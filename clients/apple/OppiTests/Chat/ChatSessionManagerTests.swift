@@ -123,6 +123,56 @@ struct ChatSessionManagerTests {
         #expect(manager.connectionGeneration == 2, "Third appear should bump again")
     }
 
+    @Test func coveredReappearDoesNotBumpGeneration() {
+        let manager = ChatSessionManager(sessionId: "s1")
+        manager.markAppeared()
+        #expect(manager.connectionGeneration == 0)
+        #expect(manager.isPreservingCoveredLifetime)
+
+        manager.markAppeared(isCoveredReentry: true)
+        #expect(manager.connectionGeneration == 0, "Covered reappear must not bump generation")
+        #expect(manager.hasAppeared)
+        #expect(manager.isPreservingCoveredLifetime)
+    }
+
+    @Test func cleanupClearsCoveredLifetimePreservationSoTrueLeaveCanReconnect() {
+        let manager = ChatSessionManager(sessionId: "s1")
+        manager.markAppeared()
+        #expect(manager.isPreservingCoveredLifetime)
+
+        manager.cleanup()
+        #expect(!manager.isPreservingCoveredLifetime)
+
+        manager.markAppeared(isCoveredReentry: manager.isPreservingCoveredLifetime)
+        #expect(manager.connectionGeneration == 1, "True leave must still bump generation")
+    }
+
+    @Test func connectDoesNotResetPopulatedSameSessionReducerOnCoveredReentry() async {
+        let sessionId = "covered-reset-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId, workspaceIdHint: "w1")
+        manager.reducer.loadSession([
+            makeTraceEvent(id: "u1", type: .user, text: "hello"),
+            makeTraceEvent(id: "a1", type: .assistant, text: "world"),
+        ])
+        let itemIDs = manager.reducer.items.map(\.id)
+        #expect(itemIDs == ["u1", "a1"])
+
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: false)
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1"))
+
+        await manager.connect(connection: connection, sessionStore: sessionStore)
+
+        #expect(
+            Set(itemIDs).isSubset(of: Set(manager.reducer.items.map(\.id))),
+            "Covered re-entry must not empty-reducer reconnect"
+        )
+        manager.cleanup()
+    }
+
     @Test func reconnectBumpsGeneration() {
         let manager = ChatSessionManager(sessionId: "s1")
         #expect(manager.connectionGeneration == 0)

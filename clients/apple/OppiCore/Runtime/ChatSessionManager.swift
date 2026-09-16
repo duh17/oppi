@@ -497,9 +497,18 @@ final class ChatSessionManager {
 
     // MARK: - Lifecycle
 
-    func markAppeared() {
+    /// True after the view has appeared and teardown has not run. Covered
+    /// reader/file pushes keep this set so reappear can skip a cold reconnect.
+    var isPreservingCoveredLifetime: Bool {
+        hasAppeared && wantsAutoReconnect
+    }
+
+    func markAppeared(isCoveredReentry: Bool = false) {
         wantsAutoReconnect = true
         if hasAppeared {
+            if isCoveredReentry {
+                return
+            }
             cancelPresentationReloadRetry()
             connectionGeneration &+= 1
         } else {
@@ -594,7 +603,10 @@ final class ChatSessionManager {
             return
         }
 
-        transitionTo(.idle)
+        let preservePopulatedReducer = !reducer.items.isEmpty
+        if !preservePopulatedReducer {
+            transitionTo(.idle)
+        }
         if let resolvedWorkspaceId = effectsStatePort.resolveSessionReentryWorkspaceId(
             sessionId: sessionId,
             workspaceIdHint: workspaceIdHint
@@ -605,9 +617,11 @@ final class ChatSessionManager {
         focusedStreamPort.fatalSetupError = false
         cancelAutoReconnect()
         cancelStateSync()
-        reducer.reset()
+        if !preservePopulatedReducer {
+            reducer.reset()
+            toolCallCorrelator.reset()
+        }
         coalescer.sessionId = sessionId
-        toolCallCorrelator.reset()
 
         effectsStatePort.setActiveSessionId(sessionId)
         effectsStatePort.setTimelineActiveSessionId(sessionId)
@@ -630,7 +644,11 @@ final class ChatSessionManager {
         telemetry.updateTransportPath(focusedStreamPort.transportPath)
         telemetry.beginFreshContentLagMeasurement(hadCache: false)
 
-        latestTraceSignature = await loadCachedTimeline()
+        if preservePopulatedReducer {
+            log.info("Skipped reducer reset — keeping \(self.reducer.items.count) live items for \(self.sessionId)")
+        } else {
+            latestTraceSignature = await loadCachedTimeline()
+        }
 
         // Stopped sessions: load fresh history but do NOT open a WebSocket.
         // Opening the WS would auto-resume the pi process on the server.
@@ -1059,7 +1077,12 @@ final class ChatSessionManager {
 
         focusedStreamPort.setReconnectHandler(nil)
         cancelStateSync()
-        disconnectIfCurrent(generation)
+        // Covered ChatView disappearance cancels `.task` without cleanup().
+        // Keep the focused session so reappear is not a cold reconnect.
+        let preserveCoveredConnection = Task.isCancelled && wantsAutoReconnect
+        if !preserveCoveredConnection {
+            disconnectIfCurrent(generation)
+        }
     }
 
     /// Reconcile session state from REST after a stop attempt times out.

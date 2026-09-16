@@ -574,12 +574,36 @@ struct ChatView: View {
         }
     }
 
+    struct TimelineReaderOpenPlan: Equatable {
+        var shouldOpen: Bool
+        var shouldWipePayloadStore: Bool
+        var shouldPreflight: Bool
+    }
+
+    static func timelineReaderOpenPlan(isShowingChatReader _: Bool) -> TimelineReaderOpenPlan {
+        TimelineReaderOpenPlan(
+            shouldOpen: true,
+            shouldWipePayloadStore: false,
+            shouldPreflight: true
+        )
+    }
+
+    static func shouldTeardownOnDisappear(isCovered: Bool) -> Bool {
+        !isCovered
+    }
+
     private func openTimelineReader(_ payload: ChatReaderPayload) {
         guard let store = chatReaderPayloadStore else { return }
-        if appNavigation.isShowingChatReader() {
-            return
+        let plan = Self.timelineReaderOpenPlan(
+            isShowingChatReader: appNavigation.isShowingChatReader()
+        )
+        guard plan.shouldOpen else { return }
+        if plan.shouldPreflight {
+            scrollController.suspendForNavigation()
         }
-        store.removeAll()
+        if plan.shouldWipePayloadStore {
+            store.removeAll()
+        }
         appNavigation.openChatReader(store.store(payload))
     }
 
@@ -966,6 +990,8 @@ struct ChatView: View {
                 // Freeze the viewport before cleanup can publish an empty timeline
                 // and make collection geometry look tail-attached during the push.
                 scrollController.suspendForNavigation()
+                let isCovered = appNavigation.isCoveringChat(sessionId: sessionId)
+                guard Self.shouldTeardownOnDisappear(isCovered: isCovered) else { return }
                 actionHandler.cleanup()
                 sessionManager.cleanup()
                 Task {
@@ -1735,13 +1761,14 @@ struct ChatView: View {
         // The async sessionManager.connect() task starts shortly after onAppear,
         // but users can tap toolbar controls before that task has a chance to
         // refocus the connection on this session.
+        let isCoveredReentry = sessionManager.isPreservingCoveredLifetime
         connection.prepareForSessionReentry(
             sessionId,
             workspaceIdHint: workspaceIdHint,
             routeScope: focusedRouteScope
         )
 
-        sessionManager.markAppeared()
+        sessionManager.markAppeared(isCoveredReentry: isCoveredReentry)
         if Self.shouldPauseTimelinePresentation(for: scenePhase) {
             sessionManager.coalescer.pause()
         } else if scenePhase == .active,

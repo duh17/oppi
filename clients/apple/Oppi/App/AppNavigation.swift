@@ -561,6 +561,83 @@ final class AppNavigation {
         lhs.serverId == rhs.serverId && lhs.sessionId == rhs.sessionId
     }
 
+    private enum ChatCoveringRouteElement {
+        case session(String)
+        case coveringPage(sourceSessionId: String?)
+        case other
+    }
+
+    private static func coveringElement(from element: WorkspaceStackRouteElement) -> ChatCoveringRouteElement {
+        switch element {
+        case .session(let target):
+            return .session(target.sessionId)
+        case .chatReader:
+            return .coveringPage(sourceSessionId: nil)
+        case .linkedFile(let target):
+            return .coveringPage(sourceSessionId: coveringSourceSessionId(for: target))
+        case .workspace, .fileBrowser, .workspaceConfiguration, .utility,
+             .serverDetails, .modelProviders, .serverResourceDetail,
+             .serverSkillBrowser, .serverSkillFile, .unknown:
+            return .other
+        }
+    }
+
+    private static func coveringElement(from target: WorkspaceSplitDetailTarget) -> ChatCoveringRouteElement {
+        switch target {
+        case .session(let session):
+            return .session(session.sessionId)
+        case .linkedFile(let file):
+            return .coveringPage(sourceSessionId: coveringSourceSessionId(for: file))
+        case .fileBrowser, .workspaceConfiguration, .utility:
+            return .other
+        }
+    }
+
+    private static func coveringElement(from element: WorkspaceSplitDetailPathElement) -> ChatCoveringRouteElement {
+        switch element {
+        case .session(let target):
+            return .session(target.sessionId)
+        case .chatReader:
+            return .coveringPage(sourceSessionId: nil)
+        case .linkedFile(let target):
+            return .coveringPage(sourceSessionId: coveringSourceSessionId(for: target))
+        case .fileBrowser, .serverResourceDetail, .serverSkillBrowser,
+             .serverSkillFile, .serverDetails, .modelProviders:
+            return .other
+        }
+    }
+
+    private static func coveringSourceSessionId(for target: WorkspaceLinkedFileNavTarget) -> String? {
+        if let sourceSessionId = target.sourceSessionId, !sourceSessionId.isEmpty {
+            return sourceSessionId
+        }
+        if case .sessionFile(_, _, let sessionId) = target.kind {
+            return sessionId
+        }
+        return nil
+    }
+
+    private static func isCoveringChat(
+        sessionId: String,
+        elements: [ChatCoveringRouteElement]
+    ) -> Bool {
+        var skippedCover = false
+        for element in elements.reversed() {
+            switch element {
+            case .coveringPage(let sourceSessionId):
+                if let sourceSessionId, sourceSessionId != sessionId {
+                    return false
+                }
+                skippedCover = true
+            case .session(let stackedSessionId) where stackedSessionId == sessionId:
+                return skippedCover
+            case .session, .other:
+                return false
+            }
+        }
+        return false
+    }
+
     func isShowingChatReader() -> Bool {
         switch workspaceNavigationPresentation {
         case .stack:
@@ -573,6 +650,25 @@ final class AppNavigation {
             }
         }
         return false
+    }
+
+    /// True when this session is still under a pushed reader or same-session
+    /// linked file. ChatView uses this to skip teardown on a covering disappear.
+    func isCoveringChat(sessionId: String) -> Bool {
+        switch workspaceNavigationPresentation {
+        case .stack:
+            return Self.isCoveringChat(
+                sessionId: sessionId,
+                elements: workspaceStackRouteElements.map(Self.coveringElement(from:))
+            )
+        case .split:
+            var elements: [ChatCoveringRouteElement] = []
+            if let splitDetailTarget {
+                elements.append(Self.coveringElement(from: splitDetailTarget))
+            }
+            elements.append(contentsOf: splitDetailPathElements.map(Self.coveringElement(from:)))
+            return Self.isCoveringChat(sessionId: sessionId, elements: elements)
+        }
     }
 
     func openChatReader(_ target: ChatReaderNavTarget) {

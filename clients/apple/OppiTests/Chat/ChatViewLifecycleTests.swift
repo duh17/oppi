@@ -127,6 +127,44 @@ struct ChatViewLifecycleTests {
         connection.disconnectStream()
     }
 
+    @Test func onDisappearWhileReaderCoversSameSessionDoesNotDisconnect() async {
+        let sessionId = "session-\(UUID().uuidString)"
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
+
+        let appNavigation = AppNavigation()
+        appNavigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(
+                serverId: connection.currentServerId ?? "server-1",
+                sessionId: sessionId
+            )
+        )
+        let host = makeHost(
+            connection: connection,
+            sessionId: sessionId,
+            appNavigation: appNavigation
+        )
+
+        let appeared = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { connection.focusedSessionId == sessionId }
+        }
+        #expect(appeared)
+
+        appNavigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        #expect(appNavigation.isCoveringChat(sessionId: sessionId))
+
+        host.hide()
+        try? await Task.sleep(for: .milliseconds(120))
+
+        #expect(
+            connection.focusedSessionId == sessionId,
+            "Covered ChatView disappearance must retain the focused session"
+        )
+
+        host.teardown()
+        connection.disconnectStream()
+    }
+
     @Test func onDisappearDoesNotDisconnectPrefocusedNotificationTargetSession() async {
         let previousSessionId = "previous-\(UUID().uuidString)"
         let targetSessionId = "target-\(UUID().uuidString)"
@@ -260,8 +298,11 @@ struct ChatViewLifecycleTests {
         connection.disconnectStream()
     }
 
-    private func makeHost(connection: ServerConnection, sessionId: String) -> HostHarness {
-        let appNavigation = AppNavigation()
+    private func makeHost(
+        connection: ServerConnection,
+        sessionId: String,
+        appNavigation: AppNavigation = AppNavigation()
+    ) -> HostHarness {
         let quickCommentTemplateStore = QuickCommentTemplateStore(templates: [])
         let root = makeRootView(
             connection: connection,
