@@ -361,7 +361,7 @@ final class TestFailingFlushConverter: AVAudioConverter, @unchecked Sendable {
     override func convert(
         to outputBuffer: AVAudioBuffer,
         error outError: NSErrorPointer,
-        withInputFrom inputBlock: @escaping AVAudioConverterInputBlock
+        withInputFrom inputBlock: AVAudioConverterInputBlock
     ) -> AVAudioConverterOutputStatus {
         flushCallCount += 1
         var status = AVAudioConverterInputStatus.haveData

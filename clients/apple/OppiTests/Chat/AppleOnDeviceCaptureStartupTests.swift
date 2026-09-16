@@ -580,7 +580,7 @@ final class TestOrdinaryConverter: AVAudioConverter, @unchecked Sendable {
     override func convert(
         to outputBuffer: AVAudioBuffer,
         error outError: NSErrorPointer,
-        withInputFrom inputBlock: @escaping AVAudioConverterInputBlock
+        withInputFrom inputBlock: AVAudioConverterInputBlock
     ) -> AVAudioConverterOutputStatus {
         var status = AVAudioConverterInputStatus.noDataNow
         _ = inputBlock(128, &status)
