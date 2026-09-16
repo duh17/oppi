@@ -130,6 +130,34 @@ function parseSttCreateEnvelope(
 // Large batching here adds noticeable pause-to-commit lag even on localhost.
 const DEFAULT_FEED_INTERVAL_MS = 200;
 
+/** 200ms of s16le 16kHz mono. Yuwp E7 peeks first-text only while pending is in [0.9s, 1.2s]. */
+const STARTUP_FEED_MAX_BYTES = 6400;
+/** Leave startup after this much audio is successfully forwarded, even if Yuwp text stays empty. */
+const STARTUP_EXIT_FORWARDED_BYTES = 48_000;
+
+/** Take up to `maxBytes` from the front of `queue`, leaving any remainder in place and in order. */
+function takeQueuedBytes(queue: Buffer[], maxBytes: number): Buffer {
+  const chunks: Buffer[] = [];
+  let remaining = maxBytes;
+  while (queue.length > 0 && remaining > 0) {
+    const head = queue[0];
+    if (!head) break;
+    if (head.length <= remaining) {
+      chunks.push(head);
+      remaining -= head.length;
+      queue.shift();
+    } else {
+      chunks.push(head.subarray(0, remaining));
+      queue[0] = head.subarray(remaining);
+      remaining = 0;
+    }
+  }
+  if (chunks.length === 0) return Buffer.alloc(0);
+  const only = chunks[0];
+  if (chunks.length === 1 && only) return only;
+  return Buffer.concat(chunks);
+}
+
 export class StreamingSttProvider implements SttProvider {
   readonly name: string;
   readonly model: string;
@@ -151,6 +179,10 @@ export class StreamingSttProvider implements SttProvider {
   private inFlightFlush: Promise<void> | null = null;
   /** Max time audio may sit in the proxy queue before forwarding upstream. */
   private feedIntervalMs: number;
+  /** True until the first nonempty transcript or 1.5s of successfully forwarded audio. */
+  private startupFeed = true;
+  /** Bytes accepted by Yuwp during startup. Failed dequeued feeds are not counted or replayed. */
+  private forwardedStartupBytes = 0;
   /** Frozen vocabulary for the current take. Never reused across different hints. */
   private takeContextualStrings: readonly string[] | undefined;
   private contextApplied = false;
@@ -190,6 +222,8 @@ export class StreamingSttProvider implements SttProvider {
     this.feeding = false;
     this.inFlightFlush = null;
     this.stopped = false;
+    this.startupFeed = true;
+    this.forwardedStartupBytes = 0;
     this.contextApplied = false;
     this.takeContextualStrings =
       options?.contextualStrings && options.contextualStrings.length > 0
@@ -209,6 +243,11 @@ export class StreamingSttProvider implements SttProvider {
   feedAudio(pcm: Buffer): void {
     if (this.stopped) return;
     this.audioQueue.push(pcm);
+    // First startup audio must not wait for the coalesce timer; a large iOS
+    // dictation_ready dump would otherwise land as one >=1.5s Yuwp POST.
+    if (this.startupFeed && this.sessionId) {
+      void this.flushAudio();
+    }
   }
 
   onToken(cb: (update: SttTranscriptUpdate) => void): void {
@@ -357,21 +396,44 @@ export class StreamingSttProvider implements SttProvider {
     }
   }
 
+  private shouldDrainImmediately(): boolean {
+    return this.startupFeed || this.stopped;
+  }
+
+  private dequeueFlushPcm(): Buffer {
+    if (this.stopped || !this.startupFeed) {
+      const pcm = Buffer.concat(this.audioQueue);
+      this.audioQueue = [];
+      return pcm;
+    }
+    return takeQueuedBytes(this.audioQueue, STARTUP_FEED_MAX_BYTES);
+  }
+
   private async flushAudio(): Promise<void> {
     if (this.inFlightFlush) {
       await this.inFlightFlush;
-      return;
+      if (!this.shouldDrainImmediately()) return;
     }
-    if (this.feeding || !this.sessionId || this.audioQueue.length === 0) return;
 
-    const flush = this.flushAudioOnce();
-    this.inFlightFlush = flush;
-    try {
-      await flush;
-    } finally {
-      if (this.inFlightFlush === flush) {
-        this.inFlightFlush = null;
+    while (this.sessionId && this.audioQueue.length > 0) {
+      if (this.inFlightFlush) {
+        await this.inFlightFlush;
+        if (!this.shouldDrainImmediately()) return;
+        continue;
       }
+      if (this.feeding || !this.sessionId || this.audioQueue.length === 0) return;
+
+      const flush = this.flushAudioOnce();
+      this.inFlightFlush = flush;
+      try {
+        await flush;
+      } finally {
+        if (this.inFlightFlush === flush) {
+          this.inFlightFlush = null;
+        }
+      }
+
+      if (!this.shouldDrainImmediately()) return;
     }
   }
 
@@ -379,8 +441,8 @@ export class StreamingSttProvider implements SttProvider {
     this.feeding = true;
 
     try {
-      const pcm = Buffer.concat(this.audioQueue);
-      this.audioQueue = [];
+      const pcm = this.dequeueFlushPcm();
+      if (pcm.length === 0) return;
 
       const res = await this.fetchFn(`${this.basePath}/${this.sessionId}`, {
         method: "POST",
@@ -390,6 +452,9 @@ export class StreamingSttProvider implements SttProvider {
       });
 
       if (res.ok) {
+        if (this.startupFeed) {
+          this.forwardedStartupBytes += pcm.length;
+        }
         const data = (await res.json()) as {
           text?: string;
           batch_corrected?: boolean;
@@ -397,6 +462,12 @@ export class StreamingSttProvider implements SttProvider {
           active_text?: string;
         };
         const text = (data.text ?? "").trim();
+        if (
+          this.startupFeed &&
+          (text.length > 0 || this.forwardedStartupBytes >= STARTUP_EXIT_FORWARDED_BYTES)
+        ) {
+          this.startupFeed = false;
+        }
         const snap = data.batch_corrected === true;
         const committedText = data.committed_text?.trim();
         const activeText = data.active_text?.trim();
@@ -416,7 +487,8 @@ export class StreamingSttProvider implements SttProvider {
           });
         }
       } else if (res.status === 404) {
-        // Stale session — server likely restarted
+        // Stale session — server likely restarted. The new Yuwp session has
+        // empty pending audio, so the startup byte budget must restart too.
         log.warn("stt.session_not_found_recreating", {
           sessionId: this.sessionId,
           status: res.status,
@@ -424,6 +496,8 @@ export class StreamingSttProvider implements SttProvider {
         this.sessionId = null;
         try {
           await this.createSession();
+          this.startupFeed = true;
+          this.forwardedStartupBytes = 0;
         } catch (err) {
           log.warn("stt.session_recreate.failed", {
             error: err instanceof Error ? err.message : String(err),

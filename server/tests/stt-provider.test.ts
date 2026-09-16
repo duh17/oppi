@@ -10,6 +10,7 @@ interface FetchCall {
   url: string;
   method: string;
   bodyLength?: number;
+  body?: Buffer;
   jsonBody?: unknown;
 }
 
@@ -34,10 +35,13 @@ function createMockFetch(
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method = init?.method ?? "GET";
     const rawBody = init?.body;
-    const bodyLength =
-      rawBody instanceof Uint8Array || rawBody instanceof ArrayBuffer
-        ? rawBody.byteLength
-        : undefined;
+    let body: Buffer | undefined;
+    if (rawBody instanceof Uint8Array) {
+      body = Buffer.from(rawBody);
+    } else if (rawBody instanceof ArrayBuffer) {
+      body = Buffer.from(rawBody);
+    }
+    const bodyLength = body?.length;
     let jsonBody: unknown;
     if (typeof rawBody === "string") {
       try {
@@ -46,7 +50,7 @@ function createMockFetch(
         jsonBody = undefined;
       }
     }
-    calls.push({ url, method, bodyLength, jsonBody });
+    calls.push({ url, method, bodyLength, body, jsonBody });
 
     for (const h of handlers) {
       if (h.match(url, method)) return h.response();
@@ -79,6 +83,56 @@ function makeProvider(
 
 function createBodies(calls: FetchCall[]): unknown[] {
   return calls.filter((c) => isCreate(c.url, c.method)).map((c) => c.jsonBody);
+}
+
+/** s16le 16kHz mono: 200ms = 6400 bytes, 0.9s = 28800, 1.2s = 38400, 1.5s = 48000. */
+const STARTUP_FEED_BYTES = 6400;
+const STARTUP_EXIT_BYTES = 48_000;
+const PREVIEW_MIN_BYTES = 28_800;
+const PREVIEW_MAX_BYTES = 38_400;
+
+function patternPcm(bytes: number, start = 0): Buffer {
+  const buf = Buffer.alloc(bytes);
+  for (let i = 0; i < bytes; i++) buf[i] = (start + i) % 256;
+  return buf;
+}
+
+function feedPcmCalls(calls: FetchCall[]): FetchCall[] {
+  return calls.filter((c) => isFeed(c.url, c.method));
+}
+
+function pcmFromInit(init?: RequestInit): Buffer {
+  const rawBody = init?.body;
+  if (rawBody instanceof Uint8Array) return Buffer.from(rawBody);
+  if (rawBody instanceof ArrayBuffer) return Buffer.from(rawBody);
+  return Buffer.alloc(0);
+}
+
+async function waitUntil(predicate: () => boolean, label: string): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    if (predicate()) return;
+    await Promise.resolve();
+  }
+  throw new Error(`waitUntil timed out: ${label}`);
+}
+
+function expectPreviewWindowVisited(sizes: number[]): void {
+  let cumulative = 0;
+  let visited = false;
+  for (const size of sizes) {
+    if (!visited) {
+      expect(size).toBeLessThan(STARTUP_EXIT_BYTES);
+    }
+    cumulative += size;
+    if (cumulative > PREVIEW_MIN_BYTES && cumulative <= PREVIEW_MAX_BYTES) {
+      visited = true;
+    }
+  }
+  expect(visited).toBe(true);
+}
+
+function concatFeedBodies(calls: FetchCall[]): Buffer {
+  return Buffer.concat(feedPcmCalls(calls).map((c) => c.body ?? Buffer.alloc(0)));
 }
 
 describe("StreamingSttProvider", () => {
@@ -296,7 +350,7 @@ describe("StreamingSttProvider", () => {
     await expect(provider.start()).rejects.toThrow(/network/);
   });
 
-  it("feed timer concatenates multiple queued chunks into one request", async () => {
+  it("after startup, feed timer concatenates multiple queued chunks into one request", async () => {
     const { fetchFn, calls } = createMockFetch([
       { match: isCreate, response: jsonResponse({ session_id: "s1" }) },
       { match: isFeed, response: jsonResponse({ text: "concat" }) },
@@ -305,16 +359,25 @@ describe("StreamingSttProvider", () => {
 
     const provider = makeProvider(fetchFn);
     await provider.start();
-    const feedBaseline = calls.filter((c) => isFeed(c.url, c.method)).length;
+
+    provider.feedAudio(Buffer.from([9, 9]));
+    await flush();
+    const afterStartupFeeds = feedPcmCalls(calls).length;
+    expect(afterStartupFeeds).toBeGreaterThanOrEqual(1);
 
     provider.feedAudio(Buffer.from([1, 2]));
     provider.feedAudio(Buffer.from([3, 4]));
     provider.feedAudio(Buffer.from([5, 6]));
-    expect(calls.filter((c) => isFeed(c.url, c.method)).length).toBe(feedBaseline);
+    expect(feedPcmCalls(calls).length).toBe(afterStartupFeeds);
 
     vi.advanceTimersByTime(100);
     await Promise.resolve();
-    expect(calls.filter((c) => isFeed(c.url, c.method)).length).toBe(feedBaseline + 1);
+    expect(feedPcmCalls(calls).length).toBe(afterStartupFeeds + 1);
+    expect(
+      feedPcmCalls(calls)
+        .at(-1)
+        ?.body?.equals(Buffer.from([1, 2, 3, 4, 5, 6])),
+    ).toBe(true);
 
     await provider.stop();
   });
@@ -456,6 +519,385 @@ describe("StreamingSttProvider", () => {
     const provider = makeProvider(fetchFn);
     await provider.start();
     await expect(provider.dispose()).resolves.toBeUndefined();
+  });
+
+  describe("startup feed policy", () => {
+    function createRecordingFetch(opts?: {
+      feedText?: (seq: number) => string;
+      gate?: (seq: number, body: Buffer) => Promise<void>;
+      failSeq?: number;
+      notFoundSeq?: number;
+    }): {
+      fetchFn: typeof globalThis.fetch;
+      calls: FetchCall[];
+      methodOrder: string[];
+      maxFeedInFlight: () => number;
+    } {
+      const calls: FetchCall[] = [];
+      const methodOrder: string[] = [];
+      let createSeq = 0;
+      let feedSeq = 0;
+      let feedInFlight = 0;
+      let maxFeedInFlight = 0;
+
+      const fetchFn = (async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const method = init?.method ?? "GET";
+        const body = pcmFromInit(init);
+        let jsonBody: unknown;
+        if (typeof init?.body === "string") {
+          try {
+            jsonBody = JSON.parse(init.body) as unknown;
+          } catch {
+            jsonBody = undefined;
+          }
+        }
+        const rec: FetchCall = {
+          url,
+          method,
+          body: isFeed(url, method) ? body : undefined,
+          bodyLength: isFeed(url, method) ? body.length : undefined,
+          jsonBody,
+        };
+        calls.push(rec);
+
+        if (isCreate(url, method)) {
+          createSeq += 1;
+          methodOrder.push("create");
+          return new Response(JSON.stringify({ session_id: `s${createSeq}` }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (isFeed(url, method)) {
+          feedSeq += 1;
+          const seq = feedSeq;
+          methodOrder.push(`feed-${seq}`);
+          feedInFlight += 1;
+          maxFeedInFlight = Math.max(maxFeedInFlight, feedInFlight);
+          try {
+            if (opts?.failSeq === seq) {
+              throw new Error("feed failed");
+            }
+            if (opts?.notFoundSeq === seq) {
+              return new Response("", { status: 404 });
+            }
+            if (opts?.gate) await opts.gate(seq, body);
+            const text = opts?.feedText?.(seq) ?? "";
+            return new Response(JSON.stringify({ text }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          } finally {
+            feedInFlight -= 1;
+          }
+        }
+        if (isDelete(url, method)) {
+          methodOrder.push("delete");
+          return new Response(JSON.stringify({ text: "done" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        throw new Error(`Unexpected fetch request: ${method} ${url}`);
+      }) as typeof globalThis.fetch;
+
+      return {
+        fetchFn,
+        calls,
+        methodOrder,
+        maxFeedInFlight: () => maxFeedInFlight,
+      };
+    }
+
+    it("flushes the first nonempty audio immediately", async () => {
+      const { fetchFn, calls } = createRecordingFetch();
+      const provider = makeProvider(fetchFn);
+      await provider.start();
+
+      const pcm = patternPcm(32);
+      provider.feedAudio(pcm);
+      await waitUntil(() => feedPcmCalls(calls).length === 1, "first immediate feed");
+
+      expect(feedPcmCalls(calls)[0]?.body?.equals(pcm)).toBe(true);
+      await provider.stop();
+    });
+
+    it("caps startup POSTs at 6400 bytes and keeps leftover PCM queued in order", async () => {
+      const { fetchFn, calls, maxFeedInFlight } = createRecordingFetch();
+      const provider = makeProvider(fetchFn);
+      await provider.start();
+
+      const burst = patternPcm(STARTUP_FEED_BYTES + 100);
+      provider.feedAudio(burst);
+      await waitUntil(() => feedPcmCalls(calls).length >= 1, "first startup slice");
+      expect(feedPcmCalls(calls)[0]?.bodyLength).toBe(STARTUP_FEED_BYTES);
+      expect(feedPcmCalls(calls)[0]?.body?.equals(burst.subarray(0, STARTUP_FEED_BYTES))).toBe(
+        true,
+      );
+
+      await waitUntil(() => feedPcmCalls(calls).length === 2, "leftover drained immediately");
+      expect(feedPcmCalls(calls)[1]?.body?.equals(burst.subarray(STARTUP_FEED_BYTES))).toBe(true);
+      expect(concatFeedBodies(calls).equals(burst)).toBe(true);
+      expect(maxFeedInFlight()).toBe(1);
+      await provider.stop();
+    });
+
+    it("drains queued startup slices immediately after each response without waiting 200ms", async () => {
+      let releaseFirst: (() => void) | undefined;
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const { fetchFn, calls, maxFeedInFlight } = createRecordingFetch({
+        gate: async (seq) => {
+          if (seq === 1) await firstGate;
+        },
+      });
+      const provider = makeProvider(fetchFn);
+      await provider.start();
+
+      const burst = patternPcm(STARTUP_FEED_BYTES * 3);
+      provider.feedAudio(burst);
+      await waitUntil(() => feedPcmCalls(calls).length === 1, "first in-flight startup POST");
+      expect(feedPcmCalls(calls)[0]?.bodyLength).toBe(STARTUP_FEED_BYTES);
+      expect(maxFeedInFlight()).toBe(1);
+
+      releaseFirst?.();
+      await waitUntil(() => feedPcmCalls(calls).length === 3, "startup backlog drain");
+      expect(feedPcmCalls(calls).map((c) => c.bodyLength)).toEqual([
+        STARTUP_FEED_BYTES,
+        STARTUP_FEED_BYTES,
+        STARTUP_FEED_BYTES,
+      ]);
+      expect(concatFeedBodies(calls).equals(burst)).toBe(true);
+      expect(maxFeedInFlight()).toBe(1);
+      await provider.stop();
+    });
+
+    it("splits a >1.5s pre-ready burst so cumulative pending visits (0.9s, 1.2s] before a >=1.5s POST", async () => {
+      const { fetchFn, calls, maxFeedInFlight } = createRecordingFetch();
+      const provider = makeProvider(fetchFn);
+      await provider.start();
+
+      const burst = patternPcm(64_000);
+      provider.feedAudio(burst);
+      await waitUntil(
+        () => concatFeedBodies(calls).length >= STARTUP_EXIT_BYTES,
+        "startup budget forwarded",
+      );
+
+      const startupSizes = feedPcmCalls(calls).map((c) => c.bodyLength ?? 0);
+      expect(startupSizes.every((size) => size <= STARTUP_FEED_BYTES)).toBe(true);
+      expectPreviewWindowVisited(startupSizes);
+      expect(maxFeedInFlight()).toBe(1);
+
+      const forwarded = concatFeedBodies(calls);
+      const leftover = burst.subarray(forwarded.length);
+      expect(leftover.length).toBeGreaterThan(0);
+      const feedsAfterBudget = feedPcmCalls(calls).length;
+
+      await flush();
+      expect(feedPcmCalls(calls).length).toBe(feedsAfterBudget);
+
+      vi.advanceTimersByTime(100);
+      await waitUntil(
+        () => feedPcmCalls(calls).length === feedsAfterBudget + 1,
+        "post-startup coalesce of leftover",
+      );
+      expect(feedPcmCalls(calls).at(-1)?.body?.equals(leftover)).toBe(true);
+      expect(concatFeedBodies(calls).equals(burst)).toBe(true);
+      await provider.stop();
+    });
+
+    it("paces startup audio immediately and still visits the preview window", async () => {
+      const { fetchFn, calls, maxFeedInFlight } = createRecordingFetch();
+      const provider = makeProvider(fetchFn);
+      await provider.start();
+
+      const paced = patternPcm(STARTUP_FEED_BYTES * 6);
+      for (let i = 0; i < 6; i++) {
+        const slice = paced.subarray(i * STARTUP_FEED_BYTES, (i + 1) * STARTUP_FEED_BYTES);
+        provider.feedAudio(Buffer.from(slice));
+        await waitUntil(() => feedPcmCalls(calls).length === i + 1, `paced feed ${i + 1}`);
+      }
+
+      const sizes = feedPcmCalls(calls).map((c) => c.bodyLength ?? 0);
+      expect(sizes).toEqual(Array(6).fill(STARTUP_FEED_BYTES));
+      expectPreviewWindowVisited(sizes);
+      expect(concatFeedBodies(calls).equals(paced)).toBe(true);
+      expect(maxFeedInFlight()).toBe(1);
+      await provider.stop();
+    });
+
+    it("exits startup after nonempty Yuwp text and restores coalesce", async () => {
+      const { fetchFn, calls } = createRecordingFetch({
+        feedText: (seq) => (seq === 1 ? "hello" : "hello world"),
+      });
+      const provider = new StreamingSttProvider({ endpoint: BASE, model: "test-model" }, fetchFn);
+      await provider.start();
+
+      provider.feedAudio(patternPcm(16, 0));
+      await waitUntil(() => feedPcmCalls(calls).length === 1, "startup text exit");
+
+      provider.feedAudio(patternPcm(8, 16));
+      provider.feedAudio(patternPcm(8, 24));
+      await flush();
+      expect(feedPcmCalls(calls).length).toBe(1);
+
+      vi.advanceTimersByTime(199);
+      await flush();
+      expect(feedPcmCalls(calls).length).toBe(1);
+
+      vi.advanceTimersByTime(1);
+      await waitUntil(() => feedPcmCalls(calls).length === 2, "default 200ms coalesce");
+      expect(feedPcmCalls(calls)[1]?.body?.equals(patternPcm(16, 16))).toBe(true);
+      await provider.stop();
+    });
+
+    it("exits startup after 1.5s of successfully forwarded empty-text audio", async () => {
+      const { fetchFn, calls } = createRecordingFetch();
+      const provider = makeProvider(fetchFn);
+      await provider.start();
+
+      const silence = patternPcm(STARTUP_EXIT_BYTES);
+      provider.feedAudio(silence);
+      await waitUntil(
+        () => concatFeedBodies(calls).length >= STARTUP_EXIT_BYTES,
+        "silence startup budget",
+      );
+      expect(concatFeedBodies(calls).equals(silence)).toBe(true);
+      const feedsAfterExit = feedPcmCalls(calls).length;
+      expect(feedPcmCalls(calls).every((c) => (c.bodyLength ?? 0) <= STARTUP_FEED_BYTES)).toBe(
+        true,
+      );
+      expectPreviewWindowVisited(feedPcmCalls(calls).map((c) => c.bodyLength ?? 0));
+
+      const tail = patternPcm(64, STARTUP_EXIT_BYTES);
+      provider.feedAudio(tail);
+      await flush();
+      expect(feedPcmCalls(calls).length).toBe(feedsAfterExit);
+
+      vi.advanceTimersByTime(100);
+      await waitUntil(
+        () => feedPcmCalls(calls).length === feedsAfterExit + 1,
+        "silence tail coalesce",
+      );
+      expect(feedPcmCalls(calls).at(-1)?.body?.equals(tail)).toBe(true);
+      await provider.stop();
+    });
+
+    it("keeps one in-flight POST while a delayed feed accumulates backlog", async () => {
+      let releaseFirst: (() => void) | undefined;
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const { fetchFn, calls, maxFeedInFlight } = createRecordingFetch({
+        gate: async (seq) => {
+          if (seq === 1) await firstGate;
+        },
+      });
+      const provider = makeProvider(fetchFn);
+      await provider.start();
+
+      provider.feedAudio(patternPcm(STARTUP_FEED_BYTES, 0));
+      await waitUntil(() => feedPcmCalls(calls).length === 1, "delayed first POST");
+      provider.feedAudio(patternPcm(STARTUP_FEED_BYTES * 2, STARTUP_FEED_BYTES));
+      await flush();
+      expect(feedPcmCalls(calls).length).toBe(1);
+      expect(maxFeedInFlight()).toBe(1);
+
+      releaseFirst?.();
+      await waitUntil(() => feedPcmCalls(calls).length === 3, "backlog slices after delay");
+      expect(feedPcmCalls(calls).every((c) => c.bodyLength === STARTUP_FEED_BYTES)).toBe(true);
+      expect(concatFeedBodies(calls).equals(patternPcm(STARTUP_FEED_BYTES * 3))).toBe(true);
+      expect(maxFeedInFlight()).toBe(1);
+      await provider.stop();
+    });
+
+    it("stop awaits in-flight feed then drains remaining PCM unsliced before DELETE", async () => {
+      let releaseFirst: (() => void) | undefined;
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const { fetchFn, calls, methodOrder, maxFeedInFlight } = createRecordingFetch({
+        gate: async (seq) => {
+          if (seq === 1) await firstGate;
+        },
+      });
+      const provider = makeProvider(fetchFn);
+      await provider.start();
+
+      const burst = patternPcm(STARTUP_FEED_BYTES + 2500);
+      provider.feedAudio(burst);
+      await waitUntil(() => feedPcmCalls(calls).length === 1, "in-flight startup slice");
+      expect(feedPcmCalls(calls)[0]?.bodyLength).toBe(STARTUP_FEED_BYTES);
+
+      const stopPromise = provider.stop();
+      await flush();
+      expect(methodOrder).not.toContain("delete");
+
+      releaseFirst?.();
+      await stopPromise;
+
+      expect(methodOrder[0]).toBe("create");
+      expect(methodOrder.at(-1)).toBe("delete");
+      expect(methodOrder.indexOf("delete")).toBeGreaterThan(methodOrder.lastIndexOf("feed-2"));
+      expect(feedPcmCalls(calls).map((c) => c.bodyLength)).toEqual([STARTUP_FEED_BYTES, 2500]);
+      expect(concatFeedBodies(calls).equals(burst)).toBe(true);
+      expect(maxFeedInFlight()).toBe(1);
+    });
+
+    it("resets the startup budget when a 404 recreates the Yuwp session", async () => {
+      const { fetchFn, calls } = createRecordingFetch({ notFoundSeq: 8 });
+      const provider = makeProvider(fetchFn);
+      await provider.start();
+
+      provider.feedAudio(patternPcm(STARTUP_FEED_BYTES * 7));
+      await waitUntil(() => feedPcmCalls(calls).length === 7, "seven startup slices");
+      expect(feedPcmCalls(calls).every((c) => c.bodyLength === STARTUP_FEED_BYTES)).toBe(true);
+
+      provider.feedAudio(patternPcm(STARTUP_FEED_BYTES, STARTUP_FEED_BYTES * 7));
+      await waitUntil(
+        () => calls.filter((c) => isCreate(c.url, c.method)).length === 2,
+        "session recreate after 404",
+      );
+
+      const feedsBeforeBurst = feedPcmCalls(calls).length;
+      const burst = patternPcm(STARTUP_EXIT_BYTES, STARTUP_FEED_BYTES * 8);
+      provider.feedAudio(burst);
+      await waitUntil(
+        () => feedPcmCalls(calls).length >= feedsBeforeBurst + STARTUP_EXIT_BYTES / STARTUP_FEED_BYTES,
+        "post-recreate startup slices",
+      );
+
+      const postRecreate = feedPcmCalls(calls).slice(feedsBeforeBurst);
+      expect(postRecreate.every((c) => (c.bodyLength ?? 0) <= STARTUP_FEED_BYTES)).toBe(true);
+      expect(postRecreate.some((c) => c.bodyLength === STARTUP_FEED_BYTES)).toBe(true);
+      await provider.stop();
+    });
+
+    it("does not replay a failed dequeued startup slice", async () => {
+      const { fetchFn, calls, maxFeedInFlight } = createRecordingFetch({ failSeq: 1 });
+      const provider = makeProvider(fetchFn);
+      await provider.start();
+
+      const burst = patternPcm(STARTUP_FEED_BYTES + 40);
+      provider.feedAudio(burst);
+      await waitUntil(() => feedPcmCalls(calls).length === 2, "failed slice then remainder");
+
+      expect(feedPcmCalls(calls)[0]?.body?.equals(burst.subarray(0, STARTUP_FEED_BYTES))).toBe(
+        true,
+      );
+      expect(feedPcmCalls(calls)[1]?.body?.equals(burst.subarray(STARTUP_FEED_BYTES))).toBe(true);
+      expect(concatFeedBodies(calls).equals(burst)).toBe(true);
+      expect(feedPcmCalls(calls).length).toBe(2);
+      expect(maxFeedInFlight()).toBe(1);
+      await provider.stop();
+    });
   });
 
   describe("per-take contextual strings", () => {
