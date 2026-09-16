@@ -163,15 +163,22 @@ struct MacToolDocumentUSDZView: View {
 
     var body: some View {
         Group {
-            if let handle {
-                MacUSDZRealityCanvas(fileURL: handle.url, cameraControlsEnabled: true)
-                    .accessibilityIdentifier("mac.documentColumn.usdz")
-            } else if didFail {
+            if didFail {
                 ContentUnavailableView(
                     "Unable to Display 3D Scene",
                     systemImage: "cube",
                     description: Text(file.filePath ?? "USDZ")
                 )
+            } else if let handle {
+                MacUSDZRealityCanvas(
+                    fileURL: handle.url,
+                    cameraControlsEnabled: true,
+                    onLoadFailed: {
+                        didFail = true
+                        releaseHandle()
+                    }
+                )
+                .accessibilityIdentifier("mac.documentColumn.usdz")
             } else {
                 ProgressView()
             }

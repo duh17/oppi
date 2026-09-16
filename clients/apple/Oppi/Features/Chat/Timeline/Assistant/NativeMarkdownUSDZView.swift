@@ -27,6 +27,7 @@ final class NativeMarkdownUSDZView: UIView {
     private let expandButton = UIButton(type: .system)
     private let chromeStack = UIStackView()
     private var heightConstraint: NSLayoutConstraint?
+    private let interactChrome = USDZInteractChrome()
     private var sceneHost: UIHostingController<USDZRealityCanvas>?
     private var resolutionTask: Task<Void, Never>?
     private var currentEmbed: MarkdownUSDZEmbed?
@@ -263,9 +264,10 @@ final class NativeMarkdownUSDZView: UIView {
         interactButton.isHidden = interactive
         expandButton.isHidden = false
 
+        interactChrome.cameraControlsEnabled = interactive
         let canvas = USDZRealityCanvas(
             fileURL: handle.url,
-            cameraControlsEnabled: interactive,
+            interactChrome: interactChrome,
             onLoadFailed: { [weak self] in
                 self?.showFallback(
                     title: String(localized: "Unable to load 3D scene"),
@@ -279,11 +281,19 @@ final class NativeMarkdownUSDZView: UIView {
         host.view.backgroundColor = .clear
         host.view.isUserInteractionEnabled = interactive
         if let sceneHost {
+            sceneHost.willMove(toParent: nil)
             sceneHost.view.removeFromSuperview()
             sceneHost.removeFromParent()
         }
-        addSubview(host.view)
-        sendSubviewToBack(host.view)
+        if let parent = nearestViewController() {
+            parent.addChild(host)
+            addSubview(host.view)
+            sendSubviewToBack(host.view)
+            host.didMove(toParent: parent)
+        } else {
+            addSubview(host.view)
+            sendSubviewToBack(host.view)
+        }
         NSLayoutConstraint.activate([
             host.view.leadingAnchor.constraint(equalTo: leadingAnchor),
             host.view.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -297,15 +307,26 @@ final class NativeMarkdownUSDZView: UIView {
     private func setInteracting(_ interacting: Bool) {
         guard renderingMode != .export, currentHandle != nil else { return }
         isInteracting = interacting
+        interactChrome.cameraControlsEnabled = interacting
         sceneHost?.view.isUserInteractionEnabled = interacting
-        if let handle = currentHandle {
-            installScene(handle: handle, interactive: interacting)
-        }
+        doneButton.isHidden = !interacting
+        interactButton.isHidden = interacting
         if interacting {
             disableEnclosingScrollView()
         } else {
             restoreScrollIfNeeded()
         }
+    }
+
+    private func nearestViewController() -> UIViewController? {
+        var current: UIResponder? = self
+        while let responder = current {
+            if let controller = responder as? UIViewController {
+                return controller
+            }
+            current = responder.next
+        }
+        return nil
     }
 
     private func retry() {
@@ -336,9 +357,11 @@ final class NativeMarkdownUSDZView: UIView {
     }
 
     private func removeScene() {
+        sceneHost?.willMove(toParent: nil)
         sceneHost?.view.removeFromSuperview()
         sceneHost?.removeFromParent()
         sceneHost = nil
+        interactChrome.cameraControlsEnabled = false
     }
 
     private func releaseHandle() {
@@ -621,12 +644,43 @@ final class USDZInspectState: ObservableObject {
     }
 }
 
+@MainActor
+final class USDZInteractChrome: ObservableObject {
+    @Published var cameraControlsEnabled: Bool
+
+    init(cameraControlsEnabled: Bool = false) {
+        self.cameraControlsEnabled = cameraControlsEnabled
+    }
+}
+
 struct USDZRealityCanvas: View {
     let fileURL: URL
-    var cameraControlsEnabled: Bool
     var onLoadFailed: (() -> Void)? = nil
+    @ObservedObject private var interactChrome: USDZInteractChrome
     @StateObject private var inspect = USDZInspectState()
     @State private var didFail = false
+
+    init(
+        fileURL: URL,
+        cameraControlsEnabled: Bool,
+        onLoadFailed: (() -> Void)? = nil
+    ) {
+        self.fileURL = fileURL
+        self.onLoadFailed = onLoadFailed
+        self._interactChrome = ObservedObject(
+            wrappedValue: USDZInteractChrome(cameraControlsEnabled: cameraControlsEnabled)
+        )
+    }
+
+    init(
+        fileURL: URL,
+        interactChrome: USDZInteractChrome,
+        onLoadFailed: (() -> Void)? = nil
+    ) {
+        self.fileURL = fileURL
+        self.onLoadFailed = onLoadFailed
+        self._interactChrome = ObservedObject(wrappedValue: interactChrome)
+    }
 
     var body: some View {
         ZStack {
@@ -655,7 +709,7 @@ struct USDZRealityCanvas: View {
                 .realityViewCameraControls(.none)
                 .realityViewLayoutBehavior(.centered)
                 .overlay {
-                    if cameraControlsEnabled {
+                    if interactChrome.cameraControlsEnabled {
                         USDZInspectGestureView(state: inspect)
                             .accessibilityHidden(true)
                     }
