@@ -123,6 +123,9 @@ struct WorkspaceDetailView: View {
 
     @State private var sessionSearchText = ""
     @State private var isSearchPresented = false
+    @State private var heldSearchQuery: String?
+    @State private var preservesSearchAcrossDismiss = false
+    @FocusState private var isSearchFieldFocused: Bool
     @State private var presentsNowPlayingPlayer = false
     @State private var composeBarColumnWidth: CGFloat = 0
     @State private var searchStore = SessionSearchStore()
@@ -162,6 +165,13 @@ struct WorkspaceDetailView: View {
     /// `NavigationLink` rows for this; that can consume the row activation.
     private var isNavigatingDeeperInWorkspaceStack: Bool {
         navigation.workspacePath.count > 1 || navigateToSessionId != nil
+    }
+
+    private var isSearchListCoveredByDestination: Bool {
+        SessionListSearchNavigationPersistence.isWorkspaceListCovered(
+            stackDepth: navigation.workspacePath.count,
+            hasSessionDestination: navigateToSessionId != nil
+        )
     }
 
     private var workspaceRefreshPollingTaskId: String {
@@ -582,6 +592,7 @@ struct WorkspaceDetailView: View {
             placement: .navigationBarDrawer(displayMode: .automatic),
             prompt: "Search sessions"
         )
+        .searchFocused($isSearchFieldFocused)
         .searchPresentationToolbarBehavior(
             sessionListToolbar.avoidsHidingContentWhileSearching ? .avoidHidingContent : .automatic
         )
@@ -589,11 +600,24 @@ struct WorkspaceDetailView: View {
             InAppNowPlayingPlayerScreen(audioPlayer: connection.audioPlayer)
         }
         .onChange(of: sessionSearchText) { _, newValue in
+            applySearchNavigation(.searchTextChanged(newValue))
             searchStore.search(
-                query: newValue,
+                query: sessionSearchText,
                 workspaceId: SessionInboxSearchScope.workspaceId(scopedTo: workspace.id),
                 apiClient: apiClient
             )
+        }
+        .onChange(of: isSearchPresented) { _, presented in
+            applySearchNavigation(.searchPresentationChanged(presented))
+            if !presented {
+                isSearchFieldFocused = false
+            }
+        }
+        .onChange(of: navigation.workspacePath.count) { _, _ in
+            restoreSearchAfterCoverageChange()
+        }
+        .onChange(of: navigateToSessionId) { _, _ in
+            restoreSearchAfterCoverageChange()
         }
         .navigationDestination(for: String.self) { sessionId in
             ChatView(sessionId: sessionId, workspaceIdHint: workspace.id)
@@ -1042,7 +1066,38 @@ struct WorkspaceDetailView: View {
         )
     }
 
+    private func applySearchNavigation(_ event: SessionListSearchNavigationPersistence.Event) {
+        let next = SessionListSearchNavigationPersistence.reduce(
+            SessionListSearchNavigationPersistence.State(
+                searchText: sessionSearchText,
+                isSearchPresented: isSearchPresented,
+                heldQuery: heldSearchQuery,
+                preservesSearchAcrossDismiss: preservesSearchAcrossDismiss
+            ),
+            event: event,
+            isCoveredByDestination: isSearchListCoveredByDestination
+        )
+        if next.searchText != sessionSearchText {
+            sessionSearchText = next.searchText
+        }
+        if next.isSearchPresented != isSearchPresented {
+            isSearchPresented = next.isSearchPresented
+        }
+        heldSearchQuery = next.heldQuery
+        preservesSearchAcrossDismiss = next.preservesSearchAcrossDismiss
+    }
+
+    private func restoreSearchAfterCoverageChange() {
+        applySearchNavigation(.coverageChanged(isCovered: isSearchListCoveredByDestination))
+        if !isSearchListCoveredByDestination {
+            isSearchFieldFocused = false
+        }
+    }
+
     private func openSession(_ session: Session) {
+        if navigation.workspaceNavigationPresentation != .split {
+            applySearchNavigation(.willOpenDestination)
+        }
         var normalized = session
         if normalized.workspaceId == nil || normalized.workspaceId?.isEmpty == true {
             normalized.workspaceId = currentWorkspace.id
@@ -1091,6 +1146,9 @@ struct WorkspaceDetailView: View {
             removeArchiveLocalSession(local.path)
 
             isImportingLocal = false
+            if navigation.workspaceNavigationPresentation != .split {
+                applySearchNavigation(.willOpenDestination)
+            }
             routeToSession(session.id)
         } catch {
             self.error = "Resume failed: \(error.localizedDescription)"
