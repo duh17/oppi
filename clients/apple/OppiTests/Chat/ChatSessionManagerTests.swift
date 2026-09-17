@@ -157,12 +157,18 @@ struct ChatSessionManagerTests {
         })
         #expect(manager.connectionGeneration == 0)
 
+        manager.reducer.loadSession([
+            makeTraceEvent(id: "kept-user", type: .user, text: "keep me"),
+            makeTraceEvent(id: "kept-assistant", type: .assistant, text: "still here"),
+        ])
+        let itemIDsBefore = manager.reducer.items.map(\.id)
+        #expect(!itemIDsBefore.isEmpty)
+
         swiftUITask.cancel()
-        manager._streamSessionForTesting = { _ in
-            AsyncStream { _ in }
-        }
         manager.markAppeared()
         manager.ensureConnected(connection: connection, sessionStore: sessionStore)
+        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(50))
 
         #expect(manager.connectionGeneration == 0, "Covered reappear must not bump generation while the loop is live")
         #expect(
@@ -170,10 +176,53 @@ struct ChatSessionManagerTests {
             "Covered SwiftUI .task cancel must not kill the manager-owned connect loop"
         )
         #expect(streams.streamsCreated == 1, "ensureConnected must not open a second stream")
+        #expect(
+            manager.reducer.items.map(\.id) == itemIDsBefore,
+            "Covered reappear must not reset a populated reducer"
+        )
 
         streams.finish(index: 0)
         manager.cleanup()
         await swiftUITask.value
+    }
+
+    @Test func releasingRuntimeLeaseDisconnectsLiveConnectLoop() async {
+        let sessionId = "lease-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        var lease: ChatSessionManagerLease? = ChatSessionManagerLease(manager: manager)
+        let streams = ScriptedStreamFactory()
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
+
+        manager.markAppeared()
+        manager.ensureConnected(connection: connection, sessionStore: sessionStore)
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId)))
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run { manager.entryState == .streaming }
+        })
+
+        lease = nil
+
+        let disconnected = await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                if case .disconnected(reason: .cancelled) = manager.entryState {
+                    return true
+                }
+                return false
+            }
+        }
+        #expect(disconnected, "Lease deinit must cleanup() the manager")
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(streams.streamsCreated == 1, "Lease cleanup must cancel the loop, not restart it")
+
+        streams.finish(index: 0)
+        connection.disconnectStream()
     }
 
     @Test func reconnectBumpsGeneration() {

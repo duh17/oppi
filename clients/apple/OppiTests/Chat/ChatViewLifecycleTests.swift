@@ -127,7 +127,7 @@ struct ChatViewLifecycleTests {
         connection.disconnectStream()
     }
 
-    @Test func onDisappearWhileReaderCoversSameSessionDoesNotDisconnect() async {
+    @Test func coveredNavigationStackPushRetainsFocusedSession() async {
         let sessionId = "session-\(UUID().uuidString)"
         let (connection, _) = makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
@@ -139,10 +139,12 @@ struct ChatViewLifecycleTests {
                 sessionId: sessionId
             )
         )
-        let host = makeHost(
+        let pathBox = NavigationPathBox()
+        let host = makeStackedHost(
             connection: connection,
             sessionId: sessionId,
-            appNavigation: appNavigation
+            appNavigation: appNavigation,
+            pathBox: pathBox
         )
 
         let appeared = await waitForTestCondition(timeoutMs: 500) {
@@ -150,18 +152,87 @@ struct ChatViewLifecycleTests {
         }
         #expect(appeared)
 
-        appNavigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        let reader = ChatReaderNavTarget(id: UUID())
+        appNavigation.openChatReader(reader)
         #expect(appNavigation.isCoveringChat(sessionId: sessionId))
 
-        host.hide()
-        try? await Task.sleep(for: .milliseconds(120))
+        pathBox.path.append(reader)
+        host.controller.view.setNeedsLayout()
+        host.controller.view.layoutIfNeeded()
 
+        let pushed = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run {
+                nestedNavigationController(in: host.controller)?.viewControllers.count ?? 0 >= 2
+            }
+        }
+        #expect(pushed, "Covered-alive proof requires a real NavigationStack push")
+
+        let retained = await waitForMainActorConditionToStayTrue(for: .milliseconds(120)) {
+            connection.focusedSessionId == sessionId
+        }
         #expect(
-            connection.focusedSessionId == sessionId,
-            "Covered ChatView disappearance must retain the focused session"
+            retained,
+            "Covered ChatView must stay alive under a real reader push"
         )
 
         host.teardown()
+        connection.disconnectStream()
+    }
+
+    @Test func destroyingCoveredChatViewDisconnectsFocusedSession() async {
+        let sessionId = "session-\(UUID().uuidString)"
+        let workspaceId = "w1"
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        connection.sessionStore.upsert(
+            makeTestSession(id: sessionId, workspaceId: workspaceId, status: .ready)
+        )
+
+        let frames = ScriptedFrameStreamFactory()
+        connection._connectStreamForTesting = { [weak connection] in
+            connection?.wsClient?._setStatusForTesting(.connected)
+            return frames.makeStream()
+        }
+
+        let appNavigation = AppNavigation()
+        appNavigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(
+                serverId: connection.currentServerId ?? "server-1",
+                sessionId: sessionId,
+                workspaceId: workspaceId
+            )
+        )
+        var host: HostHarness? = makeHost(
+            connection: connection,
+            sessionId: sessionId,
+            appNavigation: appNavigation
+        )
+
+        let appeared = await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                connection.focusedSessionId == sessionId && frames.streamsCreated >= 1
+            }
+        }
+        #expect(appeared, "Covered destroy proof needs a live focused stream")
+
+        appNavigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        #expect(appNavigation.isCoveringChat(sessionId: sessionId))
+
+        host?.hide()
+        host?.window.rootViewController = nil
+        host?.window.isHidden = true
+        host = nil
+        await Task.yield()
+
+        let disconnected = await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run { connection.focusedSessionId == nil }
+        }
+        #expect(
+            disconnected,
+            "Destroying a covered ChatView must still release the focused session"
+        )
+
+        frames.finish(index: 0)
         connection.disconnectStream()
     }
 
@@ -303,14 +374,42 @@ struct ChatViewLifecycleTests {
         sessionId: String,
         appNavigation: AppNavigation = AppNavigation()
     ) -> HostHarness {
-        let quickCommentTemplateStore = QuickCommentTemplateStore(templates: [])
-        let root = makeRootView(
-            connection: connection,
-            sessionId: sessionId,
-            appNavigation: appNavigation,
-            quickCommentTemplateStore: quickCommentTemplateStore
+        makeHost(
+            root: makeChatView(
+                connection: connection,
+                sessionId: sessionId,
+                appNavigation: appNavigation
+            )
         )
+    }
 
+    private func makeStackedHost(
+        connection: ServerConnection,
+        sessionId: String,
+        appNavigation: AppNavigation,
+        pathBox: NavigationPathBox
+    ) -> HostHarness {
+        makeHost(
+            root: AnyView(
+                StackedChatRoot(
+                    sessionId: sessionId,
+                    pathBox: pathBox
+                )
+                .environment(connection)
+                .environment(connection.chatState)
+                .environment(connection.sessionStore)
+                .environment(connection.audioPlayer)
+                .environment(connection.gitStatusStore)
+                .environment(connection.fileIndexStore)
+                .environment(connection.messageQueueStore)
+                .environment(connection.askRequestStore)
+                .environment(appNavigation)
+                .environment(QuickCommentTemplateStore(templates: []))
+            )
+        )
+    }
+
+    private func makeHost(root: AnyView) -> HostHarness {
         let controller = UIHostingController(rootView: root)
         controller.loadViewIfNeeded()
         controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -324,11 +423,10 @@ struct ChatViewLifecycleTests {
         return HostHarness(controller: controller, window: window)
     }
 
-    private func makeRootView(
+    private func makeChatView(
         connection: ServerConnection,
         sessionId: String,
-        appNavigation: AppNavigation,
-        quickCommentTemplateStore: QuickCommentTemplateStore
+        appNavigation: AppNavigation
     ) -> AnyView {
         AnyView(
             ChatView(sessionId: sessionId)
@@ -339,9 +437,9 @@ struct ChatViewLifecycleTests {
                 .environment(connection.gitStatusStore)
                 .environment(connection.fileIndexStore)
                 .environment(connection.messageQueueStore)
-                    .environment(connection.askRequestStore)
+                .environment(connection.askRequestStore)
                 .environment(appNavigation)
-                .environment(quickCommentTemplateStore)
+                .environment(QuickCommentTemplateStore(templates: []))
         )
     }
 }
@@ -362,4 +460,39 @@ private struct HostHarness {
         window.isHidden = true
         window.rootViewController = nil
     }
+}
+
+@MainActor
+@Observable
+private final class NavigationPathBox {
+    var path = NavigationPath()
+}
+
+private struct StackedChatRoot: View {
+    let sessionId: String
+    @Bindable var pathBox: NavigationPathBox
+
+    var body: some View {
+        NavigationStack(path: $pathBox.path) {
+            ChatView(sessionId: sessionId)
+                .navigationDestination(for: ChatReaderNavTarget.self) { _ in
+                    Text("Covered reader")
+                }
+        }
+    }
+}
+
+private func nestedNavigationController(in controller: UIViewController) -> UINavigationController? {
+    if let navigation = controller as? UINavigationController {
+        return navigation
+    }
+    for child in controller.children {
+        if let navigation = nestedNavigationController(in: child) {
+            return navigation
+        }
+    }
+    if let presented = controller.presentedViewController {
+        return nestedNavigationController(in: presented)
+    }
+    return nil
 }

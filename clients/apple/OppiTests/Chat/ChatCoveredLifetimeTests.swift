@@ -110,4 +110,52 @@ struct ChatCoveredLifetimeTests {
         #expect(navigation.isCoveringChat(sessionId: "session-1"))
         #expect(!navigation.isCoveringChat(sessionId: "other-session"))
     }
+
+    @Test func storingAReaderDropsPayloadsWhoseTargetIsNotOnTheStack() {
+        let store = ChatReaderPayloadStore()
+        let navigation = AppNavigation()
+        navigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
+        )
+
+        let first = store.store(ChatReaderPayload(content: .plainText(content: "one", filePath: "one.txt")))
+        navigation.openChatReader(first)
+        let second = store.store(ChatReaderPayload(content: .plainText(content: "two", filePath: "two.txt")))
+        navigation.openChatReader(second)
+
+        navigation.workspacePath.removeLast(navigation.workspacePath.count)
+
+        let third = store.store(
+            ChatReaderPayload(content: .plainText(content: "three", filePath: "three.txt")),
+            retaining: navigation.containsChatReader
+        )
+
+        #expect(store.payload(for: first.id) == nil, "Pop-to-root must drop covered R1 even without onDisappear")
+        #expect(store.payload(for: second.id) == nil)
+        #expect(store.payload(for: third.id) != nil)
+    }
+
+    @Test func storingAReaderKeepsPayloadsStillOnTheStack() {
+        let store = ChatReaderPayloadStore()
+        let navigation = AppNavigation()
+        navigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
+        )
+
+        let first = store.store(ChatReaderPayload(content: .plainText(content: "one", filePath: "one.txt")))
+        navigation.openChatReader(first)
+        let second = store.store(ChatReaderPayload(content: .plainText(content: "two", filePath: "two.txt")))
+        navigation.openChatReader(second)
+
+        navigation.workspacePath.removeLast()
+
+        let third = store.store(
+            ChatReaderPayload(content: .plainText(content: "three", filePath: "three.txt")),
+            retaining: navigation.containsChatReader
+        )
+
+        #expect(store.payload(for: first.id) != nil, "Still-stacked R1 must survive the next store")
+        #expect(store.payload(for: second.id) == nil)
+        #expect(store.payload(for: third.id) != nil)
+    }
 }

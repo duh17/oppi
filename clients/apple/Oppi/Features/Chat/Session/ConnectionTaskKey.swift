@@ -1,13 +1,8 @@
-/// Composite key for ChatView's session connection `.task(id:)`.
+/// Historical composite key for ChatView's session connection `.task(id:)`.
 ///
-/// Includes both `sessionId` and `connectionGeneration` so the task
-/// re-fires when either changes:
-/// - sessionId changes → view reused for a different session (onChange self-healing)
-/// - generation changes → reconnect after network drop
-///
-/// Without sessionId in the key, two consecutive managers both start at
-/// generation 0 — SwiftUI sees the same id and silently skips reconnection
-/// for the new session, leaving the timeline blank.
+/// ChatView now keys `.task` on `sessionId` only. The manager owns loop
+/// restarts via `ensureConnected()` / `reconnect()`; `connectionGeneration`
+/// is no longer part of the SwiftUI task identity.
 struct ConnectionTaskKey: Equatable {
     let sessionId: String
     let generation: Int

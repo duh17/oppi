@@ -317,6 +317,16 @@ final class ChatReaderPayloadStore {
         return target
     }
 
+    func store(
+        _ payload: ChatReaderPayload,
+        retaining stacked: (ChatReaderNavTarget) -> Bool
+    ) -> ChatReaderNavTarget {
+        for id in Array(payloads.keys) where !stacked(ChatReaderNavTarget(id: id)) {
+            payloads[id] = nil
+        }
+        return store(payload)
+    }
+
     func payload(for id: UUID) -> ChatReaderPayload? {
         payloads[id]
     }
@@ -363,7 +373,7 @@ struct ChatReaderDestinationView: View {
             target: target,
             store: store,
             onOpenNestedReader: { payload in
-                navigation.openChatReader(store.store(payload))
+                navigation.openChatReader(store.store(payload, retaining: navigation.containsChatReader))
             },
             onOpenLinkedFile: { action in
                 openLinkedFile(action)

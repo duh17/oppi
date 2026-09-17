@@ -93,6 +93,7 @@ struct ChatView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var sessionManager: ChatSessionManager
+    @State private var sessionRuntimeLease: ChatSessionManagerLease
     @State private var scrollController = ChatScrollController()
     @State private var actionHandler = ChatActionHandler()
     @State private var voiceInputManager = VoiceInputManager.shared
@@ -160,11 +161,13 @@ struct ChatView: View {
         self.routeScope = routeScope
             ?? workspaceIdHint.map(SessionRouteScope.workspace)
         self.ownsWorkspacePathBackNavigation = ownsWorkspacePathBackNavigation
-        _sessionManager = State(initialValue: ChatSessionManager(
+        let manager = ChatSessionManager(
             sessionId: sessionId,
             workspaceIdHint: workspaceIdHint,
             routeScope: self.routeScope
-        ))
+        )
+        _sessionManager = State(initialValue: manager)
+        _sessionRuntimeLease = State(initialValue: ChatSessionManagerLease(manager: manager))
         _composerDraftController = State(initialValue: ChatComposerDraftController(
             initialText: initialInputText,
             initialRepoPointers: initialPendingFiles
@@ -205,19 +208,6 @@ struct ChatView: View {
                 return "Switched branches, but failed to reload timeline history."
             }
         }
-    }
-
-    /// Composite key for the session connection `.task(id:)`.
-    ///
-    /// Includes both `sessionId` and `connectionGeneration` so the task
-    /// re-fires when either changes:
-    /// - sessionId changes → view reused for a different session
-    /// - generation changes → reconnect after network drop
-    ///
-    /// Without sessionId, two consecutive managers both start at
-    /// generation 0 and the task silently skips the new session.
-    private var connectionTaskKey: ConnectionTaskKey {
-        ConnectionTaskKey(sessionId: sessionId, generation: sessionManager.connectionGeneration)
     }
 
     /// Per-session reducer, owned by sessionManager.
@@ -577,7 +567,7 @@ struct ChatView: View {
     private func openTimelineReader(_ payload: ChatReaderPayload) {
         guard let store = chatReaderPayloadStore else { return }
         scrollController.suspendForNavigation()
-        appNavigation.openChatReader(store.store(payload))
+        appNavigation.openChatReader(store.store(payload, retaining: appNavigation.containsChatReader))
     }
 
     private func openCurrentToolFile(path: String) {
@@ -782,7 +772,7 @@ struct ChatView: View {
             .task(id: composerDraftAttachmentKey) {
                 attachComposerDraftIfPossible()
             }
-            .task(id: connectionTaskKey) {
+            .task(id: sessionId) {
                 audioPlayer.setSessionContext(session)
                 activateChatVoiceComposer(voiceInputManager)
                 audioLifecycleCoordinator.setPlaybackInterrupter(audioPlayer)
@@ -790,6 +780,8 @@ struct ChatView: View {
                 // The lifecycle coordinator owns presentation state and can be stale across
                 // direct-speak/reconnect edges; using it here can make the mic appear wedged.
                 voiceInputManager.setPlaybackInterrupter(audioPlayer)
+                // Manager owns loop restarts. This task only binds the session
+                // identity; cancelling it must not cancel the connect loop.
                 sessionManager.ensureConnected(
                     connection: connection,
                     sessionStore: sessionStore
@@ -937,6 +929,7 @@ struct ChatView: View {
                     workspaceIdHint: workspaceIdHint,
                     routeScope: focusedRouteScope
                 )
+                sessionRuntimeLease.manager = sessionManager
                 // Session switches can happen while the scene is already
                 // inactive/background (deep link, iPad multitasking). The new
                 // coalescer starts unpaused — re-apply the hard boundary.

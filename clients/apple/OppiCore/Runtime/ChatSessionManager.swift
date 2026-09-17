@@ -65,7 +65,9 @@ final class ChatSessionManager {
     let coalescer: DeltaCoalescer
     let toolCallCorrelator = ToolCallCorrelator()
 
-    /// Bumped to restart the `.task(id:)` connection loop.
+    /// Bumped so in-flight connect work can detect a restart.
+    /// `reconnect()` and a true re-appear after `cleanup()` start a new
+    /// manager-owned loop. SwiftUI `.task` must not key on this value.
     private(set) var connectionGeneration = 0
 
     /// Mac re-invokes `connect()` from its own runtime task. iOS owns the
