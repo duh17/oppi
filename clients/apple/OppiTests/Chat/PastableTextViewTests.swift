@@ -1,3 +1,4 @@
+import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -324,5 +325,255 @@ struct InlineComposerFastPathTests {
             maxLines: 8
         )
         #expect(shouldFastPath == false)
+    }
+}
+
+@Suite("inline composer dictation follow")
+@MainActor
+struct InlineComposerDictationFollowTests {
+    @Test func streamedTerminalTranscriptKeepsLastLineVisibleAfterEightLineClamp() async throws {
+        let font = UIFont.systemFont(ofSize: 17)
+        let draft = InlineComposerFollowDraft()
+        let width: CGFloat = 320
+        let maxLines = ComposerInputMetrics.inlineMaxLines
+        let clampedHeight = inlineComposerHeight(
+            rawContentHeight: .greatestFiniteMagnitude,
+            lineHeight: font.lineHeight,
+            verticalInsets: 12,
+            maxLines: maxLines
+        )
+
+        let host = UIHostingController(
+            rootView: InlineComposerFollowHost(
+                draft: draft,
+                font: font,
+                width: width,
+                height: clampedHeight,
+                maxLines: maxLines
+            )
+        )
+        let scene = try #require(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        )
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: width, height: clampedHeight + 24)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        host.view.layoutIfNeeded()
+
+        let lines = (1...16).map { index in
+            "Line \(index) of streamed dictation keeps newest words visible in the compact composer."
+        }
+        for index in lines.indices {
+            draft.text = lines[0...index].joined(separator: "\n")
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            await yieldMainQueueTurn()
+        }
+
+        let textView = try #require(findPastableTextView(in: host.view))
+        #expect(textView.bounds.height <= clampedHeight + 0.5)
+        #expect(textView.clipsToBounds)
+        #expect(textView.isScrollEnabled)
+        #expect(textView.textStorage.length == (draft.text as NSString).length)
+        #expect(textView.selectedRange == NSRange(location: textView.textStorage.length, length: 0))
+
+        let followed = await waitForMainActorCondition {
+            guard let textView = findPastableTextView(in: host.view) else { return false }
+            textView.layoutIfNeeded()
+            return terminalLineIsVisible(in: textView)
+        }
+        #expect(
+            followed,
+            "\(inlineFollowDebugDescription(textView))"
+        )
+    }
+
+    @Test func streamedUpdateDoesNotFollowTailWhenCaretIsOffEnd() async throws {
+        let font = UIFont.systemFont(ofSize: 17)
+        let (textView, window) = try makeClampedInlineComposerTextView(font: font)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let prefix = (1...12).map { index in
+            "Line \(index) of an already overflowing compact composer draft."
+        }.joined(separator: "\n")
+        applyInlineDictationTranscript(prefix, to: textView, font: font, scrollCaretToVisible: true)
+        await yieldMainQueueTurn()
+        textView.layoutIfNeeded()
+
+        textView.selectedRange = NSRange(location: 0, length: 0)
+        textView.setContentOffset(.zero, animated: false)
+        let offsetBefore = textView.contentOffset.y
+
+        applyInlineDictationTranscript(
+            prefix + "\nMore words after the user moved the caret.",
+            to: textView,
+            font: font,
+            scrollCaretToVisible: true
+        )
+        await yieldMainQueueTurn()
+        textView.layoutIfNeeded()
+
+        #expect(textView.selectedRange == NSRange(location: 0, length: 0))
+        #expect(abs(textView.contentOffset.y - offsetBefore) < 1)
+        #expect(!terminalLineIsVisible(in: textView))
+    }
+}
+
+@MainActor @Observable
+private final class InlineComposerFollowDraft {
+    var text = ""
+    var keyboardLanguage: String? = nil
+}
+
+private struct InlineComposerFollowHost: View {
+    @Bindable var draft: InlineComposerFollowDraft
+    let font: UIFont
+    let width: CGFloat
+    let height: CGFloat
+    let maxLines: Int
+
+    var body: some View {
+        PastableTextView(
+            text: $draft.text,
+            placeholder: "",
+            font: font,
+            textColor: .label,
+            tintColor: .systemBlue,
+            volatileSuffixLength: min(18, draft.text.count),
+            correctionRanges: [],
+            maxLines: maxLines,
+            autocorrectionEnabled: true,
+            onPasteImages: { _ in },
+            onCommandEnter: nil,
+            onAlternateEnter: nil,
+            onOverflowChange: nil,
+            onLineCountChange: nil,
+            onFocusChange: nil,
+            onDictationStateChange: nil,
+            focusRequestID: 0,
+            blurRequestID: 0,
+            dictationRequestID: 0,
+            suppressKeyboard: true,
+            allowKeyboardRestoreOnTap: false,
+            onKeyboardRestoreRequest: nil,
+            accessibilityIdentifier: "test.inline.dictation.composer",
+            keyboardLanguage: $draft.keyboardLanguage
+        )
+        .frame(width: width, height: height)
+    }
+}
+
+@MainActor
+private func makeClampedInlineComposerTextView(
+    font: UIFont,
+    width: CGFloat = 320,
+    maxLines: Int = ComposerInputMetrics.inlineMaxLines
+) throws -> (PastableUITextView, UIWindow) {
+    let textView = PastableUITextView()
+    textView.font = font
+    textView.textColor = .label
+    textView.backgroundColor = .clear
+    textView.clipsToBounds = true
+    textView.isScrollEnabled = true
+    textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
+    textView.textContainer.lineFragmentPadding = 0
+    _ = textView.layoutManager
+
+    let height = inlineComposerHeight(
+        rawContentHeight: .greatestFiniteMagnitude,
+        lineHeight: font.lineHeight,
+        verticalInsets: textView.textContainerInset.top + textView.textContainerInset.bottom,
+        maxLines: maxLines
+    )
+    textView.frame = CGRect(x: 0, y: 0, width: width, height: height)
+
+    let scene = try #require(
+        UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+    )
+    let window = UIWindow(windowScene: scene)
+    window.frame = textView.frame
+    let host = UIViewController()
+    host.view.frame = window.frame
+    host.view.addSubview(textView)
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    host.view.layoutIfNeeded()
+    return (textView, window)
+}
+
+private func applyInlineDictationTranscript(
+    _ text: String,
+    to textView: PastableUITextView,
+    font: UIFont,
+    scrollCaretToVisible: Bool
+) {
+    textView.applyStyledText(
+        text,
+        font: font,
+        baseColor: .label,
+        volatileSuffixLength: min(18, text.count),
+        volatileColor: .systemBlue,
+        volatileBackgroundColor: .systemBlue.withAlphaComponent(0.2),
+        scrollCaretToVisible: scrollCaretToVisible
+    )
+}
+
+@MainActor
+private func findPastableTextView(in view: UIView) -> PastableUITextView? {
+    if let textView = view as? PastableUITextView {
+        return textView
+    }
+    for subview in view.subviews {
+        if let found = findPastableTextView(in: subview) {
+            return found
+        }
+    }
+    return nil
+}
+
+@MainActor
+private func terminalLineIsVisible(in textView: UITextView, slop: CGFloat = 2) -> Bool {
+    let length = textView.textStorage.length
+    guard length > 0, textView.bounds.height > 1 else { return false }
+    textView.layoutManager.ensureLayout(for: textView.textContainer)
+    let glyphCount = textView.layoutManager.numberOfGlyphs
+    guard glyphCount > 0 else { return false }
+
+    let lastCharacter = NSRange(location: length - 1, length: 1)
+    let glyphRange = textView.layoutManager.glyphRange(
+        forCharacterRange: lastCharacter,
+        actualCharacterRange: nil
+    )
+    let glyphIndex = min(max(glyphRange.location, 0), glyphCount - 1)
+    var lineRect = textView.layoutManager.lineFragmentUsedRect(
+        forGlyphAt: glyphIndex,
+        effectiveRange: nil
+    )
+    lineRect.origin.y += textView.textContainerInset.top
+    lineRect.origin.x += textView.textContainerInset.left
+
+    let visibleMinY = textView.contentOffset.y
+    let visibleMaxY = textView.contentOffset.y + textView.bounds.height
+    return lineRect.maxY <= visibleMaxY + slop && lineRect.minY >= visibleMinY - lineRect.height - slop
+}
+
+@MainActor
+private func inlineFollowDebugDescription(_ textView: UITextView) -> String {
+    "contentOffset.y=\(textView.contentOffset.y) contentSize=\(textView.contentSize) bounds=\(textView.bounds) selected=\(textView.selectedRange) length=\(textView.textStorage.length)"
+}
+
+private func yieldMainQueueTurn() async {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.main.async {
+            continuation.resume()
+        }
     }
 }

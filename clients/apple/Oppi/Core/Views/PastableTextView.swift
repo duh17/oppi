@@ -221,7 +221,7 @@ struct PastableTextView: UIViewRepresentable {
             volatileBackgroundColor: UIColor(theme.accent.blue.opacity(0.20)),
             correctionRanges: correctionRanges,
             correctionUnderlineColor: UIColor(theme.accent.orange),
-            scrollCaretToVisible: false
+            scrollCaretToVisible: true
         )
         textView.onPasteImages = onPasteImages
         textView.onCommandEnter = onCommandEnter
