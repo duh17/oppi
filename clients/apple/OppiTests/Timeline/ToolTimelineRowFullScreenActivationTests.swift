@@ -585,6 +585,98 @@ struct ToolTimelineRowFullScreenActivationTests {
         #expect(stillVisible, "empty chrome after a valid document payload store miss is a bug")
     }
 
+    @Test("production activate-to-navigation keeps the diff across a stacked store miss")
+    func productionActivateToNavigationKeepsDiffAcrossStackedStoreMiss() async throws {
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff)
+        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff) }
+
+        // At 39db5c7b9 ChatReaderPageView re-queried store.payload(for:) on every
+        // render, so a covering disappear that dropped the store entry left empty chrome.
+        let host = try makeProductionChatReaderStack()
+        defer { host.window.isHidden = true }
+
+        let target = try activateProductionDiffReader(on: host)
+        #expect(host.navigation.containsChatReader(target))
+        #expect(host.store.payload(for: target.id) != nil)
+        #expect(host.controller.presentedViewController == nil)
+
+        let visible = await waitForMainActorCondition(timeout: .seconds(2)) {
+            host.controller.view.layoutIfNeeded()
+            return chatReaderShowsDiffBody(in: host.controller.view, containing: "let value = 2")
+        }
+        #expect(visible, "timeline activate must push a visible navigationDestination reader")
+
+        host.store.remove(target)
+        #expect(host.navigation.containsChatReader(target), "store-miss must not pop the stacked reader")
+        host.controller.view.setNeedsLayout()
+        host.controller.view.layoutIfNeeded()
+
+        let stillVisible = await waitForMainActorCondition(timeout: .seconds(2)) {
+            host.controller.view.layoutIfNeeded()
+            return chatReaderShowsDiffBody(in: host.controller.view, containing: "let value = 2")
+                && !chatReaderShowsUnavailableChrome(in: host.controller.view)
+        }
+        #expect(stillVisible, "covering store-miss while still stacked must not blank the on-screen reader")
+    }
+
+    @Test("true navigation pop releases the store and covering keeps a stacked payload")
+    func trueNavigationPopReleasesStoreAndCoveringKeepsStackedPayload() async throws {
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff)
+        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff) }
+
+        let host = try makeProductionChatReaderStack()
+        defer { host.window.isHidden = true }
+
+        let first = try activateProductionDiffReader(on: host)
+        let appeared = await waitForMainActorCondition(timeout: .seconds(2)) {
+            host.controller.view.layoutIfNeeded()
+            return chatReaderShowsDiffBody(in: host.controller.view, containing: "let value = 2")
+        }
+        #expect(appeared)
+        #expect(host.store.payload(for: first.id) != nil)
+
+        let second = host.store.store(
+            ChatReaderPayload(content: .plainText(content: "cover", filePath: "cover.txt")),
+            retaining: host.navigation.containsChatReader
+        )
+        host.navigation.openChatReader(second)
+        host.controller.view.setNeedsLayout()
+        host.controller.view.layoutIfNeeded()
+
+        let coveringKept = await waitForMainActorCondition(timeout: .seconds(2)) {
+            host.controller.view.layoutIfNeeded()
+            return host.store.payload(for: first.id) != nil
+                && host.store.payload(for: second.id) != nil
+                && host.navigation.containsChatReader(first)
+                && host.navigation.containsChatReader(second)
+        }
+        #expect(coveringKept, "covering disappear must not release a still-stacked payload")
+
+        host.navigation.workspacePath.removeLast()
+        host.controller.view.setNeedsLayout()
+        host.controller.view.layoutIfNeeded()
+
+        let secondReleased = await waitForMainActorCondition(timeout: .seconds(2)) {
+            host.controller.view.layoutIfNeeded()
+            return host.store.payload(for: second.id) == nil
+                && host.store.payload(for: first.id) != nil
+                && !host.navigation.containsChatReader(second)
+                && host.navigation.containsChatReader(first)
+        }
+        #expect(secondReleased, "true pop must release the popped payload and keep the stacked one")
+
+        host.navigation.workspacePath.removeLast()
+        host.controller.view.setNeedsLayout()
+        host.controller.view.layoutIfNeeded()
+
+        let firstReleased = await waitForMainActorCondition(timeout: .seconds(2)) {
+            host.controller.view.layoutIfNeeded()
+            return host.store.payload(for: first.id) == nil
+                && !host.navigation.containsChatReader(first)
+        }
+        #expect(firstReleased, "true pop of the last reader must release its store entry")
+    }
+
     @Test("ANSI text keeps display styling in full screen while copy stays plain")
     func ansiTextFullScreenPreservesDisplayPayload() throws {
         let formatted = "\u{001B}[1m$\u{001B}[0m oppi status\n\u{001B}[32mPaired\u{001B}[0m"
@@ -729,6 +821,35 @@ struct ToolTimelineRowFullScreenActivationTests {
         let target: ChatReaderNavTarget
     }
 
+    private struct ProductionChatReaderHost {
+        let window: UIWindow
+        let controller: UIHostingController<AnyView>
+        let store: ChatReaderPayloadStore
+        let navigation: AppNavigation
+    }
+
+    private struct ProductionChatReaderStack: View {
+        var navigation: AppNavigation
+        let store: ChatReaderPayloadStore
+
+        var body: some View {
+            NavigationStack(path: Binding(
+                get: { navigation.workspacePath },
+                set: { navigation.workspacePath = $0 }
+            )) {
+                Text("Inbox")
+                    .navigationDestination(for: WorkspaceSessionNavTarget.self) { _ in
+                        Text("Chat")
+                    }
+                    .navigationDestination(for: ChatReaderNavTarget.self) { target in
+                        ChatReaderDestinationView(target: target, store: store)
+                    }
+            }
+            .environment(navigation)
+            .environment(\.chatReaderPayloadStore, store)
+        }
+    }
+
     private static func makeEditDiffReaderPayload() -> ChatReaderPayload {
         let lines = [
             DiffLine(kind: .removed, text: "let value = 1", oldLineNumber: 1, newLineNumber: nil),
@@ -772,6 +893,64 @@ struct ToolTimelineRowFullScreenActivationTests {
             store: store,
             target: target
         )
+    }
+
+    private func makeProductionChatReaderStack() throws -> ProductionChatReaderHost {
+        let store = ChatReaderPayloadStore()
+        let navigation = AppNavigation()
+        navigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
+        )
+        let controller = UIHostingController(
+            rootView: AnyView(
+                ProductionChatReaderStack(navigation: navigation, store: store)
+            )
+        )
+        let harness = makeHostHarness()
+        harness.window.rootViewController = controller
+        controller.view.frame = harness.window.bounds
+        controller.loadViewIfNeeded()
+        controller.view.layoutIfNeeded()
+        return ProductionChatReaderHost(
+            window: harness.window,
+            controller: controller,
+            store: store,
+            navigation: navigation
+        )
+    }
+
+    private func activateProductionDiffReader(
+        on host: ProductionChatReaderHost
+    ) throws -> ChatReaderNavTarget {
+        let payload = Self.makeEditDiffReaderPayload()
+        let document = try #require({
+            if case .diff(let document) = payload.content { return document }
+            return nil
+        }())
+        var openedTarget: ChatReaderNavTarget?
+        var configuration = makeTimelineToolConfiguration(
+            expandedContent: .diff(lines: document.lines, path: document.filePath),
+            copyOutputText: document.copyText,
+            toolNamePrefix: "edit",
+            editAdded: 2,
+            editRemoved: 1,
+            isExpanded: true,
+            isDone: true
+        )
+        configuration.openFullScreen = { payload in
+            let target = host.store.store(payload, retaining: host.navigation.containsChatReader)
+            openedTarget = target
+            host.navigation.openChatReader(target)
+        }
+        let view = ToolTimelineRowContentView(configuration: configuration)
+        host.controller.view.addSubview(view)
+        view.frame = CGRect(x: 0, y: 2000, width: 390, height: 200)
+        host.controller.view.layoutIfNeeded()
+        view.performExpandedActivation()
+        view.removeFromSuperview()
+        host.controller.view.setNeedsLayout()
+        host.controller.view.layoutIfNeeded()
+        return try #require(openedTarget)
     }
 
     private func chatReaderShowsUnavailableChrome(in root: UIView) -> Bool {
