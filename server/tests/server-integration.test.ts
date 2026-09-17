@@ -612,13 +612,14 @@ describe("workspace file serving", () => {
     expect(res.status).toBe(404);
   });
 
-  it("blocks symlinks escaping workspace root", async () => {
+  it("serves an in-workspace symlink that points outside the root", async () => {
     const outsideFile = join(tmpdir(), `oppi-escape-target-${Date.now()}.png`);
     writeFileSync(outsideFile, "escaped");
     symlinkSync(outsideFile, join(wsRoot, "escape.png"));
     try {
       const res = await get(`/workspaces/${wsId}/raw/escape.png`);
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("escaped");
     } finally {
       rmSync(outsideFile, { force: true });
     }

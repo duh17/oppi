@@ -687,15 +687,18 @@ describe("GET /host/contents", () => {
     expect(res.body.toString("utf8")).not.toContain("inside.txt");
   });
 
-  it("returns 404 for a symlink that escapes home", async () => {
+  it("lists a home symlink directory that points outside home", async () => {
     const home = tempHome("oppi-host-contents-link-");
     const outside = tempHome("oppi-host-contents-outside-");
     writeFileSync(join(outside, "secret.txt"), "secret\n", "utf8");
     symlinkSync(outside, join(home, "escape"));
 
     const listed = await dispatchHost("GET", "/host/contents/escape", { homeDir: home });
-    expect(listed.statusCode).toBe(404);
-    expect(listed.body.toString("utf8")).not.toContain("secret.txt");
+    expect(listed.statusCode).toBe(200);
+    const body = JSON.parse(listed.body.toString("utf8")) as {
+      entries: Array<{ name: string; type: string }>;
+    };
+    expect(body.entries.map((entry) => entry.name)).toContain("secret.txt");
   });
 
   it("returns 404 for a missing directory and does not list filesystem root", async () => {

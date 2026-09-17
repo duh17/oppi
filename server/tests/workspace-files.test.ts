@@ -1,8 +1,8 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
-import { mkdirSync, writeFileSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, writeFileSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 import { parseByteRangeHeader } from "../src/http-range.js";
 import { createRouteHelpers } from "../src/routes/http.js";
@@ -114,16 +114,14 @@ describe("resolveWorkspaceFilePath", () => {
     expect(result).toBeNull();
   });
 
-  test("returns null for symlink that points outside workspace", async () => {
-    // Create a symlink inside workspace pointing outside
+  test("follows a symlink whose name stays in the workspace", async () => {
     const outsideFile = join(tmpdir(), "escape-target.png");
     writeFileSync(outsideFile, "escape");
-    const symlinkPath = join(tmpRoot, "escape.png");
-    symlinkSync(outsideFile, symlinkPath);
+    symlinkSync(outsideFile, join(tmpRoot, "escape.png"));
 
     try {
       const result = await resolveWorkspaceFilePath(tmpRoot, "escape.png");
-      expect(result).toBeNull();
+      expect(result).toBe(realpathSync(outsideFile));
     } finally {
       rmSync(outsideFile, { force: true });
     }
@@ -831,8 +829,7 @@ describe("resolveWorkspaceFilePath — security edge cases", () => {
     expect(result).toBeNull();
   });
 
-  test("rejects symlink chain escaping workspace", async () => {
-    // symlink A -> B -> outside
+  test("follows a symlink chain whose names stay in the workspace", async () => {
     const outsideFile = join(tmpdir(), `oppi-escape-chain-${Date.now()}`);
     writeFileSync(outsideFile, "escaped");
     const linkB = join(tmpRoot, "link-b");
@@ -842,22 +839,20 @@ describe("resolveWorkspaceFilePath — security edge cases", () => {
 
     try {
       const result = await resolveWorkspaceFilePath(tmpRoot, "link-a");
-      // realpath resolves the full chain; the final target is outside workspace
-      expect(result).toBeNull();
+      expect(result).toBe(realpathSync(outsideFile));
     } finally {
       rmSync(outsideFile, { force: true });
     }
   });
 
-  test("rejects directory symlink pointing outside workspace", async () => {
+  test("follows a directory symlink to a file outside the workspace", async () => {
     const outsideDir = mkdtempSync(join(tmpdir(), "oppi-escape-dir-"));
     writeFileSync(join(outsideDir, "secret.txt"), "secret");
     symlinkSync(outsideDir, join(tmpRoot, "escape-dir"));
 
     try {
-      // The symlink dir resolves outside workspace root
       const result = await resolveWorkspaceFilePath(tmpRoot, "escape-dir/secret.txt");
-      expect(result).toBeNull();
+      expect(result).toBe(realpathSync(join(outsideDir, "secret.txt")));
     } finally {
       rmSync(outsideDir, { recursive: true, force: true });
     }
@@ -936,15 +931,31 @@ describe("listDirectoryEntries — security edge cases", () => {
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  test("rejects directory listing via symlink pointing outside workspace", async () => {
+  test("lists a directory symlink that points outside the workspace", async () => {
     const outsideDir = mkdtempSync(join(tmpdir(), "oppi-escape-list-"));
     writeFileSync(join(outsideDir, "secret.txt"), "secret");
     symlinkSync(outsideDir, join(tmpRoot, "escape-dir"));
 
     try {
       const result = await listDirectoryEntries(tmpRoot, "escape-dir");
-      // resolveWorkspaceFilePath rejects symlinks outside the root
-      expect(result).toBeNull();
+      expect(result).not.toBeNull();
+      expect(result!.entries.map((entry) => entry.name)).toEqual(["secret.txt"]);
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  test("lists a relative directory symlink the way linked skills are stored", async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), "oppi-linked-skill-"));
+    writeFileSync(join(outsideDir, "SKILL.md"), "# skill\n");
+    mkdirSync(join(tmpRoot, ".pi", "skills"), { recursive: true });
+    const linkPath = join(tmpRoot, ".pi", "skills", "oppi-dev");
+    symlinkSync(relative(join(tmpRoot, ".pi", "skills"), outsideDir), linkPath);
+
+    try {
+      const result = await listDirectoryEntries(tmpRoot, ".pi/skills/oppi-dev");
+      expect(result).not.toBeNull();
+      expect(result!.entries.map((entry) => entry.name)).toContain("SKILL.md");
     } finally {
       rmSync(outsideDir, { recursive: true, force: true });
     }

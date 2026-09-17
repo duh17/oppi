@@ -1,25 +1,27 @@
 import type { Dirent, Stats } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import type { FileEntry } from "./types.js";
 
 const MAX_DIR_ENTRIES = 1000;
 
-async function resolveRootPath(root: string): Promise<string> {
-  try {
-    return await realpath(root);
-  } catch {
-    return root;
-  }
+function isLexicallyInsideRoot(candidate: string, root: string): boolean {
+  const resolvedRoot = resolve(root);
+  const resolvedCandidate = resolve(candidate);
+  if (resolvedCandidate === resolvedRoot) return true;
+  const normalizedRoot = resolvedRoot.endsWith("/") ? resolvedRoot : `${resolvedRoot}/`;
+  return resolvedCandidate.startsWith(normalizedRoot);
 }
 
 /**
- * Resolve a path that must stay inside `root` after realpath.
+ * Resolve a path whose requested form stays inside `root`.
+ *
+ * Lexical `..` and absolute escapes are rejected. In-tree symlink names are
+ * followed to their real path even when the target is outside `root`.
  *
  * Returns the canonical absolute path if it is valid and accessible, or
- * `null` if the path does not exist or escapes the root via symlinks or
- * `..` traversal.
+ * `null` if the path does not exist or the requested form leaves `root`.
  */
 export async function resolveContainedPath(
   root: string,
@@ -35,20 +37,15 @@ export async function resolveContainedPath(
         ? requestedPath
         : join(root, requestedPath);
 
-  let realFile: string;
+  if (!isLexicallyInsideRoot(joined, root)) {
+    return null;
+  }
+
   try {
-    realFile = await realpath(joined);
+    return await realpath(joined);
   } catch {
     return null;
   }
-
-  const realRoot = await resolveRootPath(root);
-  const normalizedRoot = realRoot.endsWith("/") ? realRoot : realRoot + "/";
-  if (realFile !== realRoot && !realFile.startsWith(normalizedRoot)) {
-    return null;
-  }
-
-  return realFile;
 }
 
 /** List entries in a contained directory. Returns null if path is invalid or not a directory. */
