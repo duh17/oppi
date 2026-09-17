@@ -124,7 +124,7 @@ The thinking-budget indicator changes color with how much thinking the model is 
 Start with a bundled example in `server/themes/`:
 
 - `night.json` — dark, high-contrast Night theme
-- `latte-things.json` — light, Latte Things theme
+- `latte-things.json` — light, Latte Things; comments and accents lifted to AA
 - `nord.json` — dark, Nord color scheme
 - `tokyo-night.json` — dark, Tokyo Night
 - `tokyo-night-storm.json` — dark, Tokyo Night Storm
@@ -133,7 +133,7 @@ Start with a bundled example in `server/themes/`:
 - `rose-pine-moon.json` — dark, Rosé Pine Moon
 - `rose-pine-dawn.json` — light, Rosé Pine Dawn
 
-Tokyo Night and Rosé Pine keep the official hues. Comments, quotes, and light-theme accents are lifted so chat and code text meet WCAG AA.
+Tokyo Night, Rosé Pine, and Latte Things keep their official hues. Comments, quotes, and light-theme accents are lifted so chat and code text meet WCAG AA.
 
 ### Tips
 

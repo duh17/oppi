@@ -12,6 +12,7 @@ const READABLE_THEMES = [
   "rose-pine.json",
   "rose-pine-moon.json",
   "rose-pine-dawn.json",
+  "latte-things.json",
 ] as const;
 
 const AA = 4.5;
