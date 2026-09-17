@@ -92,32 +92,6 @@ struct ChatViewSessionReuseTests {
                 "New manager should have empty timeline")
     }
 
-    // MARK: - Connection task key
-
-    /// The connection task must restart when the session changes.
-    /// This requires the task key to include sessionId, not just
-    /// connectionGeneration (which starts at 0 for all managers).
-    @Test func connectionTaskKeyDiffersAcrossSessions() {
-        let keyA = ConnectionTaskKey(sessionId: "session-A", generation: 0)
-        let keyB = ConnectionTaskKey(sessionId: "session-B", generation: 0)
-        #expect(keyA != keyB,
-                "Different sessions at same generation must produce different task keys")
-    }
-
-    @Test func connectionTaskKeySameForIdenticalState() {
-        let key1 = ConnectionTaskKey(sessionId: "session-A", generation: 0)
-        let key2 = ConnectionTaskKey(sessionId: "session-A", generation: 0)
-        #expect(key1 == key2,
-                "Same session + generation = no unnecessary task restart")
-    }
-
-    @Test func connectionTaskKeyChangesOnReconnect() {
-        let key1 = ConnectionTaskKey(sessionId: "session-A", generation: 0)
-        let key2 = ConnectionTaskKey(sessionId: "session-A", generation: 1)
-        #expect(key1 != key2,
-                "Bumped generation must trigger reconnect")
-    }
-
     // MARK: - Review comment load key
 
     /// Local review comments are scoped by both local scope and session ID.

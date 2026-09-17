@@ -163,7 +163,13 @@ final class IOSChatSessionRuntimeAdapter:
     }
 
     func close() {
-        connection?.disconnectSession()
+        guard let connection else { return }
+        if let sessionId = connection.focusedSessionId,
+           connection.audioPlayer.activeLiveTransportSessionID == sessionId {
+            connection.deferDisconnectSessionUntilLiveAudioStreamFinishes(sessionId)
+            return
+        }
+        connection.disconnectSession()
     }
 
     func isFocused(sessionId: String) -> Bool {

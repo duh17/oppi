@@ -1208,6 +1208,9 @@ final class ChatSessionManager {
         transitionTo(.disconnected(reason: .cancelled))
         resumeStreamingWaiters(with: .failure(CancellationError()))
         cancelStateSync()
+        // History-only stopped connects return before the stream-loop tail, so
+        // still-owned focus has to be released here rather than after the socket ends.
+        disconnectIfCurrent(connectionGeneration)
     }
 
     // MARK: - Per-Session Timeline Routing

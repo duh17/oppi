@@ -21,10 +21,11 @@ struct ChatCoveredLifetimeTests {
         navigation.openWorkspaceSession(session)
 
         #expect(!navigation.isCoveringChat(sessionId: "session-1"))
-        #expect(!navigation.isShowingChatReader())
+        let reader = ChatReaderNavTarget(id: UUID())
+        #expect(!navigation.containsChatReader(reader))
 
-        navigation.openChatReader(ChatReaderNavTarget(id: UUID()))
-        #expect(navigation.isShowingChatReader())
+        navigation.openChatReader(reader)
+        #expect(navigation.containsChatReader(reader))
         #expect(navigation.isCoveringChat(sessionId: "session-1"))
         #expect(!navigation.isCoveringChat(sessionId: "other-session"))
     }
@@ -66,13 +67,16 @@ struct ChatCoveredLifetimeTests {
         navigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         )
-        navigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        let first = ChatReaderNavTarget(id: UUID())
+        navigation.openChatReader(first)
         let countAfterFirst = navigation.workspacePath.count
 
-        navigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        let second = ChatReaderNavTarget(id: UUID())
+        navigation.openChatReader(second)
 
         #expect(navigation.workspacePath.count == countAfterFirst + 1)
-        #expect(navigation.isShowingChatReader())
+        #expect(navigation.containsChatReader(first))
+        #expect(navigation.containsChatReader(second))
         #expect(navigation.isCoveringChat(sessionId: "session-1"))
     }
 
@@ -104,9 +108,10 @@ struct ChatCoveredLifetimeTests {
         navigation.setWorkspaceNavigationPresentation(.split)
         let session = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         navigation.openWorkspaceSession(session)
-        navigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        let reader = ChatReaderNavTarget(id: UUID())
+        navigation.openChatReader(reader)
 
-        #expect(navigation.isShowingChatReader())
+        #expect(navigation.containsChatReader(reader))
         #expect(navigation.isCoveringChat(sessionId: "session-1"))
         #expect(!navigation.isCoveringChat(sessionId: "other-session"))
     }

@@ -236,6 +236,62 @@ struct ChatViewLifecycleTests {
         connection.disconnectStream()
     }
 
+    @Test func destroyingCoveredStoppedChatViewDisconnectsFocusedSession() async {
+        let sessionId = "session-\(UUID().uuidString)"
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .stopped))
+        connection.disconnectSession()
+        connection.wsClient?._setStatusForTesting(.disconnected)
+        connection.streamConsumptionTask = nil
+
+        var streamsCreated = 0
+        connection._connectStreamForTesting = {
+            streamsCreated += 1
+            return AsyncStream { _ in }
+        }
+
+        let appNavigation = AppNavigation()
+        appNavigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(
+                serverId: connection.currentServerId ?? "server-1",
+                sessionId: sessionId
+            )
+        )
+        var host: HostHarness? = makeHost(
+            connection: connection,
+            sessionId: sessionId,
+            appNavigation: appNavigation
+        )
+
+        let appeared = await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                connection.focusedSessionId == sessionId && streamsCreated == 0
+            }
+        }
+        #expect(appeared, "Stopped re-entry should focus the session without opening a WebSocket")
+
+        appNavigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        #expect(appNavigation.isCoveringChat(sessionId: sessionId))
+
+        host?.hide()
+        host?.window.rootViewController = nil
+        host?.window.isHidden = true
+        host = nil
+        await Task.yield()
+
+        let disconnected = await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run { connection.focusedSessionId == nil }
+        }
+        #expect(
+            disconnected,
+            "Destroying a covered stopped ChatView must still release the focused session"
+        )
+        #expect(streamsCreated == 0, "Stopped covered destroy must not open a stream")
+
+        connection.disconnectStream()
+    }
+
     @Test func onDisappearDoesNotDisconnectPrefocusedNotificationTargetSession() async {
         let previousSessionId = "previous-\(UUID().uuidString)"
         let targetSessionId = "target-\(UUID().uuidString)"

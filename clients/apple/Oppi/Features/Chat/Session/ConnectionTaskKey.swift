@@ -1,13 +1,3 @@
-/// Historical composite key for ChatView's session connection `.task(id:)`.
-///
-/// ChatView now keys `.task` on `sessionId` only. The manager owns loop
-/// restarts via `ensureConnected()` / `reconnect()`; `connectionGeneration`
-/// is no longer part of the SwiftUI task identity.
-struct ConnectionTaskKey: Equatable {
-    let sessionId: String
-    let generation: Int
-}
-
 /// Composite key for ChatView's local review-comment load task.
 ///
 /// Draft review comments are persisted by a local scope and session. Workspace

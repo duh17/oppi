@@ -225,6 +225,88 @@ struct ChatSessionManagerTests {
         connection.disconnectStream()
     }
 
+    @Test func releasingRuntimeLeaseForStoppedChatClearsStillOwnedFocus() async {
+        let sessionId = "stopped-lease-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        var lease: ChatSessionManagerLease? = ChatSessionManagerLease(manager: manager)
+        var streamCreated = false
+        manager._streamSessionForTesting = { _ in
+            streamCreated = true
+            return AsyncStream { $0.finish() }
+        }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, status: .stopped))
+
+        manager.markAppeared()
+        manager.ensureConnected(connection: connection, sessionStore: sessionStore)
+
+        let settled = await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                manager.entryState == .stopped(historyLoaded: true)
+                    && connection.focusedSessionId == sessionId
+            }
+        }
+        #expect(settled, "Stopped connect must focus and settle history-only before destroy")
+        #expect(!streamCreated, "Stopped connect must not open a WebSocket")
+
+        // Covered destroy: lease deinit without ChatView onDisappear or a stream-loop tail.
+        lease = nil
+
+        let disconnected = await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                guard connection.focusedSessionId == nil else { return false }
+                if case .disconnected(reason: .cancelled) = manager.entryState {
+                    return true
+                }
+                return false
+            }
+        }
+        #expect(
+            disconnected,
+            "Lease cleanup must release still-owned focus after a stopped connect returns"
+        )
+        #expect(!streamCreated)
+
+        connection.disconnectStream()
+    }
+
+    @Test func cleanupDoesNotStealNewerSessionFocusAfterStoppedConnect() async {
+        let sessionId = "stopped-cleanup-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        manager._streamSessionForTesting = { _ in
+            Issue.record("Stopped connect must not open a stream")
+            return AsyncStream { $0.finish() }
+        }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, status: .stopped))
+
+        manager.markAppeared()
+        await manager.connect(connection: connection, sessionStore: sessionStore)
+        #expect(manager.entryState == .stopped(historyLoaded: true))
+        #expect(connection.focusedSessionId == sessionId)
+
+        connection._setActiveSessionIdForTesting("newer-session")
+        #expect(connection.focusedSessionId == "newer-session")
+
+        manager.cleanup()
+
+        #expect(connection.focusedSessionId == "newer-session")
+        if case .disconnected(reason: .cancelled) = manager.entryState {
+        } else {
+            Issue.record("Expected disconnected after cleanup, got \(manager.entryState)")
+        }
+
+        connection.disconnectStream()
+    }
+
     @Test func reconnectBumpsGeneration() {
         let manager = ChatSessionManager(sessionId: "s1")
         #expect(manager.connectionGeneration == 0)

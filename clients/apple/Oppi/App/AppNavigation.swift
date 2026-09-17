@@ -638,20 +638,6 @@ final class AppNavigation {
         return false
     }
 
-    func isShowingChatReader() -> Bool {
-        switch workspaceNavigationPresentation {
-        case .stack:
-            if case .chatReader = workspaceStackRouteElements.last {
-                return true
-            }
-        case .split:
-            if case .chatReader = splitDetailPathElements.last {
-                return true
-            }
-        }
-        return false
-    }
-
     func containsChatReader(_ target: ChatReaderNavTarget) -> Bool {
         switch workspaceNavigationPresentation {
         case .stack:
