@@ -56,11 +56,15 @@ export class DesktopCompanionViewSessionClient {
   constructor(options: DesktopCompanionViewSessionClientOptions = {}) {
     this.socketPath = desktopCompanionOwnerSocketPath(options.runtimeRoot);
     this.timeoutMs =
-      typeof options.timeoutMs === "number" && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+      typeof options.timeoutMs === "number" &&
+      Number.isFinite(options.timeoutMs) &&
+      options.timeoutMs > 0
         ? options.timeoutMs
         : DESKTOP_COMPANION_VIEW_SESSION_TIMEOUT_MS;
     this.maxBytes =
-      typeof options.maxBytes === "number" && Number.isFinite(options.maxBytes) && options.maxBytes > 0
+      typeof options.maxBytes === "number" &&
+      Number.isFinite(options.maxBytes) &&
+      options.maxBytes > 0
         ? options.maxBytes
         : DESKTOP_COMPANION_VIEW_SESSION_MAX_BYTES;
   }

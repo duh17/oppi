@@ -85,7 +85,9 @@ function writeCodedError(res: ServerResponse, status: number, message: string, c
 }
 
 function lookupDeviceName(ctx: RouteContext, deviceId: string): string | undefined {
-  const storage = ctx.storage as { listDevices?: () => Array<{ id: string; name: string }> } | undefined;
+  const storage = ctx.storage as
+    | { listDevices?: () => Array<{ id: string; name: string }> }
+    | undefined;
   const devices = storage?.listDevices?.() ?? [];
   const match = devices.find((device) => device.id === deviceId);
   const name = match?.name?.trim();
