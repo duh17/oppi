@@ -88,7 +88,8 @@ struct DesktopCurrentStillViewerModelTests {
         #expect(model.phase == .failed(.remoteViewOff))
         #expect(model.canRetry)
         let message = try #require(model.failure?.message)
-        #expect(message.localizedCaseInsensitiveContains("remote view"))
+        #expect(message.localizedCaseInsensitiveContains("remote screen"))
+        #expect(!message.localizedCaseInsensitiveContains("mac"))
         #expect(!message.contains("403"))
     }
 
@@ -125,7 +126,8 @@ struct DesktopCurrentStillViewerModelTests {
         #expect(model.still == nil)
         #expect(model.phase == .failed(.companionDown))
         let message = try #require(model.failure?.message)
-        #expect(message.localizedCaseInsensitiveContains("oppi on the mac"))
+        #expect(message.localizedCaseInsensitiveContains("oppi on the host"))
+        #expect(!message.localizedCaseInsensitiveContains("mac"))
         #expect(!message.contains("502"))
     }
 
@@ -276,35 +278,38 @@ struct DesktopCurrentStillViewerModelTests {
         #expect(await grantScript.calls == 1)
     }
 
-    @Test func desktopStillUtilityIsPhoneOnlyAndReleaseEnabled() {
-        #expect(WorkspaceUtilityNavTarget.desktopStill.isReleaseEnabled)
+    @Test func desktopStillUtilityStaysPhoneOnlyAndHiddenUntilReleaseEnabled() {
+        #expect(!WorkspaceUtilityNavTarget.desktopStill.isReleaseEnabled)
+        #expect(!ReleaseFeatures.desktopStillEnabled)
 
         let shared = WorkspaceSidebarPrimaryUtilities.items
         #expect(shared.map(\.target) == [.agents, .schedules, .skills, .extensions])
 
         let phone = WorkspaceSidebarPrimaryUtilities.items(for: .phone)
         #expect(phone.map(\.target) == [.agents, .schedules, .skills, .extensions, .desktopStill])
-        #expect(phone.last?.title == "Mac Still")
+        #expect(phone.last?.title == "Remote Screen")
         #expect(phone.last?.systemImage == "macwindow")
         #expect(phone.last?.accessibilityIdentifier == "workspace.desktopStill.open")
         #expect(phone.last?.minimumHitHeight == 44)
-        #expect(phone.last?.accessibilityHint == "Inspect the current Mac still")
+        #expect(phone.last?.accessibilityHint == "Inspect the current remote screen")
+        #expect(
+            !phone.filter { $0.target.isReleaseEnabled }.map(\.target).contains(.desktopStill)
+        )
 
         let pad = WorkspaceSidebarPrimaryUtilities.items(for: .pad)
         #expect(pad.map(\.target) == [.agents, .schedules, .skills, .extensions])
         #expect(!pad.map(\.target).contains(.desktopStill))
     }
 
-    @Test func desktopStillUtilityPushesOnStackWithDiagnostics() {
+    @Test func desktopStillUtilityDoesNotOpenWhenReleaseDisabled() {
         let navigation = AppNavigation()
         navigation.launchPhase = .ready
         navigation.showOnboarding = false
 
         navigation.openWorkspaceUtility(.desktopStill)
 
-        #expect(navigation.selectedTab == .workspaces)
-        #expect(navigation.workspacePath.count == 1)
-        #expect(navigation.workspaceStackDiagnosticContext.screen == "utility_desktop_still")
+        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.splitDetailTarget == nil)
     }
 
     private func assertMappedFailure(
@@ -317,6 +322,7 @@ struct DesktopCurrentStillViewerModelTests {
         for token in forbiddenTokens {
             #expect(!failure.message.contains(token))
         }
+        #expect(!failure.message.localizedCaseInsensitiveContains("mac"))
         #expect(!failure.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 

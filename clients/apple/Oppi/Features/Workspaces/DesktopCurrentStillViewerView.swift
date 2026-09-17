@@ -22,7 +22,7 @@ struct DesktopCurrentStillViewerView: View {
                 content(model)
             } else if apiClient == nil {
                 ContentUnavailableView {
-                    Label("Can't show this still", systemImage: "macwindow")
+                    Label("Can't show Remote Screen", systemImage: "macwindow")
                 } description: {
                     Text(DesktopCurrentStillViewerFailure.unavailable.message)
                 }
@@ -34,7 +34,7 @@ struct DesktopCurrentStillViewerView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.bg.primary)
-        .navigationTitle("Mac Still")
+        .navigationTitle("Remote Screen")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -47,7 +47,7 @@ struct DesktopCurrentStillViewerView: View {
                 }
                 .disabled(model == nil || model?.canRetry == false)
                 .accessibilityLabel("Refresh")
-                .accessibilityHint("Reloads the current Mac still without capturing again")
+                .accessibilityHint("Reloads the current remote screen without capturing again")
                 .accessibilityIdentifier("desktop.still.refresh")
             }
         }
@@ -114,7 +114,7 @@ struct DesktopCurrentStillViewerView: View {
             .refreshable { await model.refresh() }
         case .failed(let failure):
             ContentUnavailableView {
-                Label("Can't show this still", systemImage: "macwindow")
+                Label("Can't show Remote Screen", systemImage: "macwindow")
             } description: {
                 Text(failure.message)
             } actions: {

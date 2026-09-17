@@ -106,12 +106,12 @@ enum WorkspaceSidebarPrimaryUtilities {
 
     static let desktopStill = WorkspaceSidebarPrimaryUtilityItem(
         target: .desktopStill,
-        title: "Mac Still",
+        title: "Remote Screen",
         systemImage: "macwindow",
-        accessibilityLabel: "Mac Still",
+        accessibilityLabel: "Remote Screen",
         accessibilityIdentifier: "workspace.desktopStill.open",
         minimumHitHeight: 44,
-        accessibilityHint: "Inspect the current Mac still"
+        accessibilityHint: "Inspect the current remote screen"
     )
 
     static func items(for idiom: UIUserInterfaceIdiom) -> [WorkspaceSidebarPrimaryUtilityItem] {

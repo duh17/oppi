@@ -33,13 +33,13 @@ enum DesktopCurrentStillViewerFailure: Equatable, Sendable {
     var message: String {
         switch self {
         case .remoteViewOff:
-            "Remote view is off on the Mac. In Oppi on the Mac, turn on Allow paired devices to view this still."
+            "Remote Screen is off on the host. In Oppi on the host, turn on Allow paired devices to view this screen."
         case .noneAvailable:
-            "No still is available. Capture one in Oppi on the Mac, then allow paired devices to view it."
+            "No remote screen is available. Capture one in Oppi on the host, then allow paired devices to view it."
         case .companionDown:
-            "Oppi on the Mac is not sharing a still. Open Oppi on the Mac, then retry."
+            "Oppi on the host is not sharing a remote screen. Open Oppi on the host, then retry."
         case .unavailable:
-            "Couldn't load the Mac still. Check Oppi on the Mac, then retry."
+            "Couldn't load Remote Screen. Check Oppi on the host, then retry."
         }
     }
 }
@@ -80,7 +80,7 @@ enum DesktopCurrentStillViewerPhase: Equatable, Sendable {
     case failed(DesktopCurrentStillViewerFailure)
 }
 
-/// Fetches the current remote-shared Mac still. Refresh refetches only; it never recaptures.
+/// Fetches the current remote-shared screen. Refresh refetches only; it never recaptures.
 @MainActor
 @Observable
 final class DesktopCurrentStillViewerModel {

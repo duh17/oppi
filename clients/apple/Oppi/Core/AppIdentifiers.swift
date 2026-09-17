@@ -37,4 +37,8 @@ enum ReleaseFeatures {
 
     /// Native saved-agent and schedule management screens.
     static let agentAndScheduleManagementEnabled = true
+
+    /// iPhone Remote Screen viewer in the workspace sidebar.
+    /// Keep hidden until the current-still capture path is reliable.
+    static let desktopStillEnabled = false
 }
