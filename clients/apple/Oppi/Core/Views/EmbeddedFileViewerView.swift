@@ -411,20 +411,34 @@ extension EnvironmentValues {
     }
 }
 
+/// Keeps the first successful store lookup so a later eviction cannot blank
+/// a reader that is already on screen.
+@MainActor
+final class ChatReaderPayloadHolder {
+    private var held: ChatReaderPayload?
+
+    func resolve(from store: ChatReaderPayloadStore, target: ChatReaderNavTarget) -> ChatReaderPayload? {
+        if let held {
+            return held
+        }
+        guard let payload = store.payload(for: target.id) else {
+            return nil
+        }
+        held = payload
+        return payload
+    }
+}
+
 /// Pushed reader page on the existing workspace/chat stack.
 struct ChatReaderDestinationView: View {
     let target: ChatReaderNavTarget
     let store: ChatReaderPayloadStore
     @Environment(AppNavigation.self) private var navigation
+    @State private var payloadHolder = ChatReaderPayloadHolder()
 
     var body: some View {
         readerPage(for: target)
             .toolbarVisibility(.hidden, for: .navigationBar)
-            .onDisappear {
-                if !navigation.containsChatReader(target) {
-                    store.remove(target)
-                }
-            }
     }
 
     @ViewBuilder
@@ -432,6 +446,7 @@ struct ChatReaderDestinationView: View {
         ChatReaderPageView(
             target: target,
             store: store,
+            payload: payloadHolder.resolve(from: store, target: target),
             onOpenNestedReader: { payload in
                 navigation.openChatReader(store.store(payload, retaining: navigation.containsChatReader))
             },
@@ -442,7 +457,7 @@ struct ChatReaderDestinationView: View {
     }
 
     private func openLinkedFile(_ action: LinkAction) -> Bool {
-        guard let payload = store.payload(for: target.id),
+        guard let payload = payloadHolder.resolve(from: store, target: target),
               let file = linkedFileTarget(for: action, payload: payload) else {
             return false
         }
@@ -482,6 +497,7 @@ struct ChatReaderDestinationView: View {
         ChatReaderPageView(
             target: target,
             store: store,
+            payload: store.payload(for: target.id),
             onOpenNestedReader: { _ in },
             onOpenLinkedFile: { _ in false }
         ).debugMakeControllerForTesting()
@@ -492,12 +508,13 @@ struct ChatReaderDestinationView: View {
 private struct ChatReaderPageView: View {
     let target: ChatReaderNavTarget
     let store: ChatReaderPayloadStore
+    let payload: ChatReaderPayload?
     let onOpenNestedReader: (ChatReaderPayload) -> Void
     let onOpenLinkedFile: (LinkAction) -> Bool
 
     var body: some View {
         Group {
-            if let payload = store.payload(for: target.id) {
+            if let payload {
                 page(for: payload)
                     .environment(
                         \.openChatReader,
@@ -586,7 +603,7 @@ private struct ChatReaderPageView: View {
 
 #if DEBUG
     func debugMakeControllerForTesting() -> FullScreenCodeViewController? {
-        guard let payload = store.payload(for: target.id),
+        guard let payload = payload ?? store.payload(for: target.id),
               case .document(let content, let context) = payload.kind else {
             return nil
         }

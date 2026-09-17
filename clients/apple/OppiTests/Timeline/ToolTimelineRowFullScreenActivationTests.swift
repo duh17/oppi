@@ -1,3 +1,4 @@
+import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -481,6 +482,109 @@ struct ToolTimelineRowFullScreenActivationTests {
         harness.window.isHidden = true
     }
 
+    @Test("payload holder keeps a valid document after the store drops it")
+    func payloadHolderKeepsValidDocumentAfterStoreDrop() {
+        let store = ChatReaderPayloadStore()
+        let holder = ChatReaderPayloadHolder()
+        let target = store.store(Self.makeEditDiffReaderPayload())
+
+        guard case .diff(let first) = holder.resolve(from: store, target: target)?.content else {
+            Issue.record("Expected held diff payload")
+            return
+        }
+        #expect(first.copyText.contains("let value = 2"))
+
+        store.remove(target)
+        #expect(store.payload(for: target.id) == nil)
+
+        guard case .diff(let held) = holder.resolve(from: store, target: target)?.content else {
+            Issue.record("Empty path after a valid payload store miss")
+            return
+        }
+        #expect(held.copyText.contains("let value = 2"))
+        #expect(held.lines.contains(where: { $0.text == "let extra = 3" }))
+    }
+
+    @Test("hosted destination shows a stored diff instead of empty chrome")
+    func hostedDestinationShowsStoredDiffInsteadOfEmptyChrome() async throws {
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff)
+        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff) }
+
+        let payload = Self.makeEditDiffReaderPayload()
+        let host = try makeHostedChatReader(payload: payload)
+        defer { host.window.isHidden = true }
+
+        let visible = await waitForMainActorCondition(timeout: .seconds(2)) {
+            host.controller.view.layoutIfNeeded()
+            return chatReaderShowsDiffBody(in: host.controller.view, containing: "let value = 2")
+        }
+        #expect(visible, "valid stored diff payload must render in the hosted destination")
+        #expect(!chatReaderShowsUnavailableChrome(in: host.controller.view))
+    }
+
+    @Test("hosted destination keeps a valid diff after the store drops the payload")
+    func hostedDestinationKeepsValidDiffAfterStoreDrop() async throws {
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff)
+        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff) }
+
+        let payload = Self.makeEditDiffReaderPayload()
+        let host = try makeHostedChatReader(payload: payload)
+        defer { host.window.isHidden = true }
+
+        let visible = await waitForMainActorCondition(timeout: .seconds(2)) {
+            host.controller.view.layoutIfNeeded()
+            return chatReaderShowsDiffBody(in: host.controller.view, containing: "let value = 2")
+        }
+        #expect(visible, "valid stored diff payload must render before the store miss")
+
+        host.store.remove(host.target)
+        host.controller.view.setNeedsLayout()
+        host.controller.view.layoutIfNeeded()
+
+        let stillVisible = await waitForMainActorCondition(timeout: .seconds(2)) {
+            host.controller.view.layoutIfNeeded()
+            return chatReaderShowsDiffBody(in: host.controller.view, containing: "let value = 2")
+                && !chatReaderShowsUnavailableChrome(in: host.controller.view)
+        }
+        #expect(stillVisible, "empty chrome after a valid payload store miss is a bug")
+    }
+
+    @Test("hosted destination keeps a valid markdown document after the store drops the payload")
+    func hostedDestinationKeepsValidMarkdownAfterStoreDrop() async throws {
+        let markdown = """
+        # Build 50 changelog
+
+        Full-screen readers must keep their document body even if the
+        navigation payload store is cleared after open.
+        """
+        let host = try makeHostedChatReader(
+            payload: ChatReaderPayload(
+                content: .markdown(
+                    content: markdown,
+                    filePath: ".internal/release-notes/testflight-build-50-changelog.md"
+                )
+            )
+        )
+        defer { host.window.isHidden = true }
+
+        let visible = await waitForMainActorCondition(timeout: .seconds(2)) {
+            host.controller.view.layoutIfNeeded()
+            return chatReaderShowsMarkdownBody(in: host.controller.view, containing: "Build 50 changelog")
+        }
+        #expect(visible, "valid stored markdown payload must render before the store miss")
+
+        host.store.remove(host.target)
+        host.controller.view.setNeedsLayout()
+        host.controller.view.layoutIfNeeded()
+
+        let stillVisible = await waitForMainActorCondition(timeout: .seconds(2)) {
+            host.controller.view.layoutIfNeeded()
+            return chatReaderShowsMarkdownBody(in: host.controller.view, containing: "Build 50 changelog")
+                && !chatReaderShowsUnavailableChrome(in: host.controller.view)
+        }
+        #expect(stillVisible, "empty chrome after a valid document payload store miss is a bug")
+    }
+
     @Test("ANSI text keeps display styling in full screen while copy stays plain")
     func ansiTextFullScreenPreservesDisplayPayload() throws {
         let formatted = "\u{001B}[1m$\u{001B}[0m oppi status\n\u{001B}[32mPaired\u{001B}[0m"
@@ -616,6 +720,84 @@ struct ToolTimelineRowFullScreenActivationTests {
         window.makeKeyAndVisible()
         host.loadViewIfNeeded()
         return HostHarness(window: window, host: host)
+    }
+
+    private struct HostedChatReader {
+        let window: UIWindow
+        let controller: UIHostingController<AnyView>
+        let store: ChatReaderPayloadStore
+        let target: ChatReaderNavTarget
+    }
+
+    private static func makeEditDiffReaderPayload() -> ChatReaderPayload {
+        let lines = [
+            DiffLine(kind: .removed, text: "let value = 1", oldLineNumber: 1, newLineNumber: nil),
+            DiffLine(kind: .added, text: "let value = 2", oldLineNumber: nil, newLineNumber: 1),
+            DiffLine(kind: .added, text: "let extra = 3", oldLineNumber: nil, newLineNumber: 2),
+        ]
+        return ChatReaderPayload(
+            content: .diff(
+                ToolDiffDocument(
+                    lines: lines,
+                    filePath: "App.swift",
+                    copyText: DiffEngine.formatUnified(lines)
+                )
+            )
+        )
+    }
+
+    private func makeHostedChatReader(payload: ChatReaderPayload) throws -> HostedChatReader {
+        let store = ChatReaderPayloadStore()
+        let navigation = AppNavigation()
+        navigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
+        )
+        let target = store.store(payload)
+        navigation.openChatReader(target)
+
+        let controller = UIHostingController(
+            rootView: AnyView(
+                ChatReaderDestinationView(target: target, store: store)
+                    .environment(navigation)
+            )
+        )
+        let harness = makeHostHarness()
+        harness.window.rootViewController = controller
+        controller.view.frame = harness.window.bounds
+        controller.loadViewIfNeeded()
+        controller.view.layoutIfNeeded()
+        return HostedChatReader(
+            window: harness.window,
+            controller: controller,
+            store: store,
+            target: target
+        )
+    }
+
+    private func chatReaderShowsUnavailableChrome(in root: UIView) -> Bool {
+        let needles = ["Unable to Open", "This reader is no longer available."]
+        return timelineAllLabels(in: root).contains { label in
+            let text = timelineRenderedText(of: label)
+            return needles.contains { text.contains($0) }
+        }
+    }
+
+    private func chatReaderShowsDiffBody(in root: UIView, containing needle: String) -> Bool {
+        guard let body = timelineFirstView(ofType: NativeFullScreenDiffBody.self, in: root) else {
+            return false
+        }
+        return timelineAllTextViews(in: body).contains {
+            timelineRenderedText(of: $0).contains(needle)
+        }
+    }
+
+    private func chatReaderShowsMarkdownBody(in root: UIView, containing needle: String) -> Bool {
+        let markdownBody = timelineFirstView(ofType: NativeFullScreenMarkdownBody.self, in: root)
+        let searchRoot = markdownBody ?? root
+        let hasNeedle = timelineAllViews(in: searchRoot).contains { view in
+            timelineRenderedText(of: view).contains(needle)
+        }
+        return markdownBody != nil && hasNeedle
     }
 
     @Test("lookup from presenter finds install on a descendant collection view")
