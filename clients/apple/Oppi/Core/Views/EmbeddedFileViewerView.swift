@@ -150,7 +150,7 @@ enum ChatReaderOpenLookup {
     @discardableResult
     static func open(_ payload: ChatReaderPayload, from view: UIView) -> Bool {
         guard let open = resolve(from: view) else { return false }
-        open(payload)
+        open(capturingAddToChatDestination(payload, from: view))
         return true
     }
 
@@ -164,6 +164,29 @@ enum ChatReaderOpenLookup {
             current = node.parent
         }
         return false
+    }
+
+    /// Fill a nil image destination from the visible chat before the reader opens.
+    /// Sheet fallbacks keep capturing on their own present paths.
+    static func capturingAddToChatDestination(
+        _ payload: ChatReaderPayload,
+        from view: UIView
+    ) -> ChatReaderPayload {
+        switch payload {
+        case .image(let image, .none):
+            return .image(
+                image,
+                addToChatDestination: ComposerCanvasDestinationResolver.resolve(from: view)
+            )
+        case .imageData(let data, let mimeType, .none):
+            return .imageData(
+                data,
+                mimeType: mimeType,
+                addToChatDestination: ComposerCanvasDestinationResolver.resolve(from: view)
+            )
+        case .image, .imageData, .document, .audioLyrics, .video, .nowPlaying, .extensionNative:
+            return payload
+        }
     }
 }
 

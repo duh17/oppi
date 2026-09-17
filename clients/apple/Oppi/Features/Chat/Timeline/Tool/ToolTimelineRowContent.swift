@@ -2316,7 +2316,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         guard let image else { return false }
 
         if let openFullScreen = currentConfiguration.openFullScreen {
-            openFullScreen(.image(image))
+            openFullScreen(imageReaderPayload(image))
             return true
         }
         if ChatReaderOpenLookup.open(.image(image), from: self) {
@@ -2331,6 +2331,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
         ToolTimelineRowPresentationHelpers.presentFullScreenImage(image, from: self)
         return true
+    }
+
+    private func imageReaderPayload(_ image: UIImage) -> ChatReaderPayload {
+        ChatReaderOpenLookup.capturingAddToChatDestination(.image(image), from: self)
     }
 
     @objc private func handleExpandedPinch(_ recognizer: UIPinchGestureRecognizer) {
@@ -2577,7 +2581,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             onViewFullScreenImage: { [weak self] in
                 guard let self, let image = self.imagePreviewImageView.image else { return }
                 if let openFullScreen = self.currentConfiguration.openFullScreen {
-                    openFullScreen(.image(image))
+                    openFullScreen(self.imageReaderPayload(image))
                     return
                 }
                 ToolTimelineRowPresentationHelpers.presentFullScreenImage(image, from: self)
