@@ -2334,7 +2334,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func imageReaderPayload(_ image: UIImage) -> ChatReaderPayload {
-        ChatReaderOpenLookup.capturingAddToChatDestination(.image(image), from: self)
+        .image(image)
     }
 
     @objc private func handleExpandedPinch(_ recognizer: UIPinchGestureRecognizer) {

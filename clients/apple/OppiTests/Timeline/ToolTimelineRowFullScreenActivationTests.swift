@@ -129,7 +129,7 @@ struct ToolTimelineRowFullScreenActivationTests {
 
         #expect(host.presentedViewController == nil)
         let payload = try #require(opened)
-        guard case .document(let content, _) = payload else {
+        guard case .document(let content, _) = payload.kind else {
             Issue.record("Expected document reader payload")
             harness.window.isHidden = true
             return
@@ -159,7 +159,7 @@ struct ToolTimelineRowFullScreenActivationTests {
             }
         )
         #expect(host.presentedViewController == nil)
-        guard case .image = opened.payload else {
+        guard case .image = opened.payload.kind else {
             Issue.record("Expected image reader payload")
             harness.window.isHidden = true
             return

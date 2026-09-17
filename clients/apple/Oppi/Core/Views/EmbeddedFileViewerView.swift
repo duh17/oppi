@@ -36,30 +36,90 @@ struct ExtensionNativeReaderContent {
 }
 
 /// Timeline/chat reader body. Only the ``ChatReaderNavTarget`` id rides the path.
-enum ChatReaderPayload {
-    case document(
-        content: FullScreenCodeContent,
-        reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil
-    )
-    case image(UIImage, addToChatDestination: ComposerCanvasDestination? = nil)
-    case imageData(Data, mimeType: String?, addToChatDestination: ComposerCanvasDestination? = nil)
-    case audioLyrics(AudioLyricsReaderContent)
-    case video(ChatReaderVideoContent)
-    case nowPlaying(AudioPlayerService)
-    case extensionNative(ExtensionNativeReaderContent)
+struct ChatReaderPayload {
+    enum Kind {
+        case document(
+            content: FullScreenCodeContent,
+            reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil
+        )
+        case image(UIImage)
+        case imageData(Data, mimeType: String?)
+        case audioLyrics(AudioLyricsReaderContent)
+        case video(ChatReaderVideoContent)
+        case nowPlaying(AudioPlayerService)
+        case extensionNative(ExtensionNativeReaderContent)
+    }
+
+    var kind: Kind
+    /// Origin chat captured at timeline-open time. Nested readers inherit this, including nil.
+    var destination: ComposerCanvasDestination? = nil
+
+    init(kind: Kind, destination: ComposerCanvasDestination? = nil) {
+        self.kind = kind
+        self.destination = destination
+    }
 
     init(
         content: FullScreenCodeContent,
-        reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil
+        reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
+        destination: ComposerCanvasDestination? = nil
     ) {
-        self = .document(
-            content: content,
-            reviewCommentSelectionContext: reviewCommentSelectionContext
+        self.init(
+            kind: .document(
+                content: content,
+                reviewCommentSelectionContext: reviewCommentSelectionContext
+            ),
+            destination: destination
         )
     }
 
+    static func document(
+        content: FullScreenCodeContent,
+        reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
+        destination: ComposerCanvasDestination? = nil
+    ) -> ChatReaderPayload {
+        ChatReaderPayload(
+            content: content,
+            reviewCommentSelectionContext: reviewCommentSelectionContext,
+            destination: destination
+        )
+    }
+
+    static func image(_ image: UIImage) -> ChatReaderPayload {
+        ChatReaderPayload(kind: .image(image))
+    }
+
+    static func imageData(_ data: Data, mimeType: String?) -> ChatReaderPayload {
+        ChatReaderPayload(kind: .imageData(data, mimeType: mimeType))
+    }
+
+    static func audioLyrics(_ content: AudioLyricsReaderContent) -> ChatReaderPayload {
+        ChatReaderPayload(kind: .audioLyrics(content))
+    }
+
+    static func video(_ content: ChatReaderVideoContent) -> ChatReaderPayload {
+        ChatReaderPayload(kind: .video(content))
+    }
+
+    static func nowPlaying(_ audioPlayer: AudioPlayerService) -> ChatReaderPayload {
+        ChatReaderPayload(kind: .nowPlaying(audioPlayer))
+    }
+
+    static func extensionNative(_ content: ExtensionNativeReaderContent) -> ChatReaderPayload {
+        ChatReaderPayload(kind: .extensionNative(content))
+    }
+
+    /// Stamp the origin chat. Nested opens inherit this value, including nil.
+    func stamped(with destination: ComposerCanvasDestination?) -> ChatReaderPayload {
+        ChatReaderPayload(kind: kind, destination: destination)
+    }
+
+    func inheritingDestination(from parent: ChatReaderPayload) -> ChatReaderPayload {
+        stamped(with: parent.destination)
+    }
+
     var content: FullScreenCodeContent {
-        switch self {
+        switch kind {
         case .document(let content, _):
             return content
         case .image, .imageData, .audioLyrics, .video, .nowPlaying, .extensionNative:
@@ -68,7 +128,7 @@ enum ChatReaderPayload {
     }
 
     var reviewCommentSelectionContext: ReviewCommentSelectionContext? {
-        switch self {
+        switch kind {
         case .document(_, let context):
             return context
         case .image, .imageData, .audioLyrics, .video, .nowPlaying, .extensionNative:
@@ -150,7 +210,7 @@ enum ChatReaderOpenLookup {
     @discardableResult
     static func open(_ payload: ChatReaderPayload, from view: UIView) -> Bool {
         guard let open = resolve(from: view) else { return false }
-        open(capturingAddToChatDestination(payload, from: view))
+        open(payload)
         return true
     }
 
@@ -164,29 +224,6 @@ enum ChatReaderOpenLookup {
             current = node.parent
         }
         return false
-    }
-
-    /// Fill a nil image destination from the visible chat before the reader opens.
-    /// Sheet fallbacks keep capturing on their own present paths.
-    static func capturingAddToChatDestination(
-        _ payload: ChatReaderPayload,
-        from view: UIView
-    ) -> ChatReaderPayload {
-        switch payload {
-        case .image(let image, .none):
-            return .image(
-                image,
-                addToChatDestination: ComposerCanvasDestinationResolver.resolve(from: view)
-            )
-        case .imageData(let data, let mimeType, .none):
-            return .imageData(
-                data,
-                mimeType: mimeType,
-                addToChatDestination: ComposerCanvasDestinationResolver.resolve(from: view)
-            )
-        case .image, .imageData, .document, .audioLyrics, .video, .nowPlaying, .extensionNative:
-            return payload
-        }
     }
 }
 
@@ -429,7 +466,7 @@ struct ChatReaderDestinationView: View {
     private func documentWorkspaceContext(
         _ payload: ChatReaderPayload
     ) -> FullScreenCodeContent.WorkspaceContext? {
-        switch payload {
+        switch payload.kind {
         case .document(let content, _):
             if case .markdown(_, _, let context) = content {
                 return context
@@ -464,7 +501,7 @@ private struct ChatReaderPageView: View {
                 page(for: payload)
                     .environment(
                         \.openChatReader,
-                        ChatReaderOpenAction(handler: onOpenNestedReader)
+                        ChatReaderOpenAction(handler: nestedOpen(from: payload))
                     )
             } else {
                 ContentUnavailableView(
@@ -477,31 +514,39 @@ private struct ChatReaderPageView: View {
         .toolbarVisibility(.hidden, for: .navigationBar)
     }
 
+    private func nestedOpen(from parent: ChatReaderPayload) -> (ChatReaderPayload) -> Void {
+        { nested in
+            onOpenNestedReader(nested.inheritingDestination(from: parent))
+        }
+    }
+
     @ViewBuilder
     private func page(for payload: ChatReaderPayload) -> some View {
-        switch payload {
+        let openNested = nestedOpen(from: payload)
+        switch payload.kind {
         case .document(let content, let reviewCommentSelectionContext):
             EmbeddedFileViewerView(
                 content: content,
                 reviewCommentSelectionContext: reviewCommentSelectionContext,
-                onOpenNestedReader: onOpenNestedReader,
+                addToChatDestination: payload.destination,
+                onOpenNestedReader: openNested,
                 onOpenLinkedFile: onOpenLinkedFile
             )
             .ignoresSafeArea(edges: .top)
-        case .image(let image, let destination):
+        case .image(let image):
             EmbeddedImageViewerView(
                 image: image,
-                addToChatDestination: destination,
-                onOpenNestedReader: onOpenNestedReader,
+                addToChatDestination: payload.destination,
+                onOpenNestedReader: openNested,
                 onOpenLinkedFile: onOpenLinkedFile
             )
             .ignoresSafeArea(edges: .top)
-        case .imageData(let data, let mimeType, let destination):
+        case .imageData(let data, let mimeType):
             EmbeddedImageDataViewerView(
                 data: data,
                 mimeType: mimeType,
-                addToChatDestination: destination,
-                onOpenNestedReader: onOpenNestedReader,
+                addToChatDestination: payload.destination,
+                onOpenNestedReader: openNested,
                 onOpenLinkedFile: onOpenLinkedFile
             )
             .ignoresSafeArea(edges: .top)
@@ -542,12 +587,13 @@ private struct ChatReaderPageView: View {
 #if DEBUG
     func debugMakeControllerForTesting() -> FullScreenCodeViewController? {
         guard let payload = store.payload(for: target.id),
-              case .document(let content, let context) = payload else {
+              case .document(let content, let context) = payload.kind else {
             return nil
         }
         return EmbeddedFileViewerView(
             content: content,
-            reviewCommentSelectionContext: context
+            reviewCommentSelectionContext: context,
+            addToChatDestination: payload.destination
         ).debugMakeControllerForTesting()
     }
 #endif

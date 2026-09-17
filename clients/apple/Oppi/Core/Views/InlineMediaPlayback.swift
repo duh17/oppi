@@ -717,7 +717,7 @@ enum FullScreenImageDataPreviewPresenter {
         // a reliable path back to the chat composer destination.
         let destination = ComposerCanvasDestinationResolver.resolve(from: presenter)
         if ChatReaderOpenLookup.open(
-            .imageData(data, mimeType: mimeType, addToChatDestination: destination),
+            .imageData(data, mimeType: mimeType),
             from: presenter
         ) {
             return

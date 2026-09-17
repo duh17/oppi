@@ -195,7 +195,7 @@ enum ToolTimelineRowPresentationHelpers {
         guard let presenter = nearestViewController(from: sourceView) else { return }
         let destination = ComposerCanvasDestinationResolver.resolve(from: presenter)
         if ChatReaderOpenLookup.open(
-            .image(image, addToChatDestination: destination),
+            .image(image),
             from: sourceView
         ) {
             return

@@ -469,7 +469,7 @@ extension FullScreenImageViewController {
         // a reliable path back to the chat composer destination.
         let destination = ComposerCanvasDestinationResolver.resolve(from: presenter)
         if ChatReaderOpenLookup.open(
-            .image(image, addToChatDestination: destination),
+            .image(image),
             from: presenter
         ) {
             return

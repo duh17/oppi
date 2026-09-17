@@ -564,10 +564,43 @@ struct ChatView: View {
         }
     }
 
+    private var composerCanvasDestination: ComposerCanvasDestination {
+        ComposerCanvasDestination(sessionId: sessionId) { attachment, recognizedText in
+            deliverCanvasToComposer(
+                attachment: attachment,
+                recognizedText: recognizedText
+            )
+        }
+    }
+
+    /// Origin stamp applied by ``openTimelineReader``.
+    /// Uses the live composer destination when it belongs to this chat;
+    /// otherwise the source-chat composer destination. Always overwrites any
+    /// incoming payload stamp, including nil.
+    static func stampedTimelineReaderPayload(
+        _ payload: ChatReaderPayload,
+        sessionId: String,
+        composerDestination: ComposerCanvasDestination
+    ) -> ChatReaderPayload {
+        let destination = ComposerCanvasActiveDestination.current.flatMap { current in
+            current.sessionId == sessionId ? current : nil
+        } ?? composerDestination
+        return payload.stamped(with: destination)
+    }
+
     private func openTimelineReader(_ payload: ChatReaderPayload) {
         guard let store = chatReaderPayloadStore else { return }
         scrollController.suspendForNavigation()
-        appNavigation.openChatReader(store.store(payload, retaining: appNavigation.containsChatReader))
+        appNavigation.openChatReader(
+            store.store(
+                Self.stampedTimelineReaderPayload(
+                    payload,
+                    sessionId: sessionId,
+                    composerDestination: composerCanvasDestination
+                ),
+                retaining: appNavigation.containsChatReader
+            )
+        )
     }
 
     private func openCurrentToolFile(path: String) {
@@ -853,12 +886,7 @@ struct ChatView: View {
             }
             .background {
                 ComposerCanvasDestinationAnchor(
-                    destination: ComposerCanvasDestination(sessionId: sessionId) { attachment, recognizedText in
-                        deliverCanvasToComposer(
-                            attachment: attachment,
-                            recognizedText: recognizedText
-                        )
-                    },
+                    destination: composerCanvasDestination,
                     reviewCommentSelectionRouter: reviewCommentSelectionRouter
                 )
             }
