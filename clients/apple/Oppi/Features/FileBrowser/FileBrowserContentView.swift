@@ -162,6 +162,7 @@ struct FileBrowserContentView: View {
     @Environment(AudioPlayerService.self) private var audioPlayer: AudioPlayerService?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @State private var activeSelection: FileBrowserSelection?
     @State private var fileTransitionDirection: FileBrowserNavigationDirection = .next
     @State private var content: FileContentPhase = .loading
@@ -287,8 +288,10 @@ struct FileBrowserContentView: View {
             ))
             .fullScreenReviewCommentStashOverlay(
                 isEnabled: showsSwiftUIReviewCommentStashOverlay && !usesUIKitReviewCommentStash,
-                leadingAccessoryCount: adjacentSelection(.previous) != nil ? 1 : 0
+                leadingAccessoryCount: adjacentSelection(.previous) != nil ? 1 : 0,
+                scope: reviewCommentSelectionScope
             )
+            .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
         .navigationTitle(shouldHideHostNavigationBar ? "" : viewerTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(shouldHideHostNavigationBar ? .hidden : .automatic, for: .navigationBar)

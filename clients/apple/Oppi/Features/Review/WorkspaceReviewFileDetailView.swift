@@ -215,7 +215,8 @@ struct WorkspaceReviewFileDetailView: View {
             onNext: { navigateToAdjacentReviewFile(.next) }
         ))
         .fullScreenReviewCommentStashOverlay(
-            leadingAccessoryCount: adjacentReviewFile(.previous) != nil ? 1 : 0
+            leadingAccessoryCount: adjacentReviewFile(.previous) != nil ? 1 : 0,
+            scope: effectiveReviewCommentSelectionScope
         )
         .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
         .navigationTitle(currentFile.path.lastPathComponentForDisplay)

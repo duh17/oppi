@@ -61,6 +61,7 @@ struct SessionTouchedFileContentView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(AudioPlayerService.self) private var audioPlayer
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @State private var activeSelection: FileBrowserSelection?
     @State private var fileTransitionDirection: FileBrowserNavigationDirection = .next
     @State private var phase: Phase = .loading
@@ -148,8 +149,10 @@ struct SessionTouchedFileContentView: View {
             ))
             .fullScreenReviewCommentStashOverlay(
                 isEnabled: !usesUIKitReviewCommentStash,
-                leadingAccessoryCount: adjacentSelection(.previous) != nil ? 1 : 0
+                leadingAccessoryCount: adjacentSelection(.previous) != nil ? 1 : 0,
+                scope: reviewCommentSelectionScope
             )
+            .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
         .navigationTitle(
             isUsingFileViewer
                 ? ""

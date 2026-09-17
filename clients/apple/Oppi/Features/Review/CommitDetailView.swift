@@ -451,6 +451,7 @@ struct CommitFileDiffView: View {
     let file: GitCommitFileInfo
 
     @Environment(\.apiClient) private var apiClient
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @State private var diff: WorkspaceReviewDiffResponse?
     @State private var error: String?
 
@@ -483,7 +484,8 @@ struct CommitFileDiffView: View {
         .background(.themeBgDark)
         .navigationTitle(file.path.lastPathComponentForDisplay)
         .navigationBarTitleDisplayMode(.inline)
-        .fullScreenReviewCommentStashOverlay()
+        .fullScreenReviewCommentStashOverlay(scope: reviewCommentSelectionScope)
+        .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
         .task(id: sha + "|" + file.path) {
             await loadDiff()
         }

@@ -19,24 +19,33 @@ struct ChatFileAccessReviewCommentStashTests {
         )
     }
 
-    @Test func gitContextReviewFileShowsStashWhenCommentsAreStaged() throws {
+    @Test func gitContextReviewFileShowsStashWhenCommentsAreStaged() async throws {
         let fixture = try makeReviewDetailFixture(stagedCount: 1)
+        defer { fixture.window.isHidden = true }
 
+        let appeared = await waitForMainActorCondition {
+            fixture.host.view.layoutIfNeeded()
+            return stashButton(in: fixture.host.view) != nil
+        }
+        #expect(appeared)
         let button = try #require(stashButton(in: fixture.host.view))
         #expect(button.accessibilityIdentifier == FullScreenReviewCommentStashControl.accessibilityIdentifier)
         #expect(button.accessibilityLabel == FullScreenReviewCommentStashControl.accessibilityLabel)
         #expect(button.accessibilityValue as? String == "1 staged comment")
-        fixture.window.isHidden = true
     }
 
-    @Test func gitContextReviewFileHidesStashWhenNoCommentsAreStaged() throws {
+    @Test func gitContextReviewFileHidesStashWhenNoCommentsAreStaged() async throws {
         let fixture = try makeReviewDetailFixture(stagedCount: 0)
+        defer { fixture.window.isHidden = true }
 
+        _ = await waitForMainActorCondition {
+            fixture.host.view.layoutIfNeeded()
+            return timelineAllViews(in: fixture.host.view).count > 5
+        }
         #expect(stashButton(in: fixture.host.view) == nil)
-        fixture.window.isHidden = true
     }
 
-    @Test func gitContextReviewFileStacksStashAbovePreviousFile() throws {
+    @Test func gitContextReviewFileStacksStashAbovePreviousFile() async throws {
         let previous = GitFileStatus(
             status: " M",
             path: "benchmarks/lib/prior.py",
@@ -55,38 +64,58 @@ struct ChatFileAccessReviewCommentStashTests {
             navigationFiles: [previous, current]
         )
 
+        let appeared = await waitForMainActorCondition {
+            fixture.host.view.layoutIfNeeded()
+            return stashButton(in: fixture.host.view) != nil
+        }
+        #expect(appeared)
         let stash = try #require(stashButton(in: fixture.host.view))
+        let stashFrame = stash.convert(stash.bounds, to: fixture.host.view)
         let previousFile = try #require(
             timelineAllViews(in: fixture.host.view).first { view in
-                view.accessibilityLabel == "Previous file"
+                let frame = view.convert(view.bounds, to: fixture.host.view)
+                return view !== stash
+                    && view.accessibilityIdentifier != FullScreenReviewCommentStashControl.accessibilityIdentifier
+                    && abs(frame.width - FullScreenFloatingControlChrome.controlSize) <= 1
+                    && abs(frame.height - FullScreenFloatingControlChrome.controlSize) <= 1
+                    && abs(frame.minX - stashFrame.minX) <= 8
+                    && frame.minY >= stashFrame.maxY - 1
             }
         )
-        let stashFrame = stash.convert(stash.bounds, to: fixture.host.view)
         let previousFrame = previousFile.convert(previousFile.bounds, to: fixture.host.view)
         #expect(stashFrame.maxY <= previousFrame.minY + 1)
         #expect(abs(stashFrame.minX - previousFrame.minX) <= 8)
         fixture.window.isHidden = true
     }
 
-    @Test func commitFileDiffShowsStashWhenCommentsAreStaged() throws {
+    @Test func commitFileDiffShowsStashWhenCommentsAreStaged() async throws {
         let comments = try makeIsolatedReviewComments(stagedCount: 1)
         let router = ReviewCommentSelectionRouter(dispatch: { _ in }, stash: comments)
         let host = UIHostingController(
-            rootView: CommitFileDiffView(
-                workspaceId: "w1",
-                sha: "abc1234",
-                file: GitCommitFileInfo(
-                    path: "Sources/App.swift",
-                    status: "M",
-                    addedLines: 2,
-                    removedLines: 1
+            rootView: NavigationStack {
+                CommitFileDiffView(
+                    workspaceId: "w1",
+                    sha: "abc1234",
+                    file: GitCommitFileInfo(
+                        path: "Sources/App.swift",
+                        status: "M",
+                        addedLines: 2,
+                        removedLines: 1
+                    )
                 )
-            )
-            .environment(\.reviewCommentSelectionScope, .activeSession(router))
+                .environment(\.reviewCommentSelectionScope, .activeSession(router))
+                .environment(\.theme, ThemeID.dark.appTheme)
+                .environment(\.themeID, .dark)
+            }
         )
         let window = present(host)
         defer { window.isHidden = true }
 
+        let appeared = await waitForMainActorCondition {
+            host.view.layoutIfNeeded()
+            return stashButton(in: host.view) != nil
+        }
+        #expect(appeared)
         let button = try #require(stashButton(in: host.view))
         #expect(button.accessibilityIdentifier == FullScreenReviewCommentStashControl.accessibilityIdentifier)
         #expect(button.accessibilityValue as? String == "1 staged comment")
@@ -104,7 +133,7 @@ struct ChatFileAccessReviewCommentStashTests {
         )
 
         #expect(review.contains("fullScreenReviewCommentStashOverlay("))
-        #expect(commit.contains("fullScreenReviewCommentStashOverlay()"))
+        #expect(commit.contains("fullScreenReviewCommentStashOverlay("))
         #expect(files.contains("fullScreenReviewCommentStashOverlay("))
         #expect(files.contains("leadingFloatingAccessoryCount:"))
         #expect(touched.contains("fullScreenReviewCommentStashOverlay("))
@@ -136,14 +165,18 @@ private func makeReviewDetailFixture(
     ).toReviewFile()
     let host = UIHostingController(
         rootView: AnyView(
-            WorkspaceReviewFileDetailView(
-                workspaceId: "w1",
-                selectedSessionId: "session-1",
-                file: current,
-                reviewCommentSelectionScopeOverride: .activeSession(router),
-                navigationFiles: navigationFiles
-            )
-            .environment(SessionStore())
+            NavigationStack {
+                WorkspaceReviewFileDetailView(
+                    workspaceId: "w1",
+                    selectedSessionId: "session-1",
+                    file: current,
+                    reviewCommentSelectionScopeOverride: .activeSession(router),
+                    navigationFiles: navigationFiles
+                )
+                .environment(SessionStore())
+                .environment(\.theme, ThemeID.dark.appTheme)
+                .environment(\.themeID, .dark)
+            }
         )
     )
     let window = present(host)
@@ -158,6 +191,8 @@ private func present(_ host: UIViewController) -> UIWindow {
     window.rootViewController = host
     window.makeKeyAndVisible()
     host.view.setNeedsLayout()
+    host.view.layoutIfNeeded()
+    RunLoop.current.run(until: Date().addingTimeInterval(0.05))
     host.view.layoutIfNeeded()
     return window
 }
