@@ -38,9 +38,28 @@ Example:
 
 ## [Unreleased]
 
+Target: iOS `1.1.2` build `50`. npm `oppi-server` and `oppi-mirror` remain `0.49.0` until a later publish. Testers on npm latest do not get worktree-resume notices, first-class agent CLI flags, Yuwp startup slicing, or the mirror footer.
+
+### Added
+
+- **Client:** USDZ wiki links, files, and Markdown embeds render with RealityView.
+- **Client:** GeoJSON and TopoJSON wiki links, files, and fenced blocks open as MapKit maps with a JSON source toggle. Fenced maps are tap-to-open.
+- **Server:** Same `Session.id` resumes on the workspace Main checkout when an Oppi-managed worktree is gone, with a live notice. Requires a server newer than `0.49.0`.
+- **Server:** Saved Agent create/update accepts first-class CLI flags. JSON remains for bulk/round-trip. Requires a server newer than `0.49.0`.
+
 ### Changed
 
 - **Client:** Pi sessions and the pinned Pi agent always use the official Pi mark, labeled Pi.
+- **Client:** Rendered Mermaid diagrams hide Viewing Options; Source keeps the code reader.
+- **Client:** Opening a chat document reader keeps the session connected on the workspace stack.
+- **Mirror:** Live mirror state shows in the terminal footer. Requires `oppi-mirror` newer than `0.49.0`.
+
+### Fixed
+
+- **Client:** All Sessions and workspace session search keep Results after opening a hit.
+- **Client:** Long unfocused Ask cards scroll inside the expanded-surface cap instead of filling the chat.
+- **Client:** Staged review comments show on git-context and commit file views.
+- **Server:** File browser follows in-tree symlink directories even when the target is outside the workspace or home.
 
 ### Removed
 

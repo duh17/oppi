@@ -78,35 +78,28 @@ struct WhatsNewView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
-    /// Build 49 · Changes since Build 48
+    /// Build 50 · Changes since Build 49
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            id: "syntax-and-documents",
-            icon: "chevron.left.forwardslash.chevron.right",
+            id: "usdz-and-maps",
+            icon: "cube.transparent",
             iconColor: .themeBlue,
-            title: String(localized: "Syntax highlighting for more languages"),
-            description: String(localized: "Tree-sitter adds richer source colors. CSV and TSV files open as tables, and HEIC and HEIF files open as images.")
+            title: String(localized: "USDZ, GeoJSON, and TopoJSON"),
+            description: String(localized: "USDZ opens in RealityView. GeoJSON and TopoJSON open as maps with a JSON source toggle.")
         ),
         WhatsNewFeature(
-            id: "improved-dictation",
-            icon: "waveform.badge.microphone",
+            id: "full-screen-viewers",
+            icon: "rectangle.portrait.and.arrow.right",
             iconColor: .themeGreen,
-            title: String(localized: "Improved dictation"),
-            description: String(localized: "On-device dictation shows live text, supports AirPods, and no longer interrupts other audio.")
+            title: String(localized: "Full-screen viewers"),
+            description: String(localized: "Rendered maps and diagrams hide Viewing Options until Source. Expanding a tool call to full screen slides in from the right. Staged review comments show on more file views.")
         ),
         WhatsNewFeature(
-            id: "review-comments",
-            icon: "text.bubble",
+            id: "official-pi-mark",
+            icon: "checkmark.seal",
             iconColor: .themePurple,
-            title: String(localized: "Polished review comments"),
-            description: String(localized: "Review comments stay close in the chat timeline and full-screen document views, with cleaner controls.")
-        ),
-        WhatsNewFeature(
-            id: "session-controls",
-            icon: "rectangle.grid.1x2",
-            iconColor: .themeOrange,
-            title: String(localized: "Simpler session controls"),
-            description: String(localized: "Session lists put Message and dictation on the left, like the composer, and Files on the right. The unused prompt swipe is gone.")
+            title: String(localized: "Official Pi mark"),
+            description: String(localized: "Pi sessions always use the official Pi mark. Grid π and the assistant avatar setting are gone.")
         ),
     ]
 

@@ -23,9 +23,9 @@ struct ScreenshotPreviewView: View {
         switch ScreenshotPreviewConfig.screen {
         case "workspace-edit":
             WorkspaceEditPreview()
-        case "whats-new-build49-light":
+        case "whats-new-build50-light", "whats-new-build49-light":
             WhatsNewScreenshotPreview(themeID: .light)
-        case "whats-new-build49-dark":
+        case "whats-new-build50-dark", "whats-new-build49-dark":
             WhatsNewScreenshotPreview(themeID: .dark)
         case "server-resources-skills":
             ServerResourcesScreenshotPreview(screen: .skills)
