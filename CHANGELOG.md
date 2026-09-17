@@ -38,21 +38,22 @@ Example:
 
 ## [Unreleased]
 
-Target: iOS `1.1.2` build `50`. npm `oppi-server` and `oppi-mirror` remain `0.49.0` until a later publish. Testers on npm latest do not get worktree-resume notices, first-class agent CLI flags, Yuwp startup slicing, or the mirror footer.
+Target: iOS `1.1.2` build `50`, unpublished `oppi-server@0.49.1` and `oppi-mirror@0.49.1`. npm latest is still `0.49.0`.
 
 ### Added
 
 - **Client:** USDZ wiki links, files, and Markdown embeds render with RealityView.
 - **Client:** GeoJSON and TopoJSON wiki links, files, and fenced blocks open as MapKit maps with a JSON source toggle. Fenced maps are tap-to-open.
-- **Server:** Same `Session.id` resumes on the workspace Main checkout when an Oppi-managed worktree is gone, with a live notice. Requires a server newer than `0.49.0`.
-- **Server:** Saved Agent create/update accepts first-class CLI flags. JSON remains for bulk/round-trip. Requires a server newer than `0.49.0`.
+- **Server:** Same `Session.id` resumes on the workspace Main checkout when an Oppi-managed worktree is gone, with a live notice. Requires `oppi-server@0.49.1`.
+- **Server:** Saved Agent create/update accepts first-class CLI flags. JSON remains for bulk/round-trip. Requires `oppi-server@0.49.1`.
 
 ### Changed
 
+- **Compatibility:** Build 50 requires unpublished `oppi-server@0.49.1` and `oppi-mirror@0.49.1`. npm latest remains `0.49.0` until publish.
 - **Client:** Pi sessions and the pinned Pi agent always use the official Pi mark, labeled Pi.
-- **Client:** Rendered Mermaid diagrams hide Viewing Options; Source keeps the code reader.
-- **Client:** Opening a chat document reader keeps the session connected on the workspace stack.
-- **Mirror:** Live mirror state shows in the terminal footer. Requires `oppi-mirror` newer than `0.49.0`.
+- **Client:** Rendered maps and diagrams hide Viewing Options until Source; Source keeps the code reader.
+- **Client:** Expanding a tool call to full screen slides in from the right instead of a sheet.
+- **Mirror:** Smaller connected indicator in the terminal footer. Requires `oppi-mirror@0.49.1`.
 
 ### Fixed
 
