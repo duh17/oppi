@@ -131,6 +131,20 @@ struct SessionListSearchNavigationPersistenceTests {
                 stackDepth: 1
             )
         )
+        #expect(
+            SessionListSearchNavigationPersistence.isInboxCovered(
+                isSplitPresentation: true,
+                stackDepth: 0,
+                splitDetailReplacesList: true
+            )
+        )
+        #expect(
+            !SessionListSearchNavigationPersistence.isInboxCovered(
+                isSplitPresentation: true,
+                stackDepth: 0,
+                splitDetailReplacesList: false
+            )
+        )
     }
 
     @Test func workspaceListIsCoveredByADeeperSession() {
@@ -152,6 +166,13 @@ struct SessionListSearchNavigationPersistenceTests {
                 hasSessionDestination: false
             )
         )
+        #expect(
+            SessionListSearchNavigationPersistence.isWorkspaceListCovered(
+                stackDepth: 1,
+                hasSessionDestination: false,
+                splitDetailReplacesList: true
+            )
+        )
     }
 
     @Test func inboxAndWorkspaceListWireSearchPersistence() throws {
@@ -166,8 +187,15 @@ struct SessionListSearchNavigationPersistenceTests {
         #expect(workspace.contains(".searchFocused($isSearchFieldFocused)"))
         #expect(inbox.contains("isInboxCovered("))
         #expect(workspace.contains("isWorkspaceListCovered("))
-        #expect(inbox.contains("workspaceNavigationPresentation != .split"))
-        #expect(workspace.contains("workspaceNavigationPresentation != .split"))
+        #expect(inbox.contains("inboxSessionSearch"))
+        #expect(workspace.contains("workspaceSessionSearchByID"))
+        #expect(inbox.contains(".onChange(of: activeServerId)"))
+        let hostTask = try sourceSlice(
+            inbox,
+            start: ".task(id: activeServerId) {",
+            end: ".task(id: selectedWorkspace?.workspace.id)"
+        )
+        #expect(!hostTask.contains("resetLocalHostState"))
         #expect(inbox.contains("applySearchNavigation(.searchTextChanged"))
         #expect(inbox.contains("applySearchNavigation(.searchPresentationChanged"))
         #expect(inbox.contains("restoreSearchAfterCoverageChange()"))

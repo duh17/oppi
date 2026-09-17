@@ -179,6 +179,11 @@ final class AppNavigation {
     /// can reveal or hide workspace/session columns without custom chrome.
     var splitColumnVisibility: NavigationSplitViewVisibility = .automatic
 
+    /// Session-list search lives on navigation so it survives compact inbox
+    /// remount after Back and split detail replacement on iPad.
+    var inboxSessionSearch = SessionListSearchNavigationPersistence.State()
+    var workspaceSessionSearchByID: [String: SessionListSearchNavigationPersistence.State] = [:]
+
     /// Launch phase gate. While `.resolving`, ContentView shows a blank
     /// canvas until local pairing and cache state are known.
     var launchPhase: AppLaunchPhase = .resolving

@@ -121,10 +121,6 @@ struct WorkspaceDetailView: View {
     @State private var isCreating = false
     @State private var error: String?
 
-    @State private var sessionSearchText = ""
-    @State private var isSearchPresented = false
-    @State private var heldSearchQuery: String?
-    @State private var preservesSearchAcrossDismiss = false
     @FocusState private var isSearchFieldFocused: Bool
     @State private var presentsNowPlayingPlayer = false
     @State private var composeBarColumnWidth: CGFloat = 0
@@ -170,7 +166,45 @@ struct WorkspaceDetailView: View {
     private var isSearchListCoveredByDestination: Bool {
         SessionListSearchNavigationPersistence.isWorkspaceListCovered(
             stackDepth: navigation.workspacePath.count,
-            hasSessionDestination: navigateToSessionId != nil
+            hasSessionDestination: navigateToSessionId != nil,
+            splitDetailReplacesList: navigation.splitDetailTarget != nil
+        )
+    }
+
+    private var searchNavigation: SessionListSearchNavigationPersistence.State {
+        get { navigation.workspaceSessionSearchByID[workspace.id] ?? .init() }
+        nonmutating set {
+            if newValue == .init() {
+                navigation.workspaceSessionSearchByID.removeValue(forKey: workspace.id)
+            } else {
+                navigation.workspaceSessionSearchByID[workspace.id] = newValue
+            }
+        }
+    }
+
+    private var sessionSearchText: String {
+        searchNavigation.searchText
+    }
+
+    private var searchTextBinding: Binding<String> {
+        Binding(
+            get: { searchNavigation.searchText },
+            set: {
+                var next = searchNavigation
+                next.searchText = $0
+                searchNavigation = next
+            }
+        )
+    }
+
+    private var searchPresentedBinding: Binding<Bool> {
+        Binding(
+            get: { searchNavigation.isSearchPresented },
+            set: {
+                var next = searchNavigation
+                next.isSearchPresented = $0
+                searchNavigation = next
+            }
         )
     }
 
@@ -426,7 +460,7 @@ struct WorkspaceDetailView: View {
     private var sessionListToolbar: InAppNowPlayingChrome.SessionListToolbar {
         InAppNowPlayingChrome.sessionListToolbar(
             hasActivePlayback: connection.audioPlayer.hasActivePlayback,
-            isSearchPresented: isSearchPresented
+            isSearchPresented: searchNavigation.isSearchPresented
         )
     }
 
@@ -587,8 +621,8 @@ struct WorkspaceDetailView: View {
             handleWorkspaceIdentityChanged()
         }
         .searchable(
-            text: $sessionSearchText,
-            isPresented: $isSearchPresented,
+            text: searchTextBinding,
+            isPresented: searchPresentedBinding,
             placement: .navigationBarDrawer(displayMode: .automatic),
             prompt: "Search sessions"
         )
@@ -607,7 +641,7 @@ struct WorkspaceDetailView: View {
                 apiClient: apiClient
             )
         }
-        .onChange(of: isSearchPresented) { _, presented in
+        .onChange(of: searchNavigation.isSearchPresented) { _, presented in
             applySearchNavigation(.searchPresentationChanged(presented))
             if !presented {
                 isSearchFieldFocused = false
@@ -617,6 +651,9 @@ struct WorkspaceDetailView: View {
             restoreSearchAfterCoverageChange()
         }
         .onChange(of: navigateToSessionId) { _, _ in
+            restoreSearchAfterCoverageChange()
+        }
+        .onChange(of: navigation.splitDetailTarget) { _, _ in
             restoreSearchAfterCoverageChange()
         }
         .navigationDestination(for: String.self) { sessionId in
@@ -1067,24 +1104,11 @@ struct WorkspaceDetailView: View {
     }
 
     private func applySearchNavigation(_ event: SessionListSearchNavigationPersistence.Event) {
-        let next = SessionListSearchNavigationPersistence.reduce(
-            SessionListSearchNavigationPersistence.State(
-                searchText: sessionSearchText,
-                isSearchPresented: isSearchPresented,
-                heldQuery: heldSearchQuery,
-                preservesSearchAcrossDismiss: preservesSearchAcrossDismiss
-            ),
+        searchNavigation = SessionListSearchNavigationPersistence.reduce(
+            searchNavigation,
             event: event,
             isCoveredByDestination: isSearchListCoveredByDestination
         )
-        if next.searchText != sessionSearchText {
-            sessionSearchText = next.searchText
-        }
-        if next.isSearchPresented != isSearchPresented {
-            isSearchPresented = next.isSearchPresented
-        }
-        heldSearchQuery = next.heldQuery
-        preservesSearchAcrossDismiss = next.preservesSearchAcrossDismiss
     }
 
     private func restoreSearchAfterCoverageChange() {
@@ -1095,9 +1119,7 @@ struct WorkspaceDetailView: View {
     }
 
     private func openSession(_ session: Session) {
-        if navigation.workspaceNavigationPresentation != .split {
-            applySearchNavigation(.willOpenDestination)
-        }
+        applySearchNavigation(.willOpenDestination)
         var normalized = session
         if normalized.workspaceId == nil || normalized.workspaceId?.isEmpty == true {
             normalized.workspaceId = currentWorkspace.id
@@ -1146,9 +1168,7 @@ struct WorkspaceDetailView: View {
             removeArchiveLocalSession(local.path)
 
             isImportingLocal = false
-            if navigation.workspaceNavigationPresentation != .split {
-                applySearchNavigation(.willOpenDestination)
-            }
+            applySearchNavigation(.willOpenDestination)
             routeToSession(session.id)
         } catch {
             self.error = "Resume failed: \(error.localizedDescription)"
@@ -1380,6 +1400,13 @@ struct WorkspaceDetailView: View {
         beginWorkspaceLoadIfNeeded(path: path)
         hasPresentedWorkspaceOnce = true
         refreshGitStatusContextBar()
+        if hasSessionSearchQuery {
+            searchStore.search(
+                query: sessionSearchText,
+                workspaceId: SessionInboxSearchScope.workspaceId(scopedTo: workspace.id),
+                apiClient: apiClient
+            )
+        }
 
         if workspaceLoad?.hadImmediateContent == true {
             scheduleWorkspaceLoadCompletionCheck()

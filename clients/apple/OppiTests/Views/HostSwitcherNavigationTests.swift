@@ -153,12 +153,20 @@ struct SessionInboxHostChangeTests {
         #expect(source.contains("SessionInboxHostChange.reset"))
         #expect(source.contains(".task(id: activeServerId)"))
 
+        #expect(source.contains(".onChange(of: activeServerId)"))
+        let hostChange = try sourceSlice(
+            source,
+            start: ".onChange(of: activeServerId) {",
+            end: ".toolbar { toolbarContent }"
+        )
+        #expect(hostChange.contains("resetLocalHostState"))
         let taskSlice = try sourceSlice(
             source,
             start: ".task(id: activeServerId) {",
             end: ".task(id: selectedWorkspace?.workspace.id)"
         )
-        #expect(taskSlice.contains("resetLocalHostState") || taskSlice.contains("SessionInboxHostChange.reset"))
+        #expect(!taskSlice.contains("resetLocalHostState"))
+        #expect(!taskSlice.contains("SessionInboxHostChange.reset"))
         #expect(!taskSlice.contains("showAllWorkspaceSessions"))
     }
 

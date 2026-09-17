@@ -168,7 +168,6 @@ struct SessionInboxView: View {
 
     let onOpenSidebar: (() -> Void)?
 
-    @State private var searchText = ""
     @State private var searchStore = SessionSearchStore()
     @State private var error: String?
     @State private var isCreating = false
@@ -179,9 +178,6 @@ struct SessionInboxView: View {
     @State private var hasAutoCreatedE2ESession = false
     @State private var hasAutoOpenedE2ESession = false
     @State private var providerSetupState: ProviderSetupState = .unknown
-    @State private var isSearchPresented = false
-    @State private var heldSearchQuery: String?
-    @State private var preservesSearchAcrossDismiss = false
     @FocusState private var isSearchFieldFocused: Bool
     @State private var presentsNowPlayingPlayer = false
     @State private var composeBarColumnWidth: CGFloat = 0
@@ -209,7 +205,7 @@ struct SessionInboxView: View {
     private var sessionListToolbar: InAppNowPlayingChrome.SessionListToolbar {
         InAppNowPlayingChrome.sessionListToolbar(
             hasActivePlayback: sessionListHasActivePlayback,
-            isSearchPresented: isSearchPresented
+            isSearchPresented: searchNavigation.isSearchPresented
         )
     }
 
@@ -243,6 +239,37 @@ struct SessionInboxView: View {
         )
     }
 
+    private var searchNavigation: SessionListSearchNavigationPersistence.State {
+        get { navigation.inboxSessionSearch }
+        nonmutating set { navigation.inboxSessionSearch = newValue }
+    }
+
+    private var searchText: String {
+        searchNavigation.searchText
+    }
+
+    private var searchTextBinding: Binding<String> {
+        Binding(
+            get: { searchNavigation.searchText },
+            set: {
+                var next = searchNavigation
+                next.searchText = $0
+                searchNavigation = next
+            }
+        )
+    }
+
+    private var searchPresentedBinding: Binding<Bool> {
+        Binding(
+            get: { searchNavigation.isSearchPresented },
+            set: {
+                var next = searchNavigation
+                next.isSearchPresented = $0
+                searchNavigation = next
+            }
+        )
+    }
+
     private var hasSearchQuery: Bool {
         SessionListSearchPresentation.hasQuery(searchText)
     }
@@ -250,8 +277,13 @@ struct SessionInboxView: View {
     private var isSearchListCoveredByDestination: Bool {
         SessionListSearchNavigationPersistence.isInboxCovered(
             isSplitPresentation: navigation.workspaceNavigationPresentation == .split,
-            stackDepth: navigation.workspacePath.count
+            stackDepth: navigation.workspacePath.count,
+            splitDetailReplacesList: navigation.splitDetailTarget != nil
         )
+    }
+
+    private var searchCoverageSignature: String {
+        "\(navigation.workspacePath.count):\(navigation.workspaceNavigationPresentation):\(navigation.splitDetailTarget != nil)"
     }
 
     private var viewData: SessionInboxViewData {
@@ -374,8 +406,8 @@ struct SessionInboxView: View {
         .navigationTitle(inboxNavigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .searchable(
-            text: $searchText,
-            isPresented: $isSearchPresented,
+            text: searchTextBinding,
+            isPresented: searchPresentedBinding,
             placement: .navigationBarDrawer(displayMode: .automatic),
             prompt: "Search sessions"
         )
@@ -392,22 +424,22 @@ struct SessionInboxView: View {
             applySearchNavigation(.searchTextChanged(newValue))
             refreshSearch()
         }
-        .onChange(of: selectedWorkspace?.workspace.id) { _, _ in
-            // Same query, different result domain. Search cancels the old task
-            // and clears completed results before starting the scoped request.
-            refreshSearch()
-        }
-        .onChange(of: isSearchPresented) { _, presented in
+        .onChange(of: searchNavigation.isSearchPresented) { _, presented in
             applySearchNavigation(.searchPresentationChanged(presented))
             if !presented {
                 isSearchFieldFocused = false
             }
         }
-        .onChange(of: navigation.workspacePath.count) { _, _ in
+        .onChange(of: selectedWorkspace?.workspace.id) { _, _ in
+            // Same query, different result domain. Search cancels the old task
+            // and clears completed results before starting the scoped request.
+            refreshSearch()
+        }
+        .onChange(of: searchCoverageSignature) { _, _ in
             restoreSearchAfterCoverageChange()
         }
-        .onChange(of: navigation.workspaceNavigationPresentation) { _, _ in
-            restoreSearchAfterCoverageChange()
+        .onChange(of: activeServerId) { _, _ in
+            resetLocalHostState()
         }
         .toolbar { toolbarContent }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { composeBarColumnWidth = $0 }
@@ -417,7 +449,9 @@ struct SessionInboxView: View {
             _ = await (refresh, providers)
         }
         .task(id: activeServerId) {
-            resetLocalHostState()
+            if hasSearchQuery {
+                refreshSearch()
+            }
             providerSetupState = .unknown
             async let refresh: () = refreshVisibleServer()
             async let providers: () = loadProviderSetupState()
@@ -664,6 +698,7 @@ struct SessionInboxView: View {
 
     private func resetLocalHostState() {
         applySearchNavigation(.reset)
+        navigation.workspaceSessionSearchByID = [:]
         isSearchFieldFocused = false
         let reset = SessionInboxHostChange.reset(
             searchText: searchText,
@@ -671,30 +706,16 @@ struct SessionInboxView: View {
             collapsedStoppedGroupIDs: collapsedStoppedGroupIDs,
             searchStore: searchStore
         )
-        searchText = reset.searchText
         expandedStoppedGroupIDs = reset.expandedStoppedGroupIDs
         collapsedStoppedGroupIDs = reset.collapsedStoppedGroupIDs
     }
 
     private func applySearchNavigation(_ event: SessionListSearchNavigationPersistence.Event) {
-        let next = SessionListSearchNavigationPersistence.reduce(
-            SessionListSearchNavigationPersistence.State(
-                searchText: searchText,
-                isSearchPresented: isSearchPresented,
-                heldQuery: heldSearchQuery,
-                preservesSearchAcrossDismiss: preservesSearchAcrossDismiss
-            ),
+        searchNavigation = SessionListSearchNavigationPersistence.reduce(
+            searchNavigation,
             event: event,
             isCoveredByDestination: isSearchListCoveredByDestination
         )
-        if next.searchText != searchText {
-            searchText = next.searchText
-        }
-        if next.isSearchPresented != isSearchPresented {
-            isSearchPresented = next.isSearchPresented
-        }
-        heldSearchQuery = next.heldQuery
-        preservesSearchAcrossDismiss = next.preservesSearchAcrossDismiss
     }
 
     private func restoreSearchAfterCoverageChange() {
@@ -979,9 +1000,7 @@ struct SessionInboxView: View {
             error = "Session route is unavailable"
             return
         }
-        if navigation.workspaceNavigationPresentation != .split {
-            applySearchNavigation(.willOpenDestination)
-        }
+        applySearchNavigation(.willOpenDestination)
         item.connection.sessionStore.cacheSessionForNavigation(normalized)
 
         let workspaceTarget = item.workspace.map { WorkspaceNavTarget(serverId: item.serverId, workspace: $0) }
