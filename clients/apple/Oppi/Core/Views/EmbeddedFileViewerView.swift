@@ -275,7 +275,8 @@ enum ChatReaderLinkedFileRouting {
         for action: LinkAction,
         serverID: String?,
         workspaceID: String?,
-        sessionID: String?
+        sessionID: String?,
+        workspaceRuntime: WorkspaceRuntime? = nil
     ) -> WorkspaceLinkedFileNavTarget? {
         switch action {
         case .sessionFileReference(let reference):
@@ -293,7 +294,8 @@ enum ChatReaderLinkedFileRouting {
                 reference,
                 serverID: serverID,
                 workspaceID: workspaceID,
-                sessionID: sessionID
+                sessionID: sessionID,
+                workspaceRuntime: workspaceRuntime
             )
         case .deepLink, .inAppSessionLink, .webLink, .systemDefault:
             return nil
@@ -303,31 +305,15 @@ enum ChatReaderLinkedFileRouting {
     private static func sessionFileTarget(
         for reference: ResourceReference
     ) -> WorkspaceLinkedFileNavTarget? {
-        guard let serverID = reference.sourceServerID,
-              let workspaceID = reference.workspaceID,
-              let sessionID = reference.sourceSessionID,
-              let path = reference.fileCandidatePath,
-              !serverID.isEmpty,
-              !workspaceID.isEmpty,
-              !sessionID.isEmpty,
-              !path.isEmpty else {
-            return nil
-        }
-        return .sessionFile(
-            serverId: serverID,
-            workspaceId: workspaceID,
-            sessionId: sessionID,
-            path: path,
-            lineAnchor: reference.lineAnchor,
-            sourceSessionId: sessionID
-        )
+        OppiApp.sessionFileTarget(for: reference)
     }
 
     private static func resourceFileTarget(
         _ reference: ResourceReference,
         serverID: String?,
         workspaceID: String?,
-        sessionID: String?
+        sessionID: String?,
+        workspaceRuntime: WorkspaceRuntime?
     ) -> WorkspaceLinkedFileNavTarget? {
         let serverID = reference.sourceServerID ?? serverID
         let workspaceID = reference.workspaceID ?? workspaceID
@@ -335,6 +321,27 @@ enum ChatReaderLinkedFileRouting {
         guard let serverID, !serverID.isEmpty,
               let path = reference.fileCandidatePath, !path.isEmpty else {
             return nil
+        }
+        if workspaceRuntime != .host,
+           let sessionID, !sessionID.isEmpty,
+           let workspaceID, !workspaceID.isEmpty {
+            return .sessionFile(
+                serverId: serverID,
+                workspaceId: workspaceID,
+                sessionId: sessionID,
+                path: path,
+                lineAnchor: reference.lineAnchor,
+                sourceSessionId: sessionID
+            )
+        }
+        if reference.kind == .hostFile {
+            return .hostFile(
+                serverId: serverID,
+                workspaceId: workspaceID ?? "",
+                path: path,
+                lineAnchor: reference.lineAnchor,
+                sourceSessionId: sessionID
+            )
         }
         if let sessionID, !sessionID.isEmpty,
            let workspaceID, !workspaceID.isEmpty {
@@ -479,7 +486,8 @@ struct ChatReaderDestinationView: View {
             for: action,
             serverID: context?.serverID,
             workspaceID: context?.workspaceID,
-            sessionID: context?.sessionID
+            sessionID: context?.sessionID,
+            workspaceRuntime: context?.workspaceRuntime
         )
     }
 

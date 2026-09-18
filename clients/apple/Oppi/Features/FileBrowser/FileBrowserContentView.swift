@@ -694,6 +694,7 @@ struct FileBrowserContentView: View {
                 },
                 sessionID: sessionId,
                 routesFileReferencesThroughSession: source.routesFileReferencesThroughSession,
+                workspaceRuntime: workspaceRuntime,
                 fetchSessionFile: { workspaceID, sourceSessionID, path in
                     try await api.getSessionFileData(
                         workspaceId: workspaceID,

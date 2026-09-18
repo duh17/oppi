@@ -276,9 +276,9 @@ Use workspace/session file routes for current project files, PDFs, reports, and 
 - `reports/run-summary.pdf`
 - a source-controlled media file
 - a file addressed relative to the session workspace or worktree
-- an exact external path recorded in that session's changed-file metadata or tool arguments
+- an explicit real path on a host workspace, including in-tree symlink targets and absolute/~ host paths
 
-Session raw-file routes require owner authentication and session ownership, and external paths must be capabilities already present in that session's trace or changed-file metadata. They do not accept arbitrary unreported host paths. Current-file audio and video stream through authenticated `GET`/`HEAD` requests to `/workspaces/{workspaceId}/sessions/{sessionId}/raw/{path+}` with single-range byte responses.
+Session raw-file routes require owner authentication and session ownership. On a host workspace they serve an explicit real path that exists, including in-tree symlink targets and absolute/~ host paths; pairing/auth is the gate. Sandbox session-raw stays confined and 403s outside or guest-escape paths. Current-file audio and video stream through authenticated `GET`/`HEAD` requests to `/workspaces/{workspaceId}/sessions/{sessionId}/raw/{path+}` with single-range byte responses.
 
 Use stored tool attachments for media associated with a message or tool result:
 
@@ -299,9 +299,9 @@ The server owns attachment materialization and serving.
 - Sniff image/audio/video headers where practical; do not trust only file extensions.
 - Copy bytes from helper-approved paths, generated temp files, or authenticated uploads.
 - Do not expose an HTTP API that attaches arbitrary server paths by name.
-- Reject unreported path traversal and symlink escapes; session raw previews may follow an exact path reported by the owning session.
+- Keep workspace `contents`/`raw` lexically inside the workspace, then follow in-tree symlink names even when the target is outside. Host-workspace session-raw may follow an explicit real path, including symlink targets; sandbox session-raw 403s outside and guest-escape paths.
 - Serve stored media through authenticated `GET` and `HEAD` requests to `/sessions/{sessionId}/attachments/{attachmentId}`.
-- Serve session-reported current-file media through authenticated, range-capable `GET` and `HEAD` requests to `/workspaces/{workspaceId}/sessions/{sessionId}/raw/{path+}`.
+- Serve current-file media through authenticated, range-capable `GET` and `HEAD` requests to `/workspaces/{workspaceId}/sessions/{sessionId}/raw/{path+}`. On a host workspace that path may be an unreported absolute, outside, or symlink-target file.
 - Use workspace-scoped attachment routes only for upload creation and upload content.
 - Support byte ranges for audio and video.
 - Delete attachments when the owning session is deleted.
@@ -338,7 +338,7 @@ Clients render attachments from metadata and authenticated byte sources.
 - Route remote URLs through the existing tap-to-load remote image policy.
 - Keep attachment endpoints authenticated and session-scoped.
 - Build timeline attachment and session-file providers even when API-client or workspace metadata is still loading; resolve that context when the fetch starts so cached rows can recover.
-- Keep workspace `realpath` confinement separate from authenticated session-reported file previews. Fuzzy `/paths` is not a secret-file ACL.
+- Keep workspace lexical containment (in-tree symlinks may resolve outside) separate from authenticated host-workspace session-raw and host `/files/raw`. Fuzzy `/paths` is not a secret-file ACL.
 - Avoid logging full file paths or attachment text when it can contain private data.
 - Treat stored attachments as durable session history until the session or attachment is deleted.
 

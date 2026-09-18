@@ -44,3 +44,23 @@ enum SessionTouchedFileLoadRoute: Equatable {
         return fileName
     }
 }
+
+/// Session-origin markdown readers keep guest/worktree children on session-raw.
+///
+/// Sandbox and unknown runtime stay on session-raw even when wiki classification
+/// labels an absolute guest path `hostFile`. Do not infer host ownership from a
+/// leading `/` or missing workspace metadata. Confirmed host-workspace `/Users`
+/// and `~/` links use `/files/raw`.
+enum SessionOriginLinkedFileRouting {
+    static func routesThroughSessionRaw(
+        kind: ResourceReferenceKind,
+        workspaceRuntime: WorkspaceRuntime?,
+        routesFileReferencesThroughSession: Bool
+    ) -> Bool {
+        guard routesFileReferencesThroughSession else { return false }
+        if workspaceRuntime == .host {
+            return kind != .hostFile
+        }
+        return true
+    }
+}

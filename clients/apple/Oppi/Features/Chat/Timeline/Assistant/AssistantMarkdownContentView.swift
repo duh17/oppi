@@ -59,6 +59,8 @@ final class AssistantMarkdownContentView: UIView {
         let sessionID: String?
         /// File-reader links keep using the exact source-session file route.
         let routesFileReferencesThroughSession: Bool
+        /// Sandbox origin keeps guest `/workspace/...` children on session-raw.
+        let workspaceRuntime: WorkspaceRuntime?
         let serverBaseURL: URL?
         /// Path of the source markdown file in the workspace (e.g. "docs/readme.md").
         /// Used to resolve relative image paths against the file's directory.
@@ -103,6 +105,7 @@ final class AssistantMarkdownContentView: UIView {
             worktreeId: String? = nil,
             sessionID: String? = nil,
             routesFileReferencesThroughSession: Bool = false,
+            workspaceRuntime: WorkspaceRuntime? = nil,
             serverBaseURL: URL? = nil,
             sourceFilePath: String? = nil,
             lineAnchor: SourceLineAnchor? = nil,
@@ -123,6 +126,7 @@ final class AssistantMarkdownContentView: UIView {
             self.worktreeId = worktreeId
             self.sessionID = sessionID
             self.routesFileReferencesThroughSession = routesFileReferencesThroughSession
+            self.workspaceRuntime = workspaceRuntime
             self.serverBaseURL = serverBaseURL
             self.sourceFilePath = sourceFilePath
             self.lineAnchor = lineAnchor
@@ -145,6 +149,7 @@ final class AssistantMarkdownContentView: UIView {
             worktreeId: String? = nil,
             sessionID: String? = nil,
             routesFileReferencesThroughSession: Bool = false,
+            workspaceRuntime: WorkspaceRuntime? = nil,
             serverBaseURL: URL? = nil,
             sourceFilePath: String? = nil,
             lineAnchor: SourceLineAnchor? = nil,
@@ -166,6 +171,7 @@ final class AssistantMarkdownContentView: UIView {
                 worktreeId: worktreeId,
                 sessionID: sessionID,
                 routesFileReferencesThroughSession: routesFileReferencesThroughSession,
+                workspaceRuntime: workspaceRuntime,
                 serverBaseURL: serverBaseURL,
                 sourceFilePath: sourceFilePath,
                 lineAnchor: lineAnchor,
@@ -189,6 +195,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.worktreeId == rhs.worktreeId
                 && lhs.sessionID == rhs.sessionID
                 && lhs.routesFileReferencesThroughSession == rhs.routesFileReferencesThroughSession
+                && lhs.workspaceRuntime == rhs.workspaceRuntime
                 && lhs.serverBaseURL == rhs.serverBaseURL
                 && lhs.sourceFilePath == rhs.sourceFilePath
                 && lhs.lineAnchor == rhs.lineAnchor
@@ -448,7 +455,8 @@ enum MarkdownLinkInteractionSupport {
         serverID: String? = nil,
         workspaceID: String?,
         sessionID: String? = nil,
-        routesFileReferencesThroughSession: Bool = false
+        routesFileReferencesThroughSession: Bool = false,
+        workspaceRuntime: WorkspaceRuntime? = nil
     ) -> LinkAction {
         let normalizedURL = AssistantMarkdownContentView.normalizedInteractionURL(url)
         guard let scheme = normalizedURL.scheme?.lowercased() else {
@@ -472,7 +480,7 @@ enum MarkdownLinkInteractionSupport {
             if routesFileReferencesThroughSession {
                 // The mounted reader owns origin. A serialized link supplies a
                 // path/anchor, never replacement server/workspace/session authority.
-                return .sessionFileReference(ResourceReference(
+                let pinned = ResourceReference(
                     target: reference.target,
                     sourceServerID: serverID,
                     workspaceID: workspaceID,
@@ -481,7 +489,15 @@ enum MarkdownLinkInteractionSupport {
                     kind: reference.kind,
                     lineAnchor: reference.lineAnchor,
                     visibleLabel: reference.visibleLabel
-                ))
+                )
+                if SessionOriginLinkedFileRouting.routesThroughSessionRaw(
+                    kind: reference.kind,
+                    workspaceRuntime: workspaceRuntime,
+                    routesFileReferencesThroughSession: true
+                ) {
+                    return .sessionFileReference(pinned)
+                }
+                return .resourceReference(pinned)
             }
             return .resourceReference(reference)
         }
@@ -591,7 +607,8 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
             serverID: currentConfig?.serverID,
             workspaceID: currentConfig?.workspaceID,
             sessionID: currentConfig?.sessionID,
-            routesFileReferencesThroughSession: currentConfig?.routesFileReferencesThroughSession ?? false
+            routesFileReferencesThroughSession: currentConfig?.routesFileReferencesThroughSession ?? false,
+            workspaceRuntime: currentConfig?.workspaceRuntime
         )
     }
 

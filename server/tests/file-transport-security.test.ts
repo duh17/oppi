@@ -558,7 +558,7 @@ describe("file transport security parity", () => {
     }
   });
 
-  it("blocks unreported session raw reads outside the workspace", async () => {
+  it("serves unreported session raw reads outside the workspace", async () => {
     root = mkdtempSync(join(tmpdir(), "oppi-file-security-root-"));
     const outsideRoot = mkdtempSync(join(tmpdir(), "oppi-file-security-outside-"));
     const outsideFile = join(outsideRoot, "outside.txt");
@@ -573,14 +573,19 @@ describe("file transport security parity", () => {
         makeHelpers(errors),
       );
 
+      const rawRes = new MockWritableResponse();
+      const rawFinished = once(rawRes, "finish");
       await handlers.handleGetSessionRaw(
         "ws-1",
         "sess-1",
         outsideFile,
-        new MockWritableResponse() as unknown as ServerResponse,
+        rawRes as unknown as ServerResponse,
       );
+      await rawFinished;
 
-      expect(errors).toEqual([{ status: 403, message: "Path outside session workspace" }]);
+      expect(errors).toEqual([]);
+      expect(rawRes.statusCode).toBe(200);
+      expect(rawRes.body.toString("utf8")).toBe("outside workspace\n");
     } finally {
       rmSync(outsideRoot, { recursive: true, force: true });
     }

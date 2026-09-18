@@ -3036,6 +3036,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private let worktreeId: String?
     private let sessionID: String?
     private let routesFileReferencesThroughSession: Bool
+    private let workspaceRuntime: WorkspaceRuntime?
     private let serverBaseURL: URL?
     private let sourceFilePath: String?
     private let lineAnchor: SourceLineAnchor?
@@ -3109,6 +3110,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         worktreeId: String? = nil,
         sessionID: String? = nil,
         routesFileReferencesThroughSession: Bool = false,
+        workspaceRuntime: WorkspaceRuntime? = nil,
         serverBaseURL: URL? = nil,
         sourceFilePath: String? = nil,
         lineAnchor: SourceLineAnchor? = nil,
@@ -3138,6 +3140,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.worktreeId = worktreeId
         self.sessionID = sessionID
         self.routesFileReferencesThroughSession = routesFileReferencesThroughSession
+        self.workspaceRuntime = workspaceRuntime
         self.serverBaseURL = serverBaseURL
         self.sourceFilePath = sourceFilePath
         self.lineAnchor = lineAnchor
@@ -3520,6 +3523,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             worktreeId: worktreeId,
             sessionID: sessionID,
             routesFileReferencesThroughSession: routesFileReferencesThroughSession,
+            workspaceRuntime: workspaceRuntime,
             serverBaseURL: serverBaseURL,
             sourceFilePath: sourceFilePath,
             lineAnchor: lineAnchor,
@@ -5397,7 +5401,8 @@ extension NativeFullScreenMarkdownBody: UITextViewDelegate {
             serverID: serverID,
             workspaceID: workspaceID,
             sessionID: sessionID,
-            routesFileReferencesThroughSession: routesFileReferencesThroughSession
+            routesFileReferencesThroughSession: routesFileReferencesThroughSession,
+            workspaceRuntime: workspaceRuntime
         )
     }
 

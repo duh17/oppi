@@ -434,9 +434,11 @@ export class SessionTraceService {
       return { kind: "file-not-found" };
     }
 
-    const allowReportedEscape =
-      params.workspace.runtime !== "sandbox" && this.sessionReportsPath(params.session, reqPath);
-    if (!isPathWithinRoot(resolvedPath, realWorkspaceRoot) && !allowReportedEscape) {
+    // Host workspaces: pairing/auth is the gate. Sandbox stays confined after realpath.
+    if (
+      params.workspace.runtime === "sandbox" &&
+      !isPathWithinRoot(resolvedPath, realWorkspaceRoot)
+    ) {
       return { kind: "path-outside-workspace" };
     }
 
@@ -471,19 +473,6 @@ export class SessionTraceService {
       contentType,
       size: fileStat.size,
     };
-  }
-
-  private sessionReportsPath(session: Session, requestedPath: string): boolean {
-    const changedFiles = session.changeStats?.changedFiles ?? [];
-    const sessionCreatedFiles = session.changeStats?._sessionCreatedFiles ?? [];
-    if (changedFiles.includes(requestedPath) || sessionCreatedFiles.includes(requestedPath)) {
-      return true;
-    }
-
-    const trace = this.loadSessionTrace(session, "full") ?? [];
-    return trace.some(
-      (event) => event.type === "toolCall" && containsExactString(event.args, requestedPath),
-    );
   }
 
   private async readCurrentFileText(
@@ -649,19 +638,6 @@ function resolveSessionRawPath(requestedPath: string, workspaceRoot: string): st
   }
 
   return isAbsolute(requestedPath) ? resolve(requestedPath) : resolve(workspaceRoot, requestedPath);
-}
-
-function containsExactString(value: unknown, expected: string): boolean {
-  if (typeof value === "string") {
-    return value === expected;
-  }
-  if (Array.isArray(value)) {
-    return value.some((item) => containsExactString(item, expected));
-  }
-  if (typeof value === "object" && value !== null) {
-    return Object.values(value).some((item) => containsExactString(item, expected));
-  }
-  return false;
 }
 
 async function existingPaths(candidates: string[]): Promise<string[]> {

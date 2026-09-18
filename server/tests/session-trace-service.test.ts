@@ -725,18 +725,36 @@ describe("SessionTraceService", () => {
     });
   });
 
-  it("blocks unreported paths outside the workspace", async () => {
+  it("serves unreported paths outside the workspace", async () => {
     const dataDir = tempDir("oppi-session-raw-unreported-data-");
     const workspaceRoot = tempDir("oppi-session-raw-unreported-workspace-");
     const outsideRoot = tempDir("oppi-session-raw-unreported-outside-");
     const outsidePath = join(outsideRoot, "outside.txt");
     writeFileSync(outsidePath, "outside\n", "utf8");
+    mkdirSync(join(workspaceRoot, "notes"), { recursive: true });
+    symlinkSync(outsidePath, join(workspaceRoot, "notes", "outside-link.txt"));
     const workspace = makeWorkspace({ hostMount: workspaceRoot });
     const { service } = makeService({ dataDir, workspace });
+    const session = makeSession();
 
     await expect(
-      service.getSessionRawFile({ workspace, session: makeSession(), path: outsidePath }),
-    ).resolves.toEqual({ kind: "path-outside-workspace" });
+      service.getSessionRawFile({ workspace, session, path: outsidePath }),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      contentType: "text/plain; charset=utf-8",
+      size: 8,
+    });
+    await expect(
+      service.getSessionRawFile({
+        workspace,
+        session,
+        path: "notes/outside-link.txt",
+      }),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      contentType: "text/plain; charset=utf-8",
+      size: 8,
+    });
   });
 
   it("serves an absolute path reported in tool arguments", async () => {
