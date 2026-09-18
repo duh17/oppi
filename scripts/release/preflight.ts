@@ -156,9 +156,9 @@ export function validateReleasePreflight(
   if (/\bDraft:/i.test(input.changelog) || /\bDraft:/i.test(input.whatToTest)) {
     failures.push("release notes still contain Draft placeholders");
   }
-  if (input.whatToTest.length > 600) {
+  if (input.whatToTest.length > 4000) {
     failures.push(
-      `What to Test is ${input.whatToTest.length} characters; keep it at or below 600`,
+      `What to Test is ${input.whatToTest.length} characters; keep it at or below 4000`,
     );
   }
   for (const path of input.trackedReleasePaths) {

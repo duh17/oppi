@@ -38,7 +38,9 @@ Example:
 
 ## [Unreleased]
 
-Target: iOS `1.1.2` build `51`, unpublished `oppi-server@0.49.1` and `oppi-mirror@0.49.1`. npm latest is still `0.49.0`.
+## [0.49.1] - 2026-09-18
+
+Target: iOS `1.1.2` build `51`, `oppi-server@0.49.1`, and `oppi-mirror@0.49.1`.
 
 ### Added
 
@@ -49,7 +51,7 @@ Target: iOS `1.1.2` build `51`, unpublished `oppi-server@0.49.1` and `oppi-mirro
 
 ### Changed
 
-- **Compatibility:** Build 51 requires unpublished `oppi-server@0.49.1` and `oppi-mirror@0.49.1`. npm latest remains `0.49.0` until publish.
+- **Compatibility:** Build 51 requires `oppi-server@0.49.1` and `oppi-mirror@0.49.1`.
 - **Client:** Pi sessions and the pinned Pi agent always use the official Pi mark, labeled Pi.
 - **Client:** Rendered maps and diagrams hide Viewing Options until Source; Source keeps the code reader.
 - **Client:** Expanding a tool call to full screen slides in from the right instead of a sheet.
