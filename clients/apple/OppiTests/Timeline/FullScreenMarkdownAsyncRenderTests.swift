@@ -651,6 +651,291 @@ struct FullScreenMarkdownAsyncRenderTests {
     }
 }
 
+@Suite("Full-screen markdown code-block wrap height")
+@MainActor
+struct FullScreenMarkdownCodeBlockWrapHeightTests {
+    @Test("wrap grows the code item, moves following content, and does not force-invalidate")
+    func wrapGrowsCodeItemAndFollowingContentThenUnwrapShrinks() async throws {
+        let longCommand = """
+        ./scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests/FullScreenMarkdownCodeBlockWrapHeightTests/wrapGrowsCodeItemAndFollowingContentThenUnwrapShrinks
+        """.trimmingCharacters(in: .whitespacesAndNewlines)
+        let content = """
+        # Reader wrap
+
+        ```bash
+        \(longCommand)
+        ```
+
+        Following prose must reflow when the fenced command wraps or unwraps.
+        """
+
+        let fixture = try await makeReaderFixture(content: content)
+        defer { fixture.tearDown() }
+
+        let codeItem = try #require(fixture.body.debugRenderedSegmentsForTesting.firstIndex {
+            if case .codeBlock = $0 { return true }
+            return false
+        })
+        let followingItem = codeItem + 1
+        #expect(fixture.body.debugRenderedSegmentCountForTesting > followingItem)
+
+        let codeIndexPath = IndexPath(item: codeItem, section: 0)
+        let followingIndexPath = IndexPath(item: followingItem, section: 0)
+        let unwrappedReserved = try #require(fixture.body.debugReservedHeightForTesting(codeItem))
+        let unwrappedLayoutHeight = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: codeIndexPath)?.frame.height
+        )
+        let unwrappedFollowingMinY = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: followingIndexPath)?.frame.minY
+        )
+
+        var forcedInvalidationCount = 0
+        ToolTimelineRowPresentationHelpers.forcedEnclosingLayoutInvalidationHookForTesting = { target in
+            if target === fixture.collectionView {
+                forcedInvalidationCount += 1
+            }
+        }
+
+        let wrapButton = try #require(wrapControl(in: fixture.body))
+        wrapButton.sendActions(for: .touchUpInside)
+        await drainMarkdownHeightFlush()
+        fixture.body.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let wrappedReserved = try #require(fixture.body.debugReservedHeightForTesting(codeItem))
+        let wrappedLayoutHeight = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: codeIndexPath)?.frame.height
+        )
+        let wrappedFollowingMinY = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: followingIndexPath)?.frame.minY
+        )
+        let codeTextView = try #require(codeBlockTextView(in: fixture.body))
+        codeTextView.layoutManager.ensureLayout(for: codeTextView.textContainer)
+        let usedRect = codeTextView.layoutManager.usedRect(for: codeTextView.textContainer)
+        let usedHeight = ceil(usedRect.height)
+        let usedInCollection = codeTextView.convert(usedRect, to: fixture.collectionView)
+        let wrappedItemFrame = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: codeIndexPath)?.frame
+        )
+
+        #expect(
+            wrappedReserved > unwrappedReserved + 8,
+            "reserved height did not grow after wrap (\(unwrappedReserved) -> \(wrappedReserved))"
+        )
+        #expect(
+            wrappedLayoutHeight > unwrappedLayoutHeight + 8,
+            "layout height did not grow after wrap (\(unwrappedLayoutHeight) -> \(wrappedLayoutHeight))"
+        )
+        #expect(
+            wrappedFollowingMinY > unwrappedFollowingMinY + 8,
+            "following item did not move down after wrap (\(unwrappedFollowingMinY) -> \(wrappedFollowingMinY))"
+        )
+        #expect(
+            codeTextView.bounds.height >= usedHeight - 1,
+            "wrapped code text is clipped (bounds: \(codeTextView.bounds.height), used: \(usedHeight))"
+        )
+        #expect(
+            usedInCollection.maxY <= wrappedItemFrame.maxY + 1,
+            "wrapped code usedRect overflows the reader item (used maxY: \(usedInCollection.maxY), item maxY: \(wrappedItemFrame.maxY))"
+        )
+        #expect(
+            forcedInvalidationCount == 0,
+            "reader wrap must not call collectionView.invalidateLayout via the helper"
+        )
+
+        wrapButton.sendActions(for: .touchUpInside)
+        await drainMarkdownHeightFlush()
+        fixture.body.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let restoredReserved = try #require(fixture.body.debugReservedHeightForTesting(codeItem))
+        let restoredLayoutHeight = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: codeIndexPath)?.frame.height
+        )
+        let restoredFollowingMinY = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: followingIndexPath)?.frame.minY
+        )
+        #expect(abs(restoredReserved - unwrappedReserved) < 1)
+        #expect(abs(restoredLayoutHeight - unwrappedLayoutHeight) < 1)
+        #expect(abs(restoredFollowingMinY - unwrappedFollowingMinY) < 1)
+        #expect(forcedInvalidationCount == 0)
+    }
+
+    @Test("JSON pretty-wrap measures displayed pretty text and unwrap restores the original")
+    func jsonPrettyWrapMeasuresDisplayedPrettyTextThenUnwrapRestoresOriginal() async throws {
+        let compactJSON = #"{"ok":true,"data":{"timed_out":true,"items":[1,2,3,4,5,6,7,8]}}"#
+        let content = """
+        # JSON wrap
+
+        ```json
+        \(compactJSON)
+        ```
+
+        Trailing prose after the JSON fence.
+        """
+
+        let fixture = try await makeReaderFixture(content: content)
+        defer { fixture.tearDown() }
+
+        let codeItem = try #require(fixture.body.debugRenderedSegmentsForTesting.firstIndex {
+            if case .codeBlock = $0 { return true }
+            return false
+        })
+        let followingItem = codeItem + 1
+        let codeIndexPath = IndexPath(item: codeItem, section: 0)
+        let followingIndexPath = IndexPath(item: followingItem, section: 0)
+        let unwrappedReserved = try #require(fixture.body.debugReservedHeightForTesting(codeItem))
+        let unwrappedFollowingMinY = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: followingIndexPath)?.frame.minY
+        )
+
+        let wrapButton = try #require(wrapControl(in: fixture.body))
+        wrapButton.sendActions(for: .touchUpInside)
+        await drainMarkdownHeightFlush()
+        fixture.body.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let codeTextView = try #require(codeBlockTextView(in: fixture.body))
+        let displayed = codeTextView.attributedText?.string ?? codeTextView.text ?? ""
+        #expect(displayed != compactJSON)
+        #expect(displayed.contains("\n"))
+        codeTextView.layoutManager.ensureLayout(for: codeTextView.textContainer)
+        let usedHeight = ceil(codeTextView.layoutManager.usedRect(for: codeTextView.textContainer).height)
+        let wrappedReserved = try #require(fixture.body.debugReservedHeightForTesting(codeItem))
+        let wrappedLayoutHeight = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: codeIndexPath)?.frame.height
+        )
+        let wrappedFollowingMinY = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: followingIndexPath)?.frame.minY
+        )
+        #expect(wrappedReserved > unwrappedReserved + 8)
+        #expect(wrappedLayoutHeight > unwrappedReserved + 8)
+        #expect(wrappedFollowingMinY > unwrappedFollowingMinY + 8)
+        #expect(codeTextView.bounds.height >= usedHeight - 1)
+
+        wrapButton.sendActions(for: .touchUpInside)
+        await drainMarkdownHeightFlush()
+        fixture.body.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let restoredText = try #require(codeBlockTextView(in: fixture.body))
+        let restoredDisplayed = restoredText.attributedText?.string ?? restoredText.text ?? ""
+        #expect(restoredDisplayed == compactJSON)
+        #expect(abs((fixture.body.debugReservedHeightForTesting(codeItem) ?? 0) - unwrappedReserved) < 1)
+        #expect(
+            abs(
+                (fixture.collectionView.layoutAttributesForItem(at: followingIndexPath)?.frame.minY ?? 0)
+                    - unwrappedFollowingMinY
+            ) < 1
+        )
+    }
+
+    @Test("wrap during interaction defers layout replacement until interaction ends")
+    func wrapDuringInteractionDefersLayoutReplacement() async throws {
+        let longCommand = String(repeating: "oppi-reader-wrap-command-", count: 12)
+        let content = """
+        # Interaction wrap
+
+        ```bash
+        \(longCommand)
+        ```
+
+        Following prose after the wrapped command.
+        """
+
+        let fixture = try await makeReaderFixture(content: content)
+        defer {
+            fixture.body.debugSetCollectionUserInteractingForTesting(nil)
+            fixture.tearDown()
+        }
+
+        let codeItem = try #require(fixture.body.debugRenderedSegmentsForTesting.firstIndex {
+            if case .codeBlock = $0 { return true }
+            return false
+        })
+        let followingItem = codeItem + 1
+        let codeIndexPath = IndexPath(item: codeItem, section: 0)
+        let followingIndexPath = IndexPath(item: followingItem, section: 0)
+        let unwrappedLayoutHeight = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: codeIndexPath)?.frame.height
+        )
+        let unwrappedFollowingMinY = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: followingIndexPath)?.frame.minY
+        )
+
+        fixture.body.debugSetCollectionUserInteractingForTesting(true)
+        let wrapButton = try #require(wrapControl(in: fixture.body))
+        wrapButton.sendActions(for: .touchUpInside)
+        await drainMarkdownHeightFlush()
+        fixture.body.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let interactingLayoutHeight = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: codeIndexPath)?.frame.height
+        )
+        let interactingFollowingMinY = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: followingIndexPath)?.frame.minY
+        )
+        #expect(abs(interactingLayoutHeight - unwrappedLayoutHeight) < 1)
+        #expect(abs(interactingFollowingMinY - unwrappedFollowingMinY) < 1)
+        #expect(fixture.body.debugNeedsLayoutReplaceAfterInteractionForTesting)
+        #expect((fixture.body.debugReservedHeightForTesting(codeItem) ?? 0) > unwrappedLayoutHeight + 8)
+
+        fixture.body.debugSetCollectionUserInteractingForTesting(false)
+        fixture.body.setNeedsLayout()
+        fixture.body.layoutIfNeeded()
+        await drainMarkdownHeightFlush()
+        fixture.body.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let appliedLayoutHeight = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: codeIndexPath)?.frame.height
+        )
+        let appliedFollowingMinY = try #require(
+            fixture.collectionView.layoutAttributesForItem(at: followingIndexPath)?.frame.minY
+        )
+        #expect(appliedLayoutHeight > unwrappedLayoutHeight + 8)
+        #expect(appliedFollowingMinY > unwrappedFollowingMinY + 8)
+        #expect(!fixture.body.debugNeedsLayoutReplaceAfterInteractionForTesting)
+    }
+
+    @MainActor
+    private struct ReaderFixture {
+        let body: NativeFullScreenMarkdownBody
+        let collectionView: UICollectionView
+        let window: UIWindow
+
+        func tearDown() {
+            ToolTimelineRowPresentationHelpers.forcedEnclosingLayoutInvalidationHookForTesting = nil
+            window.isHidden = true
+        }
+    }
+
+    private func makeReaderFixture(content: String) async throws -> ReaderFixture {
+        let body = NativeFullScreenMarkdownBody(
+            content: content,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.addSubview(body)
+        body.frame = window.bounds
+        window.makeKeyAndVisible()
+        body.layoutIfNeeded()
+        let collectionView = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
+        collectionView.layoutIfNeeded()
+        await drainMarkdownHeightFlush()
+        body.debugLayoutVisibleMarkdownCellsForTesting()
+        return ReaderFixture(body: body, collectionView: collectionView, window: window)
+    }
+
+    private func wrapControl(in root: UIView) -> UIButton? {
+        timelineAllViews(in: root).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "markdown.codeBlock.wrap"
+        }
+    }
+
+    private func codeBlockTextView(in root: UIView) -> UITextView? {
+        let codeBlock = timelineFirstView(ofType: NativeCodeBlockView.self, in: root)
+        return codeBlock.flatMap { timelineAllTextViews(in: $0).first }
+    }
+}
+
 private func drainMarkdownHeightFlush() async {
     await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
         DispatchQueue.main.async {

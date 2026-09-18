@@ -2218,6 +2218,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var pendingDocumentLayoutReason: MarkdownReaderLayoutReplacementReason = .document
     private var isConfiguringCell = false
     private var pendingHeightFlush = false
+    private var pendingForcedItemRemeasure = false
+    private weak var pendingForcedItemRemeasureSourceView: UIView?
+    private var pendingForcedItemRemeasureToken: MarkdownReaderHeightLedger.WorkToken?
     private var heightFlushGeneration = 0
     private var needsLayoutReplaceAfterInteraction = false
     private var needsVisibleHeightRefreshAfterInteraction = false
@@ -3747,6 +3750,80 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             guard let indexPath = collectionView.indexPath(for: cell) else { continue }
             updateGeometryPresentation(on: cell, item: indexPath.item)
         }
+    }
+
+    /// Item-scoped wrap remasure for the full-screen reader. Absolute
+    /// compositional heights ignore `invalidateLayout()`, so wrap/pretty-JSON
+    /// growth has to commit through the ledger and replace the layout.
+    func scheduleForcedItemRemeasure(from sourceView: UIView) {
+        guard let cell = enclosingSegmentCell(from: sourceView),
+              let id = cell.appliedSegmentID,
+              let canonicalWidth = preparedCanonicalWidth,
+              let token = heightLedger.workToken(
+                  for: id,
+                  canonicalWidth: canonicalWidth
+              ) else { return }
+        pendingForcedItemRemeasureSourceView = sourceView
+        pendingForcedItemRemeasureToken = token
+        guard !pendingForcedItemRemeasure else { return }
+        pendingForcedItemRemeasure = true
+        DispatchQueue.main.async { [weak self] in
+            self?.performPendingForcedItemRemeasure()
+        }
+    }
+
+    private func enclosingSegmentCell(from sourceView: UIView) -> FullScreenMarkdownSegmentCell? {
+        var view: UIView? = sourceView
+        while let current = view, current !== collectionView {
+            if let cell = current as? FullScreenMarkdownSegmentCell {
+                return cell
+            }
+            view = current.superview
+        }
+        return nil
+    }
+
+    private func performPendingForcedItemRemeasure() {
+        if isConfiguringCell {
+            DispatchQueue.main.async { [weak self] in
+                self?.performPendingForcedItemRemeasure()
+            }
+            return
+        }
+
+        pendingForcedItemRemeasure = false
+        let sourceView = pendingForcedItemRemeasureSourceView
+        let token = pendingForcedItemRemeasureToken
+        pendingForcedItemRemeasureSourceView = nil
+        pendingForcedItemRemeasureToken = nil
+
+        guard let token,
+              token.generation == heightLedger.generation,
+              let canonicalWidth = preparedCanonicalWidth,
+              abs(canonicalWidth - token.canonicalWidth) <= 0.5,
+              let sourceView,
+              let cell = enclosingSegmentCell(from: sourceView),
+              cell.appliedSegmentID == token.id,
+              let item = renderedSegmentIDs.firstIndex(of: token.id),
+              itemHeights.indices.contains(item) else { return }
+
+        let next = cell.measuredFittingHeight(width: canonicalWidth)
+        guard abs(itemHeights[item] - next) > 0.5 else { return }
+
+        let commit = heightLedger.commitFinal(
+            token: token,
+            height: next,
+            anchorID: captureViewportAnchorID()
+        )
+        guard commit.accepted else { return }
+        #if DEBUG
+        debugGeometryCommitCount += 1
+        #endif
+        itemHeights = heightLedger.heights()
+        replaceCollectionLayout(
+            preserveViewport: true,
+            reason: .visibleReconciliation
+        )
     }
 
     private func updateReservedHeight(

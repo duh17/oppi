@@ -346,6 +346,10 @@ enum ToolTimelineRowPresentationHelpers {
 
         let target = enclosingLayoutTarget(startingAt: sourceView)
         if let collectionView = target.collectionView {
+            if let reader = collectionView.delegate as? NativeFullScreenMarkdownBody {
+                reader.scheduleForcedItemRemeasure(from: sourceView)
+                return
+            }
             if isUserInteracting(with: collectionView) {
                 scheduleForcedInvalidationWhenInteractionEnds(for: collectionView)
                 return
