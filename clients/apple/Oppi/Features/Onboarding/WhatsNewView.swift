@@ -78,28 +78,42 @@ struct WhatsNewView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
-    /// Build 50 · Changes since Build 49
+    /// Builds 49–51 · Changes since Build 48
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            id: "usdz-and-maps",
-            icon: "cube.transparent",
+            id: "richer-documents",
+            icon: "doc.text",
             iconColor: .themeBlue,
-            title: String(localized: "USDZ, GeoJSON, and TopoJSON"),
-            description: String(localized: "USDZ opens in RealityView. GeoJSON and TopoJSON open as maps with a JSON source toggle.")
+            title: String(localized: "Richer documents"),
+            description: String(localized: "Tree-sitter syntax highlighting for JavaScript, TypeScript, Python, Go, Rust, Java, C, C++, Bash, HTML, CSS, Ruby, YAML, and TOML. CSV and TSV open as tables, HEIC and HEIF as images. USDZ opens in RealityView. GeoJSON and TopoJSON open as maps.")
+        ),
+        WhatsNewFeature(
+            id: "improved-dictation",
+            icon: "waveform.badge.microphone",
+            iconColor: .themeGreen,
+            title: String(localized: "Improved dictation"),
+            description: String(localized: "On-device dictation uses the iOS 27 dictation engine by default, supports AirPods, and no longer interrupts other audio.")
         ),
         WhatsNewFeature(
             id: "full-screen-viewers",
             icon: "rectangle.portrait.and.arrow.right",
-            iconColor: .themeGreen,
+            iconColor: .themeOrange,
             title: String(localized: "Full-screen viewers"),
-            description: String(localized: "Rendered maps and diagrams hide Viewing Options until Source. Expanding a tool call to full screen slides in from the right. Staged review comments show on more file views.")
+            description: String(localized: "Maps and diagrams hide Viewing Options until Source. Tool calls expand from the right. Large bash output, code, diffs, and thinking traces open without hanging.")
         ),
         WhatsNewFeature(
-            id: "official-pi-mark",
-            icon: "checkmark.seal",
+            id: "session-chrome",
+            icon: "rectangle.grid.1x2",
             iconColor: .themePurple,
-            title: String(localized: "Official Pi mark"),
-            description: String(localized: "Pi sessions always use the official Pi mark. Grid π and the assistant avatar setting are gone.")
+            title: String(localized: "Simpler session chrome"),
+            description: String(localized: "Session lists put Message and dictation on the left, Files on the right. Pi sessions always use the official Pi mark.")
+        ),
+        WhatsNewFeature(
+            id: "stability",
+            icon: "wrench.and.screwdriver",
+            iconColor: .themeYellow,
+            title: String(localized: "Stability"),
+            description: String(localized: "Performance and bug fixes throughout, including session search, file browser, and review comments.")
         ),
     ]
 

@@ -38,7 +38,7 @@ Example:
 
 ## [Unreleased]
 
-Target: iOS `1.1.2` build `50`, unpublished `oppi-server@0.49.1` and `oppi-mirror@0.49.1`. npm latest is still `0.49.0`.
+Target: iOS `1.1.2` build `51`, unpublished `oppi-server@0.49.1` and `oppi-mirror@0.49.1`. npm latest is still `0.49.0`.
 
 ### Added
 
@@ -49,7 +49,7 @@ Target: iOS `1.1.2` build `50`, unpublished `oppi-server@0.49.1` and `oppi-mirro
 
 ### Changed
 
-- **Compatibility:** Build 50 requires unpublished `oppi-server@0.49.1` and `oppi-mirror@0.49.1`. npm latest remains `0.49.0` until publish.
+- **Compatibility:** Build 51 requires unpublished `oppi-server@0.49.1` and `oppi-mirror@0.49.1`. npm latest remains `0.49.0` until publish.
 - **Client:** Pi sessions and the pinned Pi agent always use the official Pi mark, labeled Pi.
 - **Client:** Rendered maps and diagrams hide Viewing Options until Source; Source keeps the code reader.
 - **Client:** Expanding a tool call to full screen slides in from the right instead of a sheet.
@@ -57,6 +57,11 @@ Target: iOS `1.1.2` build `50`, unpublished `oppi-server@0.49.1` and `oppi-mirro
 
 ### Fixed
 
+- **Client:** Completed megabyte terminal logs index off-main and mount visible chunks only, instead of hanging or jetsamming one giant text view.
+- **Client:** Large full-screen code files index off-main and mount visible highlighted chunks only.
+- **Client:** Large unified diffs index off-main and mount visible chunks with horizontal overflow.
+- **Client:** Streaming thinking traces virtualize chunk growth instead of replacing the whole text view on every delta.
+- **Client:** Wrapped markdown reader code blocks grow with the wrapped height so remaining command text is not clipped.
 - **Client:** All Sessions and workspace session search keep Results after opening a hit.
 - **Client:** Long unfocused Ask cards scroll inside the expanded-surface cap instead of filling the chat.
 - **Client:** Staged review comments show on git-context and commit file views.
