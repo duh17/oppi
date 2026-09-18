@@ -1628,17 +1628,24 @@ final class NativeFullScreenDiffBody: UIView {
 
     private func applyWrapMode() {
         let wraps = readerPreferences.wrapsText
+        let viewportWidth = max(1, scrollView.bounds.width)
+        let insets = diffTextView.textContainerInset
+        let textContainerWidth = max(1, viewportWidth - insets.left - insets.right)
         diffTextView.textContainer.lineBreakMode = wraps ? .byCharWrapping : .byClipping
-        diffTextView.textContainer.widthTracksTextView = wraps
+        // Do not use `widthTracksTextView` + `.zero`: wrap-on first layout after a
+        // 0-width open leaves a zero-height container until Wrap Text is toggled.
+        diffTextView.textContainer.widthTracksTextView = false
         diffTextView.textContainer.size = wraps
-            ? .zero
-            : CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+            ? CGSize(width: textContainerWidth, height: .greatestFiniteMagnitude)
+            : CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         scrollView.alwaysBounceHorizontal = !wraps
         scrollView.showsHorizontalScrollIndicator = !wraps
-        widthConstraint?.constant = wraps ? max(1, scrollView.bounds.width) : max(1, unwrappedContentWidth)
+        widthConstraint?.constant = wraps ? viewportWidth : max(unwrappedContentWidth, viewportWidth)
         if wraps {
             scrollView.contentOffset.x = -scrollView.adjustedContentInset.left
         }
+        diffTextView.invalidateIntrinsicContentSize()
+        diffTextView.layoutManager.ensureLayout(for: diffTextView.textContainer)
     }
 
     private func styledDiffText(_ attributedText: NSAttributedString) -> NSAttributedString {

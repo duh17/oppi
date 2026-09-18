@@ -1291,6 +1291,75 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(request.source.lineRange == 21...21)
     }
 
+    @Test func wrappedDiffBodyShowsLinesAfterOpeningAtZeroWidth() async throws {
+        FullScreenReaderPreferencesStore.shared.setPreferences(
+            FullScreenReaderPreferences(wrapsText: true),
+            for: .diff
+        )
+        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff) }
+
+        let lines = [
+            DiffLine(kind: .removed, text: "Head: local main at 787c1dc5f", oldLineNumber: 4, newLineNumber: nil),
+            DiffLine(kind: .added, text: "Head: local main at 787c1dc5f plus", oldLineNumber: nil, newLineNumber: 4),
+        ]
+        let body = NativeFullScreenDiffBody(
+            document: ToolDiffDocument(
+                lines: lines,
+                filePath: "/Users/chenda/workspace/oppi/.internal/release-notes/build-51-findings.md",
+                copyText: DiffEngine.formatUnified(lines)
+            ),
+            palette: ThemeID.dark.palette,
+            readerPreferences: FullScreenReaderPreferences(wrapsText: true),
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 844))
+        body.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            body.topAnchor.constraint(equalTo: host.topAnchor),
+            body.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        host.layoutIfNeeded()
+
+        let textView = try #require(timelineAllTextViews(in: body).first)
+        let painted = await waitForMainActorCondition(timeout: .seconds(2)) {
+            host.layoutIfNeeded()
+            let text = textView.attributedText?.string ?? ""
+            let added = (text as NSString).range(of: "787c1dc5f plus")
+            guard added.location != NSNotFound else { return false }
+            return textView.attributedText?.attribute(
+                reviewLineNumberAttributeKey,
+                at: added.location,
+                effectiveRange: nil
+            ) as? Int == 4
+        }
+        #expect(painted, "rich wrap paint must finish before the width is restored")
+
+        host.frame.size.width = 390
+        host.setNeedsLayout()
+        host.layoutIfNeeded()
+        body.layoutIfNeeded()
+        textView.layoutIfNeeded()
+        textView.layoutManager.ensureLayout(for: textView.textContainer)
+
+        let rendered = timelineRenderedText(of: textView)
+        let used = textView.layoutManager.usedRect(for: textView.textContainer)
+        let insets = textView.textContainerInset
+        let expectedContainerWidth = 390 - insets.left - insets.right
+        let visibleFrame = textView.convert(textView.bounds, to: host).intersection(host.bounds)
+        #expect(rendered.contains("787c1dc5f plus"))
+        #expect(abs(textView.textContainer.size.width - expectedContainerWidth) <= 1)
+        #expect(textView.textContainer.size.height > 40)
+        #expect(textView.bounds.width > 100)
+        #expect(used.width > 100)
+        #expect(used.height > 20)
+        #expect(visibleFrame.width > 100)
+        #expect(visibleFrame.height > 20)
+    }
+
     @Test func completedDiffBodyUsesStrongerBackgroundForChangedTokens() async throws {
         let lines = [
             DiffLine(kind: .removed, text: "let value = oldName", oldLineNumber: 8, newLineNumber: nil),
