@@ -172,41 +172,37 @@ struct AssistantMarkdownLayoutTests {
         collectionView.captureDetachedAnchor()
         #expect(collectionView.detachedAnchorIsActive)
 
-        let imageRendered = await waitForTimelineCondition(timeoutMs: 1_800) {
-            await MainActor.run {
-                window.layoutIfNeeded()
-                collectionView.layoutIfNeeded()
-                guard let firstCell = collectionView.cellForItem(at: firstIP),
-                      let imageView = timelineFirstView(ofType: NativeMarkdownImageView.self, in: firstCell.contentView)
-                else {
-                    return false
-                }
-                return timelineAllImageViews(in: imageView).contains { $0.image != nil && !$0.isHidden }
+        let imageRendered = await waitForTimelineCondition(timeoutMs: 1_800) { @MainActor in
+            window.layoutIfNeeded()
+            collectionView.layoutIfNeeded()
+            guard let firstCell = collectionView.cellForItem(at: firstIP),
+                  let imageView = timelineFirstView(ofType: NativeMarkdownImageView.self, in: firstCell.contentView)
+            else {
+                return false
             }
+            return timelineAllImageViews(in: imageView).contains { $0.image != nil && !$0.isHidden }
         }
         #expect(imageRendered, "Expected delayed markdown PNG to decode while detached")
 
-        let reflowed = await waitForTimelineCondition(timeoutMs: 1_400) {
-            await MainActor.run {
-                window.layoutIfNeeded()
-                collectionView.layoutIfNeeded()
-                guard let firstFrame = collectionView.layoutAttributesForItem(at: firstIP)?.frame,
-                      let firstCell = collectionView.cellForItem(at: firstIP),
-                      let imageView = timelineFirstView(ofType: NativeMarkdownImageView.self, in: firstCell.contentView)
-                else {
-                    return false
-                }
-                let expectedImageHeight = ImageViewportSizing.fittedHeight(
-                    forWidth: max(1, imageView.bounds.width),
-                    heightToWidthRatio: 320.0 / 80.0,
-                    surface: .inlineProse,
-                    screenHeight: window.windowScene?.screen.bounds.height ?? hostSize.height
-                )
-                let imageTallEnough = imageView.bounds.height >= expectedImageHeight - 8
-                let rowGrew = firstFrame.height > initialFirstHeight + 40
-                // The user-visible bug is the image row staying short while detached.
-                return imageTallEnough && rowGrew
+        let reflowed = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            window.layoutIfNeeded()
+            collectionView.layoutIfNeeded()
+            guard let firstFrame = collectionView.layoutAttributesForItem(at: firstIP)?.frame,
+                  let firstCell = collectionView.cellForItem(at: firstIP),
+                  let imageView = timelineFirstView(ofType: NativeMarkdownImageView.self, in: firstCell.contentView)
+            else {
+                return false
             }
+            let expectedImageHeight = ImageViewportSizing.fittedHeight(
+                forWidth: max(1, imageView.bounds.width),
+                heightToWidthRatio: 320.0 / 80.0,
+                surface: .inlineProse,
+                screenHeight: window.windowScene?.screen.bounds.height ?? hostSize.height
+            )
+            let imageTallEnough = imageView.bounds.height >= expectedImageHeight - 8
+            let rowGrew = firstFrame.height > initialFirstHeight + 40
+            // The user-visible bug is the image row staying short while detached.
+            return imageTallEnough && rowGrew
         }
 
         #expect(
