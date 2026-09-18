@@ -62,6 +62,11 @@ Target: iOS `1.1.2` build `51`, unpublished `oppi-server@0.49.1` and `oppi-mirro
 - **Client:** Large unified diffs index off-main and mount visible chunks with horizontal overflow.
 - **Client:** Streaming thinking traces virtualize chunk growth instead of replacing the whole text view on every delta.
 - **Client:** Wrapped markdown reader code blocks grow with the wrapped height so remaining command text is not clipped.
+- **Client:** Large bash output opens from a ranged sidecar window instead of waiting on the entire JSON; tap-expand uses that first window as preview, copy still fetches the complete sidecar.
+- **Client:** Wrapped terminal chunks split at 64 visual rows so a long wrapped log does not stall the main thread.
+- **Client:** Wrapped full-screen edit diffs paint on first open instead of empty chrome until wrap is toggled.
+- **Client:** File reader Viewing Options no longer overlap previous/next. Documents use one leading prev/next pill; audio and video keep split corners.
+- **Client/Server:** Host-workspace wiki links outside the session workspace open through an explicit real path, including in-tree symlink targets.
 - **Client:** All Sessions and workspace session search keep Results after opening a hit.
 - **Client:** Long unfocused Ask cards scroll inside the expanded-surface cap instead of filling the chat.
 - **Client:** Staged review comments show on git-context and commit file views.

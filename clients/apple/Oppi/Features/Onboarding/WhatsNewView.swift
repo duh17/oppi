@@ -99,7 +99,7 @@ struct WhatsNewView: View {
             icon: "rectangle.portrait.and.arrow.right",
             iconColor: .themeOrange,
             title: String(localized: "Full-screen viewers"),
-            description: String(localized: "Maps and diagrams hide Viewing Options until Source. Tool calls expand from the right. Large bash output, code, diffs, and thinking traces open without hanging.")
+            description: String(localized: "Maps and diagrams hide Viewing Options until Source. Tool calls expand from the right. Large bash output, code, diffs, and thinking traces open without hanging. Viewing Options stay clear of previous/next.")
         ),
         WhatsNewFeature(
             id: "session-chrome",
@@ -113,7 +113,7 @@ struct WhatsNewView: View {
             icon: "wrench.and.screwdriver",
             iconColor: .themeYellow,
             title: String(localized: "Stability"),
-            description: String(localized: "Performance and bug fixes throughout, including session search, file browser, and review comments.")
+            description: String(localized: "File reader chrome, host wiki links, session search, file browser, review comments, and other reliability fixes.")
         ),
     ]
 
