@@ -1088,13 +1088,18 @@ enum FullScreenCopyDestination {
 /// Some read-only full-screen selections never get that callback, so this view
 /// also owns a fallback `UIEditMenuInteraction`; the fallback stands down when
 /// the native delegate has already built the menu for the current selection.
-final class FullScreenReviewCommentTextView: UITextView {
+final class FullScreenReviewCommentTextView: UITextView, ReviewCommentSourceLineRangeResolving {
 #if DEBUG
     static var forcesReviewSelectionTipForTesting = false
 #endif
 
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     var reviewCommentSourceContext: ReviewCommentSourceContext?
+    var reviewCommentSourceLineRangeResolver: ((NSRange) -> ClosedRange<Int>?)?
+
+    func reviewCommentSourceLineRange(for range: NSRange) -> ClosedRange<Int>? {
+        reviewCommentSourceLineRangeResolver?(range)
+    }
 
     private static let reviewSelectionTipTopPadding: CGFloat = 10
     private static let reviewSelectionTipHorizontalPadding: CGFloat = 12

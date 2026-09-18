@@ -1505,6 +1505,68 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(commentAction.title == "Comment")
     }
 
+    @Test func largeCompletedTerminalMountsOnlyViewportChunks() async throws {
+        let content = (0..<6_000).map { line in
+            "\u{1B}[32mgreen output \(line)\u{1B}[0m " + String(repeating: "x", count: 180) + "\n"
+        }.joined()
+        #expect(content.utf8.count > 1_000_000)
+        let body = NativeFullScreenTerminalBody(
+            content: content,
+            command: "git push",
+            stream: nil,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        body.frame = host.bounds
+        host.addSubview(body)
+        host.layoutIfNeeded()
+
+        let didVirtualize = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.layoutIfNeeded()
+            let mountedOutputLength = timelineAllTextViews(in: body)
+                .filter { timelineRenderedText(of: $0) != "git push" }
+                .reduce(into: 0) { $0 += $1.textStorage.length }
+            return mountedOutputLength > 0 && mountedOutputLength < content.utf16.count / 4
+        }
+
+        #expect(didVirtualize)
+        let diagnostics = try #require(body.virtualizationDiagnosticsForTesting())
+        #expect(diagnostics.retainedSourceUTF8Count == content.utf8.count)
+        #expect(diagnostics.chunkCount > 1)
+        #expect(diagnostics.cachedChunkCount <= 14)
+        #expect(diagnostics.mountedChunkCount < diagnostics.chunkCount)
+        #expect(diagnostics.mountedUTF16Count < content.utf16.count / 4)
+        #expect(diagnostics.indexRanOnMainThread == false)
+        #expect(timelineAllTextViews(in: body).allSatisfy {
+            $0.textStorage.length < content.utf16.count / 4
+        })
+
+        let collectionView = try #require(timelineAllScrollViews(in: body).compactMap { $0 as? UICollectionView }.first)
+        collectionView.setContentOffset(
+            CGPoint(x: collectionView.contentOffset.x, y: max(0, collectionView.contentSize.height - collectionView.bounds.height)),
+            animated: false
+        )
+        let renderedTail = await waitForMainActorCondition(timeout: .seconds(2)) {
+            host.layoutIfNeeded()
+            return timelineAllTextViews(in: body).contains {
+                timelineRenderedText(of: $0).contains("green output 5999")
+            }
+        }
+        #expect(renderedTail)
+        let tailTextView = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0).contains("green output 5999")
+        } as? FullScreenReviewCommentTextView)
+        let tailStorage = tailTextView.textStorage.string as NSString
+        let tailRange = tailStorage.range(of: "green output 5999")
+        #expect(tailTextView.reviewCommentSourceLineRange(for: tailRange) == 6_000...6_000)
+
+        body.applyReaderPreferences(FullScreenReaderPreferences(wrapsText: true))
+        host.layoutIfNeeded()
+        #expect(body.virtualizationDiagnosticsForTesting()?.cachedChunkCount ?? 0 <= 14)
+    }
+
     @Test func terminalBodyDefaultsToUnwrappedOutputAndAppliesReaderPreferences() throws {
         let longLine = String(repeating: "abcdefghij", count: 40)
         let body = NativeFullScreenTerminalBody(
@@ -1526,6 +1588,7 @@ struct FullScreenReviewCommentSelectionTests {
         ])
         host.layoutIfNeeded()
 
+        #expect(body.virtualizationDiagnosticsForTesting() == nil)
         let outputView = try #require(timelineAllTextViews(in: body).first {
             timelineRenderedText(of: $0) == longLine
         })

@@ -417,4 +417,245 @@ enum ANSIParser {
         return String(decoding: result, as: UTF8.self)
     }
 
+    // MARK: - Terminal chunk indexing
+
+    struct TerminalChunk: Sendable, Equatable {
+        let rawByteRange: Range<Int>
+        let displayedUTF16Range: Range<Int>
+        let leadingSGR: String
+        let displayedStartLine: Int
+        let lineColumnCounts: [Int]
+        /// Bounded slice retained to make arbitrary tail rendering O(chunk),
+        /// rather than walking a variable-width Swift String from its start.
+        let rawText: String
+
+        var rawByteCount: Int { rawByteRange.count }
+    }
+
+    struct TerminalChunkIndex: Sendable, Equatable {
+        let chunks: [TerminalChunk]
+        let displayedUTF16Count: Int
+        let widestLineColumnCount: Int
+
+        /// Resolve a document-level selection even when it spans several
+        /// mounted chunks. Ranges use the ANSI-stripped UTF-16 coordinate space
+        /// used by UITextView.
+        func displayedText(inUTF16Range range: Range<Int>) -> String {
+            guard !range.isEmpty else { return "" }
+            var result = ""
+            for chunk in chunks {
+                let lower = max(range.lowerBound, chunk.displayedUTF16Range.lowerBound)
+                let upper = min(range.upperBound, chunk.displayedUTF16Range.upperBound)
+                guard lower < upper else { continue }
+                let displayed = ANSIParser.strip(chunk.rawText) as NSString
+                let local = NSRange(
+                    location: lower - chunk.displayedUTF16Range.lowerBound,
+                    length: upper - lower
+                )
+                guard NSMaxRange(local) <= displayed.length else { continue }
+                result += displayed.substring(with: local)
+            }
+            return result
+        }
+
+        static func build(
+            from source: String,
+            maxLines: Int = 160,
+            maxBytes: Int = 32 * 1024
+        ) -> TerminalChunkIndex {
+            precondition(maxLines > 0 && maxBytes > 0)
+            let bytes = Array(source.utf8)
+            var chunks: [TerminalChunk] = []
+            chunks.reserveCapacity(max(1, bytes.count / maxBytes))
+            var style = TerminalSGRCarry()
+            var leadingStyle = style
+            var chunkStart = 0
+            var lineCount = 0
+            var chunkStartLine = 1
+            var displayedStart = 0
+            var widest = 0
+            var currentLineColumns = 0
+            var index = 0
+
+            func makeLineColumns(_ text: String) -> [Int] {
+                var result: [Int] = []
+                var columns = 0
+                for character in text {
+                    if character == "\n" {
+                        result.append(columns)
+                        columns = 0
+                    } else if character == "\t" {
+                        columns += 4
+                    } else {
+                        columns += 1
+                    }
+                }
+                if !text.hasSuffix("\n") || result.isEmpty {
+                    result.append(columns)
+                }
+                return result
+            }
+
+            func finishChunk(at end: Int) {
+                guard end > chunkStart else { return }
+                let raw = String(decoding: bytes[chunkStart..<end], as: UTF8.self)
+                let displayed = ANSIParser.strip(raw)
+                let displayedLength = (displayed as NSString).length
+                let columns = makeLineColumns(displayed)
+                chunks.append(TerminalChunk(
+                    rawByteRange: chunkStart..<end,
+                    displayedUTF16Range: displayedStart..<(displayedStart + displayedLength),
+                    leadingSGR: leadingStyle.escapeSequence,
+                    displayedStartLine: chunkStartLine,
+                    lineColumnCounts: columns,
+                    rawText: raw
+                ))
+                displayedStart += displayedLength
+                chunkStart = end
+                leadingStyle = style
+                chunkStartLine += lineCount
+                lineCount = 0
+            }
+
+            while index < bytes.count {
+                if bytes[index] == 0x1B, index + 1 < bytes.count, bytes[index + 1] == 0x5B {
+                    let sequenceStart = index + 2
+                    if let end = ANSIParser.csiEnd(in: bytes, from: sequenceStart) {
+                        if bytes[end - 1] == 0x6D {
+                            style.apply(bytes, from: sequenceStart, to: end - 1)
+                        }
+                        index = end
+                    } else {
+                        index = bytes.count
+                    }
+                } else if bytes[index] == 0x1B,
+                          index + 1 < bytes.count,
+                          ANSIParser.isEscStringControl(bytes[index + 1]) {
+                    index = ANSIParser.oscEnd(
+                        in: bytes,
+                        from: index + 2,
+                        allowsBEL: bytes[index + 1] == 0x5D
+                    ) ?? bytes.count
+                } else if bytes[index] == 0xC2,
+                          index + 1 < bytes.count,
+                          bytes[index + 1] == 0x9B {
+                    let sequenceStart = index + 2
+                    if let end = ANSIParser.csiEnd(in: bytes, from: sequenceStart) {
+                        if bytes[end - 1] == 0x6D {
+                            style.apply(bytes, from: sequenceStart, to: end - 1)
+                        }
+                        index = end
+                    } else {
+                        index = bytes.count
+                    }
+                } else if bytes[index] == 0xC2,
+                          index + 1 < bytes.count,
+                          ANSIParser.isC1StringControl(bytes[index + 1]) {
+                    index = ANSIParser.oscEnd(
+                        in: bytes,
+                        from: index + 2,
+                        allowsBEL: bytes[index + 1] == 0x9D
+                    ) ?? bytes.count
+                } else {
+                    if bytes[index] == 0x0A {
+                        lineCount += 1
+                        widest = max(widest, currentLineColumns)
+                        currentLineColumns = 0
+                    } else if bytes[index] == 0x09 {
+                        currentLineColumns += 4
+                    } else {
+                        currentLineColumns += 1
+                    }
+                    let scalarLength: Int
+                    switch bytes[index] {
+                    case 0x00..<0x80: scalarLength = 1
+                    case 0xC0..<0xE0: scalarLength = 2
+                    case 0xE0..<0xF0: scalarLength = 3
+                    default: scalarLength = 4
+                    }
+                    index = min(bytes.count, index + scalarLength)
+                }
+
+                if lineCount >= maxLines || index - chunkStart >= maxBytes {
+                    finishChunk(at: index)
+                }
+            }
+            finishChunk(at: bytes.count)
+            widest = max(widest, currentLineColumns)
+
+            return TerminalChunkIndex(
+                chunks: chunks,
+                displayedUTF16Count: displayedStart,
+                widestLineColumnCount: widest
+            )
+        }
+    }
+
+    private struct TerminalSGRCarry {
+        var bold = false
+        var dim = false
+        var italic = false
+        var underline = false
+        var foreground: [Int]?
+        var background: [Int]?
+
+        var escapeSequence: String {
+            var codes: [Int] = []
+            if bold { codes.append(1) }
+            if dim { codes.append(2) }
+            if italic { codes.append(3) }
+            if underline { codes.append(4) }
+            if let foreground { codes.append(contentsOf: foreground) }
+            if let background { codes.append(contentsOf: background) }
+            guard !codes.isEmpty else { return "" }
+            return "\u{1B}[" + codes.map(String.init).joined(separator: ";") + "m"
+        }
+
+        mutating func apply(_ bytes: [UInt8], from start: Int, to end: Int) {
+            let parameterText = String(decoding: bytes[start..<end], as: UTF8.self)
+            let parameters = parameterText.isEmpty
+                ? [0]
+                : parameterText.split(separator: ";", omittingEmptySubsequences: false).map {
+                    Int($0) ?? 0
+                }
+            var index = 0
+            while index < parameters.count {
+                let code = parameters[index]
+                switch code {
+                case 0:
+                    self = TerminalSGRCarry()
+                case 1: bold = true
+                case 2: dim = true
+                case 3: italic = true
+                case 4: underline = true
+                case 22: bold = false; dim = false
+                case 23: italic = false
+                case 24: underline = false
+                case 30...37, 90...97:
+                    foreground = [code]
+                case 39:
+                    foreground = nil
+                case 40...47, 100...107:
+                    background = [code]
+                case 49:
+                    background = nil
+                case 38, 48:
+                    let targetIsForeground = code == 38
+                    if index + 2 < parameters.count, parameters[index + 1] == 5 {
+                        let value = [code, 5, parameters[index + 2]]
+                        if targetIsForeground { foreground = value } else { background = value }
+                        index += 2
+                    } else if index + 4 < parameters.count, parameters[index + 1] == 2 {
+                        let value = [code, 2, parameters[index + 2], parameters[index + 3], parameters[index + 4]]
+                        if targetIsForeground { foreground = value } else { background = value }
+                        index += 4
+                    }
+                default:
+                    break
+                }
+                index += 1
+            }
+        }
+    }
+
 }

@@ -468,6 +468,50 @@ struct ANSIParserTests {
         #expect(bg != nil, "Expected .backgroundColor for RGB bg code")
     }
 
+    // MARK: - Terminal chunk index
+
+    @Test("terminal chunks are bounded and preserve SGR at boundaries")
+    func terminalChunkIndexCarriesSGR() {
+        let input = "\u{1B}[1;32m" + String(repeating: "colored line\n", count: 12) + "\u{1B}[0mplain"
+        let index = ANSIParser.TerminalChunkIndex.build(
+            from: input,
+            maxLines: 3,
+            maxBytes: 80
+        )
+
+        #expect(index.chunks.count > 1)
+        #expect(index.chunks.allSatisfy { $0.rawByteCount <= 80 || $0.lineColumnCounts.count == 1 })
+        let rendered = index.chunks.map { chunk in
+            ANSIParser.attributedString(from: chunk.leadingSGR + chunk.rawText)
+        }
+        #expect(rendered.map(\.string).joined() == ANSIParser.strip(input))
+
+        let second = rendered[1]
+        let color = second.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
+        #expect(color == UIColor(Color.themeGreen))
+        let font = second.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
+        #expect(font?.fontDescriptor.symbolicTraits.contains(.traitBold) == true)
+
+        let boundary = index.chunks[0].displayedUTF16Range.upperBound
+        let selection = (boundary - 4)..<(boundary + 5)
+        let fullDisplay = ANSIParser.strip(input) as NSString
+        #expect(index.displayedText(inUTF16Range: selection) == fullDisplay.substring(with: NSRange(
+            location: selection.lowerBound,
+            length: selection.count
+        )))
+    }
+
+    @Test("terminal chunks cap a huge single line by bytes")
+    func terminalChunkIndexCapsSingleLine() {
+        let input = String(repeating: "x", count: 200_000)
+        let index = ANSIParser.TerminalChunkIndex.build(from: input, maxLines: 100, maxBytes: 32 * 1024)
+
+        #expect(index.chunks.count > 1)
+        #expect(index.chunks.allSatisfy { $0.rawByteCount <= 32 * 1024 })
+        #expect(index.displayedUTF16Count == input.utf16.count)
+        #expect(index.widestLineColumnCount == input.utf16.count)
+    }
+
     // MARK: - Performance
 
     @Test("benchmark: strip handles ~32KB mixed ANSI log quickly")
