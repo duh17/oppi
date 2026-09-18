@@ -659,7 +659,7 @@ final class FullScreenCodeViewController: UIViewController {
              .delimitedTable(let text, _),
              .geoJSON(let text, _),
              .thinking(let text, _),
-             .terminal(let text, _, _):
+             .terminal(let text, _, _, _):
             textAndFirstLine = (text, 1)
         case .diff(let document):
             textAndFirstLine = (document.reconstructedNewSideText, 1)
@@ -1233,7 +1233,7 @@ final class FullScreenCodeViewController: UIViewController {
                     )
                 }
             )
-        case .terminal(let text, let command, let stream):
+        case .terminal(let text, let command, let stream, let sidecarSource):
             return NativeFullScreenTerminalBody(
                 content: text,
                 command: command,
@@ -1244,7 +1244,8 @@ final class FullScreenCodeViewController: UIViewController {
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenTerminal,
                     fallbackSourceLabel: command
-                )
+                ),
+                sidecarSource: sidecarSource
             )
         case .liveSource(let snapshot, _):
             return makeBodyView(
@@ -1889,7 +1890,7 @@ final class FullScreenCodeViewController: UIViewController {
             return text
         case .thinking(let text, let stream):
             return stream?.snapshot.text ?? text
-        case .terminal(let text, _, let stream):
+        case .terminal(let text, _, let stream, _):
             return ANSIParser.strip(stream?.snapshot.output ?? text)
         case .liveSource(let snapshot, _):
             return copyText(for: semanticContent(for: snapshot))
@@ -2032,7 +2033,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .plainText(let text, let filePath): return .plainText(text, fileName: filePath)
         case .thinking(let text, let stream):
             return .plainText(stream?.snapshot.text ?? text)
-        case .terminal(let text, _, let stream):
+        case .terminal(let text, _, let stream, _):
             return .plainText(stream?.snapshot.output ?? text)
         case .diff(let document):
             // Copy text is a unified patch, not the source file. Never keep

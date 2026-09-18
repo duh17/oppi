@@ -1760,6 +1760,123 @@ actor APIClient: ClientLogUploading {
         return output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : output
     }
 
+    func headFullToolOutput(
+        scope: SessionRouteScope,
+        sessionId: String,
+        toolCallId: String
+    ) async throws -> Int? {
+        let path = fullToolOutputPath(scope: scope, sessionId: sessionId, toolCallId: toolCallId)
+        do {
+            let (data, response) = try await request("HEAD", path: path)
+            try checkStatus(response, data: data)
+            guard let http = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+            guard let lengthValue = http.value(forHTTPHeaderField: "Content-Length"),
+                  let length = Int(lengthValue),
+                  length >= 0 else {
+                return nil
+            }
+            return length
+        } catch let APIError.server(status, _) where status == 404 {
+            return nil
+        }
+    }
+
+    func getFullToolOutputSidecarWindow(
+        scope: SessionRouteScope,
+        sessionId: String,
+        toolCallId: String,
+        startByte: Int,
+        maxBytes: Int = ToolOutputSidecarHTTP.firstWindowBytes
+    ) async throws -> ToolOutputSidecarWindow? {
+        guard startByte >= 0, maxBytes > 0 else { return nil }
+        let endByte = startByte + maxBytes - 1
+        let path = fullToolOutputPath(scope: scope, sessionId: sessionId, toolCallId: toolCallId)
+        do {
+            let (data, response) = try await performAuthorized {
+                var req = try URLRequest(url: self.makeURL(path: path))
+                req.httpMethod = "GET"
+                req.setValue("bytes=\(startByte)-\(endByte)", forHTTPHeaderField: "Range")
+                logger.debug("GET \(path) Range bytes=\(startByte)-\(endByte)")
+                return req
+            }
+            try checkStatus(response, data: data)
+            guard let http = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+            guard let parsed = ToolOutputSidecarHTTP.parseContentRange(
+                http.value(forHTTPHeaderField: "Content-Range")
+            ) else {
+                throw APIError.invalidResponse
+            }
+            guard let text = String(data: data, encoding: .utf8) else {
+                throw APIError.invalidResponse
+            }
+            return ToolOutputSidecarWindow(
+                text: text,
+                endByteOffset: parsed.end + 1,
+                totalBytes: parsed.total
+            )
+        } catch let APIError.server(status, _) where status == 404 {
+            return nil
+        }
+    }
+
+    /// First sidecar window: HEAD + Range for large output, JSON for small/legacy.
+    func openFullToolOutputSidecar(
+        scope: SessionRouteScope,
+        sessionId: String,
+        toolCallId: String
+    ) async throws -> ToolOutputSidecarWindow? {
+        if let total = try await headFullToolOutput(
+            scope: scope,
+            sessionId: sessionId,
+            toolCallId: toolCallId
+        ) {
+            if total == 0 { return nil }
+            if total <= ToolOutputSidecarHTTP.firstWindowBytes {
+                guard let text = try await getFullToolOutput(
+                    scope: scope,
+                    sessionId: sessionId,
+                    toolCallId: toolCallId
+                ) else {
+                    return nil
+                }
+                let bytes = text.utf8.count
+                return ToolOutputSidecarWindow(
+                    text: text,
+                    endByteOffset: bytes,
+                    totalBytes: max(total, bytes)
+                )
+            }
+            return try await getFullToolOutputSidecarWindow(
+                scope: scope,
+                sessionId: sessionId,
+                toolCallId: toolCallId,
+                startByte: 0
+            )
+        }
+
+        guard let text = try await getFullToolOutput(
+            scope: scope,
+            sessionId: sessionId,
+            toolCallId: toolCallId
+        ) else {
+            return nil
+        }
+        let bytes = text.utf8.count
+        return ToolOutputSidecarWindow(text: text, endByteOffset: bytes, totalBytes: bytes)
+    }
+
+    private func fullToolOutputPath(
+        scope: SessionRouteScope,
+        sessionId: String,
+        toolCallId: String
+    ) -> String {
+        "\(focusedSessionPath(scope: scope, sessionId: sessionId))/tool-output/\(toolCallId)?full=true"
+    }
+
     /// Fetch a generated session attachment by id.
     ///
     /// Session attachments are server-owned artifacts (for example, voice_speak audio)

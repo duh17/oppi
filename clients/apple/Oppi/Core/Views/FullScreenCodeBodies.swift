@@ -2017,6 +2017,10 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
 
     private var renderTask: Task<Void, Never>?
     private var streamObserverID: UUID?
+    private var sidecarSource: ToolOutputSidecarWindowSource?
+    private var sidecarTask: Task<Void, Never>?
+    private var sidecarExpectsMore = false
+    private var sidecarPendingAppend = ""
 
     init(
         content: String,
@@ -2026,10 +2030,12 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         outputWrapped: Bool? = nil,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.terminal.defaultPreferences,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
-        reviewCommentSourceContext: ReviewCommentSourceContext?
+        reviewCommentSourceContext: ReviewCommentSourceContext?,
+        sidecarSource: ToolOutputSidecarWindowSource? = nil
     ) {
         self.palette = palette
         self.stream = stream
+        self.sidecarSource = sidecarSource
         var preferences = readerPreferences
         if let outputWrapped {
             preferences.wrapsText = outputWrapped
@@ -2046,6 +2052,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         tailFollowCoordinator.shouldAutoFollowTail = !initialSnapshot.isDone
         setup()
         render(snapshot: initialSnapshot)
+        startSidecarLoadingIfNeeded()
 
         streamObserverID = stream?.addObserver { [weak self] snapshot in
             self?.handleStreamUpdate(snapshot)
@@ -2057,6 +2064,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
 
     deinit {
         renderTask?.cancel()
+        sidecarTask?.cancel()
         chunkRenderTasks.values.forEach { $0.cancel() }
         if let streamObserverID {
             let stream = stream
@@ -2201,7 +2209,8 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         renderTask?.cancel()
         renderTask = nil
 
-        if content.utf8.count <= Self.maxSynchronousANSIBytes {
+        let virtualizeCompletedPrefix = sidecarExpectsMore || content.utf8.count > Self.maxSynchronousANSIBytes
+        if !virtualizeCompletedPrefix, content.utf8.count <= Self.maxSynchronousANSIBytes {
             leaveVirtualizedMode()
             let attributedOutput = ANSIParser.attributedString(
                 from: content, baseForeground: .themeFg
@@ -2216,7 +2225,9 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
 
         // Streaming snapshots retain the existing plain-text path. Completed
         // documents switch to a chunk index before any full output is mounted.
-        if isStreaming {
+        // Partial sidecar windows virtualize so first paint does not wait for
+        // the rest of the body.
+        if isStreaming, !sidecarExpectsMore {
             leaveVirtualizedMode()
             outputView.attributedText = nil
             renderedOutputAttributedBase = nil
@@ -2229,6 +2240,129 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         }
 
         enterVirtualizedMode(source: content)
+    }
+
+    private func startSidecarLoadingIfNeeded() {
+        guard let sidecarSource else { return }
+        sidecarTask?.cancel()
+        sidecarTask = Task { [weak self] in
+            do {
+                let first = try await sidecarSource.loadFirst()
+                guard !Task.isCancelled else { return }
+                var offset = 0
+                var total = 0
+                if let first, !first.text.isEmpty {
+                    let applied = await MainActor.run { () -> Bool in
+                        guard let self else { return false }
+                        let currentBytes = self.latestSnapshot.output.utf8.count
+                        if first.totalBytes > 0, currentBytes >= first.totalBytes {
+                            self.sidecarExpectsMore = false
+                            return false
+                        }
+                        self.applyFirstSidecarWindow(first)
+                        return true
+                    }
+                    if !applied { return }
+                    offset = first.endByteOffset
+                    total = first.totalBytes
+                } else {
+                    return
+                }
+                while offset < total {
+                    guard let next = try await sidecarSource.loadNext(offset),
+                          !next.text.isEmpty else { break }
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run {
+                        self?.appendOutputWindow(next.text)
+                    }
+                    offset = next.endByteOffset
+                    total = next.totalBytes
+                    if next.isComplete { break }
+                }
+                await MainActor.run {
+                    self?.sidecarExpectsMore = false
+                }
+            } catch {
+                await MainActor.run {
+                    self?.sidecarExpectsMore = false
+                }
+            }
+        }
+    }
+
+    private func applyFirstSidecarWindow(_ window: ToolOutputSidecarWindow) {
+        sidecarExpectsMore = !window.isComplete
+        sidecarPendingAppend = ""
+        latestSnapshot = TerminalTraceStream.Snapshot(
+            output: window.text,
+            command: latestSnapshot.command,
+            isDone: true
+        )
+        render(snapshot: latestSnapshot)
+    }
+
+    func appendOutputWindow(_ text: String) {
+        guard !text.isEmpty else { return }
+        if virtualizedCollectionView.isHidden, !sidecarExpectsMore {
+            let combined = (virtualizedSource.isEmpty ? latestSnapshot.output : virtualizedSource) + text
+            latestSnapshot = TerminalTraceStream.Snapshot(
+                output: combined,
+                command: latestSnapshot.command,
+                isDone: true
+            )
+            render(snapshot: latestSnapshot)
+            return
+        }
+        virtualizedSource += text
+        if renderTask != nil {
+            sidecarPendingAppend += text
+            return
+        }
+        if virtualizedIndex == nil {
+            enterVirtualizedMode(source: virtualizedSource)
+            return
+        }
+        appendVirtualizedWindow(text)
+    }
+
+    private func appendVirtualizedWindow(_ text: String) {
+        guard let index = virtualizedIndex else { return }
+        let generation = virtualizedGeneration
+        let wrappedColumns = virtualizedWrapColumns
+        let chunkLineLimit = Self.virtualizedChunkLineLimit
+        let chunkByteLimit = Self.virtualizedChunkByteLimit
+        let visualLineLimit = Self.virtualizedChunkVisualLineLimit
+        renderTask = Task { [weak self] in
+            guard let build = await withCancellableDetachedTask(
+                priority: .userInitiated,
+                operation: {
+                    index.appendingWindow(
+                        text,
+                        maxLines: chunkLineLimit,
+                        maxBytes: chunkByteLimit,
+                        wrappedColumns: wrappedColumns,
+                        maxVisualLines: visualLineLimit
+                    )
+                }
+            ), !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self, generation == self.virtualizedGeneration else { return }
+                self.virtualizedIndex = build
+                self.virtualizedSizingWidth = nil
+                self.refreshVirtualizedItemSizes()
+                self.virtualizedCollectionView.reloadData()
+                self.prepareVisibleChunkRunway()
+                self.renderTask = nil
+                self.flushSidecarPendingAppend()
+            }
+        }
+    }
+
+    private func flushSidecarPendingAppend() {
+        let extra = sidecarPendingAppend
+        guard !extra.isEmpty else { return }
+        sidecarPendingAppend = ""
+        appendVirtualizedWindow(extra)
     }
 
     private var wrappedChunkColumns: Int? {
@@ -2310,6 +2444,8 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
                     )
                 }
                 self.prepareVisibleChunkRunway()
+                self.renderTask = nil
+                self.flushSidecarPendingAppend()
             }
         }
     }
@@ -2444,6 +2580,14 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
             layoutMilliseconds: cells.flatMap(\.layoutMilliseconds),
             mountedVisualLines: cells.map { Int(ceil(($0.bounds.height - 4) / codeFont.lineHeight)) }
         )
+    }
+
+    func virtualizedChunkLeadingSGRForTesting() -> [String]? {
+        virtualizedIndex?.chunks.map(\.leadingSGR)
+    }
+
+    func virtualizedTrailingSGRForTesting() -> String? {
+        virtualizedIndex?.trailingSGR
     }
     #endif
 

@@ -1,5 +1,5 @@
 import type { IncomingMessage } from "node:http";
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 
 export interface MockResponse {
   statusCode: number;
@@ -40,4 +40,26 @@ export function makeRawRequest(body: Buffer | string): IncomingMessage {
   };
   req.socket = { remoteAddress: "127.0.0.1" };
   return req;
+}
+
+export class MockWritableResponse extends PassThrough {
+  statusCode = 0;
+  headers: Record<string, string> = {};
+  body = Buffer.alloc(0);
+
+  constructor() {
+    super();
+    this.on("data", (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      this.body = Buffer.concat([this.body, buffer]);
+    });
+  }
+
+  writeHead(statusCode: number, headers: Record<string, string | number> = {}): this {
+    this.statusCode = statusCode;
+    this.headers = Object.fromEntries(
+      Object.entries(headers).map(([key, value]) => [key, String(value)]),
+    );
+    return this;
+  }
 }

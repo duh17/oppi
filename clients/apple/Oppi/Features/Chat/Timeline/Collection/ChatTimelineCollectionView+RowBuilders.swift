@@ -642,6 +642,27 @@ extension ChatTimelineCollectionHost.Controller {
         }
         configuration.fetchWorkspaceFile = fetchWorkspaceFile
         configuration.fetchHostFile = fetchHostFile
+        if let apiClient = connection?.apiClient, let routeScope {
+            let toolCallId = itemID
+            let capturedSessionId = sessionId
+            configuration.toolOutputSidecarSource = ToolOutputSidecarWindowSource(
+                loadFirst: {
+                    try await apiClient.openFullToolOutputSidecar(
+                        scope: routeScope,
+                        sessionId: capturedSessionId,
+                        toolCallId: toolCallId
+                    )
+                },
+                loadNext: { startByte in
+                    try await apiClient.getFullToolOutputSidecarWindow(
+                        scope: routeScope,
+                        sessionId: capturedSessionId,
+                        toolCallId: toolCallId,
+                        startByte: startByte
+                    )
+                }
+            )
+        }
         return configuration
             .withReviewCommentSelection(router: interactionCtx.reviewCommentSelectionRouter, sessionId: interactionCtx.sessionId)
             .withAudioPlayer(audioPlayer)

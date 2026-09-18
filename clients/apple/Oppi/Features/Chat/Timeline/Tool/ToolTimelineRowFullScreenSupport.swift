@@ -135,7 +135,8 @@ enum ToolTimelineRowFullScreenSupport {
             return .terminal(
                 content: terminalOutput,
                 command: command ?? configuration.copyCommandText,
-                stream: terminalStream
+                stream: terminalStream,
+                sidecarSource: configuration.toolOutputSidecarSource
             )
 
         case .text(let text, _):

@@ -511,6 +511,7 @@ describe("control session route scope", () => {
     { method: "GET", suffix: "/trace-outline" },
     { method: "GET", suffix: "/events" },
     { method: "GET", suffix: "/tool-output/tool-1" },
+    { method: "HEAD", suffix: "/tool-output/tool-1" },
     { method: "GET", suffix: "/attachments/attachment-1" },
     { method: "POST", suffix: "/command" },
     { method: "POST", suffix: "/stop" },

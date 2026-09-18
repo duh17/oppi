@@ -4,6 +4,7 @@ import { gzipSync } from "node:zlib";
 import { SessionTraceService, type SessionTraceViewMode } from "../session-trace-service.js";
 import type { Session } from "../types.js";
 import { getSessionAttachment, streamSessionAttachment } from "../session-attachments.js";
+import { streamFullToolOutputSidecar } from "../tool-output-sidecar.js";
 import { pendingDialogSnapshots } from "../session-attention.js";
 import { createSessionFileHandlers } from "./session-files.js";
 import type { RouteContext, RouteHelpers } from "./types.js";
@@ -31,6 +32,7 @@ type SessionTraceRouteHandlers = {
     toolCallId: string,
     req: IncomingMessage,
     res: ServerResponse,
+    method?: string,
   ) => Promise<void>;
   handleGetSessionAttachment: (
     sessionId: string,
@@ -92,6 +94,7 @@ type SessionTraceRouteHandlers = {
     toolCallId: string,
     req: IncomingMessage,
     res: ServerResponse,
+    method?: string,
   ) => Promise<void>;
   handleGetToolOutputForSession: (
     session: Session,
@@ -141,10 +144,11 @@ export function createSessionTraceRouteHandlers(
     toolCallId: string,
     req: IncomingMessage,
     res: ServerResponse,
+    method = "GET",
   ): Promise<void> {
     const session = requireWorkspaceSession(workspaceId, sessionId, res);
     if (!session) return;
-    await handleGetFullToolOutputForSession(session, toolCallId, req, res);
+    await handleGetFullToolOutputForSession(session, toolCallId, req, res, method);
   }
 
   async function handleGetFullToolOutputForSession(
@@ -152,8 +156,21 @@ export function createSessionTraceRouteHandlers(
     toolCallId: string,
     req: IncomingMessage,
     res: ServerResponse,
+    method = "GET",
   ): Promise<void> {
-    const output = await traceService.getFullToolOutput(session.id, decodeToolCallId(toolCallId));
+    const toolCallIdDecoded = decodeToolCallId(toolCallId);
+    const wantsRawSidecar = method.toUpperCase() === "HEAD" || Boolean(req.headers?.range);
+    if (wantsRawSidecar) {
+      const sidecar = await traceService.statFullToolOutput(session.id, toolCallIdDecoded);
+      if (!sidecar) {
+        helpers.error(res, 404, "Full tool output not found");
+        return;
+      }
+      streamFullToolOutputSidecar(sidecar, req, res, method);
+      return;
+    }
+
+    const output = await traceService.getFullToolOutput(session.id, toolCallIdDecoded);
     if (!output) {
       helpers.error(res, 404, "Full tool output not found");
       return;

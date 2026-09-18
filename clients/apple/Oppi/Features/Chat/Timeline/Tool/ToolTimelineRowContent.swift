@@ -63,6 +63,7 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var currentFileOpenIntent: ToolCurrentFileOpenIntent? = nil
     var openCurrentFile: (() -> Void)? = nil
     var openFullScreen: ((ChatReaderPayload) -> Void)? = nil
+    var toolOutputSidecarSource: ToolOutputSidecarWindowSource? = nil
 
     func makeContentView() -> any UIView & UIContentView {
         ToolTimelineRowContentView(configuration: self)
@@ -2494,7 +2495,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 filePath: filePath
             )
 
-        case .terminal(_, let command, _):
+        case .terminal(_, let command, _, _):
             return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
                 surface: .fullScreenTerminal,
                 sourceLabel: command ?? currentConfiguration.title

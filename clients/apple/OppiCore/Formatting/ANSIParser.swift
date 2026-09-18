@@ -436,6 +436,10 @@ enum ANSIParser {
         let chunks: [TerminalChunk]
         let displayedUTF16Count: Int
         let widestLineColumnCount: Int
+        /// SGR state after the last byte. Later sidecar windows prepend this
+        /// instead of reparsing earlier windows from scratch.
+        let trailingSGR: String
+        let nextDisplayedStartLine: Int
 
         /// Resolve a document-level selection even when it spans several
         /// mounted chunks. Ranges use the ANSI-stripped UTF-16 coordinate space
@@ -458,12 +462,42 @@ enum ANSIParser {
             return result
         }
 
+        func appendingWindow(
+            _ source: String,
+            maxLines: Int = 160,
+            maxBytes: Int = 32 * 1024,
+            wrappedColumns: Int? = nil,
+            maxVisualLines: Int = 64
+        ) -> TerminalChunkIndex {
+            guard !source.isEmpty else { return self }
+            let next = Self.build(
+                from: source,
+                maxLines: maxLines,
+                maxBytes: maxBytes,
+                wrappedColumns: wrappedColumns,
+                maxVisualLines: maxVisualLines,
+                leadingSGR: trailingSGR,
+                displayedUTF16Offset: displayedUTF16Count,
+                displayedStartLine: nextDisplayedStartLine
+            )
+            return TerminalChunkIndex(
+                chunks: chunks + next.chunks,
+                displayedUTF16Count: next.displayedUTF16Count,
+                widestLineColumnCount: max(widestLineColumnCount, next.widestLineColumnCount),
+                trailingSGR: next.trailingSGR,
+                nextDisplayedStartLine: next.nextDisplayedStartLine
+            )
+        }
+
         static func build(
             from source: String,
             maxLines: Int = 160,
             maxBytes: Int = 32 * 1024,
             wrappedColumns: Int? = nil,
-            maxVisualLines: Int = 64
+            maxVisualLines: Int = 64,
+            leadingSGR: String = "",
+            displayedUTF16Offset: Int = 0,
+            displayedStartLine: Int = 1
         ) -> TerminalChunkIndex {
             precondition(maxLines > 0 && maxBytes > 0 && maxVisualLines > 0)
             precondition(wrappedColumns == nil || (wrappedColumns ?? 0) > 0)
@@ -471,11 +505,20 @@ enum ANSIParser {
             var chunks: [TerminalChunk] = []
             chunks.reserveCapacity(max(1, bytes.count / maxBytes))
             var style = TerminalSGRCarry()
+            if !leadingSGR.isEmpty {
+                let sgrBytes = Array(leadingSGR.utf8)
+                if sgrBytes.count >= 3,
+                   sgrBytes[0] == 0x1B,
+                   sgrBytes[1] == 0x5B,
+                   sgrBytes.last == 0x6D {
+                    style.apply(sgrBytes, from: 2, to: sgrBytes.count - 1)
+                }
+            }
             var leadingStyle = style
             var chunkStart = 0
             var lineCount = 0
-            var chunkStartLine = 1
-            var displayedStart = 0
+            var chunkStartLine = displayedStartLine
+            var displayedStart = displayedUTF16Offset
             var widest = 0
             var currentLineColumns = 0
             var completedVisualLines = 0
@@ -642,7 +685,9 @@ enum ANSIParser {
             return TerminalChunkIndex(
                 chunks: chunks,
                 displayedUTF16Count: displayedStart,
-                widestLineColumnCount: widest
+                widestLineColumnCount: widest,
+                trailingSGR: style.escapeSequence,
+                nextDisplayedStartLine: chunkStartLine
             )
         }
     }

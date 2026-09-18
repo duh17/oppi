@@ -33,6 +33,32 @@ struct ToolTimelineRowFullScreenActivationTests {
         harness.window.isHidden = true
     }
 
+    @Test("bash expand/copy keeps the full sidecar, not the first Range window")
+    func bashCopyAndFullScreenUseCompleteSidecar() throws {
+        let firstWindow = String(repeating: "a", count: 4096)
+        let full = firstWindow + "COMPLETE-TAIL\n"
+        let configuration = makeTimelineToolConfiguration(
+            expandedContent: .bash(command: "seq", output: firstWindow, unwrapped: true),
+            copyCommandText: "seq",
+            copyOutputText: full,
+            isExpanded: true
+        )
+        #expect(configuration.copyOutputText == full)
+        #expect((configuration.copyOutputText?.utf8.count ?? 0) > firstWindow.utf8.count)
+
+        let content = ToolTimelineRowFullScreenSupport.staticFullScreenContent(
+            configuration: configuration,
+            outputCopyText: configuration.copyOutputText,
+            terminalStream: nil
+        )
+        guard case .terminal(let rendered, _, _, _) = content else {
+            Issue.record("Expected terminal full-screen content")
+            return
+        }
+        #expect(rendered == full)
+        #expect(rendered.hasSuffix("COMPLETE-TAIL\n"))
+    }
+
     @Test("eligible current-file activation uses navigation action without presenting output")
     func currentFileActivationUsesNavigationAction() {
         let harness = makeHostHarness()
@@ -702,7 +728,7 @@ struct ToolTimelineRowFullScreenActivationTests {
             Issue.record("Expected ANSI text full-screen content")
             return
         }
-        guard case .terminal(let rendered, _, let stream) = fullScreenContent else {
+        guard case .terminal(let rendered, _, let stream, _) = fullScreenContent else {
             Issue.record("Expected terminal full-screen content")
             return
         }
@@ -739,7 +765,7 @@ struct ToolTimelineRowFullScreenActivationTests {
             sourceStream: nil
         )
 
-        guard case .terminal(let rendered, _, let stream) = fullScreenContent else {
+        guard case .terminal(let rendered, _, let stream, _) = fullScreenContent else {
             Issue.record("Expected streaming ANSI text to use terminal full-screen content")
             return
         }

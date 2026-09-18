@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { once } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +11,7 @@ import { createSessionRoutes } from "../src/routes/sessions.js";
 import type { RouteContext } from "../src/routes/types.js";
 import type { Session, Workspace } from "../src/types.js";
 import { createWorkspaceWorktree } from "../src/worktrees.js";
-import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+import { makeRequest, makeResponse, MockWritableResponse } from "./harness/route-test-helpers.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -749,6 +750,140 @@ describe("sessions module", () => {
         toolCallId: "tc-1",
         output: "complete tool output",
       });
+      expect(res.headers["Content-Type"]).toMatch(/application\/json/);
+      expect(res.body).toContain("complete tool output");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("HEAD full tool output returns sidecar length without reading a JSON body", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-tool-output-head-"));
+    try {
+      const sidecar = `${"complete tool output\n".repeat(200)}emoji 😀 tail`;
+      const fullOutputPath = join(dataDir, "tc-1.full.txt");
+      writeFileSync(fullOutputPath, sidecar, "utf8");
+      const sidecarBytes = Buffer.byteLength(sidecar, "utf8");
+
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+          getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
+        },
+        sessions: {
+          getToolFullOutputPath: vi.fn(() => fullOutputPath),
+        },
+        sessionRuntimes: {
+          getToolFullOutputPath: vi.fn(() => fullOutputPath),
+        },
+      } as unknown as RouteContext;
+
+      const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "HEAD",
+        path: "/workspaces/ws-1/sessions/s1/tool-output/tc-1",
+        url: new URL("http://localhost/workspaces/ws-1/sessions/s1/tool-output/tc-1?full=true"),
+        req: { method: "HEAD", headers: {} } as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toBe("");
+      expect(res.headers["Accept-Ranges"]).toBe("bytes");
+      expect(res.headers["Content-Length"]).toBe(String(sidecarBytes));
+      expect(res.headers["Content-Type"]).toMatch(/text\/plain/);
+      expect(res.body).not.toContain("toolCallId");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("GET full tool output with Range returns 206 raw sidecar bytes", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-tool-output-range-"));
+    try {
+      const sidecar = "0123456789abcdef";
+      const fullOutputPath = join(dataDir, "tc-1.full.txt");
+      writeFileSync(fullOutputPath, sidecar, "utf8");
+
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+          getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
+        },
+        sessions: {
+          getToolFullOutputPath: vi.fn(() => fullOutputPath),
+        },
+        sessionRuntimes: {
+          getToolFullOutputPath: vi.fn(() => fullOutputPath),
+        },
+      } as unknown as RouteContext;
+
+      const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+      const res = new MockWritableResponse();
+      const finished = once(res, "finish");
+
+      const handled = await dispatch({
+        method: "GET",
+        path: "/workspaces/ws-1/sessions/s1/tool-output/tc-1",
+        url: new URL("http://localhost/workspaces/ws-1/sessions/s1/tool-output/tc-1?full=true"),
+        req: { method: "GET", headers: { range: "bytes=2-5" } } as never,
+        res: res as never,
+      });
+      await finished;
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(206);
+      expect(res.headers["Accept-Ranges"]).toBe("bytes");
+      expect(res.headers["Content-Range"]).toBe("bytes 2-5/16");
+      expect(res.headers["Content-Length"]).toBe("4");
+      expect(res.headers["Content-Type"]).toMatch(/text\/plain/);
+      expect(res.body.toString("utf8")).toBe("2345");
+      expect(res.body.toString("utf8")).not.toContain("toolCallId");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("GET full tool output Range does not split a UTF-8 codepoint", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-tool-output-utf8-"));
+    try {
+      const sidecar = "abc😀def";
+      const fullOutputPath = join(dataDir, "tc-1.full.txt");
+      writeFileSync(fullOutputPath, sidecar, "utf8");
+
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+          getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
+        },
+        sessions: {
+          getToolFullOutputPath: vi.fn(() => fullOutputPath),
+        },
+        sessionRuntimes: {
+          getToolFullOutputPath: vi.fn(() => fullOutputPath),
+        },
+      } as unknown as RouteContext;
+
+      const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+      const res = new MockWritableResponse();
+      const finished = once(res, "finish");
+
+      const handled = await dispatch({
+        method: "GET",
+        path: "/workspaces/ws-1/sessions/s1/tool-output/tc-1",
+        url: new URL("http://localhost/workspaces/ws-1/sessions/s1/tool-output/tc-1?full=true"),
+        req: { method: "GET", headers: { range: "bytes=0-4" } } as never,
+        res: res as never,
+      });
+      await finished;
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(206);
+      expect(res.headers["Content-Range"]).toBe("bytes 0-2/10");
+      expect(res.body.toString("utf8")).toBe("abc");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

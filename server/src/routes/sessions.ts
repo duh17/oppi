@@ -698,11 +698,17 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const controlToolOutputMatch = path.match(
       /^\/control-sessions\/([^/]+)\/tool-output\/([^/]+)$/,
     );
-    if (controlToolOutputMatch && method === "GET") {
+    if (controlToolOutputMatch && (method === "GET" || method === "HEAD")) {
       const session = requireControlSession(controlToolOutputMatch[1], res);
       if (session) {
-        if (url.searchParams.get("full") === "true") {
-          await handleGetFullToolOutputForSession(session, controlToolOutputMatch[2], req, res);
+        if (url.searchParams.get("full") === "true" || method === "HEAD") {
+          await handleGetFullToolOutputForSession(
+            session,
+            controlToolOutputMatch[2],
+            req,
+            res,
+            method,
+          );
         } else {
           await handleGetToolOutputForSession(session, controlToolOutputMatch[2], req, res);
         }
@@ -856,14 +862,15 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const wsSessionToolOutputMatch = path.match(
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)$/,
     );
-    if (wsSessionToolOutputMatch && method === "GET") {
-      if (url.searchParams.get("full") === "true") {
+    if (wsSessionToolOutputMatch && (method === "GET" || method === "HEAD")) {
+      if (url.searchParams.get("full") === "true" || method === "HEAD") {
         await handleGetFullToolOutput(
           wsSessionToolOutputMatch[1],
           wsSessionToolOutputMatch[2],
           wsSessionToolOutputMatch[3],
           req,
           res,
+          method,
         );
       } else {
         await handleGetToolOutput(

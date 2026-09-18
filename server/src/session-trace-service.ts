@@ -341,6 +341,24 @@ export class SessionTraceService {
     }
   }
 
+  async statFullToolOutput(
+    sessionId: string,
+    toolCallId: string,
+  ): Promise<{ path: string; size: number } | null> {
+    const fullOutputPath = this.deps.sessionRuntimes.getToolFullOutputPath(sessionId, toolCallId);
+    if (!fullOutputPath) {
+      return null;
+    }
+
+    try {
+      const info = await stat(fullOutputPath);
+      if (!info.isFile()) return null;
+      return { path: fullOutputPath, size: info.size };
+    } catch {
+      return null;
+    }
+  }
+
   async getSessionOverallDiff(params: {
     session: Session;
     path: string;

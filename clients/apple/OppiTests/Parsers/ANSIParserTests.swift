@@ -532,6 +532,25 @@ struct ANSIParserTests {
         }
     }
 
+    @Test("later sidecar windows continue SGR without reparsing the prefix")
+    func terminalChunkIndexContinuesSGRAcrossWindows() {
+        let prefix = "\u{1B}[32m" + String(repeating: "green line\n", count: 40)
+        let suffix = "still green without a local SGR prefix\n"
+        let first = ANSIParser.TerminalChunkIndex.build(from: prefix, maxLines: 8, maxBytes: 80)
+        #expect(!first.trailingSGR.isEmpty)
+        let combined = first.appendingWindow(suffix, maxLines: 8, maxBytes: 80)
+        #expect(combined.chunks.count > first.chunks.count)
+        let suffixStart = combined.chunks[first.chunks.count]
+        #expect(suffixStart.leadingSGR == first.trailingSGR)
+        let rendered = ANSIParser.attributedString(from: suffixStart.leadingSGR + suffixStart.rawText)
+        #expect(rendered.length > 0)
+        let color = rendered.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
+        #expect(color == UIColor(Color.themeGreen))
+        let full = ANSIParser.TerminalChunkIndex.build(from: prefix + suffix, maxLines: 8, maxBytes: 80)
+        #expect(combined.chunks.map { ANSIParser.strip($0.rawText) }.joined()
+            == full.chunks.map { ANSIParser.strip($0.rawText) }.joined())
+    }
+
     @Test("terminal chunks cap a huge single line by bytes")
     func terminalChunkIndexCapsSingleLine() {
         let input = String(repeating: "x", count: 200_000)

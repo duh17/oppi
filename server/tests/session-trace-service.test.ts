@@ -371,6 +371,20 @@ describe("SessionTraceService", () => {
     expect(deps.sessionRuntimes.getToolFullOutputPath).toHaveBeenCalledWith("sess-1", "tc-1");
   });
 
+  it("stats full tool output length without reading sidecar bytes", async () => {
+    const dataDir = tempDir("oppi-session-stat-tool-output-");
+    const outputPath = join(dataDir, "tc-1.full.txt");
+    const sidecar = "full output text";
+    writeFileSync(outputPath, sidecar, "utf8");
+    const { service, deps } = makeService({ dataDir, fullOutputPath: outputPath });
+
+    await expect(service.statFullToolOutput("sess-1", "tc-1")).resolves.toEqual({
+      path: outputPath,
+      size: Buffer.byteLength(sidecar, "utf8"),
+    });
+    expect(deps.sessionRuntimes.getToolFullOutputPath).toHaveBeenCalledWith("sess-1", "tc-1");
+  });
+
   it("builds an overall diff from trace mutations and the current workspace file", async () => {
     const dataDir = tempDir("oppi-session-overall-diff-");
     const workspaceRoot = tempDir("oppi-session-overall-diff-workspace-");

@@ -272,7 +272,12 @@ indirect enum FullScreenCodeContent {
     case markdown(content: String, filePath: String?, workspaceContext: WorkspaceContext? = nil)
     case html(content: String, filePath: String?)
     case thinking(content: String, stream: ThinkingTraceStream? = nil)
-    case terminal(content: String, command: String?, stream: TerminalTraceStream? = nil)
+    case terminal(
+        content: String,
+        command: String?,
+        stream: TerminalTraceStream? = nil,
+        sidecarSource: ToolOutputSidecarWindowSource? = nil
+    )
     case liveSource(snapshot: SourceTraceStream.Snapshot, stream: SourceTraceStream)
 
     // Document renderers

@@ -184,6 +184,62 @@ struct ToolOutputFetchTests {
         })
     }
 
+    @Test func expandedBashFetchStoresCompleteSidecarNotFirstWindow() async {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        let toolID = "tool-shell-full-sidecar"
+        let firstWindow = String(repeating: "a", count: 4096)
+        let full = firstWindow + "COMPLETE-TAIL\n"
+
+        harness.toolOutputStore.replace(
+            firstWindow.suffix(80) + "",
+            for: toolID,
+            previewOnly: true,
+            totalBytes: full.utf8.count
+        )
+
+        let shellConfig = makeTimelineConfiguration(
+            items: [
+                .toolCall(
+                    id: toolID,
+                    tool: "bash",
+                    argsSummary: "command: seq",
+                    outputPreview: "COMPLETE-TAIL\n",
+                    outputByteCount: full.utf8.count,
+                    isError: false,
+                    isDone: true
+                ),
+            ],
+            sessionId: "session-a",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        harness.coordinator.apply(configuration: shellConfig, to: harness.collectionView)
+
+        harness.coordinator._fetchToolOutputForTesting = { _, _ in
+            full
+        }
+
+        harness.coordinator.collectionView(
+            harness.collectionView,
+            didSelectItemAt: IndexPath(item: 0, section: 0)
+        )
+
+        #expect(harness.reducer.expandedItemIDs.contains(toolID))
+        #expect(await waitForTimelineCondition(timeoutMs: 800) {
+            await MainActor.run {
+                harness.toolOutputStore.fullOutput(for: toolID) == full
+                    && harness.toolOutputStore.hasCompleteOutput(for: toolID)
+                    && !harness.toolOutputStore.hasPreviewOnlyOutput(for: toolID)
+            }
+        })
+        #expect(harness.toolOutputStore.fullOutput(for: toolID).utf8.count > firstWindow.utf8.count)
+        #expect(harness.toolOutputStore.fullOutput(for: toolID).hasSuffix("COMPLETE-TAIL\n"))
+    }
+
     @Test func readToolWithUnknownByteCountStillFetchesFullOutputOnExpand() async {
         let harness = makeTimelineHarness(sessionId: "session-a")
         let toolID = "tool-read-unknown-bytes"
