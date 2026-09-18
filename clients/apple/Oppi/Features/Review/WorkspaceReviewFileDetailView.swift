@@ -211,11 +211,12 @@ struct WorkspaceReviewFileDetailView: View {
         .modifier(AdjacentFileNavigatorControls(
             canGoPrevious: adjacentReviewFile(.previous) != nil,
             canGoNext: adjacentReviewFile(.next) != nil,
+            placement: adjacentFileNavigatorPlacement,
             onPrevious: { navigateToAdjacentReviewFile(.previous) },
             onNext: { navigateToAdjacentReviewFile(.next) }
         ))
         .fullScreenReviewCommentStashOverlay(
-            leadingAccessoryCount: adjacentReviewFile(.previous) != nil ? 1 : 0,
+            leadingAccessoryCount: adjacentFileNavigatorLeadingAccessoryCount,
             scope: effectiveReviewCommentSelectionScope
         )
         .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
@@ -555,6 +556,20 @@ struct WorkspaceReviewFileDetailView: View {
             in: navigationFiles,
             currentPath: currentFile.path,
             direction: direction
+        )
+    }
+
+    private var adjacentFileNavigatorPlacement: AdjacentFileNavigatorPlacement {
+        AdjacentFileNavigatorPlacementPolicy.placement(
+            for: FileType.detect(from: currentFile.path).previewCategory
+        )
+    }
+
+    private var adjacentFileNavigatorLeadingAccessoryCount: Int {
+        AdjacentFileNavigatorLayout.leadingAccessoryCount(
+            canGoPrevious: adjacentReviewFile(.previous) != nil,
+            canGoNext: adjacentReviewFile(.next) != nil,
+            placement: adjacentFileNavigatorPlacement
         )
     }
 

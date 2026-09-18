@@ -283,12 +283,13 @@ struct FileBrowserContentView: View {
             .modifier(AdjacentFileNavigatorControls(
                 canGoPrevious: adjacentSelection(.previous) != nil,
                 canGoNext: adjacentSelection(.next) != nil,
+                placement: adjacentFileNavigatorPlacement,
                 onPrevious: { navigateToAdjacentFile(.previous) },
                 onNext: { navigateToAdjacentFile(.next) }
             ))
             .fullScreenReviewCommentStashOverlay(
                 isEnabled: showsSwiftUIReviewCommentStashOverlay && !usesUIKitReviewCommentStash,
-                leadingAccessoryCount: adjacentSelection(.previous) != nil ? 1 : 0,
+                leadingAccessoryCount: adjacentFileNavigatorLeadingAccessoryCount,
                 scope: reviewCommentSelectionScope
             )
             .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
@@ -340,7 +341,7 @@ struct FileBrowserContentView: View {
                     backSwipeAction: navigateBackToFileList,
                     markdownViewportIntent: markdownViewportRestore?.intent(for: currentFilePath),
                     addToChatDestination: addToChatDestination,
-                    leadingFloatingAccessoryCount: adjacentSelection(.previous) != nil ? 1 : 0
+                    leadingFloatingAccessoryCount: adjacentFileNavigatorLeadingAccessoryCount
                 )
                 .ignoresSafeArea(edges: shouldShowEmbeddedNavigationChrome ? .top : [])
             } else {
@@ -1050,6 +1051,18 @@ struct FileBrowserContentView: View {
         navigationContext?.selection(adjacentTo: currentFilePath, direction: direction)
     }
 
+    private var adjacentFileNavigatorPlacement: AdjacentFileNavigatorPlacement {
+        AdjacentFileNavigatorPlacementPolicy.placement(for: mediaCategory)
+    }
+
+    private var adjacentFileNavigatorLeadingAccessoryCount: Int {
+        AdjacentFileNavigatorLayout.leadingAccessoryCount(
+            canGoPrevious: adjacentSelection(.previous) != nil,
+            canGoNext: adjacentSelection(.next) != nil,
+            placement: adjacentFileNavigatorPlacement
+        )
+    }
+
     private func navigateToAdjacentFile(_ direction: FileBrowserNavigationDirection) {
         guard let nextSelection = adjacentSelection(direction) else { return }
         fileTransitionDirection = direction
@@ -1160,7 +1173,25 @@ extension View {
 
 // MARK: - File Navigation Controls
 
-/// Previous file stays in the leading bottom corner; next file stays trailing.
+/// Document hosts put previous and next in one leading pill so Viewing Options
+/// / Reader stays uncovered. Audio and video keep split corners so file-to-file
+/// chrome does not sit on the playback transport.
+enum AdjacentFileNavigatorPlacement: Equatable, Sendable {
+    case leadingPill
+    case splitCorners
+}
+
+enum AdjacentFileNavigatorPlacementPolicy {
+    static func placement(for category: FilePreviewCategory) -> AdjacentFileNavigatorPlacement {
+        switch category {
+        case .audio, .video:
+            return .splitCorners
+        case .image, .pdf, .usdz, .text, .binary:
+            return .leadingPill
+        }
+    }
+}
+
 /// A missing direction omits that button instead of recentering the other one.
 enum AdjacentFileNavigatorLayout {
     enum Corner: Equatable {
@@ -1174,7 +1205,18 @@ enum AdjacentFileNavigatorLayout {
         var accessibilityLabel: String
     }
 
-    static func slots(canGoPrevious: Bool, canGoNext: Bool) -> [Slot] {
+    /// Inner chevron hit width. With horizontal inset this keeps a one-button
+    /// pill the same 56 pt circle as Viewing Options.
+    static let groupedHitWidth: CGFloat = 44
+    static let groupedHorizontalInset: CGFloat = (
+        FullScreenFloatingControlChrome.controlSize - groupedHitWidth
+    ) / 2
+
+    static func slots(
+        canGoPrevious: Bool,
+        canGoNext: Bool,
+        placement: AdjacentFileNavigatorPlacement
+    ) -> [Slot] {
         var slots: [Slot] = []
         if canGoPrevious {
             slots.append(Slot(
@@ -1185,12 +1227,25 @@ enum AdjacentFileNavigatorLayout {
         }
         if canGoNext {
             slots.append(Slot(
-                corner: .trailing,
+                corner: placement == .leadingPill ? .leading : .trailing,
                 systemImage: "chevron.right",
                 accessibilityLabel: "Next file"
             ))
         }
         return slots
+    }
+
+    static func leadingAccessoryCount(
+        canGoPrevious: Bool,
+        canGoNext: Bool,
+        placement: AdjacentFileNavigatorPlacement
+    ) -> Int {
+        switch placement {
+        case .leadingPill:
+            return (canGoPrevious || canGoNext) ? 1 : 0
+        case .splitCorners:
+            return canGoPrevious ? 1 : 0
+        }
     }
 }
 
@@ -1198,45 +1253,107 @@ enum AdjacentFileNavigatorLayout {
 struct AdjacentFileNavigatorControls: ViewModifier {
     let canGoPrevious: Bool
     let canGoNext: Bool
+    let placement: AdjacentFileNavigatorPlacement
     let onPrevious: () -> Void
     let onNext: () -> Void
 
     func body(content: Content) -> some View {
         content
             .overlay(alignment: .bottomLeading) {
-                slotButton(corner: .leading, action: onPrevious)
+                switch placement {
+                case .leadingPill:
+                    groupedLeadingPill
+                case .splitCorners:
+                    if let slot = slots.first(where: { $0.corner == .leading }) {
+                        standaloneButton(slot, action: onPrevious)
+                    }
+                }
             }
             .overlay(alignment: .bottomTrailing) {
-                slotButton(corner: .trailing, action: onNext)
+                if placement == .splitCorners, let slot = trailingSlot {
+                    standaloneButton(slot, action: onNext)
+                }
             }
     }
 
-    @ViewBuilder
-    private func slotButton(
-        corner: AdjacentFileNavigatorLayout.Corner,
-        action: @escaping () -> Void
-    ) -> some View {
-        if let slot = AdjacentFileNavigatorLayout.slots(
+    private var slots: [AdjacentFileNavigatorLayout.Slot] {
+        AdjacentFileNavigatorLayout.slots(
             canGoPrevious: canGoPrevious,
-            canGoNext: canGoNext
-        ).first(where: { $0.corner == corner }) {
-            Button(action: action) {
-                Image(systemName: slot.systemImage)
-                    .font(.system(size: FullScreenFloatingControlChrome.symbolPointSize, weight: .semibold))
-                    .foregroundStyle(.themeFg)
-                    .frame(
-                        width: FullScreenFloatingControlChrome.controlSize,
-                        height: FullScreenFloatingControlChrome.controlSize
+            canGoNext: canGoNext,
+            placement: placement
+        )
+    }
+
+    private var trailingSlot: AdjacentFileNavigatorLayout.Slot? {
+        slots.first { $0.corner == .trailing }
+    }
+
+    @ViewBuilder
+    private var groupedLeadingPill: some View {
+        if canGoPrevious || canGoNext {
+            HStack(spacing: 0) {
+                if canGoPrevious {
+                    groupedGlyphButton(
+                        systemImage: "chevron.left",
+                        accessibilityLabel: "Previous file",
+                        action: onPrevious
                     )
-                    .contentShape(Circle())
+                }
+                if canGoNext {
+                    groupedGlyphButton(
+                        systemImage: "chevron.right",
+                        accessibilityLabel: "Next file",
+                        action: onNext
+                    )
+                }
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, AdjacentFileNavigatorLayout.groupedHorizontalInset)
+            .frame(height: FullScreenFloatingControlChrome.controlSize)
             .fullScreenFloatingControlGlass(in: Capsule())
-            .accessibilityLabel(slot.accessibilityLabel)
-            .padding(.leading, corner == .leading ? FullScreenFloatingControlChrome.leadingPadding : 0)
-            .padding(.trailing, corner == .trailing ? FullScreenFloatingControlChrome.trailingPadding : 0)
+            .padding(.leading, FullScreenFloatingControlChrome.leadingPadding)
             .padding(.bottom, FullScreenFloatingControlChrome.bottomPadding)
         }
+    }
+
+    private func groupedGlyphButton(
+        systemImage: String,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: FullScreenFloatingControlChrome.symbolPointSize, weight: .semibold))
+                .foregroundStyle(.themeFg)
+                .frame(
+                    width: AdjacentFileNavigatorLayout.groupedHitWidth,
+                    height: FullScreenFloatingControlChrome.controlSize
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func standaloneButton(
+        _ slot: AdjacentFileNavigatorLayout.Slot,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: slot.systemImage)
+                .font(.system(size: FullScreenFloatingControlChrome.symbolPointSize, weight: .semibold))
+                .foregroundStyle(.themeFg)
+                .frame(
+                    width: FullScreenFloatingControlChrome.controlSize,
+                    height: FullScreenFloatingControlChrome.controlSize
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .fullScreenFloatingControlGlass(in: Capsule())
+        .accessibilityLabel(slot.accessibilityLabel)
+        .padding(.leading, slot.corner == .leading ? FullScreenFloatingControlChrome.leadingPadding : 0)
+        .padding(.trailing, slot.corner == .trailing ? FullScreenFloatingControlChrome.trailingPadding : 0)
+        .padding(.bottom, FullScreenFloatingControlChrome.bottomPadding)
     }
 }
 

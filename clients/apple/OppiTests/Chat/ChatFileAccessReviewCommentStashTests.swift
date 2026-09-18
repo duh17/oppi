@@ -17,6 +17,14 @@ struct ChatFileAccessReviewCommentStashTests {
                 + FullScreenFloatingControlChrome.controlSize
                 + FullScreenFloatingControlChrome.stackSpacing
         )
+        #expect(
+            FullScreenReviewCommentStashControl.bottomPadding(leadingAccessoryCount: 2)
+                == FullScreenFloatingControlChrome.bottomPadding
+                + (2 * (
+                    FullScreenFloatingControlChrome.controlSize
+                        + FullScreenFloatingControlChrome.stackSpacing
+                ))
+        )
     }
 
     @Test func gitContextReviewFileShowsStashWhenCommentsAreStaged() async throws {

@@ -144,12 +144,13 @@ struct SessionTouchedFileContentView: View {
             .modifier(AdjacentFileNavigatorControls(
                 canGoPrevious: adjacentSelection(.previous) != nil,
                 canGoNext: adjacentSelection(.next) != nil,
+                placement: adjacentFileNavigatorPlacement,
                 onPrevious: { navigateToAdjacentFile(.previous) },
                 onNext: { navigateToAdjacentFile(.next) }
             ))
             .fullScreenReviewCommentStashOverlay(
                 isEnabled: !usesUIKitReviewCommentStash,
-                leadingAccessoryCount: adjacentSelection(.previous) != nil ? 1 : 0,
+                leadingAccessoryCount: adjacentFileNavigatorLeadingAccessoryCount,
                 scope: reviewCommentSelectionScope
             )
             .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
@@ -199,7 +200,7 @@ struct SessionTouchedFileContentView: View {
             EmbeddedFileViewerView(
                 content: fullScreenContent(text: content),
                 backSwipeAction: { dismiss() },
-                leadingFloatingAccessoryCount: adjacentSelection(.previous) != nil ? 1 : 0
+                leadingFloatingAccessoryCount: adjacentFileNavigatorLeadingAccessoryCount
             )
             .ignoresSafeArea(edges: .top)
         case .image(let data):
@@ -434,6 +435,20 @@ struct SessionTouchedFileContentView: View {
 
     private func adjacentSelection(_ direction: FileBrowserNavigationDirection) -> FileBrowserSelection? {
         navigationContext?.selection(adjacentTo: currentFilePath, direction: direction)
+    }
+
+    private var adjacentFileNavigatorPlacement: AdjacentFileNavigatorPlacement {
+        AdjacentFileNavigatorPlacementPolicy.placement(
+            for: FileType.detect(from: currentFilePath).previewCategory
+        )
+    }
+
+    private var adjacentFileNavigatorLeadingAccessoryCount: Int {
+        AdjacentFileNavigatorLayout.leadingAccessoryCount(
+            canGoPrevious: adjacentSelection(.previous) != nil,
+            canGoNext: adjacentSelection(.next) != nil,
+            placement: adjacentFileNavigatorPlacement
+        )
     }
 
     private func navigateToAdjacentFile(_ direction: FileBrowserNavigationDirection) {

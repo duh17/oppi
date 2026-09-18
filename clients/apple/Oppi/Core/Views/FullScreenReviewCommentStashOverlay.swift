@@ -6,8 +6,9 @@ import UIKit
 /// ``FullScreenCodeViewController`` owns this chrome for timeline and embedded
 /// UIKit readers. Chat file sheets that keep SwiftUI navigation — git context
 /// review, commit file diffs — never create that controller, so they install
-/// the same control here. Previous-file buttons stay in the original leading
-/// slot; stash stacks above them using the same padding as Annotate.
+/// the same control here. Previous-file stays in the original leading slot.
+/// On document hosts, previous and next share one leading pill. Stash stacks
+/// above that pill using the same padding as Annotate.
 ///
 /// Hosts pass `scope` explicitly. The control is a UIKit floating button so
 /// `accessibilityIdentifier` lands on a real `UIView` under iOS 26 glass
