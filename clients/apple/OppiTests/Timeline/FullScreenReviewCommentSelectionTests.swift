@@ -59,6 +59,64 @@ struct FullScreenReviewCommentSelectionTests {
         )
     }
 
+    @Test func largeVirtualizedCodeScrollsNearEndOfChunkAnchorIntoUpperViewport() async throws {
+        let anchor = try #require(SourceLineAnchor(startLine: 4_638, endLine: 4_640))
+        let content = (1...4_730).map { line in
+            "public let anchoredRow\(line): String = \"value-\(line)\""
+        }.joined(separator: "\n")
+        let body = NativeFullScreenCodeBody(
+            content: content,
+            language: "swift",
+            startLine: 1,
+            palette: ThemeID.dark.palette,
+            readerPreferences: FullScreenReaderPreferences(wrapsText: true),
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            lineAnchor: anchor
+        )
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        body.frame = host.bounds
+        host.addSubview(body)
+        host.layoutIfNeeded()
+
+        let focused = await waitForMainActorCondition(timeout: .seconds(5)) {
+            host.layoutIfNeeded()
+            guard timelineAllTextViews(in: body).contains(where: {
+                timelineRenderedText(of: $0).contains("anchoredRow4638")
+            }), let firstRect = body.debugLineAnchorFirstHighlightRectForTesting else {
+                return false
+            }
+            let visibleFirstRectMidY = firstRect.midY - body.debugLineAnchorScrollOffsetForTesting.y
+            return body.debugLineAnchorHighlightRectCountForTesting == 1
+                && body.debugLineAnchorGutterMarkerCountForTesting == 1
+                && body.debugLineAnchorHighlightHasVisibleGeometryForTesting
+                && visibleFirstRectMidY >= 0
+                && visibleFirstRectMidY < body.debugLineAnchorViewportHeightForTesting * 0.5
+        }
+
+        #expect(focused)
+        #expect(body.debugLineAnchorExistingRangeForTesting == 4_638...4_640)
+        #expect(body.performanceDiagnosticsForTesting().mountedUTF16Count < content.utf16.count / 4)
+
+        let collectionView = try #require(timelineAllScrollViews(in: body).compactMap {
+            $0 as? UICollectionView
+        }.first)
+        let focusedOffset = collectionView.contentOffset.y
+        let hiddenOffset = max(
+            -collectionView.adjustedContentInset.top,
+            focusedOffset - collectionView.bounds.height
+        )
+        #expect(hiddenOffset < focusedOffset)
+        collectionView.setContentOffset(
+            CGPoint(x: collectionView.contentOffset.x, y: hiddenOffset),
+            animated: false
+        )
+        host.layoutIfNeeded()
+
+        #expect(body.debugLineAnchorHighlightRectCountForTesting == 1)
+        #expect(!body.debugLineAnchorHighlightHasVisibleGeometryForTesting)
+    }
+
     @Test func anchoredSingleCodeLineUsesOneRoundedEnclosure() async throws {
         let anchor = try #require(SourceLineAnchor(startLine: 32, endLine: 32))
         let source = (1...80).map { "let value\($0) = \($0)" }.joined(separator: "\n")
@@ -772,6 +830,95 @@ struct FullScreenReviewCommentSelectionTests {
         })
         #expect(tipView.accessibilityLabel?.contains("Select text, then tap Comment") == true)
         #expect(textView.textContainerInset.top > baseInset.top + 50)
+    }
+
+    @Test func largeCompletedCodeMountsBoundedHighlightedChunks() async throws {
+        let content = (1...4_730).map { line in
+            "public let row\(line): String = \"value-\(line)\""
+        }.joined(separator: "\n")
+        #expect(content.utf8.count > 190_000 && content.utf8.count < 205_000)
+        let body = NativeFullScreenCodeBody(
+            content: content,
+            language: "swift",
+            startLine: 1,
+            palette: ThemeID.dark.palette,
+            readerPreferences: FullScreenReaderPreferences(wrapsText: true),
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        body.frame = host.bounds
+        host.addSubview(body)
+        host.layoutIfNeeded()
+
+        let measured = await waitForMainActorCondition(timeout: .seconds(8)) {
+            host.layoutIfNeeded()
+            let diagnostics = body.performanceDiagnosticsForTesting()
+            return diagnostics.highlightMilliseconds > 0
+                && diagnostics.attributedInstallMilliseconds > 0
+                && diagnostics.layoutGutterMilliseconds > 0
+        }
+        #expect(measured)
+        let diagnostics = body.performanceDiagnosticsForTesting()
+        print(
+            "METRIC full_screen_code_4730 "
+                + "highlight_ms=\(String(format: "%.2f", diagnostics.highlightMilliseconds)) "
+                + "install_ms=\(String(format: "%.2f", diagnostics.attributedInstallMilliseconds)) "
+                + "layout_gutter_ms=\(String(format: "%.2f", diagnostics.layoutGutterMilliseconds)) "
+                + "mounted_utf16=\(diagnostics.mountedUTF16Count) "
+                + "mounted_chunks=\(diagnostics.mountedChunkCount)"
+        )
+        #expect(diagnostics.retainedSourceUTF16Count == content.utf16.count)
+        #expect(diagnostics.totalChunkCount > 1)
+        #expect(diagnostics.cachedChunkCount <= 14)
+        #expect(diagnostics.mountedUTF16Count < content.utf16.count / 4)
+        #expect(diagnostics.mountedChunkCount < diagnostics.totalChunkCount)
+        #expect(diagnostics.indexRanOnMainThread == false)
+
+        let visibleTextView = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0).contains("public let row")
+        })
+        let keywordRange = (visibleTextView.textStorage.string as NSString).range(of: "public")
+        let keywordColor = visibleTextView.attributedText.attribute(
+            .foregroundColor,
+            at: keywordRange.location,
+            effectiveRange: nil
+        ) as? UIColor
+        #expect(keywordColor == UIColor(ThemeID.dark.palette.syntaxKeyword))
+
+        let collectionView = try #require(timelineAllScrollViews(in: body).compactMap {
+            $0 as? UICollectionView
+        }.first)
+        collectionView.setContentOffset(
+            CGPoint(
+                x: collectionView.contentOffset.x,
+                y: max(0, collectionView.contentSize.height - collectionView.bounds.height)
+            ),
+            animated: false
+        )
+        let renderedTail = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.layoutIfNeeded()
+            return timelineAllTextViews(in: body).contains {
+                timelineRenderedText(of: $0).contains("row4730")
+            }
+        }
+        #expect(renderedTail)
+        let tailTextView = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0).contains("row4730")
+        } as? FullScreenReviewCommentTextView)
+        let tailText = tailTextView.textStorage.string as NSString
+        let tailKeywordRange = tailText.range(of: "public", options: .backwards)
+        let tailKeywordColor = tailTextView.attributedText.attribute(
+            .foregroundColor,
+            at: tailKeywordRange.location,
+            effectiveRange: nil
+        ) as? UIColor
+        #expect(tailKeywordColor == UIColor(ThemeID.dark.palette.syntaxKeyword))
+        let tailLineRange = tailText.range(of: "row4730")
+        #expect(tailTextView.reviewCommentSourceLineRange(for: tailLineRange) == 4_730...4_730)
+        let tailDiagnostics = body.performanceDiagnosticsForTesting()
+        #expect(tailDiagnostics.cachedChunkCount <= 14)
+        #expect(tailDiagnostics.mountedUTF16Count < content.utf16.count / 4)
     }
 
     @Test func codeGutterKeepsWrappedContinuationRowsBlank() throws {

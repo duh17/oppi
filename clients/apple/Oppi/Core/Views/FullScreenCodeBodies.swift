@@ -79,12 +79,325 @@ private final class CodeLineNumberGutterView: UIView {
     }
 }
 
-final class NativeFullScreenCodeBody: UIView {
+private struct FullScreenCodeChunk: Sendable {
+    let sourceUTF16Range: Range<Int>
+    let startLine: Int
+    let text: String
+    let lineContentRanges: [NSRange]
+    let lineUTF16Lengths: [Int]
+    let tokenRanges: [SyntaxTokenRange]
+
+    var sourceLineRange: ClosedRange<Int> {
+        startLine...(startLine + lineContentRanges.count - 1)
+    }
+}
+
+private struct FullScreenCodeChunkIndex: Sendable {
+    let chunks: [FullScreenCodeChunk]
+    let sourceUTF16Count: Int
+    let widestLineUTF16Count: Int
+    let highlightMilliseconds: Double
+
+    static func build(
+        source: String,
+        language: SyntaxLanguage,
+        startLine: Int,
+        maxLines: Int,
+        maxUTF16: Int
+    ) -> Self {
+        precondition(maxLines > 0 && maxUTF16 > 0)
+        let nsSource = source as NSString
+        let lines = SourceLineMetrics.logicalLineContentRanges(in: nsSource)
+        let highlightStart = DispatchTime.now().uptimeNanoseconds
+        let tokens = language == .unknown
+            ? []
+            : TreeSitterHighlighter.resolvedTokenRanges(source, language: language)
+        let highlightMilliseconds = Double(
+            DispatchTime.now().uptimeNanoseconds &- highlightStart
+        ) / 1_000_000
+
+        var chunks: [FullScreenCodeChunk] = []
+        chunks.reserveCapacity(max(1, lines.count / maxLines))
+        var widestLine = 0
+        var lineIndex = 0
+        while lineIndex < lines.count {
+            let firstLineIndex = lineIndex
+            let chunkStart = lines[firstLineIndex].location
+            var chunkEnd = chunkStart
+            while lineIndex < lines.count, lineIndex - firstLineIndex < maxLines {
+                let proposedEnd = lineIndex + 1 < lines.count
+                    ? lines[lineIndex + 1].location
+                    : nsSource.length
+                if lineIndex > firstLineIndex, proposedEnd - chunkStart > maxUTF16 {
+                    break
+                }
+                chunkEnd = proposedEnd
+                lineIndex += 1
+                if chunkEnd - chunkStart >= maxUTF16 { break }
+            }
+            if lineIndex == firstLineIndex {
+                lineIndex += 1
+                chunkEnd = lineIndex < lines.count ? lines[lineIndex].location : nsSource.length
+            }
+
+            let sourceRange = chunkStart..<chunkEnd
+            let localLines = lines[firstLineIndex..<lineIndex].map { range in
+                widestLine = max(widestLine, range.length)
+                return NSRange(location: range.location - chunkStart, length: range.length)
+            }
+            let localTokens = tokens.compactMap { token -> SyntaxTokenRange? in
+                let lower = max(token.location, sourceRange.lowerBound)
+                let upper = min(token.location + token.length, sourceRange.upperBound)
+                guard lower < upper else { return nil }
+                return SyntaxTokenRange(
+                    location: lower - sourceRange.lowerBound,
+                    length: upper - lower,
+                    kind: token.kind
+                )
+            }
+            chunks.append(FullScreenCodeChunk(
+                sourceUTF16Range: sourceRange,
+                startLine: startLine + firstLineIndex,
+                text: nsSource.substring(with: NSRange(
+                    location: sourceRange.lowerBound,
+                    length: sourceRange.count
+                )),
+                lineContentRanges: localLines,
+                lineUTF16Lengths: localLines.map(\.length),
+                tokenRanges: localTokens
+            ))
+        }
+
+        return Self(
+            chunks: chunks,
+            sourceUTF16Count: nsSource.length,
+            widestLineUTF16Count: widestLine,
+            highlightMilliseconds: highlightMilliseconds
+        )
+    }
+}
+
+private final class FullScreenCodeChunkCell: UICollectionViewCell {
+    static let reuseIdentifier = "FullScreenCodeChunkCell"
+
+    let textView = FullScreenReviewCommentTextView()
+    private let gutterView = CodeLineNumberGutterView()
+    private let separatorView = UIView()
+    private var gutterWidthConstraint: NSLayoutConstraint?
+    private var chunk: FullScreenCodeChunk?
+    private var lineAnchorResolution: SourceLineAnchorResolution?
+    private var palette = ThemeID.dark.palette
+    private var lastLayoutWidth: CGFloat = -1
+    var onLayoutGutterMeasured: ((Double) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        contentView.backgroundColor = .clear
+        gutterView.translatesAutoresizingMaskIntoConstraints = false
+        separatorView.translatesAutoresizingMaskIntoConstraints = false
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = false
+        textView.backgroundColor = .clear
+        textView.textContainerInset = UIEdgeInsets(top: 8, left: 4, bottom: 8, right: 8)
+        textView.textContainer.lineFragmentPadding = 0
+        contentView.addSubview(gutterView)
+        contentView.addSubview(separatorView)
+        contentView.addSubview(textView)
+        let gutterWidthConstraint = gutterView.widthAnchor.constraint(equalToConstant: 44)
+        self.gutterWidthConstraint = gutterWidthConstraint
+        NSLayoutConstraint.activate([
+            gutterView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 6),
+            gutterView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            gutterView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            gutterWidthConstraint,
+            separatorView.leadingAnchor.constraint(equalTo: gutterView.trailingAnchor, constant: 6),
+            separatorView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            separatorView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            separatorView.widthAnchor.constraint(equalToConstant: 1),
+            textView.leadingAnchor.constraint(equalTo: separatorView.trailingAnchor),
+            textView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            textView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            textView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func configure(
+        chunk: FullScreenCodeChunk,
+        attributedText: NSAttributedString?,
+        font: UIFont,
+        gutterWidth: CGFloat,
+        wrapsText: Bool,
+        palette: ThemePalette,
+        lineAnchorResolution: SourceLineAnchorResolution?
+    ) {
+        self.chunk = chunk
+        self.palette = palette
+        self.lineAnchorResolution = lineAnchorResolution
+        gutterView.font = font
+        gutterView.textColor = UIColor(palette.comment)
+        gutterWidthConstraint?.constant = gutterWidth
+        separatorView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.2)
+        textView.font = font
+        textView.textColor = UIColor(palette.fg)
+        textView.textContainer.lineBreakMode = wrapsText ? .byCharWrapping : .byClipping
+        textView.textContainer.widthTracksTextView = wrapsText
+        textView.attributedText = attributedText
+        lastLayoutWidth = -1
+        setNeedsLayout()
+    }
+
+    func installAttributedText(_ attributedText: NSAttributedString) {
+        textView.setAttributedTextPreservingSelection(attributedText)
+        lastLayoutWidth = -1
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard let chunk, textView.bounds.width > 0,
+              lastLayoutWidth != textView.bounds.width else { return }
+        lastLayoutWidth = textView.bounds.width
+        let start = DispatchTime.now().uptimeNanoseconds
+        let insets = textView.textContainerInset
+        textView.textContainer.size = CGSize(
+            width: textView.textContainer.widthTracksTextView
+                ? max(1, textView.bounds.width - insets.left - insets.right)
+                : CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.layoutManager.ensureLayout(for: textView.textContainer)
+        var rows: [CodeLineNumberGutterView.Row] = []
+        rows.reserveCapacity(chunk.lineContentRanges.count)
+        let highlightMarkerLine = lineAnchorResolution?.existingRange?.lowerBound
+        var fallbackY: CGFloat = 0
+        for (offset, range) in chunk.lineContentRanges.enumerated() {
+            let fragmentRect: CGRect
+            if range.length > 0 {
+                let glyphRange = textView.layoutManager.glyphRange(
+                    forCharacterRange: range,
+                    actualCharacterRange: nil
+                )
+                fragmentRect = glyphRange.length > 0
+                    ? textView.layoutManager.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+                    : CGRect(x: 0, y: fallbackY, width: textView.textContainer.size.width, height: gutterView.font.lineHeight)
+            } else {
+                fragmentRect = CGRect(x: 0, y: fallbackY, width: textView.textContainer.size.width, height: gutterView.font.lineHeight)
+            }
+            fallbackY = fragmentRect.maxY
+            let sourceLine = chunk.startLine + offset
+            rows.append(CodeLineNumberGutterView.Row(
+                text: String(sourceLine),
+                y: insets.top + fragmentRect.minY,
+                height: max(gutterView.font.lineHeight, fragmentRect.height),
+                isHighlighted: lineAnchorResolution?.existingRange?.contains(sourceLine) == true,
+                showsHighlightMarker: sourceLine == highlightMarkerLine
+            ))
+        }
+        gutterView.rows = rows
+        updateLineAnchorHighlight(chunk: chunk)
+        onLayoutGutterMeasured?(Double(
+            DispatchTime.now().uptimeNanoseconds &- start
+        ) / 1_000_000)
+    }
+
+    private func lineAnchorLayout(
+        for chunk: FullScreenCodeChunk
+    ) -> FullScreenLineAnchorLayoutResult? {
+        guard let anchored = lineAnchorResolution?.existingRange,
+              anchored.overlaps(chunk.sourceLineRange) else { return nil }
+        let localRange = ClosedRange(uncheckedBounds: (
+            lower: max(anchored.lowerBound, chunk.sourceLineRange.lowerBound),
+            upper: min(anchored.upperBound, chunk.sourceLineRange.upperBound)
+        ))
+        return FullScreenLineAnchorLayout.layout(
+            for: textView,
+            sourceLineRange: localRange,
+            startLine: chunk.startLine
+        )
+    }
+
+    private func updateLineAnchorHighlight(chunk: FullScreenCodeChunk) {
+        guard let layout = lineAnchorLayout(for: chunk) else {
+            textView.setLineAnchorHighlight(
+                rects: [],
+                fillColor: UIColor(palette.blue).withAlphaComponent(0.08),
+                strokeColor: UIColor(palette.blue).withAlphaComponent(0.75)
+            )
+            return
+        }
+        textView.setLineAnchorHighlight(
+            rects: layout.visibleRects,
+            firstRect: layout.firstVisibleRect,
+            fillColor: UIColor(palette.blue).withAlphaComponent(0.08),
+            strokeColor: UIColor(palette.blue).withAlphaComponent(0.75)
+        )
+    }
+
+    func lineAnchorFirstContentRectInCell() -> CGRect? {
+        guard let chunk,
+              let rect = lineAnchorLayout(for: chunk)?.firstContentRect else { return nil }
+        return textView.convert(rect, to: self)
+    }
+
+    #if DEBUG
+    var debugLineAnchorHighlightRectCount: Int {
+        textView.debugLineAnchorHighlightRectCountForTesting
+    }
+
+    var debugLineAnchorFirstHighlightRect: CGRect? {
+        guard let rect = textView.debugLineAnchorFirstHighlightRectForTesting else { return nil }
+        return textView.convert(rect, to: self)
+    }
+
+    var debugLineAnchorContainsFirstTarget: Bool {
+        textView.debugLineAnchorHighlightContainsFirstTargetForTesting
+    }
+
+    var debugLineAnchorGutterMarkerCount: Int {
+        gutterView.rows.filter(\.showsHighlightMarker).count
+    }
+    #endif
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        chunk = nil
+        textView.attributedText = nil
+        textView.text = nil
+        textView.delegate = nil
+        textView.reviewCommentSourceLineRangeResolver = nil
+        gutterView.rows = []
+        onLayoutGutterMeasured = nil
+        lastLayoutWidth = -1
+    }
+}
+
+final class NativeFullScreenCodeBody: UIView, UIScrollViewDelegate, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
+    private static let virtualizationThresholdBytes = 128 * 1024
+    private static let virtualizedChunkLineLimit = 160
+    private static let virtualizedChunkUTF16Limit = 32 * 1024
+    private static let attributedChunkCacheLimit = 14
+    private static let maxEstimatedCodeWidth: CGFloat = 120_000
+
+    nonisolated private static func isMainThreadForDiagnostics() -> Bool {
+        Thread.isMainThread
+    }
+
     private let scrollView = UIScrollView()
     private let contentContainer = UIView()
     private let gutterView = CodeLineNumberGutterView()
     private let separatorView = UIView()
     private let codeTextView = FullScreenReviewCommentTextView()
+    private let virtualizedLayout = UICollectionViewFlowLayout()
+    private lazy var virtualizedCollectionView = UICollectionView(
+        frame: .zero,
+        collectionViewLayout: virtualizedLayout
+    )
     private let content: String
     private let language: String?
     private let startLine: Int
@@ -94,6 +407,7 @@ final class NativeFullScreenCodeBody: UIView {
     private let lineAnchor: SourceLineAnchor?
     private let lineAnchorResolution: SourceLineAnchorResolution?
     private let alwaysBounceVertical: Bool
+    private let usesVirtualizedRendering: Bool
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private var readerPreferences: FullScreenReaderPreferences
@@ -105,9 +419,19 @@ final class NativeFullScreenCodeBody: UIView {
     private var highlightTask: Task<Void, Never>?
     private var lineAnchorFocusTask: Task<Void, Never>?
     private var lineAnchorFocusPending = false
+    private var virtualizedIndex: FullScreenCodeChunkIndex?
+    private var virtualizedGeneration = 0
+    private var attributedChunkCache: [Int: NSAttributedString] = [:]
+    private var attributedChunkLRU: [Int] = []
+    private var chunkRenderTasks: [Int: Task<Void, Never>] = [:]
+    private var lastVirtualizedLayoutSize: CGSize = .zero
     #if DEBUG
     nonisolated(unsafe) static var highlightDelayForTesting: Duration?
     private(set) var debugHighlightWorkCountForTesting = 0
+    private var debugHighlightMilliseconds: Double = 0
+    private var debugAttributedInstallMilliseconds: Double = 0
+    private var debugLayoutGutterMilliseconds: Double = 0
+    private var debugIndexRanOnMainThread: Bool?
     #endif
 
     private struct GutterLayoutSignature: Equatable {
@@ -145,6 +469,7 @@ final class NativeFullScreenCodeBody: UIView {
             firstFileLine: startLine
         )
         self.alwaysBounceVertical = alwaysBounceVertical
+        self.usesVirtualizedRendering = content.utf8.count > Self.virtualizationThresholdBytes
         self.readerPreferences = readerPreferences
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext?.withLineRange(
@@ -161,11 +486,20 @@ final class NativeFullScreenCodeBody: UIView {
 
     deinit {
         highlightTask?.cancel()
+        chunkRenderTasks.values.forEach { $0.cancel() }
         lineAnchorFocusTask?.cancel()
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        if usesVirtualizedRendering {
+            if virtualizedCollectionView.bounds.size != lastVirtualizedLayoutSize {
+                lastVirtualizedLayoutSize = virtualizedCollectionView.bounds.size
+                virtualizedLayout.invalidateLayout()
+            }
+            scheduleLineAnchorFocusIfNeeded()
+            return
+        }
         scrollView.layoutIfNeeded()
         contentContainer.layoutIfNeeded()
         updateGutterForCurrentLayout()
@@ -182,6 +516,23 @@ final class NativeFullScreenCodeBody: UIView {
         scrollView.showsHorizontalScrollIndicator = true
         scrollView.showsVerticalScrollIndicator = true
         addSubview(scrollView)
+
+        virtualizedLayout.minimumLineSpacing = 0
+        virtualizedLayout.minimumInteritemSpacing = 0
+        virtualizedLayout.scrollDirection = .vertical
+        virtualizedCollectionView.translatesAutoresizingMaskIntoConstraints = false
+        virtualizedCollectionView.backgroundColor = UIColor(palette.bgDark)
+        virtualizedCollectionView.alwaysBounceVertical = alwaysBounceVertical
+        virtualizedCollectionView.showsVerticalScrollIndicator = true
+        virtualizedCollectionView.dataSource = self
+        virtualizedCollectionView.delegate = self
+        virtualizedCollectionView.isHidden = !usesVirtualizedRendering
+        virtualizedCollectionView.register(
+            FullScreenCodeChunkCell.self,
+            forCellWithReuseIdentifier: FullScreenCodeChunkCell.reuseIdentifier
+        )
+        addSubview(virtualizedCollectionView)
+        scrollView.isHidden = usesVirtualizedRendering
 
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentContainer)
@@ -216,7 +567,9 @@ final class NativeFullScreenCodeBody: UIView {
         codeTextView.textContainerInset = UIEdgeInsets(top: 8, left: 4, bottom: 8, right: 8)
         codeTextView.textContainer.lineFragmentPadding = 0
         applyWrapMode()
-        codeTextView.text = content
+        if !usesVirtualizedRendering {
+            codeTextView.text = content
+        }
         codeTextView.delegate = self
         codeTextView.configureReviewCommentSelection(
             router: reviewCommentSelectionRouter,
@@ -241,6 +594,11 @@ final class NativeFullScreenCodeBody: UIView {
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            virtualizedCollectionView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            virtualizedCollectionView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            virtualizedCollectionView.topAnchor.constraint(equalTo: topAnchor),
+            virtualizedCollectionView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             contentContainer.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
             contentContainer.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
@@ -277,17 +635,27 @@ final class NativeFullScreenCodeBody: UIView {
         scrollView.backgroundColor = UIColor(palette.bgDark)
         gutterView.textColor = UIColor(palette.comment)
         separatorView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.2)
-        if highlightedSourceText == nil {
-            codeTextView.textColor = UIColor(palette.fg)
+        virtualizedCollectionView.backgroundColor = UIColor(palette.bgDark)
+        if usesVirtualizedRendering {
+            resetVirtualizedAttributedChunks()
+            virtualizedCollectionView.reloadData()
+            prepareVisibleChunkRunway()
+        } else {
+            if highlightedSourceText == nil {
+                codeTextView.textColor = UIColor(palette.fg)
+            }
+            highlightTask?.cancel()
+            loadHighlighting()
+            invalidateGutterLayout()
         }
-        highlightTask?.cancel()
-        loadHighlighting()
-        invalidateGutterLayout()
     }
 
     private func loadHighlighting() {
-        guard let lang = language, !lang.isEmpty else { return }
-        let syntaxLang = SyntaxLanguage.detect(lang)
+        let syntaxLang = language.flatMap { $0.isEmpty ? nil : SyntaxLanguage.detect($0) } ?? .unknown
+        if usesVirtualizedRendering {
+            loadVirtualizedIndex(language: syntaxLang)
+            return
+        }
         guard syntaxLang != .unknown else { return }
 
         let text = content
@@ -305,30 +673,96 @@ final class NativeFullScreenCodeBody: UIView {
             // Use SendableNSAttributedString to avoid the lossy
             // NSAttributedString → AttributedString → NSAttributedString round-trip
             // that can corrupt UIKit's internal NSMutableRLEArray. (APPLE-IOS-1Y)
-            let wrapper = await Task.detached(priority: .userInitiated) {
-                SendableNSAttributedString(
+            let highlighted = await Task.detached(priority: .userInitiated) {
+                let start = DispatchTime.now().uptimeNanoseconds
+                let wrapper = SendableNSAttributedString(
                     SyntaxHighlighter.highlight(
                         text,
                         language: syntaxLang,
                         themeID: themeID
                     )
                 )
+                let elapsed = DispatchTime.now().uptimeNanoseconds &- start
+                return (wrapper, Double(elapsed) / 1_000_000)
             }.value
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self, self.highlightThemeID == themeID else { return }
-                self.highlightedSourceText = wrapper.value
+                let installStart = DispatchTime.now().uptimeNanoseconds
+                self.highlightedSourceText = highlighted.0.value
                 self.codeTextView.setAttributedTextPreservingSelection(fullScreenAttributedCodeText(
-                    from: wrapper.value,
+                    from: highlighted.0.value,
                     font: self.codeFont
                 ))
+                #if DEBUG
+                self.debugHighlightMilliseconds = highlighted.1
+                self.debugAttributedInstallMilliseconds = Double(
+                    DispatchTime.now().uptimeNanoseconds &- installStart
+                ) / 1_000_000
+                #endif
                 self.invalidateGutterLayout()
             }
         }
     }
 
+    private func loadVirtualizedIndex(language: SyntaxLanguage) {
+        virtualizedGeneration += 1
+        let generation = virtualizedGeneration
+        let source = content
+        let firstLine = startLine
+        let chunkLineLimit = Self.virtualizedChunkLineLimit
+        let chunkUTF16Limit = Self.virtualizedChunkUTF16Limit
+        resetVirtualizedAttributedChunks()
+        virtualizedIndex = nil
+        virtualizedCollectionView.reloadData()
+        highlightTask?.cancel()
+        highlightTask = Task { [weak self] in
+            guard let built = await withCancellableDetachedTask(
+                priority: .userInitiated,
+                operation: {
+                    let indexRanOnMainThread = Self.isMainThreadForDiagnostics()
+                    let index = FullScreenCodeChunkIndex.build(
+                        source: source,
+                        language: language,
+                        startLine: firstLine,
+                        maxLines: chunkLineLimit,
+                        maxUTF16: chunkUTF16Limit
+                    )
+                    return (index, indexRanOnMainThread)
+                }
+            ), !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self, generation == self.virtualizedGeneration else { return }
+                self.virtualizedIndex = built.0
+                #if DEBUG
+                self.debugHighlightMilliseconds = built.0.highlightMilliseconds
+                self.debugIndexRanOnMainThread = built.1
+                #endif
+                self.virtualizedCollectionView.reloadData()
+                self.virtualizedLayout.invalidateLayout()
+                self.virtualizedCollectionView.layoutIfNeeded()
+                self.prepareVisibleChunkRunway()
+                self.focusVirtualizedLineAnchorIfNeeded()
+            }
+        }
+    }
+
+    private func resetVirtualizedAttributedChunks() {
+        chunkRenderTasks.values.forEach { $0.cancel() }
+        chunkRenderTasks.removeAll()
+        attributedChunkCache.removeAll()
+        attributedChunkLRU.removeAll()
+    }
+
     private func applyTextSize() {
         let font = codeFont
+        if usesVirtualizedRendering {
+            resetVirtualizedAttributedChunks()
+            virtualizedCollectionView.reloadData()
+            virtualizedLayout.invalidateLayout()
+            prepareVisibleChunkRunway()
+            return
+        }
         gutterView.font = font
         codeTextView.font = font
 
@@ -351,6 +785,18 @@ final class NativeFullScreenCodeBody: UIView {
 
     private func applyWrapMode() {
         let wraps = readerPreferences.wrapsText
+        if usesVirtualizedRendering {
+            virtualizedCollectionView.alwaysBounceHorizontal = !wraps
+            virtualizedCollectionView.showsHorizontalScrollIndicator = !wraps
+            if wraps {
+                virtualizedCollectionView.contentOffset.x = -virtualizedCollectionView.adjustedContentInset.left
+            }
+            for cell in virtualizedCollectionView.visibleCells.compactMap({ $0 as? FullScreenCodeChunkCell }) {
+                cell.textView.textContainer.lineBreakMode = wraps ? .byCharWrapping : .byClipping
+            }
+            virtualizedLayout.invalidateLayout()
+            return
+        }
         codeTextView.textContainer.lineBreakMode = wraps ? .byCharWrapping : .byClipping
         codeTextView.textContainer.widthTracksTextView = wraps
         codeTextView.textContainer.size = wraps
@@ -382,9 +828,15 @@ final class NativeFullScreenCodeBody: UIView {
         guard signature != lastGutterLayoutSignature else { return }
         lastGutterLayoutSignature = signature
 
+        let layoutStart = DispatchTime.now().uptimeNanoseconds
         gutterView.font = codeFont
         gutterView.textColor = UIColor(palette.comment)
         gutterView.rows = lineNumberRowsForCurrentLayout()
+        #if DEBUG
+        debugLayoutGutterMilliseconds = Double(
+            DispatchTime.now().uptimeNanoseconds &- layoutStart
+        ) / 1_000_000
+        #endif
     }
 
     private func updateLineAnchorHighlight() {
@@ -417,6 +869,10 @@ final class NativeFullScreenCodeBody: UIView {
             await Task.yield()
             guard let self, !Task.isCancelled else { return }
             self.lineAnchorFocusTask = nil
+            if self.usesVirtualizedRendering {
+                self.focusVirtualizedLineAnchorIfNeeded()
+                return
+            }
             guard self.scrollView.bounds.height > 0 else {
                 self.lineAnchorFocusPending = true
                 return
@@ -424,6 +880,64 @@ final class NativeFullScreenCodeBody: UIView {
             self.lineAnchorFocusPending = false
             self.scrollLineAnchorIntoUpperThird()
         }
+    }
+
+    private func focusVirtualizedLineAnchorIfNeeded() {
+        guard lineAnchorFocusPending,
+              let resolution = lineAnchorResolution,
+              let index = virtualizedIndex,
+              !index.chunks.isEmpty,
+              virtualizedCollectionView.bounds.height > 0 else { return }
+        let targetLine = resolution.existingRange?.lowerBound
+            ?? index.chunks.last?.sourceLineRange.upperBound
+            ?? startLine
+        let chunkIndex = index.chunks.firstIndex { $0.sourceLineRange.contains(targetLine) }
+            ?? index.chunks.index(before: index.chunks.endIndex)
+        let indexPath = IndexPath(item: chunkIndex, section: 0)
+        virtualizedCollectionView.scrollToItem(at: indexPath, at: .top, animated: false)
+        virtualizedCollectionView.layoutIfNeeded()
+        prepareVisibleChunkRunway()
+
+        guard let existingRange = resolution.existingRange else {
+            let minimumY = -virtualizedCollectionView.adjustedContentInset.top
+            let maximumY = max(
+                minimumY,
+                virtualizedCollectionView.contentSize.height
+                    - virtualizedCollectionView.bounds.height
+                    + virtualizedCollectionView.adjustedContentInset.bottom
+            )
+            virtualizedCollectionView.setContentOffset(
+                CGPoint(x: virtualizedCollectionView.contentOffset.x, y: maximumY),
+                animated: false
+            )
+            lineAnchorFocusPending = false
+            return
+        }
+        guard existingRange.contains(targetLine),
+              let cell = virtualizedCollectionView.cellForItem(at: indexPath) as? FullScreenCodeChunkCell,
+              let firstRect = cell.lineAnchorFirstContentRectInCell() else {
+            return
+        }
+
+        let rectInCollection = cell.convert(firstRect, to: virtualizedCollectionView)
+        let minimumY = -virtualizedCollectionView.adjustedContentInset.top
+        let maximumY = max(
+            minimumY,
+            virtualizedCollectionView.contentSize.height
+                - virtualizedCollectionView.bounds.height
+                + virtualizedCollectionView.adjustedContentInset.bottom
+        )
+        let targetY = rectInCollection.minY - virtualizedCollectionView.bounds.height / 3
+        let clampedY = min(max(targetY, minimumY), maximumY)
+        guard clampedY.isFinite else { return }
+        virtualizedCollectionView.setContentOffset(
+            CGPoint(x: virtualizedCollectionView.contentOffset.x, y: clampedY),
+            animated: false
+        )
+        lineAnchorFocusPending = false
+        UIAccessibility.post(notification: .layoutChanged, argument: cell.textView)
+        cell.textView.accessibilityLabel = "Source code"
+        cell.textView.accessibilityValue = resolution.accessibilityLabel
     }
 
     private func scrollLineAnchorIntoUpperThird() {
@@ -552,6 +1066,187 @@ final class NativeFullScreenCodeBody: UIView {
         )
     }
 
+    private var currentGutterWidth: CGFloat {
+        let (_, baseWidth) = lineNumberInfo(
+            lineCount: lineCount,
+            startLine: startLine,
+            font: codeFont
+        )
+        return baseWidth + (lineAnchor == nil ? 0 : 10)
+    }
+
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        virtualizedIndex?.chunks.count ?? 0
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        cellForItemAt indexPath: IndexPath
+    ) -> UICollectionViewCell {
+        guard let cell = collectionView.dequeueReusableCell(
+            withReuseIdentifier: FullScreenCodeChunkCell.reuseIdentifier,
+            for: indexPath
+        ) as? FullScreenCodeChunkCell,
+              let index = virtualizedIndex,
+              index.chunks.indices.contains(indexPath.item) else {
+            return UICollectionViewCell()
+        }
+        let chunk = index.chunks[indexPath.item]
+        cell.textView.delegate = self
+        cell.textView.configureReviewCommentSelection(
+            router: reviewCommentSelectionRouter,
+            sourceContext: reviewCommentSourceContext
+        )
+        cell.textView.reviewCommentSourceLineRangeResolver = { [weak textView = cell.textView] range in
+            guard let textView,
+                  let local = ReviewCommentSelectionEditMenuSupport.textLineRange(
+                    in: textView.textStorage.string,
+                    range: range
+                  ) else { return nil }
+            return (chunk.startLine + local.lowerBound - 1)...(chunk.startLine + local.upperBound - 1)
+        }
+        cell.onLayoutGutterMeasured = { [weak self] milliseconds in
+            #if DEBUG
+            self?.debugLayoutGutterMilliseconds += milliseconds
+            #endif
+        }
+        let installStart = DispatchTime.now().uptimeNanoseconds
+        cell.configure(
+            chunk: chunk,
+            attributedText: attributedChunkCache[indexPath.item],
+            font: codeFont,
+            gutterWidth: currentGutterWidth,
+            wrapsText: readerPreferences.wrapsText,
+            palette: palette,
+            lineAnchorResolution: lineAnchorResolution
+        )
+        #if DEBUG
+        debugAttributedInstallMilliseconds += Double(
+            DispatchTime.now().uptimeNanoseconds &- installStart
+        ) / 1_000_000
+        #endif
+        scheduleChunkRender(indexPath.item)
+        return cell
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        layout collectionViewLayout: UICollectionViewLayout,
+        sizeForItemAt indexPath: IndexPath
+    ) -> CGSize {
+        let viewportWidth = max(1, collectionView.bounds.width)
+        let width = readerPreferences.wrapsText
+            ? viewportWidth
+            : max(viewportWidth, estimatedUnwrappedCodeWidth())
+        guard let index = virtualizedIndex,
+              index.chunks.indices.contains(indexPath.item) else {
+            return CGSize(width: width, height: codeFont.lineHeight + 16)
+        }
+        let chunk = index.chunks[indexPath.item]
+        let visualLines: Int
+        if readerPreferences.wrapsText {
+            let glyphWidth = max(1, ("M" as NSString).size(withAttributes: [.font: codeFont]).width)
+            let textWidth = max(1, viewportWidth - currentGutterWidth - 25)
+            let columns = max(1, Int(textWidth / glyphWidth))
+            visualLines = chunk.lineUTF16Lengths.reduce(into: 0) { count, lineLength in
+                count += max(1, (lineLength + columns - 1) / columns)
+            }
+        } else {
+            visualLines = max(1, chunk.lineUTF16Lengths.count)
+        }
+        return CGSize(width: width, height: CGFloat(visualLines) * codeFont.lineHeight + 16)
+    }
+
+    private func estimatedUnwrappedCodeWidth() -> CGFloat {
+        let columns = virtualizedIndex?.widestLineUTF16Count ?? 0
+        let glyphWidth = max(1, ("M" as NSString).size(withAttributes: [.font: codeFont]).width)
+        return min(
+            Self.maxEstimatedCodeWidth,
+            ceil(CGFloat(columns) * glyphWidth + currentGutterWidth + 25)
+        )
+    }
+
+    private func prepareVisibleChunkRunway() {
+        guard usesVirtualizedRendering else { return }
+        let visible = virtualizedCollectionView.indexPathsForVisibleItems.map(\.item)
+        guard let first = visible.min(), let last = visible.max(),
+              let index = virtualizedIndex, !index.chunks.isEmpty else { return }
+        for chunkIndex in max(0, first - 2)...min(index.chunks.count - 1, last + 2) {
+            scheduleChunkRender(chunkIndex)
+        }
+    }
+
+    private func scheduleChunkRender(_ chunkIndex: Int) {
+        guard attributedChunkCache[chunkIndex] == nil,
+              chunkRenderTasks[chunkIndex] == nil,
+              let index = virtualizedIndex,
+              index.chunks.indices.contains(chunkIndex) else { return }
+        let chunk = index.chunks[chunkIndex]
+        let generation = virtualizedGeneration
+        let themeID = highlightThemeID
+        chunkRenderTasks[chunkIndex] = Task { [weak self] in
+            guard let wrapper = await withCancellableDetachedTask(
+                priority: .userInitiated,
+                operation: {
+                    let attributed = NSMutableAttributedString(
+                        string: chunk.text,
+                        attributes: [.foregroundColor: UIColor(themeID.palette.syntaxVariable)]
+                    )
+                    for token in chunk.tokenRanges where token.kind != .variable {
+                        guard let color = SyntaxHighlighter.color(for: token.kind, themeID: themeID) else {
+                            continue
+                        }
+                        let range = NSRange(location: token.location, length: token.length)
+                        guard NSMaxRange(range) <= attributed.length else { continue }
+                        attributed.addAttribute(.foregroundColor, value: color, range: range)
+                    }
+                    return SendableNSAttributedString(attributed)
+                }
+            ), !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self,
+                      generation == self.virtualizedGeneration,
+                      themeID == self.highlightThemeID else { return }
+                self.chunkRenderTasks[chunkIndex] = nil
+                let attributed = fullScreenAttributedCodeText(
+                    from: wrapper.value,
+                    font: self.codeFont
+                )
+                self.cacheAttributedChunk(attributed, at: chunkIndex)
+                if let cell = self.virtualizedCollectionView.cellForItem(
+                    at: IndexPath(item: chunkIndex, section: 0)
+                ) as? FullScreenCodeChunkCell {
+                    let installStart = DispatchTime.now().uptimeNanoseconds
+                    cell.installAttributedText(attributed)
+                    cell.layoutIfNeeded()
+                    self.focusVirtualizedLineAnchorIfNeeded()
+                    #if DEBUG
+                    self.debugAttributedInstallMilliseconds += Double(
+                        DispatchTime.now().uptimeNanoseconds &- installStart
+                    ) / 1_000_000
+                    #endif
+                }
+            }
+        }
+    }
+
+    private func cacheAttributedChunk(_ attributed: NSAttributedString, at index: Int) {
+        attributedChunkCache[index] = attributed
+        attributedChunkLRU.removeAll { $0 == index }
+        attributedChunkLRU.append(index)
+        let visible = Set(virtualizedCollectionView.indexPathsForVisibleItems.map(\.item))
+        while attributedChunkCache.count > Self.attributedChunkCacheLimit,
+              let candidate = attributedChunkLRU.first(where: { !visible.contains($0) }) {
+            attributedChunkCache[candidate] = nil
+            attributedChunkLRU.removeAll { $0 == candidate }
+        }
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === virtualizedCollectionView else { return }
+        prepareVisibleChunkRunway()
+    }
+
 #if DEBUG
     var debugLineAnchorRequestedRangeForTesting: ClosedRange<Int>? {
         lineAnchorResolution?.requestedRange
@@ -562,11 +1257,24 @@ final class NativeFullScreenCodeBody: UIView {
     }
 
     var debugLineAnchorHighlightRectCountForTesting: Int {
-        codeTextView.debugLineAnchorHighlightRectCountForTesting
+        if usesVirtualizedRendering {
+            return virtualizedCollectionView.visibleCells
+                .compactMap { $0 as? FullScreenCodeChunkCell }
+                .reduce(into: 0) { $0 += $1.debugLineAnchorHighlightRectCount }
+        }
+        return codeTextView.debugLineAnchorHighlightRectCountForTesting
     }
 
     var debugLineAnchorFirstHighlightRectForTesting: CGRect? {
-        codeTextView.debugLineAnchorFirstHighlightRectForTesting
+        if usesVirtualizedRendering {
+            for cell in virtualizedCollectionView.visibleCells.compactMap({ $0 as? FullScreenCodeChunkCell }) {
+                if let rect = cell.debugLineAnchorFirstHighlightRect {
+                    return cell.convert(rect, to: virtualizedCollectionView)
+                }
+            }
+            return nil
+        }
+        return codeTextView.debugLineAnchorFirstHighlightRectForTesting
     }
 
     var debugLineAnchorHighlightEnclosureRectForTesting: CGRect? {
@@ -574,6 +1282,17 @@ final class NativeFullScreenCodeBody: UIView {
     }
 
     var debugLineAnchorHighlightHasVisibleGeometryForTesting: Bool {
+        if usesVirtualizedRendering {
+            for cell in virtualizedCollectionView.visibleCells.compactMap({ $0 as? FullScreenCodeChunkCell }) {
+                guard cell.debugLineAnchorContainsFirstTarget,
+                      let rect = cell.debugLineAnchorFirstHighlightRect else { continue }
+                let rectInCollection = cell.convert(rect, to: virtualizedCollectionView)
+                if rectInCollection.intersects(virtualizedCollectionView.bounds) {
+                    return true
+                }
+            }
+            return false
+        }
         guard codeTextView.debugLineAnchorHighlightContainsFirstTargetForTesting,
               let rect = debugLineAnchorHighlightEnclosureRectForTesting,
               rect.width > 0,
@@ -587,20 +1306,67 @@ final class NativeFullScreenCodeBody: UIView {
 
     var debugLineAnchorGutterMarkerCountForTesting: Int {
         layoutIfNeeded()
+        if usesVirtualizedRendering {
+            return virtualizedCollectionView.visibleCells
+                .compactMap { $0 as? FullScreenCodeChunkCell }
+                .reduce(into: 0) { $0 += $1.debugLineAnchorGutterMarkerCount }
+        }
         updateGutterForCurrentLayout()
         return gutterView.rows.filter(\.showsHighlightMarker).count
     }
 
     var debugLineAnchorScrollOffsetForTesting: CGPoint {
-        scrollView.contentOffset
+        usesVirtualizedRendering ? virtualizedCollectionView.contentOffset : scrollView.contentOffset
     }
 
     var debugLineAnchorViewportHeightForTesting: CGFloat {
-        scrollView.bounds.height
+        usesVirtualizedRendering ? virtualizedCollectionView.bounds.height : scrollView.bounds.height
     }
 
     var debugLineAnchorContentHeightForTesting: CGFloat {
-        scrollView.contentSize.height
+        usesVirtualizedRendering ? virtualizedCollectionView.contentSize.height : scrollView.contentSize.height
+    }
+
+    struct PerformanceDiagnostics {
+        let highlightMilliseconds: Double
+        let attributedInstallMilliseconds: Double
+        let layoutGutterMilliseconds: Double
+        let retainedSourceUTF16Count: Int
+        let totalChunkCount: Int
+        let cachedChunkCount: Int
+        let mountedUTF16Count: Int
+        let mountedChunkCount: Int
+        let indexRanOnMainThread: Bool?
+    }
+
+    func performanceDiagnosticsForTesting() -> PerformanceDiagnostics {
+        if usesVirtualizedRendering {
+            let cells = virtualizedCollectionView.visibleCells.compactMap {
+                $0 as? FullScreenCodeChunkCell
+            }
+            return PerformanceDiagnostics(
+                highlightMilliseconds: debugHighlightMilliseconds,
+                attributedInstallMilliseconds: debugAttributedInstallMilliseconds,
+                layoutGutterMilliseconds: debugLayoutGutterMilliseconds,
+                retainedSourceUTF16Count: virtualizedIndex?.sourceUTF16Count ?? (content as NSString).length,
+                totalChunkCount: virtualizedIndex?.chunks.count ?? 0,
+                cachedChunkCount: attributedChunkCache.count,
+                mountedUTF16Count: cells.reduce(into: 0) { $0 += $1.textView.textStorage.length },
+                mountedChunkCount: cells.count,
+                indexRanOnMainThread: debugIndexRanOnMainThread
+            )
+        }
+        return PerformanceDiagnostics(
+            highlightMilliseconds: debugHighlightMilliseconds,
+            attributedInstallMilliseconds: debugAttributedInstallMilliseconds,
+            layoutGutterMilliseconds: debugLayoutGutterMilliseconds,
+            retainedSourceUTF16Count: (content as NSString).length,
+            totalChunkCount: codeTextView.textStorage.length == 0 ? 0 : 1,
+            cachedChunkCount: codeTextView.textStorage.length == 0 ? 0 : 1,
+            mountedUTF16Count: codeTextView.textStorage.length,
+            mountedChunkCount: codeTextView.textStorage.length == 0 ? 0 : 1,
+            indexRanOnMainThread: nil
+        )
     }
 
     struct CodeGutterAlignmentDiagnostics: Equatable {
