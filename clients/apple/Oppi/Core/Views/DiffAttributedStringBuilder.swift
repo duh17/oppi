@@ -216,7 +216,7 @@ enum DiffAttributedStringBuilder {
         let totalRange: NSRange
     }
 
-    struct Options {
+    struct Options: Sendable {
         var includeStats = false
         var includeGapSummary = true
     }
@@ -482,6 +482,366 @@ enum DiffAttributedStringBuilder {
 
         result.endEditing()
         return BuildResult(attributedText: result)
+    }
+
+    // MARK: - Virtualized chunk index
+
+    /// Compact, attributed-text-free index used by large diff readers. Syntax is
+    /// resolved once across each complete hunk so lazily painted chunks keep the
+    /// same lexer context as the whole-document renderer.
+    struct ChunkIndex: Sendable {
+        struct Chunk: Sendable {
+            fileprivate let entries: [ChunkEntry]
+            let renderedUTF16Count: Int
+            let renderedLineCount: Int
+            let widestUTF16ColumnCount: Int
+            fileprivate let numberDigits: Int
+        }
+
+        let id: UUID
+        let chunks: [Chunk]
+        let totalUTF16Count: Int
+        let renderedLineCount: Int
+        let widestUTF16ColumnCount: Int
+        let indexRanOnMainThread: Bool
+    }
+
+    fileprivate struct IndexedSyntaxSpan: Sendable {
+        let location: Int
+        let length: Int
+        let kind: SyntaxHighlighter.TokenKind
+    }
+
+    fileprivate struct IndexedRow: Sendable {
+        let line: WorkspaceReviewDiffLine
+        let displayedLineNumber: Int?
+        let syntaxSpans: [IndexedSyntaxSpan]
+    }
+
+    fileprivate enum ChunkEntry: Sendable {
+        case stats(added: Int, removed: Int, total: Int)
+        case blank
+        case gap(Int)
+        case row(IndexedRow)
+
+        var renderedLineCount: Int { 1 }
+
+        var renderedString: String {
+            switch self {
+            case .stats(let added, let removed, let total):
+                var value = " "
+                if added > 0 { value += "+\(added) " }
+                if removed > 0 { value += "-\(removed) " }
+                return value + " \(total) lines\n"
+            case .blank:
+                return "\n"
+            case .gap(let count):
+                return " … \(count) unchanged line\(count == 1 ? "" : "s")\n"
+            case .row(let row):
+                let marker: String
+                switch row.line.kind {
+                case .added: marker = " + "
+                case .removed: marker = " - "
+                case .context: marker = "   "
+                }
+                return " \(row.displayedLineNumber.map(String.init) ?? "")\(marker)\(row.line.text.isEmpty ? " " : row.line.text)\n"
+            }
+        }
+    }
+
+    /// Builds only source/token metadata. No `NSAttributedString` or TextKit
+    /// document is created here, and callers run this operation off the main actor.
+    static func buildChunkIndex(
+        hunks: [WorkspaceReviewDiffHunk],
+        filePath: String,
+        options: Options = Options(),
+        maxLines: Int = 160,
+        maxUTF8Bytes: Int = 32 * 1024
+    ) -> ChunkIndex {
+        let safeLineLimit = max(1, maxLines)
+        let safeByteLimit = max(1, maxUTF8Bytes)
+        let language = FileType.detect(from: filePath).syntaxLanguage ?? .unknown
+
+        var maxLineNumber = 1
+        var totalLines = 0
+        var totalAdded = 0
+        var totalRemoved = 0
+        for hunk in hunks {
+            totalLines += hunk.lines.count
+            for line in hunk.lines {
+                if let number = displayedLineNumber(for: line) {
+                    maxLineNumber = max(maxLineNumber, number)
+                }
+                switch line.kind {
+                case .added: totalAdded += 1
+                case .removed: totalRemoved += 1
+                case .context: break
+                }
+            }
+        }
+        let numberDigits = max(3, String(maxLineNumber).count)
+
+        var entries: [ChunkEntry] = []
+        entries.reserveCapacity(totalLines + hunks.count * 2 + 1)
+        if options.includeStats, totalAdded > 0 || totalRemoved > 0 {
+            entries.append(.stats(added: totalAdded, removed: totalRemoved, total: totalLines))
+        }
+
+        for (hunkIndex, hunk) in hunks.enumerated() {
+            if hunkIndex > 0 {
+                entries.append(.blank)
+                if options.includeGapSummary,
+                   let gap = unchangedLineGap(from: hunks[hunkIndex - 1], to: hunk),
+                   gap > 0 {
+                    entries.append(.gap(gap))
+                }
+            }
+
+            let syntaxByLine = indexedSyntaxSpans(in: hunk, language: language)
+            for (lineIndex, line) in hunk.lines.enumerated() {
+                entries.append(.row(IndexedRow(
+                    line: line,
+                    displayedLineNumber: displayedLineNumber(for: line),
+                    syntaxSpans: syntaxByLine[lineIndex]
+                )))
+            }
+        }
+
+        var chunks: [ChunkIndex.Chunk] = []
+        var currentEntries: [ChunkEntry] = []
+        var currentLines = 0
+        var currentBytes = 0
+        var currentUTF16 = 0
+        var currentWidest = 0
+
+        func flush() {
+            guard !currentEntries.isEmpty else { return }
+            chunks.append(ChunkIndex.Chunk(
+                entries: currentEntries,
+                renderedUTF16Count: currentUTF16,
+                renderedLineCount: currentLines,
+                widestUTF16ColumnCount: currentWidest,
+                numberDigits: numberDigits
+            ))
+            currentEntries.removeAll(keepingCapacity: true)
+            currentLines = 0
+            currentBytes = 0
+            currentUTF16 = 0
+            currentWidest = 0
+        }
+
+        for entry in entries {
+            let rendered = renderedString(for: entry, numberDigits: numberDigits)
+            let entryBytes = rendered.utf8.count
+            if !currentEntries.isEmpty,
+               currentLines + entry.renderedLineCount > safeLineLimit
+                || currentBytes + entryBytes > safeByteLimit {
+                flush()
+            }
+            currentEntries.append(entry)
+            currentLines += entry.renderedLineCount
+            currentBytes += entryBytes
+            currentUTF16 += rendered.utf16.count
+            let lineWidth = rendered.last == "\n" ? rendered.dropLast().utf16.count : rendered.utf16.count
+            currentWidest = max(currentWidest, lineWidth)
+        }
+        flush()
+
+        return ChunkIndex(
+            id: UUID(),
+            chunks: chunks,
+            totalUTF16Count: chunks.reduce(into: 0) { $0 += $1.renderedUTF16Count },
+            renderedLineCount: chunks.reduce(into: 0) { $0 += $1.renderedLineCount },
+            widestUTF16ColumnCount: chunks.map(\.widestUTF16ColumnCount).max() ?? 0,
+            indexRanOnMainThread: Thread.isMainThread
+        )
+    }
+
+    /// Paints one indexed chunk on demand. The index already contains syntax
+    /// ranges, while theme colors and word-span backgrounds are applied here.
+    static func buildChunk(_ chunk: ChunkIndex.Chunk) -> NSAttributedString {
+        let style = StyleAttrs.current()
+        let numberDigits = chunk.numberDigits
+        let result = NSMutableAttributedString(string: "")
+
+        for entry in chunk.entries {
+            switch entry {
+            case .stats(let added, let removed, let total):
+                let start = result.length
+                result.append(NSAttributedString(string: " ", attributes: style.headerAttrs))
+                if added > 0 {
+                    result.append(NSAttributedString(
+                        string: "+\(added)",
+                        attributes: style.headerAttrs.merging([
+                            .foregroundColor: style.addedAccentColor,
+                            .font: AppFont.monoMediumBold,
+                        ]) { _, new in new }
+                    ))
+                    result.append(NSAttributedString(string: " ", attributes: style.headerAttrs))
+                }
+                if removed > 0 {
+                    result.append(NSAttributedString(
+                        string: "-\(removed)",
+                        attributes: style.headerAttrs.merging([
+                            .foregroundColor: style.removedAccentColor,
+                            .font: AppFont.monoMediumBold,
+                        ]) { _, new in new }
+                    ))
+                    result.append(NSAttributedString(string: " ", attributes: style.headerAttrs))
+                }
+                result.append(NSAttributedString(string: " ", attributes: style.headerAttrs))
+                result.append(NSAttributedString(
+                    string: "\(total) lines",
+                    attributes: style.headerAttrs.merging([
+                        .foregroundColor: style.commentDimColor,
+                        .font: AppFont.systemSmall,
+                    ]) { _, new in new }
+                ))
+                result.append(NSAttributedString(string: "\n", attributes: style.headerAttrs))
+                assert(result.length > start)
+
+            case .blank:
+                result.append(NSAttributedString(string: "\n", attributes: style.codeDefaultAttrs))
+
+            case .gap(let count):
+                result.append(NSAttributedString(
+                    string: " … \(count) unchanged line\(count == 1 ? "" : "s")\n",
+                    attributes: style.sectionHeaderBlockAttrs.merging(style.gapSummaryAttrs) { _, new in new }
+                ))
+
+            case .row(let row):
+                append(row: row, numberDigits: numberDigits, style: style, to: result)
+            }
+        }
+        return result
+    }
+
+    private static func append(
+        row: IndexedRow,
+        numberDigits: Int,
+        style: StyleAttrs,
+        to result: NSMutableAttributedString
+    ) {
+        let gutterAttrs: [NSAttributedString.Key: Any]
+        let numberAttrs: [NSAttributedString.Key: Any]
+        let codeAttrs: [NSAttributedString.Key: Any]
+        let marker: String
+        switch row.line.kind {
+        case .added:
+            gutterAttrs = style.gutterAddedAttrs
+            numberAttrs = style.lineNumAddedAttrs
+            codeAttrs = style.codeAddedAttrs
+            marker = " + "
+        case .removed:
+            gutterAttrs = style.gutterRemovedAttrs
+            numberAttrs = style.lineNumRemovedAttrs
+            codeAttrs = style.codeRemovedAttrs
+            marker = " - "
+        case .context:
+            gutterAttrs = style.gutterContextAttrs
+            numberAttrs = style.lineNumAttrs
+            codeAttrs = style.codeDimAttrs
+            marker = "   "
+        }
+
+        let rowStart = result.length
+        result.append(NSAttributedString(string: " ", attributes: gutterAttrs))
+        let number = row.displayedLineNumber.map { paddedNumber($0, digits: numberDigits) }
+            ?? String(repeating: " ", count: numberDigits)
+        result.append(NSAttributedString(string: number, attributes: numberAttrs))
+        result.append(NSAttributedString(string: marker, attributes: gutterAttrs))
+        let codeStart = result.length
+        let code = row.line.text.isEmpty ? " " : row.line.text
+        result.append(NSAttributedString(string: code, attributes: codeAttrs))
+        if row.line.kind == .context {
+            result.append(NSAttributedString(string: "\n", attributes: codeAttrs))
+        } else {
+            result.append(NSAttributedString(string: "\n", attributes: style.codeDefaultAttrs))
+        }
+        let rowRange = NSRange(location: rowStart, length: result.length - rowStart)
+        if let lineNumber = row.displayedLineNumber {
+            result.addAttribute(reviewLineNumberAttributeKey, value: lineNumber, range: rowRange)
+        }
+
+        for syntax in row.syntaxSpans {
+            guard let color = style.syntaxColorArray[Int(syntax.kind.rawValue)] else { continue }
+            result.addAttribute(
+                .foregroundColor,
+                value: color,
+                range: NSRange(location: codeStart + syntax.location, length: syntax.length)
+            )
+        }
+        if let spans = row.line.spans, !spans.isEmpty {
+            let background = row.line.kind == .removed ? style.wordRemovedBg : style.wordAddedBg
+            for span in spans {
+                let length = span.end - span.start
+                guard span.start >= 0, length > 0, span.end <= code.utf16.count else { continue }
+                let range = NSRange(location: codeStart + span.start, length: length)
+                result.addAttribute(.backgroundColor, value: background, range: range)
+                result.addAttribute(.foregroundColor, value: style.fgColor, range: range)
+            }
+        }
+    }
+
+    private static func renderedString(for entry: ChunkEntry, numberDigits: Int) -> String {
+        guard case .row(let row) = entry else { return entry.renderedString }
+        let number = row.displayedLineNumber.map { paddedNumber($0, digits: numberDigits) }
+            ?? String(repeating: " ", count: numberDigits)
+        let marker: String
+        switch row.line.kind {
+        case .added: marker = " + "
+        case .removed: marker = " - "
+        case .context: marker = "   "
+        }
+        return " \(number)\(marker)\(row.line.text.isEmpty ? " " : row.line.text)\n"
+    }
+
+    private static func indexedSyntaxSpans(
+        in hunk: WorkspaceReviewDiffHunk,
+        language: SyntaxLanguage
+    ) -> [[IndexedSyntaxSpan]] {
+        var result = [[IndexedSyntaxSpan]](repeating: [], count: hunk.lines.count)
+        guard language != .unknown, !hunk.lines.isEmpty else { return result }
+
+        var projection = HunkSyntaxProjection()
+        for (lineIndex, line) in hunk.lines.enumerated() {
+            projection.append(
+                lineIndex: lineIndex,
+                kind: line.kind,
+                codeText: line.text.isEmpty ? " " : line.text
+            )
+        }
+
+        func map(
+            _ tokens: [SyntaxHighlighter.TokenRange],
+            lines: [(lineIndex: Int, start: Int)]
+        ) {
+            guard !tokens.isEmpty, !lines.isEmpty else { return }
+            let starts = lines.map(\.start)
+            for token in tokens {
+                let tokenEnd = token.location + token.length
+                guard tokenEnd > token.location else { continue }
+                SyntaxHighlighter.forEachOverlappingSourceLine(
+                    lineStarts: starts,
+                    tokenStart: token.location,
+                    tokenEnd: tokenEnd,
+                    lineLengthAt: { hunk.lines[lines[$0].lineIndex].text.isEmpty ? 1 : hunk.lines[lines[$0].lineIndex].text.utf16.count }
+                ) { mappedLine, overlapStart, overlapEnd in
+                    let source = lines[mappedLine]
+                    result[source.lineIndex].append(IndexedSyntaxSpan(
+                        location: overlapStart - source.start,
+                        length: overlapEnd - overlapStart,
+                        kind: token.kind
+                    ))
+                }
+            }
+        }
+
+        let oldLines = projection.oldLines.filter { hunk.lines[$0.lineIndex].kind == .removed }
+        let newLines = projection.newLines.filter { hunk.lines[$0.lineIndex].kind != .removed }
+        map(TreeSitterHighlighter.resolvedTokenRangesUTF8(projection.oldCode, language: language), lines: oldLines)
+        map(TreeSitterHighlighter.resolvedTokenRangesUTF8(projection.newCode, language: language), lines: newLines)
+        return result
     }
 
     private static func applySyntaxTokens(

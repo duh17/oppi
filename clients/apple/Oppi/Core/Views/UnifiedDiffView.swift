@@ -6,8 +6,8 @@ import UIKit
 /// Renders server/local hunks with syntax highlighting, numbered lines, and
 /// optional word-level spans inside a selectable `UITextView`.
 ///
-/// The attributed string build runs off the main thread via `Task.detached`
-/// to prevent app hangs on large diffs (500+ lines).
+/// Small attributed strings build off-main. Large diffs build an off-main
+/// source/token index, then mount only visible attributed chunks plus a runway.
 struct UnifiedDiffView: View {
     let hunks: [WorkspaceReviewDiffHunk]
     let filePath: String
@@ -24,8 +24,26 @@ struct UnifiedDiffView: View {
         reviewCommentSelectionContext ?? reviewCommentSelectionScope?.makeContext()
     }
 
-    /// Pre-built attributed string + measured width, computed off main thread.
-    @State private var built: BuiltDiff?
+    nonisolated static func shouldUseChunkedRendering(
+        for hunks: [WorkspaceReviewDiffHunk]
+    ) -> Bool {
+        var lineCount = 0
+        var sourceUTF8Count = 0
+        for hunk in hunks {
+            lineCount += hunk.lines.count
+            for line in hunk.lines {
+                sourceUTF8Count += line.text.utf8.count + 16
+            }
+        }
+        return sourceUTF8Count > maximumSingleTextViewUTF8Bytes
+            || lineCount > maximumSingleTextViewLines
+    }
+
+    nonisolated private static let maximumSingleTextViewUTF8Bytes = 128 * 1024
+    nonisolated private static let maximumSingleTextViewLines = 600
+
+    /// Whole-document data for small diffs or an attributed-text-free chunk index.
+    @State private var built: BuiltContent?
 
     var body: some View {
         Group {
@@ -38,14 +56,26 @@ struct UnifiedDiffView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.themeBgDark)
             } else if let built {
-                UnifiedDiffTextView(
-                    built: built,
-                    reviewCommentSelectionContext: effectiveReviewCommentSelectionContext,
-                    sourceContext: reviewCommentSourceContext ?? effectiveReviewCommentSelectionContext?.sourceContext(
-                        surface: .fullScreenDiff,
-                        filePath: filePath
-                    )
+                let sourceContext = reviewCommentSourceContext ?? effectiveReviewCommentSelectionContext?.sourceContext(
+                    surface: .fullScreenDiff,
+                    filePath: filePath
                 )
+                Group {
+                    switch built {
+                    case .single(let document):
+                        UnifiedDiffTextView(
+                            built: document,
+                            reviewCommentSelectionContext: effectiveReviewCommentSelectionContext,
+                            sourceContext: sourceContext
+                        )
+                    case .chunks(let index):
+                        UnifiedDiffChunkView(
+                            index: index,
+                            reviewCommentSelectionContext: effectiveReviewCommentSelectionContext,
+                            sourceContext: sourceContext
+                        )
+                    }
+                }
                 .ignoresSafeArea(.keyboard)
             } else {
                 ProgressView()
@@ -58,18 +88,29 @@ struct UnifiedDiffView: View {
             let h = hunks
             let fp = filePath
             let result = await Task.detached(priority: .userInitiated) {
-                let build = DiffAttributedStringBuilder.buildResult(
+                if !Self.shouldUseChunkedRendering(for: h) {
+                    let build = DiffAttributedStringBuilder.buildResult(
+                        hunks: h,
+                        filePath: fp,
+                        options: .init(includeStats: false, includeGapSummary: true)
+                    )
+                    let measured = build.attributedText.boundingRect(
+                        with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
+                        options: [.usesLineFragmentOrigin],
+                        context: nil
+                    )
+                    return BuiltContent.single(BuiltDiff(
+                        attributedText: build.attributedText,
+                        contentWidth: ceil(measured.width) + 20
+                    ))
+                }
+                return BuiltContent.chunks(DiffAttributedStringBuilder.buildChunkIndex(
                     hunks: h,
                     filePath: fp,
                     options: .init(includeStats: false, includeGapSummary: true)
-                )
-                let measured = build.attributedText.boundingRect(
-                    with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
-                    options: [.usesLineFragmentOrigin],
-                    context: nil
-                )
-                return BuiltDiff(attributedText: build.attributedText, contentWidth: ceil(measured.width) + 20)
+                ))
             }.value
+            guard !Task.isCancelled else { return }
             built = result
         }
     }
@@ -78,76 +119,22 @@ struct UnifiedDiffView: View {
 // MARK: - Async Build
 
 extension UnifiedDiffView {
-    /// Build result passed to the UIKit text view.
+    enum BuiltContent: @unchecked Sendable {
+        case single(BuiltDiff)
+        case chunks(DiffAttributedStringBuilder.ChunkIndex)
+    }
+
+    /// Build result passed to the small-document UIKit text view.
     struct BuiltDiff: @unchecked Sendable {
         let attributedText: NSAttributedString
         let contentWidth: CGFloat
     }
-
 }
 
 // MARK: - Layout Manager
 
-/// Layout manager that draws full-width backgrounds for added/removed lines.
-/// `NSAttributedString.backgroundColor` only paints behind characters; this
-/// extends the tint to cover the entire line fragment rect edge-to-edge.
-private final class UnifiedDiffLayoutManager: NSLayoutManager {
-    /// Visible scroll width set from `UnifiedDiffScrollView.layoutSubviews()`.
-    /// `drawBackground` is a nonisolated UIKit override in Swift 6, so it must
-    /// not reach back into a main-actor-isolated `UIScrollView` directly.
-    nonisolated(unsafe) var viewportWidth: CGFloat = 0
-
-    /// Measured content width set after text layout.
-    nonisolated(unsafe) var measuredContentWidth: CGFloat = 0
-
-    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
-        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
-        guard let storage = textStorage else { return }
-
-        let fillWidth = max(measuredContentWidth, viewportWidth)
-
-        let addedBg = UIColor(Color.themeDiffAdded.opacity(0.10))
-        let removedBg = UIColor(Color.themeDiffRemoved.opacity(0.08))
-        let headerBg = UIColor(Color.themeBgHighlight)
-        let addedBar = UIColor(Color.themeDiffAdded)
-        let removedBar = UIColor(Color.themeDiffRemoved)
-        let barWidth: CGFloat = 2.5
-
-        storage.enumerateAttribute(diffLineKindAttributeKey, in: NSRange(location: 0, length: storage.length), options: []) { value, attrRange, _ in
-            guard let kind = value as? String else { return }
-            let bg: UIColor
-            let bar: UIColor?
-            switch kind {
-            case "added": bg = addedBg; bar = addedBar
-            case "removed": bg = removedBg; bar = removedBar
-            case "header": bg = headerBg; bar = nil
-            default: return
-            }
-
-            let glyphRange = self.glyphRange(forCharacterRange: attrRange, actualCharacterRange: nil)
-            self.enumerateLineFragments(forGlyphRange: glyphRange) { rect, _, _, _, _ in
-                var fillRect = rect
-                fillRect.origin.x = 0
-                fillRect.size.width = fillWidth
-                fillRect.origin.x += origin.x
-                fillRect.origin.y += origin.y
-                bg.setFill()
-                UIRectFillUsingBlendMode(fillRect, .normal)
-
-                // Draw left gutter bar for added/removed lines
-                if let bar {
-                    var barRect = fillRect
-                    barRect.size.width = barWidth
-                    bar.setFill()
-                    UIRectFillUsingBlendMode(barRect, .normal)
-                }
-            }
-        }
-    }
-}
-
 private final class UnifiedDiffScrollView: UIScrollView {
-    weak var diffLayoutManager: UnifiedDiffLayoutManager?
+    weak var diffLayoutManager: DiffBackgroundLayoutManager?
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -156,6 +143,58 @@ private final class UnifiedDiffScrollView: UIScrollView {
 }
 
 // MARK: - UIViewRepresentable
+
+/// Collection-backed painter shared with future native full-screen diff readers.
+private struct UnifiedDiffChunkView: UIViewRepresentable {
+    let index: DiffAttributedStringBuilder.ChunkIndex
+    let reviewCommentSelectionContext: ReviewCommentSelectionContext?
+    let sourceContext: ReviewCommentSourceContext?
+
+    @Environment(\.horizontalBackSwipeAction) private var horizontalBackSwipeAction
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> DiffChunkCollectionView {
+        let view = DiffChunkCollectionView(
+            index: index,
+            backgroundColor: UIColor(Color.themeBgDark),
+            reviewCommentSelectionContext: reviewCommentSelectionContext,
+            sourceContext: sourceContext
+        )
+        context.coordinator.installBackSwipe(
+            action: horizontalBackSwipeAction,
+            on: view.backSwipeHostView
+        )
+        return view
+    }
+
+    func updateUIView(_ uiView: DiffChunkCollectionView, context: Context) {
+        uiView.update(
+            index: index,
+            backgroundColor: UIColor(Color.themeBgDark),
+            reviewCommentSelectionContext: reviewCommentSelectionContext,
+            sourceContext: sourceContext
+        )
+        context.coordinator.installBackSwipe(
+            action: horizontalBackSwipeAction,
+            on: uiView.backSwipeHostView
+        )
+    }
+
+    @MainActor
+    final class Coordinator {
+        private let backSwipeCoordinator = HorizontalBackSwipeActionCoordinator()
+
+        func installBackSwipe(
+            action: (@MainActor @Sendable () -> Void)?,
+            on view: UIView
+        ) {
+            backSwipeCoordinator.install(action: action, on: view)
+        }
+    }
+}
 
 /// Non-scrolling UITextView inside a UIScrollView — displays a pre-built
 /// attributed string. The build happens off the main thread in the parent view.
@@ -175,7 +214,7 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UIView {
         let textStorage = NSTextStorage()
-        let layoutManager = UnifiedDiffLayoutManager()
+        let layoutManager = DiffBackgroundLayoutManager()
         let textContainer = NSTextContainer()
         textContainer.lineFragmentPadding = 0
         textContainer.lineBreakMode = .byClipping

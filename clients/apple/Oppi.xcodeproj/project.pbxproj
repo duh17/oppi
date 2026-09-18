@@ -312,6 +312,7 @@
 		2C9FEB98FEA047F7EE089E48 /* SessionIdentityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6084B6BC1910E8561BFD799A /* SessionIdentityTests.swift */; };
 		2CC4984B567D40371B9899B5 /* DocumentRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07455A7D1D33D7830E8197C5 /* DocumentRenderer.swift */; };
 		2CCC7DF3C36620B0F6538F65 /* MacSessionContextInspectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7E15C40C567CFADD994E5CE /* MacSessionContextInspectorTests.swift */; };
+		2CE5AFAF660DF776CECD68B1 /* UnifiedDiffVirtualizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55DE93187DD44373F739BCA8 /* UnifiedDiffVirtualizationTests.swift */; };
 		2D10B290A449C3AC84E89B4C /* TimelineTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C96A4D660582ACAED973BA6 /* TimelineTestSupport.swift */; };
 		2D1B43C78871BF2683DAF4F5 /* TreeSitterPython in Frameworks */ = {isa = PBXBuildFile; productRef = A344FBD7E00C0C3E7DDE472C /* TreeSitterPython */; };
 		2D851A9AC1EBADF4605CEE94 /* VoiceInputRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA29EB015CA1A879D937108C /* VoiceInputRoutingTests.swift */; };
@@ -1668,6 +1669,7 @@
 		F52706DCDA9807C8C5F18077 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 053E884C030215C064244A8D /* AppTheme.swift */; };
 		F572AA36961CEC5DBE91BF24 /* AUDIT-RESULTS.md in Resources */ = {isa = PBXBuildFile; fileRef = 35FA3411D780C1DB10CED7BC /* AUDIT-RESULTS.md */; };
 		F6018A15AE6297457B11373C /* SessionRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B95EBD89E6F0340E0347F74D /* SessionRow.swift */; };
+		F60BCC544EF485D91E7E7F15 /* DiffChunkCollectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A0CA827C360918C9B50F6DB /* DiffChunkCollectionView.swift */; };
 		F60DD1834D6C1DBF8616EBD3 /* MacSessionTimelineColumnPaintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD04C5EC9E86A68761B7249B /* MacSessionTimelineColumnPaintTests.swift */; };
 		F60F0E23C5748811BB74F04A /* MarkdownTableMarkupRewriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA73F8952DA811631CE45052 /* MarkdownTableMarkupRewriter.swift */; };
 		F661D321D58CA2D90F215470 /* MermaidERParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABA5130567D8BB2FF99C2F37 /* MermaidERParser.swift */; };
@@ -2312,6 +2314,7 @@
 		556ADBB348DD48BC3D032ABD /* ToolPresentationBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolPresentationBuilder.swift; sourceTree = "<group>"; };
 		55A0A8DFBC4F40F8AB653F73 /* UserTimelineRowContentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserTimelineRowContentTests.swift; sourceTree = "<group>"; };
 		55B6D4F64D991B9284C7BAEA /* ServerConnection+Fork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ServerConnection+Fork.swift"; sourceTree = "<group>"; };
+		55DE93187DD44373F739BCA8 /* UnifiedDiffVirtualizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedDiffVirtualizationTests.swift; sourceTree = "<group>"; };
 		5627CD1B12E022D2E6813E4A /* MacToolMetadataVisualGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacToolMetadataVisualGateTests.swift; sourceTree = "<group>"; };
 		562CB7139A941B08ABAD4FA1 /* MacScreenAwakeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacScreenAwakeController.swift; sourceTree = "<group>"; };
 		56D8694E415A626D281587BC /* InLayoutInvalidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InLayoutInvalidationTests.swift; sourceTree = "<group>"; };
@@ -2413,6 +2416,7 @@
 		69D14504BEA36189D5A1641D /* UnifiedDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedDiffView.swift; sourceTree = "<group>"; };
 		69D30D46B8A00309262E6696 /* MermaidQuadrantParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidQuadrantParser.swift; sourceTree = "<group>"; };
 		69D603A421ED850B5226621C /* DelimitedTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DelimitedTable.swift; sourceTree = "<group>"; };
+		6A0CA827C360918C9B50F6DB /* DiffChunkCollectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffChunkCollectionView.swift; sourceTree = "<group>"; };
 		6A28657447754F24ADFA0279 /* AdjacentFileNavigatorLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdjacentFileNavigatorLayoutTests.swift; sourceTree = "<group>"; };
 		6A2A545103E4D66062EFD322 /* FocusedSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusedSessionStore.swift; sourceTree = "<group>"; };
 		6A2A5B57A77DA0C589C8B6F2 /* ServerConnectionScenarioSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionScenarioSupport.swift; sourceTree = "<group>"; };
@@ -3914,6 +3918,7 @@
 				4E5CC6F74731D0932E84C930 /* IconPickerModelTests.swift */,
 				6698289848C2AE90BD46FBA3 /* NavigationSwipeGesturePolicyTests.swift */,
 				F08483EB16EB870ECD9B8DC0 /* ServerViewSelectionTests.swift */,
+				55DE93187DD44373F739BCA8 /* UnifiedDiffVirtualizationTests.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -4802,6 +4807,7 @@
 				2D20B7C8A1793DEDF39122DE /* DelimitedTableFileView.swift */,
 				7FBC0F8C16B5298704A5B983 /* DelimitedTableRenderView.swift */,
 				F3797817271519709070D510 /* DiffAttributedStringBuilder.swift */,
+				6A0CA827C360918C9B50F6DB /* DiffChunkCollectionView.swift */,
 				4E68B230E7FE6CB9EBA56D26 /* DoubleTapZoom.swift */,
 				0996499F6180DAE543025C8C /* EmbeddedFileViewerView.swift */,
 				75A97F74FE074809C6869C3A /* FileContentComponents.swift */,
@@ -7374,6 +7380,7 @@
 				DD5B3DE6BA5450EAEEE46794 /* TurnSendTrackingTests.swift in Sources */,
 				E8AA897D7BFC1D6CC9031736 /* TypewriterAnimatorTests.swift in Sources */,
 				E32DF97C45371FFED34D9030 /* USDZLocalFileStoreTests.swift in Sources */,
+				2CE5AFAF660DF776CECD68B1 /* UnifiedDiffVirtualizationTests.swift in Sources */,
 				3853D22799EE7FFA4E6D7686 /* UnifiedPatchParserTests.swift in Sources */,
 				15B71E5BBC1C1EF9769079B1 /* UserTimelineRowContentTests.swift in Sources */,
 				69B14140A0B9AFC14C1CD4DD /* VoiceInputAudioRoutePlannerTests.swift in Sources */,
@@ -7576,6 +7583,7 @@
 				C9EC938EDA52EBE1F5929F2D /* DictationStreamClient.swift in Sources */,
 				9A7293597F4966F4ABE5EB6E /* DictationTransport.swift in Sources */,
 				FE84BDDEB6B8C45964D5AD2A /* DiffAttributedStringBuilder.swift in Sources */,
+				F60BCC544EF485D91E7E7F15 /* DiffChunkCollectionView.swift in Sources */,
 				D3C7CEF0011EEE8127F0393E /* DiffEngine.swift in Sources */,
 				1ECD4C55C09F91B62F00751C /* DocumentParser.swift in Sources */,
 				F36970AA0D34F937A8C52060 /* DocumentRenderPipeline.swift in Sources */,
