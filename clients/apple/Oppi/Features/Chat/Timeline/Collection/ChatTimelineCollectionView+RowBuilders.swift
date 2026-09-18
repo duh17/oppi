@@ -662,6 +662,21 @@ extension ChatTimelineCollectionHost.Controller {
                     )
                 }
             )
+            if ExpandedToolOutputFetch.isShellSidecarTool(tool) {
+                let store = toolOutputStore
+                configuration.fetchCompleteToolOutput = {
+                    if let store, store.hasCompleteOutput(for: toolCallId) {
+                        let text = store.fullOutput(for: toolCallId)
+                        return text.isEmpty ? nil : text
+                    }
+                    return try await ExpandedToolOutputFetch.fetchForCopy(
+                        apiClient: apiClient,
+                        scope: routeScope,
+                        sessionId: capturedSessionId,
+                        toolCallId: toolCallId
+                    )
+                }
+            }
         }
         return configuration
             .withReviewCommentSelection(router: interactionCtx.reviewCommentSelectionRouter, sessionId: interactionCtx.sessionId)

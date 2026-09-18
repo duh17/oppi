@@ -1823,7 +1823,8 @@ actor APIClient: ClientLogUploading {
         }
     }
 
-    /// First sidecar window: HEAD + Range for large output, JSON for small/legacy.
+    /// First sidecar window: HEAD + Range for large output, JSON for small.
+    /// HEAD miss uses Range without decoding `?full=true` JSON.
     func openFullToolOutputSidecar(
         scope: SessionRouteScope,
         sessionId: String,
@@ -1858,15 +1859,13 @@ actor APIClient: ClientLogUploading {
             )
         }
 
-        guard let text = try await getFullToolOutput(
+        // HEAD miss: Range without Content-Length. Do not JSON-decode a large sidecar.
+        return try await getFullToolOutputSidecarWindow(
             scope: scope,
             sessionId: sessionId,
-            toolCallId: toolCallId
-        ) else {
-            return nil
-        }
-        let bytes = text.utf8.count
-        return ToolOutputSidecarWindow(text: text, endByteOffset: bytes, totalBytes: bytes)
+            toolCallId: toolCallId,
+            startByte: 0
+        )
     }
 
     private func fullToolOutputPath(

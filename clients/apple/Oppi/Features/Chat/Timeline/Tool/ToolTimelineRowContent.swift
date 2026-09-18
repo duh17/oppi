@@ -64,6 +64,8 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var openCurrentFile: (() -> Void)? = nil
     var openFullScreen: ((ChatReaderPayload) -> Void)? = nil
     var toolOutputSidecarSource: ToolOutputSidecarWindowSource? = nil
+    /// Copy/share fetches the complete sidecar. Expand must not use this path.
+    var fetchCompleteToolOutput: (() async throws -> String?)? = nil
 
     func makeContentView() -> any UIView & UIContentView {
         ToolTimelineRowContentView(configuration: self)
@@ -2380,6 +2382,22 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return nil
     }
 
+    func resolveOutputCopyText() async -> String? {
+        if let fetch = currentConfiguration.fetchCompleteToolOutput {
+            do {
+                if let complete = try await fetch() {
+                    let trimmed = complete.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        return complete
+                    }
+                }
+            } catch {
+                // Keep the already-held preview rather than failing copy.
+            }
+        }
+        return outputCopyText
+    }
+
     private func updateFullScreenSourceStream(configuration: ToolTimelineRowConfiguration) {
         guard let policy = currentInteractionPolicy,
               policy.supportsFullScreenPreview,
@@ -2562,7 +2580,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 self.copy(text: command, feedbackView: feedbackView)
             },
             onCopyOutput: { [weak self] copyTarget in
-                guard let self, let output else { return }
+                guard let self else { return }
                 let feedbackView = ToolTimelineRowContextMenuTargeting.feedbackView(
                     for: copyTarget,
                     commandContainer: self.commandContainer,
@@ -2570,9 +2588,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     expandedContainer: self.expandedContainer,
                     imagePreviewContainer: self.imagePreviewContainer
                 )
-                self.copy(text: output, feedbackView: feedbackView)
-                FeatureEducationTips.markToolOutputShortcutUsed()
-                self.dismissFeatureEducationTipForAction()
+                self.copyResolvedOutput(feedbackView: feedbackView)
             },
             onOpenFullScreenContent: { [weak self] in
                 self?.activateExpandedContent()
@@ -2600,6 +2616,16 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     func copy(text: String, feedbackView: UIView) {
         TimelineCopyFeedback.copy(text, feedbackView: feedbackView)
+    }
+
+    func copyResolvedOutput(feedbackView: UIView) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard let text = await self.resolveOutputCopyText() else { return }
+            self.copy(text: text, feedbackView: feedbackView)
+            FeatureEducationTips.markToolOutputShortcutUsed()
+            self.dismissFeatureEducationTipForAction()
+        }
     }
 
     /// Flags set by render strategies during apply(). Consumed at the end of

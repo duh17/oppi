@@ -67,7 +67,7 @@ struct ExpandedToolOutputLoaderTests {
             tool: "bash",
             fetchToolOutput: { _, _ in "full output" },
             applyOutput: { output in
-                appliedOutput = output
+                appliedOutput = output.text
             },
             reconfigureItem: {
                 reconfigureCount += 1
@@ -140,7 +140,7 @@ struct ExpandedToolOutputLoaderTests {
                 return "retry output"
             },
             applyOutput: { output in
-                appliedOutput = output
+                appliedOutput = output.text
             }
         )
 
@@ -319,7 +319,7 @@ private func makeRequest(
     itemExists: @escaping () -> Bool = { true },
     isItemExpanded: @escaping () -> Bool = { true },
     fetchToolOutput: @escaping ExpandedToolOutputLoader.FetchToolOutput = { _, _ in "output" },
-    applyOutput: @escaping (_ output: String) -> Void = { _ in },
+    applyOutput: @escaping (_ output: ExpandedToolOutputFetch.Result) -> Void = { _ in },
     reconfigureItem: @escaping () -> Void = {}
 ) -> ExpandedToolOutputLoader.LoadRequest {
     ExpandedToolOutputLoader.LoadRequest(

@@ -33,18 +33,18 @@ struct ToolTimelineRowFullScreenActivationTests {
         harness.window.isHidden = true
     }
 
-    @Test("bash expand/copy keeps the full sidecar, not the first Range window")
-    func bashCopyAndFullScreenUseCompleteSidecar() throws {
+    @Test("bash first paint stays on the first window; copy fetches the complete sidecar")
+    func bashCopyFetchesCompleteSidecarNotFirstWindow() async {
         let firstWindow = String(repeating: "a", count: 4096)
         let full = firstWindow + "COMPLETE-TAIL\n"
-        let configuration = makeTimelineToolConfiguration(
+        var configuration = makeTimelineToolConfiguration(
             expandedContent: .bash(command: "seq", output: firstWindow, unwrapped: true),
             copyCommandText: "seq",
-            copyOutputText: full,
+            copyOutputText: firstWindow,
             isExpanded: true
         )
-        #expect(configuration.copyOutputText == full)
-        #expect((configuration.copyOutputText?.utf8.count ?? 0) > firstWindow.utf8.count)
+        configuration.fetchCompleteToolOutput = { full }
+        #expect(configuration.copyOutputText == firstWindow)
 
         let content = ToolTimelineRowFullScreenSupport.staticFullScreenContent(
             configuration: configuration,
@@ -55,8 +55,13 @@ struct ToolTimelineRowFullScreenActivationTests {
             Issue.record("Expected terminal full-screen content")
             return
         }
-        #expect(rendered == full)
-        #expect(rendered.hasSuffix("COMPLETE-TAIL\n"))
+        #expect(rendered == firstWindow)
+
+        let view = ToolTimelineRowContentView(configuration: configuration)
+        let copied = await view.resolveOutputCopyText()
+        #expect(copied == full)
+        #expect(copied?.hasSuffix("COMPLETE-TAIL\n") == true)
+        #expect((copied?.utf8.count ?? 0) > firstWindow.utf8.count)
     }
 
     @Test("eligible current-file activation uses navigation action without presenting output")

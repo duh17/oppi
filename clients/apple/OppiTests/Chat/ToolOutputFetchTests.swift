@@ -6,6 +6,68 @@ import UIKit
 @Suite("Tool output fetch")
 @MainActor
 struct ToolOutputFetchTests {
+    @Test func expandFetchPolicySkipsNetworkForHeldShellPreviewOnly() {
+        #expect(
+            ExpandedToolOutputFetch.shouldSkipExpandFetch(
+                tool: "bash",
+                hasCompleteOutput: false,
+                storedPreview: "tail preview"
+            )
+        )
+        #expect(
+            ExpandedToolOutputFetch.shouldSkipExpandFetch(
+                tool: "grep",
+                hasCompleteOutput: false,
+                storedPreview: "hit"
+            )
+        )
+        #expect(
+            !ExpandedToolOutputFetch.shouldSkipExpandFetch(
+                tool: "read",
+                hasCompleteOutput: false,
+                storedPreview: "file body"
+            )
+        )
+        #expect(
+            !ExpandedToolOutputFetch.shouldSkipExpandFetch(
+                tool: "bash",
+                hasCompleteOutput: false,
+                storedPreview: ""
+            )
+        )
+        #expect(
+            ExpandedToolOutputFetch.shouldSkipExpandFetch(
+                tool: "read",
+                hasCompleteOutput: true,
+                storedPreview: "file body"
+            )
+        )
+    }
+
+    @Test func sidecarWindowCompletenessDrivesPreviewOnlyStorage() {
+        let text = String(repeating: "a", count: 4096)
+        let incomplete = ToolOutputSidecarWindow(
+            text: text,
+            endByteOffset: text.utf8.count,
+            totalBytes: text.utf8.count + 64 * 1024
+        )
+        #expect(!incomplete.isComplete)
+        let preview = ExpandedToolOutputFetch.Result(incomplete)
+        #expect(preview.text == text)
+        #expect(preview.previewOnly)
+        #expect(preview.totalBytes == incomplete.totalBytes)
+
+        let complete = ToolOutputSidecarWindow(
+            text: text,
+            endByteOffset: text.utf8.count,
+            totalBytes: text.utf8.count
+        )
+        #expect(complete.isComplete)
+        let stored = ExpandedToolOutputFetch.Result(complete)
+        #expect(!stored.previewOnly)
+        #expect(stored.totalBytes == nil)
+    }
+
     @Test func sessionSwitchCancelsInFlightToolOutputLoad() async {
         let harness = makeTimelineHarness(sessionId: "session-a")
         let probe = TimelineFetchProbe()
@@ -138,11 +200,12 @@ struct ToolOutputFetchTests {
         #expect(harness.coordinator._loadingToolOutputIDsForTesting.isEmpty)
     }
 
-    @Test func previewOnlyShellOutputStillFetchesFullOutputOnExpand() async {
+    @Test func previewOnlyShellOutputSkipsNetworkOnExpand() async {
         let harness = makeTimelineHarness(sessionId: "session-a")
         let toolID = "tool-shell-preview"
+        let preview = "line79\nline80\n"
 
-        harness.toolOutputStore.replace("line79\nline80\n", for: toolID, previewOnly: true, totalBytes: 50_000)
+        harness.toolOutputStore.replace(preview, for: toolID, previewOnly: true, totalBytes: 50_000)
 
         let shellConfig = makeTimelineConfiguration(
             items: [
@@ -150,7 +213,7 @@ struct ToolOutputFetchTests {
                     id: toolID,
                     tool: "bash",
                     argsSummary: "command: find /",
-                    outputPreview: "line79\nline80\n",
+                    outputPreview: preview,
                     outputByteCount: 50_000,
                     isError: false,
                     isDone: true
@@ -167,7 +230,7 @@ struct ToolOutputFetchTests {
         harness.coordinator.apply(configuration: shellConfig, to: harness.collectionView)
 
         harness.coordinator._fetchToolOutputForTesting = { _, _ in
-            "line1\nline2\nline3\n"
+            "SHOULD-NOT-FETCH-FULL-SIDECAR"
         }
 
         harness.coordinator.collectionView(
@@ -176,35 +239,27 @@ struct ToolOutputFetchTests {
         )
 
         #expect(harness.reducer.expandedItemIDs.contains(toolID))
-        #expect(await waitForTimelineCondition(timeoutMs: 600) {
-            await MainActor.run {
-                harness.toolOutputStore.fullOutput(for: toolID) == "line1\nline2\nline3\n"
-                    && harness.toolOutputStore.hasCompleteOutput(for: toolID)
-            }
-        })
+        #expect(harness.coordinator._toolOutputLoadTaskCountForTesting == 0)
+        #expect(harness.coordinator._toolOutputAppliedCountForTesting == 0)
+        #expect(harness.toolOutputStore.fullOutput(for: toolID) == preview)
+        #expect(harness.toolOutputStore.hasPreviewOnlyOutput(for: toolID))
+        #expect(!harness.toolOutputStore.hasCompleteOutput(for: toolID))
     }
 
-    @Test func expandedBashFetchStoresCompleteSidecarNotFirstWindow() async {
+    @Test func largeBashExpandStoresFirstWindowAsPreviewOnly() async {
         let harness = makeTimelineHarness(sessionId: "session-a")
-        let toolID = "tool-shell-full-sidecar"
+        let toolID = "tool-shell-first-window"
         let firstWindow = String(repeating: "a", count: 4096)
-        let full = firstWindow + "COMPLETE-TAIL\n"
-
-        harness.toolOutputStore.replace(
-            firstWindow.suffix(80) + "",
-            for: toolID,
-            previewOnly: true,
-            totalBytes: full.utf8.count
-        )
+        let reportedBytes = ToolOutputSidecarHTTP.firstWindowBytes + 64 * 1024
 
         let shellConfig = makeTimelineConfiguration(
             items: [
                 .toolCall(
                     id: toolID,
                     tool: "bash",
-                    argsSummary: "command: seq",
+                    argsSummary: "command: python long.py",
                     outputPreview: "COMPLETE-TAIL\n",
-                    outputByteCount: full.utf8.count,
+                    outputByteCount: firstWindow.utf8.count,
                     isError: false,
                     isDone: true
                 ),
@@ -220,7 +275,11 @@ struct ToolOutputFetchTests {
         harness.coordinator.apply(configuration: shellConfig, to: harness.collectionView)
 
         harness.coordinator._fetchToolOutputForTesting = { _, _ in
-            full
+            ExpandedToolOutputFetch.Result(
+                text: firstWindow,
+                previewOnly: true,
+                totalBytes: reportedBytes
+            )
         }
 
         harness.coordinator.collectionView(
@@ -231,13 +290,13 @@ struct ToolOutputFetchTests {
         #expect(harness.reducer.expandedItemIDs.contains(toolID))
         #expect(await waitForTimelineCondition(timeoutMs: 800) {
             await MainActor.run {
-                harness.toolOutputStore.fullOutput(for: toolID) == full
-                    && harness.toolOutputStore.hasCompleteOutput(for: toolID)
-                    && !harness.toolOutputStore.hasPreviewOnlyOutput(for: toolID)
+                harness.toolOutputStore.fullOutput(for: toolID) == firstWindow
             }
         })
-        #expect(harness.toolOutputStore.fullOutput(for: toolID).utf8.count > firstWindow.utf8.count)
-        #expect(harness.toolOutputStore.fullOutput(for: toolID).hasSuffix("COMPLETE-TAIL\n"))
+        #expect(harness.toolOutputStore.fullOutput(for: toolID) == firstWindow)
+        #expect(harness.toolOutputStore.hasPreviewOnlyOutput(for: toolID))
+        #expect(!harness.toolOutputStore.hasCompleteOutput(for: toolID))
+        #expect(harness.toolOutputStore.outputByteCount(for: toolID) == reportedBytes)
     }
 
     @Test func readToolWithUnknownByteCountStillFetchesFullOutputOnExpand() async {

@@ -493,7 +493,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var lastPrefetchDirection = 0
 
         #if DEBUG
-            var _fetchToolOutputForTesting: ((_ sessionId: String, _ toolCallId: String) async throws -> String)? {
+            var _fetchToolOutputForTesting: ExpandedToolOutputLoader.FetchToolOutput? {
                 get { toolOutputLoader.fetchOverrideForTesting }
                 set { toolOutputLoader.fetchOverrideForTesting = newValue }
             }
@@ -1592,7 +1592,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 outputByteCount: outputByteCount,
                 attempt: attempt,
                 hasExistingOutput: {
-                    toolOutputStore.hasCompleteOutput(for: itemID)
+                    ExpandedToolOutputFetch.shouldSkipExpandFetch(
+                        tool: tool,
+                        hasCompleteOutput: toolOutputStore.hasCompleteOutput(for: itemID),
+                        storedPreview: toolOutputStore.fullOutput(for: itemID)
+                    )
                 },
                 activeSessionID: sessionId,
                 currentSessionID: { [weak self] in
@@ -1605,8 +1609,13 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     self?.reducer?.expandedItemIDs.contains(itemID) == true
                 },
                 fetchToolOutput: fetchToolOutput,
-                applyOutput: { output in
-                    toolOutputStore.replace(output, for: itemID)
+                applyOutput: { fetched in
+                    toolOutputStore.replace(
+                        fetched.text,
+                        for: itemID,
+                        previewOnly: fetched.previewOnly,
+                        totalBytes: fetched.totalBytes
+                    )
                 },
                 reconfigureItem: { [weak self, weak collectionView] in
                     guard let self, let collectionView else { return }
@@ -1624,25 +1633,13 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             }
 
             return { sessionId, toolCallId in
-                let isShellTool = ToolCallFormatting.isBashTool(tool)
-                    || ToolCallFormatting.isGrepTool(tool)
-                    || ToolCallFormatting.isFindTool(tool)
-                    || ToolCallFormatting.isLsTool(tool)
-
-                if isShellTool,
-                   let fullOutput = try await apiClient.getNonEmptyFullToolOutput(
-                       scope: routeScope,
-                       sessionId: sessionId,
-                       toolCallId: toolCallId
-                   ) {
-                    return fullOutput
-                }
-
-                return try await apiClient.getNonEmptyToolOutput(
+                try await ExpandedToolOutputFetch.fetchForExpand(
+                    tool: tool,
+                    apiClient: apiClient,
                     scope: routeScope,
                     sessionId: sessionId,
                     toolCallId: toolCallId
-                ) ?? ""
+                )
             }
         }
 

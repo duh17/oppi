@@ -6,7 +6,7 @@ import Foundation
 /// while preserving the same externally observed behavior.
 @MainActor
 final class ExpandedToolOutputLoader {
-    typealias FetchToolOutput = (_ sessionId: String, _ toolCallId: String) async throws -> String
+    typealias FetchToolOutput = (_ sessionId: String, _ toolCallId: String) async throws -> ExpandedToolOutputFetch.Result
 
     struct LoadRequest {
         let itemID: String
@@ -19,7 +19,7 @@ final class ExpandedToolOutputLoader {
         let itemExists: () -> Bool
         let isItemExpanded: () -> Bool
         let fetchToolOutput: FetchToolOutput
-        let applyOutput: (_ output: String) -> Void
+        let applyOutput: (_ output: ExpandedToolOutputFetch.Result) -> Void
         let reconfigureItem: () -> Void
 
         func retrying(attempt nextAttempt: Int) -> Self {
@@ -85,7 +85,7 @@ final class ExpandedToolOutputLoader {
         }
 
         let task = Task { [weak self, request] in
-            let output: String
+            let output: ExpandedToolOutputFetch.Result
             do {
                 output = try await request.fetchToolOutput(request.activeSessionID, request.itemID)
             } catch {
@@ -109,7 +109,7 @@ final class ExpandedToolOutputLoader {
                 guard let self else { return }
 
                 let disposition = Self.completionDisposition(
-                    output: output,
+                    output: output.text,
                     isTaskCancelled: Task.isCancelled,
                     activeSessionID: request.activeSessionID,
                     currentSessionID: request.currentSessionID(),

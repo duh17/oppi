@@ -26,9 +26,6 @@ extension ToolTimelineRowContentView {
             return
         }
 
-        guard let text = outputCopyText else { return }
-        copy(text: text, feedbackView: feedbackView)
-        FeatureEducationTips.markToolOutputShortcutUsed()
-        dismissFeatureEducationTipForAction()
+        copyResolvedOutput(feedbackView: feedbackView)
     }
 }
