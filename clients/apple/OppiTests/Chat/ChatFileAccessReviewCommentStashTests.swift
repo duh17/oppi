@@ -144,8 +144,10 @@ struct ChatFileAccessReviewCommentStashTests {
         #expect(commit.contains("fullScreenReviewCommentStashOverlay("))
         #expect(files.contains("fullScreenReviewCommentStashOverlay("))
         #expect(files.contains("leadingFloatingAccessoryCount:"))
+        #expect(files.contains("trailingFloatingAccessoryCount:"))
         #expect(touched.contains("fullScreenReviewCommentStashOverlay("))
         #expect(touched.contains("leadingFloatingAccessoryCount:"))
+        #expect(touched.contains("trailingFloatingAccessoryCount:"))
         #expect(panel.contains(".environment(\\.reviewCommentSelectionScope, fileDetailReviewCommentScope)"))
     }
 }

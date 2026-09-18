@@ -144,7 +144,6 @@ struct SessionTouchedFileContentView: View {
             .modifier(AdjacentFileNavigatorControls(
                 canGoPrevious: adjacentSelection(.previous) != nil,
                 canGoNext: adjacentSelection(.next) != nil,
-                placement: adjacentFileNavigatorPlacement,
                 onPrevious: { navigateToAdjacentFile(.previous) },
                 onNext: { navigateToAdjacentFile(.next) }
             ))
@@ -200,7 +199,8 @@ struct SessionTouchedFileContentView: View {
             EmbeddedFileViewerView(
                 content: fullScreenContent(text: content),
                 backSwipeAction: { dismiss() },
-                leadingFloatingAccessoryCount: adjacentFileNavigatorLeadingAccessoryCount
+                leadingFloatingAccessoryCount: adjacentFileNavigatorLeadingAccessoryCount,
+                trailingFloatingAccessoryCount: adjacentFileNavigatorTrailingAccessoryCount
             )
             .ignoresSafeArea(edges: .top)
         case .image(let data):
@@ -437,17 +437,17 @@ struct SessionTouchedFileContentView: View {
         navigationContext?.selection(adjacentTo: currentFilePath, direction: direction)
     }
 
-    private var adjacentFileNavigatorPlacement: AdjacentFileNavigatorPlacement {
-        AdjacentFileNavigatorPlacementPolicy.placement(
-            for: FileType.detect(from: currentFilePath).previewCategory
-        )
-    }
-
     private var adjacentFileNavigatorLeadingAccessoryCount: Int {
         AdjacentFileNavigatorLayout.leadingAccessoryCount(
             canGoPrevious: adjacentSelection(.previous) != nil,
-            canGoNext: adjacentSelection(.next) != nil,
-            placement: adjacentFileNavigatorPlacement
+            canGoNext: adjacentSelection(.next) != nil
+        )
+    }
+
+    private var adjacentFileNavigatorTrailingAccessoryCount: Int {
+        AdjacentFileNavigatorLayout.trailingAccessoryCount(
+            canGoPrevious: adjacentSelection(.previous) != nil,
+            canGoNext: adjacentSelection(.next) != nil
         )
     }
 

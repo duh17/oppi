@@ -2022,6 +2022,26 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(scaledPointSize > initialPointSize)
     }
 
+    @Test func viewingOptionsStacksAboveTrailingFileNavigator() throws {
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code)
+        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code) }
+        let controller = makeController(
+            content: .code(content: "let answer = 42", language: "swift", filePath: "Answer.swift", startLine: 1)
+        )
+        controller.setTrailingFloatingAccessoryCount(1)
+        controller.view.layoutIfNeeded()
+
+        let buttonFrame = try #require(controller.floatingViewingOptionsButtonFrameForTesting)
+        #expect(buttonFrame.midX > controller.view.bounds.midX)
+        #expect(
+            abs(
+                controller.view.bounds.maxY
+                    - buttonFrame.maxY
+                    - FullScreenReviewCommentStashControl.bottomPadding(leadingAccessoryCount: 1)
+            ) <= 0.5
+        )
+    }
+
     @Test func geoJSONMapHidesViewingOptionsUntilSourceJSON() throws {
         FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code)
         defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code) }

@@ -43,19 +43,11 @@ struct FileBrowserPushTransitionMotionTests {
         #expect(context.selection(adjacentTo: "a.swift", direction: .previous) == nil)
         #expect(context.selection(adjacentTo: "c.swift", direction: .next) == nil)
         #expect(
-            AdjacentFileNavigatorLayout.slots(
-                canGoPrevious: false,
-                canGoNext: true,
-                placement: .leadingPill
-            )
+            AdjacentFileNavigatorLayout.slots(canGoPrevious: false, canGoNext: true)
                 .map(\.accessibilityLabel) == ["Next file"]
         )
         #expect(
-            AdjacentFileNavigatorLayout.slots(
-                canGoPrevious: true,
-                canGoNext: false,
-                placement: .leadingPill
-            )
+            AdjacentFileNavigatorLayout.slots(canGoPrevious: true, canGoNext: false)
                 .map(\.accessibilityLabel) == ["Previous file"]
         )
     }

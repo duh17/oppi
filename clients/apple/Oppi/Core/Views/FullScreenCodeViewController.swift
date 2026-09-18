@@ -104,6 +104,8 @@ final class FullScreenCodeViewController: UIViewController {
     private var stashBadgeLabel: UILabel?
     private var stashBottomConstraint: NSLayoutConstraint?
     private var leadingFloatingAccessoryCount = 0
+    private var trailingFloatingAccessoryCount = 0
+    private var viewingOptionsBottomConstraint: NSLayoutConstraint?
     private var lastPresentedStashCount = 0
     private var isObservingReviewCommentStash = false
     private weak var presentedStashSheetHost: UIViewController?
@@ -755,6 +757,7 @@ final class FullScreenCodeViewController: UIViewController {
               let readerPreferences = presentation.readerPreferences else {
             floatingViewingOptionsButton?.removeFromSuperview()
             floatingViewingOptionsButton = nil
+            viewingOptionsBottomConstraint = nil
             viewingOptionsController?.dismiss(animated: true)
             return
         }
@@ -767,19 +770,22 @@ final class FullScreenCodeViewController: UIViewController {
             floatingViewingOptionsButton = button
             viewController.view.addSubview(button)
             button.translatesAutoresizingMaskIntoConstraints = false
+            let bottom = button.bottomAnchor.constraint(
+                equalTo: viewController.view.safeAreaLayoutGuide.bottomAnchor,
+                constant: -viewingOptionsBottomPadding
+            )
+            viewingOptionsBottomConstraint = bottom
             NSLayoutConstraint.activate([
                 button.trailingAnchor.constraint(
                     equalTo: viewController.view.safeAreaLayoutGuide.trailingAnchor,
                     constant: -FullScreenFloatingControlChrome.trailingPadding
                 ),
-                button.bottomAnchor.constraint(
-                    equalTo: viewController.view.safeAreaLayoutGuide.bottomAnchor,
-                    constant: -FullScreenFloatingControlChrome.bottomPadding
-                ),
+                bottom,
                 button.widthAnchor.constraint(equalToConstant: FullScreenFloatingControlChrome.controlSize),
                 button.heightAnchor.constraint(equalToConstant: FullScreenFloatingControlChrome.controlSize),
             ])
         }
+        viewingOptionsBottomConstraint?.constant = -viewingOptionsBottomPadding
 
         updateFloatingViewingOptionsButton(button, palette: palette, preferences: readerPreferences)
         viewController.view.bringSubviewToFront(button)
@@ -971,6 +977,21 @@ final class FullScreenCodeViewController: UIViewController {
         leadingFloatingAccessoryCount = normalized
         guard isViewLoaded, let host = contentHostController else { return }
         updateStashBottomConstraint(on: host.view)
+    }
+
+    private var viewingOptionsBottomPadding: CGFloat {
+        FullScreenReviewCommentStashControl.bottomPadding(
+            leadingAccessoryCount: trailingFloatingAccessoryCount
+        )
+    }
+
+    func setTrailingFloatingAccessoryCount(_ count: Int) {
+        let normalized = max(0, count)
+        guard trailingFloatingAccessoryCount != normalized else { return }
+        trailingFloatingAccessoryCount = normalized
+        guard isViewLoaded else { return }
+        viewingOptionsBottomConstraint?.constant = -viewingOptionsBottomPadding
+        (contentHostController?.view ?? view).layoutIfNeeded()
     }
 
     private func updateStashBottomConstraint(on view: UIView) {

@@ -17,13 +17,12 @@ import UIKit
 ///    can annotate. Do not put Annotate in the top bar. Staged review comments
 ///    use the same corner when `stagedCount > 0`. If both are present, stack
 ///    stash above Annotate. Annotate stays in the original slot when stash is
-///    hidden. Adjacent file-to-file controls occupy this same corner on
-///    SwiftUI document hosts as one previous/next pill. Stash stacks above
-///    that pill. Audio and video keep previous leading and next trailing so
-///    playback transport is not covered. Do not add a second stash control in
-///    the top bar.
-/// 4. Bottom trailing: Viewing Options / Reader as a floating glass control.
-///    Do not cover it with Annotate, stash, next-file, or a bottom toolbar.
+///    hidden. Adjacent previous-file controls occupy this same corner on
+///    SwiftUI file hosts; stash stacks above them the same way. Do not add a
+///    second stash control in the top bar.
+/// 4. Bottom trailing: next-file when present. Viewing Options / Reader stacks
+///    above next when both exist, and stays in the original slot when next is
+///    omitted. Do not cover Reader with Annotate, stash, or a bottom toolbar.
 ///
 /// Layout rules:
 /// 1. Do NOT set a custom `UINavigationBarAppearance` on the content VC.

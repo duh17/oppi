@@ -695,6 +695,7 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
     var markdownViewportIntent: Binding<FullScreenMarkdownViewportIntent?>? = nil
     var addToChatDestination: ComposerCanvasDestination? = nil
     var leadingFloatingAccessoryCount: Int = 0
+    var trailingFloatingAccessoryCount: Int = 0
     var onOpenNestedReader: ((ChatReaderPayload) -> Void)? = nil
     var onOpenLinkedFile: ((LinkAction) -> Bool)? = nil
 
@@ -736,6 +737,7 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
             addToChatDestination: addToChatDestination
         )
         viewController.setLeadingFloatingAccessoryCount(leadingFloatingAccessoryCount)
+        viewController.setTrailingFloatingAccessoryCount(trailingFloatingAccessoryCount)
         ChatReaderOpenLookup.install(onOpenNestedReader, on: viewController.view)
         ChatReaderLinkIntercept.install(onOpenLinkedFile, on: viewController.view)
         return viewController
@@ -748,6 +750,7 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
         uiViewController.setNavigationActions(navigationActions)
         uiViewController.applyThemeIfNeeded(themeID)
         uiViewController.setLeadingFloatingAccessoryCount(leadingFloatingAccessoryCount)
+        uiViewController.setTrailingFloatingAccessoryCount(trailingFloatingAccessoryCount)
         ChatReaderOpenLookup.install(onOpenNestedReader, on: uiViewController.view)
         ChatReaderLinkIntercept.install(onOpenLinkedFile, on: uiViewController.view)
     }
@@ -767,6 +770,7 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
             addToChatDestination: addToChatDestination
         )
         controller.setLeadingFloatingAccessoryCount(leadingFloatingAccessoryCount)
+        controller.setTrailingFloatingAccessoryCount(trailingFloatingAccessoryCount)
         return controller
     }
 #endif
