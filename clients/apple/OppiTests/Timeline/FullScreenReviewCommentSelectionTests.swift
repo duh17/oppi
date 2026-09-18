@@ -1652,6 +1652,68 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(commentAction.title == "Comment")
     }
 
+    @Test func wrappedTerminalChunkInstallBudget() async throws {
+        let content = (0..<12_000).map {
+            String(format: "%05d ", $0) + String(repeating: "x", count: 160) + "\n"
+        }.joined()
+        let body = NativeFullScreenTerminalBody(
+            content: content, command: nil, stream: nil, palette: ThemeID.dark.palette,
+            readerPreferences: FullScreenReaderPreferences(wrapsText: true),
+            reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil
+        )
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        body.frame = host.bounds
+        host.addSubview(body)
+        host.layoutIfNeeded()
+        let collection = try #require(timelineAllScrollViews(in: body).compactMap { $0 as? UICollectionView }.first)
+        for fraction in [0.0, 0.5, 1.0] {
+            if fraction > 0 {
+                collection.setContentOffset(CGPoint(x: 0, y: fraction * max(0, collection.contentSize.height - collection.bounds.height)), animated: false)
+                collection.layoutIfNeeded()
+            }
+            let ready = await waitForMainActorCondition(timeout: .seconds(15)) {
+                host.layoutIfNeeded()
+                collection.layoutIfNeeded()
+                return !collection.visibleCells.isEmpty && collection.visibleCells.allSatisfy { cell in
+                    timelineAllTextViews(in: cell).contains { $0.textStorage.length > 0 }
+                }
+            }
+            #expect(ready)
+            var textLayouts: [Double] = []
+            var actualVisualLines: [Int] = []
+            for cell in collection.visibleCells {
+                for textView in timelineAllTextViews(in: cell) {
+                    let start = CACurrentMediaTime()
+                    textView.setNeedsLayout()
+                    textView.layoutIfNeeded()
+                    if let manager = textView.textLayoutManager {
+                        manager.ensureLayout(for: manager.documentRange)
+                    }
+                    textLayouts.append((CACurrentMediaTime() - start) * 1_000)
+                    let manager = try #require(textView.textLayoutManager)
+                    var lines = 0
+                    manager.enumerateTextLayoutFragments(from: manager.documentRange.location, options: []) { fragment in
+                        lines += fragment.textLineFragments.count
+                        return true
+                    }
+                    actualVisualLines.append(lines)
+                }
+            }
+            let d = try #require(body.virtualizationDiagnosticsForTesting())
+            let install = d.installMilliseconds.max() ?? 0
+            let layout = (d.layoutMilliseconds + textLayouts).max() ?? 0
+            print("TERMINAL_WRAP fraction=\(fraction) index_ms=\(d.indexMilliseconds) install_ms=\(install) layout_ms=\(layout) mounted_utf16=\(d.mountedUTF16Count) visual_lines=\(d.mountedVisualLines)")
+            #expect(d.indexRanOnMainThread == false)
+            #expect(!d.installMilliseconds.isEmpty)
+            #expect(install < 200)
+            #expect(layout < 200)
+            print("TERMINAL_WRAP actual_visual_lines=\(actualVisualLines)")
+            #expect(d.mountedVisualLines.allSatisfy { $0 <= 65 })
+            #expect(!actualVisualLines.isEmpty && actualVisualLines.allSatisfy { $0 > 0 && $0 <= 65 })
+            #expect(d.mountedUTF16Count < 16_000)
+        }
+    }
+
     @Test func largeCompletedTerminalMountsOnlyViewportChunks() async throws {
         let content = (0..<6_000).map { line in
             "\u{1B}[32mgreen output \(line)\u{1B}[0m " + String(repeating: "x", count: 180) + "\n"
@@ -1712,7 +1774,39 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(tailTextView.reviewCommentSourceLineRange(for: tailRange) == 6_000...6_000)
 
         body.applyReaderPreferences(FullScreenReaderPreferences(wrapsText: true))
-        host.layoutIfNeeded()
+        let wrapped = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.layoutIfNeeded()
+            guard let d = body.virtualizationDiagnosticsForTesting() else { return false }
+            return d.chunkCount > diagnostics.chunkCount && d.mountedUTF16Count > 0
+        }
+        #expect(wrapped)
+        let wrappedCount = try #require(body.virtualizationDiagnosticsForTesting()).chunkCount
+        body.frame.size.width = 220
+        body.setNeedsLayout()
+        let narrowed = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.layoutIfNeeded()
+            guard let d = body.virtualizationDiagnosticsForTesting() else { return false }
+            return d.chunkCount > wrappedCount && d.mountedUTF16Count > 0
+                && d.mountedVisualLines.allSatisfy { $0 <= 65 }
+        }
+        #expect(narrowed)
+        let narrowCount = try #require(body.virtualizationDiagnosticsForTesting()).chunkCount
+        body.applyReaderPreferences(FullScreenReaderPreferences(textScale: 1.35, wrapsText: true))
+        let scaled = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.layoutIfNeeded()
+            guard let d = body.virtualizationDiagnosticsForTesting() else { return false }
+            return d.chunkCount > narrowCount && d.mountedUTF16Count > 0
+                && d.mountedVisualLines.allSatisfy { $0 <= 65 }
+        }
+        #expect(scaled)
+        body.applyReaderPreferences(FullScreenReaderPreferences(wrapsText: false))
+        let unwrapped = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.layoutIfNeeded()
+            guard let d = body.virtualizationDiagnosticsForTesting() else { return false }
+            return d.chunkCount == diagnostics.chunkCount && d.mountedUTF16Count > 0
+                && d.collectionContentWidth > d.collectionBoundsWidth
+        }
+        #expect(unwrapped)
         #expect(body.virtualizationDiagnosticsForTesting()?.cachedChunkCount ?? 0 <= 14)
     }
 

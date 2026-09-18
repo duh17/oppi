@@ -501,6 +501,37 @@ struct ANSIParserTests {
         )))
     }
 
+    @Test("wrapped terminal chunks cap visual rows and preserve text, style and source lines")
+    func terminalChunkIndexCapsWrappedLines() {
+        for columns in [20, 46, 90] {
+            let input = "\u{1B}[32m" + (0..<120).map { _ in
+                String(repeating: "x", count: 166) + "\n"
+            }.joined() + String(repeating: "z", count: 20_000) + "\u{1B}[0m"
+            let index = ANSIParser.TerminalChunkIndex.build(
+                from: input, wrappedColumns: columns, maxVisualLines: 64
+            )
+            let displayed = ANSIParser.strip(input)
+            #expect(index.chunks.map { ANSIParser.strip($0.rawText) }.joined() == displayed)
+            #expect(index.displayedUTF16Count == displayed.utf16.count)
+            #expect(index.widestLineColumnCount == 20_000)
+            var line = 1
+            for chunk in index.chunks {
+                #expect(chunk.rawByteCount <= 32 * 1024)
+                let rows = chunk.lineColumnCounts.reduce(0) { $0 + max(1, ($1 + columns - 1) / columns) }
+                #expect(rows <= 64)
+                #expect(chunk.displayedStartLine == line)
+                line += ANSIParser.strip(chunk.rawText).filter { $0 == "\n" }.count
+                let rendered = ANSIParser.attributedString(from: chunk.leadingSGR + chunk.rawText)
+                if rendered.length > 0 {
+                    #expect(rendered.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor == UIColor(Color.themeGreen))
+                }
+            }
+            let boundary = index.chunks[0].displayedUTF16Range.upperBound
+            #expect(index.displayedText(inUTF16Range: (boundary - 3)..<(boundary + 3))
+                == (displayed as NSString).substring(with: NSRange(location: boundary - 3, length: 6)))
+        }
+    }
+
     @Test("terminal chunks cap a huge single line by bytes")
     func terminalChunkIndexCapsSingleLine() {
         let input = String(repeating: "x", count: 200_000)

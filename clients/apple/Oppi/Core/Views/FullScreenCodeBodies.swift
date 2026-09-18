@@ -1862,6 +1862,28 @@ private final class FullScreenTerminalChunkCell: UICollectionViewCell {
     static let reuseIdentifier = "FullScreenTerminalChunkCell"
 
     let textView = FullScreenReviewCommentTextView()
+    #if DEBUG
+    var installMilliseconds: [Double] = []
+    var layoutMilliseconds: [Double] = []
+
+    override func layoutSubviews() {
+        let start = CACurrentMediaTime()
+        super.layoutSubviews()
+        layoutMilliseconds = [max(layoutMilliseconds.first ?? 0, (CACurrentMediaTime() - start) * 1_000)]
+    }
+    #endif
+
+    func install(_ text: NSAttributedString?) {
+        #if DEBUG
+        let start = CACurrentMediaTime()
+        #endif
+        textView.attributedText = text
+        #if DEBUG
+        if text != nil {
+            installMilliseconds = [max(installMilliseconds.first ?? 0, (CACurrentMediaTime() - start) * 1_000)]
+        }
+        #endif
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1935,6 +1957,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     private static let maxSynchronousANSIBytes = 128 * 1024
     private static let maxEstimatedOutputWidth: CGFloat = 120_000
     private static let virtualizedChunkLineLimit = 160
+    private static let virtualizedChunkVisualLineLimit = 64
     private static let virtualizedChunkByteLimit = 32 * 1024
     private static let attributedChunkCacheLimit = 14
 
@@ -1970,8 +1993,11 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     private var attributedChunkLRU: [Int] = []
     private var chunkRenderTasks: [Int: Task<Void, Never>] = [:]
     private var lastVirtualizedLayoutSize: CGSize = .zero
+    private var virtualizedWrapColumns: Int?
+    private var virtualizedSizingWidth: CGFloat?
     #if DEBUG
     private var debugIndexRanOnMainThread: Bool?
+    private var debugIndexMilliseconds: Double = 0
     #endif
 
     private lazy var tailFollowCoordinator = TailFollowScrollCoordinator(
@@ -2035,6 +2061,9 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        if !virtualizedCollectionView.isHidden, virtualizedWrapColumns != wrappedChunkColumns {
+            enterVirtualizedMode(source: virtualizedSource)
+        }
         updateWrappingLayout()
         if virtualizedCollectionView.bounds.size != lastVirtualizedLayoutSize {
             lastVirtualizedLayoutSize = virtualizedCollectionView.bounds.size
@@ -2195,11 +2224,25 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         enterVirtualizedMode(source: content)
     }
 
+    private var wrappedChunkColumns: Int? {
+        guard readerPreferences.wrapsText else { return nil }
+        let glyphWidth = max(1, ("M" as NSString).size(withAttributes: [.font: codeFont]).width)
+        return max(1, Int((bounds.width - 32) / glyphWidth))
+    }
+
     private func enterVirtualizedMode(source: String) {
+        renderTask?.cancel()
+        let previousScrollFraction: CGFloat? = virtualizedIndex == nil ? nil
+            : virtualizedCollectionView.contentOffset.y
+                / max(1, virtualizedCollectionView.contentSize.height - virtualizedCollectionView.bounds.height)
         virtualizedGeneration += 1
         let generation = virtualizedGeneration
         let chunkLineLimit = Self.virtualizedChunkLineLimit
         let chunkByteLimit = Self.virtualizedChunkByteLimit
+        let visualLineLimit = Self.virtualizedChunkVisualLineLimit
+        let wrappedColumns = wrappedChunkColumns
+        virtualizedWrapColumns = wrappedColumns
+        virtualizedSizingWidth = nil
         virtualizedSource = source
         virtualizedIndex = nil
         renderedOutputAttributedBase = nil
@@ -2216,18 +2259,23 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         scrollView.isHidden = true
         virtualizedCollectionView.isHidden = false
         virtualizedCollectionView.reloadData()
+        // Wait for the host's first layout instead of indexing a one-column viewport.
+        guard wrappedColumns == nil || bounds.width > 32 else { return }
 
         renderTask = Task { [weak self] in
             guard let build = await withCancellableDetachedTask(
                 priority: .userInitiated,
                 operation: {
                     let ranOnMainThread = Self.isMainThreadForDiagnostics()
+                    let start = CACurrentMediaTime()
                     let index = ANSIParser.TerminalChunkIndex.build(
                         from: source,
                         maxLines: chunkLineLimit,
-                        maxBytes: chunkByteLimit
+                        maxBytes: chunkByteLimit,
+                        wrappedColumns: wrappedColumns,
+                        maxVisualLines: visualLineLimit
                     )
-                    return (index, ranOnMainThread)
+                    return (index, ranOnMainThread, (CACurrentMediaTime() - start) * 1_000)
                 }
             ), !Task.isCancelled else { return }
             await MainActor.run {
@@ -2235,17 +2283,17 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
                 self.virtualizedIndex = build.0
                 #if DEBUG
                 self.debugIndexRanOnMainThread = build.1
+                self.debugIndexMilliseconds = build.2
                 #endif
-                self.updateWrappingLayout()
+                self.virtualizedSizingWidth = nil
                 self.refreshVirtualizedItemSizes()
                 self.virtualizedCollectionView.reloadData()
-                self.virtualizedCollectionView.layoutIfNeeded()
-                if followTail {
-                    let offsetY = max(
-                        0,
-                        self.virtualizedCollectionView.contentSize.height
-                            - self.virtualizedCollectionView.bounds.height
-                    )
+                // Geometry is already known from the index. Do not synchronously
+                // warm UICollectionView/TextKit on the index-completion turn.
+                if previousScrollFraction != nil || followTail {
+                    let totalHeight = self.virtualizedLayout.itemSizes.reduce(CGFloat.zero) { $0 + $1.height }
+                    let offsetY = max(0, totalHeight - self.virtualizedCollectionView.bounds.height)
+                        * min(1, max(0, previousScrollFraction ?? 1))
                     self.virtualizedCollectionView.setContentOffset(
                         CGPoint(
                             x: self.virtualizedCollectionView.contentOffset.x,
@@ -2333,6 +2381,8 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     }
 
     private func refreshVirtualizedItemSizes() {
+        guard virtualizedSizingWidth != virtualizedCollectionView.bounds.width else { return }
+        virtualizedSizingWidth = virtualizedCollectionView.bounds.width
         let count = virtualizedCommandItemCount + (virtualizedIndex?.chunks.count ?? 0)
         virtualizedLayout.itemSizes = (0..<count).map { sizeForVirtualizedItem(at: $0) }
         virtualizedLayout.invalidateLayout()
@@ -2364,6 +2414,10 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         let collectionContentWidth: CGFloat
         let collectionBoundsWidth: CGFloat
         let indexRanOnMainThread: Bool?
+        let indexMilliseconds: Double
+        let installMilliseconds: [Double]
+        let layoutMilliseconds: [Double]
+        let mountedVisualLines: [Int]
     }
 
     func virtualizationDiagnosticsForTesting() -> VirtualizationDiagnostics? {
@@ -2377,7 +2431,11 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
             mountedUTF16Count: cells.reduce(into: 0) { $0 += $1.textView.textStorage.length },
             collectionContentWidth: virtualizedCollectionView.contentSize.width,
             collectionBoundsWidth: virtualizedCollectionView.bounds.width,
-            indexRanOnMainThread: debugIndexRanOnMainThread
+            indexRanOnMainThread: debugIndexRanOnMainThread,
+            indexMilliseconds: debugIndexMilliseconds,
+            installMilliseconds: cells.flatMap(\.installMilliseconds),
+            layoutMilliseconds: cells.flatMap(\.layoutMilliseconds),
+            mountedVisualLines: cells.map { Int(ceil(($0.bounds.height - 4) / codeFont.lineHeight)) }
         )
     }
     #endif
@@ -2431,7 +2489,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
                       ) else { return nil }
                 return (startLine + local.lowerBound - 1)...(startLine + local.upperBound - 1)
             }
-            textView.attributedText = attributedChunkCache[chunkIndex]
+            cell.install(attributedChunkCache[chunkIndex])
             scheduleChunkRender(chunkIndex)
         }
         return cell
@@ -2510,7 +2568,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
                 if let cell = self.virtualizedCollectionView.cellForItem(
                     at: IndexPath(item: item, section: 0)
                 ) as? FullScreenTerminalChunkCell {
-                    cell.textView.attributedText = attributed
+                    cell.install(attributed)
                 }
             }
         }
@@ -2565,16 +2623,12 @@ extension NativeFullScreenTerminalBody: FullScreenReaderConfigurable {
         guard preferences != readerPreferences else { return }
         let textSizeChanged = preferences.textScale != readerPreferences.textScale
         readerPreferences = preferences
+        if !virtualizedCollectionView.isHidden,
+           textSizeChanged || virtualizedWrapColumns != wrappedChunkColumns {
+            enterVirtualizedMode(source: virtualizedSource)
+        }
         if textSizeChanged {
             applyOutputFont()
-            if !virtualizedCollectionView.isHidden {
-                chunkRenderTasks.values.forEach { $0.cancel() }
-                chunkRenderTasks.removeAll()
-                attributedChunkCache.removeAll()
-                attributedChunkLRU.removeAll()
-                virtualizedCollectionView.reloadData()
-                prepareVisibleChunkRunway()
-            }
         }
         applyOutputWrapMode()
         setNeedsLayout()

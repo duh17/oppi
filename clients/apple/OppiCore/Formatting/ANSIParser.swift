@@ -461,9 +461,12 @@ enum ANSIParser {
         static func build(
             from source: String,
             maxLines: Int = 160,
-            maxBytes: Int = 32 * 1024
+            maxBytes: Int = 32 * 1024,
+            wrappedColumns: Int? = nil,
+            maxVisualLines: Int = 64
         ) -> TerminalChunkIndex {
-            precondition(maxLines > 0 && maxBytes > 0)
+            precondition(maxLines > 0 && maxBytes > 0 && maxVisualLines > 0)
+            precondition(wrappedColumns == nil || (wrappedColumns ?? 0) > 0)
             let bytes = Array(source.utf8)
             var chunks: [TerminalChunk] = []
             chunks.reserveCapacity(max(1, bytes.count / maxBytes))
@@ -475,7 +478,14 @@ enum ANSIParser {
             var displayedStart = 0
             var widest = 0
             var currentLineColumns = 0
+            var completedVisualLines = 0
+            var chunkLineColumns = 0
             var index = 0
+
+            func visualLines(for columns: Int) -> Int {
+                guard let wrappedColumns else { return 1 }
+                return max(1, (columns + wrappedColumns - 1) / wrappedColumns)
+            }
 
             func makeLineColumns(_ text: String) -> [Int] {
                 var result: [Int] = []
@@ -515,6 +525,8 @@ enum ANSIParser {
                 leadingStyle = style
                 chunkStartLine += lineCount
                 lineCount = 0
+                completedVisualLines = 0
+                chunkLineColumns = 0
             }
 
             func skipNonDisplay(from start: Int, to end: Int) {
@@ -591,14 +603,23 @@ enum ANSIParser {
                     }
                     index = end
                 } else {
+                    // Bound TextKit work by wrapped rows, not just source lines.
+                    // Non-ASCII scalars conservatively reserve two terminal columns;
+                    // ANSI controls consume no columns. Keep newlines with their line.
+                    let columns = bytes[index] == 0x09 ? 4 : (bytes[index] < 0x80 ? 1 : 2)
+                    if wrappedColumns != nil, bytes[index] != 0x0A,
+                       completedVisualLines + visualLines(for: chunkLineColumns + columns) > maxVisualLines {
+                        finishChunk(at: index)
+                    }
                     if bytes[index] == 0x0A {
                         lineCount += 1
+                        completedVisualLines += visualLines(for: chunkLineColumns)
+                        chunkLineColumns = 0
                         widest = max(widest, currentLineColumns)
                         currentLineColumns = 0
-                    } else if bytes[index] == 0x09 {
-                        currentLineColumns += 4
                     } else {
-                        currentLineColumns += 1
+                        chunkLineColumns += columns
+                        currentLineColumns += bytes[index] == 0x09 ? 4 : 1
                     }
                     let scalarLength: Int
                     switch bytes[index] {
@@ -610,7 +631,8 @@ enum ANSIParser {
                     index = min(bytes.count, index + scalarLength)
                 }
 
-                if lineCount >= maxLines || index - chunkStart >= maxBytes {
+                if lineCount >= maxLines || index - chunkStart >= maxBytes
+                    || (wrappedColumns != nil && completedVisualLines >= maxVisualLines) {
                     finishChunk(at: index)
                 }
             }
