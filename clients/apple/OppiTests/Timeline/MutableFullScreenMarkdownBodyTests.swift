@@ -38,6 +38,124 @@ struct MutableFullScreenMarkdownBodyTests {
         #expect(body.debugFollowsTailForTesting)
     }
 
+    @Test("large live thinking mounts bounded chunks and mutates only its tail chunk")
+    func largeThinkingUsesBoundedVirtualizedAppend() async throws {
+        let initial = String(repeating: "0123456789abcdef\n", count: 65_536)
+        let stream = ThinkingTraceStream(text: initial, isDone: false)
+        let controller = makeController(
+            content: .thinking(content: stream.snapshot.text, stream: stream)
+        )
+        let body = try #require(controller.installedBodyViewForTesting as? NativeFullScreenThinkingBody)
+        controller.view.layoutIfNeeded()
+        let opening = try #require(body.debugVirtualizationDiagnosticsForTesting)
+
+        #expect(opening.retainedSourceUTF16Count == 1_114_112)
+        #expect(opening.chunkCount > 1)
+        #expect(opening.mountedChunkCount > 0)
+        #expect(opening.mountedUTF16Count <= 128 * 1_024)
+        #expect(opening.lastMutatedUTF16Count <= 32 * 1_024)
+        #expect(opening.wholeTextReplacementCount == 0)
+
+        let appended = String(repeating: "tail-line\n", count: 4_000)
+        stream.update(text: initial + appended, isDone: false)
+        await drainMutableMarkdownQueue()
+        controller.view.layoutIfNeeded()
+        let updated = try #require(body.debugVirtualizationDiagnosticsForTesting)
+
+        print("THINKING_VIRTUALIZED retainedUTF16=\(updated.retainedSourceUTF16Count) mountedUTF16=\(updated.mountedUTF16Count) lastMutatedUTF16=\(updated.lastMutatedUTF16Count) appendedUTF16=\((appended as NSString).length)")
+        #expect(updated.retainedSourceUTF16Count == 1_154_112)
+        #expect(updated.chunkCount > opening.chunkCount)
+        #expect(updated.mountedUTF16Count <= 128 * 1_024)
+        #expect(updated.lastMutatedUTF16Count <= 32 * 1_024)
+        #expect(updated.wholeTextReplacementCount == 0)
+        #expect(updated.lastBatchReloadedItemCount == 1)
+        #expect(updated.lastBatchInsertedItemCount > 0)
+        #expect(body.debugFollowsTailForTesting)
+        #expect(maximumOffsetY(body.debugActiveScrollViewForTesting)
+            - body.debugActiveScrollViewForTesting.contentOffset.y < 1)
+    }
+
+    @Test("virtualized thinking reports document line ranges and preserves selection")
+    func virtualizedThinkingUsesDocumentLineRanges() async throws {
+        let lineCount = 12_000
+        let target = "Thinking line \(lineCount) with selectable context."
+        let initial = (1...lineCount).map {
+            "Thinking line \($0) with selectable context."
+        }.joined(separator: "\n")
+        let stream = ThinkingTraceStream(text: initial, isDone: false)
+        var captured: ReviewCommentSelectionRequest?
+        let body = NativeFullScreenThinkingBody(
+            content: initial,
+            stream: stream,
+            palette: ThemeID.dark.palette,
+            readerPreferences: FullScreenReaderContentFamily.markdown.defaultPreferences,
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter { captured = $0 },
+            reviewCommentSourceContext: ReviewCommentSourceContext(
+                sessionId: "session-1",
+                surface: .fullScreenThinking,
+                sourceLabel: "Thinking"
+            )
+        )
+        let fixture = attach(body)
+        _ = fixture
+        body.layoutIfNeeded()
+        let textView = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0).contains(target)
+        })
+        let selectedRange = (timelineRenderedText(of: textView) as NSString).range(of: target)
+        textView.selectedRange = selectedRange
+
+        let menu = try #require(body.textView(
+            textView,
+            editMenuForTextIn: selectedRange,
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+        let commentAction = try #require(menu.children.first as? UIAction)
+        let button = UIButton(type: .system)
+        button.addAction(commentAction, for: .touchUpInside)
+        button.sendActions(for: .touchUpInside)
+
+        #expect(captured?.selectedText == target)
+        #expect(captured?.source.lineRange == lineCount...lineCount)
+        #expect(!body.debugFollowsTailForTesting)
+
+        stream.update(text: initial + "\nA detached append.", isDone: false)
+        await drainMutableMarkdownQueue()
+        body.layoutIfNeeded()
+        let updatedTextView = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0).contains(target)
+        })
+
+        #expect(!body.debugFollowsTailForTesting)
+        #expect(updatedTextView.selectedRange == selectedRange)
+    }
+
+    @Test("large thinking completion keeps the immutable Markdown handoff")
+    func largeThinkingCompletionUsesImmutableMarkdown() async throws {
+        let initial = String(repeating: "word ", count: 30_000)
+        let stream = ThinkingTraceStream(text: initial, isDone: false)
+        let controller = makeController(
+            content: .thinking(content: stream.snapshot.text, stream: stream)
+        )
+        let liveBody = try #require(controller.installedBodyViewForTesting as? NativeFullScreenThinkingBody)
+        #expect(liveBody.debugVirtualizationDiagnosticsForTesting != nil)
+
+        stream.update(text: initial + "\nFinal **thought**.", isDone: true)
+        await drainMutableMarkdownQueue()
+        controller.view.layoutIfNeeded()
+
+        #expect(controller.installedBodyViewForTesting !== liveBody)
+        let completedBody = try #require(
+            controller.installedBodyViewForTesting as? NativeFullScreenMarkdownBody
+        )
+        await completedBody.debugWaitForDocumentPreparationForTesting()
+        controller.view.layoutIfNeeded()
+        let collection = try #require(
+            timelineFirstView(ofType: UICollectionView.self, in: completedBody)
+        )
+        #expect(maximumOffsetY(collection) - collection.contentOffset.y < 1)
+    }
+
     @Test("thinking selection and review menu detach live tail following")
     func thinkingSelectionDetachesTailFollow() throws {
         let stream = ThinkingTraceStream(

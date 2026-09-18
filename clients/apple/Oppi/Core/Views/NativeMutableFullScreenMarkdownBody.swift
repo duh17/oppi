@@ -589,8 +589,75 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
 /// Plain-text fullscreen thinking surface. Thinking bypasses CommonMark and
 /// receives the already-coalesced snapshots directly, sharing only the common
 /// attached/detached viewport policy with other live surfaces.
-final class NativeFullScreenThinkingBody: UIView, UITextViewDelegate {
+final class NativeFullScreenThinkingBody: UIView,
+    UITextViewDelegate,
+    UICollectionViewDataSource,
+    UICollectionViewDelegateFlowLayout
+{
+    /// Above this size, mounting the complete live trace in TextKit makes every
+    /// coalesced delta pay the layout cost of the entire document.
+    private static let singleTextViewUTF8Limit = 128 * 1024
+    private static let chunkUTF16Limit = 32 * 1024
+
+    private struct Chunk {
+        var text: String
+        var lineUTF16Counts: [Int]
+        var sourceStartLine: Int
+        var lineBreakCount: Int
+
+        var utf16Count: Int { (text as NSString).length }
+    }
+
+    private final class ChunkTextView: UITextView, ReviewCommentSourceLineRangeResolving {
+        var sourceLineRangeResolver: ((NSRange) -> ClosedRange<Int>?)?
+
+        func reviewCommentSourceLineRange(for range: NSRange) -> ClosedRange<Int>? {
+            sourceLineRangeResolver?(range)
+        }
+    }
+
+    private final class ChunkCell: UICollectionViewCell {
+        static let reuseIdentifier = "FullScreenThinkingChunkCell"
+        let textView = ChunkTextView(usingTextLayoutManager: true)
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            backgroundColor = .clear
+            contentView.backgroundColor = .clear
+            textView.translatesAutoresizingMaskIntoConstraints = false
+            textView.backgroundColor = .clear
+            textView.isEditable = false
+            textView.isSelectable = true
+            textView.isScrollEnabled = false
+            textView.textContainerInset = .zero
+            textView.textContainer.lineFragmentPadding = 0
+            textView.textContainer.lineBreakMode = .byWordWrapping
+            contentView.addSubview(textView)
+            NSLayoutConstraint.activate([
+                textView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+                textView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+                textView.topAnchor.constraint(equalTo: contentView.topAnchor),
+                textView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            ])
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { nil }
+
+        override func prepareForReuse() {
+            super.prepareForReuse()
+            textView.delegate = nil
+            textView.text = nil
+            textView.sourceLineRangeResolver = nil
+        }
+    }
+
     private let textView = UITextView(usingTextLayoutManager: true)
+    private let chunkLayout = UICollectionViewFlowLayout()
+    private lazy var chunkCollectionView = UICollectionView(
+        frame: .zero,
+        collectionViewLayout: chunkLayout
+    )
     private let stream: ThinkingTraceStream?
     private let palette: ThemePalette
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
@@ -608,6 +675,13 @@ final class NativeFullScreenThinkingBody: UIView, UITextViewDelegate {
     private var pendingCompletion: PendingCompletion?
     private var isApplyingSnapshot = false
     private var followPolicy: LiveStreamingPresentation.ViewportPolicy
+    private var renderedText = ""
+    private var chunks: [Chunk] = []
+    private var isVirtualized = false
+    private var lastMutatedUTF16Count = 0
+    private var wholeTextReplacementCount = 0
+    private var lastBatchReloadedItemCount = 0
+    private var lastBatchInsertedItemCount = 0
 
     init(
         content: String,
@@ -643,15 +717,38 @@ final class NativeFullScreenThinkingBody: UIView, UITextViewDelegate {
         textView.textContainerInset = UIEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
         textView.textContainer.lineBreakMode = .byWordWrapping
         textView.delegate = self
-        textView.text = initialText
         textView.panGestureRecognizer.addTarget(self, action: #selector(handlePanStateChange(_:)))
+
+        chunkLayout.minimumLineSpacing = 0
+        chunkLayout.minimumInteritemSpacing = 0
+        chunkLayout.scrollDirection = .vertical
+        chunkCollectionView.translatesAutoresizingMaskIntoConstraints = false
+        chunkCollectionView.backgroundColor = .clear
+        chunkCollectionView.alwaysBounceVertical = true
+        chunkCollectionView.showsVerticalScrollIndicator = true
+        chunkCollectionView.dataSource = self
+        chunkCollectionView.delegate = self
+        chunkCollectionView.isHidden = true
+        chunkCollectionView.contentInset = UIEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
+        chunkCollectionView.panGestureRecognizer.addTarget(self, action: #selector(handlePanStateChange(_:)))
+        chunkCollectionView.register(
+            ChunkCell.self,
+            forCellWithReuseIdentifier: ChunkCell.reuseIdentifier
+        )
+
         addSubview(textView)
+        addSubview(chunkCollectionView)
         NSLayoutConstraint.activate([
             textView.leadingAnchor.constraint(equalTo: leadingAnchor),
             textView.trailingAnchor.constraint(equalTo: trailingAnchor),
             textView.topAnchor.constraint(equalTo: topAnchor),
             textView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            chunkCollectionView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            chunkCollectionView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            chunkCollectionView.topAnchor.constraint(equalTo: topAnchor),
+            chunkCollectionView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+        render(initialText)
 
         if let stream {
             streamObserverID = stream.addObserver(deliverImmediately: false) { [weak self] snapshot in
@@ -681,14 +778,13 @@ final class NativeFullScreenThinkingBody: UIView, UITextViewDelegate {
     }
 
     private func apply(_ snapshot: ThinkingTraceStream.Snapshot) {
-        let previousText = textView.text ?? ""
-        let previousSelection = textView.selectedRange
+        let previousText = renderedText
         let wasStreaming = isStreaming
         if snapshot.isDone, wasStreaming, pendingCompletion == nil {
             pendingCompletion = PendingCompletion(
                 text: snapshot.text,
                 viewportIntent: .capturing(
-                    scrollView: textView,
+                    scrollView: activeScrollView,
                     followsTail: followPolicy.followsTail
                 )
             )
@@ -704,8 +800,7 @@ final class NativeFullScreenThinkingBody: UIView, UITextViewDelegate {
             currentText: snapshot.text
         )
         if previousText != snapshot.text {
-            textView.text = snapshot.text
-            restoreSelection(previousSelection)
+            render(snapshot.text)
         }
         isApplyingSnapshot = false
 
@@ -716,25 +811,253 @@ final class NativeFullScreenThinkingBody: UIView, UITextViewDelegate {
         deliverPendingCompletionIfPossible()
     }
 
-    private func restoreSelection(_ selection: NSRange) {
+    private func render(_ text: String) {
+        let previous = renderedText
+        let previousUTF16Count = (previous as NSString).length
+        let isAppend = !previous.isEmpty
+            && (text as NSString).length >= previousUTF16Count
+            && text.hasPrefix(previous)
+
+        if !isVirtualized, text.utf8.count <= Self.singleTextViewUTF8Limit {
+            let selection = textView.selectedRange
+            if isAppend {
+                let appended = (text as NSString).substring(from: previousUTF16Count)
+                textView.textStorage.replaceCharacters(
+                    in: NSRange(location: textView.textStorage.length, length: 0),
+                    with: appended
+                )
+                lastMutatedUTF16Count = (appended as NSString).length
+            } else {
+                textView.text = text
+                wholeTextReplacementCount += previous.isEmpty ? 0 : 1
+                lastMutatedUTF16Count = (text as NSString).length
+            }
+            renderedText = text
+            restoreSelection(selection, in: textView)
+            return
+        }
+
+        if !isVirtualized {
+            enterVirtualizedMode(text)
+        } else if isAppend {
+            appendVirtualizedText(
+                (text as NSString).substring(from: previousUTF16Count)
+            )
+        } else {
+            rebuildVirtualizedText(text)
+        }
+        renderedText = text
+    }
+
+    private func enterVirtualizedMode(_ text: String) {
+        isVirtualized = true
+        chunks = Self.makeChunks(text)
+        lastMutatedUTF16Count = chunks.map(\.utf16Count).max() ?? 0
+        textView.text = nil
+        textView.isHidden = true
+        chunkCollectionView.isHidden = false
+        chunkCollectionView.reloadData()
+        chunkLayout.invalidateLayout()
+    }
+
+    private func rebuildVirtualizedText(_ text: String) {
+        chunks = Self.makeChunks(text)
+        lastMutatedUTF16Count = chunks.map(\.utf16Count).max() ?? 0
+        wholeTextReplacementCount += 1
+        chunkCollectionView.reloadData()
+        chunkLayout.invalidateLayout()
+    }
+
+    private func appendVirtualizedText(_ suffix: String) {
+        guard !suffix.isEmpty, let retainedChunk = chunks.last else { return }
+        let oldCount = chunks.count
+        let changedIndex = oldCount - 1
+        let selection = (chunkCollectionView.cellForItem(
+            at: IndexPath(item: changedIndex, section: 0)
+        ) as? ChunkCell)?.textView.selectedRange
+        let replacement = Self.makeChunks(
+            retainedChunk.text + suffix,
+            sourceStartLine: retainedChunk.sourceStartLine
+        )
+        let updatedChunks = Array(chunks.dropLast()) + replacement
+        let inserted = max(0, updatedChunks.count - oldCount)
+        let insertedPaths = (oldCount..<updatedChunks.count).map {
+            IndexPath(item: $0, section: 0)
+        }
+        let changedPath = IndexPath(item: changedIndex, section: 0)
+
+        lastMutatedUTF16Count = replacement.map(\.utf16Count).max() ?? 0
+        lastBatchReloadedItemCount = 1
+        lastBatchInsertedItemCount = inserted
+        UIView.performWithoutAnimation {
+            chunkCollectionView.performBatchUpdates { [self] in
+                chunks = updatedChunks
+                chunkCollectionView.reloadItems(at: [changedPath])
+                if !insertedPaths.isEmpty {
+                    chunkCollectionView.insertItems(at: insertedPaths)
+                }
+            } completion: { [weak self] _ in
+                guard let self else { return }
+                if let cell = self.chunkCollectionView.cellForItem(at: changedPath) as? ChunkCell {
+                    self.configure(cell, at: changedIndex)
+                    if let selection {
+                        self.restoreSelection(selection, in: cell.textView)
+                    }
+                }
+                self.chunkLayout.invalidateLayout()
+                self.setNeedsLayout()
+                self.followTailIfNeeded()
+            }
+        }
+    }
+
+    private static func makeChunks(
+        _ text: String,
+        sourceStartLine: Int = 1
+    ) -> [Chunk] {
+        let source = text as NSString
+        guard source.length > 0 else {
+            return [makeChunk("", sourceStartLine: sourceStartLine)]
+        }
+        var result: [Chunk] = []
+        var location = 0
+        var nextSourceLine = sourceStartLine
+        while location < source.length {
+            let proposedEnd = min(source.length, location + chunkUTF16Limit)
+            var end = NSMaxRange(source.rangeOfComposedCharacterSequences(
+                for: NSRange(location: location, length: proposedEnd - location)
+            ))
+            if end < source.length {
+                let newline = source.range(
+                    of: "\n",
+                    options: .backwards,
+                    range: NSRange(location: location, length: end - location)
+                )
+                if newline.location != NSNotFound, newline.location > location {
+                    end = NSMaxRange(newline)
+                }
+            }
+            end = max(location + 1, end)
+            let chunk = makeChunk(
+                source.substring(with: NSRange(location: location, length: end - location)),
+                sourceStartLine: nextSourceLine
+            )
+            result.append(chunk)
+            nextSourceLine += chunk.lineBreakCount
+            location = end
+        }
+        return result
+    }
+
+    private static func makeChunk(_ text: String, sourceStartLine: Int) -> Chunk {
+        let source = text as NSString
+        var counts: [Int] = []
+        var lineBreakCount = 0
+        var start = 0
+        while start < source.length {
+            let line = source.lineRange(for: NSRange(location: start, length: 0))
+            let lineText = source.substring(with: line)
+            if lineText.hasSuffix("\n") { lineBreakCount += 1 }
+            counts.append(max(0, line.length - (lineText.hasSuffix("\n") ? 1 : 0)))
+            start = NSMaxRange(line)
+        }
+        if counts.isEmpty { counts.append(0) }
+        return Chunk(
+            text: text,
+            lineUTF16Counts: counts,
+            sourceStartLine: sourceStartLine,
+            lineBreakCount: lineBreakCount
+        )
+    }
+
+    private func restoreSelection(_ selection: NSRange, in textView: UITextView) {
         guard selection.location != NSNotFound else { return }
-        let textLength = (textView.text as NSString?)?.length ?? 0
+        let textLength = textView.textStorage.length
         let location = min(selection.location, textLength)
         let length = min(selection.length, max(0, textLength - location))
         textView.selectedRange = NSRange(location: location, length: length)
     }
 
+    private var activeScrollView: UIScrollView {
+        isVirtualized ? chunkCollectionView : textView
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        numberOfItemsInSection section: Int
+    ) -> Int {
+        chunks.count
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        cellForItemAt indexPath: IndexPath
+    ) -> UICollectionViewCell {
+        guard let cell = collectionView.dequeueReusableCell(
+            withReuseIdentifier: ChunkCell.reuseIdentifier,
+            for: indexPath
+        ) as? ChunkCell else { return UICollectionViewCell() }
+        configure(cell, at: indexPath.item)
+        return cell
+    }
+
+    private func configure(_ cell: ChunkCell, at index: Int) {
+        guard chunks.indices.contains(index) else { return }
+        let chunk = chunks[index]
+        let textView = cell.textView
+        textView.delegate = self
+        textView.font = thinkingFont
+        textView.textColor = UIColor(palette.fg)
+        textView.sourceLineRangeResolver = { [weak textView] range in
+            guard let textView,
+                  let local = ReviewCommentSelectionEditMenuSupport.textLineRange(
+                      in: textView.textStorage.string,
+                      range: range
+                  ) else { return nil }
+            return (chunk.sourceStartLine + local.lowerBound - 1)...(
+                chunk.sourceStartLine + local.upperBound - 1
+            )
+        }
+        textView.text = chunk.text
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        layout collectionViewLayout: UICollectionViewLayout,
+        sizeForItemAt indexPath: IndexPath
+    ) -> CGSize {
+        let width = max(1, collectionView.bounds.width
+            - collectionView.adjustedContentInset.left
+            - collectionView.adjustedContentInset.right)
+        guard chunks.indices.contains(indexPath.item) else {
+            return CGSize(width: width, height: thinkingFont.lineHeight)
+        }
+        let glyphWidth = max(1, ("M" as NSString).size(withAttributes: [.font: thinkingFont]).width)
+        let columns = max(1, Int(width / glyphWidth))
+        let visualLines = chunks[indexPath.item].lineUTF16Counts.reduce(into: 0) { count, lineLength in
+            count += max(1, (lineLength + columns - 1) / columns)
+        }
+        return CGSize(width: width, height: CGFloat(visualLines) * thinkingFont.lineHeight)
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === activeScrollView,
+              scrollView.isDragging || scrollView.isDecelerating else { return }
+        beginInteraction()
+    }
+
     private func followTailIfNeeded() {
         guard rejectUIKitOwnedInteractionIfNeeded(),
               followPolicy.handle(.requestFollowTail) == .followTail else { return }
-        textView.layoutIfNeeded()
+        let scrollView = activeScrollView
+        scrollView.layoutIfNeeded()
         guard rejectUIKitOwnedInteractionIfNeeded() else { return }
-        let minimumY = -textView.adjustedContentInset.top
+        let minimumY = -scrollView.adjustedContentInset.top
         let maximumY = max(
             minimumY,
-            textView.contentSize.height - textView.bounds.height + textView.adjustedContentInset.bottom
+            scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom
         )
-        textView.setContentOffset(CGPoint(x: textView.contentOffset.x, y: maximumY), animated: false)
+        scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: maximumY), animated: false)
     }
 
     var isViewportInteracting: Bool {
@@ -742,13 +1065,19 @@ final class NativeFullScreenThinkingBody: UIView, UITextViewDelegate {
     }
 
     private var isUIKitOwningViewport: Bool {
-        let panState = textView.panGestureRecognizer.state
-        return textView.isTracking
-            || textView.isDragging
-            || textView.isDecelerating
+        let scrollView = activeScrollView
+        let panState = scrollView.panGestureRecognizer.state
+        let hasSelection = isVirtualized
+            ? chunkCollectionView.visibleCells
+                .compactMap { ($0 as? ChunkCell)?.textView }
+                .contains { $0.selectedRange.length > 0 }
+            : textView.selectedRange.length > 0
+        return scrollView.isTracking
+            || scrollView.isDragging
+            || scrollView.isDecelerating
             || panState == .began
             || panState == .changed
-            || textView.selectedRange.length > 0
+            || hasSelection
     }
 
     /// Transfers viewport ownership to UIKit before every automatic offset
@@ -769,10 +1098,11 @@ final class NativeFullScreenThinkingBody: UIView, UITextViewDelegate {
     private func finishInteractionIfPossible() {
         guard !isUIKitOwningViewport else { return }
         if followPolicy.isInteracting {
-            let distance = textView.contentSize.height
-                - textView.bounds.height
-                + textView.adjustedContentInset.bottom
-                - textView.contentOffset.y
+            let scrollView = activeScrollView
+            let distance = scrollView.contentSize.height
+                - scrollView.bounds.height
+                + scrollView.adjustedContentInset.bottom
+                - scrollView.contentOffset.y
             let intent = followPolicy.handle(.interactionEnded(
                 isNearBottom: distance <= 28,
                 isStreaming: isStreaming
@@ -851,14 +1181,48 @@ extension NativeFullScreenThinkingBody: FullScreenReaderConfigurable {
         readerPreferences = preferences
         textView.font = thinkingFont
         textView.setNeedsLayout()
+        for cell in chunkCollectionView.visibleCells.compactMap({ $0 as? ChunkCell }) {
+            cell.textView.font = thinkingFont
+        }
+        chunkLayout.invalidateLayout()
         setNeedsLayout()
     }
 }
 
 #if DEBUG
 extension NativeFullScreenThinkingBody {
+    struct VirtualizationDiagnostics {
+        let retainedSourceUTF16Count: Int
+        let chunkCount: Int
+        let mountedChunkCount: Int
+        let mountedUTF16Count: Int
+        let lastMutatedUTF16Count: Int
+        let wholeTextReplacementCount: Int
+        let lastBatchReloadedItemCount: Int
+        let lastBatchInsertedItemCount: Int
+    }
+
     var debugTextViewForTesting: UITextView { textView }
     var debugFollowsTailForTesting: Bool { followPolicy.followsTail }
+    var debugActiveScrollViewForTesting: UIScrollView { activeScrollView }
+    var debugVisibleChunkTextViewForTesting: UITextView? {
+        chunkCollectionView.visibleCells.compactMap { ($0 as? ChunkCell)?.textView }.first
+    }
+
+    var debugVirtualizationDiagnosticsForTesting: VirtualizationDiagnostics? {
+        guard isVirtualized else { return nil }
+        let mounted = chunkCollectionView.visibleCells.compactMap { ($0 as? ChunkCell)?.textView }
+        return VirtualizationDiagnostics(
+            retainedSourceUTF16Count: (renderedText as NSString).length,
+            chunkCount: chunks.count,
+            mountedChunkCount: mounted.count,
+            mountedUTF16Count: mounted.reduce(into: 0) { $0 += $1.textStorage.length },
+            lastMutatedUTF16Count: lastMutatedUTF16Count,
+            wholeTextReplacementCount: wholeTextReplacementCount,
+            lastBatchReloadedItemCount: lastBatchReloadedItemCount,
+            lastBatchInsertedItemCount: lastBatchInsertedItemCount
+        )
+    }
 }
 #endif
 
