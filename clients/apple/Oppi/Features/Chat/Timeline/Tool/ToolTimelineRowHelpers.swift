@@ -172,7 +172,9 @@ enum ToolTimelineRowPresentationHelpers {
         ) {
             return
         }
-        guard !isWithinFullScreenModalContext(presenter) else {
+        // Markdown readers may open one focused rendered visual. Other viewers
+        // stay terminal so repeated taps cannot grow an unbounded modal stack.
+        guard canPresentFocusedVisual(from: presenter) else {
             return
         }
 
@@ -218,6 +220,33 @@ enum ToolTimelineRowPresentationHelpers {
                 return controller
             }
             responder = current.next
+        }
+        return nil
+    }
+
+    private static func canPresentFocusedVisual(from presenter: UIViewController) -> Bool {
+        if let codeViewer = enclosingFullScreenCodeViewController(from: presenter) {
+            return codeViewer.allowsFocusedVisualPreview
+        }
+        return !isWithinFullScreenModalContext(presenter)
+    }
+
+    private static func enclosingFullScreenCodeViewController(
+        from presenter: UIViewController
+    ) -> FullScreenCodeViewController? {
+        var current: UIViewController? = presenter
+        while let node = current {
+            if let codeViewer = node as? FullScreenCodeViewController {
+                return codeViewer
+            }
+            current = node.parent
+        }
+        var ancestor: UIViewController? = presenter.presentingViewController
+        while let node = ancestor {
+            if let codeViewer = node as? FullScreenCodeViewController {
+                return codeViewer
+            }
+            ancestor = node.presentingViewController
         }
         return nil
     }

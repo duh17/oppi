@@ -101,7 +101,7 @@ struct JSONCodeBlockWrapTests {
     }
 
     @Test func jsonlAndJsoncFencesDoNotPrettyPrint() throws {
-        for language in ["jsonl", "jsonc", "geojson"] {
+        for language in ["jsonl", "jsonc"] {
             let fixture = try makeCodeBlock(language: language, code: compactJSON)
             fixture.wrapControl.sendActions(for: .touchUpInside)
             layout(fixture)

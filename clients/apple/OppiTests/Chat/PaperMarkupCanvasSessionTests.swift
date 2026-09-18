@@ -241,13 +241,10 @@ struct PaperMarkupCanvasSessionTests {
             } != true
         )
         #expect(controller.shareableContentForTesting != nil)
+        #expect(!controller.hasFloatingViewingOptionsButtonForTesting)
 
         let annotateFrame = try #require(controller.floatingAnnotateButtonFrameForTesting)
-        let readerFrame = try #require(controller.floatingViewingOptionsButtonFrameForTesting)
         #expect(annotateFrame.midX < controller.view.bounds.midX)
-        #expect(readerFrame.midX > controller.view.bounds.midX)
-        #expect(annotateFrame.maxX < readerFrame.minX)
-        #expect(abs(annotateFrame.midY - readerFrame.midY) <= 1)
         #expect(controller.floatingAnnotateButtonForTesting?.accessibilityIdentifier
             == PaperMarkupCanvasSession.AnnotateAction.htmlViewerIdentifier)
 

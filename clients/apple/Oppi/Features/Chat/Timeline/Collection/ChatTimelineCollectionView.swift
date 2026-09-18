@@ -42,7 +42,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let routeScope: SessionRouteScope?
         let onFork: (String) -> Void
         let onOpenCurrentFile: (String) -> Void
-        let onOpenChatReader: (ChatReaderPayload) -> Void
+        let onOpenChatReader: ((ChatReaderPayload) -> Void)?
         let onBackSwipe: () -> Void
         var onQuietWorkLineToggle: (String) -> Void
         var onShowEarlier: () -> Void
@@ -90,7 +90,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             routeScope: SessionRouteScope? = nil,
             onFork: @escaping (String) -> Void,
             onOpenCurrentFile: @escaping (String) -> Void = { _ in },
-            onOpenChatReader: @escaping (ChatReaderPayload) -> Void = { _ in },
+            onOpenChatReader: ((ChatReaderPayload) -> Void)? = nil,
             onBackSwipe: @escaping () -> Void,
             onQuietWorkLineToggle: @escaping (String) -> Void = { _ in },
             onShowEarlier: @escaping () -> Void,

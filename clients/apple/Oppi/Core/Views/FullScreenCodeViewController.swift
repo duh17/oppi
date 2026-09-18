@@ -217,7 +217,7 @@ final class FullScreenCodeViewController: UIViewController {
         return ComposerCanvasDestinationResolver.resolve(from: presenter)
     }
 
-    private var allowsFocusedVisualPreview: Bool {
+    var allowsFocusedVisualPreview: Bool {
         if case .markdown = currentSemanticContent() {
             return true
         }
