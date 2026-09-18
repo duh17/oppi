@@ -1158,6 +1158,13 @@ enum FileShareService {
         return url
     }
 
+    /// Turn downloaded bytes into a file-backed activity item. The isolated
+    /// directory prevents overlapping share sheets from replacing each other's file.
+    nonisolated static func fileShareItem(data: Data, filename: String) -> ShareItem {
+        let preservedName = fileName(fromPath: filename) ?? "file"
+        return .file(writeTempData(data: data, filename: preservedName))
+    }
+
     /// Remove all temp files created for sharing. Call from
     /// UIActivityViewController.completionWithItemsHandler.
     static func cleanupTempFiles() {

@@ -269,6 +269,24 @@ final class NativeMarkdownAudioView: UIView {
         let itemID = playbackItemID(for: embed)
         let presentedTimedText = timedTextForPresentation(itemID: itemID)
         let loader = makeTimedTextLoader(for: embed)
+        let shareSource = currentSource
+        let shareSourceProvider = sourceProvider
+        let shareFileData: (() async throws -> Data)?
+        if shareSource != nil || shareSourceProvider != nil {
+            shareFileData = {
+                let source: AuthenticatedMediaSource
+                if let shareSource {
+                    source = shareSource
+                } else if let shareSourceProvider {
+                    source = try await shareSourceProvider(embed)
+                } else {
+                    throw CocoaError(.fileNoSuchFile)
+                }
+                return try await source.loadFileData()
+            }
+        } else {
+            shareFileData = nil
+        }
         AudioLyricsPlayerPresenter.present(
             from: self,
             title: title,
@@ -282,6 +300,7 @@ final class NativeMarkdownAudioView: UIView {
                 guard let reference = self?.currentEmbed?.reference else { return }
                 NotificationCenter.default.post(name: .resourceReferenceTapped, object: reference)
             },
+            shareFileData: shareFileData,
             autoplayOnAppear: false,
             timedText: presentedTimedText,
             sidecarLoader: presentedTimedText == nil ? loader : nil

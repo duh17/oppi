@@ -300,6 +300,11 @@ struct FileBrowserContentView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     if let shareable = shareableContent() {
                         FileShareButton(content: shareable, style: .icon)
+                    } else if case .audio(let source) = content {
+                        AsyncFileShareButton(filename: currentFileName) {
+                            try await source.loadFileData()
+                        }
+                        .accessibilityIdentifier("fileBrowser.audio.share")
                     }
                 }
             }

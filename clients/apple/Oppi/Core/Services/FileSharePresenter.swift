@@ -339,3 +339,53 @@ struct FileShareButton: View {
         await FileSharePresenter.share(content, format: format)
     }
 }
+
+/// Standard icon share button for files whose bytes are fetched on demand.
+/// Media stays range-streamed until the user explicitly asks to share it.
+struct AsyncFileShareButton: View {
+    let filename: String
+    let loadData: () async throws -> Data
+
+    @State private var isLoading = false
+    @State private var showsError = false
+
+    var body: some View {
+        Button {
+            Task { await shareFile() }
+        } label: {
+            if isLoading {
+                ProgressView()
+                    .controlSize(.regular)
+                    .tint(.themeCyan)
+            } else {
+                Label("Share", systemImage: "square.and.arrow.up")
+                    .labelStyle(.iconOnly)
+                    .foregroundStyle(.themeFgDim)
+            }
+        }
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
+        .disabled(isLoading)
+        .alert("Unable to Share File", isPresented: $showsError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The file could not be downloaded. Please try again.")
+        }
+    }
+
+    private func shareFile() async {
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            let data = try await loadData()
+            let item = FileShareService.fileShareItem(data: data, filename: filename)
+            FileSharePresenter.presentActivityController(item: item)
+        } catch is CancellationError {
+            return
+        } catch {
+            showsError = true
+        }
+    }
+}

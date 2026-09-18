@@ -155,6 +155,8 @@ struct ScreenshotPreviewView: View {
             VoiceMessageExpandedPreview()
         case "global-audio-banner":
             GlobalAudioBannerPreview()
+        case "audio-file-player":
+            AudioFilePlayerScreenshotPreview()
         case "share-redaction-report":
             ShareRedactionReportPreview()
         case "share-redaction-settings":
@@ -191,6 +193,26 @@ struct ScreenshotPreviewView: View {
     }
 }
 
+
+private struct AudioFilePlayerScreenshotPreview: View {
+    @State private var audioPlayer = AudioPlayerService()
+
+    var body: some View {
+        AudioLyricsPlayerView(
+            title: "xiaoge-story.wav",
+            lyrics: nil,
+            itemID: "audio-file-preview",
+            audioPlayer: audioPlayer,
+            play: { _ in },
+            openFile: {},
+            shareFileData: { Data("preview audio".utf8) },
+            autoplayOnAppear: false,
+            showsCloseButton: false,
+            usesNavigationBackButton: true
+        )
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
 
 private extension PiSessionAttributes.ContentState {
     static let workingPreview = Self(

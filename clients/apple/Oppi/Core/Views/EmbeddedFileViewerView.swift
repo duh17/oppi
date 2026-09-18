@@ -13,6 +13,7 @@ struct AudioLyricsReaderContent {
     let audioPlayer: AudioPlayerService?
     let play: (TimedText.LoadResult?) -> Void
     let openFile: (() -> Void)?
+    var shareFileData: (() async throws -> Data)? = nil
     let autoplayOnAppear: Bool
     var timedText: TimedText.LoadResult? = nil
     var sidecarLoader: (() async -> TimedText.LoadResult)? = nil
@@ -588,6 +589,7 @@ private struct ChatReaderPageView: View {
                 audioPlayer: spec.audioPlayer,
                 play: spec.play,
                 openFile: spec.openFile,
+                shareFileData: spec.shareFileData,
                 autoplayOnAppear: spec.autoplayOnAppear,
                 showsCloseButton: false,
                 usesNavigationBackButton: true,

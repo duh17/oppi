@@ -351,6 +351,29 @@ struct MarkdownInlineAudioTests {
         #expect(FileBrowserContentRenderingPolicy.audioPlayerTitlePresentation == .hostOwnsTitle)
     }
 
+    @Test("full-screen audio exposes the standard share action when file bytes are available")
+    func fullScreenAudioShareContract() throws {
+        let source = try audioLyricsPlayerSource()
+        let player = try #require(sourceSlice(
+            source,
+            from: "struct AudioLyricsPlayerView",
+            to: "struct AudioLoadingCancelControl"
+        ))
+
+        #expect(player.contains("shareFileData"))
+        #expect(player.contains("AsyncFileShareButton"))
+        #expect(player.contains("accessibilityIdentifier(\"audioLyrics.share\")"))
+
+        let markdownAudio = try nativeMarkdownAudioSource()
+        #expect(markdownAudio.contains("shareFileData:"))
+        #expect(markdownAudio.contains("source.loadFileData()"))
+        #expect(markdownAudio.contains("source = try await shareSourceProvider(embed)"))
+
+        let fileBrowser = try fileBrowserContentSource()
+        #expect(fileBrowser.contains("AsyncFileShareButton(filename: currentFileName"))
+        #expect(fileBrowser.contains("source.loadFileData()"))
+    }
+
     @MainActor
     @Test("markdown audio view reserves compact height and does not autoplay")
     func markdownAudioViewDoesNotAutoplay() throws {
@@ -750,6 +773,42 @@ struct MarkdownInlineAudioTests {
             mergeAdjacentTextSegments: false
         )
     }
+}
+
+private func audioLyricsPlayerSource() throws -> String {
+    let sourceURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appending(path: "Oppi/Features/Chat/Timeline/Media/AudioLyricsPlayerView.swift")
+    return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+private func nativeMarkdownAudioSource() throws -> String {
+    let sourceURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appending(path: "Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownAudioView.swift")
+    return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+private func fileBrowserContentSource() throws -> String {
+    let sourceURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appending(path: "Oppi/Features/FileBrowser/FileBrowserContentView.swift")
+    return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+private func sourceSlice(_ source: String, from start: String, to end: String) -> String? {
+    guard let startRange = source.range(of: start) else { return nil }
+    let rest = source[startRange.lowerBound...]
+    guard let endRange = rest.range(of: end), endRange.lowerBound > rest.startIndex else {
+        return String(rest)
+    }
+    return String(rest[..<endRange.lowerBound])
 }
 
 private func inlineAudioColor(_ lhs: UIColor?, approximatelyEquals rhs: UIColor, tolerance: CGFloat = 0.01) -> Bool {

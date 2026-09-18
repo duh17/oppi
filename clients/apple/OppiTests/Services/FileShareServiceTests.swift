@@ -201,6 +201,21 @@ struct FileShareServiceTests {
         )
     }
 
+    @Test func downloadedFileShareItemPreservesOriginalAudioFilename() throws {
+        defer { FileShareService.cleanupTempFiles() }
+        let bytes = Data("audio bytes".utf8)
+
+        let item = FileShareService.fileShareItem(data: bytes, filename: "folder/xiaoge-story.wav")
+        guard case .file(let url) = item else {
+            Issue.record("Expected downloaded audio to become a file URL")
+            return
+        }
+
+        #expect(url.lastPathComponent == "xiaoge-story.wav")
+        #expect(try Data(contentsOf: url) == bytes)
+        #expect(item.activityItems.compactMap { $0 as? URL }.first?.lastPathComponent == "xiaoge-story.wav")
+    }
+
     // MARK: - Render Default
 
     @Test func renderDefaultProducesPDFForMarkdown() async {

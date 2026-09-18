@@ -41,6 +41,7 @@ enum AudioLyricsPlayerPresenter {
         audioPlayer: AudioPlayerService?,
         play: @escaping (TimedText.LoadResult?) -> Void,
         openFile: (() -> Void)?,
+        shareFileData: (() async throws -> Data)? = nil,
         autoplayOnAppear: Bool,
         timedText: TimedText.LoadResult? = nil,
         sidecarLoader: (() async -> TimedText.LoadResult)? = nil
@@ -57,6 +58,7 @@ enum AudioLyricsPlayerPresenter {
                     audioPlayer: audioPlayer,
                     play: play,
                     openFile: openFile,
+                    shareFileData: shareFileData,
                     autoplayOnAppear: autoplayOnAppear,
                     timedText: timedText,
                     sidecarLoader: sidecarLoader
@@ -73,6 +75,7 @@ enum AudioLyricsPlayerPresenter {
             audioPlayer: audioPlayer,
             play: play,
             openFile: openFile,
+            shareFileData: shareFileData,
             autoplayOnAppear: autoplayOnAppear,
             showsCloseButton: true,
             timedText: timedText,
@@ -103,6 +106,7 @@ struct AudioLyricsPlayerView: View {
     let audioPlayer: AudioPlayerService?
     let play: (TimedText.LoadResult?) -> Void
     let openFile: (() -> Void)?
+    var shareFileData: (() async throws -> Data)? = nil
     var autoplayOnAppear = false
     var showsCloseButton = true
     var usesNavigationBackButton = false
@@ -237,6 +241,11 @@ struct AudioLyricsPlayerView: View {
             }
             languageControl
                 .frame(width: 72, alignment: .trailing)
+            if let shareFileData {
+                AsyncFileShareButton(filename: title, loadData: shareFileData)
+                    .frame(width: 44, height: 44)
+                    .accessibilityIdentifier("audioLyrics.share")
+            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
