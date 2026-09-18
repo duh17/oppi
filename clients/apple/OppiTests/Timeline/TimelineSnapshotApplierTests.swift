@@ -198,6 +198,28 @@ struct TimelineSnapshotApplierTests {
         #expect(result == ["assistant-1", "assistant-2"])
     }
 
+    // MARK: - Theme reconfigure bounding
+
+    @Test func themeChangesReconfigureOnlyVisibleTimelineItems() {
+        let currentIDs = (0..<1_000).map { "item-\($0)" }
+
+        let result = TimelineSnapshotApplier.themeReconfigureItemIDs(
+            currentIDs: currentIDs,
+            visibleIDs: ["item-997", "item-995", "stale-item"]
+        )
+
+        #expect(result == ["item-995", "item-997"])
+    }
+
+    @Test func themeChangesWithoutVisibleTimelineItemsDoNoWork() {
+        let result = TimelineSnapshotApplier.themeReconfigureItemIDs(
+            currentIDs: ["item-1", "item-2"],
+            visibleIDs: ["stale-item"]
+        )
+
+        #expect(result.isEmpty)
+    }
+
     // MARK: - Animated reconfigure filtering
 
     @Test func loadMoreFilteredFromReconfigureWhenAnimating() {

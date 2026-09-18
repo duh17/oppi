@@ -183,6 +183,15 @@ enum TimelineSnapshotApplier {
         return changedIDs.filter { $0 != ChatTimelineCollectionHost.loadMoreID }
     }
 
+    static func themeReconfigureItemIDs(
+        currentIDs: [String],
+        visibleIDs: [String]
+    ) -> [String] {
+        guard !visibleIDs.isEmpty else { return [] }
+        let visibleIDSet = Set(visibleIDs)
+        return currentIDs.filter(visibleIDSet.contains)
+    }
+
     static func reconfigureItems(
         _ itemIDs: [String],
         dataSource: DataSource?,

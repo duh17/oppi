@@ -332,7 +332,7 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func themeChangeNotificationRepaintsInlineCodeBackground() throws {
+    @Test func themeChangeNotificationRepaintsInlineCodeBackground() async throws {
         let originalThemeID = ThemeRuntimeState.currentThemeID()
         defer { ThemeRuntimeState.setThemeID(originalThemeID) }
 
@@ -374,8 +374,20 @@ struct AssistantTimelineRowContentViewTests {
         ) as? UIColor
         #expect(assistantRowColor(lightBackground, approximatelyEquals: UIColor(ThemePalettes.light.bgHighlight)))
 
+        let reconfigureCountBeforeThemeChange = controller.debugReconfiguredItemIDs.count
         ThemeRuntimeState.setThemeID(.dark)
         NotificationCenter.default.post(name: .oppiThemeDidChange, object: nil)
+
+        #expect(controller.debugReconfiguredItemIDs.count == reconfigureCountBeforeThemeChange)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
+        #expect(
+            Array(controller.debugReconfiguredItemIDs.dropFirst(reconfigureCountBeforeThemeChange))
+                == ["assistant-theme"]
+        )
 
         let updatedCell = try configuredTimelineCell(in: collectionView, item: 0)
         let updatedTextView = try #require(timelineFirstTextView(in: updatedCell))

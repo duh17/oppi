@@ -684,8 +684,28 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             guard previousThemeID != currentThemeID else { return }
             previousThemeID = currentThemeID
             collectionView.backgroundColor = UIColor(Color.themeBg)
-            guard !currentIDs.isEmpty else { return }
-            reconfigureItems(currentIDs, in: collectionView)
+
+            // Theme notifications are posted synchronously while SwiftUI may be
+            // processing a scene update. Reconfiguring the complete timeline in
+            // that callback can hold the main thread past the scene watchdog.
+            // Defer one run-loop turn and refresh only visible rows; reused
+            // offscreen cells pick up the current theme when configured.
+            DispatchQueue.main.async { [weak self, weak collectionView] in
+                guard let self, let collectionView,
+                      self.previousThemeID == currentThemeID,
+                      ThemeRuntimeState.currentThemeID() == currentThemeID else {
+                    return
+                }
+                let visibleIDs = collectionView.indexPathsForVisibleItems.compactMap {
+                    self.dataSource?.itemIdentifier(for: $0)
+                }
+                let targetIDs = TimelineSnapshotApplier.themeReconfigureItemIDs(
+                    currentIDs: self.currentIDs,
+                    visibleIDs: visibleIDs
+                )
+                guard !targetIDs.isEmpty else { return }
+                self.reconfigureItems(targetIDs, in: collectionView)
+            }
         }
 
         @objc
