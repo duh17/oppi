@@ -366,6 +366,191 @@ struct ThinkingRowContentViewTests {
             "Large streaming text must skip markdown parsing"
         )
     }
+
+    @Test func largeCompletedThinkingRendersOnlyBoundedHeadAndOpensFullSource() throws {
+        let source = "HEAD_SENTINEL\n"
+            + String(repeating: "completed reasoning line\n", count: 6_000)
+            + "TAIL_SENTINEL"
+        var opened: ChatReaderPayload?
+        var configuration = ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: source,
+            fullText: nil
+        )
+        configuration.openFullScreen = { opened = $0 }
+        let view = ThinkingTimelineRowContentView(configuration: configuration)
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let label = try #require(privateTextLabel(in: view))
+        let rendered = try #require(label.text)
+        #expect(rendered.contains("HEAD_SENTINEL"))
+        #expect(!rendered.contains("TAIL_SENTINEL"))
+        #expect(rendered.utf8.count <= ThinkingTimelineRowContentView.renderWindowUTF8ByteLimit)
+        #expect(view.copyableText?.hasSuffix("TAIL_SENTINEL") == true)
+
+        view.showFullScreen()
+        let payload = try #require(opened)
+        guard case .document(let readerContent, _) = payload.kind,
+              case .thinking(let fullSource, let stream) = readerContent else {
+            Issue.record("Expected full-screen thinking payload")
+            return
+        }
+        #expect(fullSource == source)
+        #expect(stream?.snapshot.text == source)
+    }
+
+    @Test func largeStreamingThinkingRendersOnlyBoundedTail() throws {
+        let source = "HEAD_SENTINEL\n"
+            + String(repeating: "streaming reasoning line\n", count: 6_000)
+            + "TAIL_SENTINEL"
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: false,
+            previewText: source,
+            fullText: nil
+        ))
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let label = try #require(privateTextLabel(in: view))
+        let rendered = try #require(label.text)
+        #expect(!rendered.contains("HEAD_SENTINEL"))
+        #expect(rendered.contains("TAIL_SENTINEL"))
+        #expect(rendered.utf8.count <= ThinkingTimelineRowContentView.renderWindowUTF8ByteLimit)
+        #expect(view.copyableText?.hasPrefix("HEAD_SENTINEL") == true)
+        #expect(view.contentIsTruncated)
+        #expect(view.isShowingTailForTesting, "An initially large live row must open on its newest lines")
+    }
+
+    @Test func initialStreamingTailWaitsForNonzeroViewportHeight() {
+        let source = String(repeating: "streaming reasoning line\n", count: 6_000) + "TAIL_SENTINEL"
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: false,
+            previewText: source,
+            fullText: nil
+        ))
+
+        view.frame = CGRect(x: 0, y: 0, width: 360, height: 0)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        #expect(privateNeedsStreamingTailFollow(in: view) == true)
+        view.frame = CGRect(x: 0, y: 0, width: 360, height: ThinkingRowHeightPolicy.defaultMaxBubbleHeight)
+        for _ in 0..<2 {
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+        }
+
+        #expect(view.contentIsTruncated)
+        #expect(view.isShowingTailForTesting, "Tail follow must remain pending until the viewport has height")
+    }
+
+    @Test func completionSwitchesBoundedTailToBoundedHead() throws {
+        let source = "HEAD_SENTINEL\n"
+            + String(repeating: "reasoning line\n", count: 6_000)
+            + "TAIL_SENTINEL"
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: false,
+            previewText: source,
+            fullText: nil
+        ))
+        _ = fittedTimelineSize(for: view, width: 360)
+        let label = try #require(privateTextLabel(in: view))
+        #expect(label.text?.contains("TAIL_SENTINEL") == true)
+        #expect(label.text?.contains("HEAD_SENTINEL") == false)
+
+        view.configuration = ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: source,
+            fullText: nil
+        )
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        #expect(label.text?.contains("HEAD_SENTINEL") == true)
+        #expect(label.text?.contains("TAIL_SENTINEL") == false)
+        #expect(view.copyableText == source)
+    }
+
+    @Test func boundedWindowKeepsUnicodeValid() throws {
+        let source = "HEAD_SENTINEL\n"
+            + String(repeating: "👩🏽‍💻思考", count: 2_000)
+            + "\nTAIL_SENTINEL"
+        let completed = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: source,
+            fullText: nil
+        ))
+        let streaming = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: false,
+            previewText: source,
+            fullText: nil
+        ))
+        _ = fittedTimelineSize(for: completed, width: 360)
+        _ = fittedTimelineSize(for: streaming, width: 360)
+
+        let completedText = try #require(privateTextLabel(in: completed)?.text)
+        let streamingText = try #require(privateTextLabel(in: streaming)?.text)
+        #expect(!completedText.contains("�"))
+        #expect(!streamingText.contains("�"))
+        #expect(completedText.utf8.count <= ThinkingTimelineRowContentView.renderWindowUTF8ByteLimit)
+        #expect(streamingText.utf8.count <= ThinkingTimelineRowContentView.renderWindowUTF8ByteLimit)
+        #expect(streamingText.contains("TAIL_SENTINEL"))
+    }
+
+    @Test func omittedSourceStillOffersFullScreenWhenRenderedWindowFits() throws {
+        let source = String(repeating: "bounded reasoning line\n", count: 2_000)
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: source,
+            fullText: nil,
+            maxBubbleHeight: 100_000
+        ))
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        #expect(!view.contentIsTruncated)
+        #expect(view.contextMenuForTesting() != nil)
+    }
+
+    @Test func repeatedFittingReusesBoundedTextMeasurement() {
+        let source = String(repeating: "reasoning line\n", count: 6_000)
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: source,
+            fullText: nil
+        ))
+
+        _ = fittedTimelineSize(for: view, width: 360)
+        let firstPassCount = view.measurementPassCountForTesting
+        _ = fittedTimelineSize(for: view, width: 360)
+        view.layoutIfNeeded()
+        _ = fittedTimelineSize(for: view, width: 360)
+        #expect(view.measurementPassCountForTesting == firstPassCount)
+
+        _ = fittedTimelineSize(for: view, width: 320)
+        #expect(view.measurementPassCountForTesting == firstPassCount + 1)
+    }
+
+    @Test func sameLengthEditInsideBoundedWindowRepaints() throws {
+        let prefix = String(repeating: "x", count: 1_000)
+        let suffix = String(repeating: "y", count: 6_000)
+        let original = prefix + "AAAA" + suffix
+        let updated = prefix + "BBBB" + suffix
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: original,
+            fullText: nil
+        ))
+        _ = fittedTimelineSize(for: view, width: 360)
+        #expect(privateTextLabel(in: view)?.text?.contains("AAAA") == true)
+
+        view.configuration = ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: updated,
+            fullText: nil
+        )
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let rendered = try #require(privateTextLabel(in: view)?.text)
+        #expect(!rendered.contains("AAAA"))
+        #expect(rendered.contains("BBBB"))
+    }
 }
 
 @MainActor
@@ -381,6 +566,11 @@ private func privateBubbleView(in view: ThinkingTimelineRowContentView) -> UIVie
 @MainActor
 private func privateTextLabel(in view: ThinkingTimelineRowContentView) -> UITextView? {
     Mirror(reflecting: view).children.first { $0.label == "textLabel" }?.value as? UITextView
+}
+
+@MainActor
+private func privateNeedsStreamingTailFollow(in view: ThinkingTimelineRowContentView) -> Bool? {
+    Mirror(reflecting: view).children.first { $0.label == "needsStreamingTailFollow" }?.value as? Bool
 }
 
 @MainActor

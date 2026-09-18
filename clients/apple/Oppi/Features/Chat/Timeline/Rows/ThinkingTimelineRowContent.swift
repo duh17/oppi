@@ -76,6 +76,20 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     /// Fraction of the bubble height where the fade begins (bottom 30%).
     private static let fadeStartFraction: Float = 0.7
     private static let fullScreenOverflowThreshold: CGFloat = 2
+    /// Collapsed thinking renders only one bounded window. Full source remains
+    /// available to Copy and the virtualized full-screen reader.
+    static let renderWindowUTF8ByteLimit = 4_096
+
+    private struct RenderWindow {
+        let text: String
+        let omittedSource: Bool
+    }
+
+    private struct TextMeasurementKey: Equatable {
+        let renderSignature: Int
+        let width: CGFloat
+        let contentSizeCategory: UIContentSizeCategory
+    }
 
     // Header removed — the unified WorkingIndicator in the timeline
     // already shows the Game of Life while the agent is working.
@@ -97,7 +111,15 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     private var fadeApplied = false
     /// Render signature to skip redundant text updates.
     private var renderSignature: Int?
+    private var measuredTextHeight: (key: TextMeasurementKey, height: CGFloat)?
     private var liveStreamingFollow = LiveStreamingPresentation.ViewportPolicy(followsTail: true)
+    private var needsStreamingTailFollow = false
+    private var currentSourceText: String
+    private var sourceIsOmitted = false
+
+    #if DEBUG
+    private(set) var measurementPassCountForTesting = 0
+    #endif
 
     private var currentConfiguration: ThinkingTimelineRowConfiguration
     private let fullScreenThinkingStream: ThinkingTraceStream
@@ -126,6 +148,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     init(configuration: ThinkingTimelineRowConfiguration) {
         self.currentConfiguration = configuration
         let initialText = configuration.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.currentSourceText = initialText
         self.fullScreenThinkingStream = ThinkingTraceStream(
             text: initialText,
             isDone: configuration.isDone
@@ -178,6 +201,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     override func layoutSubviews() {
         super.layoutSubviews()
         updateBubbleHeight(forWidth: bounds.width)
+        followStreamingTailIfNeeded()
         syncFadeMaskFrame()
     }
 
@@ -290,8 +314,9 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     private func apply(configuration: ThinkingTimelineRowConfiguration) {
         let wasStreaming = !currentConfiguration.isDone
         let isNowStreaming = !configuration.isDone
-        let previousText = currentConfiguration.displayText
+        let previousText = currentSourceText
         currentConfiguration = configuration
+        currentSourceText = configuration.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if isNowStreaming && !wasStreaming {
             scrollView.contentOffset = .zero
@@ -301,25 +326,29 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
             shouldRerender: true,
             wasVisible: wasStreaming,
             previousText: wasStreaming ? previousText : nil,
-            currentText: configuration.displayText
+            currentText: currentSourceText
         )
 
         let themeID = ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
         brainIcon.tintColor = UIColor(palette.purple).withAlphaComponent(0.7)
-        let text = configuration.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let renderWindow = Self.renderWindow(for: currentSourceText, isDone: configuration.isDone)
+        let text = renderWindow.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        sourceIsOmitted = renderWindow.omittedSource
         let sourceLabel = configuration.normalizedSourceLabel
-        textLabel.accessibilityLabel = text.isEmpty ? nil : "\(sourceLabel): \(text)"
-        fullScreenThinkingStream.update(text: text, isDone: configuration.isDone)
+        textLabel.accessibilityLabel = currentSourceText.isEmpty ? nil : "\(sourceLabel): \(currentSourceText)"
+        fullScreenThinkingStream.update(text: currentSourceText, isDone: configuration.isDone)
 
         let signature = Self.textSignature(
             text: text,
+            omittedSource: sourceIsOmitted,
             isDone: configuration.isDone,
             themeID: themeID
         )
         let needsTextUpdate = signature != renderSignature
 
         if configuration.isDone {
+            needsStreamingTailFollow = false
             // Done: show bubble with brain icon + text.
             textLeadingConstraint?.constant = Self.bubblePadding + Self.brainIndent
 
@@ -338,6 +367,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
             brainIcon.isHidden = false
             bubbleView.backgroundColor = UIColor(palette.comment).withAlphaComponent(TimelineBubbleStyle.subtleBgAlpha)
             if needsTextUpdate {
+                measuredTextHeight = nil
                 textLabel.attributedText = makeThinkingAttributedText(
                     text,
                     color: UIColor(palette.fg).withAlphaComponent(0.94)
@@ -360,6 +390,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
                 textLabel.attributedText = nil
                 textLabel.accessibilityLabel = nil
                 renderSignature = signature
+                needsStreamingTailFollow = false
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
                 removeFadeMask()
@@ -369,20 +400,16 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
                 if needsTextUpdate {
                     // Streaming: plain text — skip expensive markdown parsing.
                     // Full markdown rendering applies once on isDone transition.
+                    measuredTextHeight = nil
                     textLabel.attributedText = nil
                     textLabel.text = text
                     textLabel.textColor = UIColor(palette.comment).withAlphaComponent(0.88)
                     textLabel.font = .preferredFont(forTextStyle: .callout)
                     renderSignature = signature
+                    needsStreamingTailFollow = true
                 }
                 updateBubbleHeight(forWidth: bounds.width)
-                if needsTextUpdate, contentIsTruncated,
-                   liveStreamingFollow.handle(.requestFollowTail) == .followTail {
-                    ToolTimelineRowUIHelpers.followTail(
-                        in: scrollView,
-                        contentLabel: textLabel
-                    )
-                }
+                followStreamingTailIfNeeded()
             }
         }
 
@@ -397,17 +424,58 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         bubblePinchGesture.isEnabled = interaction.enablesPinchActivation
     }
 
-    /// Cheap render signature to skip redundant text updates.
-    private static func textSignature(text: String, isDone: Bool, themeID: ThemeID) -> Int {
+    /// Hash the complete bounded window so same-length edits repaint reliably.
+    private static func textSignature(
+        text: String,
+        omittedSource: Bool,
+        isDone: Bool,
+        themeID: ThemeID
+    ) -> Int {
         var hasher = Hasher()
-        hasher.combine(text.count)
+        hasher.combine(text)
+        hasher.combine(omittedSource)
         hasher.combine(isDone)
         hasher.combine(themeID)
-        // Include prefix + suffix for content-change detection without
-        // hashing the full multi-KB thinking text on every flush.
-        hasher.combine(text.prefix(128))
-        hasher.combine(text.suffix(128))
         return hasher.finalize()
+    }
+
+    /// Completed rows show the beginning; live rows show the newest tail. This
+    /// mirrors their existing top/tail viewport semantics while bounding every
+    /// Markdown parse and TextKit measurement by a fixed amount of source.
+    private static func renderWindow(for source: String, isDone: Bool) -> RenderWindow {
+        guard !source.isEmpty else {
+            return RenderWindow(text: "", omittedSource: false)
+        }
+
+        var remainingBytes = renderWindowUTF8ByteLimit
+
+        if isDone {
+            var end = source.startIndex
+            while end < source.endIndex {
+                let next = source.index(after: end)
+                let characterBytes = source[end..<next].utf8.count
+                guard characterBytes <= remainingBytes else {
+                    let text = end == source.startIndex ? "…" : String(source[..<end])
+                    return RenderWindow(text: text, omittedSource: true)
+                }
+                remainingBytes -= characterBytes
+                end = next
+            }
+        } else {
+            var start = source.endIndex
+            while start > source.startIndex {
+                let previous = source.index(before: start)
+                let characterBytes = source[previous..<start].utf8.count
+                guard characterBytes <= remainingBytes else {
+                    let text = start == source.endIndex ? "…" : String(source[start...])
+                    return RenderWindow(text: text, omittedSource: true)
+                }
+                remainingBytes -= characterBytes
+                start = previous
+            }
+        }
+
+        return RenderWindow(text: source, omittedSource: false)
     }
 
     private func makeThinkingAttributedText(_ text: String, color: UIColor) -> NSAttributedString {
@@ -456,9 +524,27 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         let isDone = currentConfiguration.isDone
         let leadingOffset = isDone ? (Self.bubblePadding + Self.brainIndent) : Self.bubblePadding
         let textWidth = max(1, width - leadingOffset - Self.bubblePadding)
-        let textSize = textLabel.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude))
-        let intrinsic = ceil(textSize.height) + Self.bubblePadding * 2
         let maxBubbleHeight = currentConfiguration.maxBubbleHeight
+        let displayScale = max(1, traitCollection.displayScale)
+        let measuredWidth = (textWidth * displayScale).rounded() / displayScale
+        let measurementKey = TextMeasurementKey(
+            renderSignature: renderSignature ?? 0,
+            width: measuredWidth,
+            contentSizeCategory: traitCollection.preferredContentSizeCategory
+        )
+        let textHeight: CGFloat
+        if measuredTextHeight?.key == measurementKey, let cachedHeight = measuredTextHeight?.height {
+            textHeight = cachedHeight
+        } else {
+            textHeight = textLabel.sizeThatFits(
+                CGSize(width: measuredWidth, height: .greatestFiniteMagnitude)
+            ).height
+            measuredTextHeight = (measurementKey, textHeight)
+            #if DEBUG
+            measurementPassCountForTesting += 1
+            #endif
+        }
+        let intrinsic = ceil(textHeight) + Self.bubblePadding * 2
 
         if !isDone {
             // Streaming: fixed viewport height. Cell height never changes
@@ -468,10 +554,15 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
             contentIsTruncated = intrinsic > maxBubbleHeight
             removeFadeMask()
         } else if intrinsic <= maxBubbleHeight {
-            // Done + fits: natural height.
+            // Done + fits: natural height. A bounded source still keeps the
+            // fade/full-screen affordance even when its rendered window fits.
             contentIsTruncated = false
             bubbleHeightConstraint?.constant = intrinsic
-            removeFadeMask()
+            if sourceIsOmitted {
+                applyFadeMask()
+            } else {
+                removeFadeMask()
+            }
         } else {
             // Done + overflow: snap to complete lines + fade mask.
             contentIsTruncated = true
@@ -488,6 +579,20 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     }
 
     // MARK: - Scroll Behavior
+
+    private func followStreamingTailIfNeeded() {
+        guard needsStreamingTailFollow, !currentConfiguration.isDone else { return }
+        guard bounds.width > 0, scrollView.bounds.height > 0 else { return }
+        needsStreamingTailFollow = false
+        guard contentIsTruncated,
+              liveStreamingFollow.handle(.requestFollowTail) == .followTail else {
+            return
+        }
+        ToolTimelineRowUIHelpers.followTail(
+            in: scrollView,
+            contentLabel: textLabel
+        )
+    }
 
     private func configureScrollBehavior() {
         // Single-vertical-owner policy: inner thinking bubble never scrolls.
@@ -526,12 +631,13 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     // MARK: - Full Screen
 
     private var trimmedDisplayText: String {
-        currentConfiguration.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        currentSourceText
     }
 
     private var canShowFullScreen: Bool {
         guard !trimmedDisplayText.isEmpty else { return false }
         guard !bubbleView.isHidden else { return false }
+        if sourceIsOmitted { return true }
 
         let viewportHeight = max(0, scrollView.bounds.height - scrollView.adjustedContentInset.top - scrollView.adjustedContentInset.bottom)
         guard viewportHeight > 1 else {

@@ -451,6 +451,85 @@ struct CollectionRenderPerfBench {
         #expect(hiddenReducer.items.count > 0)
     }
 
+    // MARK: - Benchmark: Large Thinking Rows
+
+    /// Collapsed thinking must scale with its render window, not full source size.
+    /// The complete source remains resident for Copy/full-screen, so this measures
+    /// the user-visible row construction and self-sizing path only.
+    @Test("Large thinking rows: bounded collapsed load")
+    func largeThinkingRowsBoundCollapsedLoad() throws {
+        let sources = [4 * 1_024, 32 * 1_024, 104 * 1_024].map { sourceBytes in
+            (
+                bytes: sourceBytes,
+                text: "HEAD\n"
+                    + String(repeating: "thinking performance line\n", count: sourceBytes / 26 + 1)
+                    + "TAIL"
+            )
+        }
+        var lastView: ThinkingTimelineRowContentView?
+
+        for source in sources {
+            for (mode, isDone) in [("completed", true), ("streaming", false)] {
+                let us = Self.measureMedianUs(
+                    setup: { lastView = nil },
+                    {
+                        let view = ThinkingTimelineRowContentView(configuration: .init(
+                            isDone: isDone,
+                            previewText: source.text,
+                            fullText: nil
+                        ))
+                        _ = fittedTimelineSize(for: view, width: 393)
+                        lastView = view
+                    }
+                )
+
+                let view = try #require(lastView)
+                let label = try #require(timelineFirstView(ofType: UITextView.self, in: view))
+                #expect(label.text.utf8.count <= ThinkingTimelineRowContentView.renderWindowUTF8ByteLimit)
+                if !isDone {
+                    #expect(view.isShowingTailForTesting)
+                }
+                print("METRIC thinking_\(mode)_row_\(source.bytes)_bytes_us=\(String(format: "%.1f", us))")
+            }
+
+            var updateView: ThinkingTimelineRowContentView!
+            let updateUs = Self.measureMedianUs(
+                setup: {
+                    updateView = ThinkingTimelineRowContentView(configuration: .init(
+                        isDone: false,
+                        previewText: "seed",
+                        fullText: nil
+                    ))
+                    _ = fittedTimelineSize(for: updateView, width: 393)
+                },
+                {
+                    updateView.configuration = ThinkingTimelineRowConfiguration(
+                        isDone: false,
+                        previewText: source.text,
+                        fullText: nil
+                    )
+                    _ = fittedTimelineSize(for: updateView, width: 393)
+                }
+            )
+            #expect(updateView.isShowingTailForTesting)
+            print("METRIC thinking_streaming_update_\(source.bytes)_bytes_us=\(String(format: "%.1f", updateUs))")
+        }
+
+        for (mode, isDone) in [("completed", true), ("streaming", false)] {
+            let combinedUs = Self.measureMedianUs {
+                for source in sources {
+                    let view = ThinkingTimelineRowContentView(configuration: .init(
+                        isDone: isDone,
+                        previewText: source.text,
+                        fullText: nil
+                    ))
+                    _ = fittedTimelineSize(for: view, width: 393)
+                }
+            }
+            print("METRIC thinking_\(mode)_rows_4k_32k_104k_us=\(String(format: "%.1f", combinedUs))")
+        }
+    }
+
     // MARK: - Aggregate Primary Metric
 
     @Test("Aggregate: total collection rendering cost")
