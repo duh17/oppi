@@ -517,45 +517,79 @@ enum ANSIParser {
                 lineCount = 0
             }
 
+            func skipNonDisplay(from start: Int, to end: Int) {
+                if start > chunkStart {
+                    finishChunk(at: start)
+                }
+                chunkStart = end
+                index = end
+            }
+
             while index < bytes.count {
                 if bytes[index] == 0x1B, index + 1 < bytes.count, bytes[index + 1] == 0x5B {
                     let sequenceStart = index + 2
                     if let end = ANSIParser.csiEnd(in: bytes, from: sequenceStart) {
+                        if end - index >= maxBytes {
+                            skipNonDisplay(from: index, to: end)
+                            continue
+                        }
+                        if index - chunkStart >= maxBytes {
+                            finishChunk(at: index)
+                        }
                         if bytes[end - 1] == 0x6D {
                             style.apply(bytes, from: sequenceStart, to: end - 1)
                         }
                         index = end
                     } else {
-                        index = bytes.count
+                        skipNonDisplay(from: index, to: bytes.count)
+                        continue
                     }
                 } else if bytes[index] == 0x1B,
                           index + 1 < bytes.count,
                           ANSIParser.isEscStringControl(bytes[index + 1]) {
-                    index = ANSIParser.oscEnd(
+                    let end = ANSIParser.oscEnd(
                         in: bytes,
                         from: index + 2,
                         allowsBEL: bytes[index + 1] == 0x5D
                     ) ?? bytes.count
+                    if end - chunkStart >= maxBytes {
+                        skipNonDisplay(from: index, to: end)
+                        continue
+                    }
+                    index = end
                 } else if bytes[index] == 0xC2,
                           index + 1 < bytes.count,
                           bytes[index + 1] == 0x9B {
                     let sequenceStart = index + 2
                     if let end = ANSIParser.csiEnd(in: bytes, from: sequenceStart) {
+                        if end - index >= maxBytes {
+                            skipNonDisplay(from: index, to: end)
+                            continue
+                        }
+                        if index - chunkStart >= maxBytes {
+                            finishChunk(at: index)
+                        }
                         if bytes[end - 1] == 0x6D {
                             style.apply(bytes, from: sequenceStart, to: end - 1)
                         }
                         index = end
                     } else {
-                        index = bytes.count
+                        skipNonDisplay(from: index, to: bytes.count)
+                        continue
                     }
                 } else if bytes[index] == 0xC2,
                           index + 1 < bytes.count,
                           ANSIParser.isC1StringControl(bytes[index + 1]) {
-                    index = ANSIParser.oscEnd(
+                    let end = ANSIParser.oscEnd(
                         in: bytes,
                         from: index + 2,
                         allowsBEL: bytes[index + 1] == 0x9D
                     ) ?? bytes.count
+                    if end - chunkStart >= maxBytes {
+                        skipNonDisplay(from: index, to: end)
+                        continue
+                    }
+                    index = end
                 } else {
                     if bytes[index] == 0x0A {
                         lineCount += 1

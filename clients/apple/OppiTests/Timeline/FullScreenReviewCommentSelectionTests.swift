@@ -1532,12 +1532,14 @@ struct FullScreenReviewCommentSelectionTests {
         }
 
         #expect(didVirtualize)
+        host.layoutIfNeeded()
         let diagnostics = try #require(body.virtualizationDiagnosticsForTesting())
         #expect(diagnostics.retainedSourceUTF8Count == content.utf8.count)
         #expect(diagnostics.chunkCount > 1)
         #expect(diagnostics.cachedChunkCount <= 14)
         #expect(diagnostics.mountedChunkCount < diagnostics.chunkCount)
         #expect(diagnostics.mountedUTF16Count < content.utf16.count / 4)
+        #expect(diagnostics.collectionContentWidth > diagnostics.collectionBoundsWidth)
         #expect(diagnostics.indexRanOnMainThread == false)
         #expect(timelineAllTextViews(in: body).allSatisfy {
             $0.textStorage.length < content.utf16.count / 4

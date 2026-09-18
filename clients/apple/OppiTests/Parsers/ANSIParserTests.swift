@@ -512,6 +512,28 @@ struct ANSIParserTests {
         #expect(index.widestLineColumnCount == input.utf16.count)
     }
 
+    @Test("terminal chunks drop oversized string controls instead of retaining them")
+    func terminalChunkIndexDropsOversizedOSC() {
+        let payload = String(repeating: "a", count: 80_000)
+        let terminated = "before\u{1B}]0;" + payload + "\u{07}after\n"
+        let unterminated = "keep\u{1B}]0;" + payload
+        for input in [terminated, unterminated] {
+            let index = ANSIParser.TerminalChunkIndex.build(
+                from: input,
+                maxLines: 100,
+                maxBytes: 32 * 1024
+            )
+            #expect(index.chunks.allSatisfy { $0.rawByteCount <= 32 * 1024 })
+            #expect(index.chunks.allSatisfy { !$0.rawText.contains(payload.prefix(32)) })
+        }
+        let displayed = ANSIParser.TerminalChunkIndex.build(
+            from: terminated,
+            maxLines: 100,
+            maxBytes: 32 * 1024
+        ).chunks.map { ANSIParser.strip($0.rawText) }.joined()
+        #expect(displayed == "beforeafter\n")
+    }
+
     // MARK: - Performance
 
     @Test("benchmark: strip handles ~32KB mixed ANSI log quickly")

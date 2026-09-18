@@ -1129,7 +1129,42 @@ private final class FullScreenTerminalChunkCell: UICollectionViewCell {
     }
 }
 
-final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
+private final class FullScreenTerminalVirtualizedLayout: UICollectionViewLayout {
+    var itemSizes: [CGSize] = []
+
+    private var cachedAttributes: [UICollectionViewLayoutAttributes] = []
+    private var cachedContentSize: CGSize = .zero
+
+    override func prepare() {
+        super.prepare()
+        var y: CGFloat = 0
+        var width = collectionView?.bounds.width ?? 0
+        cachedAttributes = itemSizes.enumerated().map { index, size in
+            let attrs = UICollectionViewLayoutAttributes(forCellWith: IndexPath(item: index, section: 0))
+            attrs.frame = CGRect(x: 0, y: y, width: size.width, height: size.height)
+            y += size.height
+            width = max(width, size.width)
+            return attrs
+        }
+        cachedContentSize = CGSize(width: width, height: y)
+    }
+
+    override var collectionViewContentSize: CGSize { cachedContentSize }
+
+    override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
+        cachedAttributes.filter { $0.frame.intersects(rect) }
+    }
+
+    override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
+        cachedAttributes.indices.contains(indexPath.item) ? cachedAttributes[indexPath.item] : nil
+    }
+
+    override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool {
+        collectionView?.bounds.size != newBounds.size
+    }
+}
+
+final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollectionViewDataSource, UICollectionViewDelegate {
     // ~4ms at measured 26 MB/s throughput, safely within 16ms frame budget
     private static let maxSynchronousANSIBytes = 128 * 1024
     private static let maxEstimatedOutputWidth: CGFloat = 120_000
@@ -1145,7 +1180,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     private let stack = UIStackView()
     private let commandView = FullScreenReviewCommentTextView()
     private let outputView = FullScreenReviewCommentTextView()
-    private let virtualizedLayout = UICollectionViewFlowLayout()
+    private let virtualizedLayout = FullScreenTerminalVirtualizedLayout()
     private lazy var virtualizedCollectionView = UICollectionView(
         frame: .zero,
         collectionViewLayout: virtualizedLayout
@@ -1251,9 +1286,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         scrollView.showsVerticalScrollIndicator = true
         scrollView.delegate = self
 
-        virtualizedLayout.minimumLineSpacing = 0
-        virtualizedLayout.minimumInteritemSpacing = 0
-        virtualizedLayout.scrollDirection = .vertical
         virtualizedCollectionView.translatesAutoresizingMaskIntoConstraints = false
         virtualizedCollectionView.backgroundColor = UIColor(palette.bgDark)
         virtualizedCollectionView.alwaysBounceVertical = true
@@ -1411,6 +1443,10 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         chunkRenderTasks.removeAll()
         attributedChunkCache.removeAll()
         attributedChunkLRU.removeAll()
+        let followTail = tailFollowCoordinator.shouldAutoFollowTail
+            || scrollView.bounds.height > 0
+            && scrollView.contentOffset.y + scrollView.bounds.height
+                >= scrollView.contentSize.height - 64
         scrollView.isHidden = true
         virtualizedCollectionView.isHidden = false
         virtualizedCollectionView.reloadData()
@@ -1434,9 +1470,24 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
                 #if DEBUG
                 self.debugIndexRanOnMainThread = build.1
                 #endif
+                self.updateWrappingLayout()
+                self.refreshVirtualizedItemSizes()
                 self.virtualizedCollectionView.reloadData()
-                self.virtualizedLayout.invalidateLayout()
                 self.virtualizedCollectionView.layoutIfNeeded()
+                if followTail {
+                    let offsetY = max(
+                        0,
+                        self.virtualizedCollectionView.contentSize.height
+                            - self.virtualizedCollectionView.bounds.height
+                    )
+                    self.virtualizedCollectionView.setContentOffset(
+                        CGPoint(
+                            x: self.virtualizedCollectionView.contentOffset.x,
+                            y: offsetY
+                        ),
+                        animated: false
+                    )
+                }
                 self.prepareVisibleChunkRunway()
             }
         }
@@ -1489,7 +1540,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
 
     private func updateWrappingLayout() {
         if !virtualizedCollectionView.isHidden {
-            virtualizedLayout.invalidateLayout()
+            refreshVirtualizedItemSizes()
             return
         }
         let viewportWidth = max(1, scrollView.bounds.width)
@@ -1501,14 +1552,24 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     }
 
     private func estimatedUnwrappedOutputWidth() -> CGFloat {
-        let columns = virtualizedIndex?.widestLineColumnCount
+        let outputColumns = virtualizedIndex?.widestLineColumnCount
             ?? Self.widestLineColumnCount(in: renderedOutputText)
+        let commandColumns = Self.widestLineColumnCount(
+            in: virtualizedCommand?.string ?? ""
+        )
+        let columns = max(outputColumns, commandColumns)
         let sampleWidth = ("M" as NSString).size(
             withAttributes: [.font: codeFont]
         ).width
         let textWidth = CGFloat(columns) * max(1, sampleWidth)
         let insetWidth = outputView.textContainerInset.left + outputView.textContainerInset.right + 12
         return min(Self.maxEstimatedOutputWidth, ceil(textWidth + insetWidth))
+    }
+
+    private func refreshVirtualizedItemSizes() {
+        let count = virtualizedCommandItemCount + (virtualizedIndex?.chunks.count ?? 0)
+        virtualizedLayout.itemSizes = (0..<count).map { sizeForVirtualizedItem(at: $0) }
+        virtualizedLayout.invalidateLayout()
     }
 
     private static func widestLineColumnCount(in text: String) -> Int {
@@ -1534,6 +1595,8 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         let cachedChunkCount: Int
         let mountedChunkCount: Int
         let mountedUTF16Count: Int
+        let collectionContentWidth: CGFloat
+        let collectionBoundsWidth: CGFloat
         let indexRanOnMainThread: Bool?
     }
 
@@ -1546,6 +1609,8 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
             cachedChunkCount: attributedChunkCache.count,
             mountedChunkCount: cells.count,
             mountedUTF16Count: cells.reduce(into: 0) { $0 += $1.textView.textStorage.length },
+            collectionContentWidth: virtualizedCollectionView.contentSize.width,
+            collectionBoundsWidth: virtualizedCollectionView.bounds.width,
             indexRanOnMainThread: debugIndexRanOnMainThread
         )
     }
@@ -1606,20 +1671,26 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         return cell
     }
 
-    func collectionView(
-        _ collectionView: UICollectionView,
-        layout collectionViewLayout: UICollectionViewLayout,
-        sizeForItemAt indexPath: IndexPath
-    ) -> CGSize {
-        let viewportWidth = max(1, collectionView.bounds.width - 20)
+    private func sizeForVirtualizedItem(at item: Int) -> CGSize {
+        let viewportWidth = max(1, virtualizedCollectionView.bounds.width - 20)
         let width = readerPreferences.wrapsText
             ? viewportWidth
             : max(viewportWidth, estimatedUnwrappedOutputWidth())
-        if virtualizedCommandItemCount == 1, indexPath.item == 0 {
-            let lines = max(1, virtualizedCommand?.string.split(separator: "\n", omittingEmptySubsequences: false).count ?? 1)
-            return CGSize(width: width, height: CGFloat(lines) * codeFont.lineHeight + 20)
+        if virtualizedCommandItemCount == 1, item == 0 {
+            let command = virtualizedCommand?.string ?? ""
+            let visualLines: Int
+            if readerPreferences.wrapsText {
+                let glyphWidth = max(1, ("M" as NSString).size(withAttributes: [.font: codeFont]).width)
+                let columns = max(1, Int((viewportWidth - 24) / glyphWidth))
+                visualLines = command.split(separator: "\n", omittingEmptySubsequences: false).reduce(into: 0) { count, line in
+                    count += max(1, (line.count + columns - 1) / columns)
+                }
+            } else {
+                visualLines = max(1, command.split(separator: "\n", omittingEmptySubsequences: false).count)
+            }
+            return CGSize(width: width, height: CGFloat(max(1, visualLines)) * codeFont.lineHeight + 20)
         }
-        guard let chunkIndex = chunkIndex(for: indexPath.item),
+        guard let chunkIndex = chunkIndex(for: item),
               let chunk = virtualizedIndex?.chunks[chunkIndex] else {
             return CGSize(width: width, height: codeFont.lineHeight + 4)
         }
