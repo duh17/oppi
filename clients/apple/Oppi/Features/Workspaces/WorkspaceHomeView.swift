@@ -452,10 +452,7 @@ struct WorkspaceLinkedFileDestinationView: View {
             navigationContext: source == .workspaceFile ? target.navigationContext : nil,
             lineAnchor: target.lineAnchor,
             onLineAnchorNotice: onLineAnchorNotice,
-            markdownViewportRestore: FileBrowserContentView.restoreStore(
-                for: .workspaceLinkedDestination,
-                store: store
-            ),
+            markdownViewportRestore: store,
             addToChatDestination: addToChatDestination
         )
     }

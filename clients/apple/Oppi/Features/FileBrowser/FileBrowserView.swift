@@ -1106,10 +1106,7 @@ struct FileBrowserView: View {
             navigationContext: currentFileNavigationContext,
             onNavigationSelectionChange: { selectedFile = $0 },
             onBackNavigation: clearSelectedFileForBackNavigation,
-            markdownViewportRestore: FileBrowserContentView.restoreStore(
-                for: .treePaneSelectedFile,
-                store: store
-            )
+            markdownViewportRestore: store
         )
     }
 
@@ -1130,10 +1127,7 @@ struct FileBrowserView: View {
             fileSize: size,
             chromeMode: contentChromeMode,
             navigationContext: navigationContext,
-            markdownViewportRestore: FileBrowserContentView.restoreStore(
-                for: .compactNavigationLink,
-                store: store
-            )
+            markdownViewportRestore: store
         )
     }
 

@@ -322,9 +322,7 @@ struct FileBrowserReviewCommentSelectionTests {
     }
 
     @Test func treePaneTextUsesEmbeddedFileViewerWithoutNavigationChrome() {
-        #expect(FileBrowserContentRenderingPolicy.textRenderer(for: .treePane) == .embeddedFileViewer)
         #expect(FileBrowserContentRenderingPolicy.showsNavigationChrome(for: .treePane) == false)
-        #expect(FileBrowserContentRenderingPolicy.textRenderer(for: .pushed) == .embeddedFileViewer)
         #expect(FileBrowserContentRenderingPolicy.showsNavigationChrome(for: .pushed) == true)
         #expect(FileBrowserContentRenderingPolicy.showsNavigationChrome(for: .pushed, source: .hostFile) == false)
         #expect(FileBrowserContentRenderingPolicy.navigationTitle(
@@ -332,6 +330,38 @@ struct FileBrowserReviewCommentSelectionTests {
             path: "/Users/me/secret",
             fileName: "harmless note"
         ) == "/Users/me/secret")
+    }
+
+    @Test(arguments: [FileBrowserContentChromeMode.pushed, .treePane])
+    func textMountsFullScreenCodeViewController(chromeMode: FileBrowserContentChromeMode) async throws {
+        let client = FileBrowserTextMountURLProtocol.makeClient()
+        let host = UIHostingController(rootView:
+            FileBrowserContentView(
+                workspaceId: FileBrowserTextMountURLProtocol.workspaceId,
+                filePath: FileBrowserTextMountURLProtocol.filePath,
+                fileName: FileBrowserTextMountURLProtocol.fileName,
+                chromeMode: chromeMode
+            )
+            .environment(\.apiClient, client)
+        )
+        host.loadViewIfNeeded()
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let window = UIWindow(frame: host.view.frame)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let mounted = await waitForMainActorCondition {
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            return firstFullScreenCodeViewController(in: host) != nil
+        }
+        #expect(mounted)
+        let controller = try #require(firstFullScreenCodeViewController(in: host))
+        controller.view.layoutIfNeeded()
+        #expect(timelineAllTextViews(in: controller.view).contains {
+            timelineRenderedText(of: $0).contains(FileBrowserTextMountURLProtocol.needle)
+        })
     }
 
     @Test func fileBrowserKeepsExistingMediaInsteadOfReloadingSamePath() {
@@ -1099,6 +1129,38 @@ struct FileBrowserReviewCommentSelectionTests {
         (controller.view.gestureRecognizers ?? []).filter { $0 is UIPanGestureRecognizer }.count
     }
 
+    private func firstFullScreenCodeViewController(in root: UIViewController) -> FullScreenCodeViewController? {
+        if let match = root as? FullScreenCodeViewController {
+            return match
+        }
+        for child in root.children {
+            if let found = firstFullScreenCodeViewController(in: child) {
+                return found
+            }
+        }
+        if let presented = root.presentedViewController,
+           let found = firstFullScreenCodeViewController(in: presented) {
+            return found
+        }
+        return firstFullScreenCodeViewController(in: root.view)
+    }
+
+    private func firstFullScreenCodeViewController(in view: UIView) -> FullScreenCodeViewController? {
+        var responder: UIResponder? = view
+        while let current = responder {
+            if let match = current as? FullScreenCodeViewController {
+                return match
+            }
+            responder = current.next
+        }
+        for subview in view.subviews {
+            if let found = firstFullScreenCodeViewController(in: subview) {
+                return found
+            }
+        }
+        return nil
+    }
+
     private func makeCommentStore() -> ReviewCommentStore {
         let suiteName = "FileBrowserReviewCommentSelectionTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName) ?? .standard
@@ -1180,4 +1242,55 @@ enum WikiOpenableCommentCase: String, CaseIterable {
             false
         }
     }
+}
+
+private final class FileBrowserTextMountURLProtocol: URLProtocol, @unchecked Sendable {
+    static let host = "file-browser-text-mount.test"
+    static let workspaceId = "ws-text-mount"
+    static let filePath = "notes.txt"
+    static let fileName = "notes.txt"
+    static let needle = "file-browser-uikit-host-oracle"
+
+    static func makeClient() -> APIClient {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [FileBrowserTextMountURLProtocol.self]
+        return APIClient(
+            baseURL: URL(string: "https://\(host)") ?? URL(fileURLWithPath: "/"),
+            token: "test-token",
+            configuration: config
+        )
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == host
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        let body = Data(Self.needle.utf8)
+        guard let response = HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: [
+                "Content-Type": "text/plain; charset=utf-8",
+                "Content-Length": "\(body.count)",
+            ]
+        ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

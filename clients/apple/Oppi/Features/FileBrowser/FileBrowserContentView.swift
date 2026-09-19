@@ -7,21 +7,6 @@ enum FileBrowserContentChromeMode {
     case treePane
 }
 
-/// Compact tree NavigationLink and tree-pane selectedFileContent must pass
-/// the same path-keyed restore store as WorkspaceLinkedFileDestinationView.
-enum FileBrowserMarkdownViewportRestoreHost: String, CaseIterable, Sendable {
-    case workspaceLinkedDestination
-    case treePaneSelectedFile
-    case compactNavigationLink
-
-    var suppliesKeyedRestoreStore: Bool {
-        switch self {
-        case .workspaceLinkedDestination, .treePaneSelectedFile, .compactNavigationLink:
-            return true
-        }
-    }
-}
-
 enum FileBrowserContentSource: Equatable {
     case workspaceFile
     case sessionFile(sessionId: String)
@@ -33,18 +18,7 @@ enum FileBrowserContentSource: Equatable {
     }
 }
 
-enum FileBrowserTextRenderer: Equatable {
-    case embeddedFileViewer
-}
-
 enum FileBrowserContentRenderingPolicy {
-    static func textRenderer(for chromeMode: FileBrowserContentChromeMode) -> FileBrowserTextRenderer {
-        switch chromeMode {
-        case .pushed, .treePane:
-            return .embeddedFileViewer
-        }
-    }
-
     static func showsNavigationChrome(
         for chromeMode: FileBrowserContentChromeMode,
         source: FileBrowserContentSource = .workspaceFile
@@ -132,13 +106,6 @@ struct FileBrowserContentView: View {
     /// draw a second pill on top of previous-file.
     var showsSwiftUIReviewCommentStashOverlay = true
 
-    static func restoreStore(
-        for host: FileBrowserMarkdownViewportRestoreHost,
-        store: Binding<FullScreenMarkdownViewportRestoreState>
-    ) -> Binding<FullScreenMarkdownViewportRestoreState>? {
-        host.suppliesKeyedRestoreStore ? store : nil
-    }
-
 #if DEBUG
     var debugHasMarkdownViewportRestoreForTesting: Bool {
         markdownViewportRestore != nil
@@ -212,14 +179,8 @@ struct FileBrowserContentView: View {
         return false
     }
 
-    private var shouldUseEmbeddedFileViewer: Bool {
-        FileBrowserContentRenderingPolicy.textRenderer(for: chromeMode) == .embeddedFileViewer
-    }
-
     private var usesUIKitReviewCommentStash: Bool {
-        if case .text = content {
-            return shouldUseEmbeddedFileViewer
-        }
+        if case .text = content { return true }
         return false
     }
 
@@ -233,9 +194,7 @@ struct FileBrowserContentView: View {
 
     private var parentOwnsBackSwipe: Bool {
         switch content {
-        case .text:
-            return !shouldUseEmbeddedFileViewer
-        case .pdf, .usdz:
+        case .text, .pdf, .usdz:
             return false
         case .loading, .sizeWarning, .error, .image, .video, .audio, .binary:
             return true
@@ -335,23 +294,19 @@ struct FileBrowserContentView: View {
                 description: Text(message)
             )
         case .text(let text):
-            if shouldUseEmbeddedFileViewer {
-                EmbeddedFileViewerView(
-                    content: fullScreenContent(text: text),
-                    reviewCommentSessionId: sessionId,
-                    lineAnchor: activeSelection == nil ? lineAnchor : nil,
-                    lineAnchorNotice: onLineAnchorNotice,
-                    showsNavigationChrome: shouldShowEmbeddedNavigationChrome,
-                    backSwipeAction: navigateBackToFileList,
-                    markdownViewportIntent: markdownViewportRestore?.intent(for: currentFilePath),
-                    addToChatDestination: addToChatDestination,
-                    leadingFloatingAccessoryCount: adjacentFileNavigatorLeadingAccessoryCount,
-                    trailingFloatingAccessoryCount: adjacentFileNavigatorTrailingAccessoryCount
-                )
-                .ignoresSafeArea(edges: shouldShowEmbeddedNavigationChrome ? .top : [])
-            } else {
-                inlineTextView(text)
-            }
+            EmbeddedFileViewerView(
+                content: fullScreenContent(text: text),
+                reviewCommentSessionId: sessionId,
+                lineAnchor: activeSelection == nil ? lineAnchor : nil,
+                lineAnchorNotice: onLineAnchorNotice,
+                showsNavigationChrome: shouldShowEmbeddedNavigationChrome,
+                backSwipeAction: navigateBackToFileList,
+                markdownViewportIntent: markdownViewportRestore?.intent(for: currentFilePath),
+                addToChatDestination: addToChatDestination,
+                leadingFloatingAccessoryCount: adjacentFileNavigatorLeadingAccessoryCount,
+                trailingFloatingAccessoryCount: adjacentFileNavigatorTrailingAccessoryCount
+            )
+            .ignoresSafeArea(edges: shouldShowEmbeddedNavigationChrome ? .top : [])
         case .image(let data):
             imageView(data)
         case .video(let source):
@@ -377,20 +332,6 @@ struct FileBrowserContentView: View {
                 description: Text("This file type cannot be displayed as text.")
             )
         }
-    }
-
-    @ViewBuilder
-    private func inlineTextView(_ text: String) -> some View {
-        ScrollView([.vertical, .horizontal]) {
-            Text(text)
-                .font(.system(.body, design: .monospaced))
-                .foregroundStyle(.themeFg)
-                .textSelection(.enabled)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 16)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-        }
-        .background(.themeBg)
     }
 
     // MARK: - Size Warning
