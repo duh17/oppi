@@ -46,6 +46,29 @@ describe("request provenance", () => {
     expect(isSecureNetworkRequest(request({ encrypted: true }))).toBe(true);
   });
 
+  it("uses overwritten XFF for rate-limit identity on TLS from a trusted peer", () => {
+    const req = request({
+      encrypted: true,
+      headers: { "x-forwarded-for": "203.0.113.10" },
+    });
+    const provenance = resolveRequestProvenance(req, trusted);
+    expect(provenance.isSecure).toBe(true);
+    expect(provenance.socketEncrypted).toBe(true);
+    expect(provenance.trustedPeer).toBe(true);
+    expect(provenance.clientIdentity).toBe("xff:203.0.113.10");
+  });
+
+  it("does not take XFF identity without trusted peers even on TLS", () => {
+    const req = request({
+      encrypted: true,
+      headers: { "x-forwarded-for": "203.0.113.10" },
+    });
+    const provenance = resolveRequestProvenance(req, { publicUrl, trustedPeers: [] });
+    expect(provenance.isSecure).toBe(true);
+    expect(provenance.trustedPeer).toBe(false);
+    expect(provenance.clientIdentity).toBe("peer:127.0.0.1");
+  });
+
   it("does not treat publicUrl alone as authorization for plaintext", () => {
     const req = request({
       headers: { "x-forwarded-proto": "https", "x-forwarded-for": "203.0.113.10" },

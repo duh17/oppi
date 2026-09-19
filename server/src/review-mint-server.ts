@@ -29,7 +29,7 @@ function isLoopbackMintHost(host: string): boolean {
 
 export function createReviewMintServer(options: ReviewMintServerOptions): {
   server: ReturnType<typeof createServer>;
-  revokeOutstanding: () => Promise<void>;
+  invalidateOutstanding: () => Promise<void>;
   listen: () => Promise<{ host: string; port: number }>;
   close: () => Promise<void>;
 } {
@@ -64,9 +64,9 @@ export function createReviewMintServer(options: ReviewMintServerOptions): {
     const method = (req.method || "GET").toUpperCase();
     const safePath = redactMintPath(url.pathname, secret);
 
-    if (url.pathname === `${expected}/revoke-link` && method === "POST") {
-      await coordinator.revokeOutstanding();
-      log(`mint link_revoked path=${safePath}`);
+    if (url.pathname === `${expected}/invalidate-invite` && method === "POST") {
+      await coordinator.invalidateOutstanding();
+      log(`mint invite_invalidated path=${safePath}`);
       res.writeHead(204, { "Cache-Control": "no-store" });
       res.end();
       return;
@@ -105,13 +105,13 @@ export function createReviewMintServer(options: ReviewMintServerOptions): {
     res.end();
   }
 
-  async function revokeOutstanding(): Promise<void> {
-    await coordinator.revokeOutstanding();
+  async function invalidateOutstanding(): Promise<void> {
+    await coordinator.invalidateOutstanding();
   }
 
   return {
     server,
-    revokeOutstanding,
+    invalidateOutstanding,
     listen(): Promise<{ host: string; port: number }> {
       return new Promise((resolve, reject) => {
         server.listen(options.listenPort ?? 0, listenHost, () => {

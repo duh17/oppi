@@ -30,7 +30,7 @@ Oppi does not create starter workspaces. Camera-free pairing opens the signed `o
 
 ## Reach the server
 
-After pairing, Oppi uses authenticated HTTPS/WSS. The phone must reach the server over LAN, Tailscale, or a public HTTPS hostname. Tailscale HTTPS is supported. A reverse proxy is supported: set `publicUrl` to the phone-facing HTTPS origin and, for a private HTTP upstream, `proxy.trustedPeers` to the proxy's socket address as Oppi sees it. The local CLI stays on an owner-only Unix socket.
+After pairing, Oppi uses authenticated HTTPS/WSS. The phone must reach the server over LAN, Tailscale, or a public HTTPS hostname. Tailscale HTTPS is supported. A reverse proxy is supported: set `publicUrl` to the phone-facing HTTPS origin and `proxy.trustedPeers` to the proxy's socket address as Oppi sees it (rate-limit identity on TLS origins; also required to authorize private HTTP). The local CLI stays on an owner-only Unix socket.
 
 For remote pairing, include the host in the invite:
 

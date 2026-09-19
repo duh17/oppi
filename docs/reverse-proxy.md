@@ -27,7 +27,7 @@ Rules:
 
 - `publicUrl` is HTTPS only. Optional port defaults to 443. Userinfo, query, fragment, and non-root paths are rejected. A trailing `/` is normalized away.
 - `proxy.trustedPeers` are the **immediate socket peers as Oppi sees them**, usually the proxy's private IP or loopback. They are not the phone IP or the public domain's IP.
-- Set `proxy.trustedPeers` only for a **private HTTP** origin. For a verified-HTTPS origin, keep Oppi on `tls.mode=self-signed` or `manual` and omit HTTP-proxy trust.
+- Set `proxy.trustedPeers` for both private HTTP and verified-HTTPS origins. On a TLS origin this does not authorize plaintext and is not skip-verify; it only lets Oppi take a single overwritten `X-Forwarded-For` for pairing/challenge rate-limit identity.
 - `publicUrl` alone never authorizes plaintext credentials. Private HTTP requires a trusted peer **and** a single `X-Forwarded-Proto: https` value that the proxy overwrites.
 - The proxy must overwrite `X-Forwarded-For`. Oppi uses a single overwritten client IP for pairing/challenge rate limits. ALB-style append chains are not a trustworthy client identity; Oppi falls back to the proxy socket peer. Do not append untrusted incoming forwarded addresses.
 - Do not publish the backend port. Do not proxy the owner Unix socket. Owner `sk_` tokens and `/mirror/v1/bridge` stay local.
@@ -50,7 +50,7 @@ oppi.example.com {
 
 Caddy's default proxy behavior sets forwarded headers and ignores untrusted incoming values.
 
-Verified-HTTPS origin: set Oppi to `tls.mode=self-signed` or `manual`, **omit** `proxy.trustedPeers`, and tell Caddy which CA and name to verify. Do not skip upstream TLS verification.
+Verified-HTTPS origin: set Oppi to `tls.mode=self-signed` or `manual`, still set `proxy.trustedPeers` (client-identity/rate-limit, not skip-verify), and tell Caddy which CA and name to verify. Do not skip upstream TLS verification.
 
 ```caddyfile
 oppi.example.com {
@@ -105,7 +105,7 @@ server {
 
 Renew public certificates with your usual tooling (for example certbot). The snippet assumes nginx faces the client.
 
-Verified-HTTPS origin: keep the server/redirect/WebSocket block, omit `proxy.trustedPeers`, replace `proxy_pass`, and enable verification. nginx defaults `proxy_ssl_verify` to `off`; changing only `http://` to `https://` does **not** verify the backend.
+Verified-HTTPS origin: keep the server/redirect/WebSocket block, keep `proxy.trustedPeers` (client-identity/rate-limit, not skip-verify), replace `proxy_pass`, and enable verification. nginx defaults `proxy_ssl_verify` to `off`; changing only `http://` to `https://` does **not** verify the backend.
 
 ```nginx
         proxy_pass https://127.0.0.1:7750;
@@ -128,7 +128,7 @@ ingress:
   - service: http_status:404
 ```
 
-Verified-HTTPS origin: omit HTTP-proxy trust and verify the backend CA and name.
+Verified-HTTPS origin: keep `proxy.trustedPeers` set to the connector's actual local peer (client-identity/rate-limit, not skip-verify) and verify the backend CA and name.
 
 ```yaml
 ingress:

@@ -374,8 +374,8 @@ function composeYaml(opts: {
 }): string {
   const httpsOrigin = opts.httpsOrigin;
   const tlsMode = httpsOrigin ? "self-signed" : "disabled";
-  const trusted = httpsOrigin ? "" : `oppi config set proxy.trustedPeers '["172.28.39.10/32"]' && `;
-  const originCmd = `mkdir -p /data/oppi /data/pi-agent && if [ ! -f /data/oppi/config.json ]; then oppi init --yes --force --data-dir /data/oppi; fi && oppi config set host 0.0.0.0 && oppi config set port 7750 && oppi config set publicUrl https://${PUBLIC_HOST} && oppi config set tls.mode ${tlsMode} && ${trusted}exec oppi serve`;
+  // Trusted peers on HTTPS origins are rate-limit identity only, not skip-verify.
+  const originCmd = `mkdir -p /data/oppi /data/pi-agent && if [ ! -f /data/oppi/config.json ]; then oppi init --yes --force --data-dir /data/oppi; fi && oppi config set host 0.0.0.0 && oppi config set port 7750 && oppi config set publicUrl https://${PUBLIC_HOST} && oppi config set tls.mode ${tlsMode} && oppi config set proxy.trustedPeers '["172.28.39.10/32"]' && exec oppi serve`;
   const proxyService = opts.mode.startsWith("caddy")
     ? `
   proxy:
@@ -680,79 +680,40 @@ describe("reverse-proxy four-way matrix", () => {
         docker(["cp", join(runDir, "certs", "ca.crt"), `${project}-probe:/tmp/ca.crt`]);
         const attackerKey = devicePublicKey();
         let lastAttack = "";
-        if (httpsOrigin) {
-          docker([
-            "cp",
-            join(runDir, "certs", "origin-ca.crt"),
-            `${project}-probe:/tmp/origin-ca.crt`,
-          ]);
-          for (let i = 0; i < 6; i += 1) {
-            const attack = spawnSync(
-              "docker",
-              [
-                "exec",
-                `${project}-probe`,
-                "curl",
-                "-sS",
-                "-o",
-                "/dev/null",
-                "-w",
-                "%{http_code}",
-                "--cacert",
-                "/tmp/origin-ca.crt",
-                "--resolve",
-                "localhost:7750:172.28.39.20",
-                "-H",
-                "Content-Type: application/json",
-                "-X",
-                "POST",
-                "--data",
-                JSON.stringify({
-                  pairingToken: "pt_invalid",
-                  devicePublicKey: attackerKey.publicKey,
-                }),
-                "https://localhost:7750/pair",
-              ],
-              { encoding: "utf8" },
-            );
-            lastAttack = attack.stdout.trim();
-          }
-        } else {
-          for (let i = 0; i < 6; i += 1) {
-            const attack = spawnSync(
-              "docker",
-              [
-                "exec",
-                `${project}-probe`,
-                "curl",
-                "-sS",
-                "-o",
-                "/dev/null",
-                "-w",
-                "%{http_code}",
-                "--cacert",
-                "/tmp/ca.crt",
-                "--resolve",
-                `${PUBLIC_HOST}:443:172.28.39.10`,
-                "-H",
-                `Host: ${PUBLIC_HOST}`,
-                "-H",
-                "Content-Type: application/json",
-                "-H",
-                "X-Forwarded-For: 198.51.100.20",
-                "-X",
-                "POST",
-                "--data",
-                JSON.stringify({
-                  pairingToken: "pt_invalid",
-                  devicePublicKey: attackerKey.publicKey,
-                }),
-                `https://${PUBLIC_HOST}/pair`,
-              ],
-              { encoding: "utf8" },
-            );
-            lastAttack = attack.stdout.trim();
-          }
+        for (let i = 0; i < 6; i += 1) {
+          const attack = spawnSync(
+            "docker",
+            [
+              "exec",
+              `${project}-probe`,
+              "curl",
+              "-sS",
+              "-o",
+              "/dev/null",
+              "-w",
+              "%{http_code}",
+              "--cacert",
+              "/tmp/ca.crt",
+              "--resolve",
+              `${PUBLIC_HOST}:443:172.28.39.10`,
+              "-H",
+              `Host: ${PUBLIC_HOST}`,
+              "-H",
+              "Content-Type: application/json",
+              "-H",
+              "X-Forwarded-For: 198.51.100.20",
+              "-X",
+              "POST",
+              "--data",
+              JSON.stringify({
+                pairingToken: "pt_invalid",
+                devicePublicKey: attackerKey.publicKey,
+              }),
+              `https://${PUBLIC_HOST}/pair`,
+            ],
+            { encoding: "utf8" },
+          );
+          lastAttack = attack.stdout.trim();
         }
         expect(["401", "429"]).toContain(lastAttack);
 
@@ -882,7 +843,7 @@ describe("reverse-proxy four-way matrix", () => {
           "/dev/null",
           "-X",
           "POST",
-          `http://127.0.0.1:8790/r/${MINT_SECRET}/revoke-link`,
+          `http://127.0.0.1:8790/r/${MINT_SECRET}/invalidate-invite`,
         ]);
         const stalePair = await httpsJson(edgePort, ca, "/pair", {
           method: "POST",

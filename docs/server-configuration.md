@@ -91,7 +91,7 @@ Provider API keys use `pi auth`, not Oppi config.
 | `port` / `host`                         | Listen address (restart)                                            |
 | `tls.mode`                              | `disabled`, `self-signed`, `tailscale`, `manual` (restart)          |
 | `publicUrl`                             | Phone-facing HTTPS origin, independent of the listener (restart)    |
-| `proxy.trustedPeers`                    | Immediate proxy peer CIDRs as Oppi sees them (restart)              |
+| `proxy.trustedPeers`                    | Immediate proxy peer CIDRs as Oppi sees them; rate-limit identity including TLS origins (restart) |
 | `asr.sttEndpoint`                       | HTTP/Yuwp dictation STT base URL (restart)                          |
 | `asr.provider`                          | `http` or `xai` (restart)                          |
 | `asr.sttModel`                          | HTTP/Yuwp STT model id (restart)                                      |

@@ -52,8 +52,8 @@ export class InviteMintCoordinator {
     return this.serialized(() => this.connectLocked(input));
   }
 
-  /** Drop a cached invite without minting a replacement (link revoke). */
-  async revokeOutstanding(): Promise<void> {
+  /** Drop a cached invite without minting a replacement. Next GET remints. */
+  async invalidateOutstanding(): Promise<void> {
     await this.serialized(async () => {
       this.outstanding = null;
       await this.invalidate?.();

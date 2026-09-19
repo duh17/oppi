@@ -101,7 +101,7 @@ The local CLI always uses bearer-authenticated HTTP over an owner-only Unix sock
 | `tls.caPath`                   | string  | -               | CA chain path. Used in `self-signed` mode for client certificate pinning.                             |
 | `tls.allowInsecureNetworkHttp` | boolean | `false`         | Explicit escape hatch required to bind plain HTTP/WS to non-loopback interfaces with `mode=disabled` when `publicUrl` + `proxy.trustedPeers` are not set. |
 | `publicUrl`                    | string  | -               | Phone-facing HTTPS origin. Independent of listener `host`/`port`. Optional port defaults to 443. |
-| `proxy.trustedPeers`           | string[] | -              | Immediate reverse-proxy peer CIDRs as Oppi sees them. Required for trusted private HTTP. |
+| `proxy.trustedPeers`           | string[] | -              | Immediate reverse-proxy peer CIDRs as Oppi sees them. Required for trusted private HTTP. Also set on verified-HTTPS origins so pairing rate limits use overwritten X-Forwarded-For (not skip-verify). |
 
 New configs default to `"self-signed"`, so iOS pairing uses HTTPS/WSS by default. On the first `oppi serve`, unpaired configs with `tls.mode="disabled"` are auto-promoted to `"self-signed"`. TLS applies to the remote network listener, not the local Unix socket.
 

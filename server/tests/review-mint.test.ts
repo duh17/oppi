@@ -81,7 +81,7 @@ describe("review mint coordinator", () => {
     );
 
     const first = await coordinator.connect({ method: "GET" });
-    await coordinator.revokeOutstanding();
+    await coordinator.invalidateOutstanding();
     const afterRevoke = await coordinator.connect({ method: "GET" });
     const retried = await coordinator.connect({ method: "GET", retry: true });
 
@@ -141,7 +141,7 @@ describe("review mint coordinator", () => {
     expect(calls).toBe(2);
   });
 
-  it("revokes without minting a discarded live invite", async () => {
+  it("invalidates outstanding invite without minting a discarded live invite", async () => {
     let mintCalls = 0;
     let invalidateCalls = 0;
     const coordinator = new InviteMintCoordinator(
@@ -155,7 +155,7 @@ describe("review mint coordinator", () => {
     );
 
     await coordinator.connect({ method: "GET" });
-    await coordinator.revokeOutstanding();
+    await coordinator.invalidateOutstanding();
     expect(mintCalls).toBe(1);
     expect(invalidateCalls).toBe(1);
   });
@@ -201,7 +201,7 @@ describe("review mint HTTP server", () => {
     ).not.toThrow();
   });
 
-  it("revokes the stable link without minting a replacement", async () => {
+  it("invalidates the outstanding invite without minting a replacement", async () => {
     let mintCalls = 0;
     let invalidateCalls = 0;
     const mintedServer = createReviewMintServer({
@@ -219,7 +219,7 @@ describe("review mint HTTP server", () => {
       const first = await mintRequest(bound.port, `/r/${secret}`);
       expect(first.status).toBe(302);
       expect(first.location).toBe("oppi://connect?invite=1");
-      const revoked = await mintRequest(bound.port, `/r/${secret}/revoke-link`, { method: "POST" });
+      const revoked = await mintRequest(bound.port, `/r/${secret}/invalidate-invite`, { method: "POST" });
       expect(revoked.status).toBe(204);
       expect(mintCalls).toBe(1);
       expect(invalidateCalls).toBe(1);

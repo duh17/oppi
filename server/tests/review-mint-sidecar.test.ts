@@ -106,7 +106,7 @@ describe("review mint sidecar", () => {
     }
   });
 
-  it("reuses one invite, remints after consume or external pair, and revokes without mint-and-discard", async () => {
+  it("reuses one invite, remints after consume or external pair, and invalidates outstanding invite without mint-and-discard", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-mint-sidecar-"));
     dirs.push(root);
     const dataDir = join(root, "data");
@@ -191,7 +191,7 @@ describe("review mint sidecar", () => {
     const head = await mintRequest(port, `/r/${SECRET}`, { method: "HEAD" });
     expect(head.status).toBe(405);
 
-    const revoked = await mintRequest(port, `/r/${SECRET}/revoke-link`, { method: "POST" });
+    const revoked = await mintRequest(port, `/r/${SECRET}/invalidate-invite`, { method: "POST" });
     expect(revoked.status).toBe(204);
     expect(readFileSync(counterPath, "utf8").trim().split("\n")).toEqual([
       "pair",
