@@ -18,7 +18,7 @@ oppi config set --help
 - Paths use dot notation (`tls.mode`, `runtimeEnv.TTS_BASE_URL`).
 - `oppi config set` without enough arguments lists supported keys and current values.
 - Unknown keys are ignored on startup and reported by `oppi config validate`.
-- Many keys need a **server restart** before they take effect (`asr`, `tls`, `port`, `host`, `runtimeEnv`).
+- Many keys need a **server restart** before they take effect (`asr`, `tls`, `port`, `host`, `publicUrl`, `proxy`, `runtimeEnv`). `tls.mode=cloudflare` is not supported; terminate TLS at the reverse proxy and set `publicUrl` plus `proxy.trustedPeers`.
 
 ## Dictation (ASR / STT)
 
@@ -90,6 +90,8 @@ Provider API keys use `pi auth`, not Oppi config.
 | --------------------------------------- | ------------------------------------------------------------------- |
 | `port` / `host`                         | Listen address (restart)                                            |
 | `tls.mode`                              | `disabled`, `self-signed`, `tailscale`, `manual` (restart)          |
+| `publicUrl`                             | Phone-facing HTTPS origin, independent of the listener (restart)    |
+| `proxy.trustedPeers`                    | Immediate proxy peer CIDRs as Oppi sees them (restart)              |
 | `asr.sttEndpoint`                       | HTTP/Yuwp dictation STT base URL (restart)                          |
 | `asr.provider`                          | `http` or `xai` (restart)                          |
 | `asr.sttModel`                          | HTTP/Yuwp STT model id (restart)                                      |

@@ -1,0 +1,5 @@
+{
+  "defaultProvider": "rp39",
+  "defaultModel": "oppi-rp39-deterministic",
+  "enabledModels": ["rp39/oppi-rp39-deterministic"]
+}

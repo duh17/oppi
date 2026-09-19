@@ -16,6 +16,7 @@ import { isIP } from "node:net";
 import { homedir, networkInterfaces } from "node:os";
 import { dirname, join } from "node:path";
 import { createSecureContext } from "node:tls";
+import { CLOUDFLARE_TLS_MODE_MIGRATION } from "./proxy-config.js";
 import type { ServerConfig, TlsMode } from "./types.js";
 
 const WILDCARD_BIND_HOSTS = new Set(["0.0.0.0", "::"]);
@@ -168,9 +169,12 @@ export function prepareTlsForServer(
     return resolved;
   }
 
-  if (resolved.mode === "auto" || resolved.mode === "cloudflare") {
+  if (resolved.mode === "cloudflare") {
+    throw new Error(CLOUDFLARE_TLS_MODE_MIGRATION);
+  }
+  if (resolved.mode === "auto") {
     throw new Error(
-      `TLS mode "${resolved.mode}" is not implemented yet. Use tls.mode=tailscale|self-signed|manual|disabled for now.`,
+      'TLS mode "auto" is not implemented yet. Use tls.mode=tailscale|self-signed|manual|disabled for now.',
     );
   }
 

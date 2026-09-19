@@ -43,6 +43,7 @@ Generate pairing links with the server CLI:
 ```bash
 oppi pair --host <hostname-or-ip>
 oppi pair --json --host <hostname-or-ip>
+oppi pair --json   # uses publicUrl when configured
 ```
 
 `oppi pair --json` returns the invite URL plus metadata such as the server fingerprint. The QR code and printed link use the same `oppi://connect?...` payload.

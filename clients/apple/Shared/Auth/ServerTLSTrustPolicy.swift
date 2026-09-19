@@ -25,8 +25,37 @@ enum ServerTLSTrustPolicy {
         pinnedLeafFingerprint: String? = nil
     ) -> Bool {
         guard normalizeFingerprint(pinnedLeafFingerprint) == nil else { return false }
+        return isTailscaleHostname(host) || isPublicDNSHostname(host)
+    }
+
+    /// Bonjour/LAN shortcut for no-pin pairs. Public-domain hosts stay on the paired endpoint.
+    static func allowsUnpinnedLANShortcut(forHost host: String) -> Bool {
+        isTailscaleHostname(host)
+    }
+
+    static func isTailscaleHostname(_ host: String) -> Bool {
         let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return normalized.hasSuffix(".ts.net") || normalized.hasSuffix(".beta.tailscale.net")
+    }
+
+    static func isPublicDNSHostname(_ host: String) -> Bool {
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.isEmpty { return false }
+        if isIPLiteral(normalized) { return false }
+        if normalized == "localhost" || normalized.hasSuffix(".localhost") { return false }
+        if normalized.hasSuffix(".local") { return false }
+        return normalized.contains(".")
+    }
+
+    static func isIPLiteral(_ host: String) -> Bool {
+        let trimmed = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if trimmed.contains(":") { return true }
+        let parts = trimmed.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return false }
+        return parts.allSatisfy { part in
+            guard let value = Int(part) else { return false }
+            return (0...255).contains(value) && String(value) == part
+        }
     }
 
     static func decision(

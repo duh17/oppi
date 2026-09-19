@@ -3,7 +3,8 @@ import { hostname } from "node:os";
 
 import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js";
 import { createLogger } from "../logger.js";
-import { isLocalRequest } from "../request-trust.js";
+import { trustConfigFromServerConfig } from "../proxy-config.js";
+import { isLocalRequest, resolveRequestProvenance } from "../request-trust.js";
 import { SourceRateLimiter } from "../source-rate-limit.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
 import { isDictationStreamEnabled } from "../dictation-types.js";
@@ -32,7 +33,9 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
   const pairingBlockedUntilBySource = new Map<string, number>();
   const challengeLimiter = new SourceRateLimiter(CHALLENGE_WINDOW_MS, CHALLENGE_MAX_PER_WINDOW);
   function pairingSourceKey(req: IncomingMessage): string {
-    return req.socket.remoteAddress || "unknown";
+    const config =
+      typeof ctx.storage.getConfig === "function" ? ctx.storage.getConfig() : {};
+    return resolveRequestProvenance(req, trustConfigFromServerConfig(config)).clientIdentity;
   }
 
   function prunePairingLimiters(now: number): void {

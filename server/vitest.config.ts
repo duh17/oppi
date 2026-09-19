@@ -12,7 +12,7 @@ export default defineConfig({
     // Point OPPI_LOCAL_SESSIONS_ROOT at a temp tree before any test file imports
     // local-sessions discovery (avoids scanning the developer home Pi sessions root).
     setupFiles: ["./vitest.setup.ts"],
-    exclude: ["dist/**", "node_modules/**", "e2e/**"],
+    exclude: ["dist/**", "node_modules/**", "e2e/**", "proxy-review/**"],
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts", "extensions/**/*.ts"],

@@ -43,6 +43,18 @@ describe("startup security validation", () => {
     expect(error).toContain("Cannot bind to 0.0.0.0 with TLS disabled");
   });
 
+  it("allows non-loopback HTTP when publicUrl and trustedPeers are set", () => {
+    const config = Storage.getDefaultConfig("/tmp/oppi-startup-security-proxy");
+    config.host = "0.0.0.0";
+    config.token = "sk_test_token";
+    config.tls = { mode: "disabled" };
+    config.publicUrl = "https://oppi.example.com";
+    config.proxy = { trustedPeers: ["10.0.10.25/32"] };
+
+    const error = validateStartupSecurityConfig(config);
+    expect(error).toBeNull();
+  });
+
   it("allows non-loopback HTTP only with the explicit escape hatch", () => {
     const config = Storage.getDefaultConfig("/tmp/oppi-startup-security-http-explicit");
     config.host = "0.0.0.0";

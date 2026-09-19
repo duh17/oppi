@@ -45,6 +45,15 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
     type: "boolean",
     desc: "Allow plain HTTP on non-loopback interfaces",
   },
+  publicUrl: {
+    type: "string",
+    desc: "Phone-facing HTTPS origin (independent of listener host/port)",
+  },
+  proxy: { type: "json", desc: "Reverse-proxy trust config JSON object" },
+  "proxy.trustedPeers": {
+    type: "json",
+    desc: "Immediate proxy peer IP/CIDR JSON array as Oppi sees them",
+  },
   autoTitle: { type: "json", desc: "Auto-title config JSON object" },
   "autoTitle.enabled": { type: "boolean", desc: "Enable automatic session titles" },
   "autoTitle.model": { type: "string", desc: "Auto-title model" },

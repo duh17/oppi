@@ -82,7 +82,7 @@ enum LANEndpointSelection {
         } else {
             let pairedPort = paired.baseURL.port ?? 443
             guard let pairedHost = paired.baseURL.host,
-                  PinnedServerTrustDelegate.allowsPublicCATrustFallback(forHost: pairedHost),
+                  ServerTLSTrustPolicy.allowsUnpinnedLANShortcut(forHost: pairedHost),
                   discoveredEndpoint.port == pairedPort else {
                 logger.warning("LAN rejected: endpoint lacks a pin or exact Tailscale public-CA identity")
                 return paired

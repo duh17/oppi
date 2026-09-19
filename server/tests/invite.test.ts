@@ -62,6 +62,7 @@ function makeStorage(config: {
   port: number;
   host: string;
   tls?: { mode?: "disabled" | "self-signed" | "tailscale" };
+  publicUrl?: string;
 }) {
   return {
     getConfig: vi.fn(() => config),
@@ -287,4 +288,68 @@ describe("generateInvite", () => {
     expect(signedPayload.tlsCertFingerprint).toBeUndefined();
   });
 
+  it("advertises publicUrl host/port/scheme and omits the origin leaf pin", () => {
+    const storage = makeStorage({
+      port: 7750,
+      host: "127.0.0.1",
+      tls: { mode: "disabled" },
+      publicUrl: "https://oppi.example.com/",
+    });
+
+    const invite = generateInvite(
+      storage as Storage,
+      () => "should-not-be-used.local",
+      () => "Fallback",
+    );
+
+    expect(invite).toMatchObject({
+      host: "oppi.example.com",
+      port: 443,
+      scheme: "https",
+    });
+    expect(invite.tlsCertFingerprint).toBeUndefined();
+    expect(mockPrepareTlsForServer).not.toHaveBeenCalled();
+    expect(mockReadCertificateFingerprint).not.toHaveBeenCalled();
+
+    const { signedPayload } = decodeInvite(invite.inviteURL);
+    expect(signedPayload).toMatchObject({
+      host: "oppi.example.com",
+      port: 443,
+      scheme: "https",
+      fingerprint: invite.fingerprint,
+    });
+    expect(signedPayload.tlsCertFingerprint).toBeUndefined();
+  });
+
+  it("advertises a custom public port from publicUrl", () => {
+    const storage = makeStorage({
+      port: 7750,
+      host: "127.0.0.1",
+      publicUrl: "https://oppi.example.com:8443",
+    });
+    const invite = generateInvite(
+      storage as Storage,
+      () => "unused",
+      () => "unused",
+    );
+    expect(invite.port).toBe(8443);
+    expect(invite.host).toBe("oppi.example.com");
+  });
+
+  it("rejects a host override that conflicts with publicUrl", () => {
+    const storage = makeStorage({
+      port: 7750,
+      host: "127.0.0.1",
+      publicUrl: "https://oppi.example.com",
+    });
+    expect(() =>
+      generateInvite(
+        storage as Storage,
+        () => "other.example.com",
+        () => "unused",
+        { hostOverride: "other.example.com" },
+      ),
+    ).toThrow(/conflicts with publicUrl/);
+    expect(mockPrepareTlsForServer).not.toHaveBeenCalled();
+  });
 });

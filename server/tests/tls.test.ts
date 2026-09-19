@@ -616,10 +616,10 @@ describe("prepareTlsForServer", () => {
     expect(() => prepareTlsForServer(config, tmpDir)).toThrow(/not implemented/i);
   });
 
-  it("throws for cloudflare mode (not implemented)", () => {
+  it("throws for cloudflare mode with a publicUrl migration message", () => {
     const config = makeConfig({ tls: { mode: "cloudflare" }, dataDir: tmpDir });
 
-    expect(() => prepareTlsForServer(config, tmpDir)).toThrow(/not implemented/i);
+    expect(() => prepareTlsForServer(config, tmpDir)).toThrow(/publicUrl plus proxy\.trustedPeers/);
   });
 
   it("throws for manual mode when cert file does not exist", () => {

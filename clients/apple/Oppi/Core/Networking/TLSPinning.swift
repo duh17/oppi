@@ -53,7 +53,7 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
         guard let pinnedLeafFingerprint else {
             guard let expectedServerName,
                   !expectedServerName.isEmpty,
-                  Self.allowsPublicCATrustFallback(forHost: expectedServerName) else {
+                  ServerTLSTrustPolicy.allowsUnpinnedLANShortcut(forHost: expectedServerName) else {
                 completionHandler(.performDefaultHandling, nil)
                 return
             }

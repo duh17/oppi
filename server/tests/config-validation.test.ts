@@ -565,4 +565,75 @@ describe("Storage config validation", () => {
     expect(() => new Storage(dir)).toThrow(/invalid JSON|config\.json/i);
     expect(readFileSync(configPath, "utf8")).toBe(truncated);
   });
+
+  it("normalizes publicUrl and accepts trusted proxy peers", () => {
+    const result = Storage.validateConfig(
+      {
+        ...Storage.getDefaultConfig(dir),
+        publicUrl: "https://oppi.example.com/",
+        proxy: { trustedPeers: ["127.0.0.1/32", "::1"] },
+      },
+      dir,
+      true,
+    );
+    expect(result.valid).toBe(true);
+    expect(result.config?.publicUrl).toBe("https://oppi.example.com");
+    expect(result.config?.proxy?.trustedPeers).toEqual(["127.0.0.1", "::1"]);
+  });
+
+  it("rejects invalid publicUrl components", () => {
+    for (const publicUrl of [
+      "http://oppi.example.com",
+      "https://user:pass@oppi.example.com",
+      "https://oppi.example.com?x=1",
+      "https://oppi.example.com#frag",
+      "https://oppi.example.com/app",
+    ]) {
+      const result = Storage.validateConfig(
+        { ...Storage.getDefaultConfig(dir), publicUrl },
+        dir,
+        true,
+      );
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.startsWith("config.publicUrl:"))).toBe(true);
+    }
+  });
+
+  it("rejects empty trustedPeers and proxy without publicUrl", () => {
+    const emptyPeers = Storage.validateConfig(
+      {
+        ...Storage.getDefaultConfig(dir),
+        publicUrl: "https://oppi.example.com",
+        proxy: { trustedPeers: [] },
+      },
+      dir,
+      true,
+    );
+    expect(emptyPeers.valid).toBe(false);
+
+    const noPublic = Storage.validateConfig(
+      {
+        ...Storage.getDefaultConfig(dir),
+        proxy: { trustedPeers: ["127.0.0.1/32"] },
+      },
+      dir,
+      true,
+    );
+    expect(noPublic.valid).toBe(false);
+    expect(noPublic.errors.some((e) => e.includes("requires publicUrl"))).toBe(true);
+  });
+
+  it("rejects tls.mode=cloudflare with a publicUrl migration message", () => {
+    const result = Storage.validateConfig(
+      {
+        ...Storage.getDefaultConfig(dir),
+        tls: { mode: "cloudflare" },
+      },
+      dir,
+      true,
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("publicUrl"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("proxy.trustedPeers"))).toBe(true);
+  });
 });

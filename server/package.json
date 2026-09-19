@@ -84,6 +84,7 @@
     "test:gate:pr-fast": "bun scripts/testing-gates.ts pr-fast",
     "test:gate:ci-coverage": "bun scripts/testing-gates.ts ci-coverage",
     "test:gate:nightly-deep": "bun scripts/testing-gates.ts nightly-deep",
+    "test:proxy-review": "vitest run --config vitest.proxy-review.config.ts",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:e2e:clean": "node scripts/e2e-clean.mjs",
     "test:e2e:pairing": "vitest run --config vitest.e2e.config.ts e2e/pairing-flow",

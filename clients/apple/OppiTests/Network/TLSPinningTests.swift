@@ -155,10 +155,12 @@ struct TLSPinningTests {
         ))
     }
 
-    @Test("public CA fallback is not allowed for arbitrary hosts")
-    func publicCAFallbackRejectsNonTailscaleHosts() {
+    @Test("public CA fallback is not allowed for IPs or .local hosts")
+    func publicCAFallbackRejectsNonPublicHosts() {
         #expect(!PinnedServerTrustDelegate.allowsPublicCATrustFallback(forHost: "192.168.68.66"))
-        #expect(!PinnedServerTrustDelegate.allowsPublicCATrustFallback(forHost: "example.com"))
-        #expect(!PinnedServerTrustDelegate.allowsPublicCATrustFallback(forHost: "evil-ts.net.example.com"))
+        #expect(!PinnedServerTrustDelegate.allowsPublicCATrustFallback(forHost: "mac.local"))
+        #expect(PinnedServerTrustDelegate.allowsPublicCATrustFallback(forHost: "example.com"))
+        #expect(PinnedServerTrustDelegate.allowsPublicCATrustFallback(forHost: "evil-ts.net.example.com"))
+        #expect(!ServerTLSTrustPolicy.isTailscaleHostname("evil-ts.net.example.com"))
     }
 }

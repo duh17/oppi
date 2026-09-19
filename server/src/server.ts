@@ -17,7 +17,6 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
-import { URL } from "node:url";
 import type { Storage } from "./storage.js";
 import {
   CLOCK_SKEW_MS,
@@ -90,7 +89,9 @@ import {
 import { DesktopCompanionStillClient } from "./desktop-companion-still-client.js";
 import { DesktopCompanionViewSessionClient } from "./desktop-companion-view-session-client.js";
 import type { RequestPrincipal } from "./request-principal.js";
+import { allowsTrustedPrivateHttpBind, trustConfigFromServerConfig } from "./proxy-config.js";
 import {
+  isAllowedWebSocketOrigin,
   isLocalRequest,
   isSecureNetworkRequest,
   markLocalRequest,
@@ -190,30 +191,6 @@ function writeUpgradeErrorResponse(
   const lines = [statusLine, ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`), "", ""];
   socket.write(lines.join("\r\n"));
   socket.destroy();
-}
-
-function isAllowedWebSocketOrigin(
-  req: IncomingMessage,
-  transportScheme: "http" | "https",
-): boolean {
-  const originHeader = Array.isArray(req.headers.origin)
-    ? req.headers.origin[0]
-    : req.headers.origin;
-  if (!originHeader) {
-    return true;
-  }
-
-  const hostHeader = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host;
-  if (!hostHeader) {
-    return false;
-  }
-
-  try {
-    const origin = new URL(originHeader);
-    return origin.protocol === `${transportScheme}:` && origin.host === hostHeader;
-  } catch {
-    return false;
-  }
 }
 
 export function formatUnauthorizedAuthLog(opts: {
@@ -344,8 +321,13 @@ export function validateStartupSecurityConfig(config: ServerConfig): string | nu
     return `Cannot bind to ${config.host} without a token configured. Set token in config or use --host 127.0.0.1`;
   }
 
-  if (!loopbackOnly && tlsSchemeForConfig(config) === "http" && !allowInsecureNetworkHttp(config)) {
-    return `Cannot bind to ${config.host} with TLS disabled. Use tls.mode=self-signed|tailscale|manual, bind to 127.0.0.1, or explicitly set tls.allowInsecureNetworkHttp=true.`;
+  if (
+    !loopbackOnly &&
+    tlsSchemeForConfig(config) === "http" &&
+    !allowInsecureNetworkHttp(config) &&
+    !allowsTrustedPrivateHttpBind(config)
+  ) {
+    return `Cannot bind to ${config.host} with TLS disabled. Use tls.mode=self-signed|tailscale|manual, bind to 127.0.0.1, set publicUrl plus proxy.trustedPeers, or explicitly set tls.allowInsecureNetworkHttp=true.`;
   }
 
   return null;
@@ -1329,7 +1311,7 @@ export class Server {
         : { ok: false, reason: "owner_on_network" };
     }
 
-    if (!isSecureNetworkRequest(req)) {
+    if (!isSecureNetworkRequest(req, trustConfigFromServerConfig(this.storage.getConfig()))) {
       return { ok: false, reason: "insecure" };
     }
 
@@ -1399,7 +1381,10 @@ export class Server {
       (path === "/pair" && method === "POST") ||
       (path === "/auth/challenge" && method === "POST") ||
       (path === "/auth/refresh" && method === "POST");
-    if (isDeviceAuthBootstrap && !isSecureNetworkRequest(req)) {
+    if (
+      isDeviceAuthBootstrap &&
+      !isSecureNetworkRequest(req, trustConfigFromServerConfig(this.storage.getConfig()))
+    ) {
       this.error(res, 403, "HTTPS required");
       return;
     }
@@ -1553,7 +1538,13 @@ export class Server {
       return;
     }
 
-    if (!isAllowedWebSocketOrigin(req, originScheme)) {
+    if (
+      !isAllowedWebSocketOrigin(
+        req,
+        originScheme,
+        trustConfigFromServerConfig(this.storage.getConfig()),
+      )
+    ) {
       log.warn("ws.upgrade_rejected_origin_mismatch", {
         origin: req.headers.origin,
         host: req.headers.host,

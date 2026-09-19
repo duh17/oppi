@@ -37,4 +37,35 @@ struct ServerTLSTrustPolicyTests {
             ) == .publicCAFallback
         )
     }
+
+    @Test func noPinPublicDomainUsesPublicCA() {
+        #expect(
+            ServerTLSTrustPolicy.decision(
+                pinnedLeafFingerprint: nil,
+                presentedFingerprint: "sha256:public-leaf",
+                host: "oppi.example.com"
+            ) == .publicCAFallback
+        )
+        #expect(ServerTLSTrustPolicy.allowsPublicCATrustFallback(forHost: "oppi.example.com"))
+        #expect(!ServerTLSTrustPolicy.allowsUnpinnedLANShortcut(forHost: "oppi.example.com"))
+    }
+
+    @Test func noPinIPAndLocalRejectPublicCA() {
+        #expect(
+            ServerTLSTrustPolicy.decision(
+                pinnedLeafFingerprint: nil,
+                presentedFingerprint: "sha256:leaf",
+                host: "192.168.1.9"
+            ) == .reject
+        )
+        #expect(
+            ServerTLSTrustPolicy.decision(
+                pinnedLeafFingerprint: nil,
+                presentedFingerprint: "sha256:leaf",
+                host: "mac.local"
+            ) == .reject
+        )
+        #expect(!ServerTLSTrustPolicy.allowsPublicCATrustFallback(forHost: "192.168.1.9"))
+        #expect(!ServerTLSTrustPolicy.allowsPublicCATrustFallback(forHost: "mac.local"))
+    }
 }

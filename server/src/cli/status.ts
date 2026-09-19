@@ -74,6 +74,8 @@ export function cmdStatus(storage: CliConnectionConfig, jsonOutput = false): voi
         port: config.port,
         transport: tlsSchemeForConfig(config),
         tlsMode: config.tls?.mode ?? "disabled",
+        publicUrl: config.publicUrl,
+        trustedPeers: config.proxy?.trustedPeers ?? [],
       },
     },
   };
@@ -91,7 +93,14 @@ function renderStatus(
   status: {
     paired: boolean;
     dataDir: string;
-    server: { host: string; port: number; transport: string; tlsMode: string };
+    server: {
+      host: string;
+      port: number;
+      transport: string;
+      tlsMode: string;
+      publicUrl?: string;
+      trustedPeers: string[];
+    };
   },
 ): void {
   const hostname = getTailscaleHostname();
@@ -104,6 +113,12 @@ function renderStatus(
   writeHumanLine("");
   writeHumanLine(`  Port:       ${server.port}`);
   writeHumanLine(`  Transport:  ${server.transport.toUpperCase()} (${server.tlsMode})`);
+  if (server.publicUrl) {
+    writeHumanLine(`  Public URL: ${server.publicUrl}`);
+  }
+  if (server.trustedPeers.length > 0) {
+    writeHumanLine(`  Proxy:      ${server.trustedPeers.join(", ")}`);
+  }
   writeHumanLine(`  Data:       ${c.dim(storage.getDataDir())}`);
   writeHumanLine("");
 

@@ -1,0 +1,97 @@
+# Locally rehearsed App Review stack. Unique names: oppi-rp39-review-*.
+# Public proxy never sees the owner Unix socket or this mint sidecar.
+# Copy this file; do not reuse server/e2e/docker-compose.e2e.yml.
+#
+# Required env:
+#   RP39_ORIGIN_IMAGE   built candidate image
+#   RP39_EDGE_PORT      loopback-published HTTPS port (not 7749/7750/17760/8888/13001)
+#   REVIEW_MINT_SECRET  >=16 chars; used only as the stable path suffix
+#   RP39_CERTS_DIR      directory with edge.crt, edge.key, ca.crt (and origin-ca.crt for HTTPS origin)
+
+name: oppi-rp39-review
+
+services:
+  origin:
+    image: ${RP39_ORIGIN_IMAGE}
+    container_name: oppi-rp39-review-origin
+    networks:
+      edge:
+        ipv4_address: 172.28.40.20
+    environment:
+      OPPI_DATA_DIR: /data/oppi
+      PI_CODING_AGENT_DIR: /data/pi-agent
+      PI_AGENT_SYNC_MODE: skip
+      SEARXNG_URL: ""
+    volumes:
+      - oppi-rp39-review-data:/data/oppi
+      - ./fixtures/models.json:/data/pi-agent/models.json:ro
+      - ./fixtures/settings.json:/data/pi-agent/settings.json:ro
+    entrypoint: ["bash", "-lc"]
+    command:
+      - >-
+        mkdir -p /data/oppi /data/pi-agent &&
+        oppi init --yes --force --data-dir /data/oppi &&
+        oppi config set host 0.0.0.0 &&
+        oppi config set port 7750 &&
+        oppi config set publicUrl https://oppi.rp39.test &&
+        oppi config set tls.mode disabled &&
+        oppi config set proxy.trustedPeers '["172.28.40.10/32"]' &&
+        exec oppi serve
+    restart: "no"
+
+  proxy:
+    image: caddy:2-alpine
+    container_name: oppi-rp39-review-proxy
+    networks:
+      edge:
+        ipv4_address: 172.28.40.10
+    ports:
+      - "127.0.0.1:${RP39_EDGE_PORT}:443"
+    volumes:
+      - ${RP39_CERTS_DIR}/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${RP39_CERTS_DIR}:/certs:ro
+    depends_on:
+      origin:
+        condition: service_started
+    restart: "no"
+
+  provider:
+    image: node:24-bookworm-slim
+    container_name: oppi-rp39-review-provider
+    networks:
+      edge:
+        ipv4_address: 172.28.40.30
+        aliases: ["oppi-rp39-provider"]
+    volumes:
+      - ./deterministic-provider.mjs:/provider.mjs:ro
+    command: ["node", "/provider.mjs"]
+    restart: "no"
+
+  mint:
+    image: ${RP39_ORIGIN_IMAGE}
+    container_name: oppi-rp39-review-mint
+    network_mode: "service:origin"
+    environment:
+      OPPI_DATA_DIR: /data/oppi
+      REVIEW_MINT_SECRET: ${REVIEW_MINT_SECRET}
+      REVIEW_MINT_HOST: 127.0.0.1
+      REVIEW_MINT_PORT: "8790"
+    volumes:
+      - oppi-rp39-review-data:/data/oppi
+      - ./run-mint-sidecar.mjs:/mint.mjs:ro
+    entrypoint: ["node"]
+    command: ["/mint.mjs"]
+    depends_on:
+      origin:
+        condition: service_started
+    restart: "no"
+
+networks:
+  edge:
+    name: oppi-rp39-review-net
+    ipam:
+      config:
+        - subnet: 172.28.40.0/24
+
+volumes:
+  oppi-rp39-review-data:

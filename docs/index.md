@@ -16,6 +16,7 @@ How to pair a server and use Oppi from your phone.
 - [Oppi Mirror](oppi-mirror.md)
 - [Provider quotas](provider-quotas.md)
 - [Server configuration](server-configuration.md)
+- [Reverse proxy](reverse-proxy.md)
 - [Support](support.md)
 - [Privacy](privacy.md)
 - [Screenshots](demo/README.md)

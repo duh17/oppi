@@ -17,6 +17,11 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createLogger } from "../logger.js";
+import {
+  CLOUDFLARE_TLS_MODE_MIGRATION,
+  parsePublicUrl,
+  parseTrustedPeers,
+} from "../proxy-config.js";
 import type { DevicePublicKey, ServerConfig } from "../types.js";
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
@@ -126,6 +131,8 @@ function normalizeConfig(
     "oppiDocsPrompt",
     "oppiCliPrompt",
     "tls",
+    "publicUrl",
+    "proxy",
 
     "token",
     "pairingToken",
@@ -351,19 +358,16 @@ function normalizeConfig(
       }
     }
 
-    const validModes = new Set([
-      "auto",
-      "tailscale",
-      "cloudflare",
-      "self-signed",
-      "manual",
-      "disabled",
-    ]);
+    const validModes = new Set(["auto", "tailscale", "self-signed", "manual", "disabled"]);
+
+    if (value.mode === "cloudflare") {
+      errors.push(`${path}.mode: ${CLOUDFLARE_TLS_MODE_MIGRATION}`);
+      changed = true;
+      return null;
+    }
 
     if (typeof value.mode !== "string" || !validModes.has(value.mode)) {
-      errors.push(
-        `${path}.mode: expected one of auto|tailscale|cloudflare|self-signed|manual|disabled`,
-      );
+      errors.push(`${path}.mode: expected one of auto|tailscale|self-signed|manual|disabled`);
       changed = true;
       return null;
     }
@@ -416,6 +420,59 @@ function normalizeConfig(
       config.tls = parsed;
     }
   } else {
+    changed = true;
+  }
+
+  if ("publicUrl" in obj) {
+    if (typeof obj.publicUrl !== "string") {
+      errors.push("config.publicUrl: expected https URL string");
+      changed = true;
+    } else {
+      const parsed = parsePublicUrl(obj.publicUrl);
+      if (!parsed.ok) {
+        errors.push(`config.publicUrl: ${parsed.error}`);
+        changed = true;
+      } else {
+        config.publicUrl = parsed.value.href;
+        if (parsed.value.href !== obj.publicUrl.trim()) {
+          changed = true;
+        }
+      }
+    }
+  }
+
+  if ("proxy" in obj) {
+    if (!isRecord(obj.proxy)) {
+      errors.push("config.proxy: expected object");
+      changed = true;
+    } else {
+      const proxyObj = obj.proxy;
+      if (strictUnknown) {
+        for (const key of Object.keys(proxyObj)) {
+          if (key !== "trustedPeers") {
+            errors.push(`config.proxy.${key}: unknown key`);
+          }
+        }
+      }
+      if (!("trustedPeers" in proxyObj)) {
+        errors.push("config.proxy.trustedPeers: required when proxy is set");
+        changed = true;
+      } else {
+        const parsed = parseTrustedPeers(proxyObj.trustedPeers);
+        if (!parsed.ok) {
+          errors.push(`config.proxy.trustedPeers: ${parsed.error}`);
+          changed = true;
+        } else {
+          config.proxy = { trustedPeers: parsed.value };
+        }
+      }
+    }
+  }
+
+  if (config.proxy && !config.publicUrl) {
+    errors.push(
+      "config.proxy.trustedPeers: requires publicUrl so Oppi knows the public HTTPS origin",
+    );
     changed = true;
   }
 

@@ -30,7 +30,7 @@ Oppi does not create starter workspaces. Camera-free pairing opens the signed `o
 
 ## Reach the server
 
-After pairing, Oppi uses authenticated HTTPS/WSS. The phone must reach the server over LAN, Tailscale, or a public hostname. Tailscale HTTPS is supported. The local CLI stays on an owner-only Unix socket.
+After pairing, Oppi uses authenticated HTTPS/WSS. The phone must reach the server over LAN, Tailscale, or a public HTTPS hostname. Tailscale HTTPS is supported. A reverse proxy is supported: set `publicUrl` to the phone-facing HTTPS origin and, for a private HTTP upstream, `proxy.trustedPeers` to the proxy's socket address as Oppi sees it. The local CLI stays on an owner-only Unix socket.
 
 For remote pairing, include the host in the invite:
 
@@ -68,7 +68,17 @@ oppi pair --host <hostname-or-ip>
 oppi config get port
 ```
 
-If the public port changes, set it, restart the server, and create a new invite:
+If the public origin is a reverse-proxied HTTPS hostname, set `publicUrl` instead of changing the listener port. Invites then advertise that origin and omit the origin TLS leaf pin (the phone uses the system CA):
+
+```bash
+oppi config set publicUrl https://oppi.example.com
+oppi config set proxy.trustedPeers '["127.0.0.1/32","::1/128"]'
+oppi pair
+```
+
+`--host` must not conflict with `publicUrl`. Direct self-signed and Tailscale pairing are unchanged when `publicUrl` is unset.
+
+If the listener port changes for a direct deployment, set it, restart the server, and create a new invite:
 
 ```bash
 oppi config set port <public-port>

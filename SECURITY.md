@@ -22,11 +22,11 @@ Legacy `dt_` tokens are unsupported and rejected by ordinary HTTP/WS. There is n
 
 ## Transport
 
-Configure TLS for network HTTP/WebSocket transport as self-signed (with leaf-certificate pinning in the iOS app and Share extension), Tailscale (Let's Encrypt via `tailscale cert`), manual cert, or disabled. `auto` and `cloudflare` modes are rejected. Self-signed mode auto-generates certificate material and embeds the **leaf** certificate fingerprint in the pairing payload. A configured pin is authoritative. Tailscale hosts without a pin use the system CA.
+Configure TLS for network HTTP/WebSocket transport as self-signed (with leaf-certificate pinning in the iOS app and Share extension), Tailscale (Let's Encrypt via `tailscale cert`), manual cert, or disabled. `auto` and `cloudflare` modes are rejected. For a reverse proxy, terminate public TLS at the proxy and set `publicUrl` plus `proxy.trustedPeers`; do not use `tls.mode=cloudflare`. Self-signed mode auto-generates certificate material and embeds the **leaf** certificate fingerprint in the pairing payload. A configured pin is authoritative. Tailscale hosts and public-domain hosts without a pin use the system CA. Raw IPs and `.local` names without a pin are rejected.
 
-Remote Apple/server routing uses authenticated HTTPS/WSS, including HTTPS through Tailscale.
+Remote Apple/server routing uses authenticated HTTPS/WSS, including HTTPS through Tailscale and a configured public reverse proxy.
 
-A plain network HTTP listener can be used for health-only development, but pairing, device-auth, `dt_`/`at_` API authentication, and remote WebSockets require HTTPS/WSS. Binding HTTP to a non-loopback interface still requires the explicit `tls.allowInsecureNetworkHttp=true` escape hatch. Owner HTTP and the bearer-free Mirror bridge stay on the owner-only Unix socket.
+A plain network HTTP listener can be used for health-only development, but pairing, device-auth, `dt_`/`at_` API authentication, and remote WebSockets require HTTPS/WSS or a trusted reverse-proxy HTTPS assertion. Binding HTTP to a non-loopback interface requires `publicUrl` plus `proxy.trustedPeers`, or the explicit `tls.allowInsecureNetworkHttp=true` escape hatch. Owner HTTP and the bearer-free Mirror bridge stay on the owner-only Unix socket.
 
 ## Privacy
 

@@ -85,6 +85,20 @@ export interface ServerConfig {
   /** Transport security (HTTPS/WSS). */
   tls?: TlsConfig;
 
+  /**
+   * Phone-facing HTTPS origin. Independent of the listener `host`/`port`/`tls`.
+   * When set, signed invites advertise this origin and omit the origin TLS leaf pin.
+   */
+  publicUrl?: string;
+
+  /**
+   * Immediate reverse-proxy peers as Oppi sees them on the socket.
+   * Required for trusted private HTTP; `publicUrl` alone never authorizes plaintext.
+   */
+  proxy?: {
+    trustedPeers?: string[];
+  };
+
   // Owner/admin bearer token
   token?: string;
 

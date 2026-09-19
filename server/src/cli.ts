@@ -39,6 +39,7 @@ import {
 } from "./tls.js";
 import type { ServerConfig } from "./types.js";
 import { generateInvite, type GeneratedInvite } from "./invite.js";
+import { parsePublicUrl } from "./proxy-config.js";
 import { getPackageInfo } from "./version.js";
 import {
   getServiceStatus,
@@ -88,6 +89,11 @@ function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
 
 function resolveInviteHost(config: ServerConfig, hostOverride?: string): string | null {
   if (hostOverride?.trim()) return hostOverride.trim();
+
+  if (config.publicUrl) {
+    const parsed = parsePublicUrl(config.publicUrl);
+    if (parsed.ok) return parsed.value.host;
+  }
 
   if (config.tls?.mode === "tailscale") {
     return getTailscaleHostname();
@@ -185,7 +191,19 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   console.log("");
   const scheme = server.scheme;
   const displayPort = server.port;
-  if (server.hasPublicHttpListener) {
+  const publicOrigin = config.publicUrl ? parsePublicUrl(config.publicUrl) : undefined;
+  if (publicOrigin?.ok) {
+    console.log(`  Public:    ${c.cyan(publicOrigin.value.href)}`);
+    console.log(
+      c.dim(
+        `  Listener:  ${scheme}://${config.host}:${displayPort} (tls.mode=${config.tls?.mode ?? "disabled"})`,
+      ),
+    );
+    const peers = config.proxy?.trustedPeers ?? [];
+    if (peers.length > 0) {
+      console.log(c.dim(`  Proxy:     trustedPeers ${peers.join(", ")}`));
+    }
+  } else if (server.hasPublicHttpListener) {
     if (localHostname) {
       console.log(`  Local:     ${c.cyan(`${scheme}://${localHostname}:${displayPort}`)}`);
     }
@@ -256,7 +274,9 @@ function showPairingQR(
   }
 
   if (inviteHasHttpTransport(invite)) {
-    if (hostOverride?.trim()) {
+    if (storage.getConfig().publicUrl) {
+      console.log(c.dim(`  (public origin: ${invite.scheme}://${invite.host}:${invite.port})`));
+    } else if (hostOverride?.trim()) {
       console.log(c.dim(`  (using host override: ${invite.host})`));
     } else {
       console.log(c.dim(`  (auto-detected host: ${invite.host})`));
@@ -391,6 +411,32 @@ function cmdDoctor(storage: CliConnectionConfig): void {
     checks.push({ level: "pass", message: `pi executable found (${piPath})` });
   } else {
     checks.push({ level: "warn", message: "pi executable not found in runtime PATH" });
+  }
+
+  if (config.publicUrl) {
+    const parsed = parsePublicUrl(config.publicUrl);
+    if (!parsed.ok) {
+      checks.push({ level: "fail", message: `publicUrl is invalid (${parsed.error})` });
+    } else {
+      checks.push({
+        level: "pass",
+        message: `public origin ${parsed.value.href} (phone); listener ${config.host}:${config.port}`,
+      });
+      if (config.tls?.mode === "disabled" && !(config.proxy?.trustedPeers?.length ?? 0)) {
+        checks.push({
+          level: "fail",
+          message:
+            "publicUrl with tls.mode=disabled requires proxy.trustedPeers for the immediate reverse proxy",
+        });
+      }
+    }
+  }
+  const peers = config.proxy?.trustedPeers ?? [];
+  if (peers.length > 0) {
+    checks.push({
+      level: "pass",
+      message: `trusted proxy peers: ${peers.join(", ")}`,
+    });
   }
 
   const tls = resolveTlsConfig(config, storage.getDataDir());

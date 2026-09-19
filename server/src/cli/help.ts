@@ -156,6 +156,8 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "The QR and link carry the same signed invite.",
+      "When publicUrl is set, the invite advertises that HTTPS origin and omits the origin TLS leaf pin.",
+      "--host must not conflict with publicUrl.",
       "Use --show-token only for manual recovery; it exposes the owner token in the terminal.",
     ],
     examples: [
@@ -309,6 +311,14 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "runtimeEnv.<NAME>", summary: "string; one runtime environment variable" },
       { name: "tls.mode", summary: "string; disabled, self-signed, tailscale, or manual" },
       { name: "tls.certPath", summary: "string; manual TLS certificate path" },
+      {
+        name: "publicUrl",
+        summary: "string; phone-facing https origin, e.g. https://oppi.example.com",
+      },
+      {
+        name: "proxy.trustedPeers",
+        summary: "JSON array; immediate proxy peer CIDRs as Oppi sees them",
+      },
       { name: "asr.backend", summary: "string; http" },
       { name: "asr.provider", summary: "string; http or xai" },
       { name: "asr.sttEndpoint", summary: "string; STT backend base URL" },

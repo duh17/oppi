@@ -2,6 +2,7 @@
 
 import { sign } from "node:crypto";
 import type { InviteData, InvitePayloadV3, ServerConfig, SignedInviteEnvelopeV3 } from "./types.js";
+import { parsePublicUrl } from "./proxy-config.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import {
   isTailscaleHostname,
@@ -49,6 +50,30 @@ export function generateInvite(
   const config = storage.getConfig();
   storage.ensurePaired();
 
+  const publicOrigin = config.publicUrl ? parsePublicUrl(config.publicUrl) : undefined;
+  if (config.publicUrl && publicOrigin && !publicOrigin.ok) {
+    throw new Error(`Invalid publicUrl: ${publicOrigin.error}`);
+  }
+  const publicUrl = publicOrigin?.ok ? publicOrigin.value : undefined;
+  if (publicUrl && opts.hostOverride?.trim()) {
+    const override = opts.hostOverride.trim();
+    if (override.toLowerCase() !== publicUrl.host.toLowerCase()) {
+      throw new Error(
+        `--host ${override} conflicts with publicUrl ${publicUrl.href}. Omit --host to advertise the public origin, or change publicUrl.`,
+      );
+    }
+  }
+
+  if (publicUrl) {
+    return signInvite(storage, {
+      host: publicUrl.host,
+      port: publicUrl.port,
+      scheme: "https",
+      name: opts.requestedName?.trim() || shortHostLabel(publicUrl.host),
+      pairingTokenTtlMs: opts.pairingTokenTtlMs,
+    });
+  }
+
   let inviteHost = resolveInviteHost(opts.hostOverride);
   if (!inviteHost && config.tls?.mode === "tailscale") {
     const resolved = resolveTlsConfig(config, storage.getDataDir());
@@ -89,17 +114,38 @@ export function generateInvite(
     tls.enabled && tls.certPath && tls.mode !== "tailscale"
       ? readCertificateFingerprint(tls.certPath)
       : undefined;
-  const pairingToken = storage.issuePairingToken(opts.pairingTokenTtlMs ?? 90_000);
-  const identity = ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
   const name = opts.requestedName?.trim() || shortHostLabel(inviteHost);
-  const inviteData: InviteData = {
+  return signInvite(storage, {
     host: inviteHost,
     port: config.port,
     scheme,
-    token: "",
-    pairingToken,
     name,
     tlsCertFingerprint,
+    pairingTokenTtlMs: opts.pairingTokenTtlMs,
+  });
+}
+
+function signInvite(
+  storage: InviteStorage,
+  invite: {
+    host: string;
+    port: number;
+    scheme: "http" | "https";
+    name: string;
+    tlsCertFingerprint?: string;
+    pairingTokenTtlMs?: number;
+  },
+): GeneratedInvite {
+  const pairingToken = storage.issuePairingToken(invite.pairingTokenTtlMs ?? 90_000);
+  const identity = ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
+  const inviteData: InviteData = {
+    host: invite.host,
+    port: invite.port,
+    scheme: invite.scheme,
+    token: "",
+    pairingToken,
+    name: invite.name,
+    tlsCertFingerprint: invite.tlsCertFingerprint,
   };
   const signedPayload: InvitePayloadV3 = {
     v: 3,
@@ -124,13 +170,13 @@ export function generateInvite(
   }).toString()}`;
 
   return {
-    name,
+    name: invite.name,
     pairingToken,
     fingerprint: identity.fingerprint,
-    tlsCertFingerprint,
-    host: inviteHost,
-    port: config.port,
-    scheme,
+    tlsCertFingerprint: invite.tlsCertFingerprint,
+    host: invite.host,
+    port: invite.port,
+    scheme: invite.scheme,
     inviteURL,
   };
 }
