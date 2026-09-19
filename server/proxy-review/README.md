@@ -17,3 +17,5 @@ env -u NO_COLOR -u FORCE_COLOR GIT_CONFIG_GLOBAL=/dev/null npm run test:proxy-re
 Positive TLS clients must use `curl --cacert` / Node `ca` + `servername`. `curl -k` and `rejectUnauthorized: false` are not success proof.
 
 The mint sidecar shares the origin data volume and may use the owner socket on loopback. The public proxy must not forward `/r/<secret>` or Unix-socket paths.
+
+Packaged review recipe: `docker-compose.review.yml` plus `Caddyfile.review`. Origin command skips `oppi init` when `/data/oppi/config.json` already exists so restarts preserve pairing.

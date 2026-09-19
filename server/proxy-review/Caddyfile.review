@@ -1,0 +1,13 @@
+{
+  auto_https off
+  admin off
+}
+
+http://oppi.rp39.test:80 {
+  redir https://{host}{uri} permanent
+}
+
+https://oppi.rp39.test:443 {
+  tls /certs/edge.crt /certs/edge.key
+  reverse_proxy 172.28.40.20:7750
+}

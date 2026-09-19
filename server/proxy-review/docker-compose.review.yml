@@ -30,7 +30,7 @@ services:
     command:
       - >-
         mkdir -p /data/oppi /data/pi-agent &&
-        oppi init --yes --force --data-dir /data/oppi &&
+        if [ ! -f /data/oppi/config.json ]; then oppi init --yes --force --data-dir /data/oppi; fi &&
         oppi config set host 0.0.0.0 &&
         oppi config set port 7750 &&
         oppi config set publicUrl https://oppi.rp39.test &&
@@ -48,7 +48,7 @@ services:
     ports:
       - "127.0.0.1:${RP39_EDGE_PORT}:443"
     volumes:
-      - ${RP39_CERTS_DIR}/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile.review:/etc/caddy/Caddyfile:ro
       - ${RP39_CERTS_DIR}:/certs:ro
     depends_on:
       origin:

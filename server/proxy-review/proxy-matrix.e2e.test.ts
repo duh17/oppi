@@ -5,21 +5,23 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
-import { request as httpsRequest } from "node:https";
+import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from "node:crypto";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { request as httpsRequest, Agent as HttpsAgent } from "node:https";
+import type { IncomingHttpHeaders } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Agent as HttpsAgent } from "node:https";
 import WebSocket from "ws";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SERVER_DIR = join(ROOT, "server");
 const FORBIDDEN_PORTS = new Set([7749, 7750, 17760, 8888, 13001]);
 const PUBLIC_HOST = "oppi.rp39.test";
+const MINT_SECRET = "rp39-review-secret-value";
+const REFRESH_AUDIENCE = "oppi:refresh:v1";
 const MODES = ["caddy-http", "caddy-https", "nginx-http", "nginx-https"] as const;
 type Mode = (typeof MODES)[number];
 
@@ -111,6 +113,126 @@ function httpsJson(
   });
 }
 
+function httpsCall(
+  port: number,
+  ca: Buffer,
+  path: string,
+  options: {
+    method?: string;
+    token?: string;
+    headers?: Record<string, string>;
+    json?: unknown;
+    raw?: Buffer;
+  } = {},
+): Promise<{ status: number; headers: IncomingHttpHeaders; body: Buffer }> {
+  return new Promise((resolveResponse, reject) => {
+    const payload =
+      options.raw ??
+      (options.json === undefined ? undefined : Buffer.from(JSON.stringify(options.json)));
+    const req = httpsRequest(
+      {
+        host: "127.0.0.1",
+        port,
+        servername: PUBLIC_HOST,
+        ca,
+        rejectUnauthorized: true,
+        path,
+        method: options.method ?? "GET",
+        headers: {
+          Host: PUBLIC_HOST,
+          ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+          ...(options.headers ?? {}),
+          ...(payload && !options.raw
+            ? { "Content-Type": "application/json", "Content-Length": String(payload.length) }
+            : {}),
+          ...(options.raw ? { "Content-Length": String(options.raw.length) } : {}),
+        },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) => chunks.push(chunk as Buffer));
+        res.on("end", () => {
+          resolveResponse({
+            status: res.statusCode ?? 0,
+            headers: res.headers,
+            body: Buffer.concat(chunks),
+          });
+        });
+      },
+    );
+    req.on("error", reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+function signRefresh(privateKey: KeyObject, nonce: string): string {
+  return cryptoSign("sha256", Buffer.from(`${REFRESH_AUDIENCE}.${nonce}`), {
+    key: privateKey,
+    dsaEncoding: "ieee-p1363",
+  }).toString("base64url");
+}
+
+function pairingTokenFromInviteUrl(inviteURL: string): string {
+  const url = new URL(inviteURL);
+  const invite = url.searchParams.get("invite");
+  if (!invite) throw new Error("invite URL missing invite param");
+  const envelope = JSON.parse(Buffer.from(invite, "base64url").toString("utf8")) as {
+    signedPayload: string;
+  };
+  const payload = JSON.parse(Buffer.from(envelope.signedPayload, "base64url").toString("utf8")) as {
+    pairingToken?: string;
+  };
+  if (!payload.pairingToken) throw new Error("invite payload missing pairingToken");
+  return payload.pairingToken;
+}
+
+function headerLine(raw: string, name: string): string | undefined {
+  const prefix = `${name}:`;
+  for (const line of raw.split(/\r?\n/)) {
+    if (line.toLowerCase().startsWith(prefix.toLowerCase())) {
+      return line.slice(prefix.length).trim();
+    }
+  }
+  return undefined;
+}
+
+function originExec(project: string, args: string[]): ReturnType<typeof spawnSync> {
+  return spawnSync("docker", ["exec", `${project}-origin`, ...args], { encoding: "utf8" });
+}
+
+function openVerifiedWss(
+  port: number,
+  ca: Buffer,
+  path: string,
+  token: string,
+): Promise<number> {
+  return new Promise((resolveStatus) => {
+    const ws = new WebSocket(`wss://127.0.0.1:${port}${path}`, {
+      headers: { Host: PUBLIC_HOST, Authorization: `Bearer ${token}` },
+      agent: new HttpsAgent({ ca, servername: PUBLIC_HOST, rejectUnauthorized: true }),
+    });
+    const timer = setTimeout(() => {
+      ws.terminate();
+      resolveStatus(0);
+    }, 20_000);
+    ws.once("open", () => {
+      clearTimeout(timer);
+      ws.close();
+      resolveStatus(200);
+    });
+    ws.once("unexpected-response", (_req, res) => {
+      clearTimeout(timer);
+      res.resume();
+      resolveStatus(res.statusCode || 0);
+    });
+    ws.once("error", () => {
+      clearTimeout(timer);
+      resolveStatus(0);
+    });
+  });
+}
+
 function writeEdgeCerts(dir: string): void {
   openssl(
     ["req", "-x509", "-newkey", "rsa:2048", "-keyout", "ca.key", "-out", "ca.crt", "-days", "2", "-nodes", "-subj", "/CN=oppi-rp39-test-ca"],
@@ -199,10 +321,8 @@ function composeYaml(opts: {
 }): string {
   const httpsOrigin = opts.httpsOrigin;
   const tlsMode = httpsOrigin ? "self-signed" : "disabled";
-  const trusted = httpsOrigin
-    ? ""
-    : `oppi config set proxy.trustedPeers '["172.28.39.10/32"]' && `;
-  const originCmd = `mkdir -p /data/oppi /data/pi-agent && oppi init --yes --force --data-dir /data/oppi && oppi config set host 0.0.0.0 && oppi config set port 7750 && oppi config set publicUrl https://${PUBLIC_HOST} && oppi config set tls.mode ${tlsMode} && ${trusted}exec oppi serve`;
+  const trusted = `oppi config set proxy.trustedPeers '["172.28.39.10/32"]' && `;
+  const originCmd = `mkdir -p /data/oppi /data/pi-agent && if [ ! -f /data/oppi/config.json ]; then oppi init --yes --force --data-dir /data/oppi; fi && oppi config set host 0.0.0.0 && oppi config set port 7750 && oppi config set publicUrl https://${PUBLIC_HOST} && oppi config set tls.mode ${tlsMode} && ${trusted}exec oppi serve`;
   const proxyService =
     opts.mode.startsWith("caddy")
       ? `
@@ -284,7 +404,7 @@ services:
     network_mode: "service:origin"
     environment:
       OPPI_DATA_DIR: /data/oppi
-      REVIEW_MINT_SECRET: rp39-review-secret-value
+      REVIEW_MINT_SECRET: ${MINT_SECRET}
       REVIEW_MINT_HOST: 127.0.0.1
       REVIEW_MINT_PORT: "8790"
     volumes:
@@ -413,11 +533,15 @@ describe("reverse-proxy four-way matrix", () => {
         const mintDeadline = Date.now() + 30_000;
         let mintUp = false;
         while (Date.now() < mintDeadline) {
-          const mintProbe = spawnSync(
-            "docker",
-            ["exec", `${project}-origin`, "curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}", "http://127.0.0.1:8790/r/not-the-secret"],
-            { encoding: "utf8" },
-          );
+          const mintProbe = originExec(project, [
+            "curl",
+            "-sS",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "http://127.0.0.1:8790/r/not-the-secret",
+          ]);
           if (mintProbe.stdout.trim() === "404") {
             mintUp = true;
             break;
@@ -425,31 +549,55 @@ describe("reverse-proxy four-way matrix", () => {
           await new Promise((r) => setTimeout(r, 500));
         }
         if (!mintUp) throw new Error(`${mode}: mint sidecar did not become ready`);
-        const preview = spawnSync(
-          "docker",
-          [
-            "exec",
-            `${project}-origin`,
-            "curl",
-            "-sS",
-            "-D",
-            "-",
-            "-o",
-            "/tmp/mint-preview.html",
-            "-A",
-            "facebookexternalhit/1.1",
-            "http://127.0.0.1:8790/r/rp39-review-secret-value",
-          ],
-          { encoding: "utf8" },
-        );
+
+        const preview = originExec(project, [
+          "curl",
+          "-sS",
+          "-D",
+          "-",
+          "-o",
+          "/tmp/mint-preview.html",
+          "-A",
+          "facebookexternalhit/1.1",
+          `http://127.0.0.1:8790/r/${MINT_SECRET}`,
+        ]);
         expect(preview.stdout).toMatch(/HTTP\/\d\.\d 200/);
         expect(preview.stdout).not.toMatch(/oppi:\/\/connect/);
-        const head = spawnSync(
-          "docker",
-          ["exec", `${project}-origin`, "curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}", "-I", "http://127.0.0.1:8790/r/rp39-review-secret-value"],
-          { encoding: "utf8" },
-        );
+        const head = originExec(project, [
+          "curl",
+          "-sS",
+          "-o",
+          "/dev/null",
+          "-w",
+          "%{http_code}",
+          "-I",
+          `http://127.0.0.1:8790/r/${MINT_SECRET}`,
+        ]);
         expect(head.stdout.trim()).toBe("405");
+
+        const overlap = originExec(project, [
+          "bash",
+          "-lc",
+          `curl -sS -o /dev/null -D /tmp/h1 http://127.0.0.1:8790/r/${MINT_SECRET} & curl -sS -o /dev/null -D /tmp/h2 http://127.0.0.1:8790/r/${MINT_SECRET} & wait; cat /tmp/h1; echo '---'; cat /tmp/h2`,
+        ]);
+        const [firstHeaders, secondHeaders] = overlap.stdout.split("---");
+        const loc1 = headerLine(firstHeaders ?? "", "location");
+        const loc2 = headerLine(secondHeaders ?? "", "location");
+        expect(loc1?.startsWith("oppi://connect")).toBe(true);
+        expect(loc2).toBe(loc1);
+
+        const retry = originExec(project, [
+          "curl",
+          "-sS",
+          "-o",
+          "/dev/null",
+          "-D",
+          "-",
+          `http://127.0.0.1:8790/r/${MINT_SECRET}?retry=1`,
+        ]);
+        const locRetry = headerLine(retry.stdout, "location");
+        expect(locRetry?.startsWith("oppi://connect")).toBe(true);
+        expect(locRetry).not.toBe(loc1);
 
         const pairOut = docker(["exec", `${project}-origin`, "oppi", "pair", "--json"]);
         const invite = JSON.parse(pairOut) as {
@@ -468,6 +616,46 @@ describe("reverse-proxy four-way matrix", () => {
         expect(invite.inviteURL).toContain("oppi://connect");
         expect(invite.fingerprint).toMatch(/^sha256:/);
 
+        docker(["cp", join(runDir, "certs", "ca.crt"), `${project}-probe:/tmp/ca.crt`]);
+        const attackerKey = devicePublicKey();
+        let lastAttack = "";
+        for (let i = 0; i < 6; i += 1) {
+          const attack = spawnSync(
+            "docker",
+            [
+              "exec",
+              `${project}-probe`,
+              "curl",
+              "-sS",
+              "-o",
+              "/dev/null",
+              "-w",
+              "%{http_code}",
+              "--cacert",
+              "/tmp/ca.crt",
+              "--resolve",
+              `${PUBLIC_HOST}:443:172.28.39.10`,
+              "-H",
+              `Host: ${PUBLIC_HOST}`,
+              "-H",
+              "Content-Type: application/json",
+              "-H",
+              "X-Forwarded-For: 198.51.100.20",
+              "-X",
+              "POST",
+              "--data",
+              JSON.stringify({
+                pairingToken: "pt_invalid",
+                devicePublicKey: attackerKey.publicKey,
+              }),
+              `https://${PUBLIC_HOST}/pair`,
+            ],
+            { encoding: "utf8" },
+          );
+          lastAttack = attack.stdout.trim();
+        }
+        expect(["401", "429"]).toContain(lastAttack);
+
         const device = devicePublicKey();
         const paired = await httpsJson(edgePort, ca, "/pair", {
           method: "POST",
@@ -478,72 +666,167 @@ describe("reverse-proxy four-way matrix", () => {
           },
         });
         expect(paired.status).toBe(200);
-        const creds = paired.body as { accessToken: string; deviceId: string };
+        const creds = paired.body as {
+          accessToken: string;
+          deviceId: string;
+          refreshChallenge?: { nonce: string; audience: string };
+        };
         expect(creds.accessToken.startsWith("at_")).toBe(true);
 
         const me = await httpsJson(edgePort, ca, "/me", { token: creds.accessToken });
         expect(me.status).toBe(200);
 
-        const wsStatus = await new Promise<number>((resolveStatus) => {
-          const ws = new WebSocket(`wss://127.0.0.1:${edgePort}/app/events/stream`, {
-            headers: { Host: PUBLIC_HOST, Authorization: `Bearer ${creds.accessToken}` },
-            agent: new HttpsAgent({ ca, servername: PUBLIC_HOST, rejectUnauthorized: true }),
-          });
-          const timer = setTimeout(() => {
-            ws.terminate();
-            resolveStatus(0);
-          }, 20_000);
-          ws.once("open", () => {
-            clearTimeout(timer);
-            ws.close();
-            resolveStatus(200);
-          });
-          ws.once("unexpected-response", (_req, res) => {
-            clearTimeout(timer);
-            res.resume();
-            resolveStatus(res.statusCode || 0);
-          });
-          ws.once("error", () => {
-            clearTimeout(timer);
-            resolveStatus(0);
-          });
+        const challenge = await httpsJson(edgePort, ca, "/auth/challenge", {
+          method: "POST",
+          body: { deviceId: creds.deviceId },
         });
-        expect(wsStatus).toBe(200);
+        expect(challenge.status).toBe(200);
+        const nonce = (challenge.body as { nonce: string }).nonce;
+        expect(nonce).toBeTruthy();
+        const refresh = await httpsJson(edgePort, ca, "/auth/refresh", {
+          method: "POST",
+          body: {
+            deviceId: creds.deviceId,
+            nonce,
+            signature: signRefresh(device.privateKey, nonce),
+          },
+        });
+        expect(refresh.status).toBe(200);
+        const refreshed = refresh.body as { accessToken: string };
+        expect(refreshed.accessToken.startsWith("at_")).toBe(true);
+        creds.accessToken = refreshed.accessToken;
 
+        expect(await openVerifiedWss(edgePort, ca, "/app/events/stream", creds.accessToken)).toBe(200);
+
+        originExec(project, [
+          "bash",
+          "-lc",
+          "mkdir -p /tmp/review-workspace && printf 'ABCDEFGHIJKLMNOP' > /tmp/review-workspace/clip.bin",
+        ]);
         const workspace = await httpsJson(edgePort, ca, "/workspaces", {
           method: "POST",
           token: creds.accessToken,
-          body: { name: "review", cwd: "/tmp/review-workspace" },
+          body: { name: "review", hostMount: "/tmp/review-workspace" },
         });
-        expect([200, 201]).toContain(workspace.status);
+        expect(workspace.status).toBe(201);
+        const workspaceId = (workspace.body as { workspace: { id: string } }).workspace.id;
+        const ranged = await httpsCall(edgePort, ca, `/workspaces/${workspaceId}/raw/clip.bin`, {
+          token: creds.accessToken,
+          headers: { Range: "bytes=0-3" },
+        });
+        expect(ranged.status).toBe(206);
+        expect(ranged.body.toString("utf8")).toBe("ABCD");
+
+        const session = await httpsJson(edgePort, ca, `/workspaces/${workspaceId}/sessions`, {
+          method: "POST",
+          token: creds.accessToken,
+          body: { name: "rp39-stream" },
+        });
+        expect(session.status).toBe(201);
+        const sessionId = (session.body as { session: { id: string } }).session.id;
+        expect(
+          await openVerifiedWss(
+            edgePort,
+            ca,
+            `/workspaces/${workspaceId}/sessions/${sessionId}/stream`,
+            creds.accessToken,
+          ),
+        ).toBe(200);
+
+        const uploadMeta = await httpsJson(
+          edgePort,
+          ca,
+          `/workspaces/${workspaceId}/sessions/${sessionId}/attachments`,
+          {
+            method: "POST",
+            token: creds.accessToken,
+            body: {
+              name: "note.txt",
+              mimeType: "text/plain",
+              sizeBytes: 4,
+              purpose: "chat_attachment",
+            },
+          },
+        );
+        expect(uploadMeta.status).toBe(201);
+        const upload = uploadMeta.body as { uploadId: string; contentUrl: string };
+        const uploaded = await httpsCall(edgePort, ca, upload.contentUrl, {
+          method: "PUT",
+          token: creds.accessToken,
+          headers: { "Content-Type": "text/plain" },
+          raw: Buffer.from("abcd"),
+        });
+        expect(uploaded.status).toBe(200);
 
         const owner = await httpsJson(edgePort, ca, "/me", { token: "sk_should_not_work" });
         expect(owner.status).toBe(401);
 
-        const probe = spawnSync(
-          "docker",
-          [
-            "exec",
-            `${project}-probe`,
-            "curl",
-            "-sS",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            "-H",
-            "X-Forwarded-Proto: https",
-            "-H",
-            "X-Forwarded-For: 203.0.113.9",
-            "http://172.28.39.20:7750/pair",
-            "-X",
-            "POST",
-            "--data",
-            "{}",
-          ],
-          { encoding: "utf8" },
-        );
-        expect(probe.stdout.trim()).not.toBe("200");
+        const linkInvite = originExec(project, [
+          "curl",
+          "-sS",
+          "-o",
+          "/dev/null",
+          "-D",
+          "-",
+          `http://127.0.0.1:8790/r/${MINT_SECRET}`,
+        ]);
+        const linkLocation = headerLine(linkInvite.stdout, "location");
+        expect(linkLocation?.startsWith("oppi://connect")).toBe(true);
+        const revokedToken = pairingTokenFromInviteUrl(linkLocation!);
+        originExec(project, [
+          "curl",
+          "-sS",
+          "-o",
+          "/dev/null",
+          "-X",
+          "POST",
+          `http://127.0.0.1:8790/r/${MINT_SECRET}/revoke-link`,
+        ]);
+        const stalePair = await httpsJson(edgePort, ca, "/pair", {
+          method: "POST",
+          body: { pairingToken: revokedToken, devicePublicKey: devicePublicKey().publicKey },
+        });
+        expect(stalePair.status).toBe(401);
+        expect((await httpsJson(edgePort, ca, "/me", { token: creds.accessToken })).status).toBe(200);
+
+        const mintLogs = spawnSync("docker", ["logs", `${project}-mint`], { encoding: "utf8" });
+        expect(mintLogs.stdout).not.toContain(MINT_SECRET);
+        expect(mintLogs.stderr).not.toContain(MINT_SECRET);
+        expect(mintLogs.stdout).not.toContain("oppi://connect");
+
+        docker(["restart", `${project}-origin`]);
+        let originBack = false;
+        const originRestartDeadline = Date.now() + 90_000;
+        while (Date.now() < originRestartDeadline) {
+          const health = spawnSync(
+            "docker",
+            ["exec", `${project}-origin`, "curl", "-fsS", originHealthUrl, ...(httpsOrigin ? ["-k"] : [])],
+            { encoding: "utf8" },
+          );
+          if (health.status === 0) {
+            originBack = true;
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        if (!originBack) throw new Error(`${mode}: origin did not return after restart`);
+        let edgeAfterOrigin = false;
+        const edgeAfterDeadline = Date.now() + 60_000;
+        while (Date.now() < edgeAfterDeadline) {
+          try {
+            const health = await httpsJson(edgePort, ca, "/health");
+            if (health.status === 200) {
+              edgeAfterOrigin = true;
+              break;
+            }
+          } catch {
+            // retry
+          }
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        expect(edgeAfterOrigin).toBe(true);
+        expect((await httpsJson(edgePort, ca, "/me", { token: creds.accessToken })).status).toBe(200);
+        expect(await openVerifiedWss(edgePort, ca, "/app/events/stream", creds.accessToken)).toBe(200);
 
         docker(["restart", `${project}-proxy`]);
         let reconnected = false;
@@ -561,8 +844,14 @@ describe("reverse-proxy four-way matrix", () => {
           await new Promise((r) => setTimeout(r, 1000));
         }
         expect(reconnected).toBe(true);
-        const meAfter = await httpsJson(edgePort, ca, "/me", { token: creds.accessToken });
-        expect(meAfter.status).toBe(200);
+        expect((await httpsJson(edgePort, ca, "/me", { token: creds.accessToken })).status).toBe(200);
+
+        const revoked = await httpsJson(edgePort, ca, `/auth/devices/${creds.deviceId}`, {
+          method: "DELETE",
+          token: creds.accessToken,
+        });
+        expect(revoked.status).toBe(200);
+        expect((await httpsJson(edgePort, ca, "/me", { token: creds.accessToken })).status).toBe(401);
 
         expect(imageSha.startsWith("sha256:") || imageSha.length > 10).toBe(true);
       } finally {
@@ -570,4 +859,63 @@ describe("reverse-proxy four-way matrix", () => {
       }
     }, 300_000);
   }
+
+  it("boots the packaged review compose recipe", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "oppi-rp39-review-"));
+    runDirs.push(runDir);
+    mkdirSync(join(runDir, "certs"), { recursive: true });
+    writeEdgeCerts(join(runDir, "certs"));
+    const edgePort = await freeLoopbackPort();
+    const composeFile = join(SERVER_DIR, "proxy-review/docker-compose.review.yml");
+    const env = {
+      ...process.env,
+      RP39_ORIGIN_IMAGE: image,
+      RP39_EDGE_PORT: String(edgePort),
+      REVIEW_MINT_SECRET: MINT_SECRET,
+      RP39_CERTS_DIR: join(runDir, "certs"),
+    };
+    const compose = ["compose", "-p", "oppi-rp39-review", "-f", composeFile];
+    const down = () => {
+      try {
+        execFileSync("docker", [...compose, "down", "-v", "--remove-orphans"], {
+          cwd: join(SERVER_DIR, "proxy-review"),
+          env,
+          encoding: "utf8",
+        });
+      } catch {
+        // keep going
+      }
+    };
+    try {
+      execFileSync("docker", [...compose, "up", "-d"], {
+        cwd: join(SERVER_DIR, "proxy-review"),
+        env,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const ca = readFileSync(join(runDir, "certs", "ca.crt"));
+      let ready = false;
+      const deadline = Date.now() + 120_000;
+      while (Date.now() < deadline) {
+        try {
+          const health = await httpsJson(edgePort, ca, "/health");
+          if (health.status === 200) {
+            ready = true;
+            break;
+          }
+        } catch {
+          // retry
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      if (!ready) {
+        const logs = spawnSync("docker", ["logs", "--tail", "40", "oppi-rp39-review-origin"], {
+          encoding: "utf8",
+        });
+        throw new Error(`review compose did not serve verified HTTPS /health\n${logs.stdout}\n${logs.stderr}`);
+      }
+    } finally {
+      down();
+    }
+  }, 180_000);
 });

@@ -61,6 +61,14 @@ const server = createServer((req, res) => {
   const url = new URL(req.url || "/", "http://127.0.0.1");
   const safePath = redact(url.pathname);
   res.setHeader("Cache-Control", "no-store");
+  if (url.pathname === `/r/${secret}/revoke-link` && (req.method || "GET").toUpperCase() === "POST") {
+    mint();
+    outstanding = null;
+    process.stdout.write(`mint link_revoked path=${safePath}\n`);
+    res.writeHead(204);
+    res.end();
+    return;
+  }
   if (url.pathname !== `/r/${secret}`) {
     process.stdout.write(`mint miss path=${safePath}\n`);
     res.writeHead(404);
