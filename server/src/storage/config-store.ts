@@ -474,6 +474,7 @@ function normalizeConfig(
       "config.proxy.trustedPeers: requires publicUrl so Oppi knows the public HTTPS origin",
     );
     changed = true;
+    delete config.proxy;
   }
 
   // Pairing/auth/push runtime state — passthrough (no strict schema validation, optional)

@@ -346,12 +346,18 @@ export function formatStartupSecurityWarnings(config: ServerConfig): string[] {
   }
 
   if (!loopbackOnly && tlsSchemeForConfig(config) === "http") {
-    const suffix = allowInsecureNetworkHttp(config)
-      ? " tls.allowInsecureNetworkHttp=true permits this insecure network bind."
-      : " Startup will refuse this unless tls.allowInsecureNetworkHttp=true is set.";
-    warnings.push(
-      `TLS is disabled while binding to ${config.host}; traffic is unencrypted.${suffix}`,
-    );
+    if (allowsTrustedPrivateHttpBind(config)) {
+      warnings.push(
+        `TLS is disabled while binding to ${config.host}; trusted-proxy HTTP is in effect (publicUrl + proxy.trustedPeers). Traffic between Oppi and the proxy is unencrypted.`,
+      );
+    } else {
+      const suffix = allowInsecureNetworkHttp(config)
+        ? " tls.allowInsecureNetworkHttp=true permits this insecure network bind."
+        : " Startup will refuse this unless tls.allowInsecureNetworkHttp=true is set.";
+      warnings.push(
+        `TLS is disabled while binding to ${config.host}; traffic is unencrypted.${suffix}`,
+      );
+    }
   }
 
   return warnings;

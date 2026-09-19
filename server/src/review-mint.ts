@@ -39,15 +39,21 @@ export class InviteMintCoordinator {
   private outstanding: MintedInvite | null = null;
   private chain: Promise<unknown> = Promise.resolve();
 
-  constructor(private readonly mint: () => Promise<MintedInvite> | MintedInvite) {}
+  constructor(
+    private readonly mint: () => Promise<MintedInvite> | MintedInvite,
+    private readonly invalidate?: () => Promise<void> | void,
+  ) {}
 
   async connect(input: MintConnectInput): Promise<MintConnectResult> {
     return this.serialized(() => this.connectLocked(input));
   }
 
   /** Drop a cached invite without minting a replacement (link revoke). */
-  revokeOutstanding(): void {
-    this.outstanding = null;
+  async revokeOutstanding(): Promise<void> {
+    await this.serialized(async () => {
+      this.outstanding = null;
+      await this.invalidate?.();
+    });
   }
 
   private async connectLocked(input: MintConnectInput): Promise<MintConnectResult> {

@@ -1,7 +1,7 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "project": ["src/**/*.ts"],
+  "entry": ["src/review-mint-server.ts"],
   "ignoreExportsUsedInFile": true,
-  "ignore": ["src/review-mint.ts", "src/review-mint-server.ts"],
   "ignoreDependencies": ["@earendil-works/pi-tui", "@earendil-works/pi-server"]
 }

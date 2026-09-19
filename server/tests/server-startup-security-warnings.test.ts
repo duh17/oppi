@@ -29,4 +29,18 @@ describe("startup security warnings", () => {
 
     expect(warnings).toHaveLength(0);
   });
+
+  it("names trusted-proxy HTTP instead of the insecure escape hatch", () => {
+    const config = Storage.getDefaultConfig("/tmp/oppi-server-security-warnings-proxy");
+    config.host = "0.0.0.0";
+    config.tls = { mode: "disabled" };
+    config.publicUrl = "https://oppi.example.com";
+    config.proxy = { trustedPeers: ["10.0.10.25/32"] };
+
+    const warnings = formatStartupSecurityWarnings(config);
+    const httpWarning = warnings.find((warning) => warning.includes("TLS is disabled"));
+
+    expect(httpWarning).toContain("trusted-proxy HTTP");
+    expect(httpWarning).not.toContain("allowInsecureNetworkHttp");
+  });
 });

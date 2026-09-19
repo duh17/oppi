@@ -301,6 +301,10 @@ export class Storage {
     return this.authStore.issuePairingToken(ttlMs);
   }
 
+  clearPairingToken(): void {
+    this.authStore.clearPairingToken();
+  }
+
   // ─── Device-key auth ───
 
   enrollViaPairing(

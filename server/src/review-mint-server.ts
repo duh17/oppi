@@ -10,13 +10,24 @@ export type ReviewMintServerOptions = {
   secret: string;
   listenHost?: string;
   listenPort?: number;
+  /** Explicit opt-in for a non-loopback mint bind. */
+  allowNonLoopback?: boolean;
   mint: () => Promise<MintedInvite> | MintedInvite;
+  /** Invalidate the live pairing token without minting a replacement. */
+  invalidate?: () => Promise<void> | void;
   log?: (message: string) => void;
 };
 
+function isLoopbackMintHost(host: string): boolean {
+  const trimmed = host.trim().toLowerCase();
+  const unwrapped =
+    trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+  return unwrapped === "127.0.0.1" || unwrapped === "localhost" || unwrapped === "::1";
+}
+
 export function createReviewMintServer(options: ReviewMintServerOptions): {
   server: ReturnType<typeof createServer>;
-  revokeOutstanding: () => void;
+  revokeOutstanding: () => Promise<void>;
   listen: () => Promise<{ host: string; port: number }>;
   close: () => Promise<void>;
 } {
@@ -25,7 +36,12 @@ export function createReviewMintServer(options: ReviewMintServerOptions): {
     throw new Error("review mint secret must be at least 16 characters");
   }
   const listenHost = options.listenHost ?? "127.0.0.1";
-  const coordinator = new InviteMintCoordinator(options.mint);
+  if (!isLoopbackMintHost(listenHost) && options.allowNonLoopback !== true) {
+    throw new Error(
+      `review mint refuses non-loopback bind ${listenHost}; set allowNonLoopback or REVIEW_MINT_ALLOW_NON_LOOPBACK=1`,
+    );
+  }
+  const coordinator = new InviteMintCoordinator(options.mint, options.invalidate);
   const log = options.log ?? (() => {});
 
   const server = createServer((req, res) => {
@@ -35,7 +51,17 @@ export function createReviewMintServer(options: ReviewMintServerOptions): {
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url || "/", "http://127.0.0.1");
     const expected = `/r/${secret}`;
+    const method = (req.method || "GET").toUpperCase();
     const safePath = redactMintPath(url.pathname, secret);
+
+    if (url.pathname === `${expected}/revoke-link` && method === "POST") {
+      await coordinator.revokeOutstanding();
+      log(`mint link_revoked path=${safePath}`);
+      res.writeHead(204, { "Cache-Control": "no-store" });
+      res.end();
+      return;
+    }
+
     if (url.pathname !== expected) {
       log(`mint miss path=${safePath}`);
       res.writeHead(404, { "Cache-Control": "no-store" });
@@ -44,7 +70,7 @@ export function createReviewMintServer(options: ReviewMintServerOptions): {
     }
 
     const result = await coordinator.connect({
-      method: req.method || "GET",
+      method,
       userAgent: headerValue(req.headers["user-agent"]),
       retry: url.searchParams.get("retry") === "1",
     });
@@ -69,8 +95,8 @@ export function createReviewMintServer(options: ReviewMintServerOptions): {
     res.end();
   }
 
-  function revokeOutstanding(): void {
-    coordinator.revokeOutstanding();
+  async function revokeOutstanding(): Promise<void> {
+    await coordinator.revokeOutstanding();
   }
 
   return {

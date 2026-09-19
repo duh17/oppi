@@ -33,8 +33,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
   const pairingBlockedUntilBySource = new Map<string, number>();
   const challengeLimiter = new SourceRateLimiter(CHALLENGE_WINDOW_MS, CHALLENGE_MAX_PER_WINDOW);
   function pairingSourceKey(req: IncomingMessage): string {
-    const config =
-      typeof ctx.storage.getConfig === "function" ? ctx.storage.getConfig() : {};
+    const config = typeof ctx.storage.getConfig === "function" ? ctx.storage.getConfig() : {};
     return resolveRequestProvenance(req, trustConfigFromServerConfig(config)).clientIdentity;
   }
 

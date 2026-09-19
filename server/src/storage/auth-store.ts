@@ -54,6 +54,14 @@ export class AuthStore {
     return pairingToken;
   }
 
+  /** Invalidate the outstanding pairing invite without issuing a replacement. */
+  clearPairingToken(): void {
+    this.configStore.updateConfig({
+      pairingToken: undefined,
+      pairingTokenExpiresAt: undefined,
+    });
+  }
+
   getOwnerName(): string {
     return hostname().split(".")[0] || "owner";
   }

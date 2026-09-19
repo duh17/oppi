@@ -621,6 +621,40 @@ describe("Storage config validation", () => {
     );
     expect(noPublic.valid).toBe(false);
     expect(noPublic.errors.some((e) => e.includes("requires publicUrl"))).toBe(true);
+    expect(noPublic.config?.proxy).toBeUndefined();
+  });
+
+  it("clears an outstanding pairing token without issuing a replacement", () => {
+    const storage = new Storage(dir);
+    storage.ensurePaired();
+    const token = storage.issuePairingToken();
+    expect(storage.getConfig().pairingToken).toBe(token);
+    storage.clearPairingToken();
+    expect(storage.getConfig().pairingToken).toBeUndefined();
+    expect(storage.getConfig().pairingTokenExpiresAt).toBeUndefined();
+  });
+
+  it("drops leftover proxy trust on load when publicUrl is empty", () => {
+    const configPath = join(dir, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        ...Storage.getDefaultConfig(dir),
+        publicUrl: "",
+        proxy: { trustedPeers: ["127.0.0.1/32"] },
+      }),
+    );
+
+    const storage = new Storage(dir);
+    expect(storage.getConfig().publicUrl).toBeUndefined();
+    expect(storage.getConfig().proxy).toBeUndefined();
+
+    const persisted = JSON.parse(readFileSync(configPath, "utf8")) as {
+      publicUrl?: string;
+      proxy?: { trustedPeers?: string[] };
+    };
+    expect(persisted.publicUrl).toBe("");
+    expect(persisted.proxy?.trustedPeers).toEqual(["127.0.0.1/32"]);
   });
 
   it("rejects tls.mode=cloudflare with a publicUrl migration message", () => {
