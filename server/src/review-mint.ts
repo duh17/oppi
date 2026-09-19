@@ -8,6 +8,8 @@
 export type MintedInvite = {
   inviteURL: string;
   expiresAt: number;
+  /** Outstanding pairing token. Never log this value. */
+  pairingToken: string;
 };
 
 export type MintConnectInput = {
@@ -42,6 +44,8 @@ export class InviteMintCoordinator {
   constructor(
     private readonly mint: () => Promise<MintedInvite> | MintedInvite,
     private readonly invalidate?: () => Promise<void> | void,
+    /** True when this pairing token is still the persisted outstanding token. */
+    private readonly isLiveToken?: (pairingToken: string) => boolean | Promise<boolean>,
   ) {}
 
   async connect(input: MintConnectInput): Promise<MintConnectResult> {
@@ -73,7 +77,10 @@ export class InviteMintCoordinator {
 
     const now = input.now ?? Date.now();
     if (!input.retry && this.outstanding && this.outstanding.expiresAt > now) {
-      return { status: "reused", invite: this.outstanding };
+      const live = this.isLiveToken ? await this.isLiveToken(this.outstanding.pairingToken) : true;
+      if (live) {
+        return { status: "reused", invite: this.outstanding };
+      }
     }
 
     const minted = await this.mint();

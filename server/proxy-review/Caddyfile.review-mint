@@ -1,0 +1,15 @@
+{
+  auto_https off
+  admin off
+}
+
+https://review.rp39.test:8843 {
+  tls /certs/edge.crt /certs/edge.key
+  @mint path /r/{$REVIEW_MINT_SECRET}
+  handle @mint {
+    reverse_proxy 127.0.0.1:8790
+  }
+  handle {
+    respond 404
+  }
+}

@@ -1,14 +1,27 @@
 import { describe, expect, it } from "vitest";
 import { request as httpRequest } from "node:http";
-import { InviteMintCoordinator, isPreviewUserAgent, redactMintPath } from "../src/review-mint.js";
+import {
+  InviteMintCoordinator,
+  isPreviewUserAgent,
+  redactMintPath,
+  type MintedInvite,
+} from "../src/review-mint.js";
 import { createReviewMintServer } from "../src/review-mint-server.js";
+
+function minted(n: number, expiresAt = Date.now() + 90_000): MintedInvite {
+  return {
+    inviteURL: `oppi://connect?invite=${n}`,
+    expiresAt,
+    pairingToken: `pt_${n}`,
+  };
+}
 
 describe("review mint coordinator", () => {
   it("does not mint for HEAD or preview user agents", async () => {
     let calls = 0;
     const coordinator = new InviteMintCoordinator(async () => {
       calls += 1;
-      return { inviteURL: "oppi://connect?invite=secret", expiresAt: Date.now() + 90_000 };
+      return minted(calls);
     });
 
     expect(await coordinator.connect({ method: "HEAD", userAgent: "Mozilla/5.0" })).toEqual({
@@ -25,11 +38,18 @@ describe("review mint coordinator", () => {
 
   it("reuses one outstanding invite across overlapping opens", async () => {
     let calls = 0;
-    const coordinator = new InviteMintCoordinator(async () => {
-      calls += 1;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      return { inviteURL: `oppi://connect?invite=${calls}`, expiresAt: Date.now() + 90_000 };
-    });
+    let live: string | undefined;
+    const coordinator = new InviteMintCoordinator(
+      async () => {
+        calls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const invite = minted(calls);
+        live = invite.pairingToken;
+        return invite;
+      },
+      undefined,
+      (token) => token === live,
+    );
 
     const [first, second] = await Promise.all([
       coordinator.connect({ method: "GET", userAgent: "Mozilla/5.0" }),
@@ -46,10 +66,19 @@ describe("review mint coordinator", () => {
 
   it("mints a replacement on retry after revoke or explicit retry", async () => {
     let calls = 0;
-    const coordinator = new InviteMintCoordinator(() => {
-      calls += 1;
-      return { inviteURL: `oppi://connect?invite=${calls}`, expiresAt: Date.now() + 90_000 };
-    });
+    let live: string | undefined;
+    const coordinator = new InviteMintCoordinator(
+      () => {
+        calls += 1;
+        const invite = minted(calls);
+        live = invite.pairingToken;
+        return invite;
+      },
+      () => {
+        live = undefined;
+      },
+      (token) => token === live,
+    );
 
     const first = await coordinator.connect({ method: "GET" });
     await coordinator.revokeOutstanding();
@@ -62,13 +91,63 @@ describe("review mint coordinator", () => {
     expect(calls).toBe(3);
   });
 
+  it("remints after the outstanding pairing token is consumed", async () => {
+    let calls = 0;
+    let live: string | undefined;
+    const coordinator = new InviteMintCoordinator(
+      () => {
+        calls += 1;
+        const invite = minted(calls);
+        live = invite.pairingToken;
+        return invite;
+      },
+      undefined,
+      (token) => token === live,
+    );
+
+    const first = await coordinator.connect({ method: "GET" });
+    live = undefined;
+    const afterConsume = await coordinator.connect({ method: "GET" });
+
+    expect(first.status).toBe("minted");
+    expect(afterConsume.status).toBe("minted");
+    if (first.status === "minted" && afterConsume.status === "minted") {
+      expect(afterConsume.invite.inviteURL).not.toBe(first.invite.inviteURL);
+      expect(afterConsume.invite.pairingToken).not.toBe(first.invite.pairingToken);
+    }
+    expect(calls).toBe(2);
+  });
+
+  it("remints when an external pair replaces the persisted token", async () => {
+    let calls = 0;
+    let live: string | undefined;
+    const coordinator = new InviteMintCoordinator(
+      () => {
+        calls += 1;
+        const invite = minted(calls);
+        live = invite.pairingToken;
+        return invite;
+      },
+      undefined,
+      (token) => token === live,
+    );
+
+    const first = await coordinator.connect({ method: "GET" });
+    live = "pt_external_replacement";
+    const afterReplace = await coordinator.connect({ method: "GET" });
+
+    expect(first.status).toBe("minted");
+    expect(afterReplace.status).toBe("minted");
+    expect(calls).toBe(2);
+  });
+
   it("revokes without minting a discarded live invite", async () => {
     let mintCalls = 0;
     let invalidateCalls = 0;
     const coordinator = new InviteMintCoordinator(
       () => {
         mintCalls += 1;
-        return { inviteURL: `oppi://connect?invite=${mintCalls}`, expiresAt: Date.now() + 90_000 };
+        return minted(mintCalls);
       },
       () => {
         invalidateCalls += 1;
@@ -86,7 +165,7 @@ describe("review mint coordinator", () => {
     let calls = 0;
     const coordinator = new InviteMintCoordinator(() => {
       calls += 1;
-      return { inviteURL: `oppi://connect?invite=${calls}`, expiresAt: now + 90_000 };
+      return minted(calls, now + 90_000);
     });
 
     await coordinator.connect({ method: "GET", now });
@@ -110,14 +189,14 @@ describe("review mint HTTP server", () => {
       createReviewMintServer({
         secret,
         listenHost: "0.0.0.0",
-        mint: () => ({ inviteURL: "oppi://connect?invite=x", expiresAt: Date.now() + 90_000 }),
+        mint: () => minted(1),
       }),
     ).toThrow(/non-loopback bind 0.0.0.0/);
     expect(() =>
       createReviewMintServer({
         secret,
         listenHost: "127.0.0.1",
-        mint: () => ({ inviteURL: "oppi://connect?invite=x", expiresAt: Date.now() + 90_000 }),
+        mint: () => minted(1),
       }),
     ).not.toThrow();
   });
@@ -125,17 +204,17 @@ describe("review mint HTTP server", () => {
   it("revokes the stable link without minting a replacement", async () => {
     let mintCalls = 0;
     let invalidateCalls = 0;
-    const minted = createReviewMintServer({
+    const mintedServer = createReviewMintServer({
       secret,
       mint: () => {
         mintCalls += 1;
-        return { inviteURL: `oppi://connect?invite=${mintCalls}`, expiresAt: Date.now() + 90_000 };
+        return minted(mintCalls);
       },
       invalidate: () => {
         invalidateCalls += 1;
       },
     });
-    const bound = await minted.listen();
+    const bound = await mintedServer.listen();
     try {
       const first = await mintRequest(bound.port, `/r/${secret}`);
       expect(first.status).toBe(302);
@@ -145,7 +224,59 @@ describe("review mint HTTP server", () => {
       expect(mintCalls).toBe(1);
       expect(invalidateCalls).toBe(1);
     } finally {
-      await minted.close();
+      await mintedServer.close();
+    }
+  });
+
+  it("remints after consume and keeps listening after a mint failure", async () => {
+    let mintCalls = 0;
+    let live: string | undefined;
+    let failNext = true;
+    const mintedServer = createReviewMintServer({
+      secret,
+      mint: () => {
+        if (failNext) {
+          failNext = false;
+          throw new Error("forced mint failure");
+        }
+        mintCalls += 1;
+        const invite = minted(mintCalls);
+        live = invite.pairingToken;
+        return invite;
+      },
+      isLiveToken: (token) => token === live,
+    });
+    const bound = await mintedServer.listen();
+    try {
+      const failed = await mintRequest(bound.port, `/r/${secret}`);
+      expect(failed.status).toBe(503);
+      expect(failed.cacheControl).toBe("no-store");
+      expect(failed.location).toBeUndefined();
+      expect(failed.body).toBe("");
+      expect(failed.body).not.toContain("forced mint failure");
+      expect(failed.body).not.toContain("pt_");
+      expect(failed.body).not.toContain("oppi://");
+
+      const first = await mintRequest(bound.port, `/r/${secret}`);
+      expect(first.status).toBe(302);
+      expect(first.location).toBe("oppi://connect?invite=1");
+      expect(first.cacheControl).toBe("no-store");
+
+      const reused = await mintRequest(bound.port, `/r/${secret}`);
+      expect(reused.status).toBe(302);
+      expect(reused.location).toBe(first.location);
+
+      live = undefined;
+      const afterConsume = await mintRequest(bound.port, `/r/${secret}`);
+      expect(afterConsume.status).toBe(302);
+      expect(afterConsume.location).toBe("oppi://connect?invite=2");
+
+      const retried = await mintRequest(bound.port, `/r/${secret}?retry=1`);
+      expect(retried.status).toBe(302);
+      expect(retried.location).toBe("oppi://connect?invite=3");
+      expect(mintCalls).toBe(3);
+    } finally {
+      await mintedServer.close();
     }
   });
 });
@@ -154,7 +285,7 @@ function mintRequest(
   port: number,
   path: string,
   options: { method?: string } = {},
-): Promise<{ status: number; location?: string }> {
+): Promise<{ status: number; location?: string; cacheControl?: string; body: string }> {
   return new Promise((resolve, reject) => {
     const req = httpRequest(
       {
@@ -164,11 +295,17 @@ function mintRequest(
         method: options.method ?? "GET",
       },
       (res) => {
-        res.resume();
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) => chunks.push(chunk as Buffer));
         res.on("end", () => {
           resolve({
             status: res.statusCode ?? 0,
             location: typeof res.headers.location === "string" ? res.headers.location : undefined,
+            cacheControl:
+              typeof res.headers["cache-control"] === "string"
+                ? res.headers["cache-control"]
+                : undefined,
+            body: Buffer.concat(chunks).toString("utf8"),
           });
         });
       },

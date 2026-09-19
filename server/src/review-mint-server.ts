@@ -15,6 +15,8 @@ export type ReviewMintServerOptions = {
   mint: () => Promise<MintedInvite> | MintedInvite;
   /** Invalidate the live pairing token without minting a replacement. */
   invalidate?: () => Promise<void> | void;
+  /** True when this pairing token is still the persisted outstanding token. */
+  isLiveToken?: (pairingToken: string) => boolean | Promise<boolean>;
   log?: (message: string) => void;
 };
 
@@ -41,11 +43,19 @@ export function createReviewMintServer(options: ReviewMintServerOptions): {
       `review mint refuses non-loopback bind ${listenHost}; set allowNonLoopback or REVIEW_MINT_ALLOW_NON_LOOPBACK=1`,
     );
   }
-  const coordinator = new InviteMintCoordinator(options.mint, options.invalidate);
+  const coordinator = new InviteMintCoordinator(
+    options.mint,
+    options.invalidate,
+    options.isLiveToken,
+  );
   const log = options.log ?? (() => {});
 
   const server = createServer((req, res) => {
-    void handle(req, res);
+    void handle(req, res).catch(() => {
+      failClosed(res);
+      const safePath = redactMintPath(req.url || "/", secret);
+      log(`mint failed path=${safePath}`);
+    });
   });
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -121,6 +131,15 @@ export function createReviewMintServer(options: ReviewMintServerOptions): {
       });
     },
   };
+}
+
+function failClosed(res: ServerResponse): void {
+  if (res.headersSent) {
+    res.destroy();
+    return;
+  }
+  res.writeHead(503, { "Cache-Control": "no-store" });
+  res.end();
 }
 
 function headerValue(value: string | string[] | undefined): string | undefined {

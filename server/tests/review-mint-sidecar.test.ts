@@ -9,7 +9,10 @@ import { fileURLToPath } from "node:url";
 import { ConfigStore } from "../src/storage/config-store.js";
 import { Storage } from "../src/storage.js";
 
-const SIDECAR = resolve(dirname(fileURLToPath(import.meta.url)), "../proxy-review/run-mint-sidecar.mjs");
+const SIDECAR = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../proxy-review/run-mint-sidecar.mjs",
+);
 const SECRET = "rp39-sidecar-secret-value";
 
 function freeLoopbackPort(): Promise<number> {
@@ -26,12 +29,30 @@ function freeLoopbackPort(): Promise<number> {
   });
 }
 
-function writeFakeOppi(binDir: string, counterPath: string): void {
+function writeFakeOppi(
+  binDir: string,
+  counterPath: string,
+  dataDir: string,
+  options: { failOncePath?: string } = {},
+): void {
   const script = `#!/usr/bin/env node
-const { appendFileSync } = require("node:fs");
+const { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } = require("node:fs");
+const failOncePath = ${JSON.stringify(options.failOncePath ?? "")};
+if (failOncePath && existsSync(failOncePath)) {
+  unlinkSync(failOncePath);
+  process.stderr.write("forced pair failure\\n");
+  process.exit(1);
+}
 appendFileSync(${JSON.stringify(counterPath)}, "pair\\n");
-const inviteURL = "oppi://connect?invite=sidecar-" + Date.now();
-process.stdout.write(JSON.stringify({ inviteURL, pairingToken: "pt_sidecar" }) + "\\n");
+const n = readFileSync(${JSON.stringify(counterPath)}, "utf8").trim().split("\\n").length;
+const pairingToken = "pt_sidecar_" + n;
+const inviteURL = "oppi://connect?invite=sidecar-" + n;
+const configPath = ${JSON.stringify(join(dataDir, "config.json"))};
+const config = JSON.parse(readFileSync(configPath, "utf8"));
+config.pairingToken = pairingToken;
+config.pairingTokenExpiresAt = Date.now() + 90_000;
+writeFileSync(configPath, JSON.stringify(config));
+process.stdout.write(JSON.stringify({ inviteURL, pairingToken }) + "\\n");
 `;
   writeFileSync(join(binDir, "oppi"), script, { mode: 0o755 });
   chmodSync(join(binDir, "oppi"), 0o755);
@@ -41,7 +62,7 @@ function mintRequest(
   port: number,
   path: string,
   options: { method?: string; headers?: Record<string, string> } = {},
-): Promise<{ status: number; location?: string; body: string }> {
+): Promise<{ status: number; location?: string; cacheControl?: string; body: string }> {
   return new Promise((resolveResponse, reject) => {
     const req = httpRequest(
       {
@@ -58,6 +79,10 @@ function mintRequest(
           resolveResponse({
             status: res.statusCode ?? 0,
             location: typeof res.headers.location === "string" ? res.headers.location : undefined,
+            cacheControl:
+              typeof res.headers["cache-control"] === "string"
+                ? res.headers["cache-control"]
+                : undefined,
             body: Buffer.concat(chunks).toString("utf8"),
           });
         });
@@ -81,7 +106,7 @@ describe("review mint sidecar", () => {
     }
   });
 
-  it("reuses one invite, retries, and revokes without mint-and-discard", async () => {
+  it("reuses one invite, remints after consume or external pair, and revokes without mint-and-discard", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-mint-sidecar-"));
     dirs.push(root);
     const dataDir = join(root, "data");
@@ -90,7 +115,7 @@ describe("review mint sidecar", () => {
     mkdirSync(binDir, { recursive: true });
     const counterPath = join(root, "pair-calls.txt");
     writeFileSync(counterPath, "");
-    writeFakeOppi(binDir, counterPath);
+    writeFakeOppi(binDir, counterPath, dataDir);
     writeFileSync(
       join(dataDir, "config.json"),
       JSON.stringify({
@@ -128,10 +153,34 @@ describe("review mint sidecar", () => {
     expect(first.location?.startsWith("oppi://connect")).toBe(true);
     expect(readFileSync(counterPath, "utf8").trim().split("\n")).toEqual(["pair"]);
 
+    new Storage(dataDir).clearPairingToken();
+    const afterConsume = await mintRequest(port, `/r/${SECRET}`);
+    expect(afterConsume.status).toBe(302);
+    expect(afterConsume.location).not.toBe(first.location);
+    expect(readFileSync(counterPath, "utf8").trim().split("\n")).toEqual(["pair", "pair"]);
+
     const retried = await mintRequest(port, `/r/${SECRET}?retry=1`);
     expect(retried.status).toBe(302);
-    expect(retried.location).not.toBe(first.location);
-    expect(readFileSync(counterPath, "utf8").trim().split("\n")).toEqual(["pair", "pair"]);
+    expect(retried.location).not.toBe(afterConsume.location);
+    expect(readFileSync(counterPath, "utf8").trim().split("\n")).toEqual(["pair", "pair", "pair"]);
+
+    writeFileSync(
+      join(dataDir, "config.json"),
+      JSON.stringify({
+        ...JSON.parse(readFileSync(join(dataDir, "config.json"), "utf8")),
+        pairingToken: "pt_external_replacement",
+        pairingTokenExpiresAt: Date.now() + 90_000,
+      }),
+    );
+    const afterExternal = await mintRequest(port, `/r/${SECRET}`);
+    expect(afterExternal.status).toBe(302);
+    expect(afterExternal.location).not.toBe(retried.location);
+    expect(readFileSync(counterPath, "utf8").trim().split("\n")).toEqual([
+      "pair",
+      "pair",
+      "pair",
+      "pair",
+    ]);
 
     const preview = await mintRequest(port, `/r/${SECRET}`, {
       headers: { "User-Agent": "facebookexternalhit/1.1" },
@@ -144,8 +193,69 @@ describe("review mint sidecar", () => {
 
     const revoked = await mintRequest(port, `/r/${SECRET}/revoke-link`, { method: "POST" });
     expect(revoked.status).toBe(204);
-    expect(readFileSync(counterPath, "utf8").trim().split("\n")).toEqual(["pair", "pair"]);
+    expect(readFileSync(counterPath, "utf8").trim().split("\n")).toEqual([
+      "pair",
+      "pair",
+      "pair",
+      "pair",
+    ]);
     expect(new Storage(dataDir).getConfig().pairingToken).toBeUndefined();
+    expect(logs.join("")).not.toContain(SECRET);
+    expect(logs.join("")).not.toContain("oppi://connect");
+    expect(logs.join("")).not.toContain("pt_sidecar_");
+  }, 15_000);
+
+  it("stays up after a mint failure and succeeds on the next open", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-mint-sidecar-fail-"));
+    dirs.push(root);
+    const dataDir = join(root, "data");
+    const binDir = join(root, "bin");
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    const counterPath = join(root, "pair-calls.txt");
+    const failOncePath = join(root, "fail-once");
+    writeFileSync(counterPath, "");
+    writeFileSync(failOncePath, "1");
+    writeFakeOppi(binDir, counterPath, dataDir, { failOncePath });
+    writeFileSync(
+      join(dataDir, "config.json"),
+      JSON.stringify({
+        ...ConfigStore.getDefaultConfig(dataDir),
+        host: "127.0.0.1",
+        token: "sk_test_sidecar",
+      }),
+    );
+
+    const port = await freeLoopbackPort();
+    const child = spawn(process.execPath, [SIDECAR], {
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        OPPI_DATA_DIR: dataDir,
+        REVIEW_MINT_SECRET: SECRET,
+        REVIEW_MINT_HOST: "127.0.0.1",
+        REVIEW_MINT_PORT: String(port),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    children.push(child);
+    const logs: string[] = [];
+    child.stdout.on("data", (chunk) => logs.push(chunk.toString("utf8")));
+    child.stderr.on("data", (chunk) => logs.push(chunk.toString("utf8")));
+    await waitForLog(logs, /review mint listening/, 8_000);
+
+    const failed = await mintRequest(port, `/r/${SECRET}`);
+    expect(failed.status).toBe(503);
+    expect(failed.cacheControl).toBe("no-store");
+    expect(failed.location).toBeUndefined();
+    expect(failed.body).toBe("");
+    expect(failed.body).not.toContain("forced pair failure");
+    expect(child.exitCode).toBeNull();
+
+    const recovered = await mintRequest(port, `/r/${SECRET}`);
+    expect(recovered.status).toBe(302);
+    expect(recovered.location?.startsWith("oppi://connect")).toBe(true);
+    expect(readFileSync(counterPath, "utf8").trim().split("\n")).toEqual(["pair"]);
     expect(logs.join("")).not.toContain(SECRET);
     expect(logs.join("")).not.toContain("oppi://connect");
   }, 15_000);

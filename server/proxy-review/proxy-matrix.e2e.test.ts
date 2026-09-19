@@ -20,6 +20,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SERVER_DIR = join(ROOT, "server");
 const FORBIDDEN_PORTS = new Set([7749, 7750, 17760, 8888, 13001]);
 const PUBLIC_HOST = "oppi.rp39.test";
+const REVIEW_HOST = "review.rp39.test";
 const MINT_SECRET = "rp39-review-secret-value";
 const REFRESH_AUDIENCE = "oppi:refresh:v1";
 const MODES = ["caddy-http", "caddy-https", "nginx-http", "nginx-https"] as const;
@@ -40,7 +41,8 @@ function freeLoopbackPort(): Promise<number> {
       server.close((error) => {
         if (error) reject(error);
         else if (!address || typeof address === "string") reject(new Error("port bind failed"));
-        else if (FORBIDDEN_PORTS.has(address.port)) reject(new Error(`refusing forbidden port ${address.port}`));
+        else if (FORBIDDEN_PORTS.has(address.port))
+          reject(new Error(`refusing forbidden port ${address.port}`));
         else resolvePort(address.port);
       });
     });
@@ -62,28 +64,38 @@ function docker(args: string[], opts: { cwd?: string } = {}): string {
 function devicePublicKey() {
   const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const jwk = publicKey.export({ format: "jwk" }) as { x: string; y: string };
-  return { privateKey, publicKey: { kty: "EC" as const, crv: "P-256" as const, x: jwk.x, y: jwk.y } };
+  return {
+    privateKey,
+    publicKey: { kty: "EC" as const, crv: "P-256" as const, x: jwk.x, y: jwk.y },
+  };
 }
 
 function httpsJson(
   port: number,
   ca: Buffer,
   path: string,
-  options: { method?: string; body?: unknown; token?: string; headers?: Record<string, string> } = {},
+  options: {
+    method?: string;
+    body?: unknown;
+    token?: string;
+    headers?: Record<string, string>;
+    servername?: string;
+  } = {},
 ): Promise<{ status: number; body: unknown }> {
   return new Promise((resolveResponse, reject) => {
     const body = options.body === undefined ? undefined : JSON.stringify(options.body);
+    const servername = options.servername ?? PUBLIC_HOST;
     const req = httpsRequest(
       {
         host: "127.0.0.1",
         port,
-        servername: PUBLIC_HOST,
+        servername,
         ca,
         rejectUnauthorized: true,
         path,
         method: options.method ?? "GET",
         headers: {
-          Host: PUBLIC_HOST,
+          Host: servername,
           ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
           ...(options.headers ?? {}),
           ...(body
@@ -123,23 +135,25 @@ function httpsCall(
     headers?: Record<string, string>;
     json?: unknown;
     raw?: Buffer;
+    servername?: string;
   } = {},
 ): Promise<{ status: number; headers: IncomingHttpHeaders; body: Buffer }> {
   return new Promise((resolveResponse, reject) => {
     const payload =
       options.raw ??
       (options.json === undefined ? undefined : Buffer.from(JSON.stringify(options.json)));
+    const servername = options.servername ?? PUBLIC_HOST;
     const req = httpsRequest(
       {
         host: "127.0.0.1",
         port,
-        servername: PUBLIC_HOST,
+        servername,
         ca,
         rejectUnauthorized: true,
         path,
         method: options.method ?? "GET",
         headers: {
-          Host: PUBLIC_HOST,
+          Host: servername,
           ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
           ...(options.headers ?? {}),
           ...(payload && !options.raw
@@ -201,12 +215,7 @@ function originExec(project: string, args: string[]): ReturnType<typeof spawnSyn
   return spawnSync("docker", ["exec", `${project}-origin`, ...args], { encoding: "utf8" });
 }
 
-function openVerifiedWss(
-  port: number,
-  ca: Buffer,
-  path: string,
-  token: string,
-): Promise<number> {
+function openVerifiedWss(port: number, ca: Buffer, path: string, token: string): Promise<number> {
   return new Promise((resolveStatus) => {
     const ws = new WebSocket(`wss://127.0.0.1:${port}${path}`, {
       headers: { Host: PUBLIC_HOST, Authorization: `Bearer ${token}` },
@@ -235,13 +244,57 @@ function openVerifiedWss(
 
 function writeEdgeCerts(dir: string): void {
   openssl(
-    ["req", "-x509", "-newkey", "rsa:2048", "-keyout", "ca.key", "-out", "ca.crt", "-days", "2", "-nodes", "-subj", "/CN=oppi-rp39-test-ca"],
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-keyout",
+      "ca.key",
+      "-out",
+      "ca.crt",
+      "-days",
+      "2",
+      "-nodes",
+      "-subj",
+      "/CN=oppi-rp39-test-ca",
+    ],
     dir,
   );
-  writeFileSync(join(dir, "san.cnf"), `subjectAltName=DNS:${PUBLIC_HOST}\n`);
-  openssl(["req", "-newkey", "rsa:2048", "-keyout", "edge.key", "-out", "edge.csr", "-nodes", "-subj", `/CN=${PUBLIC_HOST}`], dir);
+  writeFileSync(join(dir, "san.cnf"), `subjectAltName=DNS:${PUBLIC_HOST},DNS:${REVIEW_HOST}\n`);
   openssl(
-    ["x509", "-req", "-in", "edge.csr", "-CA", "ca.crt", "-CAkey", "ca.key", "-CAcreateserial", "-out", "edge.crt", "-days", "2", "-extfile", "san.cnf"],
+    [
+      "req",
+      "-newkey",
+      "rsa:2048",
+      "-keyout",
+      "edge.key",
+      "-out",
+      "edge.csr",
+      "-nodes",
+      "-subj",
+      `/CN=${PUBLIC_HOST}`,
+    ],
+    dir,
+  );
+  openssl(
+    [
+      "x509",
+      "-req",
+      "-in",
+      "edge.csr",
+      "-CA",
+      "ca.crt",
+      "-CAkey",
+      "ca.key",
+      "-CAcreateserial",
+      "-out",
+      "edge.crt",
+      "-days",
+      "2",
+      "-extfile",
+      "san.cnf",
+    ],
     dir,
   );
 }
@@ -323,9 +376,8 @@ function composeYaml(opts: {
   const tlsMode = httpsOrigin ? "self-signed" : "disabled";
   const trusted = httpsOrigin ? "" : `oppi config set proxy.trustedPeers '["172.28.39.10/32"]' && `;
   const originCmd = `mkdir -p /data/oppi /data/pi-agent && if [ ! -f /data/oppi/config.json ]; then oppi init --yes --force --data-dir /data/oppi; fi && oppi config set host 0.0.0.0 && oppi config set port 7750 && oppi config set publicUrl https://${PUBLIC_HOST} && oppi config set tls.mode ${tlsMode} && ${trusted}exec oppi serve`;
-  const proxyService =
-    opts.mode.startsWith("caddy")
-      ? `
+  const proxyService = opts.mode.startsWith("caddy")
+    ? `
   proxy:
     image: caddy:2-alpine
     container_name: ${opts.project}-proxy
@@ -342,7 +394,7 @@ function composeYaml(opts: {
         condition: service_started
     restart: "no"
 `
-      : `
+    : `
   proxy:
     image: nginx:1.27-alpine
     container_name: ${opts.project}-proxy
@@ -492,7 +544,14 @@ describe("reverse-proxy four-way matrix", () => {
         while (Date.now() < deadline) {
           const health = spawnSync(
             "docker",
-            ["exec", `${project}-origin`, "curl", "-fsS", originHealthUrl, ...(httpsOrigin ? ["-k"] : [])],
+            [
+              "exec",
+              `${project}-origin`,
+              "curl",
+              "-fsS",
+              originHealthUrl,
+              ...(httpsOrigin ? ["-k"] : []),
+            ],
             { encoding: "utf8" },
           );
           if (health.status === 0) {
@@ -505,12 +564,14 @@ describe("reverse-proxy four-way matrix", () => {
           const logs = spawnSync("docker", ["logs", "--tail", "80", `${project}-origin`], {
             encoding: "utf8",
           });
-          throw new Error(
-            `${mode}: origin did not become healthy\n${logs.stdout}\n${logs.stderr}`,
-          );
+          throw new Error(`${mode}: origin did not become healthy\n${logs.stdout}\n${logs.stderr}`);
         }
         if (httpsOrigin) {
-          docker(["cp", `${project}-origin:/data/oppi/tls/self-signed/ca.crt`, join(runDir, "certs", "origin-ca.crt")]);
+          docker([
+            "cp",
+            `${project}-origin:/data/oppi/tls/self-signed/ca.crt`,
+            join(runDir, "certs", "origin-ca.crt"),
+          ]);
         }
         docker([...compose, "up", "-d", "proxy", "mint"], { cwd: runDir });
         const ca = readFileSync(join(runDir, "certs", "ca.crt"));
@@ -735,7 +796,9 @@ describe("reverse-proxy four-way matrix", () => {
         expect(refreshed.accessToken.startsWith("at_")).toBe(true);
         creds.accessToken = refreshed.accessToken;
 
-        expect(await openVerifiedWss(edgePort, ca, "/app/events/stream", creds.accessToken)).toBe(200);
+        expect(await openVerifiedWss(edgePort, ca, "/app/events/stream", creds.accessToken)).toBe(
+          200,
+        );
 
         originExec(project, [
           "bash",
@@ -826,7 +889,9 @@ describe("reverse-proxy four-way matrix", () => {
           body: { pairingToken: revokedToken, devicePublicKey: devicePublicKey().publicKey },
         });
         expect(stalePair.status).toBe(401);
-        expect((await httpsJson(edgePort, ca, "/me", { token: creds.accessToken })).status).toBe(200);
+        expect((await httpsJson(edgePort, ca, "/me", { token: creds.accessToken })).status).toBe(
+          200,
+        );
 
         const mintLogs = spawnSync("docker", ["logs", `${project}-mint`], { encoding: "utf8" });
         expect(mintLogs.stdout).not.toContain(MINT_SECRET);
@@ -839,7 +904,14 @@ describe("reverse-proxy four-way matrix", () => {
         while (Date.now() < originRestartDeadline) {
           const health = spawnSync(
             "docker",
-            ["exec", `${project}-origin`, "curl", "-fsS", originHealthUrl, ...(httpsOrigin ? ["-k"] : [])],
+            [
+              "exec",
+              `${project}-origin`,
+              "curl",
+              "-fsS",
+              originHealthUrl,
+              ...(httpsOrigin ? ["-k"] : []),
+            ],
             { encoding: "utf8" },
           );
           if (health.status === 0) {
@@ -864,8 +936,12 @@ describe("reverse-proxy four-way matrix", () => {
           await new Promise((r) => setTimeout(r, 1000));
         }
         expect(edgeAfterOrigin).toBe(true);
-        expect((await httpsJson(edgePort, ca, "/me", { token: creds.accessToken })).status).toBe(200);
-        expect(await openVerifiedWss(edgePort, ca, "/app/events/stream", creds.accessToken)).toBe(200);
+        expect((await httpsJson(edgePort, ca, "/me", { token: creds.accessToken })).status).toBe(
+          200,
+        );
+        expect(await openVerifiedWss(edgePort, ca, "/app/events/stream", creds.accessToken)).toBe(
+          200,
+        );
 
         docker(["restart", `${project}-proxy`]);
         let reconnected = false;
@@ -883,14 +959,18 @@ describe("reverse-proxy four-way matrix", () => {
           await new Promise((r) => setTimeout(r, 1000));
         }
         expect(reconnected).toBe(true);
-        expect((await httpsJson(edgePort, ca, "/me", { token: creds.accessToken })).status).toBe(200);
+        expect((await httpsJson(edgePort, ca, "/me", { token: creds.accessToken })).status).toBe(
+          200,
+        );
 
         const revoked = await httpsJson(edgePort, ca, `/auth/devices/${creds.deviceId}`, {
           method: "DELETE",
           token: creds.accessToken,
         });
         expect(revoked.status).toBe(200);
-        expect((await httpsJson(edgePort, ca, "/me", { token: creds.accessToken })).status).toBe(401);
+        expect((await httpsJson(edgePort, ca, "/me", { token: creds.accessToken })).status).toBe(
+          401,
+        );
 
         expect(imageSha.startsWith("sha256:") || imageSha.length > 10).toBe(true);
       } finally {
@@ -905,11 +985,13 @@ describe("reverse-proxy four-way matrix", () => {
     mkdirSync(join(runDir, "certs"), { recursive: true });
     writeEdgeCerts(join(runDir, "certs"));
     const edgePort = await freeLoopbackPort();
+    const mintPort = await freeLoopbackPort();
     const composeFile = join(SERVER_DIR, "proxy-review/docker-compose.review.yml");
     const env = {
       ...process.env,
       RP39_ORIGIN_IMAGE: image,
       RP39_EDGE_PORT: String(edgePort),
+      RP39_MINT_PORT: String(mintPort),
       REVIEW_MINT_SECRET: MINT_SECRET,
       RP39_CERTS_DIR: join(runDir, "certs"),
     };
@@ -951,8 +1033,74 @@ describe("reverse-proxy four-way matrix", () => {
         const logs = spawnSync("docker", ["logs", "--tail", "40", "oppi-rp39-review-origin"], {
           encoding: "utf8",
         });
-        throw new Error(`review compose did not serve verified HTTPS /health\n${logs.stdout}\n${logs.stderr}`);
+        throw new Error(
+          `review compose did not serve verified HTTPS /health\n${logs.stdout}\n${logs.stderr}`,
+        );
       }
+
+      const leaked = await httpsCall(edgePort, ca, `/r/${MINT_SECRET}`);
+      expect(leaked.status).not.toBe(302);
+      expect(String(leaked.headers.location ?? "")).not.toMatch(/^oppi:\/\//);
+
+      let minted: Awaited<ReturnType<typeof httpsCall>> | undefined;
+      const mintDeadline = Date.now() + 60_000;
+      while (Date.now() < mintDeadline) {
+        try {
+          const response = await httpsCall(mintPort, ca, `/r/${MINT_SECRET}`, {
+            servername: REVIEW_HOST,
+            headers: { "User-Agent": "Mozilla/5.0 (OppiReview)" },
+          });
+          if (
+            response.status === 302 &&
+            String(response.headers.location ?? "").startsWith("oppi://")
+          ) {
+            minted = response;
+            break;
+          }
+        } catch {
+          // retry until mint ingress is up
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      if (!minted) {
+        const logs = spawnSync(
+          "docker",
+          ["logs", "--tail", "40", "oppi-rp39-review-mint-ingress"],
+          {
+            encoding: "utf8",
+          },
+        );
+        throw new Error(
+          `review compose did not serve a stable mint link\n${logs.stdout}\n${logs.stderr}`,
+        );
+      }
+      const inviteURL = String(minted.headers.location);
+      expect(inviteURL.startsWith("oppi://connect")).toBe(true);
+
+      const miss = await httpsCall(mintPort, ca, "/health", { servername: REVIEW_HOST });
+      expect(miss.status).toBe(404);
+      const wrong = await httpsCall(mintPort, ca, "/r/not-the-secret", { servername: REVIEW_HOST });
+      expect(wrong.status).toBe(404);
+
+      const device = devicePublicKey();
+      const paired = await httpsJson(edgePort, ca, "/pair", {
+        method: "POST",
+        body: {
+          pairingToken: pairingTokenFromInviteUrl(inviteURL),
+          devicePublicKey: device.publicKey,
+          deviceName: "review-phone",
+        },
+      });
+      expect(paired.status).toBe(200);
+      const accessToken = (paired.body as { accessToken: string }).accessToken;
+      expect(accessToken.startsWith("at_")).toBe(true);
+
+      const listed = await httpsJson(edgePort, ca, "/workspaces", { token: accessToken });
+      expect(listed.status).toBe(200);
+      const names = (
+        (listed.body as { workspaces?: Array<{ name?: string }> }).workspaces ?? []
+      ).map((workspace) => workspace.name);
+      expect(names).toContain("review");
     } finally {
       down();
     }

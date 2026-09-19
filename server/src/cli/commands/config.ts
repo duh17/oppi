@@ -223,7 +223,10 @@ export function cmdConfig(
             key.startsWith("runtimeEnv.") ||
             key === "runtimeEnv" ||
             key === "port" ||
-            key === "host"
+            key === "host" ||
+            key === "publicUrl" ||
+            key === "proxy" ||
+            key.startsWith("proxy.")
               ? "Restart the Oppi server for this change to take effect."
               : undefined,
         },

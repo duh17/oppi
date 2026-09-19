@@ -59,12 +59,26 @@ function mint() {
   if (typeof parsed.inviteURL !== "string" || !parsed.inviteURL.startsWith("oppi://")) {
     throw new Error("oppi pair did not return an invite URL");
   }
-  return { inviteURL: parsed.inviteURL, expiresAt: Date.now() + 90_000 };
+  if (typeof parsed.pairingToken !== "string" || parsed.pairingToken.length === 0) {
+    throw new Error("oppi pair did not return a pairing token");
+  }
+  return {
+    inviteURL: parsed.inviteURL,
+    expiresAt: Date.now() + 90_000,
+    pairingToken: parsed.pairingToken,
+  };
+}
+
+function livePairingToken() {
+  return new Storage(dataDir).getConfig().pairingToken;
 }
 
 function invalidate() {
-  const storage = new Storage(dataDir);
-  storage.clearPairingToken();
+  new Storage(dataDir).clearPairingToken();
+}
+
+function isLiveToken(pairingToken) {
+  return livePairingToken() === pairingToken;
 }
 
 const { listen } = createReviewMintServer({
@@ -74,6 +88,7 @@ const { listen } = createReviewMintServer({
   allowNonLoopback,
   mint,
   invalidate,
+  isLiveToken,
   log(message) {
     process.stdout.write(`${message}\n`);
   },

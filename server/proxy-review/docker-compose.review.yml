@@ -5,6 +5,7 @@
 # Required env:
 #   RP39_ORIGIN_IMAGE   built candidate image
 #   RP39_EDGE_PORT      loopback-published HTTPS port (not 7749/7750/17760/8888/13001)
+#   RP39_MINT_PORT      loopback-published mint-ingress HTTPS port (same forbidden-port list)
 #   REVIEW_MINT_SECRET  >=16 chars; used only as the stable path suffix
 #   RP39_CERTS_DIR      directory with edge.crt, edge.key, ca.crt (and origin-ca.crt for HTTPS origin)
 
@@ -22,6 +23,8 @@ services:
       PI_CODING_AGENT_DIR: /data/pi-agent
       PI_AGENT_SYNC_MODE: skip
       SEARXNG_URL: ""
+    ports:
+      - "127.0.0.1:${RP39_MINT_PORT}:8843"
     volumes:
       - oppi-rp39-review-data:/data/oppi
       - ./fixtures/models.json:/data/pi-agent/models.json:ro
@@ -29,7 +32,9 @@ services:
     entrypoint: ["bash", "-lc"]
     command:
       - >-
-        mkdir -p /data/oppi /data/pi-agent &&
+        mkdir -p /data/oppi /data/pi-agent /data/oppi/workspaces /tmp/review-workspace &&
+        printf 'review workspace\n' > /tmp/review-workspace/README.md &&
+        printf '%s\n' '{"id":"reviewseed","name":"review","icon":{"kind":"default"},"hostMount":"/tmp/review-workspace","createdAt":1700000000000,"updatedAt":1700000000000}' > /data/oppi/workspaces/reviewseed.json &&
         if [ ! -f /data/oppi/config.json ]; then oppi init --yes --force --data-dir /data/oppi; fi &&
         oppi config set host 0.0.0.0 &&
         oppi config set port 7750 &&
@@ -83,6 +88,22 @@ services:
     command: ["/mint.mjs"]
     depends_on:
       origin:
+        condition: service_started
+    restart: "no"
+
+  mint-ingress:
+    image: caddy:2-alpine
+    container_name: oppi-rp39-review-mint-ingress
+    network_mode: "service:origin"
+    environment:
+      REVIEW_MINT_SECRET: ${REVIEW_MINT_SECRET}
+    volumes:
+      - ./Caddyfile.review-mint:/etc/caddy/Caddyfile:ro
+      - ${RP39_CERTS_DIR}:/certs:ro
+    depends_on:
+      origin:
+        condition: service_started
+      mint:
         condition: service_started
     restart: "no"
 

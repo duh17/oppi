@@ -121,6 +121,44 @@ describe("config command agent safety", () => {
     expect(set.humanOutput).toContain("7938");
   });
 
+  it("hints restart when publicUrl or proxy trust changes", async () => {
+    const dataDir = makeDataDir();
+    const restartHint = "Restart the Oppi server for this change to take effect.";
+
+    const publicUrl = await runCli(["config", "set", "publicUrl", "https://oppi.example.com"], {
+      dataDir,
+      captureHuman: true,
+      forceJson: true,
+    });
+    expect(publicUrl.ok).toBe(true);
+    expect(publicUrl.json).toMatchObject({
+      ok: true,
+      data: { key: "publicUrl", restartHint },
+    });
+
+    const peers = await runCli(["config", "set", "proxy.trustedPeers", '["127.0.0.1/32"]'], {
+      dataDir,
+      captureHuman: true,
+      forceJson: true,
+    });
+    expect(peers.ok).toBe(true);
+    expect(peers.json).toMatchObject({
+      ok: true,
+      data: { key: "proxy.trustedPeers", restartHint },
+    });
+
+    const sessions = await runCli(["config", "set", "maxSessionsGlobal", "50"], {
+      dataDir,
+      captureHuman: true,
+      forceJson: true,
+    });
+    expect(sessions.ok).toBe(true);
+    expect(sessions.json).toMatchObject({ ok: true, data: { key: "maxSessionsGlobal" } });
+    expect(
+      (sessions.json as { ok: true; data: { restartHint?: string } }).data.restartHint,
+    ).toBeUndefined();
+  });
+
   it("reports invalid validation as structured data with a clean JSON run", async () => {
     const dataDir = makeDataDir();
     const badPath = join(dataDir, "bad-config.json");

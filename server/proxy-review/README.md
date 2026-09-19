@@ -16,6 +16,6 @@ env -u NO_COLOR -u FORCE_COLOR GIT_CONFIG_GLOBAL=/dev/null npm run test:proxy-re
 
 Positive TLS clients must use `curl --cacert` / Node `ca` + `servername`. `curl -k` and `rejectUnauthorized: false` are not success proof.
 
-The mint sidecar shares the origin data volume and may use the owner socket on loopback. `run-mint-sidecar.mjs` loads the TypeScript mint server from the built image; revoke clears the outstanding pairing token without minting a replacement. Bind is loopback unless `REVIEW_MINT_ALLOW_NON_LOOPBACK=1`. The public proxy must not forward `/r/<secret>` or Unix-socket paths.
+The mint sidecar shares the origin data volume and may use the owner socket on loopback. `run-mint-sidecar.mjs` loads the TypeScript mint server from the built image; revoke clears the outstanding pairing token without minting a replacement. Bind is loopback unless `REVIEW_MINT_ALLOW_NON_LOOPBACK=1`. Reuse requires that cached pairing token to still be the persisted outstanding token. The Oppi public proxy must not forward `/r/<secret>` or Unix-socket paths.
 
-Packaged review recipe: `docker-compose.review.yml` plus `Caddyfile.review`. Origin command skips `oppi init` when `/data/oppi/config.json` already exists so restarts preserve pairing.
+Packaged review recipe: `docker-compose.review.yml`, `Caddyfile.review` (Oppi HTTPS only), and `Caddyfile.review-mint` (loopback mint ingress). Origin seeds a synthetic workspace named `review` and skips `oppi init` when `/data/oppi/config.json` already exists so restarts preserve pairing. Reviewers open `https://review.rp39.test:<RP39_MINT_PORT>/r/<secret>` on the mint ingress; that site 404s every other path and never publishes Oppi `:7750` or the owner socket.
