@@ -38,6 +38,10 @@ Example:
 
 ## [Unreleased]
 
+### Changed
+
+- **Server:** Bundled Pi runtime moves to `0.86.0`.
+
 ## [0.49.1] - 2026-09-18
 
 Target: iOS `1.1.2` build `51`, `oppi-server@0.49.1`, and `oppi-mirror@0.49.1`.
