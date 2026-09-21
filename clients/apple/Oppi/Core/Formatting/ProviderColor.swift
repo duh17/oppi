@@ -29,7 +29,7 @@ enum ProviderColor {
             return palette.cyan
         case "amazon-bedrock", "xai":
             return palette.yellow
-        case "mistral", "mistralai":
+        case "mistral", "mistralai", "mlx-serve":
             return palette.red
         case "qwen":
             return palette.purple

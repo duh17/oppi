@@ -15,6 +15,7 @@ struct ProviderColorTests {
         expectColor("meta-llama/llama-3", equals: palette.cyan)
         expectColor("mistral/mistral-large", equals: palette.red)
         expectColor("mistralai/mistral-medium", equals: palette.red)
+        expectColor("mlx-serve/Qwen3.8-Flash-Next", equals: palette.red)
         expectColor("deepseek/deepseek-r1", equals: palette.blue)
         expectColor("ds4/deepseek-v4-flash", equals: palette.blue)
         expectColor("xai/grok-3", equals: palette.yellow)
@@ -33,6 +34,12 @@ struct ProviderColorTests {
         #expect(ProviderIcon.displayName(for: "ds4") == "DS4 Dwarf Star")
         #expect(ProviderIcon.mark(for: "ds4") == "D")
         #expect(ProviderIcon.logoAssetName(for: "ds4") == "provider-ds4")
+    }
+
+    @Test func resolvesMLXServeProviderDisplayMetadata() {
+        expectColor("mlx-serve/Qwen3.8-Flash-Next", equals: palette.red)
+        #expect(ProviderIcon.displayName(for: "mlx-serve") == "MLX Serve")
+        #expect(ProviderIcon.logoAssetName(for: "mlx-serve") == "provider-mlx-serve")
     }
 
     @Test func resolvesCursorProviderDisplayMetadata() {

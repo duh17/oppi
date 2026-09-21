@@ -1118,6 +1118,7 @@ private let providersWithLogoAsset: Set<String> = [
     "kimi-coding",
     "minimax",
     "mistral",
+    "mlx-serve",
     "omlx",
     "openai",
     "opencode",
@@ -1145,6 +1146,7 @@ private let knownProviderDisplayNames: [String: String] = [
     "huggingface": "Hugging Face",
     "kimi-coding": "Kimi Coding",
     "lmstudio": "LM Studio",
+    "mlx-serve": "MLX Serve",
     "minimax": "MiniMax",
     "minimax-cn": "MiniMax CN",
     "ollama": "Ollama",
@@ -1163,4 +1165,4 @@ private let knownProviderDisplayNames: [String: String] = [
     "zai": "Z.AI",
 ]
 
-private let acronymProviderTokens: Set<String> = ["ai", "api", "cli", "cn", "llm", "ml"]
+private let acronymProviderTokens: Set<String> = ["ai", "api", "cli", "cn", "llm", "ml", "mlx"]

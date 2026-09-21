@@ -86,6 +86,14 @@ struct ModelColorHelpersTests {
         #expect(providerDisplayLabel("omlx") == "OMLX")
     }
 
+    @Test func mlxServeUsesMenuBarTrayMark() {
+        #expect(providerDisplayLabel("mlx-serve") == "MLX Serve")
+        #expect(ProviderIcon.displayName(for: "mlx-serve") == "MLX Serve")
+        #expect(providerLogoAssetName("mlx-serve") == "provider-mlx-serve")
+        #expect(ProviderIcon.logoAssetName(for: "mlx-serve") == "provider-mlx-serve")
+        #expect(providerMonogram("mlx-serve") == "M")
+    }
+
     @Test func providerLogoAssetNamesIncludeQwen() {
         #expect(providerLogoAssetName("qwen") == "provider-qwen")
         #expect(providerLogoAssetName("qwen-token-plan") == "provider-qwen")
@@ -110,7 +118,7 @@ struct ModelColorHelpersTests {
 
     /// Template rendering keeps only alpha, so an asset that converted to an
     /// opaque rectangle would show as a filled block instead of a mark.
-    @Test(arguments: ["provider-cursor", "provider-opencode"])
+    @Test(arguments: ["provider-cursor", "provider-opencode", "provider-mlx-serve"])
     func newProviderTemplateAssetsCarryTransparency(assetName: String) throws {
         let image = try #require(UIImage(named: assetName))
         let raster = try #require(rasterize(image))
