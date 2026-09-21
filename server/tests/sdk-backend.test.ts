@@ -1265,6 +1265,10 @@ describe("SdkBackend host extensions", () => {
       join(cwd, ".pi", "settings.json"),
       JSON.stringify({ shellPath, shellCommandPrefix: configuredShellCommandPrefix }),
     );
+    const agentDir = mkdtempSync(join(tmpdir(), "oppi-caller-identity-agent-"));
+    writeFileSync(join(agentDir, "auth.json"), "{}");
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
     const originalCallerIdentity = process.env[OPPI_CALLER_SESSION_ID_ENV];
     delete process.env[OPPI_CALLER_SESSION_ID_ENV];
     let first: SdkBackend | undefined;
@@ -1344,6 +1348,9 @@ describe("SdkBackend host extensions", () => {
       await second?.dispose();
       if (originalCallerIdentity === undefined) delete process.env[OPPI_CALLER_SESSION_ID_ENV];
       else process.env[OPPI_CALLER_SESSION_ID_ENV] = originalCallerIdentity;
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      rmSync(agentDir, { recursive: true, force: true });
       rmSync(cwd, { recursive: true, force: true });
     }
   });
@@ -1565,6 +1572,10 @@ export default function (pi) {
 
   it('keeps bash disabled when launch policy uses noTools: "builtin"', async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-no-builtin-tools-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "oppi-no-builtin-tools-agent-"));
+    writeFileSync(join(agentDir, "auth.json"), "{}");
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
     const backend = await SdkBackend.create({
       session: makeSession({
         launch: {
@@ -1587,6 +1598,9 @@ export default function (pi) {
       expect(backend.session.getActiveToolNames()).not.toContain("bash");
     } finally {
       await backend.dispose();
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      rmSync(agentDir, { recursive: true, force: true });
       rmSync(cwd, { recursive: true, force: true });
     }
   });

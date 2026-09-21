@@ -40,7 +40,7 @@ Example:
 
 ### Changed
 
-- **Server:** Bundled Pi runtime moves to `0.86.0`.
+- **Server:** Bundled Pi runtime moves to `0.87.0`.
 
 ## [0.49.1] - 2026-09-18
 
