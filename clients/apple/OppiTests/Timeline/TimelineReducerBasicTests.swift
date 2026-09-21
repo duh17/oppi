@@ -229,6 +229,340 @@ struct TimelineReducerBasicTests {
         )
     }
 
+    @Test func userMessageProjectionMatchesScreenshotEchoWithImageHintSuffix() {
+        let typed = "look at this screenshot"
+        let echo = """
+        \(typed)
+
+        Attached files:
+        - screenshot.png: .pi/attachments/s1/t1/screenshot.png
+
+        [Image: original 1206x2622, displayed at 920x2000. Multiply coordinates by 1.31 to map to original image.]
+        """
+
+        #expect(UserMessageTextProjection.visibleText(from: echo) == typed)
+        #expect(UserMessageTextProjection.comparableText(echo) == typed)
+
+        let reducer = TimelineReducer()
+        let image = ImageAttachment(data: "AAAA", mimeType: "image/png")
+        let optimisticID = reducer.appendUserMessage(typed, images: [image])
+        #expect(reducer.hasUserMessage(matching: echo))
+
+        if !reducer.hasUserMessage(matching: echo) {
+            reducer.appendUserMessage(echo)
+        }
+
+        #expect(reducer.items.count == 1)
+        guard case .userMessage(let id, let text, let images, _) = reducer.items[0] else {
+            Issue.record("Expected the optimistic image row to remain")
+            return
+        }
+        #expect(id == optimisticID)
+        #expect(text == typed)
+        #expect(images == [image])
+    }
+
+    @Test(arguments: [
+        "[Image: original 1206x2622, displayed at 920x2000. Multiply coordinates by 1.31 to map to original image.]",
+        "[Image converted from image/jpeg to image/png.]",
+        "[Image omitted: could not be resized below the inline image size limit.]",
+        "[Image omitted: could not be converted to a supported inline image format.]",
+        "[Image: resized for a future model profile.]",
+    ])
+    func userMessageProjectionStripsEachPiImageHintAfterAttachedFilesBlock(_ hint: String) {
+        let typed = "look at this screenshot"
+        let echo = """
+        \(typed)
+
+        Attached files:
+        - screenshot.png: .pi/attachments/s1/t1/screenshot.png
+          MIME: image/png
+          Size: 2 MB
+
+        \(hint)
+        """
+        #expect(UserMessageTextProjection.visibleText(from: echo) == typed)
+        #expect(UserMessageTextProjection.comparableText(echo) == typed)
+    }
+
+    @Test func userMessageProjectionStripsMultiplePiImageHintsAfterAttachedFilesBlock() {
+        let typed = "look at this screenshot"
+        let echo = """
+        \(typed)
+
+        Attached files:
+        - screenshot.png: .pi/attachments/s1/t1/screenshot.png
+
+        [Image converted from image/jpeg to image/png.]
+        [Image: original 1206x2622, displayed at 920x2000. Multiply coordinates by 1.31 to map to original image.]
+        [Image omitted: could not be resized below the inline image size limit.]
+        """
+        #expect(UserMessageTextProjection.visibleText(from: echo) == typed)
+        #expect(UserMessageTextProjection.comparableText(echo) == typed)
+    }
+
+    @Test func userMessageProjectionMatchesMarkerRowToHintedAttachmentEcho() {
+        let typed = "look at this screenshot"
+        let optimistic = """
+        [[oppi-attachments:b:photos=1]]
+        \(typed)
+
+        Attached files:
+        - screenshot.png: .pi/attachments/s1/t1/screenshot.png
+        """
+        let echo = """
+        \(typed)
+
+        Attached files:
+        - screenshot.png: .pi/attachments/s1/t1/screenshot.png
+
+        [Image: original 1206x2622, displayed at 920x2000. Multiply coordinates by 1.31 to map to original image.]
+        """
+        let reducer = TimelineReducer()
+        reducer.appendUserMessage(
+            optimistic,
+            images: [ImageAttachment(data: "AAAA", mimeType: "image/png")]
+        )
+
+        #expect(UserMessageTextProjection.comparableText(optimistic) == typed)
+        #expect(UserMessageTextProjection.comparableText(echo) == typed)
+        #expect(reducer.hasUserMessage(matching: echo))
+        #expect(!reducer.hasUserMessage(matching: "ship the fix"))
+    }
+
+    @Test func imageOnlyHintEchoKeepsOptimisticImageRow() {
+        let image = ImageAttachment(data: "AAAA", mimeType: "image/png")
+        let optimistic = """
+        [[oppi-attachments:b:photos=1]]
+        Attached files:
+        - screenshot.png: .pi/attachments/s1/t1/screenshot.png
+        """
+        let echo = """
+        Attached files:
+        - screenshot.png: .pi/attachments/s1/t1/screenshot.png
+
+        [Image: original 1206x2622, displayed at 920x2000. Multiply coordinates by 1.31 to map to original image.]
+        [Image converted from image/jpeg to image/png.]
+        [Image omitted: could not be resized below the inline image size limit.]
+        """
+        let reducer = TimelineReducer()
+        let optimisticID = reducer.appendUserMessage(optimistic, images: [image])
+        #expect(reducer.hasUserMessage(matching: echo))
+
+        if !reducer.hasUserMessage(matching: echo) {
+            reducer.appendUserMessage(echo)
+        }
+
+        #expect(reducer.items.count == 1)
+        guard case .userMessage(let id, let text, let images, _) = reducer.items[0] else {
+            Issue.record("Expected the optimistic image row to remain")
+            return
+        }
+        #expect(id == optimisticID)
+        #expect(text == optimistic)
+        #expect(images == [image])
+    }
+
+    @Test func historyReloadDoesNotReappendCleanOptimisticRowWhenTraceHasImageHints() {
+        let typed = "look at this screenshot"
+        let optimistic = """
+        [[oppi-attachments:b:photos=1]]
+        \(typed)
+
+        Attached files:
+        - screenshot.png: .pi/attachments/s1/t1/screenshot.png
+        """
+        let echo = """
+        \(typed)
+
+        Attached files:
+        - screenshot.png: .pi/attachments/s1/t1/screenshot.png
+
+        [Image: original 1206x2622, displayed at 920x2000. Multiply coordinates by 1.31 to map to original image.]
+        """
+        let reducer = TimelineReducer()
+        let optimisticID = reducer.appendUserMessage(
+            optimistic,
+            images: [ImageAttachment(data: "AAAA", mimeType: "image/png")]
+        )
+        reducer.appendUserMessage("ship the fix")
+        reducer.loadSession([
+            TraceEvent(
+                id: "trace-user",
+                type: .user,
+                timestamp: "2025-01-01T00:00:00.000Z",
+                text: echo
+            )
+        ])
+
+        let userRows: [(id: String, text: String)] = reducer.items.compactMap { item in
+            guard case .userMessage(let id, let text, _, _) = item else { return nil }
+            return (id, text)
+        }
+        #expect(userRows.count == 2)
+        #expect(userRows[0].id == "trace-user")
+        #expect(!userRows.map(\.id).contains(optimisticID))
+        #expect(UserMessageTextProjection.comparableText(userRows[0].text) == typed)
+        #expect(userRows[1].text == "ship the fix")
+    }
+
+    @Test func userMessageProjectionStripsEveryImageHintInAMultiImageSend() {
+        let typed = "compare these screenshots"
+        let echo = """
+        \(typed)
+
+        Attached files:
+        - one.png: .pi/attachments/s1/t1/one.png
+          MIME: image/png
+          Size: 1 MB
+        - two.jpg: .pi/attachments/s1/t1/two.jpg
+          MIME: image/jpeg
+          Size: 2 MB
+        - three.png: .pi/attachments/s1/t1/three.png
+
+        [Image converted from image/jpeg to image/png.]
+        [Image: original 1206x2622, displayed at 920x2000. Multiply coordinates by 1.31 to map to original image.]
+        [Image: original 800x600, displayed at 800x600. Multiply coordinates by 1.00 to map to original image.]
+        [Image omitted: could not be resized below the inline image size limit.]
+        [Image: future wording that is still an image hint.]
+        """
+        #expect(UserMessageTextProjection.visibleText(from: echo) == typed)
+        #expect(UserMessageTextProjection.comparableText(echo) == typed)
+        #expect(
+            UserMessageTextProjection.attachmentPaths(from: echo) == [
+                ".pi/attachments/s1/t1/one.png",
+                ".pi/attachments/s1/t1/two.jpg",
+                ".pi/attachments/s1/t1/three.png",
+            ]
+        )
+
+        let reducer = TimelineReducer()
+        let images = [
+            ImageAttachment(data: "one", mimeType: "image/png"),
+            ImageAttachment(data: "two", mimeType: "image/jpeg"),
+            ImageAttachment(data: "three", mimeType: "image/png"),
+        ]
+        let optimisticID = reducer.appendUserMessage(typed, images: images)
+        #expect(reducer.hasUserMessage(matching: echo))
+        #expect(reducer.items.count == 1)
+        guard case .userMessage(let id, _, let keptImages, _) = reducer.items[0] else {
+            Issue.record("Expected the optimistic multi-image row to remain")
+            return
+        }
+        #expect(id == optimisticID)
+        #expect(keptImages == images)
+    }
+
+    @Test func distinctImageOnlySendsDoNotCollapse() {
+        let first = """
+        Attached files:
+        - one.png: .pi/attachments/s1/t1/one.png
+
+        [Image: original 100x100, displayed at 100x100. Multiply coordinates by 1.00 to map to original image.]
+        """
+        let second = """
+        Attached files:
+        - two.png: .pi/attachments/s1/t2/two.png
+
+        [Image: future model note.]
+        """
+        #expect(UserMessageTextProjection.comparableText(first) == ".pi/attachments/s1/t1/one.png")
+        #expect(UserMessageTextProjection.comparableText(second) == ".pi/attachments/s1/t2/two.png")
+        #expect(UserMessageTextProjection.comparableText(first) != UserMessageTextProjection.comparableText(second))
+
+        let reducer = TimelineReducer()
+        reducer.appendUserMessage(first, images: [ImageAttachment(data: "one", mimeType: "image/png")])
+        #expect(!reducer.hasUserMessage(matching: second))
+        reducer.appendUserMessage(second, images: [ImageAttachment(data: "two", mimeType: "image/png")])
+        reducer.loadSession([
+            TraceEvent(id: "trace-one", type: .user, timestamp: "2025-01-01T00:00:00.000Z", text: first)
+        ])
+
+        let userTexts: [String] = reducer.items.compactMap { item in
+            guard case .userMessage(_, let text, _, _) = item else { return nil }
+            return text
+        }
+        #expect(userTexts.count == 2)
+        #expect(userTexts[0] == first)
+        #expect(userTexts[1] == second)
+    }
+
+    @Test func rewrittenEchoWithTheSameImagesDoesNotNeedASecondRow() {
+        let optimistic = """
+        look at both
+
+        Attached files:
+        - one.png: .pi/attachments/s1/t1/one.png
+        - two.png: .pi/attachments/s1/t1/two.png
+        """
+        let echo = """
+        an extension rewrote the prompt
+
+        Attached files:
+        - one.png: .pi/attachments/s1/t1/one.png
+        - two.png: .pi/attachments/s1/t1/two.png
+
+        [Image: future wording.]
+        """
+        let reducer = TimelineReducer()
+        let images = [
+            ImageAttachment(data: "one", mimeType: "image/png"),
+            ImageAttachment(data: "two", mimeType: "image/png"),
+        ]
+        reducer.appendUserMessage(optimistic, images: images)
+        #expect(!reducer.hasUserMessage(matching: echo))
+        #expect(reducer.hasLatestImageUserMessage(matchingAttachmentPathsIn: echo))
+        #expect(reducer.items.count == 1)
+    }
+
+    @Test func userMessageProjectionDoesNotStripNonHintSuffixesOrBareAttachedFilesHeadings() {
+        let arbitraryBracket = """
+        See the note.
+
+        Attached files:
+        - screenshot.png: .pi/attachments/s1/t1/screenshot.png
+
+        [Note: keep this user note visible.]
+        """
+        #expect(UserMessageTextProjection.visibleText(from: arbitraryBracket) == arbitraryBracket)
+
+        let fileBlock = """
+        Keep the file block.
+
+        Attached files:
+        - screenshot.png: .pi/attachments/s1/t1/screenshot.png
+
+        <file name="screenshot.png">
+        [Image: original 1206x2622, displayed at 920x2000. Multiply coordinates by 1.31 to map to original image.]
+        </file>
+        """
+        #expect(UserMessageTextProjection.visibleText(from: fileBlock) == fileBlock)
+
+        let bareHeading = """
+        Attached files:
+        look at the screenshot
+        [Image: original 1206x2622, displayed at 920x2000. Multiply coordinates by 1.31 to map to original image.]
+        """
+        #expect(UserMessageTextProjection.visibleText(from: bareHeading) == bareHeading)
+
+        let leadingHint = """
+        [Image: original 1206x2622, displayed at 920x2000. Multiply coordinates by 1.31 to map to original image.]
+
+        Please inspect this.
+
+        Attached files:
+        - screenshot.png: .pi/attachments/s1/t1/screenshot.png
+        """
+        #expect(
+            UserMessageTextProjection.visibleText(from: leadingHint)
+                == """
+                [Image: original 1206x2622, displayed at 920x2000. Multiply coordinates by 1.31 to map to original image.]
+
+                Please inspect this.
+                """
+        )
+    }
+
     @Test func retryStartRendersAsError() {
         let reducer = TimelineReducer()
         reducer.process(.retryStart(sessionId: "s1", attempt: 1, maxAttempts: 3, delayMs: 2000, errorMessage: "rate limit"))

@@ -302,6 +302,44 @@ struct PendingFileReferenceTests {
         #expect(parsed.pathPills.map { $0.label } == ["image-1.jpg"])
     }
 
+    @Test func attachmentPresentationDropsImageHintSuffixAndKeepsAttachmentPills() {
+        let raw = """
+        look at this screenshot
+
+        Attached files:
+        - screenshot.png: .pi/attachments/s1/t1/screenshot.png
+          MIME: image/png
+          Size: 2 MB
+
+        [Image converted from image/jpeg to image/png.]
+        [Image: original 1206x2622, displayed at 920x2000. Multiply coordinates by 1.31 to map to original image.]
+        [Image omitted: could not be resized below the inline image size limit.]
+        """
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+
+        #expect(parsed.visibleText == "look at this screenshot")
+        #expect(parsed.pathPills.map(\.path) == [".pi/attachments/s1/t1/screenshot.png"])
+        #expect(parsed.pathPills.map(\.label) == ["screenshot.png"])
+
+        let timeline = UserMessageAttachmentPresentation.makeTimelineText(
+            text: raw,
+            uploadedAttachments: [
+                ChatAttachmentRef(
+                    type: "attachment",
+                    id: "att-shot",
+                    source: .upload,
+                    name: "screenshot.png",
+                    mimeType: "image/png",
+                    sizeBytes: 3,
+                    sha256: nil,
+                    kind: nil,
+                    workspacePath: ".pi/attachments/s1/t1/screenshot.png"
+                )
+            ]
+        )
+        #expect(timeline == raw)
+    }
+
     @Test func attachmentPresentationHandlesColonInAttachmentNameAndPath() {
         let raw = "review this\n\nAttached files:\n- notes: final.txt: .pi/attachments/demo/notes: final.txt"
         let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)

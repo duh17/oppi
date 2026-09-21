@@ -1285,7 +1285,8 @@ final class ChatSessionManager {
         case .messageEnd(let role, let content, _, _):
             if role == "user", !content.isEmpty,
                !suppressTimelineMutationWhilePaused(),
-               !reducer.hasUserMessage(matching: content) {
+               !reducer.hasUserMessage(matching: content),
+               !reducer.hasLatestImageUserMessage(matchingAttachmentPathsIn: content) {
                 reducer.appendUserMessage(content)
             }
 

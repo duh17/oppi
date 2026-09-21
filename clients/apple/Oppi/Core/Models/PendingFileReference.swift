@@ -520,7 +520,9 @@ enum UserMessageAttachmentPresentation {
         }
 
         let pathPills = block.bodyLines.compactMap { line -> UserMessagePathPill? in
-            guard let path = UserMessageTextProjection.attachedFilePath(from: line) else {
+            // Hint suffixes are not entries. Pills come only from generated paths.
+            guard line.hasPrefix("- "),
+                  let path = UserMessageTextProjection.attachedFilePath(from: line) else {
                 return nil
             }
             return UserMessagePathPill(kind: .uploadedFile, path: path)

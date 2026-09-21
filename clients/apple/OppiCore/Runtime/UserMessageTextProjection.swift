@@ -3,8 +3,9 @@ import Foundation
 /// Platform-neutral projection of transport/user-message text for timeline matching.
 ///
 /// Composer-only attachment metadata can be prepended as an `[[oppi-attachments:...]]`
-/// marker or appended as plain-text file reference blocks. The reducer only needs
-/// the user-visible text when deduping optimistic messages against trace history.
+/// marker or appended as plain-text file reference blocks. Pi may append model-facing
+/// image hints after that block. The reducer only needs the user-visible text when
+/// deduping optimistic messages against trace history.
 enum UserMessageTextProjection {
     private static let markerPrefix = "[[oppi-attachments:"
     private static let markerSuffix = "]]"
@@ -14,12 +15,26 @@ enum UserMessageTextProjection {
 
     static func comparableText(_ rawText: String) -> String {
         let visible = visibleText(from: rawText)
-        guard visible.hasPrefix("/skill:") else { return visible }
-        return visible
-            .split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
+        let normalized = visible.hasPrefix("/skill:")
+            ? visible
+                .split(whereSeparator: \.isNewline)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            : visible
+        if !normalized.isEmpty { return normalized }
+        // Image-only sends have no typed text. Paths keep two screenshots distinct
+        // while the same send's echo still matches.
+        return attachmentPaths(from: rawText).joined(separator: "\n")
+    }
+
+    static func attachmentPaths(from rawText: String) -> [String] {
+        let withoutMarker = stripMarker(from: rawText.trimmingCharacters(in: .newlines))
+        guard let block = splitTrailingAttachedFilesBlock(from: withoutMarker) else { return [] }
+        return block.bodyLines.compactMap { line in
+            guard line.hasPrefix("- ") else { return nil }
+            return attachedFilePath(from: line)
+        }
     }
 
     static func visibleText(from rawText: String) -> String {
@@ -181,25 +196,79 @@ enum UserMessageTextProjection {
     static func splitTrailingAttachedFilesBlock(
         from text: String
     ) -> (visibleText: String, bodyLines: [String])? {
-        splitTrailingBlock(header: attachedFilesHeader, from: text) { lines in
-            var hasEntry = false
-            for line in lines {
-                if line.hasPrefix("- ") {
-                    guard attachedFilePath(from: line) != nil else { return false }
-                    hasEntry = true
-                    continue
-                }
-
-                let metadataPrefixes = ["  MIME: ", "  Size: "]
-                guard hasEntry,
-                      let prefix = metadataPrefixes.first(where: { line.hasPrefix($0) }),
-                      !line.dropFirst(prefix.count)
-                        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    return false
-                }
-            }
-            return hasEntry
+        let content = text.trimmingCharacters(in: .newlines)
+        let lines = content.components(separatedBy: "\n")
+        guard let headerIndex = lines.lastIndex(of: attachedFilesHeader) else {
+            return nil
         }
+        if headerIndex > lines.startIndex {
+            let precedingLine = lines[lines.index(before: headerIndex)]
+            guard precedingLine.trimmingCharacters(in: .whitespaces).isEmpty else {
+                return nil
+            }
+        }
+
+        let afterHeader = Array(lines[lines.index(after: headerIndex)...])
+        guard let bodyLines = attachedFileBodyLines(allowingImageHintSuffix: afterHeader) else {
+            return nil
+        }
+
+        let visibleText = lines[..<headerIndex]
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (visibleText, bodyLines)
+    }
+
+    /// The generated block ends at the last path entry or MIME/Size line.
+    /// Pi's image hints follow on their own lines and are not block grammar.
+    private static func attachedFileBodyLines(allowingImageHintSuffix lines: [String]) -> [String]? {
+        var bodyLines: [String] = []
+        var index = 0
+        var hasEntry = false
+        while index < lines.count {
+            let line = lines[index]
+            if line.hasPrefix("- ") {
+                guard attachedFilePath(from: line) != nil else { return nil }
+                hasEntry = true
+                bodyLines.append(line)
+                index += 1
+                continue
+            }
+
+            let metadataPrefixes = ["  MIME: ", "  Size: "]
+            if hasEntry,
+               let prefix = metadataPrefixes.first(where: { line.hasPrefix($0) }),
+               !line.dropFirst(prefix.count)
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                bodyLines.append(line)
+                index += 1
+                continue
+            }
+            break
+        }
+        guard hasEntry else { return nil }
+
+        let suffix = Array(lines[index...])
+        guard suffix.isEmpty || isPiImageHintSuffix(suffix) else { return nil }
+        return bodyLines
+    }
+
+    private static func isPiImageHintSuffix(_ lines: [String]) -> Bool {
+        guard lines.count >= 2,
+              lines[0].trimmingCharacters(in: .whitespaces).isEmpty else {
+            return false
+        }
+        let hints = lines.dropFirst()
+        return hints.allSatisfy(isPiImageHintLine)
+    }
+
+    /// Any `[Image ...]` line is a model-facing hint. Wording can change;
+    /// a non-image bracket or a `<file>` wrapper is not a hint.
+    private static func isPiImageHintLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("[Image"), trimmed.hasSuffix("]") else { return false }
+        let body = trimmed.dropFirst("[Image".count).dropLast()
+        return !body.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     private static func isSelectedCommitBody(_ lines: [String]) -> Bool {

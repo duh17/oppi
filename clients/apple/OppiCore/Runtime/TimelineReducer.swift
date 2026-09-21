@@ -458,15 +458,17 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             if existingUserMessages.isEmpty {
                 orphanedUserMessages = []
             } else {
-                let traceUserTexts: Set<String> = Set(events.compactMap { event in
-                    guard event.type == .user else { return nil }
-                    return UserMessageTextProjection.comparableText(
-                        UserMessageImageExtractor.extractImagesFromText(event.text ?? "").0
-                    )
-                })
+                var remainingTraceTexts = events.reduce(into: [String: Int]()) { counts, event in
+                    guard event.type == .user else { return }
+                    let key = Self.comparableTimelineUserText(event.text ?? "")
+                    counts[key, default: 0] += 1
+                }
                 orphanedUserMessages = existingUserMessages.filter { item in
                     guard case .userMessage(_, let text, _, _) = item else { return false }
-                    return !traceUserTexts.contains(text)
+                    let key = Self.comparableTimelineUserText(text)
+                    guard let count = remainingTraceTexts[key], count > 0 else { return true }
+                    remainingTraceTexts[key] = count - 1
+                    return false
                 }
             }
         }
@@ -1427,16 +1429,46 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     // MARK: - User Message (from local prompt)
 
+    /// Same projection used for optimistic rows and trace rows during orphan reload.
+    private static func comparableTimelineUserText(_ text: String) -> String {
+        UserMessageTextProjection.comparableText(
+            UserMessageImageExtractor.extractImagesFromText(text).0
+        )
+    }
+
     /// Check if a user message with the given text already exists in the timeline.
     /// Used to avoid duplicating the user bubble when a server-side prompt is echoed back.
     func hasUserMessage(matching text: String) -> Bool {
         let comparable = UserMessageTextProjection.comparableText(text)
+        if comparable.isEmpty {
+            guard let lastUserText = items.reversed().lazy.compactMap({ item -> String? in
+                guard case .userMessage(_, let existingText, _, _) = item else { return nil }
+                return existingText
+            }).first else {
+                return false
+            }
+            return UserMessageTextProjection.comparableText(lastUserText).isEmpty
+        }
         return items.contains { item in
             if case .userMessage(_, let existingText, _, _) = item {
                 return UserMessageTextProjection.comparableText(existingText) == comparable
             }
             return false
         }
+    }
+
+    /// A rewritten echo that keeps the same generated files is still this send.
+    func hasLatestImageUserMessage(matchingAttachmentPathsIn text: String) -> Bool {
+        let echoPaths = UserMessageTextProjection.attachmentPaths(from: text)
+        guard !echoPaths.isEmpty,
+              let last = items.reversed().lazy.compactMap({ item -> (String, [ImageAttachment])? in
+                  guard case .userMessage(_, let existingText, let images, _) = item else { return nil }
+                  return (existingText, images)
+              }).first,
+              !last.1.isEmpty else {
+            return false
+        }
+        return UserMessageTextProjection.attachmentPaths(from: last.0) == echoPaths
     }
 
     @discardableResult
