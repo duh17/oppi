@@ -21,7 +21,7 @@ struct MetalOrbScreenshotPreview: View {
                 Text("Metal activity and dictation orbs")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(.themeFg)
-                Text("Working rows stay 20 pt. Dictation stays 44/32 pt. Levels are synthetic, not a microphone. Orbs keep moving at quiet.")
+                Text("Working rows stay 20 pt. Dictation stays 44/32 pt. Levels are synthetic, not a microphone. Dictation orbs stay still at quiet.")
                     .font(.footnote)
                     .foregroundStyle(.themeComment)
 

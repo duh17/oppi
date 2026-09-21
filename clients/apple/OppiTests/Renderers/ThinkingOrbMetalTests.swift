@@ -460,8 +460,8 @@ struct ThinkingOrbPixelMotionTests {
                     "pixels \(style.rawValue) \(Int(size))pt@3x idleChanged=\(idleChanged) identical-phase voiceChanged=\(voiceChanged) opaque=\(quiet0.opaqueCount())/\(speaking.opaqueCount())"
                 )
                 #expect(
-                    idleChanged >= 250,
-                    "\(style.rawValue) \(Int(size))pt 1s idle changed \(idleChanged)px"
+                    idleChanged == 0,
+                    "\(style.rawValue) \(Int(size))pt unvoiced frames must match; idle changed \(idleChanged)px"
                 )
                 #expect(
                     voiceChanged >= 180,

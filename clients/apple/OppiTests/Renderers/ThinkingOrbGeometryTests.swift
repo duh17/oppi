@@ -195,51 +195,89 @@ struct ThinkingOrbGeometryTests {
         for (left, right) in zip(quiet.dots, loud.dots) {
             let delta = hypot(left.x - right.x, left.y - right.y)
             maxDelta = max(maxDelta, delta)
-            // Depth shading can nudge radius slightly; voice must not pulse size.
-            #expect(abs(left.r - right.r) < 0.08)
+            // Depth shading can nudge radius slightly when the still pose and
+            // voiced sash sit at different z; voice must not pulse size.
+            #expect(abs(left.r - right.r) < 0.12)
         }
         #expect(maxDelta > 1.5)
         #expect(maxDelta < 10)
     }
 
-    @Test func quietDictationMotionIsPerceptibleAtProductionSizes() {
+    @Test func unvoicedDictationGeometryMatchesReduceMotionStillPose() {
+        let stillT = ThinkingOrbDisplayPolicy.reduceMotionTime
+        #expect(stillT == 0.6)
         for style in [ThinkingOrbStyle.composing, .breathing] {
             for sizeClass in [ThinkingOrbSizeClass.dictationExpanded, .dictationStandard] {
                 let size = sizeClass.designSize
-                let speed = ThinkingOrbPresets.resolve(style, sizeClass).speed
-                let t0 = 0.7 * speed
-                let t1 = 1.7 * speed
-                let first = ThinkingOrbGeometry.frame(
+                let still = ThinkingOrbGeometry.frame(
                     style: style,
                     sizeClass: sizeClass,
                     size: size,
-                    geometryTime: t0,
+                    geometryTime: stillT,
                     audioLevel: 0,
                     zSorted: false
                 )
-                let second = ThinkingOrbGeometry.frame(
+                #expect(!still.dots.isEmpty)
+                for time in [0.0, 0.7, 1.7, 2.4, 8.0, 30.0, 120.0] {
+                    let current = ThinkingOrbGeometry.frame(
+                        style: style,
+                        sizeClass: sizeClass,
+                        size: size,
+                        geometryTime: time,
+                        audioLevel: 0,
+                        zSorted: false
+                    )
+                    #expect(current.dots.count == still.dots.count)
+                    let motion = orbPointDisplacement(still, current)
+                    print(
+                        "silence \(style.rawValue) \(Int(size))pt t=\(time) mean/max \(motion.mean)/\(motion.max)pt"
+                    )
+                    #expect(
+                        motion.max == 0,
+                        "\(style.rawValue) \(Int(size))pt unvoiced t=\(time) moved \(motion.max)pt from still t=\(stillT)"
+                    )
+                }
+            }
+        }
+    }
+
+    @Test func smootherReleaseConvergesDictationOrbsToStillPose() {
+        let stillT = ThinkingOrbDisplayPolicy.reduceMotionTime
+        var smoother = VoiceLevelSmoother()
+        for _ in 0..<30 {
+            _ = smoother.step(raw: 0.45, dt: 1.0 / 60.0)
+        }
+        var released: Float = 1
+        for _ in 0..<120 {
+            released = smoother.step(raw: 0, dt: 1.0 / 60.0)
+        }
+        #expect(released < 0.01)
+        for style in [ThinkingOrbStyle.composing, .breathing] {
+            for sizeClass in [ThinkingOrbSizeClass.dictationExpanded, .dictationStandard] {
+                let size = sizeClass.designSize
+                let still = ThinkingOrbGeometry.frame(
                     style: style,
                     sizeClass: sizeClass,
                     size: size,
-                    geometryTime: t1,
+                    geometryTime: stillT,
                     audioLevel: 0,
                     zSorted: false
                 )
-                let motion = orbPointDisplacement(first, second)
+                let after = ThinkingOrbGeometry.frame(
+                    style: style,
+                    sizeClass: sizeClass,
+                    size: size,
+                    geometryTime: 8,
+                    audioLevel: released,
+                    zSorted: false
+                )
+                let motion = orbPointDisplacement(still, after)
                 print(
-                    "quiet \(style.rawValue) \(Int(size))pt mean/max \(motion.mean)/\(motion.max)pt"
+                    "release \(style.rawValue) \(Int(size))pt audio=\(released) mean/max \(motion.mean)/\(motion.max)pt"
                 )
                 #expect(
-                    motion.mean >= 1.2,
-                    "\(style.rawValue) \(Int(size))pt 1s quiet mean \(motion.mean)pt"
-                )
-                #expect(
-                    motion.max >= 2.0,
-                    "\(style.rawValue) \(Int(size))pt 1s quiet max \(motion.max)pt"
-                )
-                #expect(
-                    motion.max < 12,
-                    "\(style.rawValue) \(Int(size))pt 1s quiet max \(motion.max)pt is violent"
+                    motion.max < 0.2,
+                    "\(style.rawValue) \(Int(size))pt release residual \(motion.max)pt at audio=\(released)"
                 )
             }
         }

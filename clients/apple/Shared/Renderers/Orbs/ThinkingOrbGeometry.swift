@@ -643,6 +643,8 @@ private enum ThinkingOrbBuilders {
 
     /// Oppi's full-sphere Breathing, rather than the original face-on ring.
     /// Fixed material directions keep both the breath and voice flex free of spin.
+    /// Unvoiced frames hold the Reduce Motion still radius; live audio gates
+    /// only the time-dependent breath/flex amplitude.
     static func breathing(
         _ size: Double,
         _ t: Double,
@@ -651,8 +653,11 @@ private enum ThinkingOrbBuilders {
     ) -> ThinkingOrbFrame {
         let R = size * 0.39
         let rs = ThinkingOrbGeometry.radiusScale(size, 0.6)
-        let breath = 0.88 + 0.12 * sin(t * 0.82)
+        let stillT = ThinkingOrbDisplayPolicy.reduceMotionTime
         let visualVoice = 1 - exp(-voice * 3.2)
+        let breathStill = 0.88 + 0.12 * sin(stillT * 0.82)
+        let breathLive = 0.88 + 0.12 * sin(t * 0.82)
+        let breath = breathStill + visualVoice * (breathLive - breathStill)
         var dots: [ThinkingOrbDot] = []
         dots.reserveCapacity(dotCount)
         for i in 0..<dotCount {
@@ -726,6 +731,7 @@ private enum ThinkingOrbBuilders {
         let voiceAmp = 0.36
         let mid = Double(lanes - 1) / 2
         let visualVoice = 1 - exp(-voice * 3.2)
+        let stillT = ThinkingOrbDisplayPolicy.reduceMotionTime
         dots.reserveCapacity(dots.count + lanes * ThinkingOrbGeometry.below(segs))
         for w in 0..<lanes {
             let fw = Double(w)
@@ -736,9 +742,14 @@ private enum ThinkingOrbBuilders {
                 // Two traveling bending modes, with a small phase lag across
                 // the sash: neighboring strands flex together without collapsing
                 // into one loop. No tangential advection or accumulated spin.
+                // Quiet holds the Reduce Motion still pose; voice gates only
+                // the traveling amplitude, not an unbounded clock.
                 let lag = fw * 0.22
-                let wob = 0.16 * sin(a * 3 - t * 1.7 + lag)
+                let wobStill = 0.16 * sin(a * 3 - stillT * 1.7 + lag)
+                    + 0.07 * sin(a * 5 + stillT * 1.1)
+                let wobLive = 0.16 * sin(a * 3 - t * 1.7 + lag)
                     + 0.07 * sin(a * 5 + t * 1.1)
+                let wob = wobStill + visualVoice * (wobLive - wobStill)
                 // Voice changes bend amplitude, never the clock or orientation.
                 let speech = visualVoice * voiceAmp * sin(a * 2 - t * 0.72 + lag)
                 let off = laneOff + wob + speech
