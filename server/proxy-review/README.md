@@ -1,6 +1,8 @@
-# Reverse-proxy and App Review harness
+# Isolated App Review reverse-proxy stack
 
-Isolated Docker proof for issue 39. Do not reuse `server/e2e/docker-compose.e2e.yml`.
+Disposable Oppi origin plus Caddy edge for App Review. Pairing is `oppi pair` on the origin. There is no mint sidecar and no `/r/<secret>` enrollment URL.
+
+Do not reuse `server/e2e/docker-compose.e2e.yml`.
 
 - Project/container/network/volume prefix: `oppi-rp39-`
 - Edge ports bind `127.0.0.1` only and never 7749, 7750, 17760, 8888, or 13001
@@ -8,14 +10,39 @@ Isolated Docker proof for issue 39. Do not reuse `server/e2e/docker-compose.e2e.
 - Writable state is named volumes; checkout binds are read-only fixtures
 - No `docker.sock`, no home mounts, no global CA or `/etc/hosts` edits
 - Model lane: `oppi-rp39-deterministic` (never oMLX, ds4, or mlx-serve)
+- Four-way matrix modes set `proxy.trustedPeers` even for verified-HTTPS origins so pairing rate limits use overwritten XFF (not skip-verify); attacker and legitimate client both go through the same edge with CA+hostname
+
+## Bring up
+
+From `server/proxy-review/`, provide a built origin image, a loopback HTTPS edge port, and a certs directory with `edge.crt`, `edge.key`, and `ca.crt` for `oppi.rp39.test`:
+
+```bash
+export RP39_ORIGIN_IMAGE=oppi-rp39-origin:test
+export RP39_EDGE_PORT=18443
+export RP39_CERTS_DIR=/path/to/certs
+
+docker compose -f docker-compose.review.yml up -d
+```
+
+Origin seeds a synthetic workspace named `review` and skips `oppi init` when `/data/oppi/config.json` already exists so restarts preserve pairing. `Caddyfile.review` terminates Oppi HTTPS only.
+
+## Pair for App Review notes
+
+```bash
+docker compose -f docker-compose.review.yml exec origin oppi pair --json
+```
+
+Paste the `oppi://connect` URL into App Review notes. `oppi pair` remains the pairing primitive.
+
+## Re-pair
+
+If Review asks again, use Resolution Center: run `oppi pair` on origin and send the new `oppi://connect` URL. Do not add a stable enrollment link.
+
+## Automated proof
+
+Positive TLS clients must use `curl --cacert` / Node `ca` + `servername`. `curl -k` and `rejectUnauthorized: false` are not success proof.
 
 ```bash
 cd server
 env -u NO_COLOR -u FORCE_COLOR GIT_CONFIG_GLOBAL=/dev/null npm run test:proxy-review
 ```
-
-Positive TLS clients must use `curl --cacert` / Node `ca` + `servername`. `curl -k` and `rejectUnauthorized: false` are not success proof.
-
-The mint sidecar shares the origin data volume and may use the owner socket on loopback. `run-mint-sidecar.mjs` loads the TypeScript mint server from the built image. `POST /r/<secret>/invalidate-invite` invalidates the outstanding pairing invite so the next GET remints; it does not disable the stable path. To disable the stable link, stop the sidecar or rotate `REVIEW_MINT_SECRET`. Bind is loopback unless `REVIEW_MINT_ALLOW_NON_LOOPBACK=1`. Reuse requires that cached pairing token to still be the persisted outstanding token. The Oppi public proxy must not forward `/r/<secret>` or Unix-socket paths. Four-way matrix modes set `proxy.trustedPeers` even for verified-HTTPS origins so pairing rate limits use overwritten XFF (not skip-verify); attacker and legitimate client both go through the same edge with CA+hostname.
-
-Packaged review recipe: `docker-compose.review.yml`, `Caddyfile.review` (Oppi HTTPS only), and `Caddyfile.review-mint` (loopback mint ingress). Origin seeds a synthetic workspace named `review` and skips `oppi init` when `/data/oppi/config.json` already exists so restarts preserve pairing. Reviewers open `https://review.rp39.test:<RP39_MINT_PORT>/r/<secret>` on the mint ingress; that site 404s every other path and never publishes Oppi `:7750` or the owner socket.

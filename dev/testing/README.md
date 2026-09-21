@@ -61,7 +61,7 @@ For Apple `container` installations without the `container cp` plugin, including
 
 Writable host bind mounts in compose files and scripted container runs are rejected by `server/scripts/check-compose-mounts.ts`, which runs as part of `npm run check` (`npm run mounts:check` standalone).
 
-Isolated reverse-proxy and App Review Docker proof is `cd server && npm run test:proxy-review` (`server/proxy-review/`). It does not reuse `server/e2e/docker-compose.e2e.yml`.
+Isolated reverse-proxy Docker proof is `cd server && npm run test:proxy-review` (`server/proxy-review/`). It does not reuse `server/e2e/docker-compose.e2e.yml`.
 
 Server E2E coverage is documented in `server/e2e/README.md`. Prefer native mode for local work; `E2E_NATIVE=1` also suppresses Docker cleanup:
 
