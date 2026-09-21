@@ -232,6 +232,12 @@ export async function getFileIndex(workspaceRoot: string): Promise<FileIndexResp
   return result;
 }
 
+function isMountlessSandboxMain(workspace: Workspace, worktreeId: string): boolean {
+  return (
+    worktreeId === "main" && workspace.runtime === "sandbox" && !workspace.hostMount?.trim()
+  );
+}
+
 export function createWorkspaceFileRoutes(
   ctx: RouteContext,
   helpers: RouteHelpers,
@@ -242,7 +248,11 @@ export function createWorkspaceFileRoutes(
     res: ServerResponse,
   ): string | null {
     const worktreeId = url.searchParams.get("worktreeId")?.trim();
-    if (!worktreeId) {
+    // Mountless sandbox sessions still store worktreeId "main". There is no
+    // git worktree list, so that id is the sandbox host mount, not a missing
+    // checkout. A real unknown worktree, including main on a mountless host
+    // workspace, stays 404 and must not fall through to the user home.
+    if (!worktreeId || isMountlessSandboxMain(workspace, worktreeId)) {
       return resolveSdkSessionCwd(workspace);
     }
 

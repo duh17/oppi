@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createWorkspaceFileRoutes } from "../src/routes/workspace-files.js";
 import type { RouteContext } from "../src/routes/types.js";
+import { resolveSdkSessionCwd } from "../src/sdk-backend.js";
 import { SessionTraceService, type SessionTraceServiceDeps } from "../src/session-trace-service.js";
 import type { Session, Workspace } from "../src/types.js";
 import { resolveWorkspaceUserPath } from "../src/workspace-user-path.js";
@@ -153,13 +154,18 @@ describe("sandbox user browse of host-mount artifacts", () => {
   });
 
   describe("workspace browse, directory list, and file index", () => {
-    async function dispatchWorkspace(workspace: Workspace, method: string, path: string) {
+    async function dispatchWorkspace(
+      workspace: Workspace,
+      method: string,
+      path: string,
+      search = "",
+    ) {
       const dispatch = createWorkspaceFileRoutes(
         {
           storage: {
             getWorkspace: (workspaceId: string) =>
               workspaceId === workspace.id ? workspace : undefined,
-            getDataDir: () => workspace.hostMount,
+            getDataDir: () => workspace.hostMount ?? "",
           },
         } as unknown as RouteContext,
         createRouteHelpers(),
@@ -168,7 +174,7 @@ describe("sandbox user browse of host-mount artifacts", () => {
       const handled = await dispatch({
         method,
         path,
-        url: new URL(`http://localhost${path}`),
+        url: new URL(`http://localhost${path}${search}`),
         req: { headers: {} } as never,
         res: res as never,
       });
@@ -206,6 +212,91 @@ describe("sandbox user browse of host-mount artifacts", () => {
       expect(index.res.statusCode).toBe(200);
       const body = JSON.parse(index.res.body) as { paths: string[] };
       expect(body.paths).toEqual(expect.arrayContaining(["notes.txt", "reports/foo.png"]));
+    });
+
+    it("serves mountless sandbox files when the session worktree id is main", async () => {
+      const name = `wiki-main-${Date.now()}`;
+      const workspace = makeWorkspace("/tmp/unused-mountless-sandbox", {
+        id: "ws-mountless",
+        name,
+        hostMount: undefined,
+      });
+      const backing = resolveSdkSessionCwd(workspace);
+      tempDirs.push(backing);
+      writeFileSync(join(backing, "demo-tool-rendering-prompt.md"), "sandbox note\n");
+
+      const listing = await dispatchWorkspace(
+        workspace,
+        "GET",
+        `/workspaces/${workspace.id}/contents/`,
+        "?worktreeId=main",
+      );
+      expect(listing.handled).toBe(true);
+      expect(listing.res.statusCode).toBe(200);
+      const body = JSON.parse(listing.res.body) as { entries: Array<{ name: string }> };
+      expect(body.entries.map((entry) => entry.name)).toContain("demo-tool-rendering-prompt.md");
+
+      const file = await dispatchWorkspace(
+        workspace,
+        "HEAD",
+        `/workspaces/${workspace.id}/raw/demo-tool-rendering-prompt.md`,
+        "?worktreeId=main",
+      );
+      expect(file.handled).toBe(true);
+      expect(file.res.statusCode).toBe(200);
+      expect(file.res.headers["Content-Length"]).toBe("13");
+
+      const missing = await dispatchWorkspace(
+        workspace,
+        "GET",
+        `/workspaces/${workspace.id}/contents/`,
+        "?worktreeId=not-a-worktree",
+      );
+      expect(missing.res.statusCode).toBe(404);
+      expect(JSON.parse(missing.res.body)).toEqual({ error: "Worktree not found" });
+    });
+
+    it("keeps a mounted sandbox main id on the host mount", async () => {
+      const name = `wiki-mounted-${Date.now()}`;
+      const slug = name
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "");
+      tempDirs.push(join(homedir(), "sandbox", slug));
+      const hostMount = tempDir("oppi-sandbox-mounted-");
+      writeFileSync(join(hostMount, "only-on-host-mount.txt"), "mounted\n");
+      const workspace = makeWorkspace(hostMount, { id: "ws-mounted", name });
+
+      const listing = await dispatchWorkspace(
+        workspace,
+        "GET",
+        `/workspaces/${workspace.id}/contents/`,
+        "?worktreeId=main",
+      );
+      expect(listing.handled).toBe(true);
+      expect(listing.res.statusCode).toBe(200);
+      const body = JSON.parse(listing.res.body) as { entries: Array<{ name: string }> };
+      expect(body.entries.map((entry) => entry.name)).toContain("only-on-host-mount.txt");
+    });
+
+    it("does not treat a mountless host workspace main id as the user home", async () => {
+      const workspace = makeWorkspace("/tmp/unused-mountless-host", {
+        id: "ws-host-mountless",
+        name: "mountless-host",
+        runtime: "host",
+        hostMount: undefined,
+      });
+
+      const listing = await dispatchWorkspace(
+        workspace,
+        "GET",
+        `/workspaces/${workspace.id}/contents/`,
+        "?worktreeId=main",
+      );
+      expect(listing.handled).toBe(true);
+      expect(listing.res.statusCode).toBe(404);
+      expect(JSON.parse(listing.res.body)).toEqual({ error: "Worktree not found" });
     });
 
     it("rejects /etc/passwd, tilde paths, and a different workspace slug", async () => {
