@@ -19,7 +19,7 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
     private static let defaultCustomInterval: TimeInterval = 0.08
     private static let minCustomInterval: TimeInterval = 0.08
     private static let maxCustomInterval: TimeInterval = 60
-    private static let spinnerSide: CGFloat = 18
+    private static let spinnerSide: CGFloat = 20
 
     private let stackView = UIStackView()
     private let indicatorContainer = UIView()

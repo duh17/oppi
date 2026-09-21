@@ -38,7 +38,7 @@ enum ThinkingOrbStyle: String, CaseIterable, Sendable {
 }
 
 enum ThinkingOrbSizeClass: Equatable, Sendable {
-    /// 18 pt working-row footprint.
+    /// 20 pt working-row footprint.
     case workingCompact
     /// 20 pt settings preview.
     case workingPreview
@@ -49,7 +49,7 @@ enum ThinkingOrbSizeClass: Equatable, Sendable {
 
     var designSize: Double {
         switch self {
-        case .workingCompact: return 18
+        case .workingCompact: return 20
         case .workingPreview: return 20
         case .dictationExpanded: return 32
         case .dictationStandard: return 44
@@ -57,7 +57,7 @@ enum ThinkingOrbSizeClass: Equatable, Sendable {
     }
 
     static func working(side: Double) -> Self {
-        side <= 18 ? .workingCompact : .workingPreview
+        side <= 20 ? .workingCompact : .workingPreview
     }
 
     static func dictation(side: Double) -> Self {

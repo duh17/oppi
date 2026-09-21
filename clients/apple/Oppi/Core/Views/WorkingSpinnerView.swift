@@ -8,7 +8,7 @@ import SwiftUI
 struct WorkingSpinnerView: View {
     let tintColor: Color
     var style: SpinnerStyle = .current
-    var side: CGFloat = 18
+    var side: CGFloat = 20
 
     var body: some View {
         switch style {

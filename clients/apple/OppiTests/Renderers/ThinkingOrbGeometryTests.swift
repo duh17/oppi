@@ -108,31 +108,32 @@ struct ThinkingOrbGeometryTests {
         )
     }
 
-    @Test func compactWorkingFootprintIsEighteenPoints() {
-        #expect(ThinkingOrbSizeClass.workingCompact.designSize == 18)
+    @Test func compactWorkingFootprintIsTwentyPoints() {
+        #expect(ThinkingOrbSizeClass.workingCompact.designSize == 20)
         #expect(ThinkingOrbSizeClass.workingPreview.designSize == 20)
+        #expect(ThinkingOrbSizeClass.working(side: 20) == .workingCompact)
         #expect(ThinkingOrbSizeClass.working(side: 18) == .workingCompact)
         #expect(ThinkingOrbSizeClass.working(side: 16) == .workingCompact)
-        #expect(ThinkingOrbSizeClass.working(side: 20) == .workingPreview)
+        #expect(ThinkingOrbSizeClass.working(side: 24) == .workingPreview)
     }
 
     @Test func workingStylesColorASubsetOfDotsFromThePalette() {
         let working = ThinkingOrbGeometry.frame(
             style: .working,
             sizeClass: .workingCompact,
-            size: 18,
+            size: 20,
             geometryTime: 0.8
         )
         let searching = ThinkingOrbGeometry.frame(
             style: .searching,
             sizeClass: .workingCompact,
-            size: 18,
+            size: 20,
             geometryTime: 1.2
         )
         let solving = ThinkingOrbGeometry.frame(
             style: .solving,
             sizeClass: .workingCompact,
-            size: 18,
+            size: 20,
             geometryTime: 0.4
         )
         let composing = ThinkingOrbGeometry.frame(

@@ -718,7 +718,7 @@ struct MicButtonOrbLayoutTests {
 @Suite("Working indicator metal size")
 @MainActor
 struct WorkingIndicatorMetalSizeTests {
-    @Test func nativeMetalStyleKeepsTheEighteenPointSpinner() {
+    @Test func nativeMetalStyleKeepsTheTwentyPointSpinner() {
         let key = AppPreferenceStore.Appearance.spinnerStyleKey
         let original = UserDefaults.standard.object(forKey: key)
         defer {
@@ -738,7 +738,7 @@ struct WorkingIndicatorMetalSizeTests {
         view.layoutIfNeeded()
         let metal = firstSubview(of: view, type: ThinkingOrbMetalView.self)
         #expect(metal != nil)
-        #expect(metal?.bounds.size == CGSize(width: 18, height: 18))
+        #expect(metal?.bounds.size == CGSize(width: 20, height: 20))
         #expect(metal?.isHidden == false)
     }
 

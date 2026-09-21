@@ -21,11 +21,11 @@ struct MetalOrbScreenshotPreview: View {
                 Text("Metal activity and dictation orbs")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(.themeFg)
-                Text("Working rows stay 18 pt. Dictation stays 44/32 pt. Levels are synthetic, not a microphone. Orbs keep moving at quiet.")
+                Text("Working rows stay 20 pt. Dictation stays 44/32 pt. Levels are synthetic, not a microphone. Orbs keep moving at quiet.")
                     .font(.footnote)
                     .foregroundStyle(.themeComment)
 
-                Text("Working indicators · 18 pt")
+                Text("Working indicators · 20 pt")
                     .font(.headline)
                     .foregroundStyle(.themeFg)
                 HStack(spacing: 18) {
@@ -82,8 +82,8 @@ struct MetalOrbScreenshotPreview: View {
 
     private func workingTile(_ style: SpinnerStyle) -> some View {
         VStack(spacing: 8) {
-            WorkingSpinnerView(tintColor: .themeFg, style: style, side: 18)
-                .frame(width: 18, height: 18)
+            WorkingSpinnerView(tintColor: .themeFg, style: style, side: 20)
+                .frame(width: 20, height: 20)
             Text(style.displayName)
                 .font(.caption)
                 .foregroundStyle(.themeComment)
