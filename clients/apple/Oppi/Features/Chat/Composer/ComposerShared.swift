@@ -745,7 +745,6 @@ enum ComposerShared {
             connection: connection
         )
         manager.setPlaybackInterrupter(playbackInterrupter)
-        manager.setServerDictationTarget(nil)
         return generation
     }
 

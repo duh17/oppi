@@ -127,7 +127,7 @@ struct DictationHintWiringTests {
         await manager.cancelRecording()
     }
 
-    @Test func extensionEditorPrepareOmitsChatVocabularyAndUsesEditorTarget() async throws {
+    @Test func extensionEditorPrepareOmitsChatVocabularyAndUsesEditorServer() async throws {
         resetHintPreferences()
         defer { resetHintPreferences() }
 
@@ -146,14 +146,9 @@ struct DictationHintWiringTests {
             credentials: chat.credentials,
             connection: chat.connection
         )
-        manager.setServerDictationTarget(
-            ServerDictationTarget(workspaceId: "ws-a", sessionId: "session-a")
-        )
-
         try await manager.startRecording(source: "negative_control")
         #expect(classicProvider.lastContext?.serverCredentials?.host == "chat.example")
         #expect(classicProvider.lastContext?.serverConnection === chat.connection)
-        #expect(classicProvider.lastContext?.serverDictationTarget?.sessionId == "session-a")
         await manager.cancelRecording()
 
         var textBeforeRecording: String?
@@ -189,7 +184,6 @@ struct DictationHintWiringTests {
 
         #expect(classicProvider.lastContext?.serverCredentials?.host == "editor.example")
         #expect(classicProvider.lastContext?.serverConnection === editor.connection)
-        #expect(classicProvider.lastContext?.serverDictationTarget == nil)
         #expect(
             classicProvider.lastContext?.source
                 == ComposerShared.VoiceInputOwner.expandedComposer.rawValue
@@ -463,7 +457,7 @@ struct DictationHintWiringTests {
         #expect(session.startCallCount == 0)
     }
 
-    @Test func nilClaimedTargetDoesNotInheritPreviousOwnerTarget() async throws {
+    @Test func nilClaimedComposerDoesNotInheritPreviousOwnerCredentials() async throws {
         resetHintPreferences()
         defer { resetHintPreferences() }
 
@@ -480,10 +474,6 @@ struct DictationHintWiringTests {
             credentials: previous.credentials,
             connection: previous.connection
         )
-        manager.setServerDictationTarget(
-            ServerDictationTarget(workspaceId: "ws-old", sessionId: "session-old")
-        )
-
         _ = manager.beginStandaloneComposer(
             serverId: "new",
             credentials: nil,
@@ -493,7 +483,6 @@ struct DictationHintWiringTests {
 
         #expect(classicProvider.lastContext?.serverCredentials == nil)
         #expect(classicProvider.lastContext?.serverConnection == nil)
-        #expect(classicProvider.lastContext?.serverDictationTarget == nil)
         #expect(
             manager._testComposerOwner
                 == VoiceComposerOwner(serverId: "new", kind: .standalone)
@@ -527,10 +516,6 @@ struct DictationHintWiringTests {
             credentials: original.credentials,
             connection: original.connection
         )
-        manager.setServerDictationTarget(
-            ServerDictationTarget(workspaceId: "ws-frozen", sessionId: "s1")
-        )
-
         let startTask = Task { @MainActor in
             try await manager.startRecording(
                 source: ComposerShared.VoiceInputOwner.inlineComposer.rawValue
@@ -541,17 +526,12 @@ struct DictationHintWiringTests {
         })
         manager.setServerCredentials(mutated.credentials)
         manager.setServerConnection(nil)
-        manager.setServerDictationTarget(
-            ServerDictationTarget(workspaceId: "ws-mutated", sessionId: "s-mutated")
-        )
         await gate.open()
         try await startTask.value
 
         #expect(serverProvider.prepareSessionCallCount == 1)
         #expect(serverProvider.lastContext?.serverCredentials?.host == "frozen.example")
         #expect(serverProvider.lastContext?.serverConnection === original.connection)
-        #expect(serverProvider.lastContext?.serverDictationTarget?.workspaceId == "ws-frozen")
-        #expect(serverProvider.lastContext?.serverDictationTarget?.sessionId == "s1")
         #expect(manager.state == .recording)
         await manager.cancelRecording()
     }

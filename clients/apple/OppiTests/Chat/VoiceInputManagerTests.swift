@@ -2305,42 +2305,6 @@ struct VoiceInputManagerTests {
         #expect(manager.state == .recording)
     }
 
-    @Test func remoteModeWithExplicitTargetStillUsesServerProvider() async throws {
-        resetVoicePreferences()
-        defer { resetVoicePreferences() }
-
-        let systemAccess = MockVoiceInputSystemAccess()
-        let serverProvider = MockVoiceProvider(id: .oppiServer, engine: .serverDictation)
-        let manager = VoiceInputManager(
-            providerRegistry: VoiceProviderRegistry(providers: [serverProvider]),
-            systemAccess: systemAccess
-        )
-        manager.setEngineMode(.remote)
-        manager.setServerCredentials(ServerCredentials(
-            host: "localhost", port: 7749,
-            token: "test-token",
-            name: "test-server",
-            scheme: .http
-        ))
-
-        let conn = ServerConnection()
-        _ = conn.configure(credentials: ServerCredentials(
-            host: "localhost", port: 7749,
-            token: "test-token",
-            name: "test-server",
-            scheme: .http
-        ))
-        manager.setServerConnection(conn)
-        manager.setServerDictationTarget(ServerDictationTarget(workspaceId: "ws-1", sessionId: "dictation-1"))
-
-        try await manager.startRecording(source: "test")
-
-        #expect(serverProvider.prepareSessionCallCount == 1)
-        #expect(serverProvider.lastContext?.serverDictationTarget?.workspaceId == "ws-1")
-        #expect(serverProvider.lastContext?.serverDictationTarget?.sessionId == "dictation-1")
-        #expect(manager.state == .recording)
-    }
-
     /// server dictation advertised but remote setup fails — remote mode should surface the
     /// server failure instead of silently retrying on-device.
     @Test func remoteModeWithAsrAvailableButServerSetupFailureFailsClearly() async {

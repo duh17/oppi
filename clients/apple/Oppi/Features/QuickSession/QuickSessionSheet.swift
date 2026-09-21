@@ -867,10 +867,6 @@ struct QuickSessionSheet: View {
 
     private func prepareVoiceInputForSelectedServer(_ manager: VoiceInputManager) async throws {
         configureVoiceInputForSelectedServer(manager)
-
-        // Remote dictation is server-bound: connect directly to `/dictation/stream`.
-        // No workspace session, no capability preflight, no legacy audio target.
-        manager.setServerDictationTarget(nil)
     }
 
     private func loadSlashCommands(for key: QuickSessionSlashCommandLoadKey) async {

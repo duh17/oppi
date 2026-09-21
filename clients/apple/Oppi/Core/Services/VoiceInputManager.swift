@@ -639,7 +639,6 @@ final class VoiceInputManager {
     /// Set by ChatView when server connection is active.
     private(set) var serverCredentials: ServerCredentials?
     private(set) var serverConnection: ServerConnection?
-    private(set) var serverDictationTarget: ServerDictationTarget?
 
     /// User-selected engine routing mode.
     private(set) var engineMode: EngineMode = .auto
@@ -710,11 +709,6 @@ final class VoiceInputManager {
         serverConnection = connection
     }
 
-    /// Legacy session-audio target hook. Server-bound dictation leaves this nil.
-    func setServerDictationTarget(_ target: ServerDictationTarget?) {
-        serverDictationTarget = target
-    }
-
     /// Set engine mode directly.
     func setEngineMode(_ mode: EngineMode) {
         guard engineMode != mode else { return }
@@ -766,7 +760,6 @@ final class VoiceInputManager {
         }
         setServerCredentials(credentials)
         setServerConnection(connection)
-        setServerDictationTarget(nil)
         return composerGeneration
     }
 
@@ -774,14 +767,12 @@ final class VoiceInputManager {
     private struct AuthorizedTakeSnapshot {
         let credentials: ServerCredentials?
         let connection: ServerConnection?
-        let target: ServerDictationTarget?
     }
 
     private func freezeAuthorizedTake() -> AuthorizedTakeSnapshot {
         AuthorizedTakeSnapshot(
             credentials: serverCredentials,
-            connection: serverConnection,
-            target: serverDictationTarget
+            connection: serverConnection
         )
     }
 
@@ -893,8 +884,7 @@ final class VoiceInputManager {
                     locale: locale,
                     source: source,
                     serverCredentials: serverCredentials,
-                    serverConnection: serverConnection,
-                    serverDictationTarget: serverDictationTarget
+                    serverConnection: serverConnection
                 )
             )
 
@@ -1059,8 +1049,7 @@ final class VoiceInputManager {
             locale: locale,
             source: source,
             serverCredentials: frozenTake.credentials,
-            serverConnection: frozenTake.connection,
-            serverDictationTarget: frozenTake.target
+            serverConnection: frozenTake.connection
         )
         var modelPathTag = "warm_cache"
 

@@ -534,7 +534,6 @@ struct GuidedControlSessionComposer: View {
 
     private func prepareVoiceInput(_ manager: VoiceInputManager) async throws {
         configureVoiceInput(manager)
-        manager.setServerDictationTarget(nil)
     }
 
     @MainActor
