@@ -1222,6 +1222,240 @@ struct ToolExpandedSurfaceHostTests {
         #expect(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
+    /// Regression: scrolling past an expanded read-tool portrait and back, or
+    /// reapplying the same hosted surface, must keep the aspect-fit bitmap
+    /// filling the viewport. A stale too-wide descendant plus `.scaleAspectFit`
+    /// letterboxing looks like an empty left gutter and a clipped right edge.
+    @Test func readMediaExpandedImageFillsViewportAfterSameSignatureReapplyAndScrollRecycle() async throws {
+        let hostSize = CGSize(width: 390, height: 700)
+        let imageSize = CGSize(width: 240, height: 300)
+        let image = makeModeratePortraitReadMediaImage(size: imageSize)
+        let imageData = try #require(image.pngData())
+        let attachmentID = "att-hshift-portrait-\(UUID().uuidString)"
+        let attachment = ToolPresentationBuilder.ToolMediaAttachment(
+            kind: "image",
+            id: attachmentID,
+            mimeType: "image/png",
+            fileName: "portrait.png",
+            sizeBytes: imageData.count,
+            width: Int(imageSize.width),
+            height: Int(imageSize.height)
+        )
+        let imageConfiguration = makeTimelineToolConfiguration(
+            title: "read /tmp/portrait.png",
+            expandedContent: .readMedia(
+                output: "",
+                filePath: "/tmp/portrait.png",
+                startLine: 1,
+                attachments: [attachment]
+            ),
+            toolNamePrefix: "read",
+            isExpanded: true
+        ).withSessionAttachmentFetcher { id in
+            #expect(id == attachmentID)
+            return imageData
+        }
+        let wideCodeConfiguration = makeTimelineToolConfiguration(
+            title: "read /tmp/wide.swift",
+            expandedContent: .code(
+                text: String(repeating: "let staleWidthProbe = 1234567890; ", count: 48),
+                language: .swift,
+                startLine: 1,
+                filePath: "wide.swift"
+            ),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+
+        let collectionView = UICollectionView(
+            frame: CGRect(origin: .zero, size: hostSize),
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        collectionView.backgroundColor = Self.readMediaViewportLetterboxProbeColor
+        collectionView.contentInsetAdjustmentBehavior = .never
+
+        let hostController = UIViewController()
+        hostController.view.frame = CGRect(origin: .zero, size: hostSize)
+        hostController.view.backgroundColor = Self.readMediaViewportLetterboxProbeColor
+        hostController.view.addSubview(collectionView)
+        collectionView.frame = hostController.view.bounds
+        collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+
+        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        window.rootViewController = hostController
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let imageItemID = "tool-image"
+        let spacerIDs = (0..<12).map { "tool-spacer-\($0)" }
+        let registration = UICollectionView.CellRegistration<SafeSizingCell, String> { cell, _, itemID in
+            cell.contentConfiguration = itemID == imageItemID ? imageConfiguration : wideCodeConfiguration
+        }
+        let dataSource = UICollectionViewDiffableDataSource<Int, String>(
+            collectionView: collectionView
+        ) { cv, indexPath, itemID in
+            cv.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: itemID)
+        }
+        var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
+        snapshot.appendSections([0])
+        snapshot.appendItems([imageItemID] + spacerIDs)
+        await dataSource.apply(snapshot, animatingDifferences: false)
+        hostController.view.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
+
+        let imageIP = IndexPath(item: 0, section: 0)
+        let lastIP = IndexPath(item: spacerIDs.count, section: 0)
+
+        let firstPaintReady = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            guard let cell = collectionView.cellForItem(at: imageIP) else { return false }
+            return readMediaContentImageView(in: cell.contentView) != nil
+        }
+        #expect(firstPaintReady, "Expected first-paint decode of the moderate portrait read-media image")
+
+        let firstCell = try #require(collectionView.cellForItem(at: imageIP) as? SafeSizingCell)
+        try assertExpandedReadMediaImageFillsViewport(
+            in: firstCell,
+            hostView: hostController.view,
+            hostSize: hostSize,
+            phase: "first-paint"
+        )
+
+        // Phase A: retained same-signature reconfiguration. Production apply()
+        // still calls showExpandedHostedView → activateSurfaceView, which tears
+        // down and recreates edge constraints even when the surface is unchanged.
+        let retainedIdentity = ObjectIdentifier(firstCell)
+        firstCell.contentConfiguration = imageConfiguration
+        hostController.view.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
+        let retainedCell = try #require(collectionView.cellForItem(at: imageIP) as? SafeSizingCell)
+        #expect(ObjectIdentifier(retainedCell) == retainedIdentity)
+        try assertExpandedReadMediaImageFillsViewport(
+            in: retainedCell,
+            hostView: hostController.view,
+            hostSize: hostSize,
+            phase: "same-signature-reapply"
+        )
+
+        // Layout-churn: the same retained cell becomes a horizontally unwrapped
+        // code row (required extra width) and then the image again. This is the
+        // reuse leftover that scroll-away can leave on ToolTimelineRowContentView.
+        retainedCell.contentConfiguration = wideCodeConfiguration
+        hostController.view.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
+        retainedCell.contentConfiguration = imageConfiguration
+        let restoredAfterWideCode = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            readMediaContentImageView(in: retainedCell.contentView) != nil
+        }
+        #expect(restoredAfterWideCode, "Expected the portrait image after in-place wide-code reuse")
+        hostController.view.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
+        try assertExpandedReadMediaImageFillsViewport(
+            in: retainedCell,
+            hostView: hostController.view,
+            hostSize: hostSize,
+            phase: "wide-code-then-image-reuse"
+        )
+
+        // Phase B: true outer collection scroll-away until the image cell is
+        // gone, then scroll back through reuse/remount. Wait only for the
+        // bitmap to exist — do not loop until geometry looks correct.
+        collectionView.scrollToItem(at: lastIP, at: .bottom, animated: false)
+        collectionView.layoutIfNeeded()
+        let imageStillVisible = collectionView.indexPathsForVisibleItems.contains(imageIP)
+            && collectionView.cellForItem(at: imageIP).map { !$0.isHidden } == true
+        #expect(
+            !imageStillVisible,
+            "Image cell must leave the viewport before scroll-back remount"
+        )
+
+        collectionView.scrollToItem(at: imageIP, at: .top, animated: false)
+        collectionView.layoutIfNeeded()
+        let remounted = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            guard let cell = collectionView.cellForItem(at: imageIP) else { return false }
+            return readMediaContentImageView(in: cell.contentView) != nil
+        }
+        #expect(remounted, "Expected the portrait read-media image after scroll-back remount")
+        let remountedCell = try #require(collectionView.cellForItem(at: imageIP) as? SafeSizingCell)
+        hostController.view.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
+        try assertExpandedReadMediaImageFillsViewport(
+            in: remountedCell,
+            hostView: hostController.view,
+            hostSize: hostSize,
+            phase: "scroll-away-and-back"
+        )
+    }
+
+    /// Layout-churn on the production row: after a real viewport width exists,
+    /// the read-media width constraint must still win if a descendant refuses
+    /// to shrink. Today that constraint is only `.defaultHigh` (750), the same
+    /// as `UIImageView` compression resistance, so a required-CR descendant
+    /// leaves a too-wide host.
+    @Test func readMediaImageHostWidthMatchesViewportWhenImageResistsCompression() async throws {
+        let rowWidth: CGFloat = 360
+        let imageSize = CGSize(width: 240, height: 300)
+        let image = makeModeratePortraitReadMediaImage(size: imageSize)
+        let imageData = try #require(image.pngData())
+        let configuration = makeTimelineToolConfiguration(
+            title: "read /tmp/portrait.png",
+            expandedContent: .readMedia(
+                output: "Read image file [image/png]\n\ndata:image/png;base64,\(imageData.base64EncodedString())",
+                filePath: "/tmp/portrait.png",
+                startLine: 1,
+                attachments: []
+            ),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: configuration)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: rowWidth, height: 1_200))
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+            view.widthAnchor.constraint(equalToConstant: rowWidth),
+        ])
+
+        let hostController = UIViewController()
+        hostController.view.frame = container.bounds
+        hostController.view.addSubview(container)
+        let window = UIWindow(frame: hostController.view.bounds)
+        window.rootViewController = hostController
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        hostController.view.layoutIfNeeded()
+
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            readMediaContentImageView(in: view) != nil
+        }
+        #expect(decoded, "Expected the portrait read-media image before compression-resistance churn")
+        hostController.view.layoutIfNeeded()
+        try assertExpandedReadMediaImageFillsViewport(
+            in: view,
+            hostView: hostController.view,
+            hostSize: hostController.view.bounds.size,
+            phase: "first-paint"
+        )
+
+        let preview = try #require(firstToolSubview(ofType: NativeExpandedInlineImageView.self, in: view))
+        let imageView = try #require(readMediaContentImageView(in: preview))
+        let resist = UILayoutPriority(rawValue: UILayoutPriority.defaultHigh.rawValue + 1)
+        preview.setContentCompressionResistancePriority(resist, for: .horizontal)
+        imageView.setContentCompressionResistancePriority(resist, for: .horizontal)
+        view.setNeedsUpdateConstraints()
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        try assertExpandedReadMediaImageFillsViewport(
+            in: view,
+            hostView: hostController.view,
+            hostSize: hostController.view.bounds.size,
+            phase: "required-compression-resistance"
+        )
+    }
+
     @Test func tallReadMediaKeepsImageAndOpenLabelAlignedInsideRowWidth() async throws {
         let hostSize = CGSize(width: 390, height: 700)
         let imageData = try #require(makeReadToolTestImage(size: CGSize(width: 160, height: 474)).pngData())
@@ -1386,6 +1620,193 @@ struct ToolExpandedSurfaceHostTests {
         view.configuration = makeTimelineToolConfiguration(isExpanded: false)
         _ = fittedTimelineSize(for: view, width: 360)
         #expect(view.activeExpandedSurfaceKindForTesting == .none)
+    }
+
+    private static let readMediaViewportFillColor = UIColor(red: 0.07, green: 0.22, blue: 0.86, alpha: 1)
+    private static let readMediaViewportLetterboxProbeColor = UIColor(red: 1, green: 0, blue: 1, alpha: 1)
+
+    private func makeModeratePortraitReadMediaImage(size: CGSize) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { context in
+            Self.readMediaViewportFillColor.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+        }
+    }
+
+    private func aspectFittedRect(of imageSize: CGSize, in bounds: CGRect) -> CGRect {
+        guard imageSize.width > 0, imageSize.height > 0, bounds.width > 0, bounds.height > 0 else {
+            return .zero
+        }
+        let scale = min(bounds.width / imageSize.width, bounds.height / imageSize.height)
+        let fitted = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        return CGRect(
+            x: bounds.midX - fitted.width / 2,
+            y: bounds.midY - fitted.height / 2,
+            width: fitted.width,
+            height: fitted.height
+        )
+    }
+
+    private func assertExpandedReadMediaImageFillsViewport(
+        in cell: UICollectionViewCell,
+        hostView: UIView,
+        hostSize: CGSize,
+        phase: String
+    ) throws {
+        let view = try #require(firstToolSubview(ofType: ToolTimelineRowContentView.self, in: cell.contentView))
+        try assertExpandedReadMediaImageFillsViewport(
+            in: view,
+            hostView: hostView,
+            hostSize: hostSize,
+            phase: phase,
+            cell: cell
+        )
+    }
+
+    private func assertExpandedReadMediaImageFillsViewport(
+        in view: ToolTimelineRowContentView,
+        hostView: UIView,
+        hostSize: CGSize,
+        phase: String,
+        cell: UICollectionViewCell? = nil
+    ) throws {
+        let preview = try #require(firstToolSubview(ofType: NativeExpandedInlineImageView.self, in: view))
+        let imageView = try #require(readMediaContentImageView(in: preview))
+        let image = try #require(imageView.image)
+        let scrollView = view.expandedScrollView
+        let diagnostics = readMediaViewportDiagnostics(
+            phase: phase,
+            cell: cell,
+            row: view,
+            scrollView: scrollView,
+            preview: preview,
+            imageView: imageView,
+            image: image,
+            hostBounds: hostView.bounds
+        )
+
+        let inset = scrollView.adjustedContentInset
+        #expect(
+            abs(scrollView.contentOffset.x + inset.left) < 1,
+            "\(phase): horizontal offset must stay pinned; \(diagnostics)"
+        )
+        #expect(
+            scrollView.contentSize.width <= scrollView.bounds.width + 1,
+            "\(phase): content must not be wider than the viewport; \(diagnostics)"
+        )
+
+        let expectedLeadingInRow = scrollView.convert(
+            CGPoint(x: scrollView.bounds.minX + inset.left, y: 0),
+            to: view
+        ).x
+        let expectedWidth = max(0, scrollView.bounds.width - inset.left - inset.right)
+        let previewFrameInRow = preview.convert(preview.bounds, to: view)
+        let imageFrameInRow = imageView.convert(imageView.bounds, to: view)
+        let expectedHeight = ImageViewportSizing.fittedHeight(
+            forWidth: expectedWidth,
+            heightToWidthRatio: image.size.height / max(image.size.width, 1),
+            surface: .primaryMedia,
+            screenHeight: hostSize.height
+        )
+        #expect(
+            abs(preview.bounds.width - expectedWidth) < 1,
+            "\(phase): image host width must match the viewport; \(diagnostics)"
+        )
+        #expect(
+            abs(imageView.bounds.width - preview.bounds.width) < 1
+                && abs(imageView.bounds.height - preview.bounds.height) < 1
+                && abs(imageView.bounds.minX) < 1
+                && abs(imageView.bounds.minY) < 1,
+            "\(phase): image view bounds must match the host; \(diagnostics)"
+        )
+        #expect(
+            abs(preview.bounds.height - expectedHeight) < 2,
+            "\(phase): image host height must stay on the portrait aspect; \(diagnostics)"
+        )
+        #expect(
+            abs(previewFrameInRow.minX - expectedLeadingInRow) < 1,
+            "\(phase): image host leading must match viewport leading; \(diagnostics)"
+        )
+        #expect(
+            abs(imageFrameInRow.minX - expectedLeadingInRow) < 1,
+            "\(phase): image view leading must match viewport leading; \(diagnostics)"
+        )
+
+        let fittedInImageView = aspectFittedRect(of: image.size, in: imageView.bounds)
+        let fittedInRow = imageView.convert(fittedInImageView, to: view)
+        #expect(
+            abs(fittedInRow.minX - expectedLeadingInRow) < 1,
+            "\(phase): aspect-fit bitmap leading must match viewport leading; \(diagnostics)"
+        )
+        #expect(
+            abs(fittedInRow.width - expectedWidth) < 2,
+            "\(phase): aspect-fit bitmap must fill viewport width; \(diagnostics)"
+        )
+    }
+
+    private func readMediaViewportDiagnostics(
+        phase: String,
+        cell: UICollectionViewCell?,
+        row: ToolTimelineRowContentView,
+        scrollView: UIScrollView,
+        preview: NativeExpandedInlineImageView,
+        imageView: UIImageView,
+        image: UIImage,
+        hostBounds: CGRect
+    ) -> String {
+        let inset = scrollView.adjustedContentInset
+        let fitted = aspectFittedRect(of: image.size, in: imageView.bounds)
+        let presentation = imageView.layer.presentation()
+        return [
+            "phase=\(phase)",
+            "offset=\(scrollView.contentOffset)",
+            "inset=\(inset)",
+            "contentSize=\(scrollView.contentSize)",
+            "scrollBounds=\(scrollView.bounds)",
+            "rowBounds=\(row.bounds)",
+            "hostViewBounds=\(hostBounds)",
+            "hostFrame=\(preview.convert(preview.bounds, to: row))",
+            "previewFrame=\(preview.frame)",
+            "imageFrame=\(imageView.convert(imageView.bounds, to: row))",
+            "imageBounds=\(imageView.bounds)",
+            "imageSize=\(image.size)",
+            "fittedInImageView=\(fitted)",
+            "fittedInRow=\(imageView.convert(fitted, to: row))",
+            "presentationFrame=\(String(describing: presentation?.frame))",
+            "presentationBounds=\(String(describing: presentation?.bounds))",
+            "presentationPosition=\(String(describing: presentation?.position))",
+            "cell=\(cell.map { String(describing: ObjectIdentifier($0)) } ?? "nil")",
+            "row=\(ObjectIdentifier(row))",
+            "preview=\(ObjectIdentifier(preview))",
+            "imageView=\(ObjectIdentifier(imageView))",
+            "scrollView=\(ObjectIdentifier(scrollView))",
+        ].joined(separator: " ")
+    }
+
+    private func readMediaFillRatio(
+        in image: UIImage,
+        xFraction: CGFloat,
+        yFraction: CGFloat,
+        matching color: UIColor
+    ) -> CGFloat {
+        guard let raster = rasterize(image) else { return 0 }
+        let x = min(raster.width - 1, max(0, Int(CGFloat(raster.width) * xFraction)))
+        let yCenter = min(raster.height - 1, max(0, Int(CGFloat(raster.height) * yFraction)))
+        let yMin = max(0, yCenter - 8)
+        let yMax = min(raster.height - 1, yCenter + 8)
+        let xMin = max(0, x - 2)
+        let xMax = min(raster.width - 1, x + 2)
+        var match = 0
+        var total = 0
+        for y in yMin...yMax {
+            for sampleX in xMin...xMax {
+                total += 1
+                if raster.pixel(x: sampleX, y: y).matches(color) {
+                    match += 1
+                }
+            }
+        }
+        return total == 0 ? 0 : CGFloat(match) / CGFloat(total)
     }
 
     private func makeTallReadToolTestImage() -> UIImage {
@@ -1724,6 +2145,20 @@ struct ToolExpandedSurfaceHostTests {
 
         var isBrightSVGBackground: Bool {
             alpha > 200 && red > 245 && green > 240 && blue > 235
+        }
+
+        func matches(_ color: UIColor, tolerance: Int = 40) -> Bool {
+            var redComponent: CGFloat = 0
+            var greenComponent: CGFloat = 0
+            var blueComponent: CGFloat = 0
+            var alphaComponent: CGFloat = 0
+            guard color.getRed(&redComponent, green: &greenComponent, blue: &blueComponent, alpha: &alphaComponent) else {
+                return false
+            }
+            return abs(Int(red) - Int(redComponent * 255)) <= tolerance
+                && abs(Int(green) - Int(greenComponent * 255)) <= tolerance
+                && abs(Int(blue) - Int(blueComponent * 255)) <= tolerance
+                && abs(Int(alpha) - Int(alphaComponent * 255)) <= tolerance
         }
     }
 

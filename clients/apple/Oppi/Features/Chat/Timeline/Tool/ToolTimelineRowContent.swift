@@ -366,6 +366,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
     }
 
+    override func updateConstraints() {
+        updateExpandedReadMediaWidthIfNeeded()
+        super.updateConstraints()
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         if ToolTimelineRowDisplayState.updateCollapsedFileTitleForCurrentWidth(
@@ -382,6 +387,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         updateViewportHeightsIfNeeded()
         ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(outputScrollView)
         ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(expandedScrollView)
+        if expandedUsesReadMediaLayout {
+            let pinnedX = -expandedScrollView.adjustedContentInset.left
+            if abs(expandedScrollView.contentOffset.x - pinnedX) > 0.5 {
+                expandedScrollView.contentOffset.x = pinnedX
+            }
+        }
 
         // Deferred follow-tail: settle the inner scroll view's content size,
         // then scroll to the bottom. A plain scrollToBottom() here can lag one
@@ -680,6 +691,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func updateExpandedReadMediaWidthIfNeeded() {
         guard let expandedReadMediaWidthConstraint else { return }
         expandedReadMediaWidthConstraint.constant = 0
+        // Frame layout guides can report 0 during the first fitting pass, so
+        // the constraint starts at `.defaultHigh`. Once the scroll view has a
+        // real width it must win over a descendant's compression resistance
+        // (also 750 by default) or the image host stays too wide and clips.
+        if expandedUsesReadMediaLayout, expandedScrollView.bounds.width > 1 {
+            expandedReadMediaWidthConstraint.priority = .required
+        } else {
+            expandedReadMediaWidthConstraint.priority = .defaultHigh
+        }
     }
 
     func setExpandedVerticalLockEnabled(_ enabled: Bool) {
