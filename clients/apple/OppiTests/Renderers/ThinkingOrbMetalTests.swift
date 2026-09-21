@@ -14,10 +14,11 @@ struct ThinkingOrbMetalRendererTests {
             Issue.record("Metal unavailable: \(built.unavailableReason ?? "unknown")")
             return
         }
+        let design = ThinkingOrbSizeClass.workingCompact.designSize
         let frame = ThinkingOrbGeometry.frame(
             style: .working,
             sizeClass: .workingCompact,
-            size: 16,
+            size: design,
             geometryTime: 0.6
         )
         guard let texture = renderer.makeOffscreenTexture(width: 48, height: 48, renderTarget: true) else {
@@ -26,7 +27,7 @@ struct ThinkingOrbMetalRendererTests {
         }
         let cost = renderer.encodeOffscreen(
             dots: frame.dots,
-            designSize: 16,
+            designSize: design,
             texture: texture,
             tint: .darkFallback,
             waitUntilCompleted: true
@@ -44,10 +45,11 @@ struct ThinkingOrbMetalRendererTests {
             Issue.record("Metal unavailable: \(built.unavailableReason ?? "unknown")")
             return
         }
+        let design = ThinkingOrbSizeClass.workingCompact.designSize
         let frame = ThinkingOrbGeometry.frame(
             style: .working,
             sizeClass: .workingCompact,
-            size: 16,
+            size: design,
             geometryTime: 0.4
         )
         guard let texture = renderer.makeOffscreenTexture(width: 32, height: 32, renderTarget: true) else {
@@ -58,7 +60,7 @@ struct ThinkingOrbMetalRendererTests {
         renderer.encodeFault = .nilEncoder
         let cost = renderer.encodeOffscreen(
             dots: frame.dots,
-            designSize: 16,
+            designSize: design,
             texture: texture,
             tint: .darkFallback,
             waitUntilCompleted: false
@@ -72,7 +74,7 @@ struct ThinkingOrbMetalRendererTests {
         renderer.encodeFault = .none
         let recovered = renderer.encodeOffscreen(
             dots: frame.dots,
-            designSize: 16,
+            designSize: design,
             texture: texture,
             tint: .darkFallback,
             waitUntilCompleted: true
@@ -353,6 +355,124 @@ struct ThinkingOrbMetalViewLifecycleTests {
         NotificationCenter.default.post(name: UIScene.willDeactivateNotification, object: nil)
         #expect(harness.view.isDriving)
     }
+
+    @Test func mountedDictationOrbConsumesLiveAudioWithoutSnappingOnRelease() async throws {
+        let harness = try makeOrbHarness(style: .composing, side: 44)
+        defer { tearDown(harness) }
+        let renderer = try #require(harness.view.rendererForTests)
+        _ = try await waitForCompletions(on: harness.view, minimum: 2)
+        #expect(harness.view.isDriving)
+
+        harness.view.audioLevel = 0
+        _ = try await waitForCompletions(
+            on: harness.view,
+            minimum: harness.view.framesCompleted + 2
+        )
+        #expect(harness.view.lastPresentedAudio < 0.03)
+
+        harness.view.audioLevel = 0.35
+        let voice = try await waitUntilPresentedAudio(on: harness.view, atLeast: 0.12)
+        #expect(harness.view.isDriving)
+        #expect(harness.view.audioLevel == 0.35)
+        let phase = harness.view.lastPresentedGeometryTime
+        let quietShot = try renderOrbPixels(
+            renderer: renderer,
+            style: .composing,
+            sizeClass: .dictationStandard,
+            size: 44,
+            geometryTime: phase,
+            audioLevel: 0
+        )
+        let voiceShot = try renderOrbPixels(
+            renderer: renderer,
+            style: .composing,
+            sizeClass: .dictationStandard,
+            size: 44,
+            geometryTime: phase,
+            audioLevel: voice
+        )
+        let changed = quietShot.changedCount(vs: voiceShot, minChannelDelta: 40)
+        print(
+            "mounted composing 44pt identical-phase voiceChanged=\(changed)px t=\(phase) presentedAudio=\(voice)"
+        )
+        #expect(
+            changed >= 180,
+            "mounted composing 44pt identical-phase voice changed \(changed)px at t=\(phase) audio=\(voice)"
+        )
+
+        harness.view.audioLevel = 0
+        _ = try await waitForCompletions(
+            on: harness.view,
+            minimum: harness.view.framesCompleted + 1
+        )
+        #expect(
+            harness.view.lastPresentedAudio > 0.04,
+            "release must ease, not snap; presented \(harness.view.lastPresentedAudio)"
+        )
+    }
+}
+
+@Suite("Thinking orb pixel motion")
+struct ThinkingOrbPixelMotionTests {
+    @Test func voiceOnVersusQuietAtIdenticalPhaseChangesPixels() throws {
+        let built = ThinkingOrbMetalRenderer.make()
+        guard let renderer = built.renderer else {
+            Issue.record("Metal unavailable: \(built.unavailableReason ?? "unknown")")
+            return
+        }
+        var smoother = VoiceLevelSmoother()
+        var voice: Float = 0
+        for _ in 0..<60 {
+            voice = smoother.step(raw: 0.2, dt: 1.0 / 60.0)
+        }
+        for style in [ThinkingOrbStyle.composing, .breathing] {
+            for sizeClass in [ThinkingOrbSizeClass.dictationExpanded, .dictationStandard] {
+                let size = sizeClass.designSize
+                let speed = ThinkingOrbPresets.resolve(style, sizeClass).speed
+                let t0 = 0.7 * speed
+                let quiet0 = try renderOrbPixels(
+                    renderer: renderer,
+                    style: style,
+                    sizeClass: sizeClass,
+                    size: size,
+                    geometryTime: t0,
+                    audioLevel: 0
+                )
+                let quiet1 = try renderOrbPixels(
+                    renderer: renderer,
+                    style: style,
+                    sizeClass: sizeClass,
+                    size: size,
+                    geometryTime: 1.7 * speed,
+                    audioLevel: 0
+                )
+                let speaking = try renderOrbPixels(
+                    renderer: renderer,
+                    style: style,
+                    sizeClass: sizeClass,
+                    size: size,
+                    geometryTime: t0,
+                    audioLevel: voice
+                )
+                let idleChanged = quiet0.changedCount(vs: quiet1, minChannelDelta: 40)
+                let voiceChanged = quiet0.changedCount(vs: speaking, minChannelDelta: 40)
+                print(
+                    "pixels \(style.rawValue) \(Int(size))pt@3x idleChanged=\(idleChanged) identical-phase voiceChanged=\(voiceChanged) opaque=\(quiet0.opaqueCount())/\(speaking.opaqueCount())"
+                )
+                #expect(
+                    idleChanged >= 250,
+                    "\(style.rawValue) \(Int(size))pt 1s idle changed \(idleChanged)px"
+                )
+                #expect(
+                    voiceChanged >= 180,
+                    "\(style.rawValue) \(Int(size))pt modest voice changed \(voiceChanged)px"
+                )
+                #expect(quiet0.opaqueCount() > 40)
+                #expect(quiet1.opaqueCount() > 40)
+                #expect(speaking.opaqueCount() > 40)
+            }
+        }
+    }
 }
 
 @Suite("Mic button orb layout")
@@ -382,6 +502,68 @@ struct MicButtonOrbLayoutTests {
         #expect(!labels.contains { $0.text == "EN" })
         #expect(firstSubview(of: host.view, type: UIImageView.self)?.isHidden != false
             || firstSubview(of: host.view, type: UIImageView.self)?.image == nil)
+    }
+
+    @Test func recordingForwardsLiveAudioIntoTheOrbHost() {
+        withRestoredDictationStyle {
+            AppPreferenceStore.Appearance.setDictationIndicatorStyle(.composing)
+            let chrome = MicButtonChromeView()
+            chrome.apply(
+                isRecording: true,
+                isProcessing: false,
+                audioLevel: 0.42,
+                languageLabel: "EN",
+                accentColor: .systemBlue,
+                engineBadge: .onDevice,
+                diameter: 44,
+                animated: false
+            )
+            let orb = firstSubview(of: chrome, type: ThinkingOrbMetalView.self)
+            #expect(orb?.isHidden == false)
+            #expect(orb?.audioLevel == 0.42)
+
+            chrome.apply(
+                isRecording: true,
+                isProcessing: false,
+                audioLevel: 0.18,
+                languageLabel: "EN",
+                accentColor: .systemBlue,
+                engineBadge: .onDevice,
+                diameter: 44,
+                animated: false
+            )
+            #expect(orb?.audioLevel == 0.18)
+        }
+    }
+
+    @Test func swiftUIRecordingPresentationFeedsTheOrbHost() throws {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first
+        else {
+            throw TestHostError.missingScene
+        }
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 80, height: 80)
+        let host = UIHostingController(
+            rootView: MicButtonLabel(
+                isRecording: true,
+                isProcessing: false,
+                audioLevel: 0.51,
+                languageLabel: "EN",
+                accentColor: .blue,
+                engineBadge: .onDevice,
+                diameter: 44,
+                dictationStyle: .composing
+            )
+        )
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.layoutIfNeeded()
+        let orb = firstSubview(of: host.view, type: ThinkingOrbMetalView.self)
+        #expect(orb?.audioLevel == 0.51)
+        window.rootViewController = nil
+        window.isHidden = true
     }
 
     @Test func preparingDoesNotFeedVoiceIntoTheOrb() {
@@ -430,12 +612,113 @@ struct MicButtonOrbLayoutTests {
         )
         #expect(chrome.intrinsicContentSize == CGSize(width: 32, height: 32))
     }
+
+    @Test func orbListeningRemovesTheBackgroundDiscAndLegacyKeepsIt() {
+        withRestoredDictationStyle {
+            AppPreferenceStore.Appearance.setDictationIndicatorStyle(.composing)
+            let composing = MicButtonChromeView()
+            composing.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
+            composing.apply(
+                isRecording: true,
+                isProcessing: false,
+                audioLevel: 0.3,
+                languageLabel: "EN",
+                accentColor: .systemBlue,
+                engineBadge: .onDevice,
+                diameter: 44,
+                animated: false
+            )
+            composing.layoutIfNeeded()
+            #expect(micFillIsClear(composing))
+
+            composing.apply(
+                isRecording: false,
+                isProcessing: false,
+                audioLevel: 0.9,
+                languageLabel: "EN",
+                accentColor: .systemBlue,
+                engineBadge: .onDevice,
+                diameter: 44,
+                animated: false,
+                isPreparing: true
+            )
+            composing.layoutIfNeeded()
+            #expect(micFillIsClear(composing))
+            #expect(composing.intrinsicContentSize == CGSize(width: 44, height: 44))
+
+            composing.apply(
+                isRecording: false,
+                isProcessing: false,
+                audioLevel: 0,
+                languageLabel: "EN",
+                accentColor: .systemBlue,
+                engineBadge: .onDevice,
+                diameter: 44,
+                animated: false
+            )
+            composing.layoutIfNeeded()
+            #expect(!micFillIsClear(composing))
+
+            composing.apply(
+                isRecording: false,
+                isProcessing: true,
+                audioLevel: 0,
+                languageLabel: "EN",
+                accentColor: .systemBlue,
+                engineBadge: .onDevice,
+                diameter: 44,
+                animated: false
+            )
+            composing.layoutIfNeeded()
+            #expect(!micFillIsClear(composing))
+
+            AppPreferenceStore.Appearance.setDictationIndicatorStyle(.breathing)
+            composing.apply(
+                isRecording: true,
+                isProcessing: false,
+                audioLevel: 0.2,
+                languageLabel: "EN",
+                accentColor: .systemBlue,
+                engineBadge: .onDevice,
+                diameter: 32,
+                animated: false
+            )
+            composing.layoutIfNeeded()
+            #expect(micFillIsClear(composing))
+            #expect(composing.intrinsicContentSize == CGSize(width: 32, height: 32))
+
+            AppPreferenceStore.Appearance.setDictationIndicatorStyle(.ring)
+            composing.apply(
+                isRecording: true,
+                isProcessing: false,
+                audioLevel: 0.4,
+                languageLabel: "EN",
+                accentColor: .systemBlue,
+                engineBadge: .onDevice,
+                diameter: 44,
+                animated: false
+            )
+            composing.layoutIfNeeded()
+            #expect(!micFillIsClear(composing))
+        }
+    }
+
+    @Test func swiftUIListeningOmitsTheFillDiscWhenShowingAnOrb() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "Oppi/Features/Chat/Composer/MicButtonLabel.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        #expect(source.contains("if !showsOrb {"))
+        #expect(source.contains("Circle().fill(Color.themeBgHighlight)"))
+    }
 }
 
 @Suite("Working indicator metal size")
 @MainActor
 struct WorkingIndicatorMetalSizeTests {
-    @Test func nativeMetalStyleKeepsTheSixteenPointSpinner() {
+    @Test func nativeMetalStyleKeepsTheEighteenPointSpinner() {
         let key = AppPreferenceStore.Appearance.spinnerStyleKey
         let original = UserDefaults.standard.object(forKey: key)
         defer {
@@ -455,7 +738,7 @@ struct WorkingIndicatorMetalSizeTests {
         view.layoutIfNeeded()
         let metal = firstSubview(of: view, type: ThinkingOrbMetalView.self)
         #expect(metal != nil)
-        #expect(metal?.bounds.size == CGSize(width: 16, height: 16))
+        #expect(metal?.bounds.size == CGSize(width: 18, height: 18))
         #expect(metal?.isHidden == false)
     }
 
@@ -583,6 +866,25 @@ private func waitForCompletions(on view: ThinkingOrbMetalView, minimum: Int) asy
 }
 
 @MainActor
+private func waitUntilPresentedAudio(
+    on view: ThinkingOrbMetalView,
+    atLeast minimum: Float
+) async throws -> Float {
+    let deadline = ContinuousClock.now + .seconds(1.2)
+    while ContinuousClock.now < deadline {
+        if view.lastPresentedAudio >= minimum {
+            return view.lastPresentedAudio
+        }
+        await Task.yield()
+        try await Task.sleep(for: .milliseconds(16))
+    }
+    throw TestHostError.timeout(
+        orbTimeoutMessage(view, expected: "lastPresentedAudio >= \(minimum)")
+        + "; presentedAudio=\(view.lastPresentedAudio) input=\(view.audioLevel)"
+    )
+}
+
+@MainActor
 private func waitUntilStopped(_ view: ThinkingOrbMetalView) async throws {
     let deadline = ContinuousClock.now + .seconds(1.2)
     while ContinuousClock.now < deadline {
@@ -652,4 +954,119 @@ private enum TestHostError: Error, CustomStringConvertible {
         case .timeout(let detail): detail
         }
     }
+}
+
+private func micFillView(in chrome: MicButtonChromeView) -> UIView? {
+    chrome.subviews.first { view in
+        !(view is ThinkingOrbMetalView)
+            && !(view is UIImageView)
+            && !(view is UILabel)
+            && !(view is UIActivityIndicatorView)
+    }
+}
+
+private func micFillIsClear(_ chrome: MicButtonChromeView) -> Bool {
+    guard let fill = micFillView(in: chrome) else { return false }
+    if fill.isHidden { return true }
+    var alpha: CGFloat = 1
+    fill.backgroundColor?.getRed(nil, green: nil, blue: nil, alpha: &alpha)
+    return alpha < 0.02
+}
+
+private func withRestoredDictationStyle(_ body: () -> Void) {
+    let key = AppPreferenceStore.Appearance.dictationIndicatorStyleKey
+    let original = UserDefaults.standard.object(forKey: key)
+    defer {
+        if let original {
+            UserDefaults.standard.set(original, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+    body()
+}
+
+private struct OrbPixelShot {
+    let width: Int
+    let height: Int
+    let bytes: [UInt8]
+
+    func opaqueCount(minAlpha: UInt8 = 24) -> Int {
+        var count = 0
+        var index = 3
+        while index < bytes.count {
+            if bytes[index] >= minAlpha { count += 1 }
+            index += 4
+        }
+        return count
+    }
+
+    func changedCount(vs other: OrbPixelShot, minChannelDelta: Int) -> Int {
+        let count = min(bytes.count, other.bytes.count)
+        var changed = 0
+        var index = 0
+        while index < count {
+            let delta = max(
+                abs(Int(bytes[index]) - Int(other.bytes[index])),
+                abs(Int(bytes[index + 1]) - Int(other.bytes[index + 1])),
+                abs(Int(bytes[index + 2]) - Int(other.bytes[index + 2])),
+                abs(Int(bytes[index + 3]) - Int(other.bytes[index + 3]))
+            )
+            if delta >= minChannelDelta { changed += 1 }
+            index += 4
+        }
+        return changed
+    }
+}
+
+private func renderOrbPixels(
+    renderer: ThinkingOrbMetalRenderer,
+    style: ThinkingOrbStyle,
+    sizeClass: ThinkingOrbSizeClass,
+    size: Double,
+    geometryTime: Double,
+    audioLevel: Float,
+    scale: Int = 3
+) throws -> OrbPixelShot {
+    let width = max(1, Int((size * Double(scale)).rounded()))
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+        pixelFormat: .bgra8Unorm,
+        width: width,
+        height: width,
+        mipmapped: false
+    )
+    descriptor.usage = [.renderTarget, .shaderRead]
+    descriptor.storageMode = .shared
+    guard let texture = renderer.device.makeTexture(descriptor: descriptor) else {
+        throw TestHostError.timeout("failed shared orb texture")
+    }
+    let frame = ThinkingOrbGeometry.frame(
+        style: style,
+        sizeClass: sizeClass,
+        size: size,
+        geometryTime: geometryTime,
+        audioLevel: audioLevel,
+        zSorted: false
+    )
+    let cost = renderer.encodeOffscreen(
+        dots: frame.dots,
+        designSize: size,
+        texture: texture,
+        tint: .darkFallback,
+        waitUntilCompleted: true
+    )
+    guard cost.completed else {
+        throw TestHostError.timeout(cost.errorDescription ?? "orb encode did not complete")
+    }
+    var bytes = [UInt8](repeating: 0, count: width * width * 4)
+    bytes.withUnsafeMutableBytes { raw in
+        guard let base = raw.baseAddress else { return }
+        texture.getBytes(
+            base,
+            bytesPerRow: width * 4,
+            from: MTLRegionMake2D(0, 0, width, width),
+            mipmapLevel: 0
+        )
+    }
+    return OrbPixelShot(width: width, height: width, bytes: bytes)
 }

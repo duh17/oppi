@@ -53,6 +53,8 @@ struct MacChatDisplayChromeTests {
         #expect(source.contains("SpinnerStyle"))
         #expect(source.contains("MacBrailleSpinner"))
         #expect(source.contains("MacGameOfLifeSpinner"))
+        #expect(source.contains("var side: CGFloat = 18"))
+        #expect(source.contains(".frame(width: 18, height: 18)"))
         #expect(!source.contains("SessionGridRenderer"))
         #expect(!source.contains("AssistantAvatarPreference"))
         #expect(!source.contains("import UIKit"))

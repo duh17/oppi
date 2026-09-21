@@ -34,7 +34,7 @@ enum ThinkingOrbStyle: String, CaseIterable, Sendable {
 }
 
 enum ThinkingOrbSizeClass: Equatable, Sendable {
-    /// 16 pt working-row footprint.
+    /// 18 pt working-row footprint.
     case workingCompact
     /// 20 pt settings preview.
     case workingPreview
@@ -45,7 +45,7 @@ enum ThinkingOrbSizeClass: Equatable, Sendable {
 
     var designSize: Double {
         switch self {
-        case .workingCompact: return 16
+        case .workingCompact: return 18
         case .workingPreview: return 20
         case .dictationExpanded: return 32
         case .dictationStandard: return 44
@@ -160,7 +160,8 @@ enum ThinkingOrbPresets {
         switch (style, sizeClass) {
         case (.working, .workingCompact), (.working, .workingPreview):
             return orbits(
-                speed: 3.9,
+                // ~15% slower than the shipped 3.9 clock; cadence stays 60/30 Hz.
+                speed: 3.9 * 0.85,
                 orbitN: 3,
                 ghostN: 8,
                 particles: 3,
@@ -183,7 +184,7 @@ enum ThinkingOrbPresets {
             )
         case (.searching, .workingCompact), (.searching, .workingPreview):
             return globe(
-                speed: 2.665,
+                speed: 2.665 * 0.85,
                 latRings: 5,
                 lonDensity: 10,
                 rBase: 1.05,
@@ -205,7 +206,7 @@ enum ThinkingOrbPresets {
             )
         case (.solving, .workingCompact), (.solving, .workingPreview):
             return rubik(
-                speed: 1.95,
+                speed: 1.95 * 0.85,
                 latRings: 4,
                 lonDensity: 8,
                 moveCount: 8,
@@ -665,11 +666,18 @@ private enum ThinkingOrbBuilders {
     ) -> ThinkingOrbFrame {
         let cx = size / 2
         let cy = size / 2
-        // Leave a little margin so voice bends stay inside the circular control.
+        // Leave margin so idle wobble plus voice bends stay inside the circular control.
         let R = (size / 2) * 0.72
-        let spin = 0.0
-        let camTilt = 0.3
-        let pt = ThinkingOrbGeometry.Projector(yaw: t * 0.1 * spin, tilt: camTilt, cx: cx, cy: cy, scale: 1)
+        let camTilt = 0.32
+        // Slow yaw/tilt on the camera and sash. A zero spin froze both, and a
+        // face-on circle rotating in-plane is almost invisible in pixels.
+        let pt = ThinkingOrbGeometry.Projector(
+            yaw: t * 0.09,
+            tilt: camTilt + 0.12 * sin(t * 0.38),
+            cx: cx,
+            cy: cy,
+            scale: 1
+        )
         let rs = ThinkingOrbGeometry.radiusScale(size, 0.6)
         var dots: [ThinkingOrbDot] = []
         for i in 0..<ThinkingOrbGeometry.below(ghostN) {
@@ -681,8 +689,10 @@ private enum ThinkingOrbBuilders {
             ))
         }
 
-        let ya = t * 0.24 * spin
-        let ta = faceOn ? -camTilt : 0.55 + 0.3 * sin(t * 0.18) * spin
+        let ya = t * 0.16
+        let ta = faceOn
+            ? -(camTilt + 0.28) + 0.10 * sin(t * 0.40)
+            : 0.58 + 0.26 * sin(t * 0.28)
         let ux = cos(ya)
         let uy = 0.0
         let uz = sin(ya)
@@ -694,8 +704,11 @@ private enum ThinkingOrbBuilders {
         let nz = ux * vy - uy * vx
 
         let wobAmp = 0.23 * wobMul
-        let voiceAmp = 0.055
-        let baseR = R / (1 + 0.85 * wobAmp + voiceAmp)
+        let voiceAmp = 0.36
+        // Reserve idle wobble plus a slice of voice so silence is not pre-shrunk
+        // down to an invisible deformation budget.
+        let baseR = R / (1 + 0.85 * wobAmp + 0.22 * voiceAmp)
+        let idlePulse = (faceOn ? 0.14 : 0.08) * sin(t * (faceOn ? 0.82 : 0.58))
         let mid = Double(lanes - 1) / 2
         dots.reserveCapacity(dots.count + lanes * ThinkingOrbGeometry.below(segs))
         for w in 0..<lanes {
@@ -704,11 +717,13 @@ private enum ThinkingOrbBuilders {
             let edge = abs(fw - mid) / max(1, mid)
             for k in 0..<ThinkingOrbGeometry.below(segs) {
                 let a = (Double(k) / segs) * 2 * Double.pi
-                let wob = (0.055 * sin(a * 2 - t * 0.48) + 0.02 * sin(a * 3 + t * 0.31)) * wobMul
-                let speech = voice * voiceAmp * sin(a * 2 - t * 0.72)
+                let wob = (0.10 * sin(a * 2 - t * 0.48) + 0.035 * sin(a * 3 + t * 0.31)) * wobMul
+                // Boost modest speech without letting full-scale RMS explode the sash.
+                let visualVoice = 1 - exp(-voice * 3.2)
+                let speech = visualVoice * voiceAmp * sin(a * 2 - t * 0.72)
                 let combined = wob + speech
-                let radial = faceOn ? 1 + combined : 1
-                let off = faceOn ? laneOff : laneOff + combined
+                let radial = 1 + idlePulse + combined * (faceOn ? 1.0 : 0.55)
+                let off = laneOff + combined * (faceOn ? 0.45 : 1.15)
                 let x = ux * cos(a) + vx * sin(a) + nx * off
                 let y = uy * cos(a) + vy * sin(a) + ny * off
                 let z = uz * cos(a) + vz * sin(a) + nz * off

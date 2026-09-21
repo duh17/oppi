@@ -83,6 +83,10 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
     var framesFailed: Int { ledger.failed }
     var framesSkipped: Int { ledger.skipped }
     private(set) var isDriving = false
+    /// Smoothed level last fed into geometry. Public so tests can prove the
+    /// mounted host consumes `audioLevel` without reading GPU drawables.
+    private(set) var lastPresentedAudio: Float = 0
+    private(set) var lastPresentedGeometryTime: Double = 0
     var inFlightGPUBuffers: Int { renderer?.inFlightCount ?? 0 }
     var rendererForTests: ThinkingOrbMetalRenderer? { renderer }
 
@@ -516,6 +520,8 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
         let geometryTime = frozen ? ThinkingOrbDisplayPolicy.reduceMotionTime : wall * speed
         let side = Double(min(bounds.width, bounds.height))
         let design = side > 0 ? side : sizeClass.designSize
+        lastPresentedAudio = smoothed
+        lastPresentedGeometryTime = geometryTime
         let frame = ThinkingOrbGeometry.frame(
             style: style,
             sizeClass: sizeClass,

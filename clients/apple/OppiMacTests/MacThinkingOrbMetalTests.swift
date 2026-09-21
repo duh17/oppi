@@ -12,10 +12,11 @@ struct MacThinkingOrbMetalTests {
             Issue.record("Metal unavailable: \(built.unavailableReason ?? "unknown")")
             return
         }
+        let design = ThinkingOrbSizeClass.workingCompact.designSize
         let frame = ThinkingOrbGeometry.frame(
             style: .working,
             sizeClass: .workingCompact,
-            size: 16,
+            size: design,
             geometryTime: 0.6
         )
         guard let texture = renderer.makeOffscreenTexture(width: 48, height: 48, renderTarget: true) else {
@@ -24,7 +25,7 @@ struct MacThinkingOrbMetalTests {
         }
         let cost = renderer.encodeOffscreen(
             dots: frame.dots,
-            designSize: 16,
+            designSize: design,
             texture: texture,
             tint: .darkFallback,
             waitUntilCompleted: true

@@ -6,7 +6,7 @@ import SwiftUI
 /// Dictation levels are synthetic. They are not microphone capture.
 struct MetalOrbScreenshotPreview: View {
     private let themeID: ThemeID
-    @State private var syntheticLevel: Float = 0
+    @State private var voiceHeld = false
 
     init() {
         themeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light"
@@ -21,11 +21,11 @@ struct MetalOrbScreenshotPreview: View {
                 Text("Metal activity and dictation orbs")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(.themeFg)
-                Text("Working rows stay 16 pt. Dictation stays 44/32 pt. Levels are synthetic, not a microphone.")
+                Text("Working rows stay 18 pt. Dictation stays 44/32 pt. Levels are synthetic, not a microphone. Orbs keep moving at quiet.")
                     .font(.footnote)
                     .foregroundStyle(.themeComment)
 
-                Text("Working indicators · 16 pt")
+                Text("Working indicators · 18 pt")
                     .font(.headline)
                     .foregroundStyle(.themeFg)
                 HStack(spacing: 18) {
@@ -34,38 +34,33 @@ struct MetalOrbScreenshotPreview: View {
                     workingTile(.solving)
                 }
 
-                Text("Dictation · 44 pt composing")
+                Text("Dictation · Composing / Breathing")
                     .font(.headline)
                     .foregroundStyle(.themeFg)
                 HStack(spacing: 12) {
-                    Button("Quiet") { syntheticLevel = 0 }
+                    Button("Quiet") { voiceHeld = false }
                         .accessibilityIdentifier("preview.dictation.level.quiet")
-                    Button("Voice") { syntheticLevel = 0.55 }
+                    Button("Voice") { voiceHeld = true }
                         .accessibilityIdentifier("preview.dictation.level.voice")
                 }
                 .buttonStyle(.bordered)
-                MicButtonLabel(
-                    isRecording: true,
-                    isProcessing: false,
-                    audioLevel: syntheticLevel,
-                    languageLabel: "EN",
-                    accentColor: .themeBlue,
-                    engineBadge: .onDevice,
-                    diameter: 44,
-                    dictationStyle: .composing
-                )
-                .accessibilityIdentifier("preview.dictation.composing.44")
-                Text(syntheticLevel > 0 ? "Synthetic voice" : "Synthetic quiet")
+                Text(voiceHeld ? "Synthetic modest-speech envelope (preview only)" : "Synthetic quiet")
                     .font(.caption2)
                     .foregroundStyle(.themeComment)
 
-                Text("Dictation · 32 pt / Ring")
-                    .font(.headline)
-                    .foregroundStyle(.themeFg)
-                HStack(spacing: 16) {
-                    dictationTile(.composing, diameter: 32, level: 0.2, caption: "Composing")
-                    dictationTile(.breathing, diameter: 32, level: 0.2, caption: "Breathing")
-                    dictationTile(.ring, diameter: 44, level: 0.4, caption: "Ring")
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !voiceHeld)) { context in
+                    let level = previewVoiceLevel(at: context.date)
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(spacing: 16) {
+                            dictationTile(.composing, diameter: 44, level: level, caption: "Composing 44")
+                            dictationTile(.breathing, diameter: 44, level: level, caption: "Breathing 44")
+                        }
+                        HStack(spacing: 16) {
+                            dictationTile(.composing, diameter: 32, level: level, caption: "Composing 32")
+                            dictationTile(.breathing, diameter: 32, level: level, caption: "Breathing 32")
+                            dictationTile(.ring, diameter: 44, level: level, caption: "Ring")
+                        }
+                    }
                 }
             }
             .padding(20)
@@ -79,10 +74,16 @@ struct MetalOrbScreenshotPreview: View {
         .accessibilityIdentifier("screenshot.ready")
     }
 
+    private func previewVoiceLevel(at date: Date) -> Float {
+        guard voiceHeld else { return 0 }
+        let phase = date.timeIntervalSinceReferenceDate * 2.2
+        return Float(0.16 + 0.22 * (0.5 + 0.5 * sin(phase)))
+    }
+
     private func workingTile(_ style: SpinnerStyle) -> some View {
         VStack(spacing: 8) {
-            WorkingSpinnerView(tintColor: .themeFg, style: style, side: 16)
-                .frame(width: 16, height: 16)
+            WorkingSpinnerView(tintColor: .themeFg, style: style, side: 18)
+                .frame(width: 18, height: 18)
             Text(style.displayName)
                 .font(.caption)
                 .foregroundStyle(.themeComment)

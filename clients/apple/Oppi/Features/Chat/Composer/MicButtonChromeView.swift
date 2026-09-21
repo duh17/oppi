@@ -177,8 +177,9 @@ final class MicButtonChromeView: UIControl {
         var bgR: CGFloat = 0, bgG: CGFloat = 0, bgB: CGFloat = 0, bgA: CGFloat = 0
         UIColor(palette.bg).getRed(&bgR, green: &bgG, blue: &bgB, alpha: &bgA)
 
-        fillView.backgroundColor = UIColor(palette.bgHighlight)
         let showsOrb = listeningChrome && !isProcessing && dictationStyle.thinkingOrbStyle != nil
+        fillView.isHidden = showsOrb
+        fillView.backgroundColor = showsOrb ? .clear : UIColor(palette.bgHighlight)
         ringLayer.isHidden = showsOrb
         orbView.isHidden = !showsOrb
         orbView.isAnimationEnabled = showsOrb

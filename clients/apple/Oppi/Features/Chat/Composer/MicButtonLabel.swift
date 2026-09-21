@@ -89,7 +89,9 @@ struct MicButtonLabel: View {
         let level = CGFloat(min(max(isRecording ? audioLevel : 0, 0), 1))
 
         ZStack {
-            Circle().fill(Color.themeBgHighlight)
+            if !showsOrb {
+                Circle().fill(Color.themeBgHighlight)
+            }
 
             if showsOrb, let orbStyle = dictationStyle.thinkingOrbStyle {
                 ThinkingOrbView(

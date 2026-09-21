@@ -13,13 +13,13 @@ struct WorkingIndicatorTimelineRowConfiguration: UIContentConfiguration {
     }
 }
 
-/// Working indicator row: [10pt leading][16x16 spinner][6pt gap]["Working..." label]
+/// Working indicator row: [10pt leading][18x18 spinner][6pt gap]["Working..." label]
 /// Supports Metal orbs, braille dots, and Game of Life via Settings.
 final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
     private static let defaultCustomInterval: TimeInterval = 0.08
     private static let minCustomInterval: TimeInterval = 0.08
     private static let maxCustomInterval: TimeInterval = 60
-    private static let spinnerSide: CGFloat = 16
+    private static let spinnerSide: CGFloat = 18
 
     private let stackView = UIStackView()
     private let indicatorContainer = UIView()

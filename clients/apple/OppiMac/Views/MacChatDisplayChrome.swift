@@ -20,7 +20,7 @@ struct MacAssistantAvatarView: View {
 struct MacWorkingSpinnerView: View {
     var tint: Color
     var style: SpinnerStyle = .current
-    var side: CGFloat = 16
+    var side: CGFloat = 18
 
     var body: some View {
         switch style {
@@ -69,7 +69,7 @@ struct MacWorkingIndicatorRow: View {
         HStack(spacing: 6) {
             if presentation.frames == nil {
                 MacWorkingSpinnerView(tint: theme.text.secondary, style: spinnerStyle)
-                    .frame(width: 16, height: 16)
+                    .frame(width: 18, height: 18)
             } else if presentation.frames?.isEmpty == false {
                 TimelineView(.periodic(from: .now, by: reduceMotion ? 3_600 : presentation.interval)) { context in
                     Text(presentation.frame(at: context.date, reduceMotion: reduceMotion) ?? "")
