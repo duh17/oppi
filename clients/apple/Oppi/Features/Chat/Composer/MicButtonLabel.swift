@@ -2,8 +2,10 @@ import SwiftUI
 
 /// Mic button label with three states:
 /// - **Idle:** mic icon on neutral background
-/// - **Listening:** language label; ring stays flat until first PCM
+/// - **Preparing / recording:** ring or Metal orb
 /// - **Processing:** spinner
+///
+/// New orb styles show only the orb. Language and engine stay in accessibility.
 struct MicButtonLabel: View {
     enum EngineBadge: Equatable, Sendable {
         case auto
@@ -12,12 +14,14 @@ struct MicButtonLabel: View {
     }
 
     let isRecording: Bool
+    let isPreparing: Bool
     let isProcessing: Bool
     let audioLevel: Float
     let languageLabel: String?
     let accentColor: Color
     let engineBadge: EngineBadge
     let diameter: CGFloat
+    var dictationStyle: DictationIndicatorStyle = .current
 
     init(
         isRecording: Bool,
@@ -26,35 +30,44 @@ struct MicButtonLabel: View {
         languageLabel: String?,
         accentColor: Color,
         engineBadge: EngineBadge,
-        diameter: CGFloat
+        diameter: CGFloat,
+        dictationStyle: DictationIndicatorStyle = .current,
+        isPreparing: Bool = false
     ) {
         self.isRecording = isRecording
+        self.isPreparing = isPreparing
         self.isProcessing = isProcessing
         self.audioLevel = audioLevel
         self.languageLabel = languageLabel
         self.accentColor = accentColor
         self.engineBadge = engineBadge
         self.diameter = diameter
+        self.dictationStyle = dictationStyle
     }
 
     init(
         presentation: ComposerShared.MicButtonPresentation,
         accentColor: Color,
-        diameter: CGFloat
+        diameter: CGFloat,
+        dictationStyle: DictationIndicatorStyle = .current
     ) {
         self.init(
-            isRecording: presentation.showsListeningChrome,
+            isRecording: presentation.isRecording,
             isProcessing: presentation.isProcessing,
             audioLevel: presentation.audioLevel,
             languageLabel: presentation.languageLabel,
             accentColor: accentColor,
             engineBadge: presentation.engineBadge,
-            diameter: diameter
+            diameter: diameter,
+            dictationStyle: dictationStyle,
+            isPreparing: presentation.isPreparing
         )
     }
 
+    private var listeningChrome: Bool { isRecording || isPreparing }
+
     private var indicatorColor: Color {
-        if !isRecording && !isProcessing {
+        if !listeningChrome && !isProcessing {
             return .themeComment
         }
 
@@ -68,13 +81,25 @@ struct MicButtonLabel: View {
         }
     }
 
+    private var showsOrb: Bool {
+        listeningChrome && !isProcessing && dictationStyle.thinkingOrbStyle != nil
+    }
+
     var body: some View {
-        let level = CGFloat(min(max(audioLevel, 0), 1))
+        let level = CGFloat(min(max(isRecording ? audioLevel : 0, 0), 1))
 
         ZStack {
             Circle().fill(Color.themeBgHighlight)
 
-            if isRecording {
+            if showsOrb, let orbStyle = dictationStyle.thinkingOrbStyle {
+                ThinkingOrbView(
+                    style: orbStyle,
+                    sizeClass: .dictation(side: Double(diameter)),
+                    tint: indicatorColor,
+                    audioLevel: isRecording ? audioLevel : 0,
+                    isActive: true
+                )
+            } else if isRecording {
                 let strokeWidth = 1.5 + level * 2.0
                 Circle()
                     .stroke(indicatorColor, lineWidth: strokeWidth)
@@ -87,7 +112,9 @@ struct MicButtonLabel: View {
             if isProcessing {
                 ProgressView()
                     .controlSize(.mini)
-            } else if isRecording {
+            } else if showsOrb {
+                EmptyView()
+            } else if listeningChrome {
                 if engineBadge == .remote {
                     Image(systemName: "cloud")
                         .font(.system(size: diameter * 0.38, weight: .bold))
@@ -107,5 +134,21 @@ struct MicButtonLabel: View {
 
         }
         .frame(width: diameter, height: diameter)
+        .clipShape(Circle())
+        .contentShape(Circle())
+        .accessibilityValue(spokenAccessory)
+    }
+
+    private var spokenAccessory: String {
+        var parts: [String] = []
+        if let languageLabel, !languageLabel.isEmpty {
+            parts.append(languageLabel)
+        }
+        switch engineBadge {
+        case .auto: break
+        case .onDevice: parts.append("On-device")
+        case .remote: parts.append("Server")
+        }
+        return parts.joined(separator: ", ")
     }
 }

@@ -403,7 +403,7 @@ enum AppPreferences {
 
     // MARK: - Appearance
 
-    /// Spinner animation style preference.
+    /// Spinner and dictation indicator style preferences.
     enum Appearance {
         static var spinnerStyle: SpinnerStyle {
             AppPreferenceStore.Appearance.spinnerStyle
@@ -411,6 +411,14 @@ enum AppPreferences {
 
         static func setSpinnerStyle(_ style: SpinnerStyle) {
             AppPreferenceStore.Appearance.setSpinnerStyle(style)
+        }
+
+        static var dictationIndicatorStyle: DictationIndicatorStyle {
+            AppPreferenceStore.Appearance.dictationIndicatorStyle
+        }
+
+        static func setDictationIndicatorStyle(_ style: DictationIndicatorStyle) {
+            AppPreferenceStore.Appearance.setDictationIndicatorStyle(style)
         }
     }
 

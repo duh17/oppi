@@ -257,11 +257,16 @@ struct AppSettingsView: View {
                 LabeledContent("Spinner Preview") {
                     MacWorkingSpinnerView(
                         tint: Color.themeFg,
-                        style: selectedSpinnerStyle
+                        style: selectedSpinnerStyle,
+                        side: 20
                     )
                     .frame(width: 20, height: 20)
                     .id(selectedSpinnerStyle)
                 }
+
+                Text(ThinkingOrbAttribution.summary)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
 
                 Picker(
                     MacAppSettingsPreferenceControl.keybindings.title,
@@ -565,6 +570,12 @@ struct AppSettingsView: View {
             Section("App Updates") {
                 Button("Check for Updates...") {
                     checkForUpdates()
+                }
+            }
+
+            Section("About") {
+                NavigationLink("Acknowledgments") {
+                    ThinkingOrbAcknowledgmentsView()
                 }
             }
         }

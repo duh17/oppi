@@ -241,18 +241,24 @@ enum AppPreferenceStore {
 
     // MARK: - Appearance
 
-    /// Spinner animation style. Key matches iOS `AppPreferences.Appearance`.
+    /// Spinner and dictation indicator styles. Spinner key matches iOS
+    /// `AppPreferences.Appearance`.
     enum Appearance {
         static let spinnerStyleKey = "spinnerStyle"
+        static let dictationIndicatorStyleKey =
+            "\(AppIdentifiers.subsystem).appearance.dictationIndicatorStyle"
         static let spinnerDidChangeNotification = Notification.Name(
             "\(AppIdentifiers.subsystem).appearance.spinnerStyleDidChange"
+        )
+        static let dictationIndicatorDidChangeNotification = Notification.Name(
+            "\(AppIdentifiers.subsystem).appearance.dictationIndicatorStyleDidChange"
         )
 
         static var spinnerStyle: SpinnerStyle {
             guard let raw = UserDefaults.standard.string(forKey: spinnerStyleKey),
                   let style = SpinnerStyle(rawValue: raw)
             else {
-                return .brailleDots
+                return .working
             }
             return style
         }
@@ -261,6 +267,21 @@ enum AppPreferenceStore {
             guard style != spinnerStyle else { return }
             UserDefaults.standard.set(style.rawValue, forKey: spinnerStyleKey)
             NotificationCenter.default.post(name: spinnerDidChangeNotification, object: nil)
+        }
+
+        static var dictationIndicatorStyle: DictationIndicatorStyle {
+            guard let raw = UserDefaults.standard.string(forKey: dictationIndicatorStyleKey),
+                  let style = DictationIndicatorStyle(rawValue: raw)
+            else {
+                return .composing
+            }
+            return style
+        }
+
+        static func setDictationIndicatorStyle(_ style: DictationIndicatorStyle) {
+            guard style != dictationIndicatorStyle else { return }
+            UserDefaults.standard.set(style.rawValue, forKey: dictationIndicatorStyleKey)
+            NotificationCenter.default.post(name: dictationIndicatorDidChangeNotification, object: nil)
         }
     }
 }

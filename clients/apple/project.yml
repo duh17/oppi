@@ -108,6 +108,8 @@ targets:
         type: group
       - path: Shared
         type: group
+        excludes:
+          - "Renderers/Orbs/LICENSE"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi
@@ -335,6 +337,9 @@ targets:
         type: group
       - path: Shared/Renderers
         type: group
+        excludes:
+          - "Orbs"
+          - "Orbs/**"
       - path: Shared/ShareQuickSession/Payload
         type: group
       - path: OppiCore/Formatting/SessionFormatting.swift
@@ -447,6 +452,9 @@ targets:
         type: group
       - path: Shared/Renderers
         type: group
+        excludes:
+          - "Orbs"
+          - "Orbs/**"
       - path: Shared/ShareQuickSession/Payload
         type: group
       - path: OppiCore/Formatting/SessionFormatting.swift
@@ -572,6 +580,8 @@ targets:
         type: group
       - path: Shared/Renderers
         type: group
+        excludes:
+          - "Orbs/LICENSE"
       - path: Shared/Theme
         type: group
       - path: Oppi/Core/AppIdentifiers.swift

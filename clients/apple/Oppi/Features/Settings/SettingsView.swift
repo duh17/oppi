@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(ThemeStore.self) private var themeStore
 
     @State private var spinnerStyle = AppPreferences.Appearance.spinnerStyle
+    @State private var dictationIndicatorStyle = AppPreferences.Appearance.dictationIndicatorStyle
     @State private var biometricEnabled = BiometricService.shared.isEnabled
     @State private var autoTitleProvider = AppPreferences.Session.autoTitleProvider
     @State private var screenAwakePreset = AppPreferences.ScreenAwake.timeoutPreset
@@ -70,7 +71,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Picker("Spinner Style", selection: $spinnerStyle) {
+                Picker("Working indicator", selection: $spinnerStyle) {
                     ForEach(SpinnerStyle.allCases, id: \.self) { style in
                         Text(style.displayName).tag(style)
                     }
@@ -78,11 +79,41 @@ struct SettingsView: View {
                 .onChange(of: spinnerStyle) { _, newValue in
                     AppPreferences.Appearance.setSpinnerStyle(newValue)
                 }
+                .accessibilityIdentifier("settings.spinnerStyle")
 
-                LabeledContent("Spinner Preview") {
-                    WorkingSpinnerView(tintColor: .themeFg, style: spinnerStyle)
+                LabeledContent("Working preview") {
+                    WorkingSpinnerView(tintColor: .themeFg, style: spinnerStyle, side: 20)
                         .frame(width: 20, height: 20)
                         .id(spinnerStyle)
+                }
+
+                Picker("Dictation indicator", selection: $dictationIndicatorStyle) {
+                    ForEach(DictationIndicatorStyle.allCases, id: \.self) { style in
+                        Text(style.displayName).tag(style)
+                    }
+                }
+                .onChange(of: dictationIndicatorStyle) { _, newValue in
+                    AppPreferences.Appearance.setDictationIndicatorStyle(newValue)
+                }
+                .accessibilityIdentifier("settings.dictationIndicatorStyle")
+
+                VStack(alignment: .leading, spacing: 8) {
+                    LabeledContent("Dictation preview") {
+                        MicButtonLabel(
+                            isRecording: true,
+                            isProcessing: false,
+                            audioLevel: 0.2,
+                            languageLabel: "EN",
+                            accentColor: .themeBlue,
+                            engineBadge: .onDevice,
+                            diameter: ComposerInputMetrics.controlDiameter,
+                            dictationStyle: dictationIndicatorStyle
+                        )
+                        .id(dictationIndicatorStyle)
+                    }
+                    Text("Preview only — not microphone capture.")
+                        .font(.footnote)
+                        .foregroundStyle(.themeComment)
                 }
 
                 if UIDevice.current.userInterfaceIdiom == .phone {
@@ -332,6 +363,10 @@ struct SettingsView: View {
 
             Section("About") {
                 LabeledContent("Version", value: appVersionLabel)
+                NavigationLink("Acknowledgments") {
+                    ThinkingOrbAcknowledgmentsView()
+                }
+                .accessibilityIdentifier("settings.acknowledgments")
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: AppPreferences.ChatDisplay.didChangeNotification)) { _ in
@@ -345,6 +380,8 @@ struct SettingsView: View {
             selectedMessageTextScale = FontPreferences.messageTextScale
             quietModeEnabled = AppPreferences.ChatDisplay.isCompactTurnsEnabled
             workStripStyle = AppPreferences.ChatDisplay.workStripStyle
+            spinnerStyle = AppPreferences.Appearance.spinnerStyle
+            dictationIndicatorStyle = AppPreferences.Appearance.dictationIndicatorStyle
         }
         .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
         .themedListSurface()

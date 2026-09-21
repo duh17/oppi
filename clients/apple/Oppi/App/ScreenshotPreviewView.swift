@@ -187,6 +187,8 @@ struct ScreenshotPreviewView: View {
                 state: .donePreview,
                 isStale: false
             )
+        case "metal-orbs":
+            MetalOrbScreenshotPreview()
         default:
             Text("Unknown screen: \(ScreenshotPreviewConfig.screen)")
         }

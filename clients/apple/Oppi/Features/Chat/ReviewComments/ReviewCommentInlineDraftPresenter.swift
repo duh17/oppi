@@ -423,7 +423,12 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         )
         micButton.isEnabled = !isSaving && presentation.isEnabled
         micButton.accessibilityLabel = presentation.accessibilityLabel
-        micButton.accessibilityValue = presentation.accessibilityValue
+        var spoken = presentation.accessibilityValue
+        if DictationIndicatorStyle.current.thinkingOrbStyle != nil,
+           let language = presentation.languageLabel, !language.isEmpty {
+            spoken = spoken.isEmpty ? language : "\(spoken), \(language)"
+        }
+        micButton.accessibilityValue = spoken
     }
 
     private func observeVoiceInput() {

@@ -475,19 +475,28 @@ struct AppearancePreferenceStoreTests {
     }
 
     @Test func displayNamesMatchIOSSettings() {
+        #expect(SpinnerStyle.working.displayName == "Working")
+        #expect(SpinnerStyle.searching.displayName == "Searching")
+        #expect(SpinnerStyle.solving.displayName == "Solving")
         #expect(SpinnerStyle.brailleDots.displayName == "Pi")
         #expect(SpinnerStyle.gameOfLife.displayName == "GoL")
-        #expect(SpinnerStyle.allCases == [.brailleDots, .gameOfLife])
+        #expect(SpinnerStyle.allCases == [
+            .working,
+            .searching,
+            .solving,
+            .brailleDots,
+            .gameOfLife,
+        ])
     }
 
-    @Test func defaultsSpinnerStyleToPi() {
+    @Test func defaultsSpinnerStyleToWorking() {
         let key = AppPreferenceStore.Appearance.spinnerStyleKey
         let original = UserDefaults.standard.object(forKey: key)
         UserDefaults.standard.removeObject(forKey: key)
         defer { restoreObject(original, forKey: key) }
 
-        #expect(AppPreferenceStore.Appearance.spinnerStyle == .brailleDots)
-        #expect(SpinnerStyle.current == .brailleDots)
+        #expect(AppPreferenceStore.Appearance.spinnerStyle == .working)
+        #expect(SpinnerStyle.current == .working)
     }
 
     @Test func persistsSpinnerStyle() {
@@ -502,6 +511,29 @@ struct AppearancePreferenceStoreTests {
 
         AppPreferenceStore.Appearance.setSpinnerStyle(.brailleDots)
         #expect(SpinnerStyle.current == .brailleDots)
+    }
+
+    @Test func defaultsDictationIndicatorToComposing() {
+        let key = AppPreferenceStore.Appearance.dictationIndicatorStyleKey
+        let original = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { restoreObject(original, forKey: key) }
+
+        #expect(AppPreferenceStore.Appearance.dictationIndicatorStyle == .composing)
+        #expect(DictationIndicatorStyle.current == .composing)
+    }
+
+    @Test func persistsDictationIndicatorAndKeepsRing() {
+        let key = AppPreferenceStore.Appearance.dictationIndicatorStyleKey
+        let original = UserDefaults.standard.object(forKey: key)
+        defer { restoreObject(original, forKey: key) }
+
+        AppPreferenceStore.Appearance.setDictationIndicatorStyle(.ring)
+        #expect(AppPreferenceStore.Appearance.dictationIndicatorStyle == .ring)
+        #expect(UserDefaults.standard.string(forKey: key) == "ring")
+
+        AppPreferenceStore.Appearance.setDictationIndicatorStyle(.breathing)
+        #expect(DictationIndicatorStyle.current == .breathing)
     }
 }
 

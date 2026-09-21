@@ -62,9 +62,17 @@ final class BrailleSpinnerUIView: UIView {
 
     // MARK: - Window Lifecycle
 
+    override var isHidden: Bool {
+        didSet { updateAnimationRunning() }
+    }
+
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil {
+        updateAnimationRunning()
+    }
+
+    private func updateAnimationRunning() {
+        if window != nil, !isHidden {
             startAnimation()
         } else {
             stopAnimation()

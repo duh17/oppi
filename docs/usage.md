@@ -54,6 +54,12 @@ Assistant output can open markdown, code, diffs, and other documents in full-scr
 - **On-device** uses Apple's speech APIs on the phone. Audio stays on the device. Submitting the transcript still sends the prompt to the paired server.
 - **Server** streams audio to the paired server, which forwards it to the configured speech-to-text backend.
 
+**Settings → Chat Display → Dictation indicator** chooses the listening control: **Composing** and **Breathing** are voice-reactive Metal orbs, and **Ring** is the older stroke. New installs default to Composing; a saved Ring choice stays. The button size does not change.
+
+**Settings → Chat Display → Working indicator** chooses the busy-row animation: **Working**, **Searching**, and **Solving** Metal orbs, plus **Pi** and **GoL**. New installs default to Working; saved Pi or GoL choices stay.
+
+Those indicators adapt Thinking Orbs geometry; they are not original Oppi artwork. Jakub Antalik created the original [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) designs and engine. Haplo LLC made the Swift [ThinkingOrbs](https://github.com/haplollc/ThinkingOrbs) port. Oppi adds Metal rasterization and voice-reactive motion. The full MIT notice is in **Settings → About → Acknowledgments**.
+
 Voice replies are produced by the paired server and its configured voice extension. See [Server configuration](server-configuration.md) for ASR and TTS setup.
 
 ## Agents and schedules

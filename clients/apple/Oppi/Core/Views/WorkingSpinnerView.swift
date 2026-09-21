@@ -2,15 +2,24 @@ import SwiftUI
 
 // MARK: - Unified Spinner
 
-/// SwiftUI view that shows a spinner style (braille dots or Game of Life).
+/// SwiftUI view that shows a spinner style (Metal orbs, braille dots, or Game of Life).
 /// Defaults to the persisted preference. Pass an explicit `style` to override
 /// (e.g. for previews where the binding hasn't written to prefs yet).
 struct WorkingSpinnerView: View {
     let tintColor: Color
     var style: SpinnerStyle = .current
+    var side: CGFloat = 16
 
     var body: some View {
         switch style {
+        case .working, .searching, .solving:
+            if let orbStyle = style.thinkingOrbStyle {
+                ThinkingOrbView(
+                    style: orbStyle,
+                    sizeClass: .working(side: Double(side)),
+                    tint: tintColor
+                )
+            }
         case .brailleDots:
             BrailleSpinnerRepresentable(tintColor: tintColor)
         case .gameOfLife:

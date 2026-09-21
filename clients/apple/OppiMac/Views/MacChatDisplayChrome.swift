@@ -16,13 +16,22 @@ struct MacAssistantAvatarView: View {
     }
 }
 
-/// Pi / GoL working spinner. Defaults to the persisted preference.
+/// Working spinner. Defaults to the persisted preference.
 struct MacWorkingSpinnerView: View {
     var tint: Color
     var style: SpinnerStyle = .current
+    var side: CGFloat = 16
 
     var body: some View {
         switch style {
+        case .working, .searching, .solving:
+            if let orbStyle = style.thinkingOrbStyle {
+                ThinkingOrbView(
+                    style: orbStyle,
+                    sizeClass: .working(side: Double(side)),
+                    tint: tint
+                )
+            }
         case .brailleDots:
             MacBrailleSpinner(tint: tint)
         case .gameOfLife:
