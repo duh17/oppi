@@ -51,11 +51,23 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
             invalidateStillFrame()
         }
     }
+    var accentUIColors: [UIColor] = [] {
+        didSet {
+            guard !Self.accentColorsEqual(accentUIColors, oldValue, traits: traitCollection) else { return }
+            invalidateStillFrame()
+        }
+    }
     #else
     var tintNSColor: NSColor = .labelColor {
         didSet {
             guard !Self.tintComponentsEqual(tintNSColor, oldValue) else { return }
             fallbackLayer.fillColor = tintNSColor.cgColor
+            invalidateStillFrame()
+        }
+    }
+    var accentNSColors: [NSColor] = [] {
+        didSet {
+            guard !Self.accentColorsEqual(accentNSColors, oldValue) else { return }
             invalidateStillFrame()
         }
     }
@@ -557,7 +569,8 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
             dots: frame.dots,
             designSize: designSize,
             drawable: drawable,
-            tint: currentTint
+            tint: currentTint,
+            palette: currentPalette
         )
         if cost.submitted {
             ledger.addSubmitted()
@@ -803,6 +816,27 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
         }
     }
 
+    private var currentPalette: ThinkingOrbPalette {
+        #if canImport(UIKit)
+        let colors = accentUIColors
+        let resolved: [SIMD3<Float>] = (0..<4).map { index in
+            let color = index < colors.count ? colors[index] : tintUIColor
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            color.resolvedColor(with: traitCollection).getRed(&r, green: &g, blue: &b, alpha: &a)
+            return SIMD3(Float(r), Float(g), Float(b))
+        }
+        return ThinkingOrbPalette(accents: resolved)
+        #else
+        let colors = accentNSColors
+        let resolved: [SIMD3<Float>] = (0..<4).map { index in
+            let raw = index < colors.count ? colors[index] : tintNSColor
+            let rgb = raw.usingColorSpace(.deviceRGB) ?? raw
+            return SIMD3(Float(rgb.redComponent), Float(rgb.greenComponent), Float(rgb.blueComponent))
+        }
+        return ThinkingOrbPalette(accents: resolved)
+        #endif
+    }
+
     #if canImport(UIKit)
     private static func tintComponentsEqual(_ lhs: UIColor, _ rhs: UIColor, traits: UITraitCollection) -> Bool {
         var lr: CGFloat = 0, lg: CGFloat = 0, lb: CGFloat = 0, la: CGFloat = 0
@@ -810,6 +844,11 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
         lhs.resolvedColor(with: traits).getRed(&lr, green: &lg, blue: &lb, alpha: &la)
         rhs.resolvedColor(with: traits).getRed(&rr, green: &rg, blue: &rb, alpha: &ra)
         return lr == rr && lg == rg && lb == rb && la == ra
+    }
+
+    private static func accentColorsEqual(_ lhs: [UIColor], _ rhs: [UIColor], traits: UITraitCollection) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        return zip(lhs, rhs).allSatisfy { tintComponentsEqual($0, $1, traits: traits) }
     }
     #else
     private static func tintComponentsEqual(_ lhs: NSColor, _ rhs: NSColor) -> Bool {
@@ -819,6 +858,11 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
             && left.greenComponent == right.greenComponent
             && left.blueComponent == right.blueComponent
             && left.alphaComponent == right.alphaComponent
+    }
+
+    private static func accentColorsEqual(_ lhs: [NSColor], _ rhs: [NSColor]) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        return zip(lhs, rhs).allSatisfy { tintComponentsEqual($0, $1) }
     }
     #endif
 
@@ -883,18 +927,27 @@ struct ThinkingOrbView: View {
     var audioLevel: Float = 0
     var isActive: Bool = true
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.theme) private var theme
+    @Environment(\.themeID) private var themeID
 
     var body: some View {
         ThinkingOrbRepresentable(
             style: style,
             sizeClass: sizeClass,
             tint: tint,
+            accents: [
+                theme.accent.blue,
+                theme.accent.cyan,
+                theme.accent.purple,
+                theme.accent.orange,
+            ],
             audioLevel: audioLevel,
             isActive: isActive,
             isDarkBackground: colorScheme == .dark
         )
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+        .id(themeID)
     }
 }
 
@@ -903,6 +956,7 @@ private struct ThinkingOrbRepresentable: UIViewRepresentable {
     var style: ThinkingOrbStyle
     var sizeClass: ThinkingOrbSizeClass
     var tint: Color
+    var accents: [Color]
     var audioLevel: Float
     var isActive: Bool
     var isDarkBackground: Bool
@@ -925,6 +979,7 @@ private struct ThinkingOrbRepresentable: UIViewRepresentable {
         view.style = style
         view.sizeClass = sizeClass
         view.tintUIColor = UIColor(tint)
+        view.accentUIColors = accents.map { UIColor($0) }
         view.audioLevel = audioLevel
         view.isAnimationEnabled = isActive
         view.isDarkBackground = isDarkBackground
@@ -936,6 +991,7 @@ private struct ThinkingOrbRepresentable: NSViewRepresentable {
     var style: ThinkingOrbStyle
     var sizeClass: ThinkingOrbSizeClass
     var tint: Color
+    var accents: [Color]
     var audioLevel: Float
     var isActive: Bool
     var isDarkBackground: Bool
@@ -958,6 +1014,7 @@ private struct ThinkingOrbRepresentable: NSViewRepresentable {
         view.style = style
         view.sizeClass = sizeClass
         view.tintNSColor = NSColor(tint)
+        view.accentNSColors = accents.map { NSColor($0) }
         view.audioLevel = audioLevel
         view.isAnimationEnabled = isActive
         view.isDarkBackground = isDarkBackground

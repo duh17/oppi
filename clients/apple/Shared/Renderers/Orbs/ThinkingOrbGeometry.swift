@@ -15,6 +15,10 @@ struct ThinkingOrbDot: Equatable, Sendable {
     var r: Double
     var white: Double
     var a: Double = 1
+    /// 0 = spinner tint only; 1 = full theme-palette accent.
+    var accent: Double = 0
+    /// Theme accent slot 0...3 (blue, cyan, purple, orange).
+    var palette: Double = 0
 }
 
 struct ThinkingOrbFrame: Sendable {
@@ -150,6 +154,10 @@ enum ThinkingOrbGeometry {
 }
 
 enum ThinkingOrbPresets {
+    /// Compact working/searching/solving clock vs original Thinking Orbs rates.
+    /// Display cadence stays 60/30 Hz. Solving compact ticks ~1s wall.
+    static let workingMotionScale = 0.5
+
     struct Resolved: Sendable {
         var speed: Double
         var rMin: Double
@@ -160,8 +168,7 @@ enum ThinkingOrbPresets {
         switch (style, sizeClass) {
         case (.working, .workingCompact), (.working, .workingPreview):
             return orbits(
-                // ~15% slower than the shipped 3.9 clock; cadence stays 60/30 Hz.
-                speed: 3.9 * 0.85,
+                speed: 3.9 * workingMotionScale,
                 orbitN: 3,
                 ghostN: 8,
                 particles: 3,
@@ -184,7 +191,7 @@ enum ThinkingOrbPresets {
             )
         case (.searching, .workingCompact), (.searching, .workingPreview):
             return globe(
-                speed: 2.665 * 0.85,
+                speed: 2.665 * workingMotionScale,
                 latRings: 5,
                 lonDensity: 10,
                 rBase: 1.05,
@@ -206,13 +213,14 @@ enum ThinkingOrbPresets {
             )
         case (.solving, .workingCompact), (.solving, .workingPreview):
             return rubik(
-                speed: 1.95 * 0.85,
+                speed: 1.95 * workingMotionScale,
                 latRings: 4,
                 lonDensity: 8,
                 moveCount: 8,
                 rBase: 1.14,
                 rDepth: 2.6,
-                rActive: 0.5
+                rActive: 0.5,
+                slotDur: 1.95 * workingMotionScale
             )
         case (.solving, .dictationExpanded), (.solving, .dictationStandard):
             return rubik(
@@ -351,7 +359,8 @@ enum ThinkingOrbPresets {
         moveCount: Int,
         rBase: Double,
         rDepth: Double,
-        rActive: Double
+        rActive: Double,
+        slotDur: Double = 0.42
     ) -> Resolved {
         Resolved(speed: speed, rMin: 0.3) { size, t, _ in
             ThinkingOrbBuilders.rubik(
@@ -362,7 +371,8 @@ enum ThinkingOrbPresets {
                 moveCount: moveCount,
                 rBase: rBase,
                 rDepth: rDepth,
-                rActive: rActive
+                rActive: rActive,
+                slotDur: slotDur
             )
         }
     }
@@ -462,7 +472,9 @@ private enum ThinkingOrbBuilders {
                 dots.append(ThinkingOrbDot(
                     x: px, y: py, z: z,
                     r: (partR + partRDepth * depth) * rs,
-                    white: 0.3 - 0.22 * depth
+                    white: 0.3 - 0.22 * depth,
+                    accent: 0.9,
+                    palette: Double(orb % 4)
                 ))
             }
         }
@@ -504,7 +516,9 @@ private enum ThinkingOrbBuilders {
                     x: px, y: py, z: z,
                     r: (rBase + rDepth * depth + rBoost * boost) * rs,
                     white: 0.62 - 0.54 * depth,
-                    a: dimBase + (1 - dimBase) * min(1, boost)
+                    a: dimBase + (1 - dimBase) * min(1, boost),
+                    accent: min(1, boost),
+                    palette: Double(li % 4)
                 ))
             }
         }
@@ -609,7 +623,8 @@ private enum ThinkingOrbBuilders {
         moveCount: Int,
         rBase: Double,
         rDepth: Double,
-        rActive: Double
+        rActive: Double,
+        slotDur: Double
     ) -> ThinkingOrbFrame {
         let cx = size / 2
         let cy = size / 2
@@ -623,7 +638,7 @@ private enum ThinkingOrbBuilders {
         )
         let rs = ThinkingOrbGeometry.radiusScale(size, 0.6)
         let moves = makeMoves(moveCount)
-        let sc = solveCycle(t, moveCount, 0.42, 1.2)
+        let sc = solveCycle(t, moveCount, slotDur, 1.2)
         var dots: [ThinkingOrbDot] = []
         for li in 0..<ThinkingOrbGeometry.through(latRings) {
             let lat = -Double.pi / 2 + (Double(li) / latRings) * Double.pi
@@ -645,7 +660,9 @@ private enum ThinkingOrbBuilders {
                 dots.append(ThinkingOrbDot(
                     x: px, y: py, z: zr,
                     r: (rBase + rDepth * depth + (moved.inActive ? rActive : 0)) * rs,
-                    white: 0.62 - 0.54 * depth - (moved.inActive ? 0.14 : 0)
+                    white: 0.62 - 0.54 * depth - (moved.inActive ? 0.14 : 0),
+                    accent: moved.inActive ? 0.95 : (lj % 4 == 0 ? 0.28 : 0),
+                    palette: Double((moved.inActive ? max(sc.active, 0) : li) % 4)
                 ))
             }
         }

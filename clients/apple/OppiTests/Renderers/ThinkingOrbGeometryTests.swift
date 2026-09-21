@@ -23,6 +23,8 @@ struct ThinkingOrbGeometryTests {
                 #expect(dot.r.isFinite && dot.r > 0)
                 #expect(dot.a.isFinite && dot.a >= 0 && dot.a <= 1)
                 #expect(dot.white.isFinite)
+                #expect(dot.accent.isFinite && dot.accent >= 0 && dot.accent <= 1)
+                #expect(dot.palette.isFinite && dot.palette >= 0 && dot.palette <= 3)
                 #expect(dot.x >= -1 && dot.x <= size + 1)
                 #expect(dot.y >= -1 && dot.y <= size + 1)
             }
@@ -81,15 +83,17 @@ struct ThinkingOrbGeometryTests {
         }
     }
 
-    @Test func workingIndicatorTimeScaleIsFifteenPercentSlowerWithoutDroppingFrameRate() {
+    @Test func workingIndicatorTimeScaleIsHalfOriginalWithoutDroppingFrameRate() {
         let compact = ThinkingOrbSizeClass.workingCompact
         let preview = ThinkingOrbSizeClass.workingPreview
-        #expect(ThinkingOrbPresets.resolve(.working, compact).speed == 3.9 * 0.85)
-        #expect(ThinkingOrbPresets.resolve(.working, preview).speed == 3.9 * 0.85)
-        #expect(ThinkingOrbPresets.resolve(.searching, compact).speed == 2.665 * 0.85)
-        #expect(ThinkingOrbPresets.resolve(.searching, preview).speed == 2.665 * 0.85)
-        #expect(ThinkingOrbPresets.resolve(.solving, compact).speed == 1.95 * 0.85)
-        #expect(ThinkingOrbPresets.resolve(.solving, preview).speed == 1.95 * 0.85)
+        let scale = ThinkingOrbPresets.workingMotionScale
+        #expect(scale == 0.5)
+        #expect(ThinkingOrbPresets.resolve(.working, compact).speed == 3.9 * scale)
+        #expect(ThinkingOrbPresets.resolve(.working, preview).speed == 3.9 * scale)
+        #expect(ThinkingOrbPresets.resolve(.searching, compact).speed == 2.665 * scale)
+        #expect(ThinkingOrbPresets.resolve(.searching, preview).speed == 2.665 * scale)
+        #expect(ThinkingOrbPresets.resolve(.solving, compact).speed == 1.95 * scale)
+        #expect(ThinkingOrbPresets.resolve(.solving, preview).speed == 1.95 * scale)
         #expect(ThinkingOrbPresets.resolve(.composing, .dictationStandard).speed == 2.34)
         #expect(ThinkingOrbPresets.resolve(.composing, .dictationExpanded).speed == 2.34)
         #expect(ThinkingOrbPresets.resolve(.breathing, .dictationStandard).speed == 2.8)
@@ -110,6 +114,39 @@ struct ThinkingOrbGeometryTests {
         #expect(ThinkingOrbSizeClass.working(side: 18) == .workingCompact)
         #expect(ThinkingOrbSizeClass.working(side: 16) == .workingCompact)
         #expect(ThinkingOrbSizeClass.working(side: 20) == .workingPreview)
+    }
+
+    @Test func workingStylesColorASubsetOfDotsFromThePalette() {
+        let working = ThinkingOrbGeometry.frame(
+            style: .working,
+            sizeClass: .workingCompact,
+            size: 18,
+            geometryTime: 0.8
+        )
+        let searching = ThinkingOrbGeometry.frame(
+            style: .searching,
+            sizeClass: .workingCompact,
+            size: 18,
+            geometryTime: 1.2
+        )
+        let solving = ThinkingOrbGeometry.frame(
+            style: .solving,
+            sizeClass: .workingCompact,
+            size: 18,
+            geometryTime: 0.4
+        )
+        let composing = ThinkingOrbGeometry.frame(
+            style: .composing,
+            sizeClass: .dictationStandard,
+            size: 44,
+            geometryTime: 0.8
+        )
+        #expect(working.dots.contains { $0.accent >= 0.8 })
+        #expect(working.dots.contains { $0.accent == 0 })
+        #expect(Set(working.dots.filter { $0.accent >= 0.8 }.map(\.palette)).count >= 2)
+        #expect(searching.dots.contains { $0.accent > 0.2 })
+        #expect(solving.dots.contains { $0.accent >= 0.2 })
+        #expect(composing.dots.allSatisfy { $0.accent == 0 })
     }
 
     @Test func workingGeometryIgnoresAudioLevel() {

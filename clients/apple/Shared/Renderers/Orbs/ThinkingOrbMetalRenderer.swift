@@ -12,8 +12,30 @@ struct ThinkingOrbTint: Equatable, Sendable {
     static let lightFallback = ThinkingOrbTint(red: 0.12, green: 0.12, blue: 0.14, isDark: false)
     static let darkFallback = ThinkingOrbTint(red: 0.92, green: 0.92, blue: 0.94, isDark: true)
 
+    func repeatingPalette() -> ThinkingOrbPalette {
+        let color = SIMD3<Float>(red, green, blue)
+        return ThinkingOrbPalette(accents: [color, color, color, color])
+    }
+
     static func isDarkBackground(red: CGFloat, green: CGFloat, blue: CGFloat) -> Bool {
         (0.2126 * red + 0.7152 * green + 0.0722 * blue) < 0.5
+    }
+}
+
+struct ThinkingOrbPalette: Equatable, Sendable {
+    /// Blue, cyan, purple, orange slots. Always four.
+    var accents: [SIMD3<Float>]
+
+    static let empty = ThinkingOrbPalette(accents: [
+        SIMD3(0.35, 0.55, 0.95),
+        SIMD3(0.30, 0.75, 0.85),
+        SIMD3(0.62, 0.48, 0.90),
+        SIMD3(0.95, 0.62, 0.32),
+    ])
+
+    func color(_ index: Int) -> SIMD3<Float> {
+        guard !accents.isEmpty else { return SIMD3(1, 1, 1) }
+        return accents[((index % accents.count) + accents.count) % accents.count]
     }
 }
 
@@ -121,6 +143,10 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
         var tintG: Float
         var tintB: Float
         var tintA: Float
+        var accent0R: Float, accent0G: Float, accent0B: Float, accent0A: Float
+        var accent1R: Float, accent1G: Float, accent1B: Float, accent1A: Float
+        var accent2R: Float, accent2G: Float, accent2B: Float, accent2A: Float
+        var accent3R: Float, accent3G: Float, accent3B: Float, accent3A: Float
     }
 
     enum RendererError: Error {
@@ -184,14 +210,16 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
         dots: [ThinkingOrbDot],
         designSize: Double,
         drawable: CAMetalDrawable,
-        tint: ThinkingOrbTint
+        tint: ThinkingOrbTint,
+        palette: ThinkingOrbPalette? = nil
     ) -> ThinkingOrbMetalFrameCost {
         encode(
             dots: dots,
             designSize: designSize,
             target: drawable.texture,
             drawable: drawable,
-            tint: tint
+            tint: tint,
+            palette: palette ?? tint.repeatingPalette()
         )
     }
 
@@ -200,7 +228,8 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
         designSize: Double,
         texture: MTLTexture,
         tint: ThinkingOrbTint,
-        waitUntilCompleted: Bool
+        waitUntilCompleted: Bool,
+        palette: ThinkingOrbPalette? = nil
     ) -> ThinkingOrbMetalFrameCost {
         encode(
             dots: dots,
@@ -208,6 +237,7 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
             target: texture,
             drawable: nil,
             tint: tint,
+            palette: palette ?? tint.repeatingPalette(),
             waitUntilCompleted: waitUntilCompleted
         )
     }
@@ -235,6 +265,7 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
         target: MTLTexture,
         drawable: CAMetalDrawable?,
         tint: ThinkingOrbTint,
+        palette: ThinkingOrbPalette,
         waitUntilCompleted: Bool = false
     ) -> ThinkingOrbMetalFrameCost {
         let failed = ThinkingOrbMetalFrameCost(
@@ -282,6 +313,10 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
             return miss
         }
         encoder.setRenderPipelineState(pipeline)
+        let a0 = palette.color(0)
+        let a1 = palette.color(1)
+        let a2 = palette.color(2)
+        let a3 = palette.color(3)
         var uniforms = Uniforms(
             viewportX: viewport.x,
             viewportY: viewport.y,
@@ -290,7 +325,11 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
             tintR: tint.red,
             tintG: tint.green,
             tintB: tint.blue,
-            tintA: 1
+            tintA: 1,
+            accent0R: a0.x, accent0G: a0.y, accent0B: a0.z, accent0A: 1,
+            accent1R: a1.x, accent1G: a1.y, accent1B: a1.z, accent1A: 1,
+            accent2R: a2.x, accent2G: a2.y, accent2B: a2.z, accent2A: 1,
+            accent3R: a3.x, accent3G: a3.y, accent3B: a3.z, accent3A: 1
         )
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
@@ -382,7 +421,9 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
                 radius: Float(dot.r) * scale,
                 white: Float(dot.white),
                 alpha: Float(dot.a),
-                pad0: 0, pad1: 0, pad2: 0
+                pad0: Float(dot.accent),
+                pad1: Float(dot.palette),
+                pad2: 0
             )
         }
         slots[index].inFlight = true
@@ -409,6 +450,10 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
     struct Uniforms {
         float4 viewportDarkPad;
         float4 tint;
+        float4 accent0;
+        float4 accent1;
+        float4 accent2;
+        float4 accent3;
     };
 
     struct VOut {
@@ -416,6 +461,8 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
         float2 local;
         float white;
         float alpha;
+        float accent;
+        float palette;
     };
 
     vertex VOut vertex_dot(uint vid [[vertex_id]],
@@ -435,6 +482,8 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
         outv.local = local;
         outv.white = d.centerRadiusWhite.w;
         outv.alpha = d.alphaPad.x;
+        outv.accent = d.alphaPad.y;
+        outv.palette = d.alphaPad.z;
         return outv;
     }
 
@@ -448,7 +497,11 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
         float ink = u.viewportDarkPad.z > 0.5 ? (1.0 - in.white) : in.white;
         float a = saturate(in.alpha) * coverage;
         ink = saturate(ink);
-        float3 color = u.tint.xyz * ink;
+        float3 accent = in.palette < 0.5 ? u.accent0.xyz
+                      : in.palette < 1.5 ? u.accent1.xyz
+                      : in.palette < 2.5 ? u.accent2.xyz
+                      : u.accent3.xyz;
+        float3 color = mix(u.tint.xyz, accent, saturate(in.accent)) * ink;
         return float4(color * a, a);
     }
     """
