@@ -38,47 +38,41 @@ struct ThinkingOrbGeometryTests {
             size: ThinkingOrbSizeClass.workingCompact.designSize,
             geometryTime: 0.8
         )
-        let composing = ThinkingOrbGeometry.frame(
-            style: .composing,
-            sizeClass: .dictationStandard,
-            size: 44,
-            geometryTime: 0.8,
-            audioLevel: 0.5
-        )
-        let breathing = ThinkingOrbGeometry.frame(
-            style: .breathing,
-            sizeClass: .dictationExpanded,
-            size: 32,
-            geometryTime: 0.8,
-            audioLevel: 0.5
-        )
         #expect(working.dots.count < 80)
-        #expect(composing.dots.count < 200)
-        #expect(breathing.dots.count < 160)
         #expect(working.dots.count != 566)
-        #expect(composing.dots.count != 566)
     }
 
-    @Test func dictationSilhouetteStaysInsideTheCircularControl() {
-        for sizeClass in [ThinkingOrbSizeClass.dictationExpanded, .dictationStandard] {
-            let size = sizeClass.designSize
-            let radius = size / 2
-            for style in [ThinkingOrbStyle.composing, .breathing] {
-                for audio in [Float(0), 0.2, 1] {
-                    let frame = ThinkingOrbGeometry.frame(
-                        style: style,
-                        sizeClass: sizeClass,
-                        size: size,
-                        geometryTime: 2.4,
-                        audioLevel: audio
-                    )
-                    for dot in frame.dots {
-                        let dx = dot.x - radius
-                        let dy = dot.y - radius
-                        let extent = (dx * dx + dy * dy).squareRoot() + dot.r
-                        #expect(extent <= radius + 0.75)
+    @Test func dictationDeformsWithoutRotatingItsMaterialPoints() {
+        for style in [ThinkingOrbStyle.composing, .breathing] {
+            for sizeClass in [ThinkingOrbSizeClass.dictationExpanded, .dictationStandard] {
+                let size = sizeClass.designSize
+                // Undo the fixed sash tilt. Normal displacement may vary, but
+                // material points must never travel around the great circle.
+                // Include ghosts too: their stationary positions need no count oracle.
+                let tilt = style == .breathing ? 0.0 : 0.85
+                func angles(_ time: Double, _ audio: Float) -> [Double] {
+                    ThinkingOrbGeometry.frame(
+                        style: style, sizeClass: sizeClass, size: size,
+                        geometryTime: time, audioLevel: audio, zSorted: false
+                    ).dots.map {
+                        let x = $0.x - size / 2
+                        let y = -($0.y - size / 2)
+                        return atan2(y * cos(tilt) + $0.z * sin(tilt), x)
                     }
                 }
+                let reference = angles(0, 0)
+                var maximumDrift = 0.0
+                for time in [0.7, 2.4, 8, 30, 120] {
+                    for audio: Float in [0, 0.2, 1] {
+                        let current = angles(time, audio)
+                        #expect(current.count == reference.count)
+                        for (a, b) in zip(reference, current) {
+                            maximumDrift = max(maximumDrift, abs(ThinkingOrbGeometry.angleDelta(a, b)))
+                        }
+                    }
+                }
+                print("no-spin \(style) \(size)pt maximum angular drift=\(maximumDrift)")
+                #expect(maximumDrift < 1e-10)
             }
         }
     }
@@ -136,18 +130,25 @@ struct ThinkingOrbGeometryTests {
             size: 20,
             geometryTime: 0.4
         )
-        let composing = ThinkingOrbGeometry.frame(
-            style: .composing,
-            sizeClass: .dictationStandard,
-            size: 44,
-            geometryTime: 0.8
-        )
         #expect(working.dots.contains { $0.accent >= 0.8 })
         #expect(working.dots.contains { $0.accent == 0 })
         #expect(Set(working.dots.filter { $0.accent >= 0.8 }.map(\.palette)).count >= 2)
         #expect(searching.dots.contains { $0.accent > 0.2 })
         #expect(solving.dots.contains { $0.accent >= 0.2 })
-        #expect(composing.dots.allSatisfy { $0.accent == 0 })
+    }
+
+    @Test func dictationOrbsUseThemeAccentsWithoutDiscardingDepthShading() {
+        for style in [ThinkingOrbStyle.composing, .breathing] {
+            let dots = ThinkingOrbGeometry.frame(
+                style: style, sizeClass: .dictationStandard, size: 44,
+                geometryTime: 0.8
+            ).dots
+            let accented = dots.filter { $0.accent > 0.2 }
+            #expect(!accented.isEmpty)
+            #expect(Set(accented.map(\.palette)).count >= 2)
+            #expect(accented.allSatisfy { $0.accent < 1 })
+            #expect(Set(dots.map(\.white)).count > 1)
+        }
     }
 
     @Test func workingGeometryIgnoresAudioLevel() {

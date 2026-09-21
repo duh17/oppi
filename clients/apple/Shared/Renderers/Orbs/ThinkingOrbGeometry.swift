@@ -233,26 +233,24 @@ enum ThinkingOrbPresets {
                 rActive: 0.4
             )
         case (.composing, .dictationExpanded):
+            // Original 64pt composing is 12x44 plus ~38 ghosts on a frozen sash.
+            // Fill the 32/44 control the same way: dense strands, not one loop.
             return ribbon(
                 speed: 2.34,
-                lanes: 4,
-                segs: 18,
-                ghostN: 8,
-                rBase: 1.05,
-                rDepth: 1.55,
-                wobMul: 1,
-                faceOn: false
+                lanes: 10,
+                segs: 28,
+                ghostN: 20,
+                rBase: 1.1,
+                rDepth: 1.7
             )
         case (.composing, .dictationStandard):
             return ribbon(
                 speed: 2.34,
-                lanes: 5,
-                segs: 22,
-                ghostN: 12,
+                lanes: 12,
+                segs: 40,
+                ghostN: 32,
                 rBase: 1.1,
-                rDepth: 1.6,
-                wobMul: 1,
-                faceOn: false
+                rDepth: 1.7
             )
         case (.composing, .workingCompact), (.composing, .workingPreview):
             return ribbon(
@@ -261,43 +259,14 @@ enum ThinkingOrbPresets {
                 segs: 14,
                 ghostN: 6,
                 rBase: 1.15,
-                rDepth: 1.7,
-                wobMul: 1,
-                faceOn: false
+                rDepth: 1.7
             )
         case (.breathing, .dictationExpanded):
-            return ribbon(
-                speed: 2.8,
-                lanes: 4,
-                segs: 16,
-                ghostN: 0,
-                rBase: 1.05,
-                rDepth: 1.55,
-                wobMul: 0.5,
-                faceOn: true
-            )
+            return breathing(speed: 2.8, dotCount: 180)
         case (.breathing, .dictationStandard):
-            return ribbon(
-                speed: 2.8,
-                lanes: 5,
-                segs: 20,
-                ghostN: 0,
-                rBase: 1.1,
-                rDepth: 1.6,
-                wobMul: 0.5,
-                faceOn: true
-            )
+            return breathing(speed: 2.8, dotCount: 300)
         case (.breathing, .workingCompact), (.breathing, .workingPreview):
-            return ribbon(
-                speed: 3.24,
-                lanes: 3,
-                segs: 12,
-                ghostN: 0,
-                rBase: 1.15,
-                rDepth: 1.7,
-                wobMul: 0.5,
-                faceOn: true
-            )
+            return breathing(speed: 3.24, dotCount: 90)
         }
     }
 
@@ -383,9 +352,7 @@ enum ThinkingOrbPresets {
         segs: Double,
         ghostN: Double,
         rBase: Double,
-        rDepth: Double,
-        wobMul: Double,
-        faceOn: Bool
+        rDepth: Double
     ) -> Resolved {
         Resolved(speed: speed, rMin: 0.3) { size, t, voice in
             ThinkingOrbBuilders.ribbon(
@@ -396,10 +363,14 @@ enum ThinkingOrbPresets {
                 segs: segs,
                 ghostN: ghostN,
                 rBase: rBase,
-                rDepth: rDepth,
-                wobMul: wobMul,
-                faceOn: faceOn
+                rDepth: rDepth
             )
+        }
+    }
+
+    private static func breathing(speed: Double, dotCount: Int) -> Resolved {
+        Resolved(speed: speed, rMin: 0.3) { size, t, voice in
+            ThinkingOrbBuilders.breathing(size, t, voice: voice, dotCount: dotCount)
         }
     }
 }
@@ -418,7 +389,8 @@ private enum ThinkingOrbBuilders {
     ) -> ThinkingOrbFrame {
         let cx = size / 2
         let cy = size / 2
-        let R = (size / 2) * 0.82
+        // Fill the same 20pt slot as Game of Life instead of insetting the orb.
+        let R = (size / 2) * 0.9
         let pt = ThinkingOrbGeometry.Projector(yaw: t * 0.12, tilt: 0.3, cx: cx, cy: cy, scale: 1)
         let rs = ThinkingOrbGeometry.radiusScale(size, 0.6)
         var dots: [ThinkingOrbDot] = []
@@ -495,7 +467,7 @@ private enum ThinkingOrbBuilders {
         let spin = 0.5
         let cx = size / 2
         let cy = size / 2
-        let radius = (size / 2) * 0.82
+        let radius = (size / 2) * 0.9
         let tilt = 0.4 + 0.06 * sin(t * 0.35)
         let pt = ThinkingOrbGeometry.Projector(yaw: t * spin, tilt: tilt, cx: cx, cy: cy, scale: radius)
         let scan = t * (spin + (1.7 - spin) * scanMul)
@@ -628,7 +600,7 @@ private enum ThinkingOrbBuilders {
     ) -> ThinkingOrbFrame {
         let cx = size / 2
         let cy = size / 2
-        let R = (size / 2) * 0.82
+        let R = (size / 2) * 0.9
         let pt = ThinkingOrbGeometry.Projector(
             yaw: t * 0.55,
             tilt: 0.35 + 0.1 * sin(t * 0.9),
@@ -669,6 +641,41 @@ private enum ThinkingOrbBuilders {
         return ThinkingOrbFrame(dots: dots)
     }
 
+    /// Oppi's full-sphere Breathing, rather than the original face-on ring.
+    /// Fixed material directions keep both the breath and voice flex free of spin.
+    static func breathing(
+        _ size: Double,
+        _ t: Double,
+        voice: Double,
+        dotCount: Int
+    ) -> ThinkingOrbFrame {
+        let R = size * 0.39
+        let rs = ThinkingOrbGeometry.radiusScale(size, 0.6)
+        let breath = 0.88 + 0.12 * sin(t * 0.82)
+        let visualVoice = 1 - exp(-voice * 3.2)
+        var dots: [ThinkingOrbDot] = []
+        dots.reserveCapacity(dotCount)
+        for i in 0..<dotCount {
+            let d = ThinkingOrbGeometry.fibDir(i, Double(dotCount))
+            // Speech gently indents the breathing shell, never turns it.
+            // The unvoiced envelope is the outer bound even at peak input.
+            let flex = visualVoice * 0.42 * (0.7 + 0.3 * sin(d.1 * 3 + t * 0.72))
+            let radius = R * breath * (1 - flex)
+            let depth = (d.2 + 1) / 2
+            dots.append(ThinkingOrbDot(
+                x: size / 2 + d.0 * radius,
+                y: size / 2 - d.1 * radius,
+                z: d.2 * radius,
+                r: (1.0 + 1.7 * depth) * rs,
+                white: 0.58 - 0.5 * depth,
+                a: 0.3 + 0.7 * depth,
+                accent: 0.45 + 0.2 * depth,
+                palette: Double(min(3, i * 4 / dotCount))
+            ))
+        }
+        return ThinkingOrbFrame(dots: dots)
+    }
+
     static func ribbon(
         _ size: Double,
         _ t: Double,
@@ -677,20 +684,18 @@ private enum ThinkingOrbBuilders {
         segs: Double,
         ghostN: Double,
         rBase: Double,
-        rDepth: Double,
-        wobMul: Double,
-        faceOn: Bool
+        rDepth: Double
     ) -> ThinkingOrbFrame {
         let cx = size / 2
         let cy = size / 2
-        // Leave margin so idle wobble plus voice bends stay inside the circular control.
-        let R = (size / 2) * 0.72
-        let camTilt = 0.32
-        // Slow yaw/tilt on the camera and sash. A zero spin froze both, and a
-        // face-on circle rotating in-plane is almost invisible in pixels.
+        // Composing rides the original full sphere.
+        let R = (size / 2) * 0.78
+        let camTilt = 0.3
+        // Dictation has no rigid-body rotation. Only the material deforms;
+        // rotating either this camera or the band basis makes it tumble.
         let pt = ThinkingOrbGeometry.Projector(
-            yaw: t * 0.09,
-            tilt: camTilt + 0.12 * sin(t * 0.38),
+            yaw: 0,
+            tilt: camTilt,
             cx: cx,
             cy: cy,
             scale: 1
@@ -706,10 +711,8 @@ private enum ThinkingOrbBuilders {
             ))
         }
 
-        let ya = t * 0.16
-        let ta = faceOn
-            ? -(camTilt + 0.28) + 0.10 * sin(t * 0.40)
-            : 0.58 + 0.26 * sin(t * 0.28)
+        let ya = 0.0
+        let ta = 0.55
         let ux = cos(ya)
         let uy = 0.0
         let uz = sin(ya)
@@ -720,13 +723,9 @@ private enum ThinkingOrbBuilders {
         let ny = uz * vx - ux * vz
         let nz = ux * vy - uy * vx
 
-        let wobAmp = 0.23 * wobMul
         let voiceAmp = 0.36
-        // Reserve idle wobble plus a slice of voice so silence is not pre-shrunk
-        // down to an invisible deformation budget.
-        let baseR = R / (1 + 0.85 * wobAmp + 0.22 * voiceAmp)
-        let idlePulse = (faceOn ? 0.14 : 0.08) * sin(t * (faceOn ? 0.82 : 0.58))
         let mid = Double(lanes - 1) / 2
+        let visualVoice = 1 - exp(-voice * 3.2)
         dots.reserveCapacity(dots.count + lanes * ThinkingOrbGeometry.below(segs))
         for w in 0..<lanes {
             let fw = Double(w)
@@ -734,25 +733,29 @@ private enum ThinkingOrbBuilders {
             let edge = abs(fw - mid) / max(1, mid)
             for k in 0..<ThinkingOrbGeometry.below(segs) {
                 let a = (Double(k) / segs) * 2 * Double.pi
-                let wob = (0.10 * sin(a * 2 - t * 0.48) + 0.035 * sin(a * 3 + t * 0.31)) * wobMul
-                // Boost modest speech without letting full-scale RMS explode the sash.
-                let visualVoice = 1 - exp(-voice * 3.2)
-                let speech = visualVoice * voiceAmp * sin(a * 2 - t * 0.72)
-                let combined = wob + speech
-                let radial = 1 + idlePulse + combined * (faceOn ? 1.0 : 0.55)
-                let off = laneOff + combined * (faceOn ? 0.45 : 1.15)
+                // Two traveling bending modes, with a small phase lag across
+                // the sash: neighboring strands flex together without collapsing
+                // into one loop. No tangential advection or accumulated spin.
+                let lag = fw * 0.22
+                let wob = 0.16 * sin(a * 3 - t * 1.7 + lag)
+                    + 0.07 * sin(a * 5 + t * 1.1)
+                // Voice changes bend amplitude, never the clock or orientation.
+                let speech = visualVoice * voiceAmp * sin(a * 2 - t * 0.72 + lag)
+                let off = laneOff + wob + speech
                 let x = ux * cos(a) + vx * sin(a) + nx * off
                 let y = uy * cos(a) + vy * sin(a) + ny * off
                 let z = uz * cos(a) + vz * sin(a) + nz * off
                 let l = (x * x + y * y + z * z).squareRoot()
-                let rr = baseR * radial
-                let (px, py, zr) = pt((x / l) * rr, (y / l) * rr, (z / l) * rr)
+                // Only bend the sash: every point stays on the full sphere.
+                let (px, py, zr) = pt((x / l) * R, (y / l) * R, (z / l) * R)
                 let depth = (zr / R + 1) / 2
                 dots.append(ThinkingOrbDot(
                     x: px, y: py, z: zr,
                     r: (rBase + rDepth * depth) * (1 - 0.25 * edge) * rs,
                     white: 0.52 - 0.44 * depth + 0.18 * edge,
-                    a: 0.4 + 0.6 * depth
+                    a: 0.4 + 0.6 * depth,
+                    accent: 0.65 - 0.2 * edge,
+                    palette: Double(min(3, w * 4 / lanes))
                 ))
             }
         }

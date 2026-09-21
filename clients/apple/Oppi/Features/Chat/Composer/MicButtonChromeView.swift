@@ -186,6 +186,7 @@ final class MicButtonChromeView: UIControl {
         if let orbStyle = dictationStyle.thinkingOrbStyle {
             orbView.style = orbStyle
             orbView.sizeClass = .dictation(side: Double(diameter))
+            orbView.accentUIColors = [palette.blue, palette.cyan, palette.purple, palette.orange].map { UIColor($0) }
             if !orbView.tintUIColor.isEqual(indicator) {
                 orbView.tintUIColor = indicator
             }

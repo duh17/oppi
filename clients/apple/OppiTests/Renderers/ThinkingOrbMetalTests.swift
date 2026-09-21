@@ -521,6 +521,8 @@ struct MicButtonOrbLayoutTests {
             let orb = firstSubview(of: chrome, type: ThinkingOrbMetalView.self)
             #expect(orb?.isHidden == false)
             #expect(orb?.audioLevel == 0.42)
+            let palette = ThemeRuntimeState.currentPalette()
+            #expect(orb?.accentUIColors == [palette.blue, palette.cyan, palette.purple, palette.orange].map { UIColor($0) })
 
             chrome.apply(
                 isRecording: true,
@@ -740,6 +742,8 @@ struct WorkingIndicatorMetalSizeTests {
         #expect(metal != nil)
         #expect(metal?.bounds.size == CGSize(width: 20, height: 20))
         #expect(metal?.isHidden == false)
+        let palette = ThemeRuntimeState.currentPalette()
+        #expect(metal?.accentUIColors == [palette.blue, palette.cyan, palette.purple, palette.orange].map { UIColor($0) })
     }
 
     @Test func extensionHiddenIndicatorHidesTheMetalOrb() {

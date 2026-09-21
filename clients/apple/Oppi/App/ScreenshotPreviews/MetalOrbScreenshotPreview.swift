@@ -32,6 +32,7 @@ struct MetalOrbScreenshotPreview: View {
                     workingTile(.working)
                     workingTile(.searching)
                     workingTile(.solving)
+                    workingTile(.gameOfLife)
                 }
 
                 Text("Dictation · Composing / Breathing")

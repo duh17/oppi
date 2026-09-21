@@ -13,7 +13,7 @@ struct WorkingIndicatorTimelineRowConfiguration: UIContentConfiguration {
     }
 }
 
-/// Working indicator row: [10pt leading][18x18 spinner][6pt gap]["Working..." label]
+/// Working indicator row: [10pt leading][20x20 spinner][6pt gap]["Working..." label]
 /// Supports Metal orbs, braille dots, and Game of Life via Settings.
 final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
     private static let defaultCustomInterval: TimeInterval = 0.08
@@ -167,6 +167,7 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         brailleView.tintUIColor = providerColor
         golView.tintUIColor = providerColor
         metalView.tintUIColor = providerColor
+        metalView.accentUIColors = [palette.blue, palette.cyan, palette.purple, palette.orange].map { UIColor($0) }
         var bgR: CGFloat = 0, bgG: CGFloat = 0, bgB: CGFloat = 0, bgA: CGFloat = 0
         UIColor(palette.bg).getRed(&bgR, green: &bgG, blue: &bgB, alpha: &bgA)
         metalView.isDarkBackground = ThinkingOrbTint.isDarkBackground(red: bgR, green: bgG, blue: bgB)
