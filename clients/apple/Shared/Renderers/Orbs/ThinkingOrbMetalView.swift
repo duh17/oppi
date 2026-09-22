@@ -528,7 +528,7 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
         let smoothed = frozen ? .zero : smoother.step(raw: raw, dt: dt)
         let speed = ThinkingOrbPresets.resolve(style, sizeClass).speed
         let wall = max(0, now - (clockOrigin ?? now))
-        // Dictation time is only the 0.3 Hz ghost alpha twinkle's wall clock.
+        // Dictation uses wall time for Composing's calm sea and Breathing's alpha twinkle.
         let geometryTime = frozen ? ThinkingOrbDisplayPolicy.reduceMotionTime
             : (style.isVoiceReactive ? wall : wall * speed)
         let side = Double(min(bounds.width, bounds.height))

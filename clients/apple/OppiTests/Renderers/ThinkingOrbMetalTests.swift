@@ -190,19 +190,24 @@ struct ThinkingOrbMetalViewLifecycleTests {
     }
 
     @Test func reduceMotionPaintsOneStillFrameThenResumes() async throws {
-        let harness = try makeOrbHarness(style: .searching, side: 16)
-        defer { tearDown(harness) }
-        _ = try await waitForCompletions(on: harness.view, minimum: 1)
-        let liveSubmitted = harness.view.framesSubmitted
-        harness.view.forceReduceMotion = true
-        #expect(!harness.view.isDriving)
-        #expect(harness.view.framesSubmitted == liveSubmitted + 1)
-        let frozenSubmitted = harness.view.framesSubmitted
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(harness.view.framesSubmitted == frozenSubmitted)
+        for style in [ThinkingOrbStyle.searching, .composing, .breathing] {
+            let harness = try makeOrbHarness(style: style, side: style.isVoiceReactive ? 44 : 16)
+            defer { tearDown(harness) }
+            _ = try await waitForCompletions(on: harness.view, minimum: 1)
+            let liveSubmitted = harness.view.framesSubmitted
+            harness.view.forceReduceMotion = true
+            #expect(!harness.view.isDriving)
+            #expect(harness.view.framesSubmitted == liveSubmitted + 1)
+            #expect(harness.view.lastPresentedGeometryTime == ThinkingOrbDisplayPolicy.reduceMotionTime)
+            #expect(harness.view.lastPresentedSpectrum == .zero)
+            let frozenSubmitted = harness.view.framesSubmitted
+            harness.view.voiceSpectrum = VoiceSpectrumFrame(bands: .one, flux: 30)
+            try await Task.sleep(for: .milliseconds(50))
+            #expect(harness.view.framesSubmitted == frozenSubmitted, "Neither calm-sea time nor speech animates Reduce Motion")
 
-        harness.view.forceReduceMotion = false
-        #expect(harness.view.isDriving)
+            harness.view.forceReduceMotion = false
+            #expect(harness.view.isDriving)
+        }
     }
 
     @Test func freezeResumeFreezePresentsANewStillFrame() async throws {
@@ -458,10 +463,13 @@ struct ThinkingOrbPixelMotionTests {
                 print(
                     "pixels \(style.rawValue) \(Int(size))pt@3x idleChanged=\(idleChanged) identical-phase voiceChanged=\(voiceChanged) opaque=\(quiet0.opaqueCount())/\(speaking.opaqueCount())"
                 )
-                #expect(
-                    idleChanged == 0,
-                    "\(style.rawValue) \(Int(size))pt unvoiced frames must match; idle changed \(idleChanged)px"
-                )
+                if style == .composing {
+                    #expect(idleChanged > 0 && idleChanged < voiceChanged,
+                            "Composing's calm sea must be visible but gentler than speech: idle=\(idleChanged), voice=\(voiceChanged)")
+                } else {
+                    #expect(idleChanged == 0,
+                            "Breathing stays quiet: \(Int(size))pt idle changed \(idleChanged)px")
+                }
                 #expect(
                     voiceChanged >= 180,
                     "\(style.rawValue) \(Int(size))pt modest voice changed \(voiceChanged)px"
