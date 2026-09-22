@@ -971,7 +971,8 @@ struct SessionInboxView: View {
             pendingAsk: item.connection.askRequestStore.pending(for: item.session.id),
             workspaceContext: workspaceContext(for: item),
             unreadCompletionAt: item.connection.sessionStore.unreadCompletionDate(for: item.session.id),
-            searchSnippet: searchStore.snippetsBySessionId[item.session.id]
+            searchSnippet: searchStore.snippetsBySessionId[item.session.id],
+            catalogModels: item.connection.chatState.cachedModels
         )
     }
 

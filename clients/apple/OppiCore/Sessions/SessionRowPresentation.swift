@@ -9,7 +9,12 @@ struct SessionModelSummary: Identifiable, Equatable, Sendable {
 }
 
 enum SessionModelSummaryBuilder {
-    static func summaries(primaryModel: String?, descendantModels: [String] = []) -> [SessionModelSummary] {
+    static func summaries(
+        primaryModel: String?,
+        descendantModels: [String] = [],
+        catalogModels: [ModelInfo] = []
+    ) -> [SessionModelSummary] {
+        let catalogNames = displayNamesByID(from: catalogModels)
         let candidates = [primaryModel] + descendantModels.map(Optional.some)
         var seen: Set<String> = []
         var result: [SessionModelSummary] = []
@@ -23,7 +28,7 @@ enum SessionModelSummaryBuilder {
                 SessionModelSummary(
                     rawModel: normalized,
                     provider: provider(from: normalized),
-                    label: displayLabel(for: normalized)
+                    label: displayLabel(for: normalized, catalogNames: catalogNames)
                 )
             )
         }
@@ -31,18 +36,23 @@ enum SessionModelSummaryBuilder {
         return result
     }
 
-    static func displayLabel(for rawModel: String) -> String {
+    static func displayLabel(for rawModel: String, catalogModels: [ModelInfo] = []) -> String {
+        displayLabel(for: rawModel, catalogNames: displayNamesByID(from: catalogModels))
+    }
+
+    /// Short list label for any model id.
+    /// Prefers the catalog `name` when it is a real display string; otherwise the
+    /// last `/` segment so HuggingFace-style `provider/org/model` ids do not keep
+    /// the org prefix.
+    static func displayLabel(for rawModel: String, catalogNames: [String: String]) -> String {
         let trimmed = rawModel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "unknown" }
 
-        if let slashIndex = trimmed.firstIndex(of: "/") {
-            let remainder = String(trimmed[trimmed.index(after: slashIndex)...])
-            if !remainder.isEmpty {
-                return remainder
-            }
+        if let name = catalogNames[trimmed], isShortDisplayName(name) {
+            return name
         }
 
-        return trimmed
+        return SessionFormatting.shortModelName(trimmed) ?? trimmed
     }
 
     private static func normalize(_ rawModel: String?) -> String? {
@@ -56,6 +66,24 @@ enum SessionModelSummaryBuilder {
             return ""
         }
         return String(rawModel[rawModel.startIndex..<slashIndex])
+    }
+
+    private static func displayNamesByID(from models: [ModelInfo]) -> [String: String] {
+        var map: [String: String] = [:]
+        for model in models {
+            let name = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isShortDisplayName(name) else { continue }
+            map[model.id] = name
+            if !model.provider.isEmpty, !model.id.hasPrefix("\(model.provider)/") {
+                map["\(model.provider)/\(model.id)"] = name
+            }
+        }
+        return map
+    }
+
+    private static func isShortDisplayName(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && !trimmed.contains("/")
     }
 }
 
@@ -172,7 +200,8 @@ enum SessionRowPresentationBuilder {
         lineageHint: String? = nil,
         workspaceContext: String? = nil,
         unreadCompletionAt: Date? = nil,
-        searchSnippet: AttributedString? = nil
+        searchSnippet: AttributedString? = nil,
+        catalogModels: [ModelInfo] = []
     ) -> SessionRowPresentation {
         SessionRowPresentation(
             session: session,
@@ -180,7 +209,7 @@ enum SessionRowPresentationBuilder {
             attentionText: attentionText(for: pendingAsk) ?? attentionText(forPendingAskCount: pendingAskCount),
             lineageHint: lineageHint,
             workspaceContext: normalizedWorkspaceContext(workspaceContext),
-            modelSummaries: modelSummaries(for: session),
+            modelSummaries: modelSummaries(for: session, catalogModels: catalogModels),
             unreadCompletionAt: unreadCompletionAt,
             searchSnippet: searchSnippet
         )
@@ -205,10 +234,14 @@ enum SessionRowPresentationBuilder {
         pendingAskCount > 0 ? "question pending" : nil
     }
 
-    static func modelSummaries(for session: Session) -> [SessionModelSummary] {
+    static func modelSummaries(
+        for session: Session,
+        catalogModels: [ModelInfo] = []
+    ) -> [SessionModelSummary] {
         SessionModelSummaryBuilder.summaries(
             primaryModel: session.model,
-            descendantModels: []
+            descendantModels: [],
+            catalogModels: catalogModels
         )
     }
 

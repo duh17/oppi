@@ -130,4 +130,35 @@ struct SessionRowPresentationBuilderTests {
         #expect(store.listProjectionSessions.map(\.id) == ["control-1"])
         #expect(store.routeScope(for: "control-1") == .control)
     }
+
+    @Test func modelSummaryUsesCatalogDisplayNameWhenPresent() {
+        let session = makeSession(
+            id: "mlx",
+            model: "mlx-serve/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
+        )
+        let presentation = SessionRowPresentationBuilder.make(
+            session: session,
+            catalogModels: [
+                ModelInfo(
+                    id: "mlx-serve/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+                    name: "Qwen 3.8 Flash Next",
+                    provider: "mlx-serve",
+                    contextWindow: 200_000
+                ),
+            ]
+        )
+
+        #expect(presentation.modelSummaries.first?.label == "Qwen 3.8 Flash Next")
+        #expect(presentation.modelSummaries.first?.provider == "mlx-serve")
+    }
+
+    @Test func modelSummaryUsesLastPathComponentWithoutCatalog() {
+        let session = makeSession(
+            id: "mlx",
+            model: "mlx-serve/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
+        )
+        let presentation = SessionRowPresentationBuilder.make(session: session)
+
+        #expect(presentation.modelSummaries.first?.label == "Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit")
+    }
 }

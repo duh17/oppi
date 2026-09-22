@@ -34,14 +34,72 @@ struct SessionModelSummaryBuilderTests {
         ])
     }
 
-    @Test func keepsNestedOpenRouterModelPathInLabel() {
+    @Test func usesLastPathComponentForNestedModelIDs() {
+        let result = SessionModelSummaryBuilder.summaries(
+            primaryModel: "mlx-serve/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
+        )
+
+        #expect(result.count == 1)
+        #expect(result[0].provider == "mlx-serve")
+        #expect(result[0].label == "Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit")
+        #expect(!result[0].label.contains("ddalcu/"))
+    }
+
+    @Test func usesLastPathComponentForOpenRouterNestedIDs() {
         let result = SessionModelSummaryBuilder.summaries(
             primaryModel: "openrouter/z.ai/glm-5"
         )
 
         #expect(result.count == 1)
         #expect(result[0].provider == "openrouter")
-        #expect(result[0].label == "z.ai/glm-5")
+        #expect(result[0].label == "glm-5")
+    }
+
+    @Test func prefersCatalogDisplayNameForAnyModel() {
+        let catalog = [
+            ModelInfo(
+                id: "mlx-serve/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+                name: "Qwen 3.8 Flash Next",
+                provider: "mlx-serve",
+                contextWindow: 200_000
+            ),
+            ModelInfo(
+                id: "xai/grok-4.6",
+                name: "Grok 4.6",
+                provider: "xai",
+                contextWindow: 256_000
+            ),
+        ]
+
+        let mlx = SessionModelSummaryBuilder.summaries(
+            primaryModel: "mlx-serve/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+            catalogModels: catalog
+        )
+        let grok = SessionModelSummaryBuilder.summaries(
+            primaryModel: "xai/grok-4.6",
+            catalogModels: catalog
+        )
+
+        #expect(mlx.first?.label == "Qwen 3.8 Flash Next")
+        #expect(grok.first?.label == "Grok 4.6")
+    }
+
+    @Test func ignoresCatalogNamesThatAreStillRawIDs() {
+        let catalog = [
+            ModelInfo(
+                id: "mlx-serve/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+                name: "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+                provider: "mlx-serve",
+                contextWindow: 200_000
+            ),
+        ]
+
+        let result = SessionModelSummaryBuilder.summaries(
+            primaryModel: "mlx-serve/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+            catalogModels: catalog
+        )
+
+        #expect(result.first?.label == "Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit")
     }
 
     @Test func dropsNilAndBlankModels() {

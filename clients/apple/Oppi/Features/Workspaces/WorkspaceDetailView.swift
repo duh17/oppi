@@ -833,7 +833,8 @@ struct WorkspaceDetailView: View {
             pendingAsk: askRequestStore.pending(for: session.id),
             lineageHint: lineageHint,
             unreadCompletionAt: sessionStore.unreadCompletionDate(for: session.id),
-            searchSnippet: searchStore.snippetsBySessionId[session.id]
+            searchSnippet: searchStore.snippetsBySessionId[session.id],
+            catalogModels: connection.chatState.cachedModels
         )
     }
 
