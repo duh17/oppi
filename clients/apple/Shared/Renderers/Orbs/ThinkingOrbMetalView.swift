@@ -85,6 +85,7 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
     nonisolated(unsafe) private var visibilityObservations: [NSKeyValueObservation] = []
     nonisolated(unsafe) private var clipBoundsTokens: [NSObjectProtocol] = []
     private var smoother = VoiceLevelSmoother()
+    private var speechDrive = DictationSpeechDrive()
     private var lastStepNow: TimeInterval?
     private var clockOrigin: TimeInterval?
     private var sceneActive = true
@@ -98,6 +99,8 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
     /// Smoothed level last fed into geometry. Public so tests can prove the
     /// mounted host consumes `audioLevel` without reading GPU drawables.
     private(set) var lastPresentedAudio: Float = 0
+    /// Speech excess last fed into dictation geometry. Zero during room tone.
+    private(set) var lastPresentedSpeech: Float = 0
     private(set) var lastPresentedGeometryTime: Double = 0
     var inFlightGPUBuffers: Int { renderer?.inFlightCount ?? 0 }
     var rendererForTests: ThinkingOrbMetalRenderer? { renderer }
@@ -514,6 +517,7 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
         let now = CACurrentMediaTime()
         if clockOrigin == nil { clockOrigin = now }
         smoother.reset()
+        speechDrive.reset()
         if presentFrame(now: now, frozen: true) {
             stillFramePresented = true
         }
@@ -527,19 +531,23 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
         lastStepNow = now
         let raw = frozen || !style.isVoiceReactive ? 0 : audioLevel
         let smoothed = frozen ? 0 : smoother.step(raw: raw, dt: dt)
+        // Geometry sees speech excess, not the open-mic floor. A steady
+        // room tone stays at the still pose; a syllable bends it.
+        let drive = frozen ? 0 : speechDrive.step(level: smoothed, dt: dt)
         let speed = ThinkingOrbPresets.resolve(style, sizeClass).speed
         let wall = max(0, now - (clockOrigin ?? now))
         let geometryTime = frozen ? ThinkingOrbDisplayPolicy.reduceMotionTime : wall * speed
         let side = Double(min(bounds.width, bounds.height))
         let design = side > 0 ? side : sizeClass.designSize
         lastPresentedAudio = smoothed
+        lastPresentedSpeech = drive
         lastPresentedGeometryTime = geometryTime
         let frame = ThinkingOrbGeometry.frame(
             style: style,
             sizeClass: sizeClass,
             size: design,
             geometryTime: geometryTime,
-            audioLevel: smoothed
+            audioLevel: drive
         )
         return submit(frame, designSize: design)
     }

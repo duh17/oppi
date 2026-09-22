@@ -53,4 +53,50 @@ enum ThinkingOrbAudio {
         guard raw.isFinite else { return 0 }
         return min(max(raw, 0), 1)
     }
+
+    /// Pose scale for dictation orbs. A constant value holds one pose.
+    static func dictationShape(_ voice: Double) -> Double {
+        guard voice.isFinite else { return 0 }
+        return min(max(voice, 0), 1)
+    }
+}
+
+/// Turns a live mic level into speech activity.
+///
+/// Room tone after `rms * 25` is rarely zero, so a raw gate never means
+/// "not talking." Ambient tracks that floor. Activity is only the excess,
+/// so a steady open mic holds the still pose and a syllable bends it.
+struct DictationSpeechDrive: Equatable, Sendable {
+    private(set) var ambient: Float = 0
+    private(set) var activity: Float = 0
+    private var age: TimeInterval = 0
+
+    /// How far above ambient a level must sit before the sash moves.
+    static let margin: Float = 0.05
+    /// Excess that reaches a full pose. A normal syllable clears this.
+    static let fullExcess: Float = 0.22
+
+    mutating func reset() {
+        ambient = 0
+        activity = 0
+        age = 0
+    }
+
+    mutating func step(level: Float, dt: TimeInterval) -> Float {
+        let level = ThinkingOrbAudio.clamp(level)
+        let safeDt = dt.isFinite ? max(0, dt) : 0
+        guard safeDt > 0 else { return activity }
+        age += safeDt
+        // Calibrate to the open-mic floor, then only follow levels that
+        // fall back into that floor. A held syllable must not be absorbed.
+        let inFloor = level <= ambient + Self.margin
+        if age < 0.30 || inFloor {
+            let tau: TimeInterval = age < 0.30 ? 0.08 : 0.30
+            let alpha = Float(1 - exp(-safeDt / tau))
+            ambient += (level - ambient) * alpha
+        }
+        let excess = max(0, level - ambient - Self.margin)
+        activity = min(1, excess / Self.fullExcess)
+        return activity
+    }
 }

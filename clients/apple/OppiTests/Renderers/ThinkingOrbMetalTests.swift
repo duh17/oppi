@@ -368,12 +368,18 @@ struct ThinkingOrbMetalViewLifecycleTests {
             on: harness.view,
             minimum: harness.view.framesCompleted + 2
         )
+        // The open-mic floor is learned in the first 300ms. A jump during
+        // that window is calibration, not speech.
+        try await Task.sleep(for: .milliseconds(450))
         #expect(harness.view.lastPresentedAudio < 0.03)
+        #expect(harness.view.lastPresentedSpeech < 0.05)
 
-        harness.view.audioLevel = 0.35
-        let voice = try await waitUntilPresentedAudio(on: harness.view, atLeast: 0.12)
+        harness.view.audioLevel = 0.62
+        let smoothed = try await waitUntilPresentedAudio(on: harness.view, atLeast: 0.12)
+        let voice = try await waitUntilPresentedSpeech(on: harness.view, atLeast: 0.55)
         #expect(harness.view.isDriving)
-        #expect(harness.view.audioLevel == 0.35)
+        #expect(harness.view.audioLevel == 0.62)
+        #expect(smoothed >= 0.12)
         let phase = harness.view.lastPresentedGeometryTime
         let quietShot = try renderOrbPixels(
             renderer: renderer,
@@ -420,11 +426,16 @@ struct ThinkingOrbPixelMotionTests {
             Issue.record("Metal unavailable: \(built.unavailableReason ?? "unknown")")
             return
         }
-        var smoother = VoiceLevelSmoother()
-        var voice: Float = 0
-        for _ in 0..<60 {
-            voice = smoother.step(raw: 0.2, dt: 1.0 / 60.0)
+        var drive = DictationSpeechDrive()
+        let dt = 1.0 / 60.0
+        for _ in 0..<180 {
+            _ = drive.step(level: 0.16, dt: dt)
         }
+        var voice: Float = 0
+        for _ in 0..<24 {
+            voice = drive.step(level: 0.62, dt: dt)
+        }
+        #expect(voice > 0.55)
         for style in [ThinkingOrbStyle.composing, .breathing] {
             for sizeClass in [ThinkingOrbSizeClass.dictationExpanded, .dictationStandard] {
                 let size = sizeClass.designSize
@@ -885,6 +896,25 @@ private func waitUntilPresentedAudio(
     throw TestHostError.timeout(
         orbTimeoutMessage(view, expected: "lastPresentedAudio >= \(minimum)")
         + "; presentedAudio=\(view.lastPresentedAudio) input=\(view.audioLevel)"
+    )
+}
+
+@MainActor
+private func waitUntilPresentedSpeech(
+    on view: ThinkingOrbMetalView,
+    atLeast minimum: Float
+) async throws -> Float {
+    let deadline = ContinuousClock.now + .seconds(1.2)
+    while ContinuousClock.now < deadline {
+        if view.lastPresentedSpeech >= minimum {
+            return view.lastPresentedSpeech
+        }
+        await Task.yield()
+        try await Task.sleep(for: .milliseconds(16))
+    }
+    throw TestHostError.timeout(
+        orbTimeoutMessage(view, expected: "lastPresentedSpeech >= \(minimum)")
+        + "; presentedSpeech=\(view.lastPresentedSpeech) presentedAudio=\(view.lastPresentedAudio) input=\(view.audioLevel)"
     )
 }
 
