@@ -1,6 +1,8 @@
 # subagents
 
-Reference Pi extension. Not a product feature. Copy it if you want a widget of this session's Oppi subagents.
+Reference Pi extension. Not a product feature. Copy it if you want a `subagent` tool and a widget of this session's Oppi subagents.
+
+`launch` creates a child through `oppi session create` and returns immediately. With `supervise` left on, one async `oppi session wait` watches those ids. A timeout while the parent is idle sends a short check-in, about every 4 minutes, which is a real model turn. That is the prompt-cache warm the old 4-minute wait produced by returning. A widget refresh does not do it. `supervise: false` is the detached path and does not check in. The result arrives as a follow-up. Do not also call `oppi session wait`.
 
 A row uses the general activity-row link, `oppi://session/<id>`. Oppi already opens that. This package does not add a screen.
 
@@ -8,7 +10,7 @@ A row uses the general activity-row link, `oppi://session/<id>`. Oppi already op
 
 There is no children-list API. `parentSessionId` is stored on create, and `oppi session list` cannot filter by parent. Scanning that list would read every session.
 
-This package only remembers `oppi session create` results from the current parent. It then asks the CLI for those ids alone:
+This package only remembers launches from the current parent: the `subagent` tool, or a bash `oppi session create` it saw. It then asks the CLI for those ids alone:
 
 ```bash
 oppi session get <id> --json

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { applyGet, refreshLaunched, subagentFromCreate, subagentRows } from "./subagents.ts";
+import { applyGet, refreshLaunched, subagentFromCreate, subagentRows, withStatuses } from "./subagents.ts";
 
 describe("subagents", () => {
 	test("only a create result from this parent becomes a row", () => {
@@ -59,6 +59,14 @@ describe("subagents", () => {
 		expect(rows).toHaveLength(1);
 		expect(rows[0]?.state).toBe("success");
 		expect(rows[0]?.link).toBe("oppi://session/child-1?workspaceId=ws-1");
+	});
+
+	test("a ready wait status marks the row settled", () => {
+		const [row] = withStatuses(
+			[{ id: "child-1", title: "scout", subtitle: "child-1", link: "oppi://session/child-1", state: "running" }],
+			[{ id: "child-1", status: "ready" }],
+		);
+		expect(row?.state).toBe("success");
 	});
 
 	test("applyGet keeps a launched row when the payload has no parent field", () => {

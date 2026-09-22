@@ -2,10 +2,10 @@
   "name": "subagents",
   "version": "0.1.0",
   "private": true,
-  "description": "Reference Pi extension: list this session's Oppi subagents and open them from a widget row.",
+  "description": "Reference Pi extension: launch Oppi subagents, keep the parent prompt cache warm, and open them from a widget row.",
   "type": "module",
   "keywords": ["pi-package", "pi-extension", "oppi"],
-  "files": ["index.ts", "subagents.ts", "README.md", "package.json"],
+  "files": ["index.ts", "subagents.ts", "supervise.ts", "README.md", "package.json"],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },

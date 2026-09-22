@@ -47,6 +47,31 @@ export function applyGet(known: Subagent, payload: unknown): Subagent | null {
 	};
 }
 
+export function sessionIdFromCreateOutput(text: string): string | undefined {
+	return subagentFromCreate("oppi session create --json", text)?.id;
+}
+
+export function childStatusFromGet(payload: unknown): {
+	id?: string;
+	status?: string;
+	name?: string;
+	lastMessage?: string;
+	parentId?: string;
+	workspaceId?: string;
+} | null {
+	const session = sessionRecord(payload);
+	if (!session) return null;
+	const launch = asRecord(session.launch);
+	return {
+		id: stringField(session, "id"),
+		status: stringField(session, "status"),
+		name: stringField(session, "name"),
+		lastMessage: stringField(session, "lastMessage"),
+		parentId: stringField(launch, "parentSessionId"),
+		workspaceId: stringField(session, "workspaceId"),
+	};
+}
+
 export function subagentFromCreate(command: string, text: string, parentId?: string): Subagent | null {
 	if (!/\boppi\s+session\s+create\b/.test(command)) return null;
 	const data = createEnvelope(text);
@@ -75,6 +100,15 @@ export function refreshLaunched(launched: Subagent[], gets: unknown[]): Subagent
 		}
 	}
 	return [...byId.values()].slice(0, MAX_SUBAGENTS);
+}
+
+export function withStatuses(rows: Subagent[], updates: Array<{ id: string; status?: string }>): Subagent[] {
+	const byId = new Map(updates.map((item) => [item.id, item.status]));
+	return rows.map((row) => {
+		const status = byId.get(row.id);
+		if (!status) return row;
+		return { ...row, state: stateFromStatus(status) };
+	});
 }
 
 export function subagentRows(subagents: Subagent[]): SubagentRow[] {
@@ -111,7 +145,7 @@ function subagentFromSession(
 
 function stateFromStatus(status: string | undefined): Subagent["state"] {
 	const token = (status ?? "").toLowerCase();
-	if (token === "stopped" || token === "idle") return "success";
+	if (token === "stopped" || token === "idle" || token === "ready") return "success";
 	if (token === "error") return "error";
 	if (token === "attention") return "warning";
 	return "running";
