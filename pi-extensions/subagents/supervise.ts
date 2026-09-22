@@ -118,7 +118,7 @@ export interface WaitPlan {
 }
 
 export function waitPlan(children: WatchChild[], settledIds: ReadonlySet<string>): WaitPlan {
-	const open = children.filter((child) => child.supervise && !settledIds.has(child.id));
+	const open = children.filter((child) => !settledIds.has(child.id));
 	return {
 		eitherIds: open.filter((child) => !child.attentionDelivered).map((child) => child.id),
 		idleIds: open.filter((child) => child.attentionDelivered).map((child) => child.id),
@@ -166,6 +166,8 @@ export interface WaitEffect {
 	attention: string[];
 	clearAttention: string[];
 	stall: string[];
+	widgetSettle: string[];
+	widgetAttention: string[];
 	touch: boolean;
 	stalls: Map<string, StallState>;
 }
@@ -184,12 +186,25 @@ export function reduceWait(input: {
 	const attention: string[] = [];
 	const clearAttention: string[] = [];
 	const stallIds: string[] = [];
+	const widgetSettle: string[] = [];
+	const widgetAttention: string[] = [];
 	const seen = new Set<string>();
 	for (const record of [...input.reading.settled, ...input.reading.attention, ...input.reading.running]) {
 		if (seen.has(record.id) || input.settledIds.has(record.id)) continue;
 		seen.add(record.id);
 		const child = input.children.find((item) => item.id === record.id);
-		if (!child?.supervise) continue;
+		if (!child) continue;
+		if (!child.supervise) {
+			if (isSettledStatus(record.status) && !needsAttention(record.pendingDialogs)) {
+				widgetSettle.push(record.id);
+				stalls.delete(record.id);
+			} else if (needsAttention(record.pendingDialogs)) {
+				if (!child.attentionDelivered) widgetAttention.push(record.id);
+			} else if (shouldClearAttention(record.pendingDialogs) && child.attentionDelivered) {
+				clearAttention.push(record.id);
+			}
+			continue;
+		}
 		if (isSettledStatus(record.status) && !needsAttention(record.pendingDialogs)) {
 			settle.push({ id: record.id, status: record.status ?? "stopped", last: record.last });
 			stalls.delete(record.id);
@@ -218,7 +233,7 @@ export function reduceWait(input: {
 		children: warmable.map((child) => ({ ...child, attentionDelivered: false })),
 		settledIds: input.settledIds,
 	});
-	return { settle, attention, clearAttention, stall: stallIds, touch, stalls };
+	return { settle, attention, clearAttention, stall: stallIds, widgetSettle, widgetAttention, touch, stalls };
 }
 
 export interface WaitRecord {

@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { applyGet, refreshLaunched, subagentFromCreate, subagentRows, withStatuses } from "./subagents.ts";
+import {
+	applyGet,
+	applyWaitReading,
+	refreshLaunched,
+	rowFallback,
+	subagentFromCreate,
+	subagentRows,
+	withStatuses,
+} from "./subagents.ts";
 
 describe("subagents", () => {
 	test("only a create result from this parent becomes a row", () => {
@@ -100,6 +108,56 @@ describe("subagents", () => {
 			[{ id: "child-1", status: "ready" }],
 		);
 		expect(row?.state).toBe("success");
+	});
+
+	test("wait attention is warning and settled ready is Done in the row copy", () => {
+		const launched = {
+			id: "child-1",
+			title: "scout",
+			subtitle: "child1",
+			link: "oppi://session/child-1",
+			state: "running" as const,
+		};
+		const warned = applyWaitReading([launched], {
+			timedOut: false,
+			settled: [],
+			attention: [{ id: "child-1", status: "busy", pendingDialogs: 1 }],
+			running: [],
+		});
+		expect(warned[0]?.state).toBe("warning");
+		const stopping = applyWaitReading([launched], {
+			timedOut: true,
+			settled: [],
+			attention: [],
+			running: [{ id: "child-1", status: "stopping" }],
+		});
+		expect(stopping[0]?.state).toBe("success");
+		const done = applyWaitReading([launched], {
+			timedOut: false,
+			settled: [{ id: "child-1", status: "ready" }],
+			attention: [],
+			running: [],
+		});
+		const [row] = subagentRows(done);
+		expect(row?.state).toBe("success");
+		expect(row?.subtitle).toBe("Done");
+		expect(row?.detail).toBe("child1");
+		expect(rowFallback(row!)).toContain("Done");
+	});
+
+	test("a stopping get keeps a finished row Done", () => {
+		const launched = subagentFromCreate(
+			"oppi session create --name scout --json",
+			'{"ok":true,"data":{"session_id":"child-1"}}',
+			"parent-1",
+		);
+		if (!launched) throw new Error("expected a launch");
+		const done = withStatuses([launched], [{ id: "child-1", status: "ready" }]);
+		const next = applyGet(done[0]!, {
+			ok: true,
+			data: { session: { id: "child-1", status: "stopping" } },
+		});
+		expect(next?.state).toBe("success");
 	});
 
 	test("applyGet keeps a launched row when the payload has no parent field", () => {

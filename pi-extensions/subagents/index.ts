@@ -13,12 +13,13 @@ import type { ExtensionAPI, ExtensionContext, ExtensionUIContext } from "@earend
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "@sinclair/typebox";
 import {
+	applyWaitReading,
 	refreshLaunched,
+	rowFallback,
 	sessionIdFromCreateOutput,
 	sessionLink,
 	subagentFromCreate,
 	subagentRows,
-	withStatuses,
 	type Subagent,
 } from "./subagents.ts";
 import {
@@ -37,7 +38,6 @@ import {
 	shouldClearAttention,
 	SUPERVISED_ENTRY,
 	waitPlan,
-	watchedIds,
 	type StallState,
 	type WatchChild,
 } from "./supervise.ts";
@@ -159,7 +159,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		const title = shown.length === 1 ? "1 subagent" : `${shown.length} subagents`;
 		ui.setStatus(WIDGET_KEY, title);
 		ui.setWidget(WIDGET_KEY, () => ({
-			render: () => [title, ...rows.map((row) => `${row.title} ${row.link}`)],
+			render: () => [title, ...rows.map(rowFallback)],
 			renderNative: () => ({
 				version: 1,
 				id: `widget:${WIDGET_KEY}`,
@@ -167,10 +167,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				presentation: {
 					style: "surfacePanel",
 					title,
-					subtitle: rows[0]?.title,
+					subtitle: rows[0]?.subtitle ?? rows[0]?.title,
 				},
 				blocks: [{ type: "activityList", id: "subagents", rows }],
-				fallback: { lines: rows.map((row) => `${row.title} ${row.link}`) },
+				fallback: { lines: rows.map(rowFallback) },
 			}),
 			invalidate() {},
 		}));
@@ -393,8 +393,12 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				child.attentionDelivered = false;
 			}
 		}
-		const updates = [...reading.settled, ...reading.attention, ...reading.running];
-		shown = withStatuses(shown, updates);
+		for (const id of effect.widgetAttention) {
+			const child = watched.find((item) => item.id === id);
+			if (child) child.attentionDelivered = true;
+		}
+		for (const id of effect.widgetSettle) settledIds.add(id);
+		shown = applyWaitReading(shown, reading);
 		seen = shown;
 		refreshWidget();
 		if (effect.settle.length > 0) {
@@ -499,7 +503,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				} catch {
 					// Persistence is recovery, not the live watch set.
 				}
-				if (watchedIds(watched, settledIds).length === 0) stopWait();
+				const remaining = waitPlan(watched, settledIds);
+				if (remaining.eitherIds.length === 0 && remaining.idleIds.length === 0) stopWait();
 				else armWait();
 				return { content: [{ type: "text", text: `Stopped supervising ${id}. The session keeps running. No further check-ins.` }] };
 			}
@@ -546,8 +551,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			}
 			const name = params.name?.trim() || id.slice(0, 8);
 			rememberRow(id, name);
+			rememberWatch({ id, name, supervise: plan.supervise, attentionDelivered: false });
 			if (plan.supervise) {
-				rememberWatch({ id, name, supervise: true, attentionDelivered: false });
 				try {
 					pi.appendEntry(SUPERVISED_ENTRY, { id, name, supervise: true });
 				} catch {
@@ -597,7 +602,12 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		const command = commandFromInput(event.input);
 		if (!/\boppi\s+session\s+(?:create|wait|inspect)\b/.test(command)) return;
 		const created = subagentFromCreate(command, textFromContent(event.content), parentId);
-		if (created) seen = refreshLaunched([created, ...seen.filter((item) => item.id !== created.id)], []);
+		if (created) {
+			seen = refreshLaunched([created, ...seen.filter((item) => item.id !== created.id)], []);
+			if (!watched.some((item) => item.id === created.id && item.supervise)) {
+				rememberWatch({ id: created.id, name: created.title, supervise: false, attentionDelivered: false });
+			}
+		}
 		shown = seen;
 		refreshWidget();
 		refreshFromCli();

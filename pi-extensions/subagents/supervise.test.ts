@@ -139,6 +139,30 @@ describe("supervision loop", () => {
 		expect(plan.idleIds).toEqual(["latched-1"]);
 	});
 
+	test("a detached or bash launch is waited for widget updates without a parent settle turn", () => {
+		const widgetOnly: WatchChild = { ...running, id: "bash-1", name: "from-bash", supervise: false };
+		const plan = waitPlan([widgetOnly, active], new Set());
+		expect(plan.eitherIds).toEqual(["bash-1", "active-1"]);
+		const effect = reduceWait({
+			children: [widgetOnly, active],
+			settledIds: new Set(),
+			reading: readWait({
+				ok: true,
+				data: { session_id: "bash-1", status: "ready", reason: "idle" },
+			}),
+			now: 10_000,
+			lastParentTouch: 10_000,
+			idle: true,
+			stalls: new Map(),
+		});
+		expect(effect.settle).toEqual([]);
+		expect(effect.touch).toBe(false);
+		expect(effect.widgetSettle).toEqual(["bash-1"]);
+		const afterRelease = waitPlan([widgetOnly, active], new Set(["active-1"]));
+		expect(afterRelease.eitherIds).toEqual(["bash-1"]);
+		expect(afterRelease.idleIds).toEqual([]);
+	});
+
 	test("a latched child that becomes ready still settles", () => {
 		const effect = reduceWait({
 			children: [latched, active],

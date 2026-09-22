@@ -19,6 +19,7 @@ export interface SubagentRow {
 	id: string;
 	title: string;
 	subtitle: string;
+	detail?: string;
 	state: Subagent["state"];
 	link: string;
 }
@@ -112,11 +113,47 @@ export function withStatuses(rows: Subagent[], updates: Array<{ id: string; stat
 	});
 }
 
+export function applyWaitReading(
+	rows: Subagent[],
+	reading: {
+		settled: Array<{ id: string; status?: string }>;
+		attention: Array<{ id: string }>;
+		running: Array<{ id: string }>;
+	},
+): Subagent[] {
+	const byId = new Map<string, Subagent["state"]>();
+	for (const record of reading.running) byId.set(record.id, stateFromStatus(record.status));
+	for (const record of reading.settled) byId.set(record.id, stateFromStatus(record.status));
+	for (const record of reading.attention) byId.set(record.id, "warning");
+	return rows.map((row) => {
+		const state = byId.get(row.id);
+		return state ? { ...row, state } : row;
+	});
+}
+
+export function statusLabel(state: Subagent["state"]): string {
+	switch (state) {
+		case "running":
+			return "Working";
+		case "success":
+			return "Done";
+		case "warning":
+			return "Needs attention";
+		case "error":
+			return "Error";
+	}
+}
+
+export function rowFallback(row: SubagentRow): string {
+	return `${row.title} ${row.subtitle} ${row.link}`;
+}
+
 export function subagentRows(subagents: Subagent[]): SubagentRow[] {
 	return subagents.map((item) => ({
 		id: item.id,
 		title: item.title,
-		subtitle: item.subtitle,
+		subtitle: statusLabel(item.state),
+		detail: item.subtitle,
 		state: item.state,
 		link: item.link,
 	}));
@@ -160,7 +197,7 @@ function agentEmoji(icon: unknown): string | undefined {
 
 function stateFromStatus(status: string | undefined): Subagent["state"] {
 	const token = (status ?? "").toLowerCase();
-	if (token === "stopped" || token === "idle" || token === "ready") return "success";
+	if (token === "stopped" || token === "idle" || token === "ready" || token === "stopping") return "success";
 	if (token === "error") return "error";
 	if (token === "attention") return "warning";
 	return "running";
