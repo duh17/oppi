@@ -332,11 +332,7 @@ struct TimelineReducerBasicTests {
 
     @Test func imageOnlyHintEchoKeepsOptimisticImageRow() {
         let image = ImageAttachment(data: "AAAA", mimeType: "image/png")
-        let optimistic = """
-        [[oppi-attachments:b:photos=1]]
-        Attached files:
-        - screenshot.png: .pi/attachments/s1/t1/screenshot.png
-        """
+        let optimistic = "[[oppi-attachments:b:photos=1]]"
         let echo = """
         Attached files:
         - screenshot.png: .pi/attachments/s1/t1/screenshot.png
@@ -348,8 +344,10 @@ struct TimelineReducerBasicTests {
         let reducer = TimelineReducer()
         let optimisticID = reducer.appendUserMessage(optimistic, images: [image])
         #expect(reducer.hasUserMessage(matching: echo))
+        #expect(reducer.hasLatestImageUserMessage(matchingEcho: echo))
 
-        if !reducer.hasUserMessage(matching: echo) {
+        if !reducer.hasUserMessage(matching: echo),
+           !reducer.hasLatestImageUserMessage(matchingEcho: echo) {
             reducer.appendUserMessage(echo)
         }
 
@@ -442,8 +440,12 @@ struct TimelineReducerBasicTests {
             ImageAttachment(data: "two", mimeType: "image/jpeg"),
             ImageAttachment(data: "three", mimeType: "image/png"),
         ]
-        let optimisticID = reducer.appendUserMessage(typed, images: images)
+        let optimisticID = reducer.appendUserMessage(
+            "[[oppi-attachments:b:photos=3]]\n\(typed)",
+            images: images
+        )
         #expect(reducer.hasUserMessage(matching: echo))
+        #expect(reducer.hasLatestImageUserMessage(matchingEcho: echo))
         #expect(reducer.items.count == 1)
         guard case .userMessage(let id, _, let keptImages, _) = reducer.items[0] else {
             Issue.record("Expected the optimistic multi-image row to remain")
@@ -454,28 +456,25 @@ struct TimelineReducerBasicTests {
     }
 
     @Test func distinctImageOnlySendsDoNotCollapse() {
-        let first = """
+        let firstOptimistic = "[[oppi-attachments:b:photos=1]]"
+        let secondOptimistic = "[[oppi-attachments:b:photos=2]]"
+        let firstEcho = """
         Attached files:
         - one.png: .pi/attachments/s1/t1/one.png
 
         [Image: original 100x100, displayed at 100x100. Multiply coordinates by 1.00 to map to original image.]
         """
-        let second = """
-        Attached files:
-        - two.png: .pi/attachments/s1/t2/two.png
-
-        [Image: future model note.]
-        """
-        #expect(UserMessageTextProjection.comparableText(first) == ".pi/attachments/s1/t1/one.png")
-        #expect(UserMessageTextProjection.comparableText(second) == ".pi/attachments/s1/t2/two.png")
-        #expect(UserMessageTextProjection.comparableText(first) != UserMessageTextProjection.comparableText(second))
-
         let reducer = TimelineReducer()
-        reducer.appendUserMessage(first, images: [ImageAttachment(data: "one", mimeType: "image/png")])
-        #expect(!reducer.hasUserMessage(matching: second))
-        reducer.appendUserMessage(second, images: [ImageAttachment(data: "two", mimeType: "image/png")])
+        reducer.appendUserMessage(firstOptimistic, images: [ImageAttachment(data: "one", mimeType: "image/png")])
+        reducer.appendUserMessage(
+            secondOptimistic,
+            images: [
+                ImageAttachment(data: "one", mimeType: "image/png"),
+                ImageAttachment(data: "two", mimeType: "image/png"),
+            ]
+        )
         reducer.loadSession([
-            TraceEvent(id: "trace-one", type: .user, timestamp: "2025-01-01T00:00:00.000Z", text: first)
+            TraceEvent(id: "trace-one", type: .user, timestamp: "2025-01-01T00:00:00.000Z", text: firstEcho)
         ])
 
         let userTexts: [String] = reducer.items.compactMap { item in
@@ -483,8 +482,8 @@ struct TimelineReducerBasicTests {
             return text
         }
         #expect(userTexts.count == 2)
-        #expect(userTexts[0] == first)
-        #expect(userTexts[1] == second)
+        #expect(userTexts[0] == firstEcho)
+        #expect(userTexts[1] == secondOptimistic)
     }
 
     @Test func rewrittenEchoWithTheSameImagesDoesNotNeedASecondRow() {
@@ -509,9 +508,13 @@ struct TimelineReducerBasicTests {
             ImageAttachment(data: "one", mimeType: "image/png"),
             ImageAttachment(data: "two", mimeType: "image/png"),
         ]
-        reducer.appendUserMessage(optimistic, images: images)
+        let composer = """
+        [[oppi-attachments:b:photos=2]]
+        look at both
+        """
+        reducer.appendUserMessage(composer, images: images)
         #expect(!reducer.hasUserMessage(matching: echo))
-        #expect(reducer.hasLatestImageUserMessage(matchingAttachmentPathsIn: echo))
+        #expect(reducer.hasLatestImageUserMessage(matchingEcho: echo))
         #expect(reducer.items.count == 1)
     }
 

@@ -463,12 +463,30 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     let key = Self.comparableTimelineUserText(event.text ?? "")
                     counts[key, default: 0] += 1
                 }
+                var remainingImageEchoes = events.reduce(0) { count, event in
+                    guard event.type == .user, Self.traceUserEventCarriesImages(event.text ?? "") else {
+                        return count
+                    }
+                    return count + 1
+                }
                 orphanedUserMessages = existingUserMessages.filter { item in
-                    guard case .userMessage(_, let text, _, _) = item else { return false }
+                    guard case .userMessage(_, let text, let images, _) = item else { return false }
                     let key = Self.comparableTimelineUserText(text)
-                    guard let count = remainingTraceTexts[key], count > 0 else { return true }
-                    remainingTraceTexts[key] = count - 1
-                    return false
+                    if let count = remainingTraceTexts[key], count > 0 {
+                        remainingTraceTexts[key] = count - 1
+                        if !images.isEmpty, remainingImageEchoes > 0 {
+                            remainingImageEchoes -= 1
+                        }
+                        return false
+                    }
+                    // The composer photo row is only a marker plus thumbnails.
+                    // Its trace echo carries the materialized files, so text does
+                    // not match. Pair one local image row with one image echo.
+                    if !images.isEmpty, remainingImageEchoes > 0 {
+                        remainingImageEchoes -= 1
+                        return false
+                    }
+                    return true
                 }
             }
         }
@@ -1457,18 +1475,26 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
     }
 
-    /// A rewritten echo that keeps the same generated files is still this send.
-    func hasLatestImageUserMessage(matchingAttachmentPathsIn text: String) -> Bool {
-        let echoPaths = UserMessageTextProjection.attachmentPaths(from: text)
-        guard !echoPaths.isEmpty,
-              let last = items.reversed().lazy.compactMap({ item -> (String, [ImageAttachment])? in
-                  guard case .userMessage(_, let existingText, let images, _) = item else { return nil }
-                  return (existingText, images)
-              }).first,
-              !last.1.isEmpty else {
+    /// The latest composer photo row is the echo even when the server text
+    /// has materialized paths or rewritten prose the composer never stored.
+    func hasLatestImageUserMessage(matchingEcho text: String) -> Bool {
+        guard let last = items.reversed().lazy.compactMap({ item -> (String, [ImageAttachment])? in
+            guard case .userMessage(_, let existingText, let images, _) = item else { return nil }
+            return (existingText, images)
+        }).first, !last.1.isEmpty else {
             return false
         }
-        return UserMessageTextProjection.attachmentPaths(from: last.0) == echoPaths
+        let echoVisible = UserMessageTextProjection.visibleText(from: text)
+        let localVisible = UserMessageTextProjection.visibleText(from: last.0)
+        if echoVisible == localVisible { return true }
+        let echoCarriesImages = !UserMessageTextProjection.attachmentPaths(from: text).isEmpty
+            || Self.traceUserEventCarriesImages(text)
+        return echoCarriesImages
+    }
+
+    private static func traceUserEventCarriesImages(_ text: String) -> Bool {
+        text.contains("data:image/")
+            || !UserMessageTextProjection.attachmentPaths(from: text).isEmpty
     }
 
     @discardableResult

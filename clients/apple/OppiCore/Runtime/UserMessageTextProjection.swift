@@ -22,10 +22,7 @@ enum UserMessageTextProjection {
                 .filter { !$0.isEmpty }
                 .joined(separator: " ")
             : visible
-        if !normalized.isEmpty { return normalized }
-        // Image-only sends have no typed text. Paths keep two screenshots distinct
-        // while the same send's echo still matches.
-        return attachmentPaths(from: rawText).joined(separator: "\n")
+        return normalized
     }
 
     static func attachmentPaths(from rawText: String) -> [String] {

@@ -1286,7 +1286,7 @@ final class ChatSessionManager {
             if role == "user", !content.isEmpty,
                !suppressTimelineMutationWhilePaused(),
                !reducer.hasUserMessage(matching: content),
-               !reducer.hasLatestImageUserMessage(matchingAttachmentPathsIn: content) {
+               !reducer.hasLatestImageUserMessage(matchingEcho: content) {
                 reducer.appendUserMessage(content)
             }
 
