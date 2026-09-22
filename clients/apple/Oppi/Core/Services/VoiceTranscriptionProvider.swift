@@ -99,7 +99,7 @@ enum VoiceSessionEvent: Sendable {
 @MainActor
 protocol VoiceTranscriptionSession: AnyObject {
     var events: AsyncThrowingStream<VoiceSessionEvent, Error> { get }
-    var audioLevels: AsyncStream<Float> { get }
+    var audioLevels: AsyncStream<VoiceSpectrumFrame> { get }
 
     func start() async throws -> VoiceSessionStartTimings
     /// Rebuild the microphone graph onto the current route without finishing

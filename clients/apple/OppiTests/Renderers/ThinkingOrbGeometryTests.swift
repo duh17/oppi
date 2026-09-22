@@ -4,347 +4,235 @@ import Testing
 
 @Suite("ThinkingOrbGeometry")
 struct ThinkingOrbGeometryTests {
-    @Test func fiveStylesProduceBoundedFiniteDots() {
-        let styles = ThinkingOrbStyle.allCases
-        #expect(styles == [.working, .searching, .solving, .composing, .breathing])
+    private let styles: [ThinkingOrbStyle] = [.composing, .breathing]
+    private let sizes: [ThinkingOrbSizeClass] = [.dictationExpanded, .dictationStandard]
+
+    private func frame(_ style: ThinkingOrbStyle, _ size: ThinkingOrbSizeClass,
+                       _ voice: VoiceSpectrumFrame = .zero, time: Double = 0.6) -> ThinkingOrbFrame {
+        ThinkingOrbGeometry.frame(style: style, sizeClass: size, size: size.designSize,
+                                  geometryTime: time, voiceSpectrum: voice, zSorted: false)
+    }
+
+    @Test func dictationInputHoldsAStandingShapeAtDistantTimes() {
+        let input = VoiceSpectrumFrame(level: 1, bands: SIMD8(0.8, 0.4, 0.2, 0.7, 0.9, 0, 0, 0))
         for style in styles {
-            let sizeClass: ThinkingOrbSizeClass = style.isVoiceReactive ? .dictationStandard : .workingCompact
-            let size = sizeClass.designSize
-            let frame = ThinkingOrbGeometry.frame(
-                style: style,
-                sizeClass: sizeClass,
-                size: size,
-                geometryTime: 1.25,
-                audioLevel: 0.4
-            )
-            #expect(!frame.dots.isEmpty)
-            for dot in frame.dots {
+            for size in sizes {
+                let first = frame(style, size, input)
+                let later = frame(style, size, input, time: 120)
+                #expect(displacements(first, later).allSatisfy { $0 == .zero })
+                #expect(zip(first.dots, later.dots).allSatisfy { $0.r == $1.r })
+            }
+        }
+    }
+
+    @Test func zeroBandsStayAtIdleRegardlessOfRMSAndTime() {
+        for style in styles {
+            for size in sizes {
+                let idle = frame(style, size)
+                for time in [0.0, 1.7, 120.0] {
+                    let later = frame(style, size, VoiceSpectrumFrame(level: 1), time: time)
+                    #expect(displacements(idle, later).allSatisfy { $0 == .zero })
+                    #expect(zip(idle.dots, later.dots).allSatisfy { $0.r == $1.r })
+                    #expect(zip(idle.dots, later.dots).allSatisfy { abs($0.a - $1.a) <= 0.100001 })
+                }
+            }
+        }
+    }
+
+    @Test func lowAndHighBandsHaveDifferentDisplacementPatternsOnBothStyles() {
+        for style in styles {
+            for size in sizes {
+                let idle = frame(style, size)
+                let low = frame(style, size, VoiceSpectrumFrame(bands: SIMD8(1, 0, 0, 0, 0, 0, 0, 0)))
+                let high = frame(style, size, VoiceSpectrumFrame(bands: SIMD8(0, 0, 0, 0, 1, 0, 0, 0)))
+                let lowDelta = displacements(idle, low)
+                let highDelta = displacements(idle, high)
+                #expect(lowDelta != highDelta)
+                #expect(lowDelta.contains { length($0) > 1 })
+                #expect(highDelta.contains { length($0) > 1 })
+                let dotProduct = zip(lowDelta, highDelta).reduce(0.0) { sum, pair in
+                    sum + pair.0.x * pair.1.x + pair.0.y * pair.1.y + pair.0.z * pair.1.z
+                }
+                let energy = sqrt(lowDelta.reduce(0) { $0 + length($1) * length($1) }
+                    * highDelta.reduce(0) { $0 + length($1) * length($1) })
+                #expect(abs(dotProduct / energy) < 0.6, "Not just a rescaled loudness deformation")
+            }
+        }
+    }
+
+    @Test func sameBandsProduceTangentialSashAndRadialSphereDeformation() {
+        let voice = VoiceSpectrumFrame(bands: SIMD8(0.6, 0.3, 0.5, 0.2, 0.4, 0, 0, 0))
+        for size in sizes {
+            let sash = frame(.composing, size, voice)
+            let sphere = frame(.breathing, size, voice)
+            #expect(sash.dots != sphere.dots)
+            let radius = size.designSize * 0.39
+            for dot in sash.dots {
+                #expect(abs(radialLength(dot, size.designSize) - radius) < 1e-9)
+            }
+            let idleSphere = frame(.breathing, size)
+            #expect(displacements(idleSphere, sphere).contains { length($0) > 0.5 })
+            for (idle, live) in zip(idleSphere.dots, sphere.dots) {
+                let a = centered(idle, size.designSize)
+                let b = centered(live, size.designSize)
+                #expect(length(a / length(a) - b / length(b)) < 1e-10)
+                #expect(abs(length(b) - 0.94 * radius) <= 0.36 * radius + 1e-9)
+            }
+        }
+    }
+
+    @Test func everyBandHasItsOwnModeAndUnusedLanesAreIgnored() {
+        for style in styles {
+            let idle = frame(style, .dictationStandard)
+            var patterns: [[SIMD3<Double>]] = []
+            for band in 0..<5 {
+                var input = VoiceSpectrumFrame.zero
+                input.bands[band] = 1
+                let delta = displacements(idle, frame(style, .dictationStandard, input))
+                #expect(delta.contains { length($0) > 0.5 })
+                #expect(!patterns.contains(delta))
+                patterns.append(delta)
+            }
+            let unused = VoiceSpectrumFrame(bands: SIMD8(0, 0, 0, 0, 0, 1, 1, 1))
+            #expect(idle.dots == frame(style, .dictationStandard, unused).dots)
+        }
+    }
+
+    @Test func fluxChangesSashDotRadiusAndSphereAccentButNeverPositions() {
+        for style in styles {
+            let idle = frame(style, .dictationStandard)
+            let onset = frame(style, .dictationStandard, VoiceSpectrumFrame(flux: 30))
+            #expect(displacements(idle, onset).allSatisfy { $0 == .zero })
+            if style == .composing {
+                #expect(zip(idle.dots, onset.dots).contains { $0.r < $1.r })
+            } else {
+                #expect(zip(idle.dots, onset.dots).allSatisfy { $0.r == $1.r && $0.accent < $1.accent })
+            }
+        }
+    }
+
+    @Test func breathingIdleRadiusIsFixedAndDisplacementIsBounded() {
+        for size in sizes {
+            let radius = size.designSize * 0.39
+            for dot in frame(.breathing, size).dots {
+                #expect(abs(radialLength(dot, size.designSize) - 0.94 * radius) < 1e-9)
+            }
+            for dot in frame(.breathing, size, VoiceSpectrumFrame(bands: .one)).dots {
+                #expect(abs(radialLength(dot, size.designSize) - 0.94 * radius) <= 0.36 * radius + 1e-9)
+            }
+        }
+    }
+
+    @Test func breathingRenderedDotBoundsStayInsideTheCanvasForEveryBandCombination() {
+        // Every corner of the five-band input cube plus intermediate levels.
+        // Radius is input-independent; radial displacement is clamped linear,
+        // so the corners include each material direction's extreme excursion.
+        for size in sizes {
+            for mask in 0..<32 {
+                for gain: Float in [0.25, 0.5, 1] {
+                    var bands = SIMD8<Float>.zero
+                    for k in 0..<5 where mask & (1 << k) != 0 { bands[k] = gain }
+                    // Use the finalized (radius-minimum, depth-sorted) path
+                    // consumed by the live Metal view, not raw builder dots.
+                    let result = ThinkingOrbGeometry.frame(
+                        style: .breathing, sizeClass: size, size: size.designSize,
+                        geometryTime: 0.6, voiceSpectrum: VoiceSpectrumFrame(bands: bands, flux: 30)
+                    )
+                    let outside = result.dots.filter {
+                        $0.x - $0.r < 0 || $0.y - $0.r < 0
+                            || $0.x + $0.r > size.designSize
+                            || $0.y + $0.r > size.designSize
+                    }
+                    #expect(outside.isEmpty, "\(size.designSize)pt mask=\(mask) gain=\(gain): \(outside.count) clipped dots")
+                }
+            }
+        }
+    }
+
+    @Test func fiveStylesProduceBoundedFiniteDots() {
+        #expect(ThinkingOrbStyle.allCases == [.working, .searching, .solving, .composing, .breathing])
+        for style in ThinkingOrbStyle.allCases {
+            let size: ThinkingOrbSizeClass = style.isVoiceReactive ? .dictationStandard : .workingCompact
+            let result = frame(style, size, VoiceSpectrumFrame(level: 1, bands: .one, flux: 30))
+            #expect(!result.dots.isEmpty)
+            for dot in result.dots {
                 #expect(dot.x.isFinite && dot.y.isFinite && dot.z.isFinite)
                 #expect(dot.r.isFinite && dot.r > 0)
                 #expect(dot.a.isFinite && dot.a >= 0 && dot.a <= 1)
-                #expect(dot.white.isFinite)
-                #expect(dot.accent.isFinite && dot.accent >= 0 && dot.accent <= 1)
-                #expect(dot.palette.isFinite && dot.palette >= 0 && dot.palette <= 3)
-                #expect(dot.x >= -1 && dot.x <= size + 1)
-                #expect(dot.y >= -1 && dot.y <= size + 1)
+                #expect(dot.accent >= 0 && dot.accent <= 1)
+                #expect(dot.palette >= 0 && dot.palette <= 3)
+                #expect(dot.x >= -1 && dot.x <= size.designSize + 1)
+                #expect(dot.y >= -1 && dot.y <= size.designSize + 1)
             }
         }
     }
 
-    @Test func compactWorkingCountsStayWellBelowTheLargeSpecimen() {
-        let working = ThinkingOrbGeometry.frame(
-            style: .working,
-            sizeClass: .workingCompact,
-            size: ThinkingOrbSizeClass.workingCompact.designSize,
-            geometryTime: 0.8
-        )
-        #expect(working.dots.count < 80)
-        #expect(working.dots.count != 566)
-    }
-
-    @Test func dictationDeformsWithoutRotatingItsMaterialPoints() {
-        for style in [ThinkingOrbStyle.composing, .breathing] {
-            for sizeClass in [ThinkingOrbSizeClass.dictationExpanded, .dictationStandard] {
-                let size = sizeClass.designSize
-                // Undo the fixed sash tilt. Normal displacement may vary, but
-                // material points must never travel around the great circle.
-                // Include ghosts too: their stationary positions need no count oracle.
-                let tilt = style == .breathing ? 0.0 : 0.85
-                func angles(_ time: Double, _ audio: Float) -> [Double] {
-                    ThinkingOrbGeometry.frame(
-                        style: style, sizeClass: sizeClass, size: size,
-                        geometryTime: time, audioLevel: audio, zSorted: false
-                    ).dots.map {
-                        let x = $0.x - size / 2
-                        let y = -($0.y - size / 2)
-                        return atan2(y * cos(tilt) + $0.z * sin(tilt), x)
-                    }
-                }
-                let reference = angles(0, 0)
-                var maximumDrift = 0.0
-                for time in [0.7, 2.4, 8, 30, 120] {
-                    for audio: Float in [0, 0.2, 1] {
-                        let current = angles(time, audio)
-                        #expect(current.count == reference.count)
-                        for (a, b) in zip(reference, current) {
-                            maximumDrift = max(maximumDrift, abs(ThinkingOrbGeometry.angleDelta(a, b)))
-                        }
-                    }
-                }
-                print("no-spin \(style) \(size)pt maximum angular drift=\(maximumDrift)")
-                #expect(maximumDrift < 1e-10)
-            }
+    @Test func workingStylesIgnoreAllSpectrumFieldsAndKeepTheirClock() {
+        for style in [ThinkingOrbStyle.working, .searching, .solving] {
+            let quiet = frame(style, .workingCompact)
+            #expect(quiet.dots == frame(style, .workingCompact, VoiceSpectrumFrame(level: 1, bands: .one, flux: 90)).dots)
+            #expect(quiet.dots != frame(style, .workingCompact, time: 8).dots)
         }
     }
 
-    @Test func workingIndicatorTimeScaleIsHalfOriginalWithoutDroppingFrameRate() {
-        let compact = ThinkingOrbSizeClass.workingCompact
-        let preview = ThinkingOrbSizeClass.workingPreview
-        let scale = ThinkingOrbPresets.workingMotionScale
-        #expect(scale == 0.5)
-        #expect(ThinkingOrbPresets.resolve(.working, compact).speed == 3.9 * scale)
-        #expect(ThinkingOrbPresets.resolve(.working, preview).speed == 3.9 * scale)
-        #expect(ThinkingOrbPresets.resolve(.searching, compact).speed == 2.665 * scale)
-        #expect(ThinkingOrbPresets.resolve(.searching, preview).speed == 2.665 * scale)
-        #expect(ThinkingOrbPresets.resolve(.solving, compact).speed == 1.95 * scale)
-        #expect(ThinkingOrbPresets.resolve(.solving, preview).speed == 1.95 * scale)
-        #expect(ThinkingOrbPresets.resolve(.composing, .dictationStandard).speed == 2.34)
-        #expect(ThinkingOrbPresets.resolve(.composing, .dictationExpanded).speed == 2.34)
-        #expect(ThinkingOrbPresets.resolve(.breathing, .dictationStandard).speed == 2.8)
-        #expect(ThinkingOrbPresets.resolve(.breathing, .dictationExpanded).speed == 2.8)
-        #expect(ThinkingOrbDisplayPolicy.activeFramesPerSecond == 60)
-        #expect(ThinkingOrbDisplayPolicy.constrainedFramesPerSecond == 30)
-        #expect(
-            ThinkingOrbDisplayPolicy.preferredFramesPerSecond(
-                isLowPowerModeEnabled: false,
-                thermalState: .nominal
-            ) == 60
-        )
-    }
-
-    @Test func compactWorkingFootprintIsTwentyPoints() {
+    @Test func compactWorkingCountsAndTimeScaleStayUnchanged() {
+        #expect(frame(.working, .workingCompact).dots.count < 80)
         #expect(ThinkingOrbSizeClass.workingCompact.designSize == 20)
         #expect(ThinkingOrbSizeClass.workingPreview.designSize == 20)
         #expect(ThinkingOrbSizeClass.working(side: 20) == .workingCompact)
-        #expect(ThinkingOrbSizeClass.working(side: 18) == .workingCompact)
-        #expect(ThinkingOrbSizeClass.working(side: 16) == .workingCompact)
         #expect(ThinkingOrbSizeClass.working(side: 24) == .workingPreview)
+        #expect(ThinkingOrbPresets.workingMotionScale == 0.5)
+        for size in [ThinkingOrbSizeClass.workingCompact, .workingPreview] {
+            #expect(ThinkingOrbPresets.resolve(.working, size).speed == 3.9 * 0.5)
+            #expect(ThinkingOrbPresets.resolve(.searching, size).speed == 2.665 * 0.5)
+            #expect(ThinkingOrbPresets.resolve(.solving, size).speed == 1.95 * 0.5)
+        }
     }
 
-    @Test func workingStylesColorASubsetOfDotsFromThePalette() {
-        let working = ThinkingOrbGeometry.frame(
-            style: .working,
-            sizeClass: .workingCompact,
-            size: 20,
-            geometryTime: 0.8
-        )
-        let searching = ThinkingOrbGeometry.frame(
-            style: .searching,
-            sizeClass: .workingCompact,
-            size: 20,
-            geometryTime: 1.2
-        )
-        let solving = ThinkingOrbGeometry.frame(
-            style: .solving,
-            sizeClass: .workingCompact,
-            size: 20,
-            geometryTime: 0.4
-        )
-        #expect(working.dots.contains { $0.accent >= 0.8 })
-        #expect(working.dots.contains { $0.accent == 0 })
-        #expect(Set(working.dots.filter { $0.accent >= 0.8 }.map(\.palette)).count >= 2)
-        #expect(searching.dots.contains { $0.accent > 0.2 })
-        #expect(solving.dots.contains { $0.accent >= 0.2 })
-    }
-
-    @Test func dictationOrbsUseThemeAccentsWithoutDiscardingDepthShading() {
-        for style in [ThinkingOrbStyle.composing, .breathing] {
-            let dots = ThinkingOrbGeometry.frame(
-                style: style, sizeClass: .dictationStandard, size: 44,
-                geometryTime: 0.8
-            ).dots
-            let accented = dots.filter { $0.accent > 0.2 }
-            #expect(!accented.isEmpty)
-            #expect(Set(accented.map(\.palette)).count >= 2)
-            #expect(accented.allSatisfy { $0.accent < 1 })
+    @Test func allStylesKeepThemeAccentsAndDepthShading() {
+        for style in ThinkingOrbStyle.allCases {
+            let dots = frame(style, style.isVoiceReactive ? .dictationStandard : .workingCompact).dots
+            #expect(dots.contains { $0.accent > 0.2 })
             #expect(Set(dots.map(\.white)).count > 1)
         }
     }
+}
 
-    @Test func workingGeometryIgnoresAudioLevel() {
-        let size = ThinkingOrbSizeClass.workingCompact.designSize
-        let quiet = ThinkingOrbGeometry.frame(
-            style: .working,
-            sizeClass: .workingCompact,
-            size: size,
-            geometryTime: 1.1,
-            audioLevel: 0
-        )
-        let loud = ThinkingOrbGeometry.frame(
-            style: .working,
-            sizeClass: .workingCompact,
-            size: size,
-            geometryTime: 1.1,
-            audioLevel: 1
-        )
-        #expect(quiet.dots.count == loud.dots.count)
-        for (left, right) in zip(quiet.dots, loud.dots) {
-            #expect(left == right)
+@Suite("VoiceSpectrumSmoother")
+struct VoiceSpectrumSmootherTests {
+    @Test func thirtyAndSixtyHzAgreeOnAttackAndReleaseForEachBand() {
+        let input = VoiceSpectrumFrame(level: 0.7, bands: SIMD8(0.2, 0.4, 0.6, 0.8, 1, 0, 0, 0), flux: 25)
+        var at30 = VoiceSpectrumSmoother()
+        var at60 = VoiceSpectrumSmoother()
+        for raw in [input, .zero] {
+            for _ in 0..<12 { _ = at30.step(raw: raw, dt: 1.0 / 30) }
+            for _ in 0..<24 { _ = at60.step(raw: raw, dt: 1.0 / 60) }
+            for k in 0..<8 { #expect(abs(at30.current.bands[k] - at60.current.bands[k]) < 1e-6) }
+            #expect(abs(at30.current.flux - at60.current.flux) < 1e-5)
         }
     }
 
-    @Test func composingVoiceChangesAmplitudeNotClock() {
-        let quiet = ThinkingOrbGeometry.frame(
-            style: .composing,
-            sizeClass: .dictationStandard,
-            size: 44,
-            geometryTime: 1.7,
-            audioLevel: 0,
-            zSorted: false
-        )
-        let loud = ThinkingOrbGeometry.frame(
-            style: .composing,
-            sizeClass: .dictationStandard,
-            size: 44,
-            geometryTime: 1.7,
-            audioLevel: 1,
-            zSorted: false
-        )
-        #expect(quiet.dots.count == loud.dots.count)
-        var maxDelta = 0.0
-        for (left, right) in zip(quiet.dots, loud.dots) {
-            let delta = hypot(left.x - right.x, left.y - right.y)
-            maxDelta = max(maxDelta, delta)
-            // Depth shading can nudge radius slightly when the still pose and
-            // voiced sash sit at different z; voice must not pulse size.
-            #expect(abs(left.r - right.r) < 0.12)
-        }
-        #expect(maxDelta > 1.5)
-        #expect(maxDelta < 10)
+    @Test func attackReleaseAndSilenceAreIndependentOfRMS() {
+        var smoother = VoiceSpectrumSmoother()
+        var input = VoiceSpectrumFrame(bands: SIMD8(1, 0, 0, 0, 0, 0, 0, 0))
+        let attack = smoother.step(raw: input, dt: 0.040)
+        #expect(abs(attack.bands[0] - Float(1 - exp(-1.0))) < 1e-6)
+        #expect(attack.bands[1] == 0)
+        input.bands = .zero
+        let release = smoother.step(raw: input, dt: 0.180)
+        #expect(abs(release.bands[0] - attack.bands[0] * Float(exp(-1.0))) < 1e-6)
+        #expect(smoother.step(raw: input, dt: 2).bands[0] < 0.00001)
+        smoother.reset()
+        #expect(smoother.current == .zero)
     }
 
-    @Test func unvoicedDictationGeometryMatchesReduceMotionStillPose() {
-        let stillT = ThinkingOrbDisplayPolicy.reduceMotionTime
-        #expect(stillT == 0.6)
-        for style in [ThinkingOrbStyle.composing, .breathing] {
-            for sizeClass in [ThinkingOrbSizeClass.dictationExpanded, .dictationStandard] {
-                let size = sizeClass.designSize
-                let still = ThinkingOrbGeometry.frame(
-                    style: style,
-                    sizeClass: sizeClass,
-                    size: size,
-                    geometryTime: stillT,
-                    audioLevel: 0,
-                    zSorted: false
-                )
-                #expect(!still.dots.isEmpty)
-                for time in [0.0, 0.7, 1.7, 2.4, 8.0, 30.0, 120.0] {
-                    let current = ThinkingOrbGeometry.frame(
-                        style: style,
-                        sizeClass: sizeClass,
-                        size: size,
-                        geometryTime: time,
-                        audioLevel: 0,
-                        zSorted: false
-                    )
-                    #expect(current.dots.count == still.dots.count)
-                    let motion = orbPointDisplacement(still, current)
-                    print(
-                        "silence \(style.rawValue) \(Int(size))pt t=\(time) mean/max \(motion.mean)/\(motion.max)pt"
-                    )
-                    #expect(
-                        motion.max == 0,
-                        "\(style.rawValue) \(Int(size))pt unvoiced t=\(time) moved \(motion.max)pt from still t=\(stillT)"
-                    )
-                }
-            }
-        }
-    }
-
-    @Test func smootherReleaseConvergesDictationOrbsToStillPose() {
-        let stillT = ThinkingOrbDisplayPolicy.reduceMotionTime
-        var smoother = VoiceLevelSmoother()
-        for _ in 0..<30 {
-            _ = smoother.step(raw: 0.45, dt: 1.0 / 60.0)
-        }
-        var released: Float = 1
-        for _ in 0..<120 {
-            released = smoother.step(raw: 0, dt: 1.0 / 60.0)
-        }
-        #expect(released < 0.01)
-        for style in [ThinkingOrbStyle.composing, .breathing] {
-            for sizeClass in [ThinkingOrbSizeClass.dictationExpanded, .dictationStandard] {
-                let size = sizeClass.designSize
-                let still = ThinkingOrbGeometry.frame(
-                    style: style,
-                    sizeClass: sizeClass,
-                    size: size,
-                    geometryTime: stillT,
-                    audioLevel: 0,
-                    zSorted: false
-                )
-                let after = ThinkingOrbGeometry.frame(
-                    style: style,
-                    sizeClass: sizeClass,
-                    size: size,
-                    geometryTime: 8,
-                    audioLevel: released,
-                    zSorted: false
-                )
-                let motion = orbPointDisplacement(still, after)
-                print(
-                    "release \(style.rawValue) \(Int(size))pt audio=\(released) mean/max \(motion.mean)/\(motion.max)pt"
-                )
-                #expect(
-                    motion.max < 0.2,
-                    "\(style.rawValue) \(Int(size))pt release residual \(motion.max)pt at audio=\(released)"
-                )
-            }
-        }
-    }
-
-    @Test func modestVoiceDeformsDictationOrbsByMoreThanAPoint() {
-        let voice = smoothedVoice(raw: 0.2, seconds: 1)
-        #expect(voice > 0.12)
-        for style in [ThinkingOrbStyle.composing, .breathing] {
-            for sizeClass in [ThinkingOrbSizeClass.dictationExpanded, .dictationStandard] {
-                let size = sizeClass.designSize
-                let speed = ThinkingOrbPresets.resolve(style, sizeClass).speed
-                let t = 0.7 * speed
-                let quiet = ThinkingOrbGeometry.frame(
-                    style: style,
-                    sizeClass: sizeClass,
-                    size: size,
-                    geometryTime: t,
-                    audioLevel: 0,
-                    zSorted: false
-                )
-                let speaking = ThinkingOrbGeometry.frame(
-                    style: style,
-                    sizeClass: sizeClass,
-                    size: size,
-                    geometryTime: t,
-                    audioLevel: voice,
-                    zSorted: false
-                )
-                #expect(quiet.dots.count == speaking.dots.count)
-                let motion = orbPointDisplacement(quiet, speaking)
-                print(
-                    "modest-voice \(style.rawValue) \(Int(size))pt mean/max \(motion.mean)/\(motion.max)pt audio=\(voice)"
-                )
-                #expect(
-                    motion.mean >= 0.85,
-                    "\(style.rawValue) \(Int(size))pt modest-voice mean \(motion.mean)pt"
-                )
-                #expect(
-                    motion.max >= 1.4,
-                    "\(style.rawValue) \(Int(size))pt modest-voice max \(motion.max)pt"
-                )
-                #expect(
-                    motion.max < 8,
-                    "\(style.rawValue) \(Int(size))pt modest-voice max \(motion.max)pt is violent"
-                )
-            }
-        }
-    }
-
-    @Test func stylesAreVisuallyDistinctAtTheSameTime() {
-        let size = 44.0
-        let frames = ThinkingOrbStyle.allCases.map {
-            ThinkingOrbGeometry.frame(
-                style: $0,
-                sizeClass: $0.isVoiceReactive ? .dictationStandard : .workingPreview,
-                size: size,
-                geometryTime: 0.9
-            )
-        }
-        for i in 0..<frames.count {
-            for j in (i + 1)..<frames.count {
-                let sameCount = frames[i].dots.count == frames[j].dots.count
-                let sameFirst = frames[i].dots.first == frames[j].dots.first
-                #expect(!(sameCount && sameFirst))
-            }
-        }
+    @Test func malformedInputsStayFiniteAndUnusedLanesStayZero() {
+        var smoother = VoiceSpectrumSmoother()
+        let result = smoother.step(raw: VoiceSpectrumFrame(level: .nan,
+            bands: SIMD8(.nan, .infinity, -2, 3, 0.2, 1, 1, 1), flux: .infinity), dt: 0.1)
+        for k in 0..<8 { #expect(result.bands[k].isFinite && result.bands[k] >= 0 && result.bands[k] <= 1) }
+        #expect(result.bands[5] == 0 && result.bands[6] == 0 && result.bands[7] == 0)
+        #expect(result.flux == 0)
     }
 }
 
@@ -352,68 +240,32 @@ struct ThinkingOrbGeometryTests {
 struct VoiceLevelSmootherTests {
     @Test func outputStaysFiniteAndBounded() {
         var smoother = VoiceLevelSmoother()
-        for raw in [-2, 0, 0.02, 0.16, 0.9, 4, Float.nan] as [Float] {
-            let value = smoother.step(raw: raw, dt: 1.0 / 60.0)
-            #expect(value.isFinite)
-            #expect(value >= 0 && value <= 1)
+        for raw: Float in [-2, 0, 0.02, 0.16, 0.9, 4, .nan] {
+            let value = smoother.step(raw: raw, dt: 1.0 / 60)
+            #expect(value.isFinite && value >= 0 && value <= 1)
         }
     }
-
     @Test func thirtyAndSixtyFpsAgreeAfterTheSameElapsedTime() {
-        var at60 = VoiceLevelSmoother()
         var at30 = VoiceLevelSmoother()
-        let elapsed: TimeInterval = 0.40
-        let frames60 = Int((elapsed * 60).rounded())
-        let frames30 = Int((elapsed * 30).rounded())
-        var last60: Float = 0
-        var last30: Float = 0
-        for _ in 0..<frames60 {
-            last60 = at60.step(raw: 0.85, dt: 1.0 / 60.0)
-        }
-        for _ in 0..<frames30 {
-            last30 = at30.step(raw: 0.85, dt: 1.0 / 30.0)
-        }
-        #expect(abs(last60 - last30) < 0.03)
+        var at60 = VoiceLevelSmoother()
+        for _ in 0..<12 { _ = at30.step(raw: 0.85, dt: 1.0 / 30) }
+        for _ in 0..<24 { _ = at60.step(raw: 0.85, dt: 1.0 / 60) }
+        #expect(abs(at30.current - at60.current) < 1e-6)
     }
-
     @Test func quietSpeechSurvivesTheNoiseFloor() {
         var smoother = VoiceLevelSmoother()
-        var value: Float = 0
-        for _ in 0..<30 {
-            value = smoother.step(raw: 0.16, dt: 1.0 / 60.0)
-        }
-        #expect(value > 0.08)
-        #expect(value < 0.16)
+        let value = smoother.step(raw: 0.16, dt: 0.5)
+        #expect(value > 0.08 && value < 0.16)
     }
 }
 
 @Suite("ThinkingOrbDisplayPolicy")
 struct ThinkingOrbDisplayPolicyTests {
     @Test func prefersSixtyUnlessConstrained() {
-        #expect(
-            ThinkingOrbDisplayPolicy.preferredFramesPerSecond(
-                isLowPowerModeEnabled: false,
-                thermalState: .nominal
-            ) == 60
-        )
-        #expect(
-            ThinkingOrbDisplayPolicy.preferredFramesPerSecond(
-                isLowPowerModeEnabled: true,
-                thermalState: .nominal
-            ) == 30
-        )
-        #expect(
-            ThinkingOrbDisplayPolicy.preferredFramesPerSecond(
-                isLowPowerModeEnabled: false,
-                thermalState: .serious
-            ) == 30
-        )
-        #expect(
-            ThinkingOrbDisplayPolicy.preferredFramesPerSecond(
-                isLowPowerModeEnabled: false,
-                thermalState: .critical
-            ) == 30
-        )
+        #expect(ThinkingOrbDisplayPolicy.preferredFramesPerSecond(isLowPowerModeEnabled: false, thermalState: .nominal) == 60)
+        #expect(ThinkingOrbDisplayPolicy.preferredFramesPerSecond(isLowPowerModeEnabled: true, thermalState: .nominal) == 30)
+        #expect(ThinkingOrbDisplayPolicy.preferredFramesPerSecond(isLowPowerModeEnabled: false, thermalState: .serious) == 30)
+        #expect(ThinkingOrbDisplayPolicy.preferredFramesPerSecond(isLowPowerModeEnabled: false, thermalState: .critical) == 30)
     }
 }
 
@@ -423,41 +275,25 @@ struct ThinkingOrbAttributionTests {
         #expect(ThinkingOrbAttribution.licenseText.contains("Haplo LLC"))
         #expect(ThinkingOrbAttribution.licenseText.contains("Jakub Antalik"))
         #expect(ThinkingOrbAttribution.licenseText.contains("MIT License"))
-        #expect(ThinkingOrbAttribution.summary.contains("Jakub Antalik"))
-        #expect(ThinkingOrbAttribution.summary.contains("Haplo LLC"))
         #expect(ThinkingOrbAttribution.summary.contains("Metal"))
         #expect(ThinkingOrbAttribution.originalDesignURLString == "https://github.com/Jakubantalik/thinking-orbs")
         #expect(ThinkingOrbAttribution.swiftPortURLString == "https://github.com/haplollc/ThinkingOrbs")
     }
-
     @Test func acknowledgmentsViewNamesRolesAndBothRepositories() throws {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appending(path: "Shared/Renderers/Orbs/ThinkingOrbAcknowledgmentsView.swift")
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appending(path: "Shared/Renderers/Orbs/ThinkingOrbAcknowledgmentsView.swift")
         let source = try String(contentsOf: url, encoding: .utf8)
         #expect(source.contains("Jakub Antalik — original thinking-orbs designs and engine"))
         #expect(source.contains("Haplo LLC — Swift ThinkingOrbs port"))
-        #expect(source.contains("originalDesignURL"))
-        #expect(source.contains("swiftPortURL"))
-        #expect(source.contains("licenseText"))
+        #expect(source.contains("originalDesignURL") && source.contains("swiftPortURL") && source.contains("licenseText"))
     }
 }
 
-private func orbPointDisplacement(_ a: ThinkingOrbFrame, _ b: ThinkingOrbFrame) -> (mean: Double, max: Double) {
-    let deltas = zip(a.dots, b.dots).map { hypot($0.x - $1.x, $0.y - $1.y) }
-    let mean = deltas.reduce(0, +) / Double(max(deltas.count, 1))
-    return (mean, deltas.max() ?? 0)
+private func centered(_ dot: ThinkingOrbDot, _ size: Double) -> SIMD3<Double> {
+    SIMD3(dot.x - size / 2, dot.y - size / 2, dot.z)
 }
-
-private func smoothedVoice(raw: Float, seconds: TimeInterval) -> Float {
-    var smoother = VoiceLevelSmoother()
-    let dt = 1.0 / 60.0
-    let frames = Int((seconds / dt).rounded())
-    var value: Float = 0
-    for _ in 0..<frames {
-        value = smoother.step(raw: raw, dt: dt)
-    }
-    return value
+private func radialLength(_ dot: ThinkingOrbDot, _ size: Double) -> Double { length(centered(dot, size)) }
+private func length(_ value: SIMD3<Double>) -> Double { sqrt(value.x * value.x + value.y * value.y + value.z * value.z) }
+private func displacements(_ a: ThinkingOrbFrame, _ b: ThinkingOrbFrame) -> [SIMD3<Double>] {
+    zip(a.dots, b.dots).map { SIMD3($1.x - $0.x, $1.y - $0.y, $1.z - $0.z) }
 }

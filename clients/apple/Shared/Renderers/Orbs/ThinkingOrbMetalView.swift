@@ -26,7 +26,7 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
     var sizeClass: ThinkingOrbSizeClass {
         didSet { if sizeClass != oldValue { invalidateStillFrame() } }
     }
-    var audioLevel: Float = 0
+    var voiceSpectrum: VoiceSpectrumFrame = .zero
     var isDarkBackground = true {
         didSet { if isDarkBackground != oldValue { invalidateStillFrame() } }
     }
@@ -84,7 +84,7 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
     nonisolated(unsafe) private var windowObserverTokens: [NSObjectProtocol] = []
     nonisolated(unsafe) private var visibilityObservations: [NSKeyValueObservation] = []
     nonisolated(unsafe) private var clipBoundsTokens: [NSObjectProtocol] = []
-    private var smoother = VoiceLevelSmoother()
+    private var smoother = VoiceSpectrumSmoother()
     private var lastStepNow: TimeInterval?
     private var clockOrigin: TimeInterval?
     private var sceneActive = true
@@ -95,9 +95,8 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
     var framesFailed: Int { ledger.failed }
     var framesSkipped: Int { ledger.skipped }
     private(set) var isDriving = false
-    /// Smoothed level last fed into geometry. Public so tests can prove the
-    /// mounted host consumes `audioLevel` without reading GPU drawables.
-    private(set) var lastPresentedAudio: Float = 0
+    /// Smoothed input last fed into geometry, independent of GPU drawables.
+    private(set) var lastPresentedSpectrum: VoiceSpectrumFrame = .zero
     private(set) var lastPresentedGeometryTime: Double = 0
     var inFlightGPUBuffers: Int { renderer?.inFlightCount ?? 0 }
     var rendererForTests: ThinkingOrbMetalRenderer? { renderer }
@@ -525,21 +524,23 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
         if clockOrigin == nil { clockOrigin = now }
         let dt = lastStepNow.map { max(0, now - $0) } ?? 0
         lastStepNow = now
-        let raw = frozen || !style.isVoiceReactive ? 0 : audioLevel
-        let smoothed = frozen ? 0 : smoother.step(raw: raw, dt: dt)
+        let raw = frozen || !style.isVoiceReactive ? .zero : voiceSpectrum
+        let smoothed = frozen ? .zero : smoother.step(raw: raw, dt: dt)
         let speed = ThinkingOrbPresets.resolve(style, sizeClass).speed
         let wall = max(0, now - (clockOrigin ?? now))
-        let geometryTime = frozen ? ThinkingOrbDisplayPolicy.reduceMotionTime : wall * speed
+        // Dictation time is only the 0.3 Hz ghost alpha twinkle's wall clock.
+        let geometryTime = frozen ? ThinkingOrbDisplayPolicy.reduceMotionTime
+            : (style.isVoiceReactive ? wall : wall * speed)
         let side = Double(min(bounds.width, bounds.height))
         let design = side > 0 ? side : sizeClass.designSize
-        lastPresentedAudio = smoothed
+        lastPresentedSpectrum = smoothed
         lastPresentedGeometryTime = geometryTime
         let frame = ThinkingOrbGeometry.frame(
             style: style,
             sizeClass: sizeClass,
             size: design,
             geometryTime: geometryTime,
-            audioLevel: smoothed
+            voiceSpectrum: smoothed
         )
         return submit(frame, designSize: design)
     }
@@ -924,7 +925,7 @@ struct ThinkingOrbView: View {
     var style: ThinkingOrbStyle
     var sizeClass: ThinkingOrbSizeClass
     var tint: Color
-    var audioLevel: Float = 0
+    var voiceSpectrum: VoiceSpectrumFrame = .zero
     var isActive: Bool = true
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.theme) private var theme
@@ -941,7 +942,7 @@ struct ThinkingOrbView: View {
                 theme.accent.purple,
                 theme.accent.orange,
             ],
-            audioLevel: audioLevel,
+            voiceSpectrum: voiceSpectrum,
             isActive: isActive,
             isDarkBackground: colorScheme == .dark
         )
@@ -957,7 +958,7 @@ private struct ThinkingOrbRepresentable: UIViewRepresentable {
     var sizeClass: ThinkingOrbSizeClass
     var tint: Color
     var accents: [Color]
-    var audioLevel: Float
+    var voiceSpectrum: VoiceSpectrumFrame
     var isActive: Bool
     var isDarkBackground: Bool
 
@@ -980,7 +981,7 @@ private struct ThinkingOrbRepresentable: UIViewRepresentable {
         view.sizeClass = sizeClass
         view.tintUIColor = UIColor(tint)
         view.accentUIColors = accents.map { UIColor($0) }
-        view.audioLevel = audioLevel
+        view.voiceSpectrum = voiceSpectrum
         view.isAnimationEnabled = isActive
         view.isDarkBackground = isDarkBackground
         view.honorsSystemReduceMotion = true
@@ -992,7 +993,7 @@ private struct ThinkingOrbRepresentable: NSViewRepresentable {
     var sizeClass: ThinkingOrbSizeClass
     var tint: Color
     var accents: [Color]
-    var audioLevel: Float
+    var voiceSpectrum: VoiceSpectrumFrame
     var isActive: Bool
     var isDarkBackground: Bool
 
@@ -1015,7 +1016,7 @@ private struct ThinkingOrbRepresentable: NSViewRepresentable {
         view.sizeClass = sizeClass
         view.tintNSColor = NSColor(tint)
         view.accentNSColors = accents.map { NSColor($0) }
-        view.audioLevel = audioLevel
+        view.voiceSpectrum = voiceSpectrum
         view.isAnimationEnabled = isActive
         view.isDarkBackground = isDarkBackground
         view.honorsSystemReduceMotion = true

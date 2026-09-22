@@ -19,7 +19,7 @@ final class MicButtonChromeView: UIControl {
     private var isRecording = false
     private var isPreparing = false
     private var isProcessing = false
-    private var audioLevel: Float = 0
+    private var voiceSpectrum: VoiceSpectrumFrame = .zero
     private var languageLabel: String?
     private var accentColor = UIColor(ThemeRuntimeState.currentPalette().blue)
     private var engineBadge: MicButtonLabel.EngineBadge = .auto
@@ -68,7 +68,7 @@ final class MicButtonChromeView: UIControl {
         apply(
             isRecording: presentation.isRecording,
             isProcessing: presentation.isProcessing,
-            audioLevel: presentation.audioLevel,
+            voiceSpectrum: presentation.voiceSpectrum,
             languageLabel: presentation.languageLabel,
             accentColor: accentColor,
             engineBadge: presentation.engineBadge,
@@ -81,7 +81,7 @@ final class MicButtonChromeView: UIControl {
     func apply(
         isRecording: Bool,
         isProcessing: Bool,
-        audioLevel: Float,
+        voiceSpectrum: VoiceSpectrumFrame,
         languageLabel: String?,
         accentColor: UIColor,
         engineBadge: MicButtonLabel.EngineBadge,
@@ -92,7 +92,7 @@ final class MicButtonChromeView: UIControl {
         self.isRecording = isRecording
         self.isPreparing = isPreparing
         self.isProcessing = isProcessing
-        self.audioLevel = audioLevel
+        self.voiceSpectrum = voiceSpectrum
         self.languageLabel = languageLabel
         self.accentColor = accentColor
         self.engineBadge = engineBadge
@@ -171,8 +171,8 @@ final class MicButtonChromeView: UIControl {
         let palette = ThemeRuntimeState.currentPalette()
         let indicator = indicatorColor(palette: palette)
         let listeningChrome = isRecording || isPreparing
-        let voiceLevel = isRecording ? audioLevel : 0
-        let clampedLevel = CGFloat(min(max(voiceLevel, 0), 1))
+        let spectrum = isRecording ? voiceSpectrum : .zero
+        let clampedLevel = CGFloat(min(max(spectrum.level, 0), 1))
         let lineWidth = isRecording ? 1.5 + clampedLevel * 2.0 : 1
         var bgR: CGFloat = 0, bgG: CGFloat = 0, bgB: CGFloat = 0, bgA: CGFloat = 0
         UIColor(palette.bg).getRed(&bgR, green: &bgG, blue: &bgB, alpha: &bgA)
@@ -190,7 +190,7 @@ final class MicButtonChromeView: UIControl {
             if !orbView.tintUIColor.isEqual(indicator) {
                 orbView.tintUIColor = indicator
             }
-            orbView.audioLevel = voiceLevel
+            orbView.voiceSpectrum = spectrum
             orbView.isDarkBackground = ThinkingOrbTint.isDarkBackground(red: bgR, green: bgG, blue: bgB)
         }
         ringLayer.strokeColor = (isRecording

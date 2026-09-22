@@ -103,7 +103,10 @@ struct MetalOrbScreenshotPreview: View {
             MicButtonLabel(
                 isRecording: true,
                 isProcessing: false,
-                audioLevel: level,
+                voiceSpectrum: VoiceSpectrumFrame(
+                    level: level,
+                    bands: SIMD8(level * 2, level, 0, 0, level * 0.5, 0, 0, 0)
+                ),
                 languageLabel: "EN",
                 accentColor: .themeBlue,
                 engineBadge: .onDevice,

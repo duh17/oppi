@@ -12,7 +12,7 @@ final class VoiceInputSessionMonitor {
     func bind(
         session: any VoiceTranscriptionSession,
         recordingStartTime: ContinuousClock.Instant,
-        onAudioLevel: @escaping @MainActor (Float) -> Void,
+        onAudioLevel: @escaping @MainActor (VoiceSpectrumFrame) -> Void,
         onEvent: @escaping @MainActor (VoiceSessionEvent) -> Void,
         onFirstTranscript: @escaping @MainActor (_ latencyMs: Int, _ resultType: String) -> Void,
         onError: @escaping @MainActor (Error) -> Void

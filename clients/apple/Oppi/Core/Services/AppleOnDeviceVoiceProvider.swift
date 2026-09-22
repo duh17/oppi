@@ -362,13 +362,13 @@ enum TranscriberModule {
 @MainActor
 final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
     let events: AsyncThrowingStream<VoiceSessionEvent, Error>
-    let audioLevels: AsyncStream<Float>
+    let audioLevels: AsyncStream<VoiceSpectrumFrame>
 
     private let transcriber: TranscriberModule
     private let preferredAudioFormat: AVAudioFormat?
     private let contextualStrings: [String]
     private let eventContinuation: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
-    private let audioLevelContinuation: AsyncStream<Float>.Continuation
+    private let audioLevelContinuation: AsyncStream<VoiceSpectrumFrame>.Continuation
 
     private var analyzer: SpeechAnalyzer?
     private var inputBuilder: AnalyzerInputBuffer?
@@ -406,7 +406,7 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         events = eventPair.0
         eventContinuation = eventPair.1
 
-        let (audioLevels, audioLevelContinuation) = AsyncStream.makeStream(of: Float.self)
+        let (audioLevels, audioLevelContinuation) = AsyncStream.makeStream(of: VoiceSpectrumFrame.self)
         self.audioLevels = audioLevels
         self.audioLevelContinuation = audioLevelContinuation
     }
@@ -700,7 +700,7 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         }
     }
 
-    private func startAudioLevelBridge(_ levelStream: AsyncStream<Float>) {
+    private func startAudioLevelBridge(_ levelStream: AsyncStream<VoiceSpectrumFrame>) {
         audioLevelTask?.cancel()
         audioLevelTask = Task {
             for await level in levelStream {

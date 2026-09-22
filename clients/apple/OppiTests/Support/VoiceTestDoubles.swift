@@ -125,10 +125,10 @@ final class MockVoiceProvider: VoiceTranscriptionProvider {
 @MainActor
 final class MockVoiceSession: VoiceTranscriptionSession {
     let events: AsyncThrowingStream<VoiceSessionEvent, Error>
-    let audioLevels: AsyncStream<Float>
+    let audioLevels: AsyncStream<VoiceSpectrumFrame>
 
     private let eventContinuation: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
-    private let audioLevelContinuation: AsyncStream<Float>.Continuation
+    private let audioLevelContinuation: AsyncStream<VoiceSpectrumFrame>.Continuation
 
     var startTimings = VoiceSessionStartTimings(analyzerStartMs: 11, audioStartMs: 22)
     var startError: Error?
@@ -151,7 +151,7 @@ final class MockVoiceSession: VoiceTranscriptionSession {
         events = eventPair.stream
         eventContinuation = eventPair.continuation
 
-        let audioPair = AsyncStream.makeStream(of: Float.self)
+        let audioPair = AsyncStream.makeStream(of: VoiceSpectrumFrame.self)
         audioLevels = audioPair.stream
         audioLevelContinuation = audioPair.continuation
     }
@@ -208,8 +208,12 @@ final class MockVoiceSession: VoiceTranscriptionSession {
         }
     }
 
+    func yieldSpectrum(_ frame: VoiceSpectrumFrame) {
+        audioLevelContinuation.yield(frame)
+    }
+
     func yieldAudioLevel(_ level: Float) {
-        audioLevelContinuation.yield(level)
+        audioLevelContinuation.yield(VoiceSpectrumFrame(level: level))
     }
 }
 

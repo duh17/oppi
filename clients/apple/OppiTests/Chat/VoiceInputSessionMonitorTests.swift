@@ -9,7 +9,7 @@ struct VoiceInputSessionMonitorTests {
         let session = TestVoiceSession()
         let monitor = VoiceInputSessionMonitor()
 
-        var receivedLevels: [Float] = []
+        var receivedLevels: [VoiceSpectrumFrame] = []
         var receivedEvents: [VoiceSessionEvent] = []
         var firstTranscript: (Int, String)?
 
@@ -196,7 +196,7 @@ struct VoiceInputSessionMonitorTests {
         let sessionB = MockVoiceSession()
         let monitor = VoiceInputSessionMonitor()
         var receivedEvents: [VoiceSessionEvent] = []
-        var receivedLevels: [Float] = []
+        var receivedLevels: [VoiceSpectrumFrame] = []
 
         bindMonitor(monitor, session: sessionA)
 
@@ -219,7 +219,7 @@ struct VoiceInputSessionMonitorTests {
         #expect(sessionB.cancelCallCount == 0)
         sessionB.yieldAudioLevel(0.5)
         sessionB.yieldEvent(.partialTranscript("keep-b"))
-        #expect(await waitForMainActorCondition { receivedLevels == [0.5] })
+        #expect(await waitForMainActorCondition { receivedLevels == [VoiceSpectrumFrame(level: 0.5)] })
         #expect(await waitForMainActorCondition {
             receivedEvents.contains { eventText($0, expecting: .partialTranscript) == "keep-b" }
         })
@@ -361,7 +361,7 @@ struct VoiceInputSessionMonitorTests {
 private func bindMonitor(
     _ monitor: VoiceInputSessionMonitor,
     session: any VoiceTranscriptionSession,
-    onAudioLevel: @escaping @MainActor (Float) -> Void = { _ in },
+    onAudioLevel: @escaping @MainActor (VoiceSpectrumFrame) -> Void = { _ in },
     onEvent: @escaping @MainActor (VoiceSessionEvent) -> Void = { _ in },
     onError: @escaping @MainActor (Error) -> Void = { error in
         Issue.record("Unexpected monitor error: \(error)")
@@ -412,10 +412,10 @@ private actor TestCounter {
 
 private final class TestVoiceSession: VoiceTranscriptionSession {
     let events: AsyncThrowingStream<VoiceSessionEvent, Error>
-    let audioLevels: AsyncStream<Float>
+    let audioLevels: AsyncStream<VoiceSpectrumFrame>
 
     private let eventContinuation: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
-    private let audioContinuation: AsyncStream<Float>.Continuation
+    private let audioContinuation: AsyncStream<VoiceSpectrumFrame>.Continuation
     private let stopCounter = TestCounter()
     private let cancelCounter = TestCounter()
 
@@ -424,7 +424,7 @@ private final class TestVoiceSession: VoiceTranscriptionSession {
         events = eventPair.stream
         eventContinuation = eventPair.continuation
 
-        let audioPair = AsyncStream.makeStream(of: Float.self)
+        let audioPair = AsyncStream.makeStream(of: VoiceSpectrumFrame.self)
         audioLevels = audioPair.stream
         audioContinuation = audioPair.continuation
     }
@@ -460,7 +460,7 @@ private final class TestVoiceSession: VoiceTranscriptionSession {
     }
 
     func yieldAudioLevel(_ level: Float) {
-        audioContinuation.yield(level)
+        audioContinuation.yield(VoiceSpectrumFrame(level: level))
     }
 
     var stopCallCount: Int {

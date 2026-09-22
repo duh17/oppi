@@ -72,12 +72,14 @@ enum ThinkingOrbGeometry {
         sizeClass: ThinkingOrbSizeClass,
         size: Double,
         geometryTime t: Double,
-        audioLevel: Float = 0,
+        voiceSpectrum: VoiceSpectrumFrame = .zero,
         zSorted: Bool = true
     ) -> ThinkingOrbFrame {
         let safeSize = size.isFinite && size > 0 ? size : sizeClass.designSize
         let safeT = t.isFinite ? t : 0
-        let voice = Double(ThinkingOrbAudio.clamp(audioLevel))
+        var voice = voiceSpectrum
+        for k in 0..<8 { voice.bands[k] = k < 5 ? ThinkingOrbAudio.clamp(voice.bands[k]) : 0 }
+        voice.flux = voice.flux.isFinite ? max(0, voice.flux) : 0
         let resolved = ThinkingOrbPresets.resolve(style, sizeClass)
         let built = resolved.build(safeSize, safeT, voice)
         if !zSorted {
@@ -161,7 +163,7 @@ enum ThinkingOrbPresets {
     struct Resolved: Sendable {
         var speed: Double
         var rMin: Double
-        fileprivate var build: @Sendable (_ size: Double, _ t: Double, _ voice: Double) -> ThinkingOrbFrame
+        fileprivate var build: @Sendable (_ size: Double, _ t: Double, _ voice: VoiceSpectrumFrame) -> ThinkingOrbFrame
     }
 
     static func resolve(_ style: ThinkingOrbStyle, _ sizeClass: ThinkingOrbSizeClass) -> Resolved {
@@ -376,6 +378,11 @@ enum ThinkingOrbPresets {
 }
 
 private enum ThinkingOrbBuilders {
+    /// Only alpha is clock-driven in dictation, with a stable per-dot phase.
+    private static func ghostTwinkle(_ index: Int, _ time: Double) -> Double {
+        0.05 * sin(time * 2 * .pi * 0.3 + ThinkingOrbGeometry.hashD(Double(index), 4.1) * 2 * .pi)
+    }
+
     static func orbits(
         _ size: Double,
         _ t: Double,
@@ -642,39 +649,52 @@ private enum ThinkingOrbBuilders {
     }
 
     /// Oppi's full-sphere Breathing, rather than the original face-on ring.
-    /// Fixed material directions keep both the breath and voice flex free of spin.
-    /// Unvoiced frames hold the Reduce Motion still radius; live audio gates
-    /// only the time-dependent breath/flex amplitude.
+    /// Fixed material directions, with five distinct radial spectral modes.
+    /// No clock term changes position or radius.
     static func breathing(
         _ size: Double,
         _ t: Double,
-        voice: Double,
+        voice: VoiceSpectrumFrame,
         dotCount: Int
     ) -> ThinkingOrbFrame {
         let R = size * 0.39
         let rs = ThinkingOrbGeometry.radiusScale(size, 0.6)
-        let stillT = ThinkingOrbDisplayPolicy.reduceMotionTime
-        let visualVoice = 1 - exp(-voice * 3.2)
-        let breathStill = 0.88 + 0.12 * sin(stillT * 0.82)
-        let breathLive = 0.88 + 0.12 * sin(t * 0.82)
-        let breath = breathStill + visualVoice * (breathLive - breathStill)
+        let bands = voice.bands
+        let onset = Double(min(1, voice.flux / 30))
         var dots: [ThinkingOrbDot] = []
         dots.reserveCapacity(dotCount)
         for i in 0..<dotCount {
             let d = ThinkingOrbGeometry.fibDir(i, Double(dotCount))
-            // Speech gently indents the breathing shell, never turns it.
-            // The unvoiced envelope is the outer bound even at peak input.
-            let flex = visualVoice * 0.42 * (0.7 + 0.3 * sin(d.1 * 3 + t * 0.72))
-            let radius = R * breath * (1 - flex)
+            let y = d.1
+            let y2 = y * y
+            let p2 = (3 * y2 - 1) / 2
+            let p3 = (5 * y2 * y - 3 * y) / 2
+            let p4 = (35 * y2 * y2 - 30 * y2 + 3) / 8
+            let roughness = 2 * ThinkingOrbGeometry.hashD(Double(i), 9.3) - 1
+            // Higher bands stay close to the chest mode so pitch is
+            // visible at 32/44 pt, not a faint roughness on a swell.
+            let displacement = 0.32 * Double(bands[0])
+                + 0.28 * Double(bands[1]) * p2
+                + 0.26 * Double(bands[2]) * p3
+                + 0.24 * Double(bands[3]) * p4
+                + 0.22 * Double(bands[4]) * roughness
             let depth = (d.2 + 1) / 2
+            let dotRadius = (1.0 + 1.7 * depth) * rs
+            // Reserve the rendered radius before limiting a material point's
+            // radial travel. Only excursions that would clip are shortened;
+            // directions, idle geometry, and the five spectral modes stay put.
+            // Metal converts coordinates to Float; leave subpixel rounding room.
+            let roundingInset = 2 * Double(Float(size).ulp)
+            let canvasRadius = max(0, size / 2 - dotRadius - roundingInset) / max(abs(d.0), abs(d.1))
+            let radius = min(R * (0.94 + min(0.36, max(-0.36, displacement))), canvasRadius)
             dots.append(ThinkingOrbDot(
                 x: size / 2 + d.0 * radius,
                 y: size / 2 - d.1 * radius,
                 z: d.2 * radius,
-                r: (1.0 + 1.7 * depth) * rs,
+                r: dotRadius,
                 white: 0.58 - 0.5 * depth,
-                a: 0.3 + 0.7 * depth,
-                accent: 0.45 + 0.2 * depth,
+                a: min(1, 0.3 + 0.7 * depth + (i % 5 == 0 ? ghostTwinkle(i, t) : 0)),
+                accent: min(1, 0.45 + 0.2 * depth + 0.3 * onset),
                 palette: Double(min(3, i * 4 / dotCount))
             ))
         }
@@ -684,7 +704,7 @@ private enum ThinkingOrbBuilders {
     static func ribbon(
         _ size: Double,
         _ t: Double,
-        voice: Double,
+        voice: VoiceSpectrumFrame,
         lanes: Int,
         segs: Double,
         ghostN: Double,
@@ -712,7 +732,8 @@ private enum ThinkingOrbBuilders {
             let (px, py, z) = pt(d.0 * R, d.1 * R, d.2 * R)
             let depth = (z / R + 1) / 2
             dots.append(ThinkingOrbDot(
-                x: px, y: py, z: z, r: 0.8 * rs, white: 0.78, a: 0.1 + 0.22 * depth
+                x: px, y: py, z: z, r: 0.8 * rs, white: 0.78,
+                a: 0.1 + 0.22 * depth + ghostTwinkle(i, t)
             ))
         }
 
@@ -728,9 +749,11 @@ private enum ThinkingOrbBuilders {
         let ny = uz * vx - ux * vz
         let nz = ux * vy - uy * vx
 
-        let voiceAmp = 0.36
+        let modes = SIMD8<Double>(1, 2, 3, 5, 8, 0, 0, 0)
+        let amplitudes = SIMD8<Double>(0.56, 0.50, 0.44, 0.40, 0.36, 0, 0, 0)
+        let phases = SIMD8<Double>(0.3, 1.1, 2.0, 0.7, 2.7, 0, 0, 0)
+        let onset = Double(min(1, voice.flux / 30))
         let mid = Double(lanes - 1) / 2
-        let visualVoice = 1 - exp(-voice * 3.2)
         let stillT = ThinkingOrbDisplayPolicy.reduceMotionTime
         dots.reserveCapacity(dots.count + lanes * ThinkingOrbGeometry.below(segs))
         for w in 0..<lanes {
@@ -739,20 +762,16 @@ private enum ThinkingOrbBuilders {
             let edge = abs(fw - mid) / max(1, mid)
             for k in 0..<ThinkingOrbGeometry.below(segs) {
                 let a = (Double(k) / segs) * 2 * Double.pi
-                // Two traveling bending modes, with a small phase lag across
-                // the sash: neighboring strands flex together without collapsing
-                // into one loop. No tangential advection or accumulated spin.
-                // Quiet holds the Reduce Motion still pose; voice gates only
-                // the traveling amplitude, not an unbounded clock.
+                // Frozen sash plus standing bends: low bands bend long arcs,
+                // high bands ripple finely. Lane lag is spatial, never temporal.
                 let lag = fw * 0.22
-                let wobStill = 0.16 * sin(a * 3 - stillT * 1.7 + lag)
+                let wob = 0.16 * sin(a * 3 - stillT * 1.7 + lag)
                     + 0.07 * sin(a * 5 + stillT * 1.1)
-                let wobLive = 0.16 * sin(a * 3 - t * 1.7 + lag)
-                    + 0.07 * sin(a * 5 + t * 1.1)
-                let wob = wobStill + visualVoice * (wobLive - wobStill)
-                // Voice changes bend amplitude, never the clock or orientation.
-                let speech = visualVoice * voiceAmp * sin(a * 2 - t * 0.72 + lag)
-                let off = laneOff + wob + speech
+                var off = laneOff + wob
+                for band in 0..<5 {
+                    off += Double(voice.bands[band]) * amplitudes[band]
+                        * sin(a * modes[band] + phases[band] + lag)
+                }
                 let x = ux * cos(a) + vx * sin(a) + nx * off
                 let y = uy * cos(a) + vy * sin(a) + ny * off
                 let z = uz * cos(a) + vz * sin(a) + nz * off
@@ -762,7 +781,7 @@ private enum ThinkingOrbBuilders {
                 let depth = (zr / R + 1) / 2
                 dots.append(ThinkingOrbDot(
                     x: px, y: py, z: zr,
-                    r: (rBase + rDepth * depth) * (1 - 0.25 * edge) * rs,
+                    r: (rBase + rDepth * depth) * (1 - 0.25 * edge) * rs * (1 + 0.2 * onset),
                     white: 0.52 - 0.44 * depth + 0.18 * edge,
                     a: 0.4 + 0.6 * depth,
                     accent: 0.65 - 0.2 * edge,

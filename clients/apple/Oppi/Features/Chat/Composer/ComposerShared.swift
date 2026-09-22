@@ -37,7 +37,7 @@ enum ComposerShared {
         let isPreparing: Bool
         let isProcessing: Bool
         let isBlockedByOtherOwner: Bool
-        let audioLevel: Float
+        let voiceSpectrum: VoiceSpectrumFrame
         let languageLabel: String?
         let engineBadge: MicButtonLabel.EngineBadge
         let accessibilityValue: String
@@ -175,7 +175,7 @@ enum ComposerShared {
             isPreparing: isPreparing,
             isProcessing: isProcessing,
             isBlockedByOtherOwner: isBlocked,
-            audioLevel: manager.audioLevel,
+            voiceSpectrum: manager.voiceSpectrum,
             languageLabel: manager.activeLanguageLabel,
             engineBadge: micEngineBadge(for: manager),
             accessibilityValue: voiceRouteAccessibilityValue(for: manager)
@@ -188,7 +188,7 @@ enum ComposerShared {
             isPreparing: false,
             isProcessing: false,
             isBlockedByOtherOwner: micTapAction(for: manager.state) != .start,
-            audioLevel: 0,
+            voiceSpectrum: .zero,
             languageLabel: nil,
             engineBadge: micEngineBadge(for: manager),
             accessibilityValue: voiceRouteAccessibilityValue(for: manager)

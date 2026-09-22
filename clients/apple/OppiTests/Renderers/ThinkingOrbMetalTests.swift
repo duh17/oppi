@@ -308,7 +308,7 @@ struct ThinkingOrbMetalViewLifecycleTests {
         chrome.apply(
             isRecording: true,
             isProcessing: false,
-            audioLevel: 0.2,
+            voiceSpectrum: VoiceSpectrumFrame(level: 0.2),
             languageLabel: "EN",
             accentColor: .systemBlue,
             engineBadge: .onDevice,
@@ -323,7 +323,7 @@ struct ThinkingOrbMetalViewLifecycleTests {
         chrome.apply(
             isRecording: true,
             isProcessing: false,
-            audioLevel: 0.9,
+            voiceSpectrum: VoiceSpectrumFrame(level: 0.9),
             languageLabel: "EN",
             accentColor: .systemBlue,
             engineBadge: .onDevice,
@@ -331,7 +331,7 @@ struct ThinkingOrbMetalViewLifecycleTests {
             animated: false
         )
         #expect(orb.framesSubmitted == submitted)
-        #expect(orb.audioLevel == 0.9)
+        #expect(orb.voiceSpectrum.level == 0.9)
     }
 
     @Test func removingTheViewAllowsDeallocation() async throws {
@@ -363,17 +363,18 @@ struct ThinkingOrbMetalViewLifecycleTests {
         _ = try await waitForCompletions(on: harness.view, minimum: 2)
         #expect(harness.view.isDriving)
 
-        harness.view.audioLevel = 0
+        harness.view.voiceSpectrum = .zero
         _ = try await waitForCompletions(
             on: harness.view,
             minimum: harness.view.framesCompleted + 2
         )
-        #expect(harness.view.lastPresentedAudio < 0.03)
+        #expect(harness.view.lastPresentedSpectrum.level < 0.03)
 
-        harness.view.audioLevel = 0.35
+        harness.view.voiceSpectrum = VoiceSpectrumFrame(level: 0.35, bands: SIMD8(0.8, 0.4, 0, 0, 0.3, 0, 0, 0))
         let voice = try await waitUntilPresentedAudio(on: harness.view, atLeast: 0.12)
         #expect(harness.view.isDriving)
-        #expect(harness.view.audioLevel == 0.35)
+        #expect(harness.view.voiceSpectrum.level == 0.35)
+        #expect(harness.view.lastPresentedSpectrum.bands[0] > 0.4)
         let phase = harness.view.lastPresentedGeometryTime
         let quietShot = try renderOrbPixels(
             renderer: renderer,
@@ -381,7 +382,7 @@ struct ThinkingOrbMetalViewLifecycleTests {
             sizeClass: .dictationStandard,
             size: 44,
             geometryTime: phase,
-            audioLevel: 0
+            voiceSpectrum: .zero
         )
         let voiceShot = try renderOrbPixels(
             renderer: renderer,
@@ -389,7 +390,7 @@ struct ThinkingOrbMetalViewLifecycleTests {
             sizeClass: .dictationStandard,
             size: 44,
             geometryTime: phase,
-            audioLevel: voice
+            voiceSpectrum: harness.view.lastPresentedSpectrum
         )
         let changed = quietShot.changedCount(vs: voiceShot, minChannelDelta: 40)
         print(
@@ -400,15 +401,12 @@ struct ThinkingOrbMetalViewLifecycleTests {
             "mounted composing 44pt identical-phase voice changed \(changed)px at t=\(phase) audio=\(voice)"
         )
 
-        harness.view.audioLevel = 0
+        harness.view.voiceSpectrum = .zero
         _ = try await waitForCompletions(
             on: harness.view,
             minimum: harness.view.framesCompleted + 1
         )
-        #expect(
-            harness.view.lastPresentedAudio > 0.04,
-            "release must ease, not snap; presented \(harness.view.lastPresentedAudio)"
-        )
+        #expect(harness.view.lastPresentedSpectrum.bands[0] > 0.1, "release must ease, not snap")
     }
 }
 
@@ -420,10 +418,11 @@ struct ThinkingOrbPixelMotionTests {
             Issue.record("Metal unavailable: \(built.unavailableReason ?? "unknown")")
             return
         }
-        var smoother = VoiceLevelSmoother()
-        var voice: Float = 0
+        var smoother = VoiceSpectrumSmoother()
+        var voice = VoiceSpectrumFrame.zero
+        let input = VoiceSpectrumFrame(level: 0.2, bands: SIMD8(0.8, 0.2, 0, 0, 0.2, 0, 0, 0))
         for _ in 0..<60 {
-            voice = smoother.step(raw: 0.2, dt: 1.0 / 60.0)
+            voice = smoother.step(raw: input, dt: 1.0 / 60.0)
         }
         for style in [ThinkingOrbStyle.composing, .breathing] {
             for sizeClass in [ThinkingOrbSizeClass.dictationExpanded, .dictationStandard] {
@@ -436,7 +435,7 @@ struct ThinkingOrbPixelMotionTests {
                     sizeClass: sizeClass,
                     size: size,
                     geometryTime: t0,
-                    audioLevel: 0
+                    voiceSpectrum: .zero
                 )
                 let quiet1 = try renderOrbPixels(
                     renderer: renderer,
@@ -444,7 +443,7 @@ struct ThinkingOrbPixelMotionTests {
                     sizeClass: sizeClass,
                     size: size,
                     geometryTime: 1.7 * speed,
-                    audioLevel: 0
+                    voiceSpectrum: .zero
                 )
                 let speaking = try renderOrbPixels(
                     renderer: renderer,
@@ -452,7 +451,7 @@ struct ThinkingOrbPixelMotionTests {
                     sizeClass: sizeClass,
                     size: size,
                     geometryTime: t0,
-                    audioLevel: voice
+                    voiceSpectrum: voice
                 )
                 let idleChanged = quiet0.changedCount(vs: quiet1, minChannelDelta: 40)
                 let voiceChanged = quiet0.changedCount(vs: speaking, minChannelDelta: 40)
@@ -488,7 +487,7 @@ struct MicButtonOrbLayoutTests {
             rootView: MicButtonLabel(
                 isRecording: true,
                 isProcessing: false,
-                audioLevel: 0.4,
+                voiceSpectrum: VoiceSpectrumFrame(level: 0.4),
                 languageLabel: "EN",
                 accentColor: .blue,
                 engineBadge: .onDevice,
@@ -511,7 +510,7 @@ struct MicButtonOrbLayoutTests {
             chrome.apply(
                 isRecording: true,
                 isProcessing: false,
-                audioLevel: 0.42,
+                voiceSpectrum: VoiceSpectrumFrame(level: 0.42, bands: SIMD8(0.8, 0, 0.3, 0, 0.4, 0, 0, 0)),
                 languageLabel: "EN",
                 accentColor: .systemBlue,
                 engineBadge: .onDevice,
@@ -520,21 +519,21 @@ struct MicButtonOrbLayoutTests {
             )
             let orb = firstSubview(of: chrome, type: ThinkingOrbMetalView.self)
             #expect(orb?.isHidden == false)
-            #expect(orb?.audioLevel == 0.42)
+            #expect(orb?.voiceSpectrum == VoiceSpectrumFrame(level: 0.42, bands: SIMD8(0.8, 0, 0.3, 0, 0.4, 0, 0, 0)))
             let palette = ThemeRuntimeState.currentPalette()
             #expect(orb?.accentUIColors == [palette.blue, palette.cyan, palette.purple, palette.orange].map { UIColor($0) })
 
             chrome.apply(
                 isRecording: true,
                 isProcessing: false,
-                audioLevel: 0.18,
+                voiceSpectrum: VoiceSpectrumFrame(level: 0.18),
                 languageLabel: "EN",
                 accentColor: .systemBlue,
                 engineBadge: .onDevice,
                 diameter: 44,
                 animated: false
             )
-            #expect(orb?.audioLevel == 0.18)
+            #expect(orb?.voiceSpectrum.level == 0.18)
         }
     }
 
@@ -551,7 +550,7 @@ struct MicButtonOrbLayoutTests {
             rootView: MicButtonLabel(
                 isRecording: true,
                 isProcessing: false,
-                audioLevel: 0.51,
+                voiceSpectrum: VoiceSpectrumFrame(level: 0.51, bands: SIMD8(0, 0, 0.2, 0, 0.7, 0, 0, 0)),
                 languageLabel: "EN",
                 accentColor: .blue,
                 engineBadge: .onDevice,
@@ -563,7 +562,7 @@ struct MicButtonOrbLayoutTests {
         window.makeKeyAndVisible()
         host.view.layoutIfNeeded()
         let orb = firstSubview(of: host.view, type: ThinkingOrbMetalView.self)
-        #expect(orb?.audioLevel == 0.51)
+        #expect(orb?.voiceSpectrum == VoiceSpectrumFrame(level: 0.51, bands: SIMD8(0, 0, 0.2, 0, 0.7, 0, 0, 0)))
         window.rootViewController = nil
         window.isHidden = true
     }
@@ -573,7 +572,7 @@ struct MicButtonOrbLayoutTests {
         chrome.apply(
             isRecording: false,
             isProcessing: false,
-            audioLevel: 0.9,
+            voiceSpectrum: VoiceSpectrumFrame(level: 0.9, bands: .one),
             languageLabel: "EN",
             accentColor: .systemBlue,
             engineBadge: .onDevice,
@@ -583,7 +582,7 @@ struct MicButtonOrbLayoutTests {
         )
         let orb = firstSubview(of: chrome, type: ThinkingOrbMetalView.self)
         #expect(orb?.isHidden == false)
-        #expect(orb?.audioLevel == 0)
+        #expect(orb?.voiceSpectrum == .zero)
         #expect(chrome.intrinsicContentSize == CGSize(width: 44, height: 44))
         let labels = allLabels(in: chrome).filter { !$0.isHidden }
         #expect(!labels.contains { $0.text == "EN" })
@@ -594,7 +593,7 @@ struct MicButtonOrbLayoutTests {
         chrome.apply(
             isRecording: true,
             isProcessing: false,
-            audioLevel: 0.4,
+            voiceSpectrum: VoiceSpectrumFrame(level: 0.4),
             languageLabel: "EN",
             accentColor: .systemBlue,
             engineBadge: .onDevice,
@@ -605,7 +604,7 @@ struct MicButtonOrbLayoutTests {
         chrome.apply(
             isRecording: true,
             isProcessing: false,
-            audioLevel: 1,
+            voiceSpectrum: VoiceSpectrumFrame(level: 1),
             languageLabel: "EN",
             accentColor: .systemBlue,
             engineBadge: .onDevice,
@@ -623,7 +622,7 @@ struct MicButtonOrbLayoutTests {
             composing.apply(
                 isRecording: true,
                 isProcessing: false,
-                audioLevel: 0.3,
+                voiceSpectrum: VoiceSpectrumFrame(level: 0.3),
                 languageLabel: "EN",
                 accentColor: .systemBlue,
                 engineBadge: .onDevice,
@@ -636,7 +635,7 @@ struct MicButtonOrbLayoutTests {
             composing.apply(
                 isRecording: false,
                 isProcessing: false,
-                audioLevel: 0.9,
+                voiceSpectrum: VoiceSpectrumFrame(level: 0.9),
                 languageLabel: "EN",
                 accentColor: .systemBlue,
                 engineBadge: .onDevice,
@@ -651,7 +650,7 @@ struct MicButtonOrbLayoutTests {
             composing.apply(
                 isRecording: false,
                 isProcessing: false,
-                audioLevel: 0,
+                voiceSpectrum: .zero,
                 languageLabel: "EN",
                 accentColor: .systemBlue,
                 engineBadge: .onDevice,
@@ -664,7 +663,7 @@ struct MicButtonOrbLayoutTests {
             composing.apply(
                 isRecording: false,
                 isProcessing: true,
-                audioLevel: 0,
+                voiceSpectrum: .zero,
                 languageLabel: "EN",
                 accentColor: .systemBlue,
                 engineBadge: .onDevice,
@@ -678,7 +677,7 @@ struct MicButtonOrbLayoutTests {
             composing.apply(
                 isRecording: true,
                 isProcessing: false,
-                audioLevel: 0.2,
+                voiceSpectrum: VoiceSpectrumFrame(level: 0.2),
                 languageLabel: "EN",
                 accentColor: .systemBlue,
                 engineBadge: .onDevice,
@@ -693,7 +692,7 @@ struct MicButtonOrbLayoutTests {
             composing.apply(
                 isRecording: true,
                 isProcessing: false,
-                audioLevel: 0.4,
+                voiceSpectrum: VoiceSpectrumFrame(level: 0.4),
                 languageLabel: "EN",
                 accentColor: .systemBlue,
                 engineBadge: .onDevice,
@@ -876,15 +875,15 @@ private func waitUntilPresentedAudio(
 ) async throws -> Float {
     let deadline = ContinuousClock.now + .seconds(1.2)
     while ContinuousClock.now < deadline {
-        if view.lastPresentedAudio >= minimum {
-            return view.lastPresentedAudio
+        if view.lastPresentedSpectrum.level >= minimum {
+            return view.lastPresentedSpectrum.level
         }
         await Task.yield()
         try await Task.sleep(for: .milliseconds(16))
     }
     throw TestHostError.timeout(
         orbTimeoutMessage(view, expected: "lastPresentedAudio >= \(minimum)")
-        + "; presentedAudio=\(view.lastPresentedAudio) input=\(view.audioLevel)"
+        + "; presentedAudio=\(view.lastPresentedSpectrum.level) input=\(view.voiceSpectrum)"
     )
 }
 
@@ -919,7 +918,7 @@ private func micButtonFitSize(diameter: CGFloat) -> CGSize {
     let label = MicButtonLabel(
         isRecording: true,
         isProcessing: false,
-        audioLevel: 0.35,
+        voiceSpectrum: VoiceSpectrumFrame(level: 0.35),
         languageLabel: "EN",
         accentColor: .blue,
         engineBadge: .onDevice,
@@ -1029,7 +1028,7 @@ private func renderOrbPixels(
     sizeClass: ThinkingOrbSizeClass,
     size: Double,
     geometryTime: Double,
-    audioLevel: Float,
+    voiceSpectrum: VoiceSpectrumFrame,
     scale: Int = 3
 ) throws -> OrbPixelShot {
     let width = max(1, Int((size * Double(scale)).rounded()))
@@ -1049,7 +1048,7 @@ private func renderOrbPixels(
         sizeClass: sizeClass,
         size: size,
         geometryTime: geometryTime,
-        audioLevel: audioLevel,
+        voiceSpectrum: voiceSpectrum,
         zSorted: false
     )
     let cost = renderer.encodeOffscreen(

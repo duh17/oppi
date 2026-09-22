@@ -102,7 +102,7 @@ struct SettingsView: View {
                         MicButtonLabel(
                             isRecording: true,
                             isProcessing: false,
-                            audioLevel: 0.2,
+                            voiceSpectrum: .zero,
                             languageLabel: "EN",
                             accentColor: .themeBlue,
                             engineBadge: .onDevice,

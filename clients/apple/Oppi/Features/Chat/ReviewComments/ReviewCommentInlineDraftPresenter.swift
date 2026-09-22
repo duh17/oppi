@@ -443,7 +443,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             _ = manager.transcriptPresentationRevision
             _ = manager.state
             _ = manager.activeRecordingSource
-            _ = manager.audioLevel
+            _ = manager.voiceSpectrum
             _ = manager.activeLanguageLabel
         } onChange: { [weak self] in
             Task { @MainActor in

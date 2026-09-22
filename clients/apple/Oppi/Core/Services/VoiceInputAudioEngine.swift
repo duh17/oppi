@@ -258,7 +258,7 @@ protocol AnalyzerInputFeeding: AnyObject {
 }
 
 protocol OnDeviceAudioCapture: AnyObject {
-    var audioLevels: AsyncStream<Float> { get }
+    var audioLevels: AsyncStream<VoiceSpectrumFrame> { get }
     var isRunning: Bool { get }
     func stop()
     func stopAndFinishInput(flush: Bool)
@@ -267,10 +267,10 @@ protocol OnDeviceAudioCapture: AnyObject {
 enum AudioEngineHelper {
     final class RunningCapture: OnDeviceAudioCapture {
         let engine: AVAudioEngine
-        let audioLevels: AsyncStream<Float>
+        let audioLevels: AsyncStream<VoiceSpectrumFrame>
         private let feed: any AnalyzerInputFeeding
         private let inputBuilder: AnalyzerInputBuffer
-        private let levelContinuation: AsyncStream<Float>.Continuation
+        private let levelContinuation: AsyncStream<VoiceSpectrumFrame>.Continuation
         private var didFinish = false
         private var didStop = false
 
@@ -287,8 +287,8 @@ enum AudioEngineHelper {
 
         fileprivate init(
             engine: AVAudioEngine,
-            audioLevels: AsyncStream<Float>,
-            levelContinuation: AsyncStream<Float>.Continuation,
+            audioLevels: AsyncStream<VoiceSpectrumFrame>,
+            levelContinuation: AsyncStream<VoiceSpectrumFrame>.Continuation,
             feed: any AnalyzerInputFeeding,
             inputBuilder: AnalyzerInputBuffer
         ) {
@@ -339,20 +339,16 @@ enum AudioEngineHelper {
             events: events
         )
 
-        let (levelStream, levelContinuation) = AsyncStream.makeStream(of: Float.self)
+        let (levelStream, levelContinuation) = AsyncStream.makeStream(of: VoiceSpectrumFrame.self)
+        let spectrum = try VoiceSpectrumAnalyzer()
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, time in
             guard buffer.frameLength > 0 else { return }
+            let frame = spectrum.analyze(buffer)
             // Levels follow successfully queued analyzer input, not raw RMS.
             // Conversion loss fails the take immediately, rather than timing out.
             guard feed.feed(buffer, at: time) else { return }
-            if let channelData = buffer.floatChannelData?[0] {
-                let frameLength = UInt(buffer.frameLength)
-                var rms: Float = 0
-                vDSP_rmsqv(channelData, 1, &rms, frameLength)
-                let level = min(1.0, rms * 25.0)
-                levelContinuation.yield(level)
-            }
+            levelContinuation.yield(frame)
         }
 
         engine.prepare()

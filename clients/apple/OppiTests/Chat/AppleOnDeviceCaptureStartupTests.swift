@@ -344,7 +344,7 @@ struct AppleOnDeviceCaptureStartupTests {
         var waits = 0
         try await session.startAudioCapture(makeCapture: { capture }, sleep: { _ in
             waits += 1
-            capture.continuation.yield(0) // Silence is live audio, not a missing tap.
+            capture.continuation.yield(.zero) // Silence is live audio, not a missing tap.
             await Task.yield()
         })
         #expect(waits > 0)
@@ -362,7 +362,7 @@ struct AppleOnDeviceCaptureStartupTests {
             starts += 1
             return starts == 1 ? stopped : live
         }, sleep: { _ in
-            live.continuation.yield(0.2)
+            live.continuation.yield(VoiceSpectrumFrame(level: 0.2))
             await Task.yield()
         })
         #expect(starts == 2)
@@ -376,7 +376,7 @@ struct AppleOnDeviceCaptureStartupTests {
         let session = makeSession()
         let first = FakeOnDeviceCapture()
         try await session.startAudioCapture(makeCapture: { first }, sleep: { _ in
-            first.continuation.yield(0.1)
+            first.continuation.yield(VoiceSpectrumFrame(level: 0.1))
             await Task.yield()
         })
         // rebuildAudioCapture uses AudioEngineHelper, which needs a real input.
@@ -535,7 +535,7 @@ struct AppleOnDeviceCaptureStartupTests {
 private final class DelayedAppleSessionEvents: VoiceTranscriptionSession {
     let session: AppleOnDeviceVoiceSession
     let events: AsyncThrowingStream<VoiceSessionEvent, Error>
-    var audioLevels: AsyncStream<Float> { session.audioLevels }
+    var audioLevels: AsyncStream<VoiceSpectrumFrame> { session.audioLevels }
     let deliverError = AsyncGate()
     private(set) var cancelCalls = 0
 
@@ -557,7 +557,7 @@ private final class DelayedAppleSessionEvents: VoiceTranscriptionSession {
     func start() async throws -> VoiceSessionStartTimings {
         let capture = FakeOnDeviceCapture()
         try await session.startAudioCapture(makeCapture: { capture }, sleep: { _ in
-            capture.continuation.yield(0)
+            capture.continuation.yield(.zero)
             await Task.yield()
         })
         return VoiceSessionStartTimings(analyzerStartMs: 0, audioStartMs: 0)
@@ -595,15 +595,15 @@ final class TestOrdinaryConverter: AVAudioConverter, @unchecked Sendable {
 }
 
 private final class FakeOnDeviceCapture: OnDeviceAudioCapture {
-    let audioLevels: AsyncStream<Float>
-    let continuation: AsyncStream<Float>.Continuation
+    let audioLevels: AsyncStream<VoiceSpectrumFrame>
+    let continuation: AsyncStream<VoiceSpectrumFrame>.Continuation
     var isRunning: Bool
     var stopCount = 0
     var finishCount = 0
 
     init(isRunning: Bool = true) {
         self.isRunning = isRunning
-        (audioLevels, continuation) = AsyncStream.makeStream(of: Float.self)
+        (audioLevels, continuation) = AsyncStream.makeStream(of: VoiceSpectrumFrame.self)
     }
 
     func stop() {

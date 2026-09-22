@@ -16,7 +16,7 @@ struct MicButtonLabel: View {
     let isRecording: Bool
     let isPreparing: Bool
     let isProcessing: Bool
-    let audioLevel: Float
+    let voiceSpectrum: VoiceSpectrumFrame
     let languageLabel: String?
     let accentColor: Color
     let engineBadge: EngineBadge
@@ -26,7 +26,7 @@ struct MicButtonLabel: View {
     init(
         isRecording: Bool,
         isProcessing: Bool,
-        audioLevel: Float,
+        voiceSpectrum: VoiceSpectrumFrame,
         languageLabel: String?,
         accentColor: Color,
         engineBadge: EngineBadge,
@@ -37,7 +37,7 @@ struct MicButtonLabel: View {
         self.isRecording = isRecording
         self.isPreparing = isPreparing
         self.isProcessing = isProcessing
-        self.audioLevel = audioLevel
+        self.voiceSpectrum = voiceSpectrum
         self.languageLabel = languageLabel
         self.accentColor = accentColor
         self.engineBadge = engineBadge
@@ -54,7 +54,7 @@ struct MicButtonLabel: View {
         self.init(
             isRecording: presentation.isRecording,
             isProcessing: presentation.isProcessing,
-            audioLevel: presentation.audioLevel,
+            voiceSpectrum: presentation.voiceSpectrum,
             languageLabel: presentation.languageLabel,
             accentColor: accentColor,
             engineBadge: presentation.engineBadge,
@@ -86,7 +86,7 @@ struct MicButtonLabel: View {
     }
 
     var body: some View {
-        let level = CGFloat(min(max(isRecording ? audioLevel : 0, 0), 1))
+        let level = CGFloat(min(max(isRecording ? voiceSpectrum.level : 0, 0), 1))
 
         ZStack {
             if !showsOrb {
@@ -98,14 +98,14 @@ struct MicButtonLabel: View {
                     style: orbStyle,
                     sizeClass: .dictation(side: Double(diameter)),
                     tint: indicatorColor,
-                    audioLevel: isRecording ? audioLevel : 0,
+                    voiceSpectrum: isRecording ? voiceSpectrum : .zero,
                     isActive: true
                 )
             } else if isRecording {
                 let strokeWidth = 1.5 + level * 2.0
                 Circle()
                     .stroke(indicatorColor, lineWidth: strokeWidth)
-                    .animation(.easeOut(duration: 0.1), value: audioLevel)
+                    .animation(.easeOut(duration: 0.1), value: voiceSpectrum.level)
             } else {
                 Circle()
                     .stroke(indicatorColor.opacity(engineBadge == .auto ? 0.35 : 0.6), lineWidth: 1)

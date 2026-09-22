@@ -506,7 +506,7 @@ final class VoiceInputManager {
     private var correctionHighlightText = ""
     private var correctionHighlightRanges: [NSRange] = []
     private var correctionHighlightTask: Task<Void, Never>?
-    private(set) var audioLevel: Float = 0
+    private(set) var voiceSpectrum: VoiceSpectrumFrame = .zero
 
     /// Short language code for the active recording session (e.g. "EN", "中").
     /// Set at recording start from the resolved locale. Nil when not recording.
@@ -1386,7 +1386,7 @@ final class VoiceInputManager {
             recordingStartTime: ContinuousClock.now,
             onAudioLevel: { [weak self] level in
                 guard let self else { return }
-                self.audioLevel = level
+                self.voiceSpectrum = level
                 self.lastCaptureAudioAt = .now
                 if let recoveryStart = self.captureRecoveryAudioBeganAt,
                    recoveryStart.elapsedMs() >= Self.captureStallTimeoutMs {
@@ -1805,7 +1805,7 @@ final class VoiceInputManager {
         volatileTranscript = ""
         replaceTranscriptState.reset()
         _ = clearCorrectionHighlight()
-        audioLevel = 0
+        voiceSpectrum = .zero
         activeLanguageLabel = nil
         activeEngine = nil
         activeRecordingSource = nil

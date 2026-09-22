@@ -27,7 +27,7 @@ enum DictationAudioInput: Sendable {
 @MainActor
 final class OppiDictationSession: VoiceTranscriptionSession {
     let events: AsyncThrowingStream<VoiceSessionEvent, Error>
-    let audioLevels: AsyncStream<Float>
+    let audioLevels: AsyncStream<VoiceSpectrumFrame>
 
     private let transport: any DictationTransport
     /// Resolves once the server sends `dictation_ready`. Audio is buffered until then.
@@ -35,7 +35,7 @@ final class OppiDictationSession: VoiceTranscriptionSession {
     /// Recording-scoped message stream, routed from the active dictation transport.
     private let recordingMessages: AsyncStream<ServerMessage>
     private let eventContinuation: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
-    private let audioLevelContinuation: AsyncStream<Float>.Continuation
+    private let audioLevelContinuation: AsyncStream<VoiceSpectrumFrame>.Continuation
     private var messageListenTask: Task<Void, Never>?
     /// Consumes immediately, retaining pre-ready PCM before sending on the WS.
     private var audioDrainTask: Task<Void, Never>?
@@ -79,7 +79,7 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         self.events = events
         self.eventContinuation = eventContinuation
 
-        let (audioLevels, audioLevelContinuation) = AsyncStream.makeStream(of: Float.self)
+        let (audioLevels, audioLevelContinuation) = AsyncStream.makeStream(of: VoiceSpectrumFrame.self)
         self.audioLevels = audioLevels
         self.audioLevelContinuation = audioLevelContinuation
 
@@ -615,7 +615,7 @@ enum DictationAudioEngineHelper {
     static func startEngine(
         audioContinuation: AsyncStream<DictationAudioInput>.Continuation,
         events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
-    ) throws -> (AVAudioEngine, AsyncStream<Float>) {
+    ) throws -> (AVAudioEngine, AsyncStream<VoiceSpectrumFrame>) {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
@@ -640,9 +640,11 @@ enum DictationAudioEngineHelper {
             converter = nil
         }
 
-        let (levelStream, levelContinuation) = AsyncStream<Float>.makeStream()
+        let (levelStream, levelContinuation) = AsyncStream<VoiceSpectrumFrame>.makeStream()
+        let spectrum = try VoiceSpectrumAnalyzer()
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, _ in
+            let frame = spectrum.analyze(buffer)
             guard let outputBuffer = feedCaptureBuffer(
                 buffer, converter: converter, inputFormat: inputFormat, targetFormat: targetFormat,
                 into: audioContinuation, events: events
@@ -652,8 +654,11 @@ enum DictationAudioEngineHelper {
                 let frameLength = UInt(outputBuffer.frameLength)
                 var rms: Float = 0
                 vDSP_rmsqv(channelData, 1, &rms, frameLength)
-                let level = min(1.0, rms * 25.0)
-                levelContinuation.yield(level)
+                // Preserve the delivered PCM heartbeat's RMS; spectrum always
+                // comes from the native-rate tap, never the 16 kHz conversion.
+                var delivered = frame
+                delivered.level = min(1.0, rms * 25.0)
+                levelContinuation.yield(delivered)
             }
         }
 

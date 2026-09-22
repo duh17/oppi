@@ -576,7 +576,7 @@ struct ChatInputBarTests {
         #expect(presentation.showsListeningChrome)
         #expect(!presentation.isRecording)
         #expect(!presentation.isProcessing)
-        #expect(presentation.audioLevel == 0)
+        #expect(presentation.voiceSpectrum == .zero)
         #expect(presentation.accessibilityLabel == "Cancel voice input")
     }
 

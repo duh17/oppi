@@ -115,7 +115,7 @@ struct VoiceInputManagerTests {
         #expect(!manager.isProcessing)
         #expect(!manager.isPreparing)
         #expect(manager.currentTranscript.isEmpty)
-        #expect(manager.audioLevel == 0)
+        #expect(manager.voiceSpectrum == .zero)
     }
 
     // MARK: - State Guards
@@ -1940,17 +1940,19 @@ struct VoiceInputManagerTests {
         #expect(systemAccess.activateAudioSessionCallCount == 1)
         #expect(session.startCallCount == 1)
 
-        session.yieldAudioLevel(0.6)
+        let spectrum = VoiceSpectrumFrame(level: 0.6, bands: SIMD8(0.7, 0, 0.2, 0, 0.9, 0, 0, 0), flux: 12)
+        session.yieldSpectrum(spectrum)
         session.yieldEvent(.partialTranscript("hel"))
         session.yieldEvent(.appendFinalTranscript("hello"))
 
-        #expect(await waitForMainActorCondition { manager.audioLevel == 0.6 })
+        #expect(await waitForMainActorCondition { manager.voiceSpectrum == spectrum })
+        #expect(ComposerShared.micButtonPresentation(for: manager, owner: .inlineComposer).voiceSpectrum == spectrum)
         #expect(await waitForMainActorCondition { manager.currentTranscript == "hello" })
 
         await manager.stopRecording()
 
         #expect(manager.state == .idle)
-        #expect(manager.audioLevel == 0)
+        #expect(manager.voiceSpectrum == .zero)
         #expect(manager.activeEngine == nil)
         #expect(manager.activeLanguageLabel == nil)
         #expect(systemAccess.deactivateAudioSessionCallCount == 1)
@@ -2122,7 +2124,7 @@ struct VoiceInputManagerTests {
         #expect(systemAccess.deactivateAudioSessionCallCount == 1)
         #expect(manager.activeEngine == nil)
         #expect(manager.activeLanguageLabel == nil)
-        #expect(manager.audioLevel == 0)
+        #expect(manager.voiceSpectrum == .zero)
         #expect({
             if case .error("start failed") = manager.state {
                 return true
@@ -2985,7 +2987,7 @@ struct VoiceInputManagerTests {
         #expect(sessionB.startCallCount == 1)
 
         sessionB.yieldAudioLevel(0.5)
-        #expect(await waitForMainActorCondition { manager.audioLevel == 0.5 })
+        #expect(await waitForMainActorCondition { manager.voiceSpectrum.level == 0.5 })
         sessionB.yieldEvent(.partialTranscript("keep-b"))
         #expect(await waitForMainActorCondition { manager.volatileTranscript == "keep-b" })
 
@@ -3021,17 +3023,17 @@ private final class CachedAppleTestProvider: VoiceTranscriptionProvider {
 @MainActor
 private final class BufferedAnalyzerTestSession: VoiceTranscriptionSession {
     let events: AsyncThrowingStream<VoiceSessionEvent, Error>
-    let audioLevels: AsyncStream<Float>
+    let audioLevels: AsyncStream<VoiceSpectrumFrame>
     let inputs: AnalyzerInputBuffer
     let eventContinuation: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
-    let levelContinuation: AsyncStream<Float>.Continuation
+    let levelContinuation: AsyncStream<VoiceSpectrumFrame>.Continuation
     var rebuilds = 0
     init() {
         let eventPair = AsyncThrowingStream<VoiceSessionEvent, Error>.makeStream()
         events = eventPair.stream
         eventContinuation = eventPair.continuation
         inputs = AnalyzerInputBuffer(events: eventPair.continuation)
-        (audioLevels, levelContinuation) = AsyncStream<Float>.makeStream()
+        (audioLevels, levelContinuation) = AsyncStream<VoiceSpectrumFrame>.makeStream()
     }
     func enqueueBuffers(_ count: Int) throws {
         let format = try #require(AVAudioFormat(
@@ -3040,13 +3042,13 @@ private final class BufferedAnalyzerTestSession: VoiceTranscriptionSession {
         let pcm = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_024))
         pcm.frameLength = 1_024
         for _ in 0..<count {
-            if inputs.enqueue(AnalyzerInput(buffer: pcm)) { levelContinuation.yield(0) }
+            if inputs.enqueue(AnalyzerInput(buffer: pcm)) { levelContinuation.yield(.zero) }
         }
     }
     func start() async throws -> VoiceSessionStartTimings {
         VoiceSessionStartTimings(analyzerStartMs: 0, audioStartMs: 0)
     }
-    func rebuildAudioCapture() async throws { rebuilds += 1; levelContinuation.yield(0) }
+    func rebuildAudioCapture() async throws { rebuilds += 1; levelContinuation.yield(.zero) }
     func stop() async { inputs.finish(); eventContinuation.finish(); levelContinuation.finish() }
     func cancel() async { inputs.finish(discard: true); eventContinuation.finish(); levelContinuation.finish() }
 }

@@ -44,7 +44,7 @@ private func installTestDictationTransport(
 final class TestPCMDictationSession: VoiceTranscriptionSession {
     let session: OppiDictationSession
     var events: AsyncThrowingStream<VoiceSessionEvent, Error> { session.events }
-    var audioLevels: AsyncStream<Float> { session.audioLevels }
+    var audioLevels: AsyncStream<VoiceSpectrumFrame> { session.audioLevels }
 
     init(_ session: OppiDictationSession) { self.session = session }
 
