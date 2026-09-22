@@ -225,9 +225,14 @@ final class ReviewCommentStore {
 
     func appendReviewBlock(
         to text: String,
-        pathFormatting: ReviewCommentPathFormatting = .normalizedDisplay
+        pathFormatting: ReviewCommentPathFormatting = .normalizedDisplay,
+        currentSourceRevision: ((ReviewComment) -> String?)? = nil
     ) -> String {
-        let block = Self.reviewBlock(for: stagedComments, pathFormatting: pathFormatting)
+        let block = Self.reviewBlock(
+            for: stagedComments,
+            pathFormatting: pathFormatting,
+            currentSourceRevision: currentSourceRevision
+        )
         guard !block.isEmpty else { return text }
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -311,7 +316,8 @@ final class ReviewCommentStore {
 
     static func reviewBlock(
         for comments: [ReviewComment],
-        pathFormatting: ReviewCommentPathFormatting = .normalizedDisplay
+        pathFormatting: ReviewCommentPathFormatting = .normalizedDisplay,
+        currentSourceRevision: ((ReviewComment) -> String?)? = nil
     ) -> String {
         let staged = comments
             .filter { $0.status == .staged }
@@ -339,11 +345,27 @@ final class ReviewCommentStore {
                 lines.append("")
                 lines.append("**Selected text:**")
                 lines.append("")
+                let language = comment.reference.htmlDOMAnchor == nil
+                    ? (comment.reference.languageHint ?? languageHint(for: comment.reference.path))
+                    : nil
                 lines.append(contentsOf: fencedContextLines(
                     selectedText,
-                    language: comment.reference.languageHint ?? languageHint(for: comment.reference.path),
+                    language: language,
                     maxLines: 12
                 ))
+            }
+
+            if let anchor = comment.reference.htmlDOMAnchor {
+                lines.append("")
+                lines.append(contentsOf: anchor.promptLines())
+            }
+
+            if let anchor = comment.reference.semanticAnchor {
+                let resolved = currentSourceRevision?(comment).map {
+                    anchor.markedStaleAgainst(currentRevision: $0)
+                } ?? anchor
+                lines.append("")
+                lines.append(contentsOf: resolved.promptLines)
             }
 
             lines.append("")

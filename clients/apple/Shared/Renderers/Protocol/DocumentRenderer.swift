@@ -248,6 +248,23 @@ protocol GraphicalDocumentRenderer: DocumentRenderer {
 
     /// Bounding box of the layout result for scroll view content sizing.
     nonisolated func boundingBox(_ layout: LayoutResult) -> CGSize
+
+    /// Optional selection map. Default is none; renderers that emit regions override it.
+    nonisolated func semanticAnnotationMap(
+        source: String,
+        document: Document,
+        layout: LayoutResult
+    ) -> SemanticAnnotationMap?
+}
+
+extension GraphicalDocumentRenderer {
+    nonisolated func semanticAnnotationMap(
+        source: String,
+        document: Document,
+        layout: LayoutResult
+    ) -> SemanticAnnotationMap? {
+        nil
+    }
 }
 
 extension GraphicalDocumentRenderer {

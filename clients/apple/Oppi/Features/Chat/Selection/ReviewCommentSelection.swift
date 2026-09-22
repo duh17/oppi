@@ -341,6 +341,10 @@ struct ReviewCommentSourceContext: Equatable {
 struct ReviewCommentSelectionRequest: Equatable {
     let selectedText: String
     let source: ReviewCommentSourceContext
+    /// DOM-only rendered-element anchor. Absent for selected-text comments.
+    var htmlDOMAnchor: HTMLDOMElementAnchor? = nil
+    /// Diagram-object anchor. Absent for selected-text and DOM comments.
+    var semanticAnchor: ReviewCommentSemanticAnchor? = nil
 }
 
 @MainActor

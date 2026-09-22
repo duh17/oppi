@@ -159,6 +159,7 @@ enum HostFilePreviewPolicy {
 final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfigurable {
     private let webView: ReviewCommentWKWebView
     private let contentTracker = HTMLContentTracker()
+    private let pickController: HTMLDOMPickController
     private(set) var isRenderReady = false
     var onRenderStateChange: (() -> Void)?
 
@@ -172,6 +173,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
         wv.scrollView.backgroundColor = .clear
         wv.reviewCommentHandler = reviewCommentHandler
         self.webView = wv
+        self.pickController = HTMLDOMPickController(webView: wv)
 
         super.init(frame: .zero)
 
@@ -192,10 +194,12 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
         wv.scrollView.backgroundColor = .clear
         wv.configureReviewCommentRouter(reviewCommentRouter, sourceContext: sourceContext)
         self.webView = wv
+        self.pickController = HTMLDOMPickController(webView: wv)
 
         super.init(frame: .zero)
 
         configureWebView(htmlString: htmlString)
+        pickController.configure(router: reviewCommentRouter, sourceContext: sourceContext)
     }
 
     private func configureWebView(htmlString: String) {
@@ -210,8 +214,11 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
             webView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        // Queue for loading — will fire when view is ready
-        contentTracker.setContent(HTMLContentSecurity.injectContentSecurityPolicy(into: htmlString))
+        // Queue for loading — will fire when view is ready.
+        let secured = HTMLContentSecurity.injectContentSecurityPolicy(into: htmlString)
+        pickController.setLoadedSource(secured)
+        pickController.attach(to: self)
+        contentTracker.setContent(secured)
     }
 
     @available(*, unavailable)
@@ -237,7 +244,9 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
 
     /// Load new HTML content. Loads immediately if ready, otherwise deferred.
     func load(_ htmlString: String) {
-        if let html = contentTracker.setContent(HTMLContentSecurity.injectContentSecurityPolicy(into: htmlString)) {
+        let secured = HTMLContentSecurity.injectContentSecurityPolicy(into: htmlString)
+        pickController.setLoadedSource(secured)
+        if let html = contentTracker.setContent(secured) {
             setRenderReady(false)
             webView.loadHTMLString(html, baseURL: nil)
         }
@@ -245,6 +254,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
 
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
         webView.pageZoom = preferences.textScale
+        pickController.refreshHighlightAfterViewportChange()
     }
 
     /// Update the review comment handler (e.g., when SwiftUI re-renders).
@@ -270,6 +280,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
     private func setRenderReady(_ ready: Bool) {
         guard isRenderReady != ready else { return }
         isRenderReady = ready
+        pickController.renderReadyChanged()
         onRenderStateChange?()
     }
 
@@ -281,6 +292,11 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
             setRenderReady(false)
             webView.loadHTMLString(html, baseURL: nil)
         }
+    }
+
+    // swiftlint:disable:next no_force_unwrap_production
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        pickController.noteDocumentChange()
     }
 
     // swiftlint:disable:next no_force_unwrap_production
@@ -329,6 +345,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
 
     // swiftlint:disable:next no_force_unwrap_production
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        pickController.noteDocumentChange()
         setRenderReady(false)
         contentTracker.markProcessTerminated()
         flushIfReady()
@@ -336,14 +353,23 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
 
     // swiftlint:disable:next no_force_unwrap_production
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+        pickController.noteDocumentChange()
         setRenderReady(false)
         contentTracker.markProcessTerminated()
         flushIfReady()
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        pickController.noteDocumentChange()
         setRenderReady(false)
         contentTracker.markProcessTerminated()
         flushIfReady()
     }
+}
+
+extension HTMLRenderView {
+    var webViewForTesting: ReviewCommentWKWebView { webView }
+    var htmlDOMPickControllerForTesting: HTMLDOMPickController { pickController }
+    var loadedSourceSHA256ForTesting: String { pickController.loadedSourceSHA256 }
+    var navigationGenerationForTesting: UInt64 { pickController.navigationGeneration }
 }

@@ -181,17 +181,20 @@ enum DocumentRenderPipeline {
         let draw: (CGContext, CGPoint) -> Void
         let baseline: CGFloat?
         let isRenderable: Bool
+        let semanticMap: SemanticAnnotationMap?
 
         init(
             size: CGSize,
             draw: @escaping (CGContext, CGPoint) -> Void,
             baseline: CGFloat? = nil,
-            isRenderable: Bool = true
+            isRenderable: Bool = true,
+            semanticMap: SemanticAnnotationMap? = nil
         ) {
             self.size = size
             self.draw = draw
             self.baseline = baseline
             self.isRenderable = isRenderable
+            self.semanticMap = semanticMap
         }
     }
 
@@ -381,6 +384,17 @@ enum DocumentRenderPipeline {
     struct GraphicalLayout {
         let size: CGSize
         let draw: (CGContext, CGPoint) -> Void
+        let semanticMap: SemanticAnnotationMap?
+
+        init(
+            size: CGSize,
+            draw: @escaping (CGContext, CGPoint) -> Void,
+            semanticMap: SemanticAnnotationMap? = nil
+        ) {
+            self.size = size
+            self.draw = draw
+            self.semanticMap = semanticMap
+        }
     }
 
     /// Parse and layout a single graphical document.
@@ -398,7 +412,7 @@ enum DocumentRenderPipeline {
         let kind = graphicalKind(P.self, R.self)
         let layoutKey = layoutCacheKey(kind: kind, text: text, config: config)
         if let hit = layoutCache.cache.object(forKey: layoutKey) {
-            return GraphicalLayout(size: hit.size, draw: hit.draw)
+            return GraphicalLayout(size: hit.size, draw: hit.draw, semanticMap: hit.semanticMap)
         }
 
         let document = cachedDocument(parser: parser, kind: kind, text: text)
@@ -407,15 +421,20 @@ enum DocumentRenderPipeline {
         #endif
         let layoutResult = renderer.layout(document, configuration: config)
         let size = renderer.boundingBox(layoutResult)
+        let semanticMap = renderer.semanticAnnotationMap(
+            source: text,
+            document: document,
+            layout: layoutResult
+        )
         let draw: (CGContext, CGPoint) -> Void = { ctx, origin in
             renderer.draw(layoutResult, in: ctx, at: origin)
         }
         layoutCache.cache.setObject(
-            CachedGraphicalLayout(size: size, draw: draw),
+            CachedGraphicalLayout(size: size, draw: draw, semanticMap: semanticMap),
             forKey: layoutKey,
             cost: cachedLayoutCost(size: size, text: text)
         )
-        return GraphicalLayout(size: size, draw: draw)
+        return GraphicalLayout(size: size, draw: draw, semanticMap: semanticMap)
     }
 
     static func renderInlineGraphicalImage<P: DocumentParser, R: GraphicalDocumentRenderer>(

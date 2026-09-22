@@ -431,11 +431,17 @@ struct OppiApp: App {
     var body: some Scene {
         WindowGroup {
 #if DEBUG
-            if WikiLineAnchorHarnessConfig.isEnabled {
+            if HTMLDOMAnnotationHarnessConfig.isEnabled {
+                HTMLDOMAnnotationHarnessView()
+                    .ignoresSafeArea()
+            } else if WikiLineAnchorHarnessConfig.isEnabled {
                 WikiLineAnchorHarnessView()
                     .ignoresSafeArea()
             } else if ReviewCommentStashHarnessConfig.isEnabled {
                 ReviewCommentStashHarnessView()
+            } else if SemanticPickHarnessConfig.isEnabled {
+                SemanticPickHarnessView()
+                    .ignoresSafeArea()
             } else if FullScreenReviewCommentHarnessConfig.isEnabled {
                 FullScreenReviewCommentHarnessView()
                     .ignoresSafeArea()

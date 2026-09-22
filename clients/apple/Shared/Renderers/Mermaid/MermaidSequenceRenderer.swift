@@ -217,7 +217,7 @@ enum MermaidSequenceRenderer {
         }
         let prepared = prepare(diagram, configuration: configuration)
         let captured = prepared
-        return MermaidFlowchartRenderer.FlowchartLayout(
+        var layout = MermaidFlowchartRenderer.FlowchartLayout(
             graphResult: GraphLayoutResult(nodePositions: [:], edgePaths: [], totalSize: .zero),
             flowchart: .empty,
             subgraphFrames: [:],
@@ -232,6 +232,106 @@ enum MermaidSequenceRenderer {
             },
             customSize: prepared.facts.size
         )
+        layout.semanticRegions = semanticRegions(prepared: prepared)
+        return layout
+    }
+
+    private static func semanticRegions(prepared: PreparedSequenceLayout) -> [SemanticRegion] {
+        let c = prepared.constants
+        var regions: [SemanticRegion] = []
+        for participant in prepared.participants {
+            if !prepared.createdIds.contains(participant.id) {
+                appendParticipantRegions(
+                    participant,
+                    yOffset: 0,
+                    constants: c,
+                    fontSize: c.fontSize,
+                    precedence: 80,
+                    into: &regions
+                )
+            }
+            if let createY = prepared.createY[participant.id] {
+                appendParticipantRegions(
+                    participant,
+                    yOffset: createY - participant.boxRect.minY,
+                    constants: c,
+                    fontSize: c.fontSize,
+                    precedence: 80,
+                    into: &regions
+                )
+            }
+            if prepared.showBottomCopies, prepared.destroyY[participant.id] == nil {
+                appendParticipantRegions(
+                    participant,
+                    yOffset: prepared.bottomCopyY - participant.boxRect.minY,
+                    constants: c,
+                    fontSize: c.fontSize,
+                    precedence: 70,
+                    into: &regions
+                )
+            }
+        }
+
+        for (index, message) in prepared.messages.enumerated() {
+            guard let from = prepared.participants.first(where: { $0.id == message.message.from }),
+                  let to = prepared.participants.first(where: { $0.id == message.message.to }) else { continue }
+            let targetID = MermaidSemanticID.message(index + 1)
+            let isSelf = from.id == to.id
+            if isSelf {
+                let loopW = c.selfMessageWidth
+                let loopH = c.selfMessageHeight * 0.6
+                let start = CGPoint(x: from.centerX, y: message.y)
+                let topRight = CGPoint(x: from.centerX + loopW, y: message.y)
+                let bottomRight = CGPoint(x: from.centerX + loopW, y: message.y + loopH)
+                let end = CGPoint(x: from.centerX, y: message.y + loopH)
+                regions.append(SemanticRegion(
+                    targetID: targetID,
+                    geometry: .polyline(points: [start, topRight, bottomRight, end], strokeWidth: 1.5),
+                    precedence: 60
+                ))
+                if !message.wrappedText.isEmpty {
+                    let textX = from.centerX + loopW + c.labelGap
+                    let textY = message.y + loopH * 0.3 - c.fontSize * 0.4
+                    regions.append(SemanticRegion(
+                        targetID: targetID,
+                        geometry: .rectangle(CGRect(
+                            x: textX,
+                            y: textY,
+                            width: max(message.labelSize.width, 1),
+                            height: max(message.labelSize.height, 1)
+                        )),
+                        precedence: 65
+                    ))
+                }
+            } else {
+                let ends = straightMessageEndpoints(
+                    message: message,
+                    from: from,
+                    to: to,
+                    activations: prepared.activations,
+                    constants: c
+                )
+                regions.append(SemanticRegion(
+                    targetID: targetID,
+                    geometry: .polyline(points: [ends.from, ends.to], strokeWidth: 1.5),
+                    precedence: 60
+                ))
+                if !message.wrappedText.isEmpty {
+                    let midX = (ends.from.x + ends.to.x) / 2
+                    regions.append(SemanticRegion(
+                        targetID: targetID,
+                        geometry: .rectangle(CGRect(
+                            x: midX - message.labelSize.width / 2,
+                            y: message.y - message.labelSize.height - c.labelGap,
+                            width: max(message.labelSize.width, 1),
+                            height: max(message.labelSize.height, 1)
+                        )),
+                        precedence: 65
+                    ))
+                }
+            }
+        }
+        return regions
     }
 
     private static func prepare(
@@ -1180,6 +1280,125 @@ enum MermaidSequenceRenderer {
         ctx.strokePath()
     }
 
+    private static func appendParticipantRegions(
+        _ participant: ParticipantLayout,
+        yOffset: CGFloat,
+        constants c: Constants,
+        fontSize: CGFloat,
+        precedence: Int,
+        into regions: inout [SemanticRegion]
+    ) {
+        let targetID = MermaidSemanticID.participant(participant.id)
+        if participant.isActor || participant.kind == .actor {
+            let label = participant.wrappedLabel.isEmpty ? participant.label : participant.wrappedLabel
+            let ink = actorInkLayout(
+                centerX: participant.centerX,
+                topY: participant.boxRect.minY + yOffset,
+                label: label,
+                constants: c,
+                fontSize: fontSize
+            )
+            regions.append(SemanticRegion(
+                targetID: targetID,
+                geometry: .rectangle(ink.figureRect),
+                precedence: precedence
+            ))
+            if ink.labelRect.width > 0, ink.labelRect.height > 0 {
+                regions.append(SemanticRegion(
+                    targetID: targetID,
+                    geometry: .rectangle(ink.labelRect),
+                    precedence: precedence
+                ))
+            }
+        } else {
+            regions.append(SemanticRegion(
+                targetID: targetID,
+                geometry: .rectangle(participant.boxRect.offsetBy(dx: 0, dy: yOffset)),
+                precedence: precedence
+            ))
+        }
+    }
+
+    private struct ActorInkLayout {
+        var headRect: CGRect
+        var neck: CGPoint
+        var bodyEnd: CGPoint
+        var armSpan: CGFloat
+        var armY: CGFloat
+        var legLen: CGFloat
+        var figureRect: CGRect
+        var labelOrigin: CGPoint
+        var labelSize: CGSize
+        var labelRect: CGRect
+        var font: CTFont
+    }
+
+    private static func actorInkLayout(
+        centerX: CGFloat,
+        topY: CGFloat,
+        label: String,
+        constants c: Constants,
+        fontSize: CGFloat
+    ) -> ActorInkLayout {
+        let headRadius = c.fontSize * 0.4
+        let bodyLen = c.fontSize * 0.6
+        let armSpan = c.fontSize * 0.5
+        let legLen = c.fontSize * 0.5
+        let headCenterY = topY + headRadius
+        let neckY = headCenterY + headRadius
+        let bodyEndY = neckY + bodyLen
+        let feetY = bodyEndY + legLen
+        let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
+        let textSize = MermaidTextUtils.measureText(label, font: font, fontSize: fontSize)
+        let labelOrigin = CGPoint(x: centerX - textSize.width / 2, y: feetY + c.fontSize * 0.3)
+        let labelRect = CGRect(origin: labelOrigin, size: CGSize(width: max(textSize.width, 1), height: max(textSize.height, 1)))
+        return ActorInkLayout(
+            headRect: CGRect(
+                x: centerX - headRadius,
+                y: headCenterY - headRadius,
+                width: headRadius * 2,
+                height: headRadius * 2
+            ),
+            neck: CGPoint(x: centerX, y: neckY),
+            bodyEnd: CGPoint(x: centerX, y: bodyEndY),
+            armSpan: armSpan,
+            armY: neckY + bodyLen * 0.3,
+            legLen: legLen,
+            figureRect: CGRect(x: centerX - armSpan, y: topY, width: armSpan * 2, height: feetY - topY),
+            labelOrigin: labelOrigin,
+            labelSize: textSize,
+            labelRect: labelRect,
+            font: font
+        )
+    }
+
+    private static func straightMessageEndpoints(
+        message: MessageLayout,
+        from: ParticipantLayout,
+        to: ParticipantLayout,
+        activations: [ActivationLayout],
+        constants c: Constants
+    ) -> (from: CGPoint, to: CGPoint) {
+        func inset(for participantId: String) -> CGFloat {
+            let y = message.y
+            if activations.contains(where: {
+                $0.participantId == participantId && $0.rect.minY - 0.5 <= y && y <= $0.rect.maxY + 0.5
+            }) {
+                return c.activationWidth / 2 + 1
+            }
+            return 0
+        }
+
+        var fromX = from.centerX
+        var toX = to.centerX
+        if from.id != to.id {
+            let goingRight = toX > fromX
+            fromX += goingRight ? inset(for: message.message.from) : -inset(for: message.message.from)
+            toX += goingRight ? -inset(for: message.message.to) : inset(for: message.message.to)
+        }
+        return (CGPoint(x: fromX, y: message.y), CGPoint(x: toX, y: message.y))
+    }
+
     // MARK: - Actor stick figure
 
     private static func drawActorStickFigure(
@@ -1191,56 +1410,34 @@ enum MermaidSequenceRenderer {
         theme: RenderTheme,
         label: String
     ) {
-        let headRadius = c.fontSize * 0.4
-        let bodyLen = c.fontSize * 0.6
-        let armSpan = c.fontSize * 0.5
-        let legLen = c.fontSize * 0.5
-
-        let headCenterY = topY + headRadius
+        let ink = actorInkLayout(
+            centerX: centerX,
+            topY: topY,
+            label: label,
+            constants: c,
+            fontSize: fontSize
+        )
 
         ctx.saveGState()
         ctx.setStrokeColor(theme.foreground)
         ctx.setLineWidth(1.5)
-
-        // Head (circle).
-        let headRect = CGRect(
-            x: centerX - headRadius,
-            y: headCenterY - headRadius,
-            width: headRadius * 2,
-            height: headRadius * 2
-        )
-        ctx.strokeEllipse(in: headRect)
-
-        // Body (vertical line from bottom of head).
-        let neckY = headCenterY + headRadius
-        let bodyEndY = neckY + bodyLen
-        ctx.move(to: CGPoint(x: centerX, y: neckY))
-        ctx.addLine(to: CGPoint(x: centerX, y: bodyEndY))
-
-        // Arms (horizontal line at mid-body).
-        let armY = neckY + bodyLen * 0.3
-        ctx.move(to: CGPoint(x: centerX - armSpan, y: armY))
-        ctx.addLine(to: CGPoint(x: centerX + armSpan, y: armY))
-
-        // Legs (two lines from body end).
-        ctx.move(to: CGPoint(x: centerX, y: bodyEndY))
-        ctx.addLine(to: CGPoint(x: centerX - armSpan * 0.7, y: bodyEndY + legLen))
-        ctx.move(to: CGPoint(x: centerX, y: bodyEndY))
-        ctx.addLine(to: CGPoint(x: centerX + armSpan * 0.7, y: bodyEndY + legLen))
-
+        ctx.strokeEllipse(in: ink.headRect)
+        ctx.move(to: ink.neck)
+        ctx.addLine(to: ink.bodyEnd)
+        ctx.move(to: CGPoint(x: centerX - ink.armSpan, y: ink.armY))
+        ctx.addLine(to: CGPoint(x: centerX + ink.armSpan, y: ink.armY))
+        ctx.move(to: ink.bodyEnd)
+        ctx.addLine(to: CGPoint(x: centerX - ink.armSpan * 0.7, y: ink.bodyEnd.y + ink.legLen))
+        ctx.move(to: ink.bodyEnd)
+        ctx.addLine(to: CGPoint(x: centerX + ink.armSpan * 0.7, y: ink.bodyEnd.y + ink.legLen))
         ctx.strokePath()
         ctx.restoreGState()
 
-        // Label below the figure.
-        let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
-        let textSize = MermaidTextUtils.measureText(label, font: font, fontSize: fontSize)
-        let labelY = bodyEndY + legLen + c.fontSize * 0.3
-        let labelX = centerX - textSize.width / 2
         MermaidTextUtils.drawText(
             label,
-            at: CGPoint(x: labelX, y: labelY),
-            width: textSize.width,
-            font: font,
+            at: ink.labelOrigin,
+            width: ink.labelSize.width,
+            font: ink.font,
             fontSize: fontSize,
             foregroundColor: theme.foreground,
             alignment: .center,
@@ -1564,25 +1761,17 @@ enum MermaidSequenceRenderer {
         guard let fromIdx = participantIndex[ml.message.from],
               let toIdx = participantIndex[ml.message.to] else { return }
 
-        func inset(for participantId: String) -> CGFloat {
-            let y = ml.y
-            if activations.contains(where: {
-                $0.participantId == participantId && $0.rect.minY - 0.5 <= y && y <= $0.rect.maxY + 0.5
-            }) {
-                return c.activationWidth / 2 + 1
-            }
-            return 0
-        }
-
-        var fromX = ox + participants[fromIdx].centerX
-        var toX = ox + participants[toIdx].centerX
-        let y = oy + ml.y
+        let ends = straightMessageEndpoints(
+            message: ml,
+            from: participants[fromIdx],
+            to: participants[toIdx],
+            activations: activations,
+            constants: c
+        )
+        let fromX = ox + ends.from.x
+        let toX = ox + ends.to.x
+        let y = oy + ends.from.y
         let isSelf = fromIdx == toIdx
-        if !isSelf {
-            let goingRight = toX > fromX
-            fromX += goingRight ? inset(for: ml.message.from) : -inset(for: ml.message.from)
-            toX += goingRight ? -inset(for: ml.message.to) : inset(for: ml.message.to)
-        }
 
         if isSelf {
             drawSelfMessage(

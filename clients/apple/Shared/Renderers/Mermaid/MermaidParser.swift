@@ -10,8 +10,21 @@ import Foundation
 struct MermaidParser: DocumentParser, Sendable {
 
     nonisolated func parse(_ source: String) -> MermaidDiagram {
-        let lines = source.components(separatedBy: .newlines)
-        let stripped = lines.map { stripComment($0) }
+        parseAnnotated(source).diagram
+    }
+
+    func parseAnnotated(_ source: String) -> MermaidAnnotatedParse {
+        let index = MermaidSourceIndex(source: source)
+        let collector = SemanticSourceCollector(index: index)
+        let diagram = parse(index: index, collector: collector)
+        return MermaidAnnotatedParse(diagram: diagram, ledger: collector.ledger)
+    }
+
+    private func parse(
+        index: MermaidSourceIndex,
+        collector: SemanticSourceCollector
+    ) -> MermaidDiagram {
+        let stripped = index.lines.map(\.stripped)
         let frontmatter = parseFrontmatterOptions(in: stripped)
 
         // Find first non-blank, non-`%%` line to detect diagram type, skipping optional Mermaid YAML frontmatter.
@@ -23,12 +36,16 @@ struct MermaidParser: DocumentParser, Sendable {
 
         switch header.type {
         case .flowchart:
-            let body = Array(stripped[(firstIndex + 1)...])
-            let diagram = parseFlowchart(direction: header.direction ?? .TD, lines: body)
+            let body = Array(index.lines[(firstIndex + 1)...])
+            let diagram = parseFlowchart(
+                direction: header.direction ?? .TD,
+                lines: body,
+                collector: collector
+            )
             return .flowchart(diagram)
         case .sequence:
-            let body = Array(stripped[(firstIndex + 1)...])
-            let diagram = MermaidSequenceParser.parse(lines: body)
+            let body = Array(index.lines[(firstIndex + 1)...])
+            let diagram = MermaidSequenceParser.parse(lines: body, collector: collector)
             return .sequence(diagram)
         case .gantt:
             let body = Array(stripped[(firstIndex + 1)...])
@@ -44,8 +61,8 @@ struct MermaidParser: DocumentParser, Sendable {
             return .state(diagram)
         case .pie:
             // Pie title/showData live on the `pie` header line, so keep it.
-            let body = Array(stripped[firstIndex...])
-            let diagram = MermaidPieParser.parse(lines: body)
+            let body = Array(index.lines[firstIndex...])
+            let diagram = MermaidPieParser.parse(lines: body, collector: collector)
             return .pie(diagram)
         case .timeline:
             let body = Array(stripped[firstIndex...])
@@ -480,7 +497,11 @@ struct MermaidParser: DocumentParser, Sendable {
 
     // MARK: - Flowchart parsing
 
-    private func parseFlowchart(direction: FlowDirection, lines: [String]) -> FlowchartDiagram {
+    private func parseFlowchart(
+        direction: FlowDirection,
+        lines: [MermaidSourceIndex.Line],
+        collector: SemanticSourceCollector?
+    ) -> FlowchartDiagram {
         var nodesById: [String: FlowNode] = [:]
         var edges: [FlowEdge] = []
         var subgraphs: [FlowSubgraph] = []
@@ -498,7 +519,7 @@ struct MermaidParser: DocumentParser, Sendable {
         }
 
         // Flatten into statements: split on `;` and newlines, skip blanks.
-        let statements = expandStatements(lines)
+        let statements = expandLocatedStatements(lines)
 
         // Parse subgraphs with a stack-based approach.
         var subgraphStack: [SubgraphBuilder] = []
@@ -507,8 +528,8 @@ struct MermaidParser: DocumentParser, Sendable {
         var lastExplicitSubgraphId: [String: String] = [:]
         var implicitSubgraphIds: [String: [String]] = [:]
 
-        for stmt in statements {
-            let trimmed = stmt.trimmingCharacters(in: .whitespaces)
+        for located in statements {
+            let trimmed = located.text
             if trimmed.isEmpty { continue }
             // Kept `%%{init}` lines must not tokenize into phantom nodes.
             if trimmed.hasPrefix("%%") { continue }
@@ -572,7 +593,7 @@ struct MermaidParser: DocumentParser, Sendable {
             }
 
             // Node declarations and edges (the main parsing path).
-            let parsed = parseNodeEdgeStatement(trimmed)
+            let parsed = parseNodeEdgeStatement(located, collector: collector)
             let statementDeclaresNodes = parsed.edges.isEmpty
             for node in parsed.nodes {
                 // Keep the first explicit declaration. An implicit reference
@@ -670,6 +691,75 @@ struct MermaidParser: DocumentParser, Sendable {
 
     /// Split lines on statement separator semicolons, preserving semicolons
     /// inside labels and entity codes such as `#quot;` or `#9829;`.
+    private struct LocatedStatement {
+        let text: String
+        let line: MermaidSourceIndex.Line
+        let byteRange: Range<Int>
+    }
+
+    private func expandLocatedStatements(_ lines: [MermaidSourceIndex.Line]) -> [LocatedStatement] {
+        var result: [LocatedStatement] = []
+        for line in lines {
+            for piece in splitStatementsLocated(in: line.stripped) {
+                let leading = piece.text.prefix(while: { $0 == " " || $0 == "\t" }).utf8.count
+                let trimmed = piece.text.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty else { continue }
+                let start = piece.byteStart + leading
+                result.append(LocatedStatement(
+                    text: trimmed,
+                    line: line,
+                    byteRange: start..<(start + trimmed.utf8.count)
+                ))
+            }
+        }
+        return result
+    }
+
+    private func splitStatementsLocated(in line: String) -> [(text: String, byteStart: Int)] {
+        var statements: [(text: String, byteStart: Int)] = []
+        var current = ""
+        var currentStart = 0
+        var byte = 0
+        var inDoubleQuote = false
+        var squareDepth = 0
+        var parenDepth = 0
+        var braceDepth = 0
+
+        for char in line {
+            let charBytes = char.utf8.count
+            if char == "\"" {
+                if current.isEmpty { currentStart = byte }
+                inDoubleQuote.toggle()
+                current.append(char)
+                byte += charBytes
+                continue
+            }
+            if !inDoubleQuote {
+                switch char {
+                case "[": squareDepth += 1
+                case "]": squareDepth = max(0, squareDepth - 1)
+                case "(": parenDepth += 1
+                case ")": parenDepth = max(0, parenDepth - 1)
+                case "{": braceDepth += 1
+                case "}": braceDepth = max(0, braceDepth - 1)
+                case ";" where squareDepth == 0 && parenDepth == 0 && braceDepth == 0:
+                    statements.append((current, currentStart))
+                    current = ""
+                    byte += charBytes
+                    currentStart = byte
+                    continue
+                default:
+                    break
+                }
+            }
+            if current.isEmpty { currentStart = byte }
+            current.append(char)
+            byte += charBytes
+        }
+        statements.append((current, currentStart))
+        return statements
+    }
+
     private func expandStatements(_ lines: [String]) -> [String] {
         var result: [String] = []
         for line in lines {
@@ -923,9 +1013,13 @@ struct MermaidParser: DocumentParser, Sendable {
     /// Parse a statement that may contain node declarations and/or edges.
     ///
     /// Handles chains like `A --> B --> C` and ampersand syntax `A --> B & C`.
-    private func parseNodeEdgeStatement(_ line: String) -> ParsedStatement {
+    private func parseNodeEdgeStatement(
+        _ located: LocatedStatement,
+        collector: SemanticSourceCollector?
+    ) -> ParsedStatement {
         var nodes: [FlowNode] = []
         var edges: [FlowEdge] = []
+        let line = located.text
 
         // Tokenize into node-refs and edge-operators.
         let tokens = tokenize(line)
@@ -936,32 +1030,49 @@ struct MermaidParser: DocumentParser, Sendable {
 
         // Parse first node group (may have & separators).
         var prevGroup = parseNodeGroup(tokens: tokens, index: &i)
-        for node in prevGroup {
-            nodes.append(node)
+        recordFlowNodes(prevGroup, located: located, collector: collector)
+        for token in prevGroup {
+            nodes.append(token.node)
         }
 
         while i < tokens.count {
             // Expect an edge operator.
-            guard case .edge(let style, let label, let edgeId, let isMarkdown) = tokens[i] else { break }
+            guard case .edge(let style, let label, let edgeId, let isMarkdown, _) = tokens[i] else { break }
             i += 1
 
             // Parse next node group.
             let nextGroup = parseNodeGroup(tokens: tokens, index: &i)
-            for node in nextGroup {
-                nodes.append(node)
+            recordFlowNodes(nextGroup, located: located, collector: collector)
+            for token in nextGroup {
+                nodes.append(token.node)
             }
 
             // Create edges from each source to each target.
             for src in prevGroup {
                 for dst in nextGroup {
                     edges.append(FlowEdge(
-                        from: src.id,
-                        to: dst.id,
+                        from: src.node.id,
+                        to: dst.node.id,
                         label: label,
                         style: style,
                         id: edgeId,
                         isMarkdown: isMarkdown
                     ))
+                    if let collector {
+                        let clause = src.characterRange.lowerBound..<dst.characterRange.upperBound
+                        collector.addFlowEdge(
+                            explicitID: edgeId,
+                            from: src.node.id,
+                            to: dst.node.id,
+                            label: label,
+                            line: located.line,
+                            byteRange: byteRange(clause, in: located),
+                            endpointRanges: [
+                                byteRange(src.characterRange, in: located),
+                                byteRange(dst.characterRange, in: located),
+                            ]
+                        )
+                    }
                 }
             }
 
@@ -971,12 +1082,39 @@ struct MermaidParser: DocumentParser, Sendable {
         return ParsedStatement(nodes: nodes, edges: edges)
     }
 
+    private struct RangedNode {
+        let node: FlowNode
+        let characterRange: Range<Int>
+    }
+
+    private func recordFlowNodes(
+        _ group: [RangedNode],
+        located: LocatedStatement,
+        collector: SemanticSourceCollector?
+    ) {
+        for token in group {
+            collector?.addFlowNode(
+                id: token.node.id,
+                label: token.node.label,
+                shapeIsImplicit: token.node.shape == .default,
+                line: located.line,
+                byteRange: byteRange(token.characterRange, in: located)
+            )
+        }
+    }
+
+    private func byteRange(_ characters: Range<Int>, in located: LocatedStatement) -> Range<Int> {
+        let local = MermaidSourceIndex.byteRange(in: located.text, characters: characters)
+        let start = located.byteRange.lowerBound + local.lowerBound
+        return start..<(start + (local.upperBound - local.lowerBound))
+    }
+
     /// Parse a group of nodes separated by `&`.
-    private func parseNodeGroup(tokens: [FlowToken], index: inout Int) -> [FlowNode] {
-        var group: [FlowNode] = []
+    private func parseNodeGroup(tokens: [FlowToken], index: inout Int) -> [RangedNode] {
+        var group: [RangedNode] = []
         while index < tokens.count {
-            guard case .node(let node) = tokens[index] else { break }
-            group.append(node)
+            guard case .node(let node, let range) = tokens[index] else { break }
+            group.append(RangedNode(node: node, characterRange: range))
             index += 1
             // Check for `&` separator.
             if index < tokens.count, case .ampersand = tokens[index] {
@@ -991,9 +1129,9 @@ struct MermaidParser: DocumentParser, Sendable {
     // MARK: - Tokenizer
 
     private enum FlowToken {
-        case node(FlowNode)
-        case edge(FlowEdgeStyle, String?, String?, Bool)
-        case ampersand
+        case node(FlowNode, Range<Int>)
+        case edge(FlowEdgeStyle, String?, String?, Bool, Range<Int>)
+        case ampersand(Range<Int>)
     }
 
     /// Tokenize a flowchart statement line into nodes, edges, and ampersands.
@@ -1008,21 +1146,21 @@ struct MermaidParser: DocumentParser, Sendable {
 
             // Try to match an edge operator.
             if let match = tryParseEdge(chars, pos) {
-                tokens.append(.edge(match.style, match.label, match.id, match.isMarkdown))
+                tokens.append(.edge(match.style, match.label, match.id, match.isMarkdown, pos..<match.endPos))
                 pos = match.endPos
                 continue
             }
 
             // Ampersand.
             if chars[pos] == "&" {
-                tokens.append(.ampersand)
+                tokens.append(.ampersand(pos..<(pos + 1)))
                 pos += 1
                 continue
             }
 
             // Must be a node reference.
             if let (node, newPos) = tryParseNodeRef(chars, pos) {
-                tokens.append(.node(node))
+                tokens.append(.node(node, pos..<newPos))
                 pos = newPos
                 continue
             }

@@ -41,6 +41,15 @@ enum MermaidSequenceParser {
     }
 
     static func parse(lines: [String]) -> SequenceDiagram {
+        parse(lines: lines.map {
+            MermaidSourceIndex.Line(number: 0, utf8Start: 0, text: $0, commentCut: $0.utf8.count)
+        })
+    }
+
+    static func parse(
+        lines: [MermaidSourceIndex.Line],
+        collector: SemanticSourceCollector? = nil
+    ) -> SequenceDiagram {
         var events: [SequenceEvent] = []
         var participants: [SequenceParticipant] = []
         var boxes: [SequenceBox] = []
@@ -59,9 +68,11 @@ enum MermaidSequenceParser {
             knownIds.insert(participant.id)
         }
 
-        for line in lines {
+        for located in lines {
+            let line = located.stripped
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty { continue }
+            let statementRange = Self.statementRange(located)
             let lower = trimmed.lowercased()
 
             if lower == "autonumber" || lower.hasPrefix("autonumber ") {
@@ -99,6 +110,13 @@ enum MermaidSequenceParser {
                     .trimmingCharacters(in: .whitespaces)
                 if let participant = parseParticipant(declaration) {
                     addParticipant(participant)
+                    recordParticipant(
+                        participant,
+                        range: statementRange,
+                        located: located,
+                        isDeclaration: true,
+                        collector: collector
+                    )
                     events.append(.create(participant))
                 }
                 continue
@@ -184,12 +202,35 @@ enum MermaidSequenceParser {
 
             if let participant = parseParticipant(trimmed) {
                 addParticipant(participant)
+                recordParticipant(
+                    participant,
+                    range: statementRange,
+                    located: located,
+                    isDeclaration: true,
+                    collector: collector
+                )
                 continue
             }
 
             if let message = parseSequenceMessage(trimmed) {
                 for pid in [message.from, message.to] {
                     addParticipant(SequenceParticipant(id: pid, label: pid, isActor: false))
+                    recordParticipant(
+                        SequenceParticipant(id: pid, label: pid, isActor: false),
+                        range: statementRange,
+                        located: located,
+                        isDeclaration: false,
+                        collector: collector
+                    )
+                }
+                if let statementRange {
+                    collector?.addSequenceMessage(
+                        from: message.from,
+                        to: message.to,
+                        label: message.text,
+                        line: located,
+                        byteRange: statementRange
+                    )
                 }
                 events.append(.message(message))
             }
@@ -336,6 +377,32 @@ enum MermaidSequenceParser {
         let actors = actorPart.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
 
         return SequenceNote(text: text, position: position, actors: actors)
+    }
+
+    private static func statementRange(_ line: MermaidSourceIndex.Line) -> Range<Int>? {
+        let prefixCount = min(line.commentCut, line.text.utf8.count)
+        let prefix = MermaidSourceIndex.excerpt(line.text, bytes: 0..<prefixCount)
+        let leading = prefix.prefix(while: { $0 == " " || $0 == "\t" }).utf8.count
+        let trimmed = prefix.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        return leading..<(leading + trimmed.utf8.count)
+    }
+
+    private static func recordParticipant(
+        _ participant: SequenceParticipant,
+        range: Range<Int>?,
+        located: MermaidSourceIndex.Line,
+        isDeclaration: Bool,
+        collector: SemanticSourceCollector?
+    ) {
+        guard let range else { return }
+        collector?.addSequenceParticipant(
+            id: participant.id,
+            label: participant.label,
+            line: located,
+            byteRange: range,
+            isDeclaration: isDeclaration
+        )
     }
 
     private static func parseParticipant(_ line: String) -> SequenceParticipant? {

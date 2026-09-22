@@ -2251,9 +2251,13 @@ struct ChatView: View {
         let originalPendingRepoPointers = composerDraftController.repoPointers
         composerDraftController.setPendingAttachments(originalPendingAttachments)
         guard let submission = beginComposerSubmission(draftClearance: draftClearance) else { return }
+        let timelineItems = reducer.items
         let reviewText = reviewComments.appendReviewBlock(
             to: originalInputText,
-            pathFormatting: reviewCommentPathFormatting
+            pathFormatting: reviewCommentPathFormatting,
+            currentSourceRevision: { comment in
+                SemanticCommentFreshness.currentRevision(for: comment, timelineItems: timelineItems)
+            }
         )
         let text = PendingFileReference.appendReferenceBlock(to: reviewText, files: originalPendingRepoPointers)
         let stagedReviewCommentIds = reviewComments.stagedCommentIds

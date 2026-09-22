@@ -572,7 +572,9 @@ final class NativeMermaidBlockView: UIView {
             from: self,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSessionId: reviewCommentSourceContext?.sessionId,
-            reviewCommentSourceLabel: reviewCommentSourceContext?.sourceLabel
+            reviewCommentSourceLabel: reviewCommentSourceContext?.sourceLabel,
+            reviewCommentFilePath: reviewCommentSourceContext?.filePath,
+            reviewCommentTimelineItemId: reviewCommentSourceContext?.timelineItemId
         )
         return true
     }

@@ -23,9 +23,14 @@ final class ChatReviewCommentsController: ReviewCommentStashHandling {
 
     func appendReviewBlock(
         to text: String,
-        pathFormatting: ReviewCommentPathFormatting = .normalizedDisplay
+        pathFormatting: ReviewCommentPathFormatting = .normalizedDisplay,
+        currentSourceRevision: ((ReviewComment) -> String?)? = nil
     ) -> String {
-        store.appendReviewBlock(to: text, pathFormatting: pathFormatting)
+        store.appendReviewBlock(
+            to: text,
+            pathFormatting: pathFormatting,
+            currentSourceRevision: currentSourceRevision
+        )
     }
 
     @discardableResult
@@ -85,13 +90,15 @@ final class ChatReviewCommentsController: ReviewCommentStashHandling {
             label: request.source.sourceLabel,
             path: request.source.filePath,
             side: nil,
-            startLine: request.source.lineRange?.lowerBound,
-            endLine: request.source.lineRange?.upperBound,
+            startLine: request.htmlDOMAnchor == nil ? request.source.lineRange?.lowerBound : nil,
+            endLine: request.htmlDOMAnchor == nil ? request.source.lineRange?.upperBound : nil,
             selectedText: request.selectedText,
-            languageHint: request.source.languageHint,
+            languageHint: request.htmlDOMAnchor == nil ? request.source.languageHint : nil,
             toolCallId: nil,
             timelineItemId: request.source.timelineItemId,
-            url: nil
+            url: nil,
+            htmlDOMAnchor: request.htmlDOMAnchor,
+            semanticAnchor: request.semanticAnchor
         )
     }
 }

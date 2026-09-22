@@ -42,6 +42,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         let customDraw: (@Sendable (CGContext, CGPoint) -> Void)?
         /// Total size for custom-drawn diagrams.
         let customSize: CGSize?
+        /// Layout-space hit regions. Empty for families that do not emit selection geometry.
+        var semanticRegions: [SemanticRegion] = []
 
         /// Shared bag for dedicated renderers (pie, xy, gitGraph, …).
         static func custom(
@@ -480,7 +482,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             }
         }
 
-        return FlowchartLayout(
+        var layout = FlowchartLayout(
             graphResult: graphResult,
             flowchart: flowchart,
             subgraphFrames: subgraphFrames,
@@ -501,6 +503,83 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             customDraw: nil,
             customSize: nil
         )
+        layout.semanticRegions = semanticRegions(for: layout)
+        return layout
+    }
+
+    private func semanticRegions(for layout: FlowchartLayout) -> [SemanticRegion] {
+        let contentBounds = flowchartContentBounds(layout)
+        let offset = CGPoint(
+            x: flowchartOuterPadding - contentBounds.minX,
+            y: flowchartOuterPadding - contentBounds.minY
+        )
+        var regions: [SemanticRegion] = []
+        for (id, rect) in layout.graphResult.nodePositions {
+            let shape = layout.nodeShapes[id] ?? .default
+            let shifted = rect.offsetBy(dx: offset.x, dy: offset.y)
+            regions.append(SemanticRegion(
+                targetID: MermaidSemanticID.node(id),
+                geometry: nodeGeometry(shape, rect: shifted),
+                precedence: 100
+            ))
+        }
+        let edgeIDs = MermaidSemanticID.edgeIDs(for: layout.flowchart.edges)
+        for (index, path) in layout.graphResult.edgePaths.enumerated() {
+            guard index < edgeIDs.count, path.points.count >= 2 else { continue }
+            let key = index < layout.edgeKeys.count
+                ? layout.edgeKeys[index]
+                : "\(path.from)->\(path.to)"
+            let style = layout.edgeStyles[key]
+                ?? (index < layout.flowchart.edges.count ? layout.flowchart.edges[index].style : .arrow)
+            if style == .invisible { continue }
+            let styleProperties = layout.edgeStyleDirectives[key] ?? [:]
+            let points = path.points.map { CGPoint(x: $0.x + offset.x, y: $0.y + offset.y) }
+            let width = edgeStrokeWidth(style: style, styleProperties: styleProperties)
+            let geometry: SemanticGeometry
+            if points.count == 3,
+               !isAxisAligned(points[0], points[1]) || !isAxisAligned(points[1], points[2]) {
+                geometry = .strokedPath(
+                    SemanticPath(cgPath: edgeDrawingPath(points)),
+                    strokeWidth: width
+                )
+            } else {
+                geometry = .polyline(points: points, strokeWidth: width)
+            }
+            regions.append(SemanticRegion(
+                targetID: edgeIDs[index],
+                geometry: geometry,
+                precedence: 40
+            ))
+            if let label = layout.edgeLabels[key],
+               let labelLayout = edgeLabelLayout(
+                label,
+                path: path,
+                fontSize: layout.fontSize,
+                isMarkdown: index < layout.flowchart.edges.count && layout.flowchart.edges[index].isMarkdown,
+                among: layout.graphResult.edgePaths
+               ) {
+                regions.append(SemanticRegion(
+                    targetID: edgeIDs[index],
+                    geometry: .rectangle(labelLayout.rect.offsetBy(dx: offset.x, dy: offset.y)),
+                    precedence: 55
+                ))
+            }
+        }
+        return regions
+    }
+
+    private func edgeStrokeWidth(style: FlowEdgeStyle, styleProperties: [String: String]) -> CGFloat {
+        let fallback: CGFloat = style == .thick ? 3 : 1.5
+        return parseLineWidth(styleProperties["stroke-width"]) ?? fallback
+    }
+
+    private func nodeGeometry(_ shape: FlowNodeShape, rect: CGRect) -> SemanticGeometry {
+        let path = nodeShapePath(shape, rect: rect)
+        let semantic = SemanticPath(cgPath: path)
+        if semantic.isEmpty {
+            return .rectangle(rect)
+        }
+        return .path(semantic)
     }
 
     private struct SubgraphAnchors {
@@ -2573,86 +2652,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         ctx.setStrokeColor(strokeColor)
         ctx.setFillColor(fillColor)
 
-        let path: CGPath
-        switch shape {
-        case .rectangle, .default, .dividedRectangle, .windowPane:
-            path = CGPath(roundedRect: rect, cornerWidth: 4, cornerHeight: 4, transform: nil)
-        case .rounded:
-            path = CGPath(roundedRect: rect, cornerWidth: 8, cornerHeight: 8, transform: nil)
-        case .stadium, .delay:
-            let radius = rect.height / 2
-            path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
-        case .diamond:
-            path = diamondPath(rect)
-        case .hexagon:
-            path = hexagonPath(rect)
-        case .circle, .filledCircle:
-            path = CGPath(ellipseIn: rect, transform: nil)
-        case .cylindrical:
-            path = CGPath(roundedRect: rect, cornerWidth: 6, cornerHeight: 6, transform: nil)
-        case .horizontalCylinder:
-            path = CGPath(roundedRect: rect, cornerWidth: rect.height * 0.5, cornerHeight: rect.height * 0.5, transform: nil)
-        case .linedCylinder:
-            path = CGPath(roundedRect: rect, cornerWidth: 6, cornerHeight: 6, transform: nil)
-        case .subroutine:
-            path = subroutinePath(rect)
-        case .asymmetric, .odd:
-            path = asymmetricPath(rect)
-        case .parallelogram:
-            path = parallelogramPath(rect)
-        case .parallelogramAlt, .slopedRectangle:
-            path = parallelogramAltPath(rect)
-        case .trapezoid:
-            path = trapezoidPath(rect)
-        case .trapezoidAlt:
-            path = trapezoidAltPath(rect)
-        case .doubleCircle, .crossedCircle:
-            path = CGPath(ellipseIn: rect, transform: nil)
-        case .bang:
-            path = bangPath(rect)
-        case .notchedRectangle:
-            path = notchedRectanglePath(rect)
-        case .cloud:
-            path = cloudPath(rect)
-        case .hourglass, .bowTieRectangle:
-            path = hourglassPath(rect)
-        case .bolt:
-            path = boltPath(rect)
-        case .brace:
-            path = bracePath(rect, rightSide: false)
-        case .braceRight:
-            path = bracePath(rect, rightSide: true)
-        case .braces:
-            path = bracesPath(rect)
-        case .datastore:
-            path = datastorePath(rect)
-        case .curvedTrapezoid:
-            path = curvedTrapezoidPath(rect)
-        case .document:
-            path = documentPath(rect)
-        case .triangle:
-            path = trianglePath(rect)
-        case .forkJoin:
-            path = CGPath(roundedRect: rect.insetBy(dx: 0, dy: rect.height * 0.32), cornerWidth: 2, cornerHeight: 2, transform: nil)
-        case .linedDocument:
-            path = documentPath(rect)
-        case .notchedPentagon:
-            path = notchedPentagonPath(rect)
-        case .flippedTriangle:
-            path = flippedTrianglePath(rect)
-        case .stackedDocument:
-            path = stackedDocumentPath(rect)
-        case .stackedRectangle:
-            path = stackedRectanglePath(rect)
-        case .flag:
-            path = flagPath(rect)
-        case .taggedDocument:
-            path = taggedDocumentPath(rect)
-        case .taggedRectangle:
-            path = taggedRectanglePath(rect)
-        case .textBlock:
-            path = CGMutablePath()
-        }
+        let path = nodeShapePath(shape, rect: rect)
 
         ctx.addPath(path)
         ctx.drawPath(using: .fillStroke)
@@ -2698,6 +2698,84 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             ctx.strokePath()
         default:
             break
+        }
+    }
+
+    private func nodeShapePath(_ shape: FlowNodeShape, rect: CGRect) -> CGPath {
+        switch shape {
+        case .rectangle, .default, .dividedRectangle, .windowPane:
+            return CGPath(roundedRect: rect, cornerWidth: 4, cornerHeight: 4, transform: nil)
+        case .rounded:
+            return CGPath(roundedRect: rect, cornerWidth: 8, cornerHeight: 8, transform: nil)
+        case .stadium, .delay:
+            let radius = rect.height / 2
+            return CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        case .diamond:
+            return diamondPath(rect)
+        case .hexagon:
+            return hexagonPath(rect)
+        case .circle, .filledCircle:
+            return CGPath(ellipseIn: rect, transform: nil)
+        case .cylindrical, .linedCylinder:
+            return CGPath(roundedRect: rect, cornerWidth: 6, cornerHeight: 6, transform: nil)
+        case .horizontalCylinder:
+            return CGPath(roundedRect: rect, cornerWidth: rect.height * 0.5, cornerHeight: rect.height * 0.5, transform: nil)
+        case .subroutine:
+            return subroutinePath(rect)
+        case .asymmetric, .odd:
+            return asymmetricPath(rect)
+        case .parallelogram:
+            return parallelogramPath(rect)
+        case .parallelogramAlt, .slopedRectangle:
+            return parallelogramAltPath(rect)
+        case .trapezoid:
+            return trapezoidPath(rect)
+        case .trapezoidAlt:
+            return trapezoidAltPath(rect)
+        case .doubleCircle, .crossedCircle:
+            return CGPath(ellipseIn: rect, transform: nil)
+        case .bang:
+            return bangPath(rect)
+        case .notchedRectangle:
+            return notchedRectanglePath(rect)
+        case .cloud:
+            return cloudPath(rect)
+        case .hourglass, .bowTieRectangle:
+            return hourglassPath(rect)
+        case .bolt:
+            return boltPath(rect)
+        case .brace:
+            return bracePath(rect, rightSide: false)
+        case .braceRight:
+            return bracePath(rect, rightSide: true)
+        case .braces:
+            return bracesPath(rect)
+        case .datastore:
+            return datastorePath(rect)
+        case .curvedTrapezoid:
+            return curvedTrapezoidPath(rect)
+        case .document, .linedDocument:
+            return documentPath(rect)
+        case .triangle:
+            return trianglePath(rect)
+        case .forkJoin:
+            return CGPath(roundedRect: rect.insetBy(dx: 0, dy: rect.height * 0.32), cornerWidth: 2, cornerHeight: 2, transform: nil)
+        case .notchedPentagon:
+            return notchedPentagonPath(rect)
+        case .flippedTriangle:
+            return flippedTrianglePath(rect)
+        case .stackedDocument:
+            return stackedDocumentPath(rect)
+        case .stackedRectangle:
+            return stackedRectanglePath(rect)
+        case .flag:
+            return flagPath(rect)
+        case .taggedDocument:
+            return taggedDocumentPath(rect)
+        case .taggedRectangle:
+            return taggedRectanglePath(rect)
+        case .textBlock:
+            return CGMutablePath()
         }
     }
 
@@ -3033,15 +3111,11 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         ctx.setStrokeColor(strokeColor)
 
         switch style {
-        case .arrow, .circle, .cross, .biArrow, .biCircle, .biCross:
-            ctx.setLineWidth(parseLineWidth(styleProperties["stroke-width"]) ?? 1.5)
-        case .open:
-            ctx.setLineWidth(parseLineWidth(styleProperties["stroke-width"]) ?? 1.5)
+        case .arrow, .circle, .cross, .biArrow, .biCircle, .biCross, .open, .thick:
+            ctx.setLineWidth(edgeStrokeWidth(style: style, styleProperties: styleProperties))
         case .dotted:
-            ctx.setLineWidth(parseLineWidth(styleProperties["stroke-width"]) ?? 1.5)
+            ctx.setLineWidth(edgeStrokeWidth(style: style, styleProperties: styleProperties))
             ctx.setLineDash(phase: 0, lengths: parseDashArray(styleProperties["stroke-dasharray"]) ?? [4, 4])
-        case .thick:
-            ctx.setLineWidth(parseLineWidth(styleProperties["stroke-width"]) ?? 3.0)
         case .invisible:
             ctx.restoreGState()
             return
@@ -3050,14 +3124,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             ctx.setLineDash(phase: 0, lengths: dashArray)
         }
 
-        ctx.move(to: points[0])
-        if points.count == 3, !isAxisAligned(points[0], points[1]) || !isAxisAligned(points[1], points[2]) {
-            ctx.addQuadCurve(to: points[2], control: points[1])
-        } else {
-            for i in 1 ..< points.count {
-                ctx.addLine(to: points[i])
-            }
-        }
+        ctx.addPath(edgeDrawingPath(points))
         ctx.strokePath()
         ctx.restoreGState()
 
@@ -3071,6 +3138,22 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                 offset: offset
             )
         }
+    }
+
+    /// Single edge-ink path shared by drawing, hit testing, and highlighting.
+    private func edgeDrawingPath(_ points: [CGPoint]) -> CGPath {
+        let path = CGMutablePath()
+        guard let first = points.first else { return path }
+        path.move(to: first)
+        if points.count == 3,
+           !isAxisAligned(points[0], points[1]) || !isAxisAligned(points[1], points[2]) {
+            path.addQuadCurve(to: points[2], control: points[1])
+        } else {
+            for point in points.dropFirst() {
+                path.addLine(to: point)
+            }
+        }
+        return path
     }
 
     private func drawEdgeArrowhead(

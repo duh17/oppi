@@ -62,13 +62,21 @@ struct PieSlice: Equatable, Sendable {
 enum MermaidPieParser {
 
     nonisolated static func parse(lines: [String]) -> PieDiagram {
+        parse(lines: lines.map { MermaidSourceIndex.Line(number: 0, utf8Start: 0, text: $0, commentCut: $0.utf8.count) })
+    }
+
+    nonisolated static func parse(
+        lines: [MermaidSourceIndex.Line],
+        collector: SemanticSourceCollector? = nil
+    ) -> PieDiagram {
         var title: String?
         var slices: [PieSlice] = []
         var showData = false
 
         var seenHeader = false
 
-        for rawLine in lines {
+        for located in lines {
+            let rawLine = located.stripped
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
 
@@ -110,6 +118,9 @@ enum MermaidPieParser {
             // Dataset row: `<label> : <value>`.
             if let slice = parseSlice(line) {
                 slices.append(slice)
+                if let range = statementRange(located) {
+                    collector?.addPieSlice(label: slice.label, line: located, byteRange: range)
+                }
                 continue
             }
 
@@ -119,6 +130,15 @@ enum MermaidPieParser {
         }
 
         return PieDiagram(title: title, slices: slices, showData: showData)
+    }
+
+    private static func statementRange(_ line: MermaidSourceIndex.Line) -> Range<Int>? {
+        let prefixCount = min(line.commentCut, line.text.utf8.count)
+        let prefix = MermaidSourceIndex.excerpt(line.text, bytes: 0..<prefixCount)
+        let leading = prefix.prefix(while: { $0 == " " || $0 == "\t" }).utf8.count
+        let trimmed = prefix.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        return leading..<(leading + trimmed.utf8.count)
     }
 
     /// Parse a single `"label" : value` (or bare `label : value`) row.

@@ -5980,6 +5980,8 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
     private let readerPreferences: FullScreenReaderPreferences
     private let themeID: ThemeID
     private var latexZoomContentView: UIView?
+    private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    private let reviewCommentSourceContext: ReviewCommentSourceContext?
 
     init(
         content: DocumentContent,
@@ -5991,6 +5993,8 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
     ) {
         self.readerPreferences = readerPreferences
         self.themeID = themeID ?? ThemeRuntimeState.currentThemeID()
+        self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
+        self.reviewCommentSourceContext = reviewCommentSourceContext
         super.init(frame: .zero)
         backgroundColor = UIColor(palette.bgDark)
 
@@ -6004,6 +6008,9 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
             let zoomable = ZoomableGraphicalView(
                 size: layout.size, draw: layout.draw
             )
+            zoomable.configureSemanticPick(map: layout.semanticMap) { [weak self] target in
+                self?.presentSemanticComment(for: target)
+            }
             zoomable.translatesAutoresizingMaskIntoConstraints = false
             addSubview(zoomable)
             NSLayoutConstraint.activate([
@@ -6087,6 +6094,20 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    private func presentSemanticComment(for target: SemanticTarget) {
+        guard let reviewCommentSelectionRouter, let reviewCommentSourceContext else { return }
+        let request = ReviewCommentSelectionRequest(
+            selectedText: target.label,
+            source: reviewCommentSourceContext,
+            semanticAnchor: target.semanticAnchor()
+        )
+        ReviewCommentInlineDraftPresenter.present(
+            sourceView: self,
+            request: request,
+            router: reviewCommentSelectionRouter
+        )
+    }
 
     @objc private func handleLatexDoubleTap(_ gesture: UITapGestureRecognizer) {
         guard let latexZoomContentView else { return }

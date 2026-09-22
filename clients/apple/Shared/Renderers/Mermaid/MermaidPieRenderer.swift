@@ -319,7 +319,39 @@ enum MermaidPieRenderer {
             }
         }
 
-        return MermaidFlowchartRenderer.FlowchartLayout(
+        var semanticRegions: [SemanticRegion] = []
+        var sliceStart = -CGFloat.pi / 2
+        for (index, slice) in diagram.slices.enumerated() {
+            let sweep = CGFloat(slice.value / total) * 2 * .pi
+            let sliceEnd = sliceStart + sweep
+            semanticRegions.append(SemanticRegion(
+                targetID: MermaidSemanticID.slice(index + 1),
+                geometry: .sector(
+                    center: pieCenter,
+                    radius: pieRadius,
+                    startAngle: sliceStart,
+                    endAngle: sliceEnd
+                ),
+                precedence: 90
+            ))
+            sliceStart = sliceEnd
+        }
+        var legendY = legendOrigin.y
+        for (index, row) in rows.enumerated() {
+            semanticRegions.append(SemanticRegion(
+                targetID: MermaidSemanticID.slice(index + 1),
+                geometry: .rectangle(CGRect(
+                    x: legendOrigin.x,
+                    y: legendY,
+                    width: max(usedLegendWidth, swatchSize),
+                    height: row.height
+                )),
+                precedence: 80
+            ))
+            legendY += row.height
+        }
+
+        var layout = MermaidFlowchartRenderer.FlowchartLayout(
             graphResult: GraphLayoutResult(
                 nodePositions: nodePositions, edgePaths: [], totalSize: size
             ),
@@ -342,6 +374,8 @@ enum MermaidPieRenderer {
             customDraw: customDraw,
             customSize: size
         )
+        layout.semanticRegions = semanticRegions
+        return layout
     }
 
     // MARK: - Legend rows

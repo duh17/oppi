@@ -174,6 +174,55 @@ struct ReviewCommentReference: Codable, Sendable, Equatable {
     var toolCallId: String?
     var timelineItemId: String?
     var url: String?
+    /// DOM-only rendered-element anchor. Older drafts omit this key.
+    var htmlDOMAnchor: HTMLDOMElementAnchor? = nil
+    /// Local persisted diagram-object reference. Older drafts omit this key.
+    var semanticAnchor: ReviewCommentSemanticAnchor? = nil
+}
+
+extension ReviewCommentReference {
+    private enum CodingKeys: String, CodingKey {
+        case source, label, path, side, startLine, endLine, selectedText, languageHint
+        case toolCallId, timelineItemId, url, htmlDOMAnchor, semanticAnchor
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        source = try container.decode(ReviewCommentReferenceSource.self, forKey: .source)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        path = try container.decodeIfPresent(String.self, forKey: .path)
+        side = try container.decodeIfPresent(String.self, forKey: .side)
+        startLine = try container.decodeIfPresent(Int.self, forKey: .startLine)
+        endLine = try container.decodeIfPresent(Int.self, forKey: .endLine)
+        selectedText = try container.decodeIfPresent(String.self, forKey: .selectedText)
+        languageHint = try container.decodeIfPresent(String.self, forKey: .languageHint)
+        toolCallId = try container.decodeIfPresent(String.self, forKey: .toolCallId)
+        timelineItemId = try container.decodeIfPresent(String.self, forKey: .timelineItemId)
+        url = try container.decodeIfPresent(String.self, forKey: .url)
+        do {
+            htmlDOMAnchor = try container.decodeIfPresent(HTMLDOMElementAnchor.self, forKey: .htmlDOMAnchor)
+        } catch {
+            htmlDOMAnchor = nil
+        }
+        semanticAnchor = try container.decodeIfPresent(ReviewCommentSemanticAnchor.self, forKey: .semanticAnchor)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(source, forKey: .source)
+        try container.encodeIfPresent(label, forKey: .label)
+        try container.encodeIfPresent(path, forKey: .path)
+        try container.encodeIfPresent(side, forKey: .side)
+        try container.encodeIfPresent(startLine, forKey: .startLine)
+        try container.encodeIfPresent(endLine, forKey: .endLine)
+        try container.encodeIfPresent(selectedText, forKey: .selectedText)
+        try container.encodeIfPresent(languageHint, forKey: .languageHint)
+        try container.encodeIfPresent(toolCallId, forKey: .toolCallId)
+        try container.encodeIfPresent(timelineItemId, forKey: .timelineItemId)
+        try container.encodeIfPresent(url, forKey: .url)
+        try container.encodeIfPresent(htmlDOMAnchor, forKey: .htmlDOMAnchor)
+        try container.encodeIfPresent(semanticAnchor, forKey: .semanticAnchor)
+    }
 }
 
 extension ReviewCommentReference {

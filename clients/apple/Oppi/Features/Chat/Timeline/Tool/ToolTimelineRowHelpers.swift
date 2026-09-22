@@ -155,7 +155,9 @@ enum ToolTimelineRowPresentationHelpers {
         reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
         reviewCommentSessionId: String? = nil,
-        reviewCommentSourceLabel: String? = nil
+        reviewCommentSourceLabel: String? = nil,
+        reviewCommentFilePath: String? = nil,
+        reviewCommentTimelineItemId: String? = nil
     ) {
         guard let presenter = nearestViewController(from: sourceView) else {
             return
@@ -164,7 +166,9 @@ enum ToolTimelineRowPresentationHelpers {
             ?? ReviewCommentSelectionContext(
                 router: reviewCommentSelectionRouter,
                 sessionId: reviewCommentSessionId,
-                sourceLabel: reviewCommentSourceLabel
+                sourceLabel: reviewCommentSourceLabel,
+                filePath: reviewCommentFilePath,
+                timelineItemId: reviewCommentTimelineItemId
             )
         if ChatReaderOpenLookup.open(
             .document(content: content, reviewCommentSelectionContext: reviewContext),

@@ -65,4 +65,12 @@ struct MermaidRenderer: GraphicalDocumentRenderer, Sendable {
     nonisolated func boundingBox(_ layout: LayoutResult) -> CGSize {
         flowchartRenderer.boundingBox(layout)
     }
+
+    nonisolated func semanticAnnotationMap(
+        source: String,
+        document: MermaidDiagram,
+        layout: LayoutResult
+    ) -> SemanticAnnotationMap? {
+        MermaidSemanticAnnotation.map(source: source, diagram: document, layout: layout)
+    }
 }

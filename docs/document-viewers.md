@@ -233,6 +233,8 @@ Fenced `mermaid` blocks and `.mmd` / `.mermaid` files render these types:
 
 Unknown types show an unsupported placeholder.
 
+In the full-screen rendered view, flowchart, pie, and sequence diagrams can enter **Pick object**. Pick mode pauses pan and zoom; leave it with **Browse** to move the diagram again. A tap highlights the node, edge, slice, legend row, participant, or message that was hit. A pie slice and its legend row are the same object. A sequence arrow and its label are the same object. Overlapping hits open a chooser that shows the readable label and display key instead of guessing. Comment uses the existing review-comment composer and stash. The outgoing prompt includes the readable label, original source excerpt and UTF-8 ranges, source origin, and a revision-bound object id. Changing the source does not silently retarget an existing comment. When the send path can still see that source, the prompt keeps the original object and marks it stale. The other Mermaid families above still render, but they do not emit selectable objects yet.
+
 ## GeoJSON and TopoJSON
 
 `.geojson` / `.topojson` files and fenced `geojson` / `topojson` blocks open the document viewer with Rendered = MapKit map and Source = JSON. `.json` files whose root `type` is `FeatureCollection`, `GeometryCollection`, or `Topology` use the same viewer. Ordinary JSON such as `package.json` stays a JSON listing. Invalid or unsupported input keeps the source JSON and shows a short failure reason instead of an empty map.
@@ -248,6 +250,14 @@ Oppi uses native UIKit rendering for interactive markdown, code, diffs, terminal
 - consistent toolbar behavior across sheet and embedded file-browser viewers
 
 HTML is useful for content that is already HTML and for export-oriented rendering. The HTML viewer runs in a constrained `WKWebView` with a restrictive content security policy. It is a preview surface, not a way for arbitrary workspace HTML to gain app privileges.
+
+### Comment on a rendered HTML element
+
+In the HTML preview, **Pick Element** pauses browsing so you can comment on a rendered element. A native shield covers the page before WebKit sees the tap, so the pick does not click, focus, or otherwise activate page controls. Entering Pick resigns WebKit's native keyboard responder so keyboard input no longer edits a page field. The DOM `activeElement` may remain unchanged because Oppi does not write to the page or dispatch a page `blur` event. Scrolling and pinching are paused in pick mode. **Browse** leaves pick mode and restores normal scrolling. The banner says this directly: Browse to scroll.
+
+The comment describes the rendered element: its tag, label, and a bounded text summary, plus the loaded document hash and a DOM locator. The summary is not fenced as HTML source and does not claim an original source line. The loaded source hash is not a promise that the live DOM is unchanged. Oppi keeps a content-world identity for the picked node and checks that identity again when the comment is saved. A replaced node, or a text change past the stored excerpt, is rejected. Hidden content, form values, password fields, editable text, accessible names on those sensitive controls, event-handler code, and token-bearing URLs are left out. Known nonvisible text is also left out: `display`/`visibility`/`hidden`/`aria-hidden`, near-zero opacity, `font-size: 0`, and zero-size clipped overflow. This is not a claim that every visually hard-to-read string, such as low-contrast or off-screen text, is detected. If the page navigates, reloads, or the element changes before you save, Oppi does not attach the comment to a different element.
+
+**Select Parent** walks to the containing element. Open shadow roots can be selected inside. Closed shadow roots and embedded frames are commented as the container you can see, and the comment says that limitation. Selected-text Comment and screenshot annotation stay available while browsing.
 
 ## Export and renderer presets
 
