@@ -8,7 +8,7 @@ import Foundation
 // MIT License — see ThinkingOrbAttribution and LICENSE in this folder.
 
 /// One finished dot in design-point space (0...size on both axes).
-struct ThinkingOrbDot: Equatable, Sendable {
+struct OrbDot: Equatable, Sendable {
     var x: Double
     var y: Double
     var z: Double
@@ -21,11 +21,11 @@ struct ThinkingOrbDot: Equatable, Sendable {
     var palette: Double = 0
 }
 
-struct ThinkingOrbFrame: Sendable {
-    var dots: [ThinkingOrbDot]
+struct OrbFrame: Sendable {
+    var dots: [OrbDot]
 }
 
-enum ThinkingOrbStyle: String, CaseIterable, Sendable {
+enum OrbStyle: String, CaseIterable, Sendable {
     case working
     case searching
     case solving
@@ -37,7 +37,7 @@ enum ThinkingOrbStyle: String, CaseIterable, Sendable {
     }
 }
 
-enum ThinkingOrbSizeClass: Equatable, Sendable {
+enum OrbSizeClass: Equatable, Sendable {
     /// 20 pt working-row footprint.
     case workingCompact
     /// 20 pt settings preview.
@@ -66,21 +66,21 @@ enum ThinkingOrbSizeClass: Equatable, Sendable {
 }
 
 /// Batched CPU geometry for the five shipped orb styles.
-enum ThinkingOrbGeometry {
+enum OrbGeometry {
     static func frame(
-        style: ThinkingOrbStyle,
-        sizeClass: ThinkingOrbSizeClass,
+        style: OrbStyle,
+        sizeClass: OrbSizeClass,
         size: Double,
         geometryTime t: Double,
         voiceSpectrum: VoiceSpectrumFrame = .zero,
         zSorted: Bool = true
-    ) -> ThinkingOrbFrame {
+    ) -> OrbFrame {
         let safeSize = size.isFinite && size > 0 ? size : sizeClass.designSize
         let safeT = t.isFinite ? t : 0
         var voice = voiceSpectrum
-        for k in 0..<8 { voice.bands[k] = k < 5 ? ThinkingOrbAudio.clamp(voice.bands[k]) : 0 }
+        for k in 0..<8 { voice.bands[k] = k < 5 ? OrbAudio.clamp(voice.bands[k]) : 0 }
         voice.flux = voice.flux.isFinite ? max(0, voice.flux) : 0
-        let resolved = ThinkingOrbPresets.resolve(style, sizeClass)
+        let resolved = OrbPresets.resolve(style, sizeClass)
         let built = resolved.build(safeSize, safeT, voice)
         if !zSorted {
             return built
@@ -143,19 +143,19 @@ enum ThinkingOrbGeometry {
         }
     }
 
-    static func finalize(_ dots: [ThinkingOrbDot], rMin: Double) -> ThinkingOrbFrame {
-        var visible: [(Int, ThinkingOrbDot)] = []
+    static func finalize(_ dots: [OrbDot], rMin: Double) -> OrbFrame {
+        var visible: [(Int, OrbDot)] = []
         visible.reserveCapacity(dots.count)
         for (i, var d) in dots.enumerated() where d.a >= 0.02 {
             d.r = max(rMin, d.r)
             visible.append((i, d))
         }
         visible.sort { $0.1.z != $1.1.z ? $0.1.z < $1.1.z : $0.0 < $1.0 }
-        return ThinkingOrbFrame(dots: visible.map(\.1))
+        return OrbFrame(dots: visible.map(\.1))
     }
 }
 
-enum ThinkingOrbPresets {
+enum OrbPresets {
     /// Compact working/searching/solving clock vs original Thinking Orbs rates.
     /// Display cadence stays 60/30 Hz. Solving compact ticks ~1s wall.
     static let workingMotionScale = 0.5
@@ -163,10 +163,10 @@ enum ThinkingOrbPresets {
     struct Resolved: Sendable {
         var speed: Double
         var rMin: Double
-        fileprivate var build: @Sendable (_ size: Double, _ t: Double, _ voice: VoiceSpectrumFrame) -> ThinkingOrbFrame
+        fileprivate var build: @Sendable (_ size: Double, _ t: Double, _ voice: VoiceSpectrumFrame) -> OrbFrame
     }
 
-    static func resolve(_ style: ThinkingOrbStyle, _ sizeClass: ThinkingOrbSizeClass) -> Resolved {
+    static func resolve(_ style: OrbStyle, _ sizeClass: OrbSizeClass) -> Resolved {
         switch (style, sizeClass) {
         case (.working, .workingCompact), (.working, .workingPreview):
             return orbits(
@@ -174,11 +174,11 @@ enum ThinkingOrbPresets {
                 orbitN: 3,
                 ghostN: 8,
                 particles: 3,
-                ghostR: 2.16,
+                ghostR: 3.02,
                 ghostA: 0.7,
-                partR: 2.88,
-                partRDepth: 3.84,
-                rMin: 0.55
+                partR: 4.03,
+                partRDepth: 5.38,
+                rMin: 0.77
             )
         case (.working, .dictationExpanded), (.working, .dictationStandard):
             return orbits(
@@ -196,9 +196,9 @@ enum ThinkingOrbPresets {
                 speed: 2.665 * workingMotionScale,
                 latRings: 5,
                 lonDensity: 10,
-                rBase: 1.05,
-                rDepth: 2.4,
-                rBoost: 1.4,
+                rBase: 1.85,
+                rDepth: 4.00,
+                rBoost: 2.20,
                 scanMul: 4.335,
                 dimBase: 0.45
             )
@@ -219,9 +219,9 @@ enum ThinkingOrbPresets {
                 latRings: 4,
                 lonDensity: 8,
                 moveCount: 8,
-                rBase: 1.14,
-                rDepth: 2.6,
-                rActive: 0.5,
+                rBase: 1.80,
+                rDepth: 4.00,
+                rActive: 0.80,
                 slotDur: 1.95 * workingMotionScale
             )
         case (.solving, .dictationExpanded), (.solving, .dictationStandard):
@@ -261,7 +261,7 @@ enum ThinkingOrbPresets {
         rMin: Double = 0.3
     ) -> Resolved {
         Resolved(speed: speed, rMin: rMin) { size, t, _ in
-            ThinkingOrbBuilders.orbits(
+            OrbBuilders.orbits(
                 size,
                 t,
                 orbitN: orbitN,
@@ -286,7 +286,7 @@ enum ThinkingOrbPresets {
         dimBase: Double
     ) -> Resolved {
         Resolved(speed: speed, rMin: 0.3) { size, t, _ in
-            ThinkingOrbBuilders.globe(
+            OrbBuilders.globe(
                 size,
                 t,
                 latRings: latRings,
@@ -311,7 +311,7 @@ enum ThinkingOrbPresets {
         slotDur: Double = 0.42
     ) -> Resolved {
         Resolved(speed: speed, rMin: 0.3) { size, t, _ in
-            ThinkingOrbBuilders.rubik(
+            OrbBuilders.rubik(
                 size,
                 t,
                 latRings: latRings,
@@ -333,7 +333,7 @@ enum ThinkingOrbPresets {
         radiusMultiplier: Double
     ) -> Resolved {
         Resolved(speed: speed, rMin: 0.3) { size, t, voice in
-            ThinkingOrbBuilders.ribbon(
+            OrbBuilders.ribbon(
                 size, t, voice: voice, lanes: lanes, segs: segs,
                 ghostN: ghostN, radiusMultiplier: radiusMultiplier
             )
@@ -342,15 +342,15 @@ enum ThinkingOrbPresets {
 
     private static func breathing(speed: Double, dotCount: Int) -> Resolved {
         Resolved(speed: speed, rMin: 0.3) { size, t, voice in
-            ThinkingOrbBuilders.breathing(size, t, voice: voice, dotCount: dotCount)
+            OrbBuilders.breathing(size, t, voice: voice, dotCount: dotCount)
         }
     }
 }
 
-private enum ThinkingOrbBuilders {
+private enum OrbBuilders {
     /// Only alpha is clock-driven in dictation, with a stable per-dot phase.
     private static func ghostTwinkle(_ index: Int, _ time: Double) -> Double {
-        0.05 * sin(time * 2 * .pi * 0.3 + ThinkingOrbGeometry.hashD(Double(index), 4.1) * 2 * .pi)
+        0.05 * sin(time * 2 * .pi * 0.3 + OrbGeometry.hashD(Double(index), 4.1) * 2 * .pi)
     }
 
     static func orbits(
@@ -363,23 +363,23 @@ private enum ThinkingOrbBuilders {
         ghostA: Double,
         partR: Double,
         partRDepth: Double
-    ) -> ThinkingOrbFrame {
+    ) -> OrbFrame {
         let cx = size / 2
         let cy = size / 2
         // Fill the same 20pt slot as Game of Life instead of insetting the orb.
         let R = (size / 2) * 0.9
-        let pt = ThinkingOrbGeometry.Projector(yaw: t * 0.12, tilt: 0.3, cx: cx, cy: cy, scale: 1)
-        let rs = ThinkingOrbGeometry.radiusScale(size, 0.6)
-        var dots: [ThinkingOrbDot] = []
+        let pt = OrbGeometry.Projector(yaw: t * 0.12, tilt: 0.3, cx: cx, cy: cy, scale: 1)
+        let rs = OrbGeometry.radiusScale(size, 0.6)
+        var dots: [OrbDot] = []
         dots.reserveCapacity(
-            ThinkingOrbGeometry.below(orbitN)
-                * (ThinkingOrbGeometry.below(ghostN) + ThinkingOrbGeometry.below(particles))
+            OrbGeometry.below(orbitN)
+                * (OrbGeometry.below(ghostN) + OrbGeometry.below(particles))
         )
 
-        for orb in 0..<ThinkingOrbGeometry.below(orbitN) {
-            let h1 = ThinkingOrbGeometry.hashD(Double(orb), 1.7)
-            let h2 = ThinkingOrbGeometry.hashD(Double(orb), 5.2)
-            let h3 = ThinkingOrbGeometry.hashD(Double(orb), 8.9)
+        for orb in 0..<OrbGeometry.below(orbitN) {
+            let h1 = OrbGeometry.hashD(Double(orb), 1.7)
+            let h2 = OrbGeometry.hashD(Double(orb), 5.2)
+            let h3 = OrbGeometry.hashD(Double(orb), 8.9)
             let ro = R * (0.45 + 0.52 * h1)
             let th = h1 * 2 * Double.pi
             let phi = acos(2 * h2 - 1)
@@ -397,7 +397,7 @@ private enum ThinkingOrbBuilders {
             let vz = nx * uy - ny * ux
             let speed = (0.25 + 0.55 * h3) * (h3 > 0.5 ? 1 : -1)
 
-            for k in 0..<ThinkingOrbGeometry.below(ghostN) {
+            for k in 0..<OrbGeometry.below(ghostN) {
                 let a = (Double(k) / ghostN) * 2 * Double.pi
                 let (px, py, z) = pt(
                     (ux * cos(a) + vx * sin(a)) * ro,
@@ -405,12 +405,12 @@ private enum ThinkingOrbBuilders {
                     (uz * cos(a) + vz * sin(a)) * ro
                 )
                 let depth = (z / ro + 1) / 2
-                dots.append(ThinkingOrbDot(
+                dots.append(OrbDot(
                     x: px, y: py, z: z, r: ghostR * rs, white: 0.72,
                     a: ghostA * (0.4 + 0.6 * depth)
                 ))
             }
-            for m in 0..<ThinkingOrbGeometry.below(particles) {
+            for m in 0..<OrbGeometry.below(particles) {
                 let a = t * speed + (Double(m) / particles) * 2 * Double.pi + h2 * 6
                 let (px, py, z) = pt(
                     (ux * cos(a) + vx * sin(a)) * ro,
@@ -418,7 +418,7 @@ private enum ThinkingOrbBuilders {
                     (uz * cos(a) + vz * sin(a)) * ro
                 )
                 let depth = (z / ro + 1) / 2
-                dots.append(ThinkingOrbDot(
+                dots.append(OrbDot(
                     x: px, y: py, z: z,
                     r: (partR + partRDepth * depth) * rs,
                     white: 0.3 - 0.22 * depth,
@@ -427,7 +427,7 @@ private enum ThinkingOrbBuilders {
                 ))
             }
         }
-        return ThinkingOrbFrame(dots: dots)
+        return OrbFrame(dots: dots)
     }
 
     static func globe(
@@ -440,28 +440,28 @@ private enum ThinkingOrbBuilders {
         rBoost: Double,
         scanMul: Double,
         dimBase: Double
-    ) -> ThinkingOrbFrame {
+    ) -> OrbFrame {
         let spin = 0.5
         let cx = size / 2
         let cy = size / 2
         let radius = (size / 2) * 0.9
         let tilt = 0.4 + 0.06 * sin(t * 0.35)
-        let pt = ThinkingOrbGeometry.Projector(yaw: t * spin, tilt: tilt, cx: cx, cy: cy, scale: radius)
+        let pt = OrbGeometry.Projector(yaw: t * spin, tilt: tilt, cx: cx, cy: cy, scale: radius)
         let scan = t * (spin + (1.7 - spin) * scanMul)
-        let rs = ThinkingOrbGeometry.radiusScale(size, 0.6)
-        var dots: [ThinkingOrbDot] = []
-        for li in 0..<ThinkingOrbGeometry.through(latRings) {
+        let rs = OrbGeometry.radiusScale(size, 0.6)
+        var dots: [OrbDot] = []
+        for li in 0..<OrbGeometry.through(latRings) {
             let lat = -Double.pi / 2 + (Double(li) / latRings) * Double.pi
             let cosLat = cos(lat)
             let sinLat = sin(lat)
-            let lonCount = max(1, Int(ThinkingOrbGeometry.jsRound(abs(cosLat) * lonDensity)))
+            let lonCount = max(1, Int(OrbGeometry.jsRound(abs(cosLat) * lonDensity)))
             for lj in 0..<lonCount {
                 let lon = (Double(lj) / Double(lonCount)) * 2 * Double.pi
                 let (px, py, z) = pt(cosLat * cos(lon), sinLat, cosLat * sin(lon))
                 let depth = (z + 1) / 2
-                let d = ThinkingOrbGeometry.angleDelta(lon + t * spin, scan)
+                let d = OrbGeometry.angleDelta(lon + t * spin, scan)
                 let boost = exp(-(d * d) / 0.18) * max(0, z)
-                dots.append(ThinkingOrbDot(
+                dots.append(OrbDot(
                     x: px, y: py, z: z,
                     r: (rBase + rDepth * depth + rBoost * boost) * rs,
                     white: 0.62 - 0.54 * depth,
@@ -471,7 +471,7 @@ private enum ThinkingOrbBuilders {
                 ))
             }
         }
-        return ThinkingOrbFrame(dots: dots)
+        return OrbFrame(dots: dots)
     }
 
     private struct Move {
@@ -514,9 +514,9 @@ private enum ThinkingOrbBuilders {
     private static func makeMoves(_ count: Int) -> [Move] {
         (0..<count).map { i in
             let fi = Double(i)
-            let axis = min(2, Int((ThinkingOrbGeometry.hashD(fi, 2.3) * 3).rounded(.down)))
-            let lo = -1.0 + 0.5 * min(3, (ThinkingOrbGeometry.hashD(fi, 5.9) * 4).rounded(.down))
-            let dir: Double = ThinkingOrbGeometry.hashD(fi, 7.7) < 0.5 ? 1 : -1
+            let axis = min(2, Int((OrbGeometry.hashD(fi, 2.3) * 3).rounded(.down)))
+            let lo = -1.0 + 0.5 * min(3, (OrbGeometry.hashD(fi, 5.9) * 4).rounded(.down))
+            let dir: Double = OrbGeometry.hashD(fi, 7.7) < 0.5 ? 1 : -1
             return Move(axis: axis, lo: lo, hi: lo + 0.5, ang: (dir * Double.pi) / 2)
         }
     }
@@ -574,26 +574,26 @@ private enum ThinkingOrbBuilders {
         rDepth: Double,
         rActive: Double,
         slotDur: Double
-    ) -> ThinkingOrbFrame {
+    ) -> OrbFrame {
         let cx = size / 2
         let cy = size / 2
         let R = (size / 2) * 0.9
-        let pt = ThinkingOrbGeometry.Projector(
+        let pt = OrbGeometry.Projector(
             yaw: t * 0.55,
             tilt: 0.35 + 0.1 * sin(t * 0.9),
             cx: cx,
             cy: cy,
             scale: R
         )
-        let rs = ThinkingOrbGeometry.radiusScale(size, 0.6)
+        let rs = OrbGeometry.radiusScale(size, 0.6)
         let moves = makeMoves(moveCount)
         let sc = solveCycle(t, moveCount, slotDur, 1.2)
-        var dots: [ThinkingOrbDot] = []
-        for li in 0..<ThinkingOrbGeometry.through(latRings) {
+        var dots: [OrbDot] = []
+        for li in 0..<OrbGeometry.through(latRings) {
             let lat = -Double.pi / 2 + (Double(li) / latRings) * Double.pi
             let cosLat = cos(lat)
             let sinLat = sin(lat)
-            let lonCount = max(1, Int(ThinkingOrbGeometry.jsRound(abs(cosLat) * lonDensity)))
+            let lonCount = max(1, Int(OrbGeometry.jsRound(abs(cosLat) * lonDensity)))
             for lj in 0..<lonCount {
                 let lon = (Double(lj) / Double(lonCount)) * 2 * Double.pi
                 let moved = applyMoves(
@@ -606,7 +606,7 @@ private enum ThinkingOrbBuilders {
                 )
                 let (px, py, zr) = pt(moved.x, moved.y, moved.z)
                 let depth = (zr + 1) / 2
-                dots.append(ThinkingOrbDot(
+                dots.append(OrbDot(
                     x: px, y: py, z: zr,
                     r: (rBase + rDepth * depth + (moved.inActive ? rActive : 0)) * rs,
                     white: 0.62 - 0.54 * depth - (moved.inActive ? 0.14 : 0),
@@ -615,7 +615,7 @@ private enum ThinkingOrbBuilders {
                 ))
             }
         }
-        return ThinkingOrbFrame(dots: dots)
+        return OrbFrame(dots: dots)
     }
 
     /// Oppi's full-sphere Breathing, rather than the original face-on ring.
@@ -626,21 +626,21 @@ private enum ThinkingOrbBuilders {
         _ t: Double,
         voice: VoiceSpectrumFrame,
         dotCount: Int
-    ) -> ThinkingOrbFrame {
+    ) -> OrbFrame {
         let R = size * 0.39
-        let rs = ThinkingOrbGeometry.radiusScale(size, 0.6)
+        let rs = OrbGeometry.radiusScale(size, 0.6)
         let bands = voice.bands
         let onset = Double(min(1, voice.flux / 30))
-        var dots: [ThinkingOrbDot] = []
+        var dots: [OrbDot] = []
         dots.reserveCapacity(dotCount)
         for i in 0..<dotCount {
-            let d = ThinkingOrbGeometry.fibDir(i, Double(dotCount))
+            let d = OrbGeometry.fibDir(i, Double(dotCount))
             let y = d.1
             let y2 = y * y
             let p2 = (3 * y2 - 1) / 2
             let p3 = (5 * y2 * y - 3 * y) / 2
             let p4 = (35 * y2 * y2 - 30 * y2 + 3) / 8
-            let roughness = 2 * ThinkingOrbGeometry.hashD(Double(i), 9.3) - 1
+            let roughness = 2 * OrbGeometry.hashD(Double(i), 9.3) - 1
             // Higher bands stay close to the chest mode so pitch is
             // visible at 32/44 pt, not a faint roughness on a swell.
             let displacement = 0.32 * Double(bands[0])
@@ -657,7 +657,7 @@ private enum ThinkingOrbBuilders {
             let roundingInset = 2 * Double(Float(size).ulp)
             let canvasRadius = max(0, size / 2 - dotRadius - roundingInset) / max(abs(d.0), abs(d.1))
             let radius = min(R * (0.94 + min(0.36, max(-0.36, displacement))), canvasRadius)
-            dots.append(ThinkingOrbDot(
+            dots.append(OrbDot(
                 x: size / 2 + d.0 * radius,
                 y: size / 2 - d.1 * radius,
                 z: d.2 * radius,
@@ -668,7 +668,7 @@ private enum ThinkingOrbBuilders {
                 palette: Double(min(3, i * 4 / dotCount))
             ))
         }
-        return ThinkingOrbFrame(dots: dots)
+        return OrbFrame(dots: dots)
     }
 
     /// Upstream Composing's spherical sash, with its camera/plane frozen (spin=0).
@@ -681,10 +681,10 @@ private enum ThinkingOrbBuilders {
         segs: Int,
         ghostN: Int,
         radiusMultiplier: Double
-    ) -> ThinkingOrbFrame {
+    ) -> OrbFrame {
         let R = (size / 2) * 0.78
-        let pt = ThinkingOrbGeometry.Projector(yaw: 0, tilt: 0.3, cx: size / 2, cy: size / 2, scale: 1)
-        let rs = ThinkingOrbGeometry.radiusScale(size, 0.6)
+        let pt = OrbGeometry.Projector(yaw: 0, tilt: 0.3, cx: size / 2, cy: size / 2, scale: 1)
+        let rs = OrbGeometry.radiusScale(size, 0.6)
         let rBase = 1.1 * radiusMultiplier
         let rDepth = 1.7 * radiusMultiplier
         let bands = voice.bands
@@ -695,13 +695,13 @@ private enum ThinkingOrbBuilders {
         let phase = 0.12 * sin(t * 0.16) + 0.65 * Double(bands[0])
         let vy = cos(0.55), vz = sin(0.55)
         let ny = -vz, nz = vy
-        var dots: [ThinkingOrbDot] = []
+        var dots: [OrbDot] = []
         dots.reserveCapacity(ghostN + lanes * segs)
         for i in 0..<ghostN {
-            let d = ThinkingOrbGeometry.fibDir(i, Double(ghostN))
+            let d = OrbGeometry.fibDir(i, Double(ghostN))
             let (px, py, z) = pt(d.0 * R, d.1 * R, d.2 * R)
             let depth = (z / R + 1) / 2
-            dots.append(ThinkingOrbDot(
+            dots.append(OrbDot(
                 x: px, y: py, z: z, r: max(0.3, 0.8 * rs),
                 white: 0.78, a: 0.1 + 0.22 * depth
             ))
@@ -733,7 +733,7 @@ private enum ThinkingOrbBuilders {
                 let swell = min(0.2, 0.12 * onset + 0.20 * pitch)
                 // Normalization keeps every center on R. Even the largest
                 // flux-boosted dot fits the remaining .11 * size at 20/32/44pt.
-                dots.append(ThinkingOrbDot(
+                dots.append(OrbDot(
                     x: px, y: py, z: zr,
                     r: max(0.3, (rBase + rDepth * depth) * (1 - 0.25 * edge) * rs * (1 + swell)),
                     white: 0.52 - 0.44 * depth + 0.18 * edge - 0.16 * pitch,
@@ -743,7 +743,7 @@ private enum ThinkingOrbBuilders {
                 ))
             }
         }
-        return ThinkingOrbFrame(dots: dots)
+        return OrbFrame(dots: dots)
     }
 
     /// 0 at the sash middle, 1 at the rims. Overlap so neighboring lanes swell together.

@@ -2,11 +2,11 @@ import Foundation
 
 /// Visual style for the composer dictation control.
 ///
-/// `ring` is the legacy stroke. `composing` and `breathing` are Metal orbs.
+/// `ring` is the default stroke. `breathing` and `composing` are Metal orbs.
 enum DictationIndicatorStyle: String, CaseIterable, Sendable {
-    case composing
-    case breathing
     case ring
+    case breathing
+    case composing
 
     var displayName: String {
         switch self {

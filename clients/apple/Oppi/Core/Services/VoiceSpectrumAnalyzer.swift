@@ -65,7 +65,7 @@ final class VoiceSpectrumAnalyzer: @unchecked Sendable {
                 filled = 0
             }
         }
-        latest.level = ThinkingOrbAudio.clamp(rms * 25)
+        latest.level = OrbAudio.clamp(rms * 25)
         latest.flux = onset
         // Spectral contrast can amplify a quiet tone above its per-band floor.
         // Apply the legacy absolute quiet floor only to the emitted frame;
@@ -121,7 +121,7 @@ final class VoiceSpectrumAnalyzer: @unchecked Sendable {
             floor[k] = min(db, floor[k] + Float(Double(n) / sampleRate))
             // 6 dB clears the floor's lag so room noise stays still.
             // Shape gain, not a shorter span, carries the visible reaction.
-            bands[k] = ThinkingOrbAudio.clamp((db - floor[k] - 6) / 24)
+            bands[k] = OrbAudio.clamp((db - floor[k] - 6) / 24)
             flux += max(0, db - previousDB[k])
             previousDB[k] = db
         }

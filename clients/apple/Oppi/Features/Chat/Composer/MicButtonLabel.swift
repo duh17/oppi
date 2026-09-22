@@ -82,7 +82,7 @@ struct MicButtonLabel: View {
     }
 
     private var showsOrb: Bool {
-        listeningChrome && !isProcessing && dictationStyle.thinkingOrbStyle != nil
+        listeningChrome && !isProcessing && dictationStyle.orbStyle != nil
     }
 
     var body: some View {
@@ -93,8 +93,8 @@ struct MicButtonLabel: View {
                 Circle().fill(Color.themeBgHighlight)
             }
 
-            if showsOrb, let orbStyle = dictationStyle.thinkingOrbStyle {
-                ThinkingOrbView(
+            if showsOrb, let orbStyle = dictationStyle.orbStyle {
+                OrbView(
                     style: orbStyle,
                     sizeClass: .dictation(side: Double(diameter)),
                     tint: indicatorColor,

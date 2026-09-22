@@ -3,18 +3,18 @@ import Metal
 import os
 import QuartzCore
 
-struct ThinkingOrbTint: Equatable, Sendable {
+struct OrbTint: Equatable, Sendable {
     var red: Float
     var green: Float
     var blue: Float
     var isDark: Bool
 
-    static let lightFallback = ThinkingOrbTint(red: 0.12, green: 0.12, blue: 0.14, isDark: false)
-    static let darkFallback = ThinkingOrbTint(red: 0.92, green: 0.92, blue: 0.94, isDark: true)
+    static let lightFallback = Self(red: 0.12, green: 0.12, blue: 0.14, isDark: false)
+    static let darkFallback = Self(red: 0.92, green: 0.92, blue: 0.94, isDark: true)
 
-    func repeatingPalette() -> ThinkingOrbPalette {
+    func repeatingPalette() -> OrbPalette {
         let color = SIMD3<Float>(red, green, blue)
-        return ThinkingOrbPalette(accents: [color, color, color, color])
+        return OrbPalette(accents: [color, color, color, color])
     }
 
     static func isDarkBackground(red: CGFloat, green: CGFloat, blue: CGFloat) -> Bool {
@@ -22,11 +22,11 @@ struct ThinkingOrbTint: Equatable, Sendable {
     }
 }
 
-struct ThinkingOrbPalette: Equatable, Sendable {
+struct OrbPalette: Equatable, Sendable {
     /// Blue, cyan, purple, orange slots. Always four.
     var accents: [SIMD3<Float>]
 
-    static let empty = ThinkingOrbPalette(accents: [
+    static let empty = Self(accents: [
         SIMD3(0.35, 0.55, 0.95),
         SIMD3(0.30, 0.75, 0.85),
         SIMD3(0.62, 0.48, 0.90),
@@ -40,22 +40,22 @@ struct ThinkingOrbPalette: Equatable, Sendable {
 }
 
 /// Process-wide immutable Metal setup. Vertex rings stay per renderer instance.
-final class ThinkingOrbMetalPipeline: @unchecked Sendable {
+final class OrbMetalPipeline: @unchecked Sendable {
     let device: MTLDevice
     let queue: MTLCommandQueue
     let pipeline: MTLRenderPipelineState
 
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var cached: ThinkingOrbMetalPipeline?
+    nonisolated(unsafe) private static var cached: OrbMetalPipeline?
     nonisolated(unsafe) private static var cachedError: String?
 
-    static func shared() throws -> ThinkingOrbMetalPipeline {
+    static func shared() throws -> OrbMetalPipeline {
         lock.lock()
         defer { lock.unlock() }
         if let cached { return cached }
-        if let cachedError { throw ThinkingOrbMetalRenderer.RendererError.pipeline(cachedError) }
+        if let cachedError { throw OrbMetalRenderer.RendererError.pipeline(cachedError) }
         do {
-            let built = try ThinkingOrbMetalPipeline()
+            let built = try OrbMetalPipeline()
             cached = built
             return built
         } catch {
@@ -66,17 +66,17 @@ final class ThinkingOrbMetalPipeline: @unchecked Sendable {
 
     private init() throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
-            throw ThinkingOrbMetalRenderer.RendererError.noDevice
+            throw OrbMetalRenderer.RendererError.noDevice
         }
         guard let queue = device.makeCommandQueue() else {
-            throw ThinkingOrbMetalRenderer.RendererError.noCommandQueue
+            throw OrbMetalRenderer.RendererError.noCommandQueue
         }
-        let library = try device.makeLibrary(source: ThinkingOrbMetalRenderer.shaderSource, options: nil)
+        let library = try device.makeLibrary(source: OrbMetalRenderer.shaderSource, options: nil)
         guard let vertex = library.makeFunction(name: "vertex_dot") else {
-            throw ThinkingOrbMetalRenderer.RendererError.missingFunction("vertex_dot")
+            throw OrbMetalRenderer.RendererError.missingFunction("vertex_dot")
         }
         guard let fragment = library.makeFunction(name: "fragment_dot") else {
-            throw ThinkingOrbMetalRenderer.RendererError.missingFunction("fragment_dot")
+            throw OrbMetalRenderer.RendererError.missingFunction("fragment_dot")
         }
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = vertex
@@ -93,7 +93,7 @@ final class ThinkingOrbMetalPipeline: @unchecked Sendable {
     }
 }
 
-struct ThinkingOrbMetalFrameCost: Sendable {
+struct OrbMetalFrameCost: Sendable {
     var encodeNanos: UInt64
     var submitNanos: UInt64
     var status: MTLCommandBufferStatus
@@ -102,12 +102,12 @@ struct ThinkingOrbMetalFrameCost: Sendable {
     var completed: Bool
 }
 
-/// Batched Metal rasterizer for thinking-orb dots.
+/// Batched Metal rasterizer for orb dots.
 ///
 /// Three immutable vertex slots. A slot is not rewritten until its command
 /// buffer completion handler runs, including failure. Live drawing never waits
 /// on the GPU from the display-link thread.
-final class ThinkingOrbMetalRenderer: @unchecked Sendable {
+final class OrbMetalRenderer: @unchecked Sendable {
     static let ringSize = 3
 
     let device: MTLDevice
@@ -115,7 +115,7 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
     private let pipeline: MTLRenderPipelineState
     private let lock = NSLock()
     private var slots: [Slot]
-    var onFinished: (@Sendable (ThinkingOrbMetalFrameCost) -> Void)?
+    var onFinished: (@Sendable (OrbMetalFrameCost) -> Void)?
 
     private struct Slot {
         var buffer: MTLBuffer
@@ -166,16 +166,16 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
 
     var encodeFault: EncodeFault = .none
 
-    static func make() -> (renderer: ThinkingOrbMetalRenderer?, unavailableReason: String?) {
+    static func make() -> (renderer: OrbMetalRenderer?, unavailableReason: String?) {
         do {
-            let shared = try ThinkingOrbMetalPipeline.shared()
-            return (try ThinkingOrbMetalRenderer(shared: shared), nil)
+            let shared = try OrbMetalPipeline.shared()
+            return (try OrbMetalRenderer(shared: shared), nil)
         } catch {
             return (nil, String(describing: error))
         }
     }
 
-    init(shared: ThinkingOrbMetalPipeline) throws {
+    init(shared: OrbMetalPipeline) throws {
         self.device = shared.device
         self.queue = shared.queue
         self.pipeline = shared.pipeline
@@ -207,12 +207,12 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
     }
 
     func encode(
-        dots: [ThinkingOrbDot],
+        dots: [OrbDot],
         designSize: Double,
         drawable: CAMetalDrawable,
-        tint: ThinkingOrbTint,
-        palette: ThinkingOrbPalette? = nil
-    ) -> ThinkingOrbMetalFrameCost {
+        tint: OrbTint,
+        palette: OrbPalette? = nil
+    ) -> OrbMetalFrameCost {
         encode(
             dots: dots,
             designSize: designSize,
@@ -224,13 +224,13 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
     }
 
     func encodeOffscreen(
-        dots: [ThinkingOrbDot],
+        dots: [OrbDot],
         designSize: Double,
         texture: MTLTexture,
-        tint: ThinkingOrbTint,
+        tint: OrbTint,
         waitUntilCompleted: Bool,
-        palette: ThinkingOrbPalette? = nil
-    ) -> ThinkingOrbMetalFrameCost {
+        palette: OrbPalette? = nil
+    ) -> OrbMetalFrameCost {
         encode(
             dots: dots,
             designSize: designSize,
@@ -260,15 +260,15 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
     }
 
     private func encode(
-        dots: [ThinkingOrbDot],
+        dots: [OrbDot],
         designSize: Double,
         target: MTLTexture,
         drawable: CAMetalDrawable?,
-        tint: ThinkingOrbTint,
-        palette: ThinkingOrbPalette,
+        tint: OrbTint,
+        palette: OrbPalette,
         waitUntilCompleted: Bool = false
-    ) -> ThinkingOrbMetalFrameCost {
-        let failed = ThinkingOrbMetalFrameCost(
+    ) -> OrbMetalFrameCost {
+        let failed = OrbMetalFrameCost(
             encodeNanos: 0,
             submitNanos: 0,
             status: .error,
@@ -352,7 +352,7 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
             guard let self else { return }
             self.releaseSlot(slotIndex)
             let status = finished.status
-            let cost = ThinkingOrbMetalFrameCost(
+            let cost = OrbMetalFrameCost(
                 encodeNanos: encodeNanos,
                 submitNanos: 0,
                 status: status,
@@ -369,7 +369,7 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
 
         if waitUntilCompleted {
             commandBuffer.waitUntilCompleted()
-            return ThinkingOrbMetalFrameCost(
+            return OrbMetalFrameCost(
                 encodeNanos: encodeNanos,
                 submitNanos: submitNanos,
                 status: commandBuffer.status,
@@ -379,7 +379,7 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
             )
         }
 
-        return ThinkingOrbMetalFrameCost(
+        return OrbMetalFrameCost(
             encodeNanos: encodeNanos,
             submitNanos: submitNanos,
             status: commandBuffer.status,
@@ -390,7 +390,7 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
     }
 
     private func packDots(
-        _ dots: [ThinkingOrbDot],
+        _ dots: [OrbDot],
         designSize: Double,
         viewport: SIMD2<Float>
     ) -> Int? {
@@ -494,22 +494,26 @@ final class ThinkingOrbMetalRenderer: @unchecked Sendable {
         if (coverage <= 0.0) {
             discard_fragment();
         }
-        float ink = u.viewportDarkPad.z > 0.5 ? (1.0 - in.white) : in.white;
+        float amount = saturate(1.0 - in.white);
         float a = saturate(in.alpha) * coverage;
-        ink = saturate(ink);
         float3 accent = in.palette < 0.5 ? u.accent0.xyz
                       : in.palette < 1.5 ? u.accent1.xyz
                       : in.palette < 2.5 ? u.accent2.xyz
                       : u.accent3.xyz;
-        float3 color = mix(u.tint.xyz, accent, saturate(in.accent)) * ink;
+        float3 hue = mix(u.tint.xyz, accent, saturate(in.accent));
+        // Dark: dim toward black. Light: fade toward paper, never multiply a
+        // dark accent into a black disk.
+        float3 color = u.viewportDarkPad.z > 0.5
+            ? hue * amount
+            : mix(float3(1.0, 1.0, 1.0), hue, saturate(0.45 + 0.55 * amount));
         return float4(color * a, a);
     }
     """
 }
 
-enum ThinkingOrbLog {
+enum OrbLog {
     static let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "dev.chenda.Oppi",
-        category: "ThinkingOrb"
+        category: "Orb"
     )
 }

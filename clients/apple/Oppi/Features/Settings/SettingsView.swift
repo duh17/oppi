@@ -87,35 +87,6 @@ struct SettingsView: View {
                         .id(spinnerStyle)
                 }
 
-                Picker("Dictation indicator", selection: $dictationIndicatorStyle) {
-                    ForEach(DictationIndicatorStyle.allCases, id: \.self) { style in
-                        Text(style.displayName).tag(style)
-                    }
-                }
-                .onChange(of: dictationIndicatorStyle) { _, newValue in
-                    AppPreferences.Appearance.setDictationIndicatorStyle(newValue)
-                }
-                .accessibilityIdentifier("settings.dictationIndicatorStyle")
-
-                VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent("Dictation preview") {
-                        MicButtonLabel(
-                            isRecording: true,
-                            isProcessing: false,
-                            voiceSpectrum: .zero,
-                            languageLabel: "EN",
-                            accentColor: .themeBlue,
-                            engineBadge: .onDevice,
-                            diameter: ComposerInputMetrics.controlDiameter,
-                            dictationStyle: dictationIndicatorStyle
-                        )
-                        .id(dictationIndicatorStyle)
-                    }
-                    Text("Preview only — not microphone capture.")
-                        .font(.footnote)
-                        .foregroundStyle(.themeComment)
-                }
-
                 if UIDevice.current.userInterfaceIdiom == .phone {
                     Toggle("Compact turns", isOn: $quietModeEnabled)
                         .onChange(of: quietModeEnabled) { _, newValue in
@@ -322,6 +293,35 @@ struct SettingsView: View {
                 }
                 .onChange(of: voiceEngineMode) { _, newValue in
                     AppPreferences.Voice.setEngineMode(newValue)
+                }
+
+                Picker("Dictation animation", selection: $dictationIndicatorStyle) {
+                    ForEach(DictationIndicatorStyle.allCases, id: \.self) { style in
+                        Text(style.displayName).tag(style)
+                    }
+                }
+                .onChange(of: dictationIndicatorStyle) { _, newValue in
+                    AppPreferences.Appearance.setDictationIndicatorStyle(newValue)
+                }
+                .accessibilityIdentifier("settings.dictationIndicatorStyle")
+
+                VStack(alignment: .leading, spacing: 8) {
+                    LabeledContent("Dictation preview") {
+                        MicButtonLabel(
+                            isRecording: true,
+                            isProcessing: false,
+                            voiceSpectrum: .zero,
+                            languageLabel: "EN",
+                            accentColor: .themeBlue,
+                            engineBadge: .onDevice,
+                            diameter: ComposerInputMetrics.controlDiameter,
+                            dictationStyle: dictationIndicatorStyle
+                        )
+                        .id(dictationIndicatorStyle)
+                    }
+                    Text("Preview only — not microphone capture.")
+                        .font(.footnote)
+                        .foregroundStyle(.themeComment)
                 }
             } header: {
                 Text("Voice")

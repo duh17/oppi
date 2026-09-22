@@ -25,7 +25,7 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
     private let indicatorContainer = UIView()
     private let brailleView = BrailleSpinnerUIView()
     private let golView = GameOfLifeUIView(gridSize: 6)
-    private let metalView = ThinkingOrbMetalView(style: .working, sizeClass: .workingCompact)
+    private let metalView = OrbMetalView(style: .working, sizeClass: .workingCompact)
     private let customIndicatorLabel = UILabel()
     private let workingLabel = UILabel()
 
@@ -156,7 +156,7 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         let showsCustomIndicator = customFrames?.isEmpty == false
 
         let style = SpinnerStyle.current
-        let showsMetal = style.thinkingOrbStyle != nil
+        let showsMetal = style.orbStyle != nil
         brailleView.isHidden = hidesIndicator || showsCustomIndicator || style != .brailleDots
         golView.isHidden = hidesIndicator || showsCustomIndicator || style != .gameOfLife
         metalView.isHidden = hidesIndicator || showsCustomIndicator || !showsMetal
@@ -170,8 +170,8 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         metalView.accentUIColors = [palette.blue, palette.cyan, palette.purple, palette.orange].map { UIColor($0) }
         var bgR: CGFloat = 0, bgG: CGFloat = 0, bgB: CGFloat = 0, bgA: CGFloat = 0
         UIColor(palette.bg).getRed(&bgR, green: &bgG, blue: &bgB, alpha: &bgA)
-        metalView.isDarkBackground = ThinkingOrbTint.isDarkBackground(red: bgR, green: bgG, blue: bgB)
-        if let orbStyle = style.thinkingOrbStyle {
+        metalView.isDarkBackground = OrbTint.isDarkBackground(red: bgR, green: bgG, blue: bgB)
+        if let orbStyle = style.orbStyle {
             metalView.style = orbStyle
             metalView.sizeClass = .workingCompact
         }

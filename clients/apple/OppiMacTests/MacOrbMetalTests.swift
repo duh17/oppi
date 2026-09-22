@@ -3,17 +3,17 @@ import QuartzCore
 import Testing
 @testable import Oppi
 
-@Suite("Mac thinking orb Metal host")
+@Suite("Mac orb Metal host")
 @MainActor
-struct MacThinkingOrbMetalTests {
+struct MacOrbMetalTests {
     @Test func macOffscreenEncodeCompletesOnTheGPU() throws {
-        let built = ThinkingOrbMetalRenderer.make()
+        let built = OrbMetalRenderer.make()
         guard let renderer = built.renderer else {
             Issue.record("Metal unavailable: \(built.unavailableReason ?? "unknown")")
             return
         }
-        let design = ThinkingOrbSizeClass.workingCompact.designSize
-        let frame = ThinkingOrbGeometry.frame(
+        let design = OrbSizeClass.workingCompact.designSize
+        let frame = OrbGeometry.frame(
             style: .working,
             sizeClass: .workingCompact,
             size: design,
@@ -170,7 +170,7 @@ struct MacThinkingOrbMetalTests {
 private struct MacOrbHarness {
     let window: NSWindow
     let container: NSView
-    let view: ThinkingOrbMetalView
+    let view: OrbMetalView
     var clip: NSClipView?
 }
 
@@ -193,7 +193,7 @@ private func makeMacOrbHarness() throws -> MacOrbHarness {
     let content = NSView(frame: NSRect(x: 0, y: 0, width: 80, height: 80))
     content.wantsLayer = true
     window.contentView = content
-    let view = ThinkingOrbMetalView(style: .working, sizeClass: .workingCompact)
+    let view = OrbMetalView(style: .working, sizeClass: .workingCompact)
     view.frame = NSRect(x: 18, y: 18, width: 16, height: 16)
     view.tintNSColor = .white
     view.isDarkBackground = true
@@ -238,7 +238,7 @@ private func tearDown(_ harness: MacOrbHarness) {
 }
 
 @MainActor
-private func waitForMacCompletions(on view: ThinkingOrbMetalView, minimum: Int) async throws -> Int {
+private func waitForMacCompletions(on view: OrbMetalView, minimum: Int) async throws -> Int {
     let deadline = ContinuousClock.now + .seconds(1.2)
     while ContinuousClock.now < deadline {
         if view.framesCompleted >= minimum {
@@ -254,7 +254,7 @@ private func waitForMacCompletions(on view: ThinkingOrbMetalView, minimum: Int) 
 }
 
 @MainActor
-private func waitUntilMacStopped(_ view: ThinkingOrbMetalView) async throws {
+private func waitUntilMacStopped(_ view: OrbMetalView) async throws {
     let deadline = ContinuousClock.now + .seconds(1.2)
     while ContinuousClock.now < deadline {
         if !view.isDriving { return }
@@ -267,7 +267,7 @@ private func waitUntilMacStopped(_ view: ThinkingOrbMetalView) async throws {
 }
 
 @MainActor
-private func waitUntilMacDriving(_ view: ThinkingOrbMetalView) async throws {
+private func waitUntilMacDriving(_ view: OrbMetalView) async throws {
     let deadline = ContinuousClock.now + .seconds(1.2)
     while ContinuousClock.now < deadline {
         if view.isDriving { return }
@@ -280,7 +280,7 @@ private func waitUntilMacDriving(_ view: ThinkingOrbMetalView) async throws {
 }
 
 @MainActor
-private func macTimeoutMessage(_ view: ThinkingOrbMetalView, expected: String) -> String {
+private func macTimeoutMessage(_ view: OrbMetalView, expected: String) -> String {
     let metal = view.layer as? CAMetalLayer
     let window = view.window
     return """

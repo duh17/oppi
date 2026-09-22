@@ -10,7 +10,7 @@ import UIKit
 final class MicButtonChromeView: UIControl {
     private let fillView = UIView()
     private let ringLayer = CAShapeLayer()
-    private let orbView = ThinkingOrbMetalView(style: .composing, sizeClass: .dictationStandard)
+    private let orbView = OrbMetalView(style: .composing, sizeClass: .dictationStandard)
     private let imageView = UIImageView()
     private let textLabel = UILabel()
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
@@ -177,13 +177,13 @@ final class MicButtonChromeView: UIControl {
         var bgR: CGFloat = 0, bgG: CGFloat = 0, bgB: CGFloat = 0, bgA: CGFloat = 0
         UIColor(palette.bg).getRed(&bgR, green: &bgG, blue: &bgB, alpha: &bgA)
 
-        let showsOrb = listeningChrome && !isProcessing && dictationStyle.thinkingOrbStyle != nil
+        let showsOrb = listeningChrome && !isProcessing && dictationStyle.orbStyle != nil
         fillView.isHidden = showsOrb
         fillView.backgroundColor = showsOrb ? .clear : UIColor(palette.bgHighlight)
         ringLayer.isHidden = showsOrb
         orbView.isHidden = !showsOrb
         orbView.isAnimationEnabled = showsOrb
-        if let orbStyle = dictationStyle.thinkingOrbStyle {
+        if let orbStyle = dictationStyle.orbStyle {
             orbView.style = orbStyle
             orbView.sizeClass = .dictation(side: Double(diameter))
             orbView.accentUIColors = [palette.blue, palette.cyan, palette.purple, palette.orange].map { UIColor($0) }
@@ -191,7 +191,7 @@ final class MicButtonChromeView: UIControl {
                 orbView.tintUIColor = indicator
             }
             orbView.voiceSpectrum = spectrum
-            orbView.isDarkBackground = ThinkingOrbTint.isDarkBackground(red: bgR, green: bgG, blue: bgB)
+            orbView.isDarkBackground = OrbTint.isDarkBackground(red: bgR, green: bgG, blue: bgB)
         }
         ringLayer.strokeColor = (isRecording
             ? indicator

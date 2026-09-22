@@ -5,7 +5,7 @@ import Testing
 @Suite("SpinnerStyle")
 struct SpinnerStyleTests {
     @Test func displayNameMapping() {
-        #expect(SpinnerStyle.working.displayName == "Working")
+        #expect(SpinnerStyle.working.displayName == "Orbiting")
         #expect(SpinnerStyle.searching.displayName == "Searching")
         #expect(SpinnerStyle.solving.displayName == "Solving")
         #expect(SpinnerStyle.brailleDots.displayName == "Pi")
@@ -40,9 +40,9 @@ struct DictationIndicatorStyleTests {
 
     @Test func allCasesKeepsLegacyRingAndAddsVoiceOrbs() {
         #expect(DictationIndicatorStyle.allCases == [
-            .composing,
-            .breathing,
             .ring,
+            .breathing,
+            .composing,
         ])
     }
 
@@ -81,17 +81,17 @@ struct AppearanceStylePreferenceTests {
         }
     }
 
-    @Test func unsetDictationDefaultsToComposing() {
+    @Test func unsetDictationDefaultsToRing() {
         withClearedKey(AppPreferenceStore.Appearance.dictationIndicatorStyleKey) {
-            #expect(AppPreferenceStore.Appearance.dictationIndicatorStyle == .composing)
-            #expect(DictationIndicatorStyle.current == .composing)
+            #expect(AppPreferenceStore.Appearance.dictationIndicatorStyle == .ring)
+            #expect(DictationIndicatorStyle.current == .ring)
         }
     }
 
-    @Test func invalidDictationDefaultsToComposing() {
+    @Test func invalidDictationDefaultsToRing() {
         withRestoredKey(AppPreferenceStore.Appearance.dictationIndicatorStyleKey) { key in
             UserDefaults.standard.set("not-a-dictation-style", forKey: key)
-            #expect(AppPreferenceStore.Appearance.dictationIndicatorStyle == .composing)
+            #expect(AppPreferenceStore.Appearance.dictationIndicatorStyle == .ring)
         }
     }
 

@@ -8,22 +8,22 @@ import QuartzCore
 import SwiftUI
 
 #if canImport(UIKit)
-typealias ThinkingOrbPlatformView = UIView
+typealias OrbPlatformView = UIView
 #else
-typealias ThinkingOrbPlatformView = NSView
+typealias OrbPlatformView = NSView
 #endif
 
-/// Native Metal host for one thinking orb.
+/// Native Metal host for one orb.
 ///
 /// Owns display-link cadence, GPU submission, and lifecycle gating. Geometry is
 /// CPU-shared; rasterization is batched Metal. Hidden, inactive, offscreen, and
 /// Reduce Motion states stop the clock. Reduce Motion paints one still frame.
 @MainActor
-final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
-    var style: ThinkingOrbStyle {
+final class OrbMetalView: OrbPlatformView {
+    var style: OrbStyle {
         didSet { if style != oldValue { invalidateStillFrame() } }
     }
-    var sizeClass: ThinkingOrbSizeClass {
+    var sizeClass: OrbSizeClass {
         didSet { if sizeClass != oldValue { invalidateStillFrame() } }
     }
     var voiceSpectrum: VoiceSpectrumFrame = .zero
@@ -73,10 +73,10 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
     }
     #endif
 
-    private let renderer: ThinkingOrbMetalRenderer?
+    private let renderer: OrbMetalRenderer?
     private(set) var unavailableReason: String?
     private let fallbackLayer = CAShapeLayer()
-    private let ledger = ThinkingOrbFrameLedger()
+    private let ledger = OrbFrameLedger()
     private let displayLinkProxy = DisplayLinkProxy()
     nonisolated(unsafe) private var cadenceLink: CADisplayLink?
     nonisolated(unsafe) private var defaultObserverTokens: [NSObjectProtocol] = []
@@ -99,7 +99,7 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
     private(set) var lastPresentedSpectrum: VoiceSpectrumFrame = .zero
     private(set) var lastPresentedGeometryTime: Double = 0
     var inFlightGPUBuffers: Int { renderer?.inFlightCount ?? 0 }
-    var rendererForTests: ThinkingOrbMetalRenderer? { renderer }
+    var rendererForTests: OrbMetalRenderer? { renderer }
 
     var isFrozen: Bool {
         forceReduceMotion || (honorsSystemReduceMotion && systemReduceMotionEnabled)
@@ -111,16 +111,16 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
 
     private var metalLayer: CAMetalLayer? { layer as? CAMetalLayer }
 
-    init(style: ThinkingOrbStyle, sizeClass: ThinkingOrbSizeClass) {
+    init(style: OrbStyle, sizeClass: OrbSizeClass) {
         self.style = style
         self.sizeClass = sizeClass
-        let built = ThinkingOrbMetalRenderer.make()
+        let built = OrbMetalRenderer.make()
         self.renderer = built.renderer
         self.unavailableReason = built.unavailableReason
         super.init(frame: .zero)
         displayLinkProxy.owner = self
         if let reason = unavailableReason {
-            ThinkingOrbLog.logger.error("Thinking orb Metal unavailable: \(reason, privacy: .public)")
+            OrbLog.logger.error("Thinking orb Metal unavailable: \(reason, privacy: .public)")
         }
         #if canImport(UIKit)
         isOpaque = false
@@ -484,7 +484,7 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
 
     private func applyFrameRate() {
         let lowPower = forceLowPowerMode || ProcessInfo.processInfo.isLowPowerModeEnabled
-        let fps = ThinkingOrbDisplayPolicy.preferredFramesPerSecond(
+        let fps = OrbDisplayPolicy.preferredFramesPerSecond(
             isLowPowerModeEnabled: lowPower,
             thermalState: ProcessInfo.processInfo.thermalState
         )
@@ -526,16 +526,16 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
         lastStepNow = now
         let raw = frozen || !style.isVoiceReactive ? .zero : voiceSpectrum
         let smoothed = frozen ? .zero : smoother.step(raw: raw, dt: dt)
-        let speed = ThinkingOrbPresets.resolve(style, sizeClass).speed
+        let speed = OrbPresets.resolve(style, sizeClass).speed
         let wall = max(0, now - (clockOrigin ?? now))
         // Dictation uses wall time for Composing's calm sea and Breathing's alpha twinkle.
-        let geometryTime = frozen ? ThinkingOrbDisplayPolicy.reduceMotionTime
+        let geometryTime = frozen ? OrbDisplayPolicy.reduceMotionTime
             : (style.isVoiceReactive ? wall : wall * speed)
         let side = Double(min(bounds.width, bounds.height))
         let design = side > 0 ? side : sizeClass.designSize
         lastPresentedSpectrum = smoothed
         lastPresentedGeometryTime = geometryTime
-        let frame = ThinkingOrbGeometry.frame(
+        let frame = OrbGeometry.frame(
             style: style,
             sizeClass: sizeClass,
             size: design,
@@ -546,10 +546,10 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
     }
 
     @discardableResult
-    private func submit(_ frame: ThinkingOrbFrame, designSize: Double) -> Bool {
+    private func submit(_ frame: OrbFrame, designSize: Double) -> Bool {
         guard let renderer, let metalLayer else { return false }
         guard bounds.width > 0, bounds.height > 0 else { return false }
-        if renderer.inFlightCount >= ThinkingOrbMetalRenderer.ringSize {
+        if renderer.inFlightCount >= OrbMetalRenderer.ringSize {
             ledger.addSkipped()
             return false
         }
@@ -579,16 +579,16 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
         }
         ledger.addFailed()
         if let reason = cost.errorDescription {
-            ThinkingOrbLog.logger.error("Thinking orb encode failed: \(reason, privacy: .public)")
+            OrbLog.logger.error("Orb encode failed: \(reason, privacy: .public)")
         }
         return false
     }
 
-    private var currentTint: ThinkingOrbTint {
+    private var currentTint: OrbTint {
         #if canImport(UIKit)
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         tintUIColor.resolvedColor(with: traitCollection).getRed(&r, green: &g, blue: &b, alpha: &a)
-        return ThinkingOrbTint(
+        return OrbTint(
             red: Float(r),
             green: Float(g),
             blue: Float(b),
@@ -596,7 +596,7 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
         )
         #else
         let rgb = tintNSColor.usingColorSpace(.deviceRGB) ?? tintNSColor
-        return ThinkingOrbTint(
+        return OrbTint(
             red: Float(rgb.redComponent),
             green: Float(rgb.greenComponent),
             blue: Float(rgb.blueComponent),
@@ -804,7 +804,7 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
     }
     #endif
 
-    nonisolated private static func deliverVisibilityPing(_ owner: ThinkingOrbMetalView?) {
+    nonisolated private static func deliverVisibilityPing(_ owner: OrbMetalView?) {
         guard let owner else { return }
         if Thread.isMainThread {
             MainActor.assumeIsolated {
@@ -817,7 +817,7 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
         }
     }
 
-    private var currentPalette: ThinkingOrbPalette {
+    private var currentPalette: OrbPalette {
         #if canImport(UIKit)
         let colors = accentUIColors
         let resolved: [SIMD3<Float>] = (0..<4).map { index in
@@ -826,7 +826,7 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
             color.resolvedColor(with: traitCollection).getRed(&r, green: &g, blue: &b, alpha: &a)
             return SIMD3(Float(r), Float(g), Float(b))
         }
-        return ThinkingOrbPalette(accents: resolved)
+        return OrbPalette(accents: resolved)
         #else
         let colors = accentNSColors
         let resolved: [SIMD3<Float>] = (0..<4).map { index in
@@ -834,7 +834,7 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
             let rgb = raw.usingColorSpace(.deviceRGB) ?? raw
             return SIMD3(Float(rgb.redComponent), Float(rgb.greenComponent), Float(rgb.blueComponent))
         }
-        return ThinkingOrbPalette(accents: resolved)
+        return OrbPalette(accents: resolved)
         #endif
     }
 
@@ -869,7 +869,7 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
 
     @MainActor
     private final class DisplayLinkProxy: NSObject {
-        weak var owner: ThinkingOrbMetalView?
+        weak var owner: OrbMetalView?
 
         @objc func tick(_ link: CADisplayLink) {
             owner?.handleDisplayLink(link)
@@ -879,7 +879,7 @@ final class ThinkingOrbMetalView: ThinkingOrbPlatformView {
 
 /// GPU-thread-safe submit/complete counters. Completion handlers must not hop
 /// to the main actor.
-private final class ThinkingOrbFrameLedger: @unchecked Sendable {
+private final class OrbFrameLedger: @unchecked Sendable {
     private struct Counters {
         var submitted = 0
         var completed = 0
@@ -907,7 +907,7 @@ private final class ThinkingOrbFrameLedger: @unchecked Sendable {
         lock.withLock { counters.skipped += 1 }
     }
 
-    func noteFinished(_ cost: ThinkingOrbMetalFrameCost) {
+    func noteFinished(_ cost: OrbMetalFrameCost) {
         lock.withLock {
             if cost.completed {
                 counters.completed += 1
@@ -916,14 +916,14 @@ private final class ThinkingOrbFrameLedger: @unchecked Sendable {
             }
         }
         if !cost.completed, let reason = cost.errorDescription {
-            ThinkingOrbLog.logger.error("Thinking orb GPU failed: \(reason, privacy: .public)")
+            OrbLog.logger.error("Orb GPU failed: \(reason, privacy: .public)")
         }
     }
 }
 
-struct ThinkingOrbView: View {
-    var style: ThinkingOrbStyle
-    var sizeClass: ThinkingOrbSizeClass
+struct OrbView: View {
+    var style: OrbStyle
+    var sizeClass: OrbSizeClass
     var tint: Color
     var voiceSpectrum: VoiceSpectrumFrame = .zero
     var isActive: Bool = true
@@ -932,7 +932,7 @@ struct ThinkingOrbView: View {
     @Environment(\.themeID) private var themeID
 
     var body: some View {
-        ThinkingOrbRepresentable(
+        OrbRepresentable(
             style: style,
             sizeClass: sizeClass,
             tint: tint,
@@ -953,30 +953,30 @@ struct ThinkingOrbView: View {
 }
 
 #if canImport(UIKit)
-private struct ThinkingOrbRepresentable: UIViewRepresentable {
-    var style: ThinkingOrbStyle
-    var sizeClass: ThinkingOrbSizeClass
+private struct OrbRepresentable: UIViewRepresentable {
+    var style: OrbStyle
+    var sizeClass: OrbSizeClass
     var tint: Color
     var accents: [Color]
     var voiceSpectrum: VoiceSpectrumFrame
     var isActive: Bool
     var isDarkBackground: Bool
 
-    func makeUIView(context: Context) -> ThinkingOrbMetalView {
-        let view = ThinkingOrbMetalView(style: style, sizeClass: sizeClass)
+    func makeUIView(context: Context) -> OrbMetalView {
+        let view = OrbMetalView(style: style, sizeClass: sizeClass)
         apply(view)
         return view
     }
 
-    func updateUIView(_ uiView: ThinkingOrbMetalView, context: Context) {
+    func updateUIView(_ uiView: OrbMetalView, context: Context) {
         apply(uiView)
     }
 
-    static func dismantleUIView(_ uiView: ThinkingOrbMetalView, coordinator: ()) {
+    static func dismantleUIView(_ uiView: OrbMetalView, coordinator: ()) {
         uiView.stopAndDismantle()
     }
 
-    private func apply(_ view: ThinkingOrbMetalView) {
+    private func apply(_ view: OrbMetalView) {
         view.style = style
         view.sizeClass = sizeClass
         view.tintUIColor = UIColor(tint)
@@ -988,30 +988,30 @@ private struct ThinkingOrbRepresentable: UIViewRepresentable {
     }
 }
 #else
-private struct ThinkingOrbRepresentable: NSViewRepresentable {
-    var style: ThinkingOrbStyle
-    var sizeClass: ThinkingOrbSizeClass
+private struct OrbRepresentable: NSViewRepresentable {
+    var style: OrbStyle
+    var sizeClass: OrbSizeClass
     var tint: Color
     var accents: [Color]
     var voiceSpectrum: VoiceSpectrumFrame
     var isActive: Bool
     var isDarkBackground: Bool
 
-    func makeNSView(context: Context) -> ThinkingOrbMetalView {
-        let view = ThinkingOrbMetalView(style: style, sizeClass: sizeClass)
+    func makeNSView(context: Context) -> OrbMetalView {
+        let view = OrbMetalView(style: style, sizeClass: sizeClass)
         apply(view)
         return view
     }
 
-    func updateNSView(_ nsView: ThinkingOrbMetalView, context: Context) {
+    func updateNSView(_ nsView: OrbMetalView, context: Context) {
         apply(nsView)
     }
 
-    static func dismantleNSView(_ nsView: ThinkingOrbMetalView, coordinator: ()) {
+    static func dismantleNSView(_ nsView: OrbMetalView, coordinator: ()) {
         nsView.stopAndDismantle()
     }
 
-    private func apply(_ view: ThinkingOrbMetalView) {
+    private func apply(_ view: OrbMetalView) {
         view.style = style
         view.sizeClass = sizeClass
         view.tintNSColor = NSColor(tint)

@@ -475,7 +475,7 @@ struct AppearancePreferenceStoreTests {
     }
 
     @Test func displayNamesMatchIOSSettings() {
-        #expect(SpinnerStyle.working.displayName == "Working")
+        #expect(SpinnerStyle.working.displayName == "Orbiting")
         #expect(SpinnerStyle.searching.displayName == "Searching")
         #expect(SpinnerStyle.solving.displayName == "Solving")
         #expect(SpinnerStyle.brailleDots.displayName == "Pi")
@@ -513,14 +513,14 @@ struct AppearancePreferenceStoreTests {
         #expect(SpinnerStyle.current == .brailleDots)
     }
 
-    @Test func defaultsDictationIndicatorToComposing() {
+    @Test func defaultsDictationIndicatorToRing() {
         let key = AppPreferenceStore.Appearance.dictationIndicatorStyleKey
         let original = UserDefaults.standard.object(forKey: key)
         UserDefaults.standard.removeObject(forKey: key)
         defer { restoreObject(original, forKey: key) }
 
-        #expect(AppPreferenceStore.Appearance.dictationIndicatorStyle == .composing)
-        #expect(DictationIndicatorStyle.current == .composing)
+        #expect(AppPreferenceStore.Appearance.dictationIndicatorStyle == .ring)
+        #expect(DictationIndicatorStyle.current == .ring)
     }
 
     @Test func persistsDictationIndicatorAndKeepsRing() {

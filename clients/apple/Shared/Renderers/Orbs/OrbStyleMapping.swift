@@ -1,5 +1,5 @@
 extension SpinnerStyle {
-    var thinkingOrbStyle: ThinkingOrbStyle? {
+    var orbStyle: OrbStyle? {
         switch self {
         case .working: return .working
         case .searching: return .searching
@@ -10,7 +10,7 @@ extension SpinnerStyle {
 }
 
 extension DictationIndicatorStyle {
-    var thinkingOrbStyle: ThinkingOrbStyle? {
+    var orbStyle: OrbStyle? {
         switch self {
         case .composing: return .composing
         case .breathing: return .breathing

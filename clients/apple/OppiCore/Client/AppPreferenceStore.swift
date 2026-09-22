@@ -273,7 +273,7 @@ enum AppPreferenceStore {
             guard let raw = UserDefaults.standard.string(forKey: dictationIndicatorStyleKey),
                   let style = DictationIndicatorStyle(rawValue: raw)
             else {
-                return .composing
+                return .ring
             }
             return style
         }

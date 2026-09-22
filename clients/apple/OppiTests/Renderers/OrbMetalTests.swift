@@ -6,16 +6,16 @@ import Testing
 import UIKit
 @testable import Oppi
 
-@Suite("ThinkingOrbMetalRenderer")
-struct ThinkingOrbMetalRendererTests {
+@Suite("OrbMetalRenderer")
+struct OrbMetalRendererTests {
     @Test func offscreenEncodeCompletesOnTheGPU() throws {
-        let built = ThinkingOrbMetalRenderer.make()
+        let built = OrbMetalRenderer.make()
         guard let renderer = built.renderer else {
             Issue.record("Metal unavailable: \(built.unavailableReason ?? "unknown")")
             return
         }
-        let design = ThinkingOrbSizeClass.workingCompact.designSize
-        let frame = ThinkingOrbGeometry.frame(
+        let design = OrbSizeClass.workingCompact.designSize
+        let frame = OrbGeometry.frame(
             style: .working,
             sizeClass: .workingCompact,
             size: design,
@@ -36,17 +36,17 @@ struct ThinkingOrbMetalRendererTests {
         #expect(cost.completed)
         #expect(cost.status == .completed)
         #expect(renderer.inFlightCount == 0)
-        #expect(renderer.freeSlotCount == ThinkingOrbMetalRenderer.ringSize)
+        #expect(renderer.freeSlotCount == OrbMetalRenderer.ringSize)
     }
 
     @Test func injectedEncodeFailureReleasesTheRingSlot() throws {
-        let built = ThinkingOrbMetalRenderer.make()
+        let built = OrbMetalRenderer.make()
         guard let renderer = built.renderer else {
             Issue.record("Metal unavailable: \(built.unavailableReason ?? "unknown")")
             return
         }
-        let design = ThinkingOrbSizeClass.workingCompact.designSize
-        let frame = ThinkingOrbGeometry.frame(
+        let design = OrbSizeClass.workingCompact.designSize
+        let frame = OrbGeometry.frame(
             style: .working,
             sizeClass: .workingCompact,
             size: design,
@@ -85,9 +85,9 @@ struct ThinkingOrbMetalRendererTests {
     }
 }
 
-@Suite("ThinkingOrbMetalView lifecycle")
+@Suite("OrbMetalView lifecycle")
 @MainActor
-struct ThinkingOrbMetalViewLifecycleTests {
+struct OrbMetalViewLifecycleTests {
     @Test func mountedViewSubmitsAndCompletesLiveDrawables() async throws {
         let harness = try makeOrbHarness(style: .working, side: 16)
         defer { tearDown(harness) }
@@ -190,7 +190,7 @@ struct ThinkingOrbMetalViewLifecycleTests {
     }
 
     @Test func reduceMotionPaintsOneStillFrameThenResumes() async throws {
-        for style in [ThinkingOrbStyle.searching, .composing, .breathing] {
+        for style in [OrbStyle.searching, .composing, .breathing] {
             let harness = try makeOrbHarness(style: style, side: style.isVoiceReactive ? 44 : 16)
             defer { tearDown(harness) }
             _ = try await waitForCompletions(on: harness.view, minimum: 1)
@@ -198,7 +198,7 @@ struct ThinkingOrbMetalViewLifecycleTests {
             harness.view.forceReduceMotion = true
             #expect(!harness.view.isDriving)
             #expect(harness.view.framesSubmitted == liveSubmitted + 1)
-            #expect(harness.view.lastPresentedGeometryTime == ThinkingOrbDisplayPolicy.reduceMotionTime)
+            #expect(harness.view.lastPresentedGeometryTime == OrbDisplayPolicy.reduceMotionTime)
             #expect(harness.view.lastPresentedSpectrum == .zero)
             let frozenSubmitted = harness.view.framesSubmitted
             harness.view.voiceSpectrum = VoiceSpectrumFrame(bands: .one, flux: 30)
@@ -243,7 +243,7 @@ struct ThinkingOrbMetalViewLifecycleTests {
     @Test func frozenZeroBoundsPresentsOnceAfterFirstRealLayout() throws {
         let harness = try makeOrbHarness(style: .working, side: 16)
         defer { tearDown(harness) }
-        let orb = ThinkingOrbMetalView(style: .working, sizeClass: .workingCompact)
+        let orb = OrbMetalView(style: .working, sizeClass: .workingCompact)
         orb.forceReduceMotion = true
         orb.tintUIColor = .white
         orb.frame = .zero
@@ -321,7 +321,7 @@ struct ThinkingOrbMetalViewLifecycleTests {
             animated: false
         )
         chrome.layoutIfNeeded()
-        let orb = try #require(firstSubview(of: chrome, type: ThinkingOrbMetalView.self))
+        let orb = try #require(firstSubview(of: chrome, type: OrbMetalView.self))
         orb.forceReduceMotion = true
         #expect(orb.framesSubmitted >= 1)
         let submitted = orb.framesSubmitted
@@ -340,7 +340,7 @@ struct ThinkingOrbMetalViewLifecycleTests {
     }
 
     @Test func removingTheViewAllowsDeallocation() async throws {
-        weak var weakView: ThinkingOrbMetalView?
+        weak var weakView: OrbMetalView?
         do {
             let harness = try makeOrbHarness(style: .working, side: 16)
             weakView = harness.view
@@ -415,10 +415,10 @@ struct ThinkingOrbMetalViewLifecycleTests {
     }
 }
 
-@Suite("Thinking orb pixel motion")
-struct ThinkingOrbPixelMotionTests {
+@Suite("Orb pixel motion")
+struct OrbPixelMotionTests {
     @Test func voiceOnVersusQuietAtIdenticalPhaseChangesPixels() throws {
-        let built = ThinkingOrbMetalRenderer.make()
+        let built = OrbMetalRenderer.make()
         guard let renderer = built.renderer else {
             Issue.record("Metal unavailable: \(built.unavailableReason ?? "unknown")")
             return
@@ -429,10 +429,10 @@ struct ThinkingOrbPixelMotionTests {
         for _ in 0..<60 {
             voice = smoother.step(raw: input, dt: 1.0 / 60.0)
         }
-        for style in [ThinkingOrbStyle.composing, .breathing] {
-            for sizeClass in [ThinkingOrbSizeClass.dictationExpanded, .dictationStandard] {
+        for style in [OrbStyle.composing, .breathing] {
+            for sizeClass in [OrbSizeClass.dictationExpanded, .dictationStandard] {
                 let size = sizeClass.designSize
-                let speed = ThinkingOrbPresets.resolve(style, sizeClass).speed
+                let speed = OrbPresets.resolve(style, sizeClass).speed
                 let t0 = 0.7 * speed
                 let quiet0 = try renderOrbPixels(
                     renderer: renderer,
@@ -480,6 +480,38 @@ struct ThinkingOrbPixelMotionTests {
             }
         }
     }
+
+    @Test func lightBackgroundComposingOrbKeepsThemeColor() throws {
+        let built = OrbMetalRenderer.make()
+        guard let renderer = built.renderer else {
+            Issue.record("Metal unavailable: \(built.unavailableReason ?? "unknown")")
+            return
+        }
+        let lightTint = OrbTint(red: 0.400, green: 0.365, blue: 0.325, isDark: false)
+        let lightPalette = OrbPalette(accents: [
+            SIMD3(0.161, 0.400, 0.659),
+            SIMD3(0.094, 0.424, 0.459),
+            SIMD3(0.416, 0.361, 0.565),
+            SIMD3(0.659, 0.298, 0.082),
+        ])
+        let shot = try renderOrbPixels(
+            renderer: renderer,
+            style: .composing,
+            sizeClass: .dictationStandard,
+            size: 44,
+            geometryTime: 0.6,
+            voiceSpectrum: .zero,
+            tint: lightTint,
+            palette: lightPalette
+        )
+        let stats = shot.opaqueColorStats()
+        #expect(stats.count > 40)
+        #expect(
+            stats.luma > 0.22,
+            "Light composing orb went black: luma=\(stats.luma) chroma=\(stats.chroma)"
+        )
+        #expect(stats.chroma > 0.08, "Light composing orb lost theme color: chroma=\(stats.chroma)")
+    }
 }
 
 @Suite("Mic button orb layout")
@@ -525,7 +557,7 @@ struct MicButtonOrbLayoutTests {
                 diameter: 44,
                 animated: false
             )
-            let orb = firstSubview(of: chrome, type: ThinkingOrbMetalView.self)
+            let orb = firstSubview(of: chrome, type: OrbMetalView.self)
             #expect(orb?.isHidden == false)
             #expect(orb?.voiceSpectrum == VoiceSpectrumFrame(level: 0.42, bands: SIMD8(0.8, 0, 0.3, 0, 0.4, 0, 0, 0)))
             let palette = ThemeRuntimeState.currentPalette()
@@ -569,7 +601,7 @@ struct MicButtonOrbLayoutTests {
         window.rootViewController = host
         window.makeKeyAndVisible()
         host.view.layoutIfNeeded()
-        let orb = firstSubview(of: host.view, type: ThinkingOrbMetalView.self)
+        let orb = firstSubview(of: host.view, type: OrbMetalView.self)
         #expect(orb?.voiceSpectrum == VoiceSpectrumFrame(level: 0.51, bands: SIMD8(0, 0, 0.2, 0, 0.7, 0, 0, 0)))
         window.rootViewController = nil
         window.isHidden = true
@@ -588,7 +620,7 @@ struct MicButtonOrbLayoutTests {
             animated: false,
             isPreparing: true
         )
-        let orb = firstSubview(of: chrome, type: ThinkingOrbMetalView.self)
+        let orb = firstSubview(of: chrome, type: OrbMetalView.self)
         #expect(orb?.isHidden == false)
         #expect(orb?.voiceSpectrum == .zero)
         #expect(chrome.intrinsicContentSize == CGSize(width: 44, height: 44))
@@ -745,7 +777,7 @@ struct WorkingIndicatorMetalSizeTests {
         view.frame = CGRect(x: 0, y: 0, width: 320, height: 44)
         view.setNeedsLayout()
         view.layoutIfNeeded()
-        let metal = firstSubview(of: view, type: ThinkingOrbMetalView.self)
+        let metal = firstSubview(of: view, type: OrbMetalView.self)
         #expect(metal != nil)
         #expect(metal?.bounds.size == CGSize(width: 20, height: 20))
         #expect(metal?.isHidden == false)
@@ -774,7 +806,7 @@ struct WorkingIndicatorMetalSizeTests {
         view.frame = CGRect(x: 0, y: 0, width: 320, height: 44)
         view.setNeedsLayout()
         view.layoutIfNeeded()
-        let metal = firstSubview(of: view, type: ThinkingOrbMetalView.self)
+        let metal = firstSubview(of: view, type: OrbMetalView.self)
         #expect(metal?.isHidden == true)
     }
 }
@@ -783,12 +815,12 @@ private struct OrbHarness {
     let window: UIWindow
     let host: UIViewController
     let container: UIView
-    let view: ThinkingOrbMetalView
+    let view: OrbMetalView
     var scroll: UIScrollView?
 }
 
 @MainActor
-private func makeOrbHarness(style: ThinkingOrbStyle, side: CGFloat) throws -> OrbHarness {
+private func makeOrbHarness(style: OrbStyle, side: CGFloat) throws -> OrbHarness {
     guard let scene = UIApplication.shared.connectedScenes
         .compactMap({ $0 as? UIWindowScene })
         .first
@@ -802,7 +834,7 @@ private func makeOrbHarness(style: ThinkingOrbStyle, side: CGFloat) throws -> Or
     let container = UIView(frame: host.view.bounds)
     container.autoresizingMask = [.flexibleWidth, .flexibleHeight]
     host.view.addSubview(container)
-    let view = ThinkingOrbMetalView(
+    let view = OrbMetalView(
         style: style,
         sizeClass: style.isVoiceReactive
             ? .dictation(side: Double(side))
@@ -838,7 +870,7 @@ private func makeOrbScrollHarness() throws -> OrbHarness {
     scroll.contentInsetAdjustmentBehavior = .never
     scroll.contentSize = CGSize(width: 80, height: 480)
     container.addSubview(scroll)
-    let view = ThinkingOrbMetalView(style: .working, sizeClass: .workingCompact)
+    let view = OrbMetalView(style: .working, sizeClass: .workingCompact)
     view.translatesAutoresizingMaskIntoConstraints = true
     view.frame = CGRect(x: 18, y: 18, width: 16, height: 16)
     view.tintUIColor = .white
@@ -861,7 +893,7 @@ private func tearDown(_ harness: OrbHarness) {
 }
 
 @MainActor
-private func waitForCompletions(on view: ThinkingOrbMetalView, minimum: Int) async throws -> Int {
+private func waitForCompletions(on view: OrbMetalView, minimum: Int) async throws -> Int {
     let deadline = ContinuousClock.now + .seconds(1.2)
     while ContinuousClock.now < deadline {
         if view.framesCompleted >= minimum {
@@ -878,7 +910,7 @@ private func waitForCompletions(on view: ThinkingOrbMetalView, minimum: Int) asy
 
 @MainActor
 private func waitUntilPresentedAudio(
-    on view: ThinkingOrbMetalView,
+    on view: OrbMetalView,
     atLeast minimum: Float
 ) async throws -> Float {
     let deadline = ContinuousClock.now + .seconds(1.2)
@@ -896,7 +928,7 @@ private func waitUntilPresentedAudio(
 }
 
 @MainActor
-private func waitUntilStopped(_ view: ThinkingOrbMetalView) async throws {
+private func waitUntilStopped(_ view: OrbMetalView) async throws {
     let deadline = ContinuousClock.now + .seconds(1.2)
     while ContinuousClock.now < deadline {
         if !view.isDriving { return }
@@ -909,7 +941,7 @@ private func waitUntilStopped(_ view: ThinkingOrbMetalView) async throws {
 }
 
 @MainActor
-private func orbTimeoutMessage(_ view: ThinkingOrbMetalView, expected: String) -> String {
+private func orbTimeoutMessage(_ view: OrbMetalView, expected: String) -> String {
     let metal = view.layer as? CAMetalLayer
     return """
     expected \(expected); driving=\(view.isDriving) submitted=\(view.framesSubmitted) \
@@ -969,7 +1001,7 @@ private enum TestHostError: Error, CustomStringConvertible {
 
 private func micFillView(in chrome: MicButtonChromeView) -> UIView? {
     chrome.subviews.first { view in
-        !(view is ThinkingOrbMetalView)
+        !(view is OrbMetalView)
             && !(view is UIImageView)
             && !(view is UILabel)
             && !(view is UIActivityIndicatorView)
@@ -997,6 +1029,12 @@ private func withRestoredDictationStyle(_ body: () -> Void) {
     body()
 }
 
+private struct OrbOpaqueColorStats {
+    var count: Int
+    var luma: Double
+    var chroma: Double
+}
+
 private struct OrbPixelShot {
     let width: Int
     let height: Int
@@ -1010,6 +1048,29 @@ private struct OrbPixelShot {
             index += 4
         }
         return count
+    }
+
+    func opaqueColorStats(minAlpha: UInt8 = 24) -> OrbOpaqueColorStats {
+        var count = 0
+        var lumaSum = 0.0
+        var chromaSum = 0.0
+        var index = 0
+        while index + 3 < bytes.count {
+            let alpha = bytes[index + 3]
+            if alpha >= minAlpha {
+                let blue = Double(bytes[index]) / 255
+                let green = Double(bytes[index + 1]) / 255
+                let red = Double(bytes[index + 2]) / 255
+                let maxC = max(red, green, blue)
+                let minC = min(red, green, blue)
+                lumaSum += 0.2126 * red + 0.7152 * green + 0.0722 * blue
+                chromaSum += maxC - minC
+                count += 1
+            }
+            index += 4
+        }
+        let denom = Double(max(count, 1))
+        return OrbOpaqueColorStats(count: count, luma: lumaSum / denom, chroma: chromaSum / denom)
     }
 
     func changedCount(vs other: OrbPixelShot, minChannelDelta: Int) -> Int {
@@ -1031,13 +1092,15 @@ private struct OrbPixelShot {
 }
 
 private func renderOrbPixels(
-    renderer: ThinkingOrbMetalRenderer,
-    style: ThinkingOrbStyle,
-    sizeClass: ThinkingOrbSizeClass,
+    renderer: OrbMetalRenderer,
+    style: OrbStyle,
+    sizeClass: OrbSizeClass,
     size: Double,
     geometryTime: Double,
     voiceSpectrum: VoiceSpectrumFrame,
-    scale: Int = 3
+    scale: Int = 3,
+    tint: OrbTint = .darkFallback,
+    palette: OrbPalette? = nil
 ) throws -> OrbPixelShot {
     let width = max(1, Int((size * Double(scale)).rounded()))
     let descriptor = MTLTextureDescriptor.texture2DDescriptor(
@@ -1051,7 +1114,7 @@ private func renderOrbPixels(
     guard let texture = renderer.device.makeTexture(descriptor: descriptor) else {
         throw TestHostError.timeout("failed shared orb texture")
     }
-    let frame = ThinkingOrbGeometry.frame(
+    let frame = OrbGeometry.frame(
         style: style,
         sizeClass: sizeClass,
         size: size,
@@ -1063,8 +1126,9 @@ private func renderOrbPixels(
         dots: frame.dots,
         designSize: size,
         texture: texture,
-        tint: .darkFallback,
-        waitUntilCompleted: true
+        tint: tint,
+        waitUntilCompleted: true,
+        palette: palette
     )
     guard cost.completed else {
         throw TestHostError.timeout(cost.errorDescription ?? "orb encode did not complete")

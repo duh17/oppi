@@ -13,8 +13,8 @@ struct WorkingSpinnerView: View {
     var body: some View {
         switch style {
         case .working, .searching, .solving:
-            if let orbStyle = style.thinkingOrbStyle {
-                ThinkingOrbView(
+            if let orbStyle = style.orbStyle {
+                OrbView(
                     style: orbStyle,
                     sizeClass: .working(side: Double(side)),
                     tint: tintColor

@@ -23,7 +23,7 @@ struct VoiceSpectrumSmoother: Sendable {
     mutating func step(raw: VoiceSpectrumFrame, dt: TimeInterval) -> VoiceSpectrumFrame {
         let safeDt = dt.isFinite ? max(0, dt) : 0
         var target = SIMD8<Float>.zero
-        for k in 0..<5 { target[k] = ThinkingOrbAudio.clamp(raw.bands[k]) }
+        for k in 0..<5 { target[k] = OrbAudio.clamp(raw.bands[k]) }
         let attack = Float(1 - exp(-safeDt / 0.040))
         let release = Float(1 - exp(-safeDt / 0.180))
         let alpha = SIMD8<Float>(repeating: release).replacing(
@@ -70,22 +70,22 @@ struct VoiceLevelSmoother: Equatable, Sendable {
     }
 
     mutating func step(raw: Float, dt: TimeInterval) -> Float {
-        let clamped = ThinkingOrbAudio.clamp(raw)
+        let clamped = OrbAudio.clamp(raw)
         let gated = clamped < noiseFloor ? 0 : clamped
         let target = gated / (1 + compression * gated)
         let safeDt = dt.isFinite ? max(0, dt) : 0
         if safeDt == 0 {
-            return ThinkingOrbAudio.clamp(current)
+            return OrbAudio.clamp(current)
         }
         let tau = target >= current ? attackSeconds : releaseSeconds
         let alpha = Float(1 - exp(-safeDt / tau))
         current += (target - current) * alpha
-        current = ThinkingOrbAudio.clamp(current)
+        current = OrbAudio.clamp(current)
         return current
     }
 }
 
-enum ThinkingOrbAudio {
+enum OrbAudio {
     static func clamp(_ raw: Float) -> Float {
         guard raw.isFinite else { return 0 }
         return min(max(raw, 0), 1)

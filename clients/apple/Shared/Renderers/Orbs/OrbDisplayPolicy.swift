@@ -1,7 +1,7 @@
 import Foundation
 
-/// Frame-rate and freeze policy for a visible thinking orb.
-enum ThinkingOrbDisplayPolicy: Sendable {
+/// Frame-rate and freeze policy for a visible orb.
+enum OrbDisplayPolicy: Sendable {
     static let activeFramesPerSecond = 60
     static let constrainedFramesPerSecond = 30
     static let reduceMotionTime: Double = 0.6

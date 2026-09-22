@@ -2,20 +2,20 @@ import Foundation
 import Testing
 @testable import Oppi
 
-@Suite("ThinkingOrbGeometry")
-struct ThinkingOrbGeometryTests {
-    private let styles: [ThinkingOrbStyle] = [.composing, .breathing]
-    private let sizes: [ThinkingOrbSizeClass] = [.dictationExpanded, .dictationStandard]
+@Suite("OrbGeometry")
+struct OrbGeometryTests {
+    private let styles: [OrbStyle] = [.composing, .breathing]
+    private let sizes: [OrbSizeClass] = [.dictationExpanded, .dictationStandard]
 
-    private func frame(_ style: ThinkingOrbStyle, _ size: ThinkingOrbSizeClass,
-                       _ voice: VoiceSpectrumFrame = .zero, time: Double = 0.6) -> ThinkingOrbFrame {
-        ThinkingOrbGeometry.frame(style: style, sizeClass: size, size: size.designSize,
+    private func frame(_ style: OrbStyle, _ size: OrbSizeClass,
+                       _ voice: VoiceSpectrumFrame = .zero, time: Double = 0.6) -> OrbFrame {
+        OrbGeometry.frame(style: style, sizeClass: size, size: size.designSize,
                                   geometryTime: time, voiceSpectrum: voice, zSorted: false)
     }
 
     @Test func breathingInputHoldsAStandingShapeAtDistantTimes() {
         let input = VoiceSpectrumFrame(level: 1, bands: SIMD8(0.8, 0.4, 0.2, 0.7, 0.9, 0, 0, 0))
-        for style in [ThinkingOrbStyle.breathing] {
+        for style in [OrbStyle.breathing] {
             for size in sizes {
                 let first = frame(style, size, input)
                 let later = frame(style, size, input, time: 120)
@@ -122,25 +122,25 @@ struct ThinkingOrbGeometryTests {
         // OrbPresets.resolve(.composing, .regular).frame(size: 44, t: 0).
         // Sorted samples include ghost, far/near, center/edge lanes. These
         // numbers are NOT derived from Oppi's builder or its earlier ports.
-        let oracle: [(Int, Double, Double, Double, Double, Double, Double)] = [
-            (0, 25.659142103415356, 21.075977535511367, -16.739846521164203, 0.3, 0.78, 0.1026932915309987),
-            (37, 26.80673369729434, 31.42359475208977, -13.511357189848889, 0.3362726354562842, 0.48958616443862213, 0.46378746171592855),
-            (80, 24.43213672548319, 34.328859017555864, -11.685441637943656, 0.3097846732115062, 0.5643588088780656, 0.4957090622737123),
-            (150, 9.031713445660737, 29.51447441769235, -8.355945073442655, 0.40332260547097937, 0.4234911373052089, 0.553917044170583),
-            (240, 5.069919765828949, 22.567476277089877, -2.74152401767172, 0.4541868711013282, 0.3842386529072132, 0.6520712584323125),
-            (300, 36.70773308716401, 30.64519007464264, 1.8463141688351419, 0.4113569544649034, 0.4563293055277546, 0.73227821973488),
-            (400, 37.60294843651849, 23.092906481879687, 7.0582685914614185, 0.5476288593092902, 0.2913275588507277, 0.8233963040465284),
-            (500, 17.1794075265542, 10.18652845832057, 11.474727811102447, 0.6304801312851167, 0.20197901407677515, 0.9006071295647281),
-            (565, 22.0, 18.95398998965966, 16.88749309450359, 0.5614852527619381, 0.263493678275595, 0.9952358932605523),
+        let oracle: [ComposingOracleSample] = [
+            .init(0, 25.659142103415356, 21.075977535511367, -16.739846521164203, 0.3, 0.78, 0.1026932915309987),
+            .init(37, 26.80673369729434, 31.42359475208977, -13.511357189848889, 0.3362726354562842, 0.48958616443862213, 0.46378746171592855),
+            .init(80, 24.43213672548319, 34.328859017555864, -11.685441637943656, 0.3097846732115062, 0.5643588088780656, 0.4957090622737123),
+            .init(150, 9.031713445660737, 29.51447441769235, -8.355945073442655, 0.40332260547097937, 0.4234911373052089, 0.553917044170583),
+            .init(240, 5.069919765828949, 22.567476277089877, -2.74152401767172, 0.4541868711013282, 0.3842386529072132, 0.6520712584323125),
+            .init(300, 36.70773308716401, 30.64519007464264, 1.8463141688351419, 0.4113569544649034, 0.4563293055277546, 0.73227821973488),
+            .init(400, 37.60294843651849, 23.092906481879687, 7.0582685914614185, 0.5476288593092902, 0.2913275588507277, 0.8233963040465284),
+            .init(500, 17.1794075265542, 10.18652845832057, 11.474727811102447, 0.6304801312851167, 0.20197901407677515, 0.9006071295647281),
+            .init(565, 22.0, 18.95398998965966, 16.88749309450359, 0.5614852527619381, 0.263493678275595, 0.9952358932605523),
         ]
-        let dots = ThinkingOrbGeometry.frame(style: .composing, sizeClass: .dictationStandard,
+        let dots = OrbGeometry.frame(style: .composing, sizeClass: .dictationStandard,
                                              size: 44, geometryTime: 0).dots
         #expect(dots.count == 566)
         guard dots.count == 566 else { return }
-        for (i, x, y, z, r, white, alpha) in oracle {
-            let actual = dots[i]
-            #expect(abs(actual.x - x) < 1e-10 && abs(actual.y - y) < 1e-10 && abs(actual.z - z) < 1e-10)
-            #expect(abs(actual.r - r) < 1e-10 && abs(actual.white - white) < 1e-10 && abs(actual.a - alpha) < 1e-10)
+        for sample in oracle {
+            let actual = dots[sample.index]
+            #expect(abs(actual.x - sample.x) < 1e-10 && abs(actual.y - sample.y) < 1e-10 && abs(actual.z - sample.z) < 1e-10)
+            #expect(abs(actual.r - sample.r) < 1e-10 && abs(actual.white - sample.white) < 1e-10 && abs(actual.a - sample.alpha) < 1e-10)
         }
         for size in sizes {
             let raw = frame(.composing, size, time: 0).dots
@@ -166,7 +166,7 @@ struct ThinkingOrbGeometryTests {
             #expect((front.map(\.white).reduce(0, +) / Double(front.count))
                 < (back.map(\.white).reduce(0, +) / Double(back.count)))
             #expect(dots.allSatisfy { $0.r >= 0.3 && $0.a >= 0.1 && $0.a <= 1 })
-            let sorted = ThinkingOrbGeometry.frame(
+            let sorted = OrbGeometry.frame(
                 style: .composing, sizeClass: size, size: size.designSize, geometryTime: 0.6
             ).dots
             #expect(sorted.count == dots.count)
@@ -221,7 +221,7 @@ struct ThinkingOrbGeometryTests {
                                      (3 * Double.pi / 0.32, Float(30)), (120.0, Float(30))] {
                     var voice = sample
                     voice.flux = flux
-                    let dots = ThinkingOrbGeometry.frame(
+                    let dots = OrbGeometry.frame(
                         style: .composing, sizeClass: size, size: size.designSize,
                         geometryTime: time, voiceSpectrum: voice
                     ).dots
@@ -296,7 +296,7 @@ struct ThinkingOrbGeometryTests {
                 #expect(peak > size.designSize * 0.008 && peak < previousPeak)
                 previousPeak = peak
                 guard live.dots.count == 566 else { Issue.record("Missing upstream lanes"); continue }
-                func offset(_ dot: ThinkingOrbDot) -> Double {
+                func offset(_ dot: OrbDot) -> Double {
                     let x = dot.x - size.designSize / 2, y = size.designSize / 2 - dot.y
                     return (-y * sin(0.85) + dot.z * cos(0.85)) / hypot(x, y * cos(0.85) + dot.z * sin(0.85))
                 }
@@ -361,7 +361,7 @@ struct ThinkingOrbGeometryTests {
                     for k in 0..<5 where mask & (1 << k) != 0 { bands[k] = gain }
                     // Use the finalized (radius-minimum, depth-sorted) path
                     // consumed by the live Metal view, not raw builder dots.
-                    let result = ThinkingOrbGeometry.frame(
+                    let result = OrbGeometry.frame(
                         style: .breathing, sizeClass: size, size: size.designSize,
                         geometryTime: 0.6, voiceSpectrum: VoiceSpectrumFrame(bands: bands, flux: 30)
                     )
@@ -377,9 +377,9 @@ struct ThinkingOrbGeometryTests {
     }
 
     @Test func fiveStylesProduceBoundedFiniteDots() {
-        #expect(ThinkingOrbStyle.allCases == [.working, .searching, .solving, .composing, .breathing])
-        for style in ThinkingOrbStyle.allCases {
-            let size: ThinkingOrbSizeClass = style.isVoiceReactive ? .dictationStandard : .workingCompact
+        #expect(OrbStyle.allCases == [.working, .searching, .solving, .composing, .breathing])
+        for style in OrbStyle.allCases {
+            let size: OrbSizeClass = style.isVoiceReactive ? .dictationStandard : .workingCompact
             let result = frame(style, size, VoiceSpectrumFrame(level: 1, bands: .one, flux: 30))
             #expect(!result.dots.isEmpty)
             for dot in result.dots {
@@ -395,29 +395,36 @@ struct ThinkingOrbGeometryTests {
     }
 
     @Test func workingStylesIgnoreAllSpectrumFieldsAndKeepTheirClock() {
-        for style in [ThinkingOrbStyle.working, .searching, .solving] {
+        for style in [OrbStyle.working, .searching, .solving] {
             let quiet = frame(style, .workingCompact)
             #expect(quiet.dots == frame(style, .workingCompact, VoiceSpectrumFrame(level: 1, bands: .one, flux: 90)).dots)
             #expect(quiet.dots != frame(style, .workingCompact, time: 8).dots)
         }
     }
 
+    @Test func compactWorkingParticlesReadAtLeastOneAndAHalfPoints() {
+        for style in [OrbStyle.working, .searching, .solving] {
+            let peak = frame(style, .workingCompact).dots.map(\.r).max() ?? 0
+            #expect(peak > 1.1, "\(style.rawValue) compact peak radius \(peak)")
+        }
+    }
+
     @Test func compactWorkingCountsAndTimeScaleStayUnchanged() {
         #expect(frame(.working, .workingCompact).dots.count < 80)
-        #expect(ThinkingOrbSizeClass.workingCompact.designSize == 20)
-        #expect(ThinkingOrbSizeClass.workingPreview.designSize == 20)
-        #expect(ThinkingOrbSizeClass.working(side: 20) == .workingCompact)
-        #expect(ThinkingOrbSizeClass.working(side: 24) == .workingPreview)
-        #expect(ThinkingOrbPresets.workingMotionScale == 0.5)
-        for size in [ThinkingOrbSizeClass.workingCompact, .workingPreview] {
-            #expect(ThinkingOrbPresets.resolve(.working, size).speed == 3.9 * 0.5)
-            #expect(ThinkingOrbPresets.resolve(.searching, size).speed == 2.665 * 0.5)
-            #expect(ThinkingOrbPresets.resolve(.solving, size).speed == 1.95 * 0.5)
+        #expect(OrbSizeClass.workingCompact.designSize == 20)
+        #expect(OrbSizeClass.workingPreview.designSize == 20)
+        #expect(OrbSizeClass.working(side: 20) == .workingCompact)
+        #expect(OrbSizeClass.working(side: 24) == .workingPreview)
+        #expect(OrbPresets.workingMotionScale == 0.5)
+        for size in [OrbSizeClass.workingCompact, .workingPreview] {
+            #expect(OrbPresets.resolve(.working, size).speed == 3.9 * 0.5)
+            #expect(OrbPresets.resolve(.searching, size).speed == 2.665 * 0.5)
+            #expect(OrbPresets.resolve(.solving, size).speed == 1.95 * 0.5)
         }
     }
 
     @Test func allStylesKeepThemeAccentsAndDepthShading() {
-        for style in ThinkingOrbStyle.allCases {
+        for style in OrbStyle.allCases {
             let dots = frame(style, style.isVoiceReactive ? .dictationStandard : .workingCompact).dots
             #expect(dots.contains { $0.accent > 0.2 })
             #expect(Set(dots.map(\.white)).count > 1)
@@ -486,13 +493,13 @@ struct VoiceLevelSmootherTests {
     }
 }
 
-@Suite("ThinkingOrbDisplayPolicy")
-struct ThinkingOrbDisplayPolicyTests {
+@Suite("OrbDisplayPolicy")
+struct OrbDisplayPolicyTests {
     @Test func prefersSixtyUnlessConstrained() {
-        #expect(ThinkingOrbDisplayPolicy.preferredFramesPerSecond(isLowPowerModeEnabled: false, thermalState: .nominal) == 60)
-        #expect(ThinkingOrbDisplayPolicy.preferredFramesPerSecond(isLowPowerModeEnabled: true, thermalState: .nominal) == 30)
-        #expect(ThinkingOrbDisplayPolicy.preferredFramesPerSecond(isLowPowerModeEnabled: false, thermalState: .serious) == 30)
-        #expect(ThinkingOrbDisplayPolicy.preferredFramesPerSecond(isLowPowerModeEnabled: false, thermalState: .critical) == 30)
+        #expect(OrbDisplayPolicy.preferredFramesPerSecond(isLowPowerModeEnabled: false, thermalState: .nominal) == 60)
+        #expect(OrbDisplayPolicy.preferredFramesPerSecond(isLowPowerModeEnabled: true, thermalState: .nominal) == 30)
+        #expect(OrbDisplayPolicy.preferredFramesPerSecond(isLowPowerModeEnabled: false, thermalState: .serious) == 30)
+        #expect(OrbDisplayPolicy.preferredFramesPerSecond(isLowPowerModeEnabled: false, thermalState: .critical) == 30)
     }
 }
 
@@ -516,20 +523,20 @@ struct ThinkingOrbAttributionTests {
     }
 }
 
-private func centered(_ dot: ThinkingOrbDot, _ size: Double) -> SIMD3<Double> {
+private func centered(_ dot: OrbDot, _ size: Double) -> SIMD3<Double> {
     SIMD3(dot.x - size / 2, dot.y - size / 2, dot.z)
 }
-private func projectedRadius(_ dot: ThinkingOrbDot, _ size: Double) -> Double {
+private func projectedRadius(_ dot: OrbDot, _ size: Double) -> Double {
     hypot(dot.x - size / 2, dot.y - size / 2)
 }
-private func radialLength(_ dot: ThinkingOrbDot, _ size: Double) -> Double { length(centered(dot, size)) }
+private func radialLength(_ dot: OrbDot, _ size: Double) -> Double { length(centered(dot, size)) }
 private func length(_ value: SIMD3<Double>) -> Double { sqrt(value.x * value.x + value.y * value.y + value.z * value.z) }
-private func displacements(_ a: ThinkingOrbFrame, _ b: ThinkingOrbFrame) -> [SIMD3<Double>] {
+private func displacements(_ a: OrbFrame, _ b: OrbFrame) -> [SIMD3<Double>] {
     zip(a.dots, b.dots).map { SIMD3($1.x - $0.x, $1.y - $0.y, $1.z - $0.z) }
 }
 private func meanLaneRadiusDelta(
-    _ idle: ThinkingOrbFrame,
-    _ live: ThinkingOrbFrame,
+    _ idle: OrbFrame,
+    _ live: OrbFrame,
     lanes: [Int],
     ghost: Int = 38,
     segs: Int = 44
@@ -545,8 +552,28 @@ private func meanLaneRadiusDelta(
     }
     return count == 0 ? 0 : sum / Double(count)
 }
+private struct ComposingOracleSample {
+    var index: Int
+    var x: Double
+    var y: Double
+    var z: Double
+    var r: Double
+    var white: Double
+    var alpha: Double
+
+    init(_ index: Int, _ x: Double, _ y: Double, _ z: Double, _ r: Double, _ white: Double, _ alpha: Double) {
+        self.index = index
+        self.x = x
+        self.y = y
+        self.z = z
+        self.r = r
+        self.white = white
+        self.alpha = alpha
+    }
+}
+
 private func meanLaneAccent(
-    _ live: ThinkingOrbFrame,
+    _ live: OrbFrame,
     lanes: [Int],
     ghost: Int = 38,
     segs: Int = 44
