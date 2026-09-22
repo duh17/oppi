@@ -4,7 +4,7 @@ import Foundation
 // commit e2c07bbdec4db797fb302300ef0159b1806a909f
 // Original designs and engine: Jakub Antalik
 // Swift port: Haplo LLC
-// Voice-driven sash deformation: Oppi adaptation
+// Voice-driven circular band and sphere deformation: Oppi adaptation
 // MIT License — see ThinkingOrbAttribution and LICENSE in this folder.
 
 /// One finished dot in design-point space (0...size on both axes).
@@ -235,31 +235,27 @@ enum ThinkingOrbPresets {
                 rActive: 0.4
             )
         case (.composing, .dictationExpanded):
-            // Original 64pt composing is 12x44 plus ~38 ghosts on a frozen sash.
-            // Fill the 32/44 control the same way: dense strands, not one loop.
-            return ribbon(
+            // Concentric dotted lanes stay readable at the actual control size.
+            return circularBand(
                 speed: 2.34,
-                lanes: 10,
-                segs: 28,
-                ghostN: 20,
+                lanes: 4,
+                segs: 32,
                 rBase: 1.1,
                 rDepth: 1.7
             )
         case (.composing, .dictationStandard):
-            return ribbon(
+            return circularBand(
                 speed: 2.34,
-                lanes: 12,
-                segs: 40,
-                ghostN: 32,
+                lanes: 5,
+                segs: 44,
                 rBase: 1.1,
                 rDepth: 1.7
             )
         case (.composing, .workingCompact), (.composing, .workingPreview):
-            return ribbon(
+            return circularBand(
                 speed: 3.12,
                 lanes: 3,
-                segs: 14,
-                ghostN: 6,
+                segs: 20,
                 rBase: 1.15,
                 rDepth: 1.7
             )
@@ -348,22 +344,20 @@ enum ThinkingOrbPresets {
         }
     }
 
-    private static func ribbon(
+    private static func circularBand(
         speed: Double,
         lanes: Int,
-        segs: Double,
-        ghostN: Double,
+        segs: Int,
         rBase: Double,
         rDepth: Double
     ) -> Resolved {
         Resolved(speed: speed, rMin: 0.3) { size, t, voice in
-            ThinkingOrbBuilders.ribbon(
+            ThinkingOrbBuilders.circularBand(
                 size,
                 t,
                 voice: voice,
                 lanes: lanes,
                 segs: segs,
-                ghostN: ghostN,
                 rBase: rBase,
                 rDepth: rDepth
             )
@@ -701,91 +695,52 @@ private enum ThinkingOrbBuilders {
         return ThinkingOrbFrame(dots: dots)
     }
 
-    static func ribbon(
+    /// Front-facing annulus. Depth shades the rounded band, never projects it
+    /// into a tilted sash. Every lane shares the same radial displacement.
+    static func circularBand(
         _ size: Double,
         _ t: Double,
         voice: VoiceSpectrumFrame,
         lanes: Int,
-        segs: Double,
-        ghostN: Double,
+        segs: Int,
         rBase: Double,
         rDepth: Double
     ) -> ThinkingOrbFrame {
-        let cx = size / 2
-        let cy = size / 2
-        // Composing rides the original full sphere.
-        let R = (size / 2) * 0.78
-        let camTilt = 0.3
-        // Dictation has no rigid-body rotation. Only the material deforms;
-        // rotating either this camera or the band basis makes it tumble.
-        let pt = ThinkingOrbGeometry.Projector(
-            yaw: 0,
-            tilt: camTilt,
-            cx: cx,
-            cy: cy,
-            scale: 1
-        )
         let rs = ThinkingOrbGeometry.radiusScale(size, 0.6)
-        var dots: [ThinkingOrbDot] = []
-        for i in 0..<ThinkingOrbGeometry.below(ghostN) {
-            let d = ThinkingOrbGeometry.fibDir(i, ghostN)
-            let (px, py, z) = pt(d.0 * R, d.1 * R, d.2 * R)
-            let depth = (z / R + 1) / 2
-            dots.append(ThinkingOrbDot(
-                x: px, y: py, z: z, r: 0.8 * rs, white: 0.78,
-                a: 0.1 + 0.22 * depth + ghostTwinkle(i, t)
-            ))
-        }
-
-        let ya = 0.0
-        let ta = 0.55
-        let ux = cos(ya)
-        let uy = 0.0
-        let uz = sin(ya)
-        let vx = -uz * sin(ta)
-        let vy = cos(ta)
-        let vz = ux * sin(ta)
-        let nx = uy * vz - uz * vy
-        let ny = uz * vx - ux * vz
-        let nz = ux * vy - uy * vx
-
-        let modes = SIMD8<Double>(1, 2, 3, 5, 8, 0, 0, 0)
-        let amplitudes = SIMD8<Double>(0.56, 0.50, 0.44, 0.40, 0.36, 0, 0, 0)
-        let phases = SIMD8<Double>(0.3, 1.1, 2.0, 0.7, 2.7, 0, 0, 0)
+        let bands = voice.bands
         let onset = Double(min(1, voice.flux / 30))
-        let mid = Double(lanes - 1) / 2
-        let stillT = ThinkingOrbDisplayPolicy.reduceMotionTime
-        dots.reserveCapacity(dots.count + lanes * ThinkingOrbGeometry.below(segs))
-        for w in 0..<lanes {
-            let fw = Double(w)
-            let laneOff = (fw - mid) * 0.075
-            let edge = abs(fw - mid) / max(1, mid)
-            for k in 0..<ThinkingOrbGeometry.below(segs) {
-                let a = (Double(k) / segs) * 2 * Double.pi
-                // Frozen sash plus standing bends: low bands bend long arcs,
-                // high bands ripple finely. Lane lag is spatial, never temporal.
-                let lag = fw * 0.22
-                let wob = 0.16 * sin(a * 3 - stillT * 1.7 + lag)
-                    + 0.07 * sin(a * 5 + stillT * 1.1)
-                var off = laneOff + wob
-                for band in 0..<5 {
-                    off += Double(voice.bands[band]) * amplitudes[band]
-                        * sin(a * modes[band] + phases[band] + lag)
-                }
-                let x = ux * cos(a) + vx * sin(a) + nx * off
-                let y = uy * cos(a) + vy * sin(a) + ny * off
-                let z = uz * cos(a) + vz * sin(a) + nz * off
-                let l = (x * x + y * y + z * z).squareRoot()
-                // Only bend the sash: every point stays on the full sphere.
-                let (px, py, zr) = pt((x / l) * R, (y / l) * R, (z / l) * R)
-                let depth = (zr / R + 1) / 2
+        var dots: [ThinkingOrbDot] = []
+        dots.reserveCapacity(lanes * segs)
+        for lane in 0..<lanes {
+            let across = Double(lane) / Double(lanes - 1)
+            let edge = abs(2 * across - 1)
+            let arch = sqrt(max(0, 1 - edge * edge))
+            for segment in 0..<segs {
+                let angle = Double(segment) / Double(segs) * 2 * .pi
+                // Bass expands the whole band; upper bands add progressively
+                // finer, smaller standing ripples. Even modes preserve the
+                // center. No phase/angle/lane lag can wring or cross the lanes.
+                let displacement = 0.050 * Double(bands[0])
+                    + 0.028 * Double(bands[1]) * (0.6 + 0.4 * cos(2 * angle))
+                    + 0.018 * Double(bands[2]) * cos(4 * angle)
+                    + 0.012 * Double(bands[3]) * cos(6 * angle)
+                    + 0.010 * Double(bands[4]) * cos(8 * angle)
+                // For the entire [0,1]^5 cube, displacement is in [-.040,.118].
+                // Centers therefore stay in [.190,.468] * size. The remaining
+                // .032 * size exceeds the largest onset dot at 20/32/44 pt,
+                // including finalize's .3pt minimum and Float rounding.
+                let radius = size * (0.23 + 0.12 * across + displacement)
+                let depth = 0.25 + 0.55 * arch + 0.1 * sin(angle)
+                let index = lane * segs + segment
                 dots.append(ThinkingOrbDot(
-                    x: px, y: py, z: zr,
+                    x: size / 2 + cos(angle) * radius,
+                    y: size / 2 - sin(angle) * radius,
+                    z: (2 * depth - 1) * size * 0.04,
                     r: (rBase + rDepth * depth) * (1 - 0.25 * edge) * rs * (1 + 0.2 * onset),
                     white: 0.52 - 0.44 * depth + 0.18 * edge,
-                    a: 0.4 + 0.6 * depth,
+                    a: 0.4 + 0.6 * depth + (index % 5 == 0 ? ghostTwinkle(index, t) : 0),
                     accent: 0.65 - 0.2 * edge,
-                    palette: Double(min(3, w * 4 / lanes))
+                    palette: Double(min(3, lane * 4 / lanes))
                 ))
             }
         }
