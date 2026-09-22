@@ -61,6 +61,39 @@ describe("subagents", () => {
 		expect(rows[0]?.link).toBe("oppi://session/child-1?workspaceId=ws-1");
 	});
 
+	test("a saved-agent emoji prefixes the row title", () => {
+		const launched = subagentFromCreate(
+			"oppi session create --name scout --json",
+			'{"ok":true,"data":{"session_id":"child-1"}}',
+			"parent-1",
+		);
+		if (!launched) throw new Error("expected a launch");
+		const next = applyGet(launched, {
+			ok: true,
+			data: {
+				session: {
+					id: "child-1",
+					name: "scout",
+					status: "busy",
+					launch: { agentIcon: { kind: "emoji", value: "🔎" } },
+				},
+			},
+		});
+		expect(next?.title).toBe("🔎 scout");
+		expect(
+			applyGet(launched, {
+				ok: true,
+				data: {
+					session: {
+						id: "child-1",
+						name: "plain",
+						launch: { agentIcon: { kind: "symbol", name: "sparkles" } },
+					},
+				},
+			})?.title,
+		).toBe("plain");
+	});
+
 	test("a ready wait status marks the row settled", () => {
 		const [row] = withStatuses(
 			[{ id: "child-1", title: "scout", subtitle: "child-1", link: "oppi://session/child-1", state: "running" }],

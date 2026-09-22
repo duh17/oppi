@@ -4,7 +4,7 @@ Reference Pi extension. Not a product feature. Copy it if you want a `subagent` 
 
 `launch` creates a child through `oppi session create` and returns immediately. With `supervise` left on, one async `oppi session wait` watches those ids. A timeout while the parent is idle sends a short check-in, about every 4 minutes, which is a real model turn. That is the prompt-cache warm the old 4-minute wait produced by returning. A widget refresh does not do it. `supervise: false` is the detached path and does not check in. The result arrives as a follow-up. Do not also call `oppi session wait`.
 
-A row uses the general activity-row link, `oppi://session/<id>`. Oppi already opens that. This package does not add a screen.
+A row uses the general activity-row link, `oppi://session/<id>`. Oppi already opens that. This package does not add a screen. A saved-agent emoji from `launch.agentIcon` is prefixed on the title. The activity row has no icon slot, so SF Symbol and genmoji icons are not drawn here.
 
 ## How it finds them
 

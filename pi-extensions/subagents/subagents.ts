@@ -40,10 +40,11 @@ export function applyGet(known: Subagent, payload: unknown): Subagent | null {
 	const parent = stringField(launch, "parentSessionId");
 	if (parent && parent !== known.parentId) return null;
 	const refreshed = subagentFromSession(session, known.id, known.parentId);
+	const name = stringField(session, "name") ?? known.title;
 	return {
 		...known,
 		...refreshed,
-		title: stringField(session, "name") ?? known.title,
+		title: titledWithAgent(name, asRecord(launch)?.agentIcon),
 	};
 }
 
@@ -141,6 +142,20 @@ function subagentFromSession(
 		link: sessionLink(id, workspaceId),
 		state: stateFromStatus(stringField(session, "status")),
 	};
+}
+
+export function titledWithAgent(name: string, icon: unknown): string {
+	const mark = agentEmoji(icon);
+	if (!mark || name.startsWith(`${mark} `) || name === mark) return name;
+	return `${mark} ${name}`;
+}
+
+function agentEmoji(icon: unknown): string | undefined {
+	const record = asRecord(icon);
+	if (stringField(record, "kind") !== "emoji") return undefined;
+	const value = stringField(record, "value");
+	if (!value || [...value].length > 4) return undefined;
+	return value;
 }
 
 function stateFromStatus(status: string | undefined): Subagent["state"] {
