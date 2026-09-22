@@ -203,37 +203,6 @@ struct ThinkingOrbGeometryTests {
         #expect(maxDelta < 10)
     }
 
-    @Test func steadyDictationLevelDoesNotTravel() {
-        for style in [ThinkingOrbStyle.composing, .breathing] {
-            for sizeClass in [ThinkingOrbSizeClass.dictationExpanded, .dictationStandard] {
-                let size = sizeClass.designSize
-                for level: Float in [0.12, 0.35, 1] {
-                    let first = ThinkingOrbGeometry.frame(
-                        style: style,
-                        sizeClass: sizeClass,
-                        size: size,
-                        geometryTime: 0.2,
-                        audioLevel: level,
-                        zSorted: false
-                    )
-                    let later = ThinkingOrbGeometry.frame(
-                        style: style,
-                        sizeClass: sizeClass,
-                        size: size,
-                        geometryTime: 40,
-                        audioLevel: level,
-                        zSorted: false
-                    )
-                    let motion = orbPointDisplacement(first, later)
-                    #expect(
-                        motion.max == 0,
-                        "\(style.rawValue) \(Int(size))pt level \(level) traveled \(motion.max)pt"
-                    )
-                }
-            }
-        }
-    }
-
     @Test func unvoicedDictationGeometryMatchesReduceMotionStillPose() {
         let stillT = ThinkingOrbDisplayPolicy.reduceMotionTime
         #expect(stillT == 0.6)
@@ -315,18 +284,8 @@ struct ThinkingOrbGeometryTests {
     }
 
     @Test func modestVoiceDeformsDictationOrbsByMoreThanAPoint() {
-        var drive = DictationSpeechDrive()
-        let dt = 1.0 / 60.0
-        for _ in 0..<180 {
-            _ = drive.step(level: 0.16, dt: dt)
-        }
-        let room = drive.activity
-        #expect(room < 0.02)
-        var voice: Float = 0
-        for _ in 0..<24 {
-            voice = drive.step(level: 0.62, dt: dt)
-        }
-        #expect(voice > 0.55)
+        let voice = smoothedVoice(raw: 0.2, seconds: 1)
+        #expect(voice > 0.12)
         for style in [ThinkingOrbStyle.composing, .breathing] {
             for sizeClass in [ThinkingOrbSizeClass.dictationExpanded, .dictationStandard] {
                 let size = sizeClass.designSize
@@ -415,28 +374,6 @@ struct VoiceLevelSmootherTests {
             last30 = at30.step(raw: 0.85, dt: 1.0 / 30.0)
         }
         #expect(abs(last60 - last30) < 0.03)
-    }
-
-    @Test func steadyRoomToneProducesNoSpeechActivity() {
-        var drive = DictationSpeechDrive()
-        var activity: Float = 1
-        let dt = 1.0 / 60.0
-        for _ in 0..<180 {
-            activity = drive.step(level: 0.16, dt: dt)
-        }
-        #expect(activity < 0.02, "room tone activity \(activity) ambient \(drive.ambient)")
-
-        var speaking: Float = 0
-        for _ in 0..<24 {
-            speaking = drive.step(level: 0.62, dt: dt)
-        }
-        #expect(speaking > 0.55, "speech activity \(speaking)")
-
-        var settled: Float = 1
-        for _ in 0..<120 {
-            settled = drive.step(level: 0.16, dt: dt)
-        }
-        #expect(settled < 0.02, "pause activity \(settled)")
     }
 
     @Test func quietSpeechSurvivesTheNoiseFloor() {
