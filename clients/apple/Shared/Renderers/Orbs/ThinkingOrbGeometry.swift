@@ -4,7 +4,7 @@ import Foundation
 // commit e2c07bbdec4db797fb302300ef0159b1806a909f
 // Original designs and engine: Jakub Antalik
 // Swift port: Haplo LLC
-// Voice-driven circular band and sphere deformation: Oppi adaptation
+// Voice-driven particle spheres and spectral deformation: Oppi adaptation
 // MIT License — see ThinkingOrbAttribution and LICENSE in this folder.
 
 /// One finished dot in design-point space (0...size on both axes).
@@ -235,27 +235,23 @@ enum ThinkingOrbPresets {
                 rActive: 0.4
             )
         case (.composing, .dictationExpanded):
-            // Concentric dotted lanes stay readable at the actual control size.
-            return circularBand(
+            return particleSphere(
                 speed: 2.34,
-                lanes: 4,
-                segs: 32,
+                dotCount: 128,
                 rBase: 1.1,
                 rDepth: 1.7
             )
         case (.composing, .dictationStandard):
-            return circularBand(
+            return particleSphere(
                 speed: 2.34,
-                lanes: 5,
-                segs: 44,
+                dotCount: 220,
                 rBase: 1.1,
                 rDepth: 1.7
             )
         case (.composing, .workingCompact), (.composing, .workingPreview):
-            return circularBand(
+            return particleSphere(
                 speed: 3.12,
-                lanes: 3,
-                segs: 20,
+                dotCount: 60,
                 rBase: 1.15,
                 rDepth: 1.7
             )
@@ -344,20 +340,18 @@ enum ThinkingOrbPresets {
         }
     }
 
-    private static func circularBand(
+    private static func particleSphere(
         speed: Double,
-        lanes: Int,
-        segs: Int,
+        dotCount: Int,
         rBase: Double,
         rDepth: Double
     ) -> Resolved {
         Resolved(speed: speed, rMin: 0.3) { size, t, voice in
-            ThinkingOrbBuilders.circularBand(
+            ThinkingOrbBuilders.particleSphere(
                 size,
                 t,
                 voice: voice,
-                lanes: lanes,
-                segs: segs,
+                dotCount: dotCount,
                 rBase: rBase,
                 rDepth: rDepth
             )
@@ -695,14 +689,13 @@ private enum ThinkingOrbBuilders {
         return ThinkingOrbFrame(dots: dots)
     }
 
-    /// Front-facing annulus. Depth shades the rounded band, never projects it
-    /// into a tilted sash. Every lane shares the same radial displacement.
-    static func circularBand(
+    /// Composing's quiet particle sphere: staggered front/back samples, not lanes.
+    /// Antipodal pairs and even radial modes keep the center fixed without spin.
+    static func particleSphere(
         _ size: Double,
         _ t: Double,
         voice: VoiceSpectrumFrame,
-        lanes: Int,
-        segs: Int,
+        dotCount: Int,
         rBase: Double,
         rDepth: Double
     ) -> ThinkingOrbFrame {
@@ -710,37 +703,41 @@ private enum ThinkingOrbBuilders {
         let bands = voice.bands
         let onset = Double(min(1, voice.flux / 30))
         var dots: [ThinkingOrbDot] = []
-        dots.reserveCapacity(lanes * segs)
-        for lane in 0..<lanes {
-            let across = Double(lane) / Double(lanes - 1)
-            let edge = abs(2 * across - 1)
-            let arch = sqrt(max(0, 1 - edge * edge))
-            for segment in 0..<segs {
-                let angle = Double(segment) / Double(segs) * 2 * .pi
-                // Bass expands the whole band; upper bands add progressively
-                // finer, smaller standing ripples. Even modes preserve the
-                // center. No phase/angle/lane lag can wring or cross the lanes.
-                let displacement = 0.050 * Double(bands[0])
-                    + 0.028 * Double(bands[1]) * (0.6 + 0.4 * cos(2 * angle))
-                    + 0.018 * Double(bands[2]) * cos(4 * angle)
-                    + 0.012 * Double(bands[3]) * cos(6 * angle)
-                    + 0.010 * Double(bands[4]) * cos(8 * angle)
-                // For the entire [0,1]^5 cube, displacement is in [-.040,.118].
-                // Centers therefore stay in [.190,.468] * size. The remaining
-                // .032 * size exceeds the largest onset dot at 20/32/44 pt,
-                // including finalize's .3pt minimum and Float rounding.
-                let radius = size * (0.23 + 0.12 * across + displacement)
-                let depth = 0.25 + 0.55 * arch + 0.1 * sin(angle)
-                let index = lane * segs + segment
+        dots.reserveCapacity(dotCount)
+        let pairs = dotCount / 2
+        let goldenAngle = Double.pi * (3 - 5.0.squareRoot())
+        for pair in 0..<pairs {
+            // Uniform hemisphere depth plus golden-angle staggering fills the
+            // projected center without latitude rows or aligned radial spokes.
+            let z = (Double(pair) + 0.5) / Double(pairs)
+            let edge = sqrt(1 - z * z)
+            let angle = Double(pair) * goldenAngle
+            let x = edge * cos(angle)
+            let y = edge * sin(angle)
+            // Retain Composing's restrained swell and finer standing ripples,
+            // now along each fixed 3D direction rather than annular lanes.
+            let displacement = 0.050 * Double(bands[0])
+                + 0.028 * Double(bands[1]) * (0.6 + 0.4 * cos(2 * angle))
+                + 0.018 * Double(bands[2]) * cos(4 * angle)
+                + 0.012 * Double(bands[3]) * cos(6 * angle)
+                + 0.010 * Double(bands[4]) * cos(8 * angle)
+            // Across [0,1]^5, radius is [.310,.468] * size. Edge dots have
+            // .032 * size of headroom; larger foreground dots project inward.
+            // Tests cover full dot bounds and Float rounding at 20/32/44 pt.
+            let radius = size * (0.35 + displacement)
+            for hemisphere in 0..<2 {
+                let sign = hemisphere == 0 ? 1.0 : -1.0
+                let depth = (sign * z + 1) / 2
+                let index = pair * 2 + hemisphere
                 dots.append(ThinkingOrbDot(
-                    x: size / 2 + cos(angle) * radius,
-                    y: size / 2 - sin(angle) * radius,
-                    z: (2 * depth - 1) * size * 0.04,
-                    r: (rBase + rDepth * depth) * (1 - 0.25 * edge) * rs * (1 + 0.2 * onset),
+                    x: size / 2 + sign * x * radius,
+                    y: size / 2 - sign * y * radius,
+                    z: sign * z * radius,
+                    r: max(0.3, (rBase + rDepth * depth) * rs * (1 + 0.2 * onset)),
                     white: 0.52 - 0.44 * depth + 0.18 * edge,
-                    a: 0.4 + 0.6 * depth + (index % 5 == 0 ? ghostTwinkle(index, t) : 0),
+                    a: min(1, 0.4 + 0.6 * depth + (index % 5 == 0 ? ghostTwinkle(index, t) : 0)),
                     accent: 0.65 - 0.2 * edge,
-                    palette: Double(min(3, lane * 4 / lanes))
+                    palette: Double(min(3, index * 4 / dotCount))
                 ))
             }
         }

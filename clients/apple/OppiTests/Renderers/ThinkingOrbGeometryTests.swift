@@ -49,7 +49,7 @@ struct ThinkingOrbGeometryTests {
                 let highDelta = displacements(idle, high)
                 #expect(lowDelta != highDelta)
                 #expect(lowDelta.contains { length($0) > 1 })
-                // The band keeps treble ripples small; the sphere retains its larger roughness.
+                // Composing keeps treble ripples small; Breathing retains its larger roughness.
                 #expect(highDelta.contains { length($0) > (style == .composing ? 0.25 : 1) })
                 let dotProduct = zip(lowDelta, highDelta).reduce(0.0) { sum, pair in
                     sum + pair.0.x * pair.1.x + pair.0.y * pair.1.y + pair.0.z * pair.1.z
@@ -61,14 +61,17 @@ struct ThinkingOrbGeometryTests {
         }
     }
 
-    @Test func sameBandsKeepCircularBandDistinctFromRadialSphere() {
+    @Test func sameBandsKeepComposingRestrainedAndDistinctFromBreathing() {
         let voice = VoiceSpectrumFrame(bands: SIMD8(0.6, 0.3, 0.5, 0.2, 0.4, 0, 0, 0))
         for size in sizes {
-            let band = frame(.composing, size, voice)
+            let composing = frame(.composing, size, voice)
             let sphere = frame(.breathing, size, voice)
-            #expect(band.dots != sphere.dots)
-            #expect(band.dots.allSatisfy { projectedRadius($0, size.designSize) > size.designSize * 0.18 })
+            #expect(composing.dots != sphere.dots)
+            #expect(composing.dots.contains { projectedRadius($0, size.designSize) < size.designSize * 0.1 })
             #expect(sphere.dots.contains { projectedRadius($0, size.designSize) < size.designSize * 0.1 })
+            let composingTravel = displacements(frame(.composing, size), composing).map { length($0) }
+            let breathingTravel = displacements(frame(.breathing, size), sphere).map { length($0) }
+            #expect((composingTravel.max() ?? 0) < (breathingTravel.max() ?? 0))
             let radius = size.designSize * 0.39
             let idleSphere = frame(.breathing, size)
             #expect(displacements(idleSphere, sphere).contains { length($0) > 0.5 })
@@ -98,7 +101,7 @@ struct ThinkingOrbGeometryTests {
         }
     }
 
-    @Test func fluxChangesBandDotRadiusAndSphereAccentButNeverPositions() {
+    @Test func fluxChangesComposingDotRadiusAndBreathingAccentButNeverPositions() {
         for style in styles {
             let idle = frame(style, .dictationStandard)
             let onset = frame(style, .dictationStandard, VoiceSpectrumFrame(flux: 30))
@@ -111,65 +114,68 @@ struct ThinkingOrbGeometryTests {
         }
     }
 
-    @Test func composingQuietIsConcentricCircularLanesWithDepth() {
-        for (size, lanes, segments) in bandMeshes {
+    @Test func composingQuietProjectsAStaggeredSphereThroughTheCenter() {
+        for size in sizes {
+            let side = size.designSize
             let dots = frame(.composing, size).dots
-            #expect(dots.allSatisfy {
-                let radius = projectedRadius($0, size.designSize)
-                return radius >= size.designSize * 0.22 && radius <= size.designSize * 0.36
-            }, "Quiet must leave an open center and a round outer envelope")
-            #expect(dots.count == lanes * segments, "Only annular lanes, no interior sphere ghosts")
-            guard dots.count == lanes * segments else { continue }
-            for lane in 0..<lanes {
-                let ring = Array(dots[(lane * segments)..<((lane + 1) * segments)])
-                let radii = ring.map { projectedRadius($0, size.designSize) }
-                #expect((radii.max() ?? 0) - (radii.min() ?? 0) < 1e-9)
-                #expect(radii.allSatisfy { $0 >= size.designSize * 0.22 && $0 <= size.designSize * 0.36 })
-                let centerX = ring.map(\.x).reduce(0, +) / Double(segments)
-                let centerY = ring.map(\.y).reduce(0, +) / Double(segments)
-                #expect(abs(centerX - size.designSize / 2) < 1e-9)
-                #expect(abs(centerY - size.designSize / 2) < 1e-9)
+            #expect(dots.count >= 100 && dots.count <= 240, "Keep particles legible at control size")
+            #expect(dots.allSatisfy { abs(radialLength($0, side) - 0.35 * side) < 1e-9 })
+            #expect(dots.filter { projectedRadius($0, side) < side * 0.1 }.count >= 4, "Not an annulus")
+            for sector in 0..<12 {
+                let points = dots.filter {
+                    let angle = atan2($0.y - side / 2, $0.x - side / 2) + .pi
+                    return min(11, Int(angle / (2 * .pi) * 12)) == sector
+                }
+                #expect(points.contains { projectedRadius($0, side) > side * 0.32 }, "Round silhouette in every direction")
             }
-            #expect(Set(dots.map(\.z)).count > 1, "Depth must not require tilting the circle")
-            #expect(Set(dots.map(\.white)).count > 1)
+            // Quantization ignores Float noise but catches repeated concentric rows/spokes.
+            let radii = Dictionary(grouping: dots) { Int((projectedRadius($0, side) / side * 10000).rounded()) }
+            let angles = Dictionary(grouping: dots) {
+                Int(((atan2($0.y - side / 2, $0.x - side / 2) + .pi) * 10000).rounded())
+            }
+            #expect(radii.values.allSatisfy { $0.count <= 4 })
+            #expect(angles.values.allSatisfy { $0.count <= 2 })
         }
     }
 
-    @Test func composingSharesRadialTravelWithoutChangingAnglesOrCrossingLanes() {
-        for (size, lanes, segments) in bandMeshes {
+    @Test func composingFrontParticlesAreLargerAndBrighterThanTheRear() {
+        for size in sizes {
+            let dots = frame(.composing, size).dots
+            let front = dots.filter { $0.z > size.designSize * 0.2 }
+            let back = dots.filter { $0.z < -size.designSize * 0.2 }
+            #expect(!front.isEmpty && !back.isEmpty, "True front/back sphere depth, not band shading")
+            guard !front.isEmpty && !back.isEmpty else { continue }
+            #expect((front.map(\.r).min() ?? 0) > 1.5 * (back.map(\.r).max() ?? 0))
+            #expect((front.map(\.a).min() ?? 0) > (back.map(\.a).max() ?? 0))
+            #expect((front.map(\.white).max() ?? 0) < (back.map(\.white).min() ?? 0))
+            #expect(dots.allSatisfy { $0.r >= 0.3 && $0.a >= 0.3 && $0.a <= 1 })
+            let sorted = ThinkingOrbGeometry.frame(
+                style: .composing, sizeClass: size, size: size.designSize, geometryTime: 0.6
+            ).dots
+            #expect(sorted.count == dots.count)
+            #expect(zip(sorted, sorted.dropFirst()).allSatisfy { $0.z <= $1.z }, "Front dots paint over the rear")
+        }
+    }
+
+    @Test func composingKeepsMaterialDirectionsAndCenterAcrossTheBandCube() {
+        for size in sizes {
+            let side = size.designSize
             let idle = frame(.composing, size).dots
-            guard idle.count == lanes * segments else {
-                Issue.record("Unexpected band topology: \(idle.count)")
-                continue
-            }
             for voice in bandCubeSamples {
                 let live = frame(.composing, size, voice).dots
                 #expect(live.count == idle.count)
                 guard live.count == idle.count else { continue }
-                let angleErrors = zip(idle, live).map { a, b in
-                    let c = size.designSize / 2
-                    return abs(ThinkingOrbGeometry.angleDelta(atan2(a.y - c, a.x - c), atan2(b.y - c, b.x - c)))
-                }
-                #expect(angleErrors.allSatisfy { $0 < 1e-10 })
-                for segment in 0..<segments {
-                    let travel = projectedRadius(live[segment], size.designSize) - projectedRadius(idle[segment], size.designSize)
-                    #expect(travel >= -0.041 * size.designSize && travel <= 0.119 * size.designSize)
-                    for lane in 1..<lanes {
-                        let index = lane * segments + segment
-                        let gap = projectedRadius(live[index], size.designSize) - projectedRadius(live[index - segments], size.designSize)
-                        let idleGap = projectedRadius(idle[index], size.designSize) - projectedRadius(idle[index - segments], size.designSize)
-                        #expect(gap > 0 && abs(gap - idleGap) < 1e-9, "Shared deformation must preserve lane thickness")
-                    }
-                }
-                // Even angular modes keep opposing points centered, including mixed spectra.
-                for lane in 0..<lanes {
-                    for segment in 0..<(segments / 2) {
-                        let a = live[lane * segments + segment]
-                        let b = live[lane * segments + segment + segments / 2]
-                        #expect(abs(a.x + b.x - size.designSize) < 1e-9)
-                        #expect(abs(a.y + b.y - size.designSize) < 1e-9)
-                    }
-                }
+                #expect(zip(idle, live).allSatisfy { a, b in
+                    let p = centered(a, side)
+                    let q = centered(b, side)
+                    return length(p / length(p) - q / length(q)) < 1e-10
+                }, "No rotation, tumble, twist, or angular crossing")
+                #expect(zip(idle, live).allSatisfy { a, b in
+                    let travel = radialLength(b, side) - radialLength(a, side)
+                    return travel >= -0.041 * side && travel <= 0.119 * side
+                })
+                let center = live.reduce(SIMD3<Double>.zero) { $0 + centered($1, side) } / Double(live.count)
+                #expect(length(center) < 1e-10, "Even spectral modes must not drift the sphere center")
             }
         }
     }
@@ -187,6 +193,36 @@ struct ThinkingOrbGeometryTests {
                         && $0.x - $0.r >= 0 && $0.y - $0.r >= 0
                         && $0.x + $0.r <= size.designSize && $0.y + $0.r <= size.designSize
                 })
+                #expect(dots.allSatisfy {
+                    let x = Float($0.x), y = Float($0.y), r = Float($0.r)
+                    let side = Float(size.designSize)
+                    return x - r >= 0 && y - r >= 0 && x + r <= side && y + r <= side && r >= 0.3
+                }, "Bounds and minimum dot size must survive Metal's Float conversion")
+            }
+        }
+    }
+
+    @Test func composingUpperBandsMakeProgressivelyFinerSmallerRipples() {
+        for size in sizes {
+            let side = size.designSize
+            let idle = frame(.composing, size).dots
+            let angularOrder = idle.indices.sorted {
+                atan2(idle[$0].y - side / 2, idle[$0].x - side / 2)
+                    < atan2(idle[$1].y - side / 2, idle[$1].x - side / 2)
+            }
+            var previousPeak = Double.infinity
+            for band in 2..<5 {
+                var input = VoiceSpectrumFrame.zero
+                input.bands[band] = 1
+                let live = frame(.composing, size, input).dots
+                let travel = angularOrder.map { radialLength(live[$0], side) - radialLength(idle[$0], side) }
+                let peak = travel.map { abs($0) }.max() ?? 0
+                #expect(peak > side * 0.009 && peak < previousPeak)
+                previousPeak = peak
+                let crossings = travel.indices.filter {
+                    (travel[$0] > 0) != (travel[($0 + 1) % travel.count] > 0)
+                }.count
+                #expect(crossings == band * 4, "Higher bands add finer standing ripples, not random jitter")
             }
         }
     }
@@ -198,7 +234,11 @@ struct ThinkingOrbGeometryTests {
             let treble = frame(.composing, size, VoiceSpectrumFrame(bands: SIMD8(0, 0, 0, 0, 1, 0, 0, 0))).dots
             let bassTravel = zip(idle, bass).map { projectedRadius($1, size.designSize) - projectedRadius($0, size.designSize) }
             let trebleTravel = zip(idle, treble).map { projectedRadius($1, size.designSize) - projectedRadius($0, size.designSize) }
-            #expect(bassTravel.allSatisfy { $0 > size.designSize * 0.04 && $0 < size.designSize * 0.06 })
+            #expect(zip(idle, bass).allSatisfy {
+                let travel = radialLength($1, size.designSize) - radialLength($0, size.designSize)
+                return travel > size.designSize * 0.049 && travel < size.designSize * 0.051
+            })
+            #expect(bassTravel.allSatisfy { $0 > 0 && $0 < size.designSize * 0.06 })
             #expect(trebleTravel.contains { $0 > size.designSize * 0.007 })
             #expect(trebleTravel.contains { $0 < -size.designSize * 0.007 })
             #expect(trebleTravel.allSatisfy { abs($0) < size.designSize * 0.015 })
@@ -219,10 +259,6 @@ struct ThinkingOrbGeometryTests {
                 #expect(zip(quiet.dots, final.dots).allSatisfy { abs($0.r - $1.r) < 0.00001 })
             }
         }
-    }
-
-    private var bandMeshes: [(ThinkingOrbSizeClass, Int, Int)] {
-        [(.dictationExpanded, 4, 32), (.dictationStandard, 5, 44)]
     }
 
     private var bandCubeSamples: [VoiceSpectrumFrame] {
