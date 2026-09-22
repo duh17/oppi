@@ -4,7 +4,7 @@ import Foundation
 // commit e2c07bbdec4db797fb302300ef0159b1806a909f
 // Original designs and engine: Jakub Antalik
 // Swift port: Haplo LLC
-// Calm-sea sash motion and voice-driven spectral deformation: Oppi adaptation
+// Calm-sea sash motion and voice-driven pitch mapping: Oppi adaptation
 // MIT License — see ThinkingOrbAttribution and LICENSE in this folder.
 
 /// One finished dot in design-point space (0...size on both axes).
@@ -691,7 +691,7 @@ private enum ThinkingOrbBuilders {
         let onset = Double(min(1, voice.flux / 30))
         // Bound idle phase instead of running the original traveling waves
         // continuously: ~39s calm-sea cycle, under 0.018 * size of travel.
-        // Speech redirects the same waves through the existing spectrum smoother.
+        // Speech still steers those shared waves; pitch is lane size/color.
         let phase = 0.12 * sin(t * 0.16) + 0.65 * Double(bands[0])
         let vy = cos(0.55), vz = sin(0.55)
         let ny = -vz, nz = vy
@@ -714,8 +714,8 @@ private enum ThinkingOrbBuilders {
             for k in 0..<segs {
                 let a = Double(k) / Double(segs) * 2 * Double.pi
                 // Preserve the upstream two-wave silhouette and only its small
-                // .22 lane phase. All added spectral ripples are shared by lanes;
-                // no independent lag, rigid rotation, or accumulating wring.
+                // .22 lane phase. Shared spectral ripples keep lane gaps; pitch
+                // swells chest in the middle and treble on the rims.
                 let wob = 0.16 * sin(a * 3 - phase * 1.7 + fw * 0.22)
                     + 0.07 * sin(a * 5 + phase * 1.1)
                     + 0.08 * Double(bands[1]) * sin(a * 2)
@@ -729,18 +729,35 @@ private enum ThinkingOrbBuilders {
                 let length = sqrt(x * x + y * y + z * z)
                 let (px, py, zr) = pt(x / length * R, y / length * R, z / length * R)
                 let depth = (zr / R + 1) / 2
+                let pitch = sashPitchEnergy(edge: edge, bands: bands)
+                let swell = min(0.2, 0.12 * onset + 0.20 * pitch)
                 // Normalization keeps every center on R. Even the largest
                 // flux-boosted dot fits the remaining .11 * size at 20/32/44pt.
                 dots.append(ThinkingOrbDot(
                     x: px, y: py, z: zr,
-                    r: max(0.3, (rBase + rDepth * depth) * (1 - 0.25 * edge) * rs * (1 + 0.2 * onset)),
-                    white: 0.52 - 0.44 * depth + 0.18 * edge,
+                    r: max(0.3, (rBase + rDepth * depth) * (1 - 0.25 * edge) * rs * (1 + swell)),
+                    white: 0.52 - 0.44 * depth + 0.18 * edge - 0.16 * pitch,
                     a: 0.4 + 0.6 * depth,
-                    accent: 0.65 - 0.2 * edge,
+                    accent: min(1, 0.65 - 0.2 * edge + 0.35 * pitch),
                     palette: Double(min(3, lane * 4 / lanes))
                 ))
             }
         }
         return ThinkingOrbFrame(dots: dots)
+    }
+
+    /// 0 at the sash middle, 1 at the rims. Overlap so neighboring lanes swell together.
+    private static func sashPitchWeight(edge: Double, band: Int) -> Double {
+        max(0, 1 - abs(edge - Double(band) / 4) / 0.55)
+    }
+
+    private static func sashPitchEnergy(edge: Double, bands: SIMD8<Float>) -> Double {
+        var energy = 0.0
+        for band in 0..<5 {
+            let value = Double(bands[band])
+            guard value > 0 else { continue }
+            energy += sashPitchWeight(edge: edge, band: band) * value
+        }
+        return min(1, energy)
     }
 }

@@ -260,6 +260,30 @@ struct ThinkingOrbGeometryTests {
         }
     }
 
+    @Test func composingMapsChestToCenterLanesAndTrebleToEdges() {
+        for size in sizes {
+            let idle = frame(.composing, size)
+            guard idle.dots.count == 566 else {
+                Issue.record("Missing upstream lanes")
+                continue
+            }
+            let chest = frame(.composing, size, VoiceSpectrumFrame(bands: SIMD8(1, 0, 0, 0, 0, 0, 0, 0)))
+            let treble = frame(.composing, size, VoiceSpectrumFrame(bands: SIMD8(0, 0, 0, 0, 1, 0, 0, 0)))
+            let chestCenter = meanLaneRadiusDelta(idle, chest, lanes: [5, 6])
+            let chestEdge = meanLaneRadiusDelta(idle, chest, lanes: [0, 11])
+            let trebleCenter = meanLaneRadiusDelta(idle, treble, lanes: [5, 6])
+            let trebleEdge = meanLaneRadiusDelta(idle, treble, lanes: [0, 11])
+            #expect(chestCenter > chestEdge * 1.4, "Chest energy should swell the sash middle")
+            #expect(trebleEdge > trebleCenter * 1.4, "Treble should swell the rims")
+            #expect(chestCenter > 0.02)
+            #expect(trebleEdge > 0.015)
+            #expect(meanLaneAccent(chest, lanes: [5, 6]) > meanLaneAccent(chest, lanes: [0, 11]))
+            #expect(meanLaneAccent(treble, lanes: [0, 11]) > meanLaneAccent(treble, lanes: [5, 6]))
+            #expect(displacements(idle, chest).contains { length($0) > 0.3 })
+            #expect(zip(idle.dots.prefix(38), chest.dots.prefix(38)).allSatisfy { $0 == $1 })
+        }
+    }
+
     @Test func composingUpperBandsMakeSmallerCoherentOutOfPlaneRipples() {
         for size in sizes {
             let idle = frame(.composing, size)
@@ -272,7 +296,6 @@ struct ThinkingOrbGeometryTests {
                 #expect(peak > size.designSize * 0.008 && peak < previousPeak)
                 previousPeak = peak
                 guard live.dots.count == 566 else { Issue.record("Missing upstream lanes"); continue }
-                // Inverse projection measures out-of-plane motion, not a radial swell.
                 func offset(_ dot: ThinkingOrbDot) -> Double {
                     let x = dot.x - size.designSize / 2, y = size.designSize / 2 - dot.y
                     return (-y * sin(0.85) + dot.z * cos(0.85)) / hypot(x, y * cos(0.85) + dot.z * sin(0.85))
@@ -503,4 +526,38 @@ private func radialLength(_ dot: ThinkingOrbDot, _ size: Double) -> Double { len
 private func length(_ value: SIMD3<Double>) -> Double { sqrt(value.x * value.x + value.y * value.y + value.z * value.z) }
 private func displacements(_ a: ThinkingOrbFrame, _ b: ThinkingOrbFrame) -> [SIMD3<Double>] {
     zip(a.dots, b.dots).map { SIMD3($1.x - $0.x, $1.y - $0.y, $1.z - $0.z) }
+}
+private func meanLaneRadiusDelta(
+    _ idle: ThinkingOrbFrame,
+    _ live: ThinkingOrbFrame,
+    lanes: [Int],
+    ghost: Int = 38,
+    segs: Int = 44
+) -> Double {
+    var sum = 0.0
+    var count = 0
+    for lane in lanes {
+        for k in 0..<segs {
+            let i = ghost + lane * segs + k
+            sum += live.dots[i].r - idle.dots[i].r
+            count += 1
+        }
+    }
+    return count == 0 ? 0 : sum / Double(count)
+}
+private func meanLaneAccent(
+    _ live: ThinkingOrbFrame,
+    lanes: [Int],
+    ghost: Int = 38,
+    segs: Int = 44
+) -> Double {
+    var sum = 0.0
+    var count = 0
+    for lane in lanes {
+        for k in 0..<segs {
+            sum += live.dots[ghost + lane * segs + k].accent
+            count += 1
+        }
+    }
+    return count == 0 ? 0 : sum / Double(count)
 }
