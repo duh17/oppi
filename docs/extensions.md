@@ -52,12 +52,22 @@ For ordinary Pi extensions, disabled rows are still visible in the server catalo
 | ----------------------- | ------------------------------------------------------------- | ---------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------- |
 | Host pi extensions      | User/project pi settings, `pi install`, or `.pi/extensions`   | User-owned pi config/package paths       | pi resource loader | Must work without Oppi server services                                                                        |
 | Ask extension example   | Pi package/settings install or auto-discovered extension path | `pi-extensions/ask`                      | pi resource loader | Portable Pi package: registers `ask`, uses native AskCard when available, then falls back to Pi UI APIs       |
+| Subagents example       | Pi package/settings install or auto-discovered extension path | `pi-extensions/subagents`                | pi resource loader | Reference widget. Remembers creates from this parent, then `oppi session get` for those ids only.             |
+| Background jobs example | Pi package/settings install or auto-discovered extension path | `pi-extensions/background-jobs`          | pi resource loader | Reference tool. Backgrounds a long shell command and delivers the output as a follow-up.                      |
 | Active goal extension   | User Pi resource settings or auto-discovered extension path   | Standalone `pi-goal` package             | pi resource loader | Canonical durable-goal implementation maintained in its own repository                                        |
 | Disabled goal prototype | Not enabled                                                   | `pi-extensions/goal`                     | not loaded         | Preserved while compaction recovery, task timing, and snapshot migration are audited in the pi-goal workspace |
 | Browser video example   | Pi package/settings install or auto-discovered extension path | `pi-extensions/browser-automation-video` | pi resource loader | Oppi-compatible Pi package: registers a public Pi tool and uses Oppi's attachment helper when available       |
 | Mobile UI compatibility | Native Oppi client + server bridge                            | Protocol and UI bridge code              | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md)    |
 
 This split keeps consent clear: installing Oppi does not install a pi extension package.
+
+## Reference extension examples
+
+`pi-extensions/subagents` and `pi-extensions/background-jobs` are copyable examples, not Oppi product features. Installing Oppi does not enable them. Link the package into `~/.pi/agent/extensions/` or run `pi -e ./pi-extensions/<name>` when you want that behavior.
+
+`subagents` remembers `oppi session create` results from the current parent and refreshes those ids with `oppi session get`. A row uses the existing `oppi://session/<id>` link. It does not add a screen or a children-list API.
+
+`background-jobs` registers `background_job`. A shell command that is still running after 15 seconds, or one that ends in `&`, becomes a job. The composer pill shows it, and the output is injected as a follow-up. Polling a running job is blocked.
 
 ## Ask extension example
 
