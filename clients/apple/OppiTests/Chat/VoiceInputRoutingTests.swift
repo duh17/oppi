@@ -5,6 +5,20 @@ import Testing
 @Suite("VoiceInputRouteResolver")
 @MainActor
 struct VoiceInputRoutingTests {
+    @Test func onDeviceKeepsClassicDictationWhenAvailable() async {
+        let resolver = VoiceInputRouteResolver { engine, _ in
+            engine == .classicDictation || engine == .modernSpeech
+        }
+
+        let resolved = await resolver.resolveEngine(
+            mode: .onDevice,
+            fallback: .classicDictation,
+            locale: Locale(identifier: "en-US")
+        )
+
+        #expect(resolved == .classicDictation)
+    }
+
     @Test func onDeviceKeepsModernSpeechWhenAvailable() async {
         let resolver = VoiceInputRouteResolver { engine, _ in
             engine == .modernSpeech

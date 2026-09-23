@@ -30,6 +30,48 @@ struct DictationHintWiringTests {
         #expect(setContext < start)
     }
 
+    @Test func onDeviceClassicTakeGetsDictionaryHintsWithoutServerConsent() async throws {
+        resetHintPreferences()
+        defer {
+            resetHintPreferences()
+            TestURLProtocol.handler = nil
+        }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [TestURLProtocol.self]
+        let api = try APIClient(
+            baseURL: #require(URL(string: "http://localhost:7749")),
+            token: "sk_test", configuration: config
+        )
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/dictation/dictionary/global")
+            let url = try #require(request.url)
+            let response = try #require(HTTPURLResponse(
+                url: url, statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            ))
+            return (Data(#"{"phrases":["Yuwp","kypu"],"revision":1}"#.utf8), response)
+        }
+        let connection = ServerConnection()
+        connection.setAPIClientForTesting(api)
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        manager.setEngineMode(.onDevice)
+        _ = manager.beginStandaloneComposer(
+            serverId: "server", credentials: nil, connection: connection
+        )
+        try await manager.startRecording(source: "test")
+
+        #expect(manager.activeEngine == .classicDictation)
+        #expect(classicProvider.lastContext?.contextualStrings == ["Yuwp", "kypu"])
+        #expect(!DictationDictionaryConsent.isEnabled(serverId: "server", provider: "xai"))
+        await manager.cancelRecording()
+    }
+
     @Test func restoredChatUsesItsServerAfterDifferentServerStandalone() async throws {
         resetHintPreferences()
         defer { resetHintPreferences() }

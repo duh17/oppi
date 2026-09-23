@@ -6,10 +6,10 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Voic
 
 /// On-device speech-to-text using `SpeechAnalyzer` (iOS 26+).
 ///
-/// Prefers Apple's general-purpose `SpeechTranscriber` and falls back to
-/// `DictationTranscriber` when the newer model is unavailable for the current
-/// device or locale. Both engines stream progressive results. `SpeechTranscriber`
-/// keeps volatile partials and omits `fastResults` so long takes keep full context.
+/// Prefers Apple's `DictationTranscriber` (keyboard-dictation models) and falls
+/// back to `SpeechTranscriber` when classic dictation is unavailable. Both engines
+/// stream progressive results. Phrase hints from the shared dictation dictionary
+/// go to on-device `AnalysisContext` without server-send consent.
 ///
 /// **Language detection:** By default, follows the active keyboard language
 /// at mic-tap time (Chinese keyboard → Chinese model, English keyboard →

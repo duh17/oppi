@@ -14,11 +14,13 @@ extension VoiceInputManager {
     }
 
     /// Preferred on-device engine before device and locale capabilities are checked.
-    /// Runtime routing falls back to `DictationTranscriber` when the newer
-    /// `SpeechTranscriber` model is unavailable.
+    ///
+    /// `DictationTranscriber` uses the same models as keyboard dictation and
+    /// consumes `AnalysisContext` phrase hints. Runtime routing falls back to
+    /// `SpeechTranscriber` when classic dictation is unavailable.
     static func preferredEngine(for locale: Locale) -> TranscriptionEngine {
         _ = locale
-        return .modernSpeech
+        return .classicDictation
     }
 
     /// Compact language label for display in the mic button.
