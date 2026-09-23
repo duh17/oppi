@@ -74,7 +74,10 @@ struct DictationDictionaryView: View {
                                 DictationDictionaryConsent.setEnabled(enabled, serverId: serverId, provider: provider)
                             }
                     } footer: {
-                        Text("When enabled, selected phrases leave this device for paired server \(serverName(serverId)) and its configured \(providerName(provider)) ASR provider. Default off. On-device dictation can use phrases without sending them. Selected does not mean applied; the speech provider may ignore hints.")
+                        Text(DictationDictionaryCopy.consentFooter(
+                            serverName: serverName(serverId),
+                            provider: provider
+                        ))
                     }
                 }
             }
@@ -228,9 +231,15 @@ struct DictationDictionaryView: View {
     private func serverName(_ id: String) -> String {
         coordinator.serverStore.server(for: id)?.name ?? id
     }
+}
 
-    private func providerName(_ provider: String) -> String {
-        provider == "xai" ? "xAI" : "Yuwp / HTTP"
+/// User-visible dictionary copy. Never name a local ASR implementation.
+enum DictationDictionaryCopy {
+    static func consentFooter(serverName: String, provider: String) -> String {
+        let service = provider == "xai"
+            ? "xAI speech-to-text service"
+            : "speech-to-text service"
+        return "When enabled, selected phrases leave this device for paired server \(serverName) and its configured \(service). Default off. On-device dictation can use phrases without sending them. Selected does not mean applied; the speech provider may ignore hints."
     }
 }
 

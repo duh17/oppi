@@ -149,6 +149,20 @@ struct DictationDictionarySelectionTests {
         #expect(global == ["second", "third"])
     }
 
+    @Test func consentFooterNamesCloudVendorButNotLocalASRImplementation() {
+        let http = DictationDictionaryCopy.consentFooter(serverName: "mac-studio", provider: "http")
+        let unknown = DictationDictionaryCopy.consentFooter(serverName: "mac-studio", provider: "other")
+        let xai = DictationDictionaryCopy.consentFooter(serverName: "mac-studio", provider: "xai")
+        for copy in [http, unknown, xai] {
+            #expect(!copy.localizedCaseInsensitiveContains("yuwp"))
+            #expect(copy.contains("mac-studio"))
+            #expect(copy.contains("speech-to-text service"))
+        }
+        #expect(http.contains("its configured speech-to-text service"))
+        #expect(!http.contains("HTTP"))
+        #expect(xai.contains("its configured xAI speech-to-text service"))
+    }
+
     @Test func overflowRemainsVisibleAsExcluded() {
         let phrases = (0..<101).map { "name\($0)" }
         let selected = DictationDictionarySelection.make(workspace: phrases, global: ["global"])
