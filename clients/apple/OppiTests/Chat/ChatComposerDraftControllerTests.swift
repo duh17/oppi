@@ -250,6 +250,27 @@ struct ChatComposerDraftControllerTests {
         #expect(store.record(for: key)?.payload.text == "normal message")
     }
 
+    @Test func immediateSubmissionReattachBeforeAcknowledgementRestoresEmptyComposer() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let controller = ChatComposerDraftController(initialText: "sent before replay")
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        let submission = try #require(controller.beginSubmission(draftClearance: .immediately))
+        #expect(controller.text.isEmpty)
+
+        let returningController = ChatComposerDraftController()
+        returningController.attach(store: store, key: key, isEphemeral: false)
+        #expect(returningController.text.isEmpty)
+        #expect(store.record(for: key) == nil)
+
+        controller.completeSubmission(submission)
+        #expect(returningController.text.isEmpty)
+    }
+
     @Test func dispatchClearingTheVisibleAttachmentBarDoesNotClearPendingSubmission() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -267,9 +288,18 @@ struct ChatComposerDraftControllerTests {
         )
         controller.attach(store: store, key: key, isEphemeral: false)
 
-        _ = controller.beginSubmission(draftClearance: .immediately)
+        let submission = try #require(controller.beginSubmission(draftClearance: .immediately))
         controller.setPendingAttachments([]) // ChatView's dispatch cleanup
 
+        #expect(store.record(for: key) == nil)
+        #expect(submission.payload.text == "send this")
+        #expect(submission.payload.attachments.map(\.id) == [attachment.id])
+        #expect(submission.pendingAttachments.first?.composerDraftData == Data("notes".utf8))
+
+        controller.failSubmission(submission)
+        #expect(controller.text == "send this")
+        #expect(controller.pendingAttachments.map(\.id) == [attachment.id])
+        #expect(controller.pendingAttachments.first?.composerDraftData == Data("notes".utf8))
         #expect(store.record(for: key)?.payload.text == "send this")
         #expect(store.record(for: key)?.payload.attachments.map(\.id) == [attachment.id])
     }
@@ -441,6 +471,23 @@ struct ChatComposerDraftControllerTests {
         controller.attach(store: store, key: key, isEphemeral: false)
 
         let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        controller.text = "next message"
+        controller.completeSubmission(submission)
+
+        #expect(controller.text == "next message")
+        #expect(store.record(for: key)?.payload.text == "next message")
+    }
+
+    @Test func acknowledgedImmediateSubmissionDoesNotClearNewerTyping() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let controller = ChatComposerDraftController(initialText: "send this")
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        let submission = try #require(controller.beginSubmission(draftClearance: .immediately))
         controller.text = "next message"
         controller.completeSubmission(submission)
 

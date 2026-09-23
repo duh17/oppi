@@ -19,6 +19,7 @@ final class ChatComposerDraftController {
         let store: ComposerDraftStore?
         let key: ComposerDraftKey?
         let payload: ComposerDraftPayload
+        let pendingAttachments: [PendingAttachment]
         let revision: UInt64?
         let wasEphemeral: Bool
         let draftClearance: SubmissionDraftClearance
@@ -271,6 +272,7 @@ final class ChatComposerDraftController {
             store: store,
             key: key,
             payload: messagePayload,
+            pendingAttachments: pendingAttachments,
             revision: revision,
             wasEphemeral: isEphemeral,
             draftClearance: draftClearance
@@ -280,6 +282,7 @@ final class ChatComposerDraftController {
 
         if draftClearance == .immediately {
             messagePayload = .empty
+            persistMessagePayload()
             isApplyingVisiblePayload = true
             pendingAttachments = []
             isApplyingVisiblePayload = false
@@ -350,7 +353,7 @@ final class ChatComposerDraftController {
 
         if messagePayload.isEmpty {
             messagePayload = snapshot.payload
-            pendingAttachments = restoredAttachments(for: snapshot.payload)
+            pendingAttachments = snapshot.pendingAttachments
             if !isEphemeral,
                let key,
                store?.record(for: key)?.payload != snapshot.payload {
@@ -362,7 +365,7 @@ final class ChatComposerDraftController {
                 current: messagePayload
             )
             pendingAttachments = Self.combinedAttachments(
-                failed: restoredAttachments(for: snapshot.payload),
+                failed: snapshot.pendingAttachments,
                 current: pendingAttachments
             )
             persistMessagePayload()
