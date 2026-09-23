@@ -551,8 +551,7 @@ final class VoiceInputManager {
         }
 
         if paintsOnDevicePauseDraft {
-            if onDevicePauseSettled { return 0 }
-            return currentTranscript.count
+            return onDeviceDraftSuffixLength(in: currentTranscript)
         }
 
         if typewriterAnimator.isAnimating {
@@ -635,9 +634,10 @@ final class VoiceInputManager {
     private var recordingStart: ContinuousClock.Instant?
     private var resultUpdateCount = 0
     private var replaceTranscriptState = ReplaceTranscriptState()
-    /// On-device Speech keeps a long volatile window. Paint the whole take as
-    /// draft until a pause, then clear the blue tint without waiting for `isFinal`.
+    /// On-device Speech keeps a long volatile window. Paint new words as draft
+    /// until a pause, then keep that prefix settled even if later results arrive.
     private var onDevicePauseSettled = false
+    private var onDeviceSettledPrefix = ""
     private var onDevicePauseSettleTask: Task<Void, Never>?
     private var onDevicePauseSettleGeneration = 0
     var onDevicePauseSettleDelay: Duration = .milliseconds(700)
@@ -2075,6 +2075,7 @@ final class VoiceInputManager {
                 isRecording: self.state == .recording
             ) else { return }
             self.onDevicePauseSettled = true
+            self.onDeviceSettledPrefix = self.currentTranscript
             self.onDevicePauseSettleTask = nil
             self.markTranscriptPresentationChanged()
         }
@@ -2091,10 +2092,18 @@ final class VoiceInputManager {
         !cancelled && isRecording && generation == currentGeneration
     }
 
+    private func onDeviceDraftSuffixLength(in displayText: String) -> Int {
+        if onDevicePauseSettled || displayText.isEmpty { return 0 }
+        if onDeviceSettledPrefix.isEmpty { return displayText.count }
+        let shared = zip(displayText, onDeviceSettledPrefix).prefix { $0 == $1 }.count
+        return max(0, displayText.count - shared)
+    }
+
     private func cancelOnDevicePauseSettle() {
         onDevicePauseSettleTask?.cancel()
         onDevicePauseSettleTask = nil
         onDevicePauseSettled = false
+        onDeviceSettledPrefix = ""
         onDevicePauseSettleGeneration &+= 1
     }
 

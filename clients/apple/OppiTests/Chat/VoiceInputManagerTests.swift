@@ -1986,9 +1986,15 @@ struct VoiceInputManagerTests {
         #expect(await waitForMainActorCondition { manager.currentTranscriptVolatileSuffixLength == 0 })
 
         manager.onDevicePauseSettleDelay = .seconds(60)
+        session.yieldEvent(.partialTranscript("hello world"))
+        #expect(await waitForMainActorCondition {
+            manager.currentTranscript == "hello world"
+                && manager.currentTranscriptVolatileSuffixLength == 0
+        })
+
         session.yieldEvent(.partialTranscript("hello world this"))
         #expect(await waitForMainActorCondition {
-            manager.currentTranscriptVolatileSuffixLength == "hello world this".count
+            manager.currentTranscriptVolatileSuffixLength == " this".count
         })
 
         await manager.cancelRecording()
