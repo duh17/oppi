@@ -114,10 +114,8 @@ struct DictationDictionaryView: View {
                         if let reason = entry?.exclusion {
                             Text(exclusionText(reason)).font(.caption).foregroundStyle(.themeComment)
                         } else if global?.provider == "xai" && value.unicodeScalars.count > 50 {
-                            Text("Selected on-device; excluded from xAI Server dictation (over 50 characters)")
+                            Text("Excluded from xAI Server dictation (over 50 characters)")
                                 .font(.caption).foregroundStyle(.themeComment)
-                        } else {
-                            Text("Selected for next take").font(.caption).foregroundStyle(.themeComment)
                         }
                     }
                 }
