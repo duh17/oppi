@@ -184,7 +184,8 @@ struct QuickSessionSheet: View {
                 ? agentModelOverride
                 : selectedModelId,
             isAgent: selectedAgentId != nil,
-            catalogModels: selectedChatState.cachedModels
+            catalogModels: selectedChatState.cachedModels,
+            agentConfiguredModelId: selectedAgent?.sessionDefaults?.model
         )
     }
 
@@ -192,9 +193,16 @@ struct QuickSessionSheet: View {
         modelPresentation.requestModelId
     }
 
+    private var displayedModelId: String? {
+        modelPresentation.displayModelId
+    }
+
     private var effectiveThinkingLevel: ThinkingLevel {
         if selectedAgentId != nil {
-            return agentThinkingOverride ?? .medium
+            return NewSessionThinkingPresentation.displayedLevel(
+                explicitlySelected: agentThinkingOverride,
+                agentConfigured: selectedAgent?.sessionDefaults?.thinkingLevel
+            )
         }
         return thinkingLevel
     }
@@ -303,7 +311,7 @@ struct QuickSessionSheet: View {
         }
         .sheet(isPresented: $showModelPicker) {
             ModelPickerSheet(
-                currentModel: effectiveModelId,
+                currentModel: displayedModelId,
                 onSelect: selectModel,
                 onSetDefault: { model in
                     guard let api = selectedServerConnection()?.apiClient else {
@@ -312,8 +320,15 @@ struct QuickSessionSheet: View {
                     let agentId = selectedAgentId
                     try await ModelDefaultPersistence.save(model, agentId: agentId, api: api)
                     if agentId == selectedAgentId {
-                        if agentId != nil { agentModelOverride = nil }
-                        else { selectedModelId = nil }
+                        if let agentId {
+                            agentModelOverride = nil
+                            rememberAgentConfiguredModel(
+                                agentId: agentId,
+                                modelId: ModelSwitchPolicy.fullModelID(for: model)
+                            )
+                        } else {
+                            selectedModelId = nil
+                        }
                     }
                     if agentId == nil, let models = try? await api.listModels() {
                         selectedChatState.cachedModels = models
@@ -345,7 +360,7 @@ struct QuickSessionSheet: View {
                 onModelTap: { showModelPicker = true },
                 onThinkingSelect: selectThinkingLevel,
                 supportedThinkingLevels: ThinkingLevelMenuSource.levels(
-                    for: effectiveModelId,
+                    for: displayedModelId,
                     in: selectedChatState.cachedModels
                 ),
                 allowsEmptySubmit: selectedAgentId == nil
@@ -515,7 +530,7 @@ struct QuickSessionSheet: View {
             providerOverride: modelPresentation.pillProvider,
             thinkingLevel: effectiveThinkingLevel,
             supportedThinkingLevels: ThinkingLevelMenuSource.levels(
-                for: effectiveModelId,
+                for: displayedModelId,
                 in: selectedChatState.cachedModels
             ),
             onModelTap: { showModelPicker = true },
@@ -579,6 +594,20 @@ struct QuickSessionSheet: View {
         launchFailure = nil
         AppPreferences.QuickSession.saveAgentId(agentId)
         requireExplicitCompatibleWorkspaceIfNeeded()
+    }
+
+    private func rememberAgentConfiguredModel(agentId: String, modelId: String) {
+        guard let index = availableAgents.firstIndex(where: { $0.id == agentId }) else { return }
+        var updated = availableAgents[index]
+        let current = updated.sessionDefaults
+        updated.sessionDefaults = AgentSessionDefaults(
+            model: modelId,
+            thinkingLevel: current?.thinkingLevel,
+            tools: current?.tools,
+            excludeTools: current?.excludeTools,
+            noTools: current?.noTools
+        )
+        availableAgents[index] = updated
     }
 
     private func requireExplicitCompatibleWorkspaceIfNeeded() {

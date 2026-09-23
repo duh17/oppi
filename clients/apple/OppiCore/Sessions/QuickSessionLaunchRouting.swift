@@ -22,24 +22,40 @@ struct NewSessionModelPresentation: Equatable, Sendable {
     /// Catalog provider for the pill icon when the id has no `provider/` prefix.
     let pillProvider: String?
 
+    /// Model id shown on the pill. Nil when the label is a placeholder.
+    var displayModelId: String? {
+        if let requestModelId { return requestModelId }
+        if pillText == "Agent" || pillText == "Model" { return nil }
+        return pillText
+    }
+
     static func resolve(
         explicitlySelectedModelId: String?,
         isAgent: Bool,
-        catalogModels: [ModelInfo]
+        catalogModels: [ModelInfo],
+        agentConfiguredModelId: String? = nil
     ) -> Self {
         let requestModelId = NewSessionModelOverride(
             explicitlySelectedModelId: explicitlySelectedModelId
         ).requestModelId
         if let requestModelId {
-            let catalog = catalogModels.first(where: { $0.id == requestModelId })
-            return Self(
+            return Self.displaying(
+                modelId: requestModelId,
                 requestModelId: requestModelId,
-                pillText: requestModelId,
-                pillProvider: Self.displayProvider(catalog?.provider)
-                    ?? providerPrefix(from: requestModelId)
+                catalogModels: catalogModels
             )
         }
         if isAgent {
+            let configuredModelId = NewSessionModelOverride(
+                explicitlySelectedModelId: agentConfiguredModelId
+            ).requestModelId
+            if let configuredModelId {
+                return Self.displaying(
+                    modelId: configuredModelId,
+                    requestModelId: nil,
+                    catalogModels: catalogModels
+                )
+            }
             return Self(requestModelId: nil, pillText: "Agent", pillProvider: nil)
         }
         if let starred = catalogModels.first(where: \.isDefault) {
@@ -52,6 +68,19 @@ struct NewSessionModelPresentation: Equatable, Sendable {
         return Self(requestModelId: nil, pillText: "Model", pillProvider: nil)
     }
 
+    private static func displaying(
+        modelId: String,
+        requestModelId: String?,
+        catalogModels: [ModelInfo]
+    ) -> Self {
+        let catalog = catalogModels.first(where: { $0.id == modelId })
+        return Self(
+            requestModelId: requestModelId,
+            pillText: modelId,
+            pillProvider: displayProvider(catalog?.provider) ?? providerPrefix(from: modelId)
+        )
+    }
+
     private static func displayProvider(_ provider: String?) -> String? {
         let trimmed = provider?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
@@ -61,6 +90,17 @@ struct NewSessionModelPresentation: Equatable, Sendable {
         guard let slashIndex = model.firstIndex(of: "/") else { return nil }
         let provider = String(model[model.startIndex..<slashIndex])
         return provider.isEmpty ? nil : provider
+    }
+}
+
+/// Display vs request split for Agent thinking pills. An explicit picker choice
+/// is the only override; otherwise show the Agent default or medium.
+enum NewSessionThinkingPresentation {
+    static func displayedLevel(
+        explicitlySelected: ThinkingLevel?,
+        agentConfigured: ThinkingLevel?
+    ) -> ThinkingLevel {
+        explicitlySelected ?? agentConfigured ?? .medium
     }
 }
 

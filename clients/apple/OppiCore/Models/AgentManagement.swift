@@ -184,6 +184,7 @@ struct AgentDefinitionSummary: Identifiable, Sendable, Equatable {
     var icon: IconChoice
     var description: String?
     var launchConstraints: AgentLaunchConstraints? = nil
+    var sessionDefaults: AgentSessionDefaults? = nil
     var status: AgentDefinitionStatus
     var version: Int
     var createdAt: Date
@@ -206,7 +207,7 @@ struct StoredAgentDefinition: Identifiable, Sendable, Equatable {
 
 extension AgentDefinitionSummary: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, name, icon, description, launchConstraints, status, version, createdAt, updatedAt, archivedAt
+        case id, name, icon, description, launchConstraints, sessionDefaults, status, version, createdAt, updatedAt, archivedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -216,6 +217,7 @@ extension AgentDefinitionSummary: Codable {
         icon = try c.decodeIfPresent(IconChoice.self, forKey: .icon) ?? .defaultValue
         description = try c.decodeIfPresent(String.self, forKey: .description)
         launchConstraints = try c.decodeIfPresent(AgentLaunchConstraints.self, forKey: .launchConstraints)
+        sessionDefaults = try c.decodeIfPresent(AgentSessionDefaults.self, forKey: .sessionDefaults)
         status = try c.decode(AgentDefinitionStatus.self, forKey: .status)
         version = try c.decode(Int.self, forKey: .version)
         createdAt = try c.decodeUnixMilliseconds(forKey: .createdAt)
@@ -230,6 +232,7 @@ extension AgentDefinitionSummary: Codable {
         try c.encode(icon, forKey: .icon)
         try c.encodeIfPresent(description, forKey: .description)
         try c.encodeIfPresent(launchConstraints, forKey: .launchConstraints)
+        try c.encodeIfPresent(sessionDefaults, forKey: .sessionDefaults)
         try c.encode(status, forKey: .status)
         try c.encode(version, forKey: .version)
         try c.encodeUnixMilliseconds(createdAt, forKey: .createdAt)

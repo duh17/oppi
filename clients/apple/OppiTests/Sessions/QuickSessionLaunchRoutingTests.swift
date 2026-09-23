@@ -585,6 +585,53 @@ struct NewSessionModelPresentationTests {
         #expect(presentation.requestModelId == nil)
         #expect(presentation.pillText == "Agent")
         #expect(presentation.pillProvider == nil)
+        #expect(presentation.displayModelId == nil)
+    }
+
+    @Test func agentConfiguredModelIsDisplayOnly() {
+        let presentation = NewSessionModelPresentation.resolve(
+            explicitlySelectedModelId: nil,
+            isAgent: true,
+            catalogModels: [opus, sonnet],
+            agentConfiguredModelId: opus.id
+        )
+
+        #expect(presentation.requestModelId == nil)
+        #expect(presentation.pillText == opus.id)
+        #expect(presentation.displayModelId == opus.id)
+        #expect(shortModelName(presentation.pillText) == "opus-4-0")
+        #expect(presentation.pillProvider == "anthropic")
+        #expect(
+            NewSessionModelOverride(explicitlySelectedModelId: presentation.requestModelId)
+                .requestModelId == nil
+        )
+    }
+
+    @Test func agentConfiguredModelWithoutCatalogPrefixStillGetsProviderIcon() {
+        let presentation = NewSessionModelPresentation.resolve(
+            explicitlySelectedModelId: nil,
+            isAgent: true,
+            catalogModels: [],
+            agentConfiguredModelId: "xai/grok-4.6"
+        )
+
+        #expect(presentation.requestModelId == nil)
+        #expect(presentation.pillText == "xai/grok-4.6")
+        #expect(presentation.displayModelId == "xai/grok-4.6")
+        #expect(presentation.pillProvider == "xai")
+    }
+
+    @Test func explicitAgentPickWinsOverConfiguredModel() {
+        let presentation = NewSessionModelPresentation.resolve(
+            explicitlySelectedModelId: sonnet.id,
+            isAgent: true,
+            catalogModels: [opus, sonnet],
+            agentConfiguredModelId: opus.id
+        )
+
+        #expect(presentation.requestModelId == sonnet.id)
+        #expect(presentation.pillText == sonnet.id)
+        #expect(presentation.displayModelId == sonnet.id)
     }
 
     @Test func explicitPickIsRequestAndPill() {
@@ -599,6 +646,37 @@ struct NewSessionModelPresentationTests {
         #expect(presentation.pillText != opus.name)
         #expect(shortModelName(presentation.pillText) == "opus-4-0")
         #expect(presentation.pillProvider == "anthropic")
+        #expect(presentation.displayModelId == opus.id)
+    }
+}
+
+@Suite("New session thinking presentation")
+struct NewSessionThinkingPresentationTests {
+    @Test func agentConfiguredThinkingIsDisplayFallback() {
+        #expect(
+            NewSessionThinkingPresentation.displayedLevel(
+                explicitlySelected: nil,
+                agentConfigured: .high
+            ) == .high
+        )
+    }
+
+    @Test func explicitThinkingWinsOverAgentDefault() {
+        #expect(
+            NewSessionThinkingPresentation.displayedLevel(
+                explicitlySelected: .low,
+                agentConfigured: .high
+            ) == .low
+        )
+    }
+
+    @Test func missingAgentThinkingKeepsMediumPlaceholder() {
+        #expect(
+            NewSessionThinkingPresentation.displayedLevel(
+                explicitlySelected: nil,
+                agentConfigured: nil
+            ) == .medium
+        )
     }
 }
 

@@ -224,6 +224,7 @@ struct AgentManagementView: View {
                                     icon: updated.definition.icon,
                                     description: updated.description,
                                     launchConstraints: updated.definition.launchConstraints,
+                                    sessionDefaults: updated.definition.sessionDefaults,
                                     status: updated.status,
                                     version: updated.version,
                                     createdAt: updated.createdAt,

@@ -26,6 +26,10 @@ export interface AgentDefinitionSummary {
   icon: NonNullable<AgentDefinition["icon"]>;
   description?: string;
   launchConstraints?: AgentDefinition["launchConstraints"];
+  sessionDefaults?: {
+    model?: string;
+    thinkingLevel?: NonNullable<AgentDefinition["sessionDefaults"]>["thinkingLevel"];
+  };
   status: AgentDefinitionStatus;
   version: number;
   createdAt: number;
@@ -372,6 +376,7 @@ export class AgentDefinitionStore {
 }
 
 export function agentSummary(agent: StoredAgentDefinition): AgentDefinitionSummary {
+  const sessionDefaults = summarySessionDefaults(agent.definition.sessionDefaults);
   return {
     id: agent.id,
     name: agent.name,
@@ -380,11 +385,24 @@ export function agentSummary(agent: StoredAgentDefinition): AgentDefinitionSumma
     ...(agent.definition.launchConstraints
       ? { launchConstraints: agent.definition.launchConstraints }
       : {}),
+    ...(sessionDefaults ? { sessionDefaults } : {}),
     status: agent.status,
     version: agent.version,
     createdAt: agent.createdAt,
     updatedAt: agent.updatedAt,
     ...(agent.archivedAt !== undefined ? { archivedAt: agent.archivedAt } : {}),
+  };
+}
+
+function summarySessionDefaults(
+  defaults: AgentDefinition["sessionDefaults"],
+): AgentDefinitionSummary["sessionDefaults"] {
+  const model = typeof defaults?.model === "string" ? defaults.model.trim() : "";
+  const thinkingLevel = defaults?.thinkingLevel;
+  if (!model && !thinkingLevel) return undefined;
+  return {
+    ...(model ? { model } : {}),
+    ...(thinkingLevel ? { thinkingLevel } : {}),
   };
 }
 

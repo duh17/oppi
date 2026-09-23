@@ -317,9 +317,9 @@ describe("agent routes", () => {
         listRes as never,
       );
       expect(listRes.statusCode).toBe(200);
-      expect(JSON.parse(listRes.body).agents).toEqual(
-        [expect.objectContaining({ id: agent.id, name: "Reviewer", status: "active" })],
-      );
+      expect(JSON.parse(listRes.body).agents).toEqual([
+        expect.objectContaining({ id: agent.id, name: "Reviewer", status: "active" }),
+      ]);
 
       const launchRes = makeResponse();
       await routes.dispatch(
@@ -381,19 +381,21 @@ describe("agent routes", () => {
         req: {} as never,
         res: listRes as never,
       });
-      expect(JSON.parse(listRes.body).agents).toEqual(
-        [
-          expect.objectContaining({
-            id: created.id,
-            name: "Reviewer",
-            launchConstraints: {
-              allowedWorkspaceIds: ["review-workspace"],
-              requiredRuntime: "sandbox",
-            },
-            status: "active",
-          }),
-        ],
-      );
+      expect(JSON.parse(listRes.body).agents).toEqual([
+        expect.objectContaining({
+          id: created.id,
+          name: "Reviewer",
+          launchConstraints: {
+            allowedWorkspaceIds: ["review-workspace"],
+            requiredRuntime: "sandbox",
+          },
+          sessionDefaults: {
+            model: "openai-codex/gpt-5.5",
+            thinkingLevel: "medium",
+          },
+          status: "active",
+        }),
+      ]);
 
       const getRes = makeResponse();
       await dispatch({

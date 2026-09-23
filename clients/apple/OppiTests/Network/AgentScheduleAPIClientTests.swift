@@ -105,6 +105,26 @@ struct AgentScheduleAPIClientTests {
         #expect(agents.first?.icon == .emoji("🧘"))
         #expect(agents.first?.launchConstraints?.allowedWorkspaceIds == ["research"])
         #expect(agents.first?.launchConstraints?.requiredRuntime == .sandbox)
+        #expect(agents.first?.sessionDefaults == nil)
+    }
+
+    @Test func agentListDecodesConfiguredModelAndThinking() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/agents")
+            return mockResponse(json: """
+            {"agents":[{"id":"agent-1","name":"Designer","status":"active","version":1,"createdAt":1000,"updatedAt":2000,"sessionDefaults":{"model":"xai/grok-4.6","thinkingLevel":"high"}}]}
+            """)
+        }
+
+        let agents = try await client.listAgents()
+
+        #expect(agents.count == 1)
+        #expect(agents.first?.sessionDefaults?.model == "xai/grok-4.6")
+        #expect(agents.first?.sessionDefaults?.thinkingLevel == .high)
     }
 
     @Test func agentCreatePostsDefinitionAndDecodesStoredAgent() async throws {
