@@ -363,10 +363,6 @@ struct SettingsView: View {
 
             Section("About") {
                 LabeledContent("Version", value: appVersionLabel)
-                NavigationLink("Acknowledgments") {
-                    ThinkingOrbAcknowledgmentsView()
-                }
-                .accessibilityIdentifier("settings.acknowledgments")
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: AppPreferences.ChatDisplay.didChangeNotification)) { _ in

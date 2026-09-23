@@ -58,7 +58,7 @@ Assistant output can open markdown, code, diffs, and other documents in full-scr
 
 **Settings → Chat Display → Working indicator** chooses the busy-row animation: **Working**, **Searching**, and **Solving** Metal orbs, plus **Pi** and **GoL**. New installs default to Working; saved Pi or GoL choices stay.
 
-Those indicators adapt Thinking Orbs geometry; they are not original Oppi artwork. Jakub Antalik created the original [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) designs and engine. Haplo LLC made the Swift [ThinkingOrbs](https://github.com/haplollc/ThinkingOrbs) port. Oppi adds Metal rasterization and voice-reactive motion. The full MIT notice is in **Settings → About → Acknowledgments**.
+Those indicators adapt Thinking Orbs geometry; they are not original Oppi artwork. Jakub Antalik created the original [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) designs and engine. Haplo LLC made the Swift [ThinkingOrbs](https://github.com/haplollc/ThinkingOrbs) port. Oppi adds Metal rasterization and voice-reactive motion. The full MIT notice lives with the orb source in `clients/apple/Shared/Renderers/Orbs/LICENSE`.
 
 Voice replies are produced by the paired server and its configured voice extension. See [Server configuration](server-configuration.md) for ASR and TTS setup.
 
