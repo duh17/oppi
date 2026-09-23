@@ -457,6 +457,65 @@ struct DictationHintWiringTests {
         #expect(session.startCallCount == 0)
     }
 
+    @Test(arguments: [true, false])
+    func dismissDuringDictionaryFetchNeverStartsCapture(cancelBeforeReply: Bool) async throws {
+        resetHintPreferences()
+        defer { resetHintPreferences() }
+
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [TestURLProtocol.self]
+        let api = try APIClient(
+            baseURL: #require(URL(string: "http://localhost:7749")),
+            token: "sk_test", configuration: config
+        )
+        TestURLProtocol.handler = { request in
+            entered.signal()
+            release.wait()
+            let url = try #require(request.url)
+            let response = try #require(HTTPURLResponse(
+                url: url, statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            ))
+            return (Data(#"{"phrases":[],"revision":0}"#.utf8), response)
+        }
+        defer { release.signal(); TestURLProtocol.handler = nil }
+        let connection = ServerConnection()
+        connection.setAPIClientForTesting(api)
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        manager.setEngineMode(.onDevice)
+        let generation = manager.beginStandaloneComposer(
+            serverId: "server", credentials: nil, connection: connection
+        )
+        let start = Task { @MainActor in
+            try await manager.startRecording(source: "test")
+        }
+        #expect(await waitForMainActorCondition {
+            entered.wait(timeout: .now()) == .success
+        })
+        let identity = ComposerShared.takeIdentityForDismissedComposer(
+            manager: manager, generation: generation
+        )
+        #expect(identity != nil)
+        manager.endComposer(generation: generation)
+        if cancelBeforeReply {
+            await ComposerShared.cancelVoiceInputOnDismiss(manager: manager, matching: identity)
+        }
+        release.signal()
+        _ = try? await start.value
+        if !cancelBeforeReply {
+            await ComposerShared.cancelVoiceInputOnDismiss(manager: manager, matching: identity)
+        }
+        #expect(manager.state == .idle)
+        #expect(provider.prepareSessionCallCount == 0)
+        #expect(manager.currentCaptureTakeIdentity() == nil)
+    }
+
     @Test func nilClaimedComposerDoesNotInheritPreviousOwnerCredentials() async throws {
         resetHintPreferences()
         defer { resetHintPreferences() }

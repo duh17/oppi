@@ -4,6 +4,7 @@ import type { RequestPrincipal } from "../request-principal.js";
 import { createRouteHelpers } from "./http.js";
 import type { RouteContext, RouteDispatcher } from "./types.js";
 import { createIdentityRoutes } from "./identity.js";
+import { createDictationDictionaryRoutes } from "./dictation-dictionary.js";
 import { createSkillRoutes } from "./skills.js";
 import { createWorkspaceRoutes } from "./workspaces.js";
 import { createAgentRoutes } from "./agents.js";
@@ -30,6 +31,7 @@ export class RouteHandler {
   constructor(private readonly ctx: RouteContext) {
     this.dispatchers = [
       createIdentityRoutes(this.ctx, this.helpers),
+      createDictationDictionaryRoutes(this.ctx, this.helpers),
       createServerResourceRoutes(this.ctx, this.helpers),
       createSkillRoutes(this.ctx, this.helpers),
       createWorkspaceRoutes(this.ctx, this.helpers),

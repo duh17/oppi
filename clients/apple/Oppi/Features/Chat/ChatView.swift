@@ -1803,7 +1803,8 @@ struct ChatView: View {
             sessionId: sessionId,
             credentials: connection.credentials,
             connection: connection,
-            playbackInterrupter: audioPlayer
+            playbackInterrupter: audioPlayer,
+            workspaceId: session?.workspaceId ?? workspaceIdHint
         )
     }
 
@@ -1813,7 +1814,8 @@ struct ChatView: View {
             serverId: serverId,
             sessionId: sessionId,
             credentials: connection.credentials,
-            connection: connection
+            connection: connection,
+            workspaceId: session?.workspaceId ?? workspaceIdHint
         )
         manager.setPlaybackInterrupter(audioPlayer)
     }

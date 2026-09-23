@@ -328,6 +328,19 @@ struct ServerDetailView: View {
         }
 
         Section {
+            NavigationLink {
+                DictationDictionaryView(workspaceId: nil)
+            } label: {
+                Label("Dictation Dictionary", systemImage: "text.book.closed")
+            }
+            .accessibilityIdentifier("server.dictationDictionary")
+        } header: {
+            Text("Dictation")
+        } footer: {
+            Text("Edit All Workspaces jargon for this paired server. Workspace-specific phrases are in workspace settings.")
+        }
+
+        Section {
             mobileOutputGuideRow
         } footer: {
             Text("Appends Oppi's link and rich-content rendering guide to new and explicitly reloaded managed Pi sessions, including Pi Control. Terminal-owned Mirror sessions are unchanged.")

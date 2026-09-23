@@ -3,6 +3,7 @@ import { safeErrorMessage } from "../log-utils.js";
 import { parseCliArgs } from "./args.js";
 import { cmdAgent } from "./commands/agent.js";
 import { cmdConfig } from "./commands/config.js";
+import { cmdDictionary } from "./commands/dictionary.js";
 import { cmdSchedule } from "./commands/schedule.js";
 import { cmdSession } from "./commands/session.js";
 import { cmdWait } from "./commands/wait.js";
@@ -137,6 +138,9 @@ async function executeUnscopedCliCommand(
       return;
     case "agent":
       await cmdAgent(connection, positional[0], positional.slice(1), flags);
+      return;
+    case "dictionary":
+      await cmdDictionary(connection, positional[0], flags);
       return;
     case "workspace":
       await cmdWorkspace(connection, positional[0], positional.slice(1), flags);

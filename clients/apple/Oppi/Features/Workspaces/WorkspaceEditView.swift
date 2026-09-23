@@ -293,6 +293,14 @@ struct WorkspaceEditView: View {
             }
             .selectionDisabled()
 
+            Section("Dictionary") {
+                NavigationLink {
+                    DictationDictionaryView(workspaceId: workspace.id)
+                } label: {
+                    Label("Dictation Dictionary", systemImage: "text.book.closed")
+                }
+            }
+
             Section("Workspace Changes") {
                 Toggle("Show workspace changes in chat", isOn: $gitStatusEnabled)
 

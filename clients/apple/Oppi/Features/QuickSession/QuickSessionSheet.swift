@@ -916,6 +916,7 @@ struct QuickSessionSheet: View {
             credentials: targetConnection.credentials,
             connection: targetConnection,
             playbackInterrupter: targetConnection.audioPlayer,
+            workspaceId: selectedWorkspace?.id,
             ownedGeneration: voiceComposerGeneration
         )
     }

@@ -58,6 +58,13 @@ struct VoiceComposerOwner: Equatable, Sendable {
 
     let serverId: String
     let kind: Kind
+    let workspaceId: String?
+
+    init(serverId: String, kind: Kind, workspaceId: String? = nil) {
+        self.serverId = serverId
+        self.kind = kind
+        self.workspaceId = workspaceId
+    }
 }
 
 /// Identity of one capture take. `composerGeneration` is the owner at start,
@@ -608,6 +615,7 @@ final class VoiceInputManager {
     private var activeStartRequestID: Int?
     /// Composer generation that owned the take when `activeStartRequestID` was assigned.
     private var activeStartComposerGeneration: Int?
+    private var dictionaryFetchTask: Task<AuthorizedTakeSnapshot, Never>?
 
     // MARK: - Session Attribution
 
@@ -724,9 +732,13 @@ final class VoiceInputManager {
         serverId: String,
         sessionId: String,
         credentials: ServerCredentials?,
-        connection: ServerConnection?
+        connection: ServerConnection?,
+        workspaceId: String? = nil
     ) -> Int {
-        let owner = VoiceComposerOwner(serverId: serverId, kind: .conversation(sessionId: sessionId))
+        let owner = VoiceComposerOwner(
+            serverId: serverId, kind: .conversation(sessionId: sessionId),
+            workspaceId: workspaceId ?? connection?.sessionStore.session(id: sessionId)?.workspaceId
+        )
         return claimComposer(owner, credentials: credentials, connection: connection)
     }
 
@@ -735,9 +747,10 @@ final class VoiceInputManager {
     func beginStandaloneComposer(
         serverId: String,
         credentials: ServerCredentials?,
-        connection: ServerConnection?
+        connection: ServerConnection?,
+        workspaceId: String? = nil
     ) -> Int {
-        let owner = VoiceComposerOwner(serverId: serverId, kind: .standalone)
+        let owner = VoiceComposerOwner(serverId: serverId, kind: .standalone, workspaceId: workspaceId)
         return claimComposer(owner, credentials: credentials, connection: connection)
     }
 
@@ -767,13 +780,69 @@ final class VoiceInputManager {
     private struct AuthorizedTakeSnapshot {
         let credentials: ServerCredentials?
         let connection: ServerConnection?
+        let workspaceId: String?
+        let selected: [String]?
+        let sendToServer: Bool
+        let provider: String?
     }
 
-    private func freezeAuthorizedTake() -> AuthorizedTakeSnapshot {
-        AuthorizedTakeSnapshot(
-            credentials: serverCredentials,
-            connection: serverConnection
+    private func freezeAuthorizedTake() async -> AuthorizedTakeSnapshot {
+        // Capture ownership and credentials before the HTTP suspension. Failure is an
+        // ordinary take without hints, never a cache of a deleted/corrupt dictionary.
+        let credentials = serverCredentials
+        let connection = serverConnection
+        let workspaceId = composerOwner?.workspaceId
+        let serverId = composerOwner?.serverId
+        var selected: [String]?
+        var sendToServer = false
+        var provider: String?
+        if let api = connection?.apiClient {
+            do {
+                async let global = api.dictationDictionary(workspaceId: nil)
+                if let workspaceId {
+                    let workspace = try await api.dictationDictionary(workspaceId: workspaceId)
+                    let all = try await global
+                    selected = DictationDictionarySelection.make(
+                        workspace: workspace.phrases, global: all.phrases
+                    ).selected
+                    if let serverId, let configuredProvider = all.provider,
+                       configuredProvider == workspace.provider {
+                        provider = configuredProvider
+                        sendToServer = DictationDictionaryConsent.isEnabled(
+                            serverId: serverId, provider: configuredProvider
+                        )
+                    }
+                } else {
+                    let all = try await global
+                    selected = DictationDictionarySelection.make(workspace: [], global: all.phrases).selected
+                    if let serverId, let configuredProvider = all.provider {
+                        provider = configuredProvider
+                        sendToServer = DictationDictionaryConsent.isEnabled(
+                            serverId: serverId, provider: configuredProvider
+                        )
+                    }
+                }
+            } catch {
+                // Failed/corrupt store never revives an earlier snapshot.
+            }
+        }
+        return AuthorizedTakeSnapshot(
+            credentials: credentials, connection: connection, workspaceId: workspaceId,
+            selected: selected, sendToServer: sendToServer, provider: provider
         )
+    }
+
+    /// Called with the frozen selection only; nil means a dictionary fetch failed.
+    /// Consent controls network hints, not on-device SpeechAnalyzer hints.
+    static func contextualStringsForTake(
+        selected: [String]?, engine: TranscriptionEngine, sendToServer: Bool, provider: String?
+    ) -> [String] {
+        guard let selected else { return [] }
+        guard engine == .serverDictation else { return selected }
+        guard sendToServer else { return [] }
+        return provider == "xai"
+            ? selected.filter { $0.unicodeScalars.count <= 50 }
+            : selected
     }
 
     func currentCaptureTakeIdentity() -> VoiceCaptureTakeIdentity? {
@@ -998,9 +1067,24 @@ final class VoiceInputManager {
         resultUpdateCount = 0
         replaceTranscriptState.reset()
         activeRecordingSource = source
-        let frozenTake = freezeAuthorizedTake()
-
+        // Expose the take before HTTP suspends so dismiss can retire it even if
+        // the dictionary endpoint stalls. A later composer must not inherit it.
         state = .preparingModel
+        let claimedComposer = composerOwner != nil
+        let fetchTask = Task { await freezeAuthorizedTake() }
+        dictionaryFetchTask = fetchTask
+        let frozenTake = await fetchTask.value
+        if activeStartRequestID == requestID { dictionaryFetchTask = nil }
+        guard activeStartRequestID == requestID, state == .preparingModel else {
+            ownsOperation = false
+            throw CancellationError()
+        }
+        if claimedComposer && (composerOwner == nil || composerGeneration != activeStartComposerGeneration) {
+            await cancelRecording()
+            ownsOperation = false
+            throw CancellationError()
+        }
+
         let startTime = ContinuousClock.now
         let locale = Self.resolvedLocale(keyboardLanguage: keyboardLanguage)
         let localeID = locale.identifier(.bcp47)
@@ -1049,7 +1133,11 @@ final class VoiceInputManager {
             locale: locale,
             source: source,
             serverCredentials: frozenTake.credentials,
-            serverConnection: frozenTake.connection
+            serverConnection: frozenTake.connection,
+            contextualStrings: Self.contextualStringsForTake(
+                selected: frozenTake.selected, engine: engine,
+                sendToServer: frozenTake.sendToServer, provider: frozenTake.provider
+            )
         )
         var modelPathTag = "warm_cache"
 
@@ -1226,6 +1314,8 @@ final class VoiceInputManager {
         // drain finishes. A competing startup/stream cleanup must lose ownership.
         let generation = nextStartRequestID
         clearActiveStartIdentity()
+        dictionaryFetchTask?.cancel()
+        dictionaryFetchTask = nil
         state = .processing
         await sessionMonitor.cancel()
         guard nextStartRequestID == generation, state == .processing else { return }

@@ -485,9 +485,8 @@ extension ClientMessage {
 
 /// Wire bounds for per-take dictation vocabulary.
 ///
-/// No current Apple source fills this list. Keep the encoder and `SpeechAnalyzer.setContext`
-/// path so a future vocabulary source can attach phrases without a protocol change.
-/// Do not send conversation text. Reintroduce an explicit Server opt-in if phrases leave the device.
+/// The server-owned dictionary supplies per-take phrases; never use conversation text.
+/// Server dictation requires a fresh paired-server/provider-specific opt-in.
 ///
 /// Client code prepares a list that cannot violate these limits. The server
 /// rejects malformed supplied context with a predictable error and does not

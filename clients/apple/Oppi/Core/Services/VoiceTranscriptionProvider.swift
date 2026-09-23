@@ -14,7 +14,7 @@ struct VoiceProviderContext {
     let source: String
     let serverCredentials: ServerCredentials?
     let serverConnection: ServerConnection?
-    /// Optional per-take vocabulary. Currently empty; reserved for a future source.
+    /// Selected dictionary hints frozen for this take (not a promise of application).
     let contextualStrings: [String]
 
     init(

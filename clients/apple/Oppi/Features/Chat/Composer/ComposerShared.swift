@@ -731,6 +731,7 @@ enum ComposerShared {
         credentials: ServerCredentials?,
         connection: ServerConnection?,
         playbackInterrupter: (any VoicePlaybackCaptureCoordinating)?,
+        workspaceId: String? = nil,
         ownedGeneration: Int? = nil
     ) -> Int {
         if let ownedGeneration,
@@ -742,7 +743,8 @@ enum ComposerShared {
         let generation = manager.beginStandaloneComposer(
             serverId: serverId,
             credentials: credentials,
-            connection: connection
+            connection: connection,
+            workspaceId: workspaceId
         )
         manager.setPlaybackInterrupter(playbackInterrupter)
         return generation
@@ -755,14 +757,16 @@ enum ComposerShared {
         sessionId: String,
         credentials: ServerCredentials?,
         connection: ServerConnection?,
-        playbackInterrupter: (any VoicePlaybackCaptureCoordinating)?
+        playbackInterrupter: (any VoicePlaybackCaptureCoordinating)?,
+        workspaceId: String? = nil
     ) {
         guard let serverId else { return }
         _ = manager.activateConversationComposer(
             serverId: serverId,
             sessionId: sessionId,
             credentials: credentials,
-            connection: connection
+            connection: connection,
+            workspaceId: workspaceId
         )
         manager.setPlaybackInterrupter(playbackInterrupter)
     }

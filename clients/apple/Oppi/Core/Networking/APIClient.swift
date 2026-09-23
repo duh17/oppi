@@ -2329,7 +2329,7 @@ actor APIClient: ClientLogUploading {
         return data
     }
 
-    private func put<T: Encodable>(_ path: String, body: T) async throws -> Data {
+    func put<T: Encodable>(_ path: String, body: T) async throws -> Data {
         let (data, response) = try await request("PUT", path: path, body: body)
         try checkStatus(response, data: data)
         return data

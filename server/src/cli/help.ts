@@ -73,6 +73,10 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "server", summary: "install, restart, stop, or inspect the launchd service" },
       { name: "config", summary: "show, get, set, or validate server config" },
       { name: "workspace", summary: "list, inspect, create, update, and delete workspaces" },
+      {
+        name: "dictionary",
+        summary: "edit server-owned dictation hints (also in Server Settings)",
+      },
       { name: "worktree", summary: "list, create, open, and remove workspace worktrees" },
       {
         name: "session",
@@ -421,6 +425,37 @@ const HELP_TOPICS: HelpTopic[] = [
     usage: "oppi version",
     notes: ["Aliases: oppi --version, oppi -v."],
     examples: [{ command: "oppi version" }],
+  },
+  {
+    path: ["dictionary"],
+    title: "Dictation dictionary",
+    summary:
+      "Edit the same server-owned dictation lists as iPhone Server Settings, by hand or from a session.",
+    usage:
+      "oppi dictionary list|add|remove|forget [--workspace ID] [--phrase TEXT | --phrases @- | --file PATH] [--json]",
+    flags: [
+      {
+        name: "--workspace ID",
+        summary: "stable workspace id for This Workspace; omit for All Workspaces",
+      },
+      { name: "--phrase TEXT", summary: "literal phrase for one-shot add or remove" },
+      {
+        name: "--phrases @-",
+        summary: "add JSON array of strings or newline-separated phrases from stdin",
+      },
+      { name: "--file PATH", summary: "add phrases from a file in either format" },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    examples: [
+      { command: "oppi dictionary add --phrase 'Duh Ifone'" },
+      { command: "printf 'Yuwp\\nDuh Ifone\\n' | oppi dictionary add --phrases @-" },
+      { command: "oppi dictionary list --workspace <id> --json" },
+      { command: "oppi dictionary forget --workspace <id>" },
+    ],
+    notes: [
+      "These short jargon phrases are hints, not replacements or guaranteed corrections. Humans and sessions share the same lists via CLI/HTTP or iPhone Server Settings. At most 100 saved phrases per scope, 256 UTF-8 bytes per phrase; take limits also include 8192 total UTF-8 bytes. Add reports skipped duplicates, phrase-bytes, and cap overflows.",
+      "Server dictation requires a separate default-off iPhone opt-in to send selected phrases to the paired server and its configured ASR provider.",
+    ],
   },
   {
     path: ["workspace"],
