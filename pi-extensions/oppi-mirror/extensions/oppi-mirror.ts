@@ -1067,6 +1067,7 @@ const MIRROR_TREE_MAX_PREVIEW_SOURCE_CHARS = 4_000;
 const MIRROR_TREE_DEFAULT_HIDDEN_ENTRY_TYPES = new Set([
   "label",
   "custom",
+  "context_edit",
   "model_change",
   "thinking_level_change",
   "session_info",
@@ -5237,6 +5238,15 @@ async function createTuiMirrorRuntime(
     ctx: ExtensionContext,
   ): object {
     const eventRecord = isToolTuiRecord(event) ? event : {};
+    if (eventType === "turn_end") {
+      return {
+        type: "turn_end",
+        ...(typeof eventRecord.turnIndex === "number"
+          ? { turnIndex: eventRecord.turnIndex }
+          : {}),
+      };
+    }
+
     if (eventType === "tool_execution_start") {
       const toolCallId =
         typeof eventRecord.toolCallId === "string" &&

@@ -1905,6 +1905,49 @@ describe("oppi mirror canonical flush wiring", () => {
       expect(events.indexOf("message_end")).toBeLessThan(events.indexOf("turn_end"));
     });
   });
+
+  it("forwards turn_end as type and turnIndex only", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      const socket = await startMirror(pi, ctx);
+      socket.sent.length = 0;
+
+      for (const handler of pi.handlers.get("turn_end") ?? []) {
+        await handler(
+          {
+            type: "turn_end",
+            turnIndex: 3,
+            message: { role: "assistant", content: "x".repeat(2000) },
+            toolResults: [{ role: "toolResult", content: "y".repeat(2000) }],
+            entries: [{ type: "context_edit" }],
+            context: { llmMessages: [{ role: "user", content: "z".repeat(2000) }] },
+            messageEntryId: "asst-1",
+            toolResultEntryIds: ["tool-1"],
+            continue: false,
+          },
+          ctx,
+        );
+      }
+
+      const events = socket.sent
+        .map(
+          (line) =>
+            JSON.parse(line) as { type?: string; event?: Record<string, unknown> },
+        )
+        .filter((frame) => frame.type === "event")
+        .map((frame) => frame.event);
+      expect(events.find((event) => event?.type === "turn_end")).toEqual({
+        type: "turn_end",
+        turnIndex: 3,
+      });
+    });
+  });
 });
 
 describe("oppi mirror log rotation", () => {

@@ -79,4 +79,51 @@ describe("oppi mirror session tree", () => {
       }),
     );
   });
+
+  it("hides context_edit nodes in the default tree filter", () => {
+    const userEntry = {
+      id: "user-1",
+      parentId: null,
+      type: "message",
+      timestamp: "2026-09-22T00:00:00.000Z",
+      message: { role: "user", content: "Hello" },
+    };
+    const editEntry = {
+      id: "edit-1",
+      parentId: "user-1",
+      type: "context_edit",
+      timestamp: "2026-09-22T00:00:01.000Z",
+      targetId: "user-1",
+      replacement: null,
+    };
+    const ctx = {
+      sessionManager: {
+        getLeafId: () => "edit-1",
+        getEntry: (id: string) => (id === userEntry.id ? userEntry : editEntry),
+        getTree: () => [
+          {
+            entry: userEntry,
+            children: [{ entry: editEntry, children: [] }],
+          },
+        ],
+      },
+    };
+
+    const snapshot = sessionTreeWire(ctx as never, "default");
+    expect(snapshot.nodes).toContainEqual(
+      expect.objectContaining({
+        id: "edit-1",
+        type: "context_edit",
+        defaultVisible: false,
+        matchesFilter: false,
+      }),
+    );
+    expect(snapshot.nodes).toContainEqual(
+      expect.objectContaining({
+        id: "user-1",
+        defaultVisible: true,
+        matchesFilter: true,
+      }),
+    );
+  });
 });

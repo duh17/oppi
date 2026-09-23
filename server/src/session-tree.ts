@@ -50,6 +50,7 @@ const MAX_TEXT_PREVIEW_CHARS = 160;
 const TREE_DEFAULT_HIDDEN_ENTRY_TYPES = new Set([
   "label",
   "custom",
+  "context_edit",
   "model_change",
   "thinking_level_change",
   "session_info",
