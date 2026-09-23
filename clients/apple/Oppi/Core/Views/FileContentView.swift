@@ -8,9 +8,6 @@ import SwiftUI
 /// - Code: UIKit-backed line numbers + syntax highlighting (NativeFullScreenCodeBody)
 /// - Markdown: rendered prose with raw toggle
 /// - JSON: pretty-printed with UIKit-backed colored keys/values
-/// - Images: inline preview with tap-to-zoom
-/// - Audio: inline playback rows for extracted data URIs
-/// - Video: placeholder only (preview intentionally unsupported)
 /// - Plain text: UIKit-backed monospaced with line numbers
 struct FileContentView: View {
     let content: String
@@ -70,7 +67,7 @@ struct FileContentView: View {
         let fileType = FileType.detect(from: filePath, content: content)
         if isError {
             errorView
-        } else if content.isEmpty && fileType != .usdz {
+        } else if content.isEmpty {
             emptyView
         } else {
             contentView(for: fileType)
@@ -102,23 +99,12 @@ struct FileContentView: View {
             CodeFileView(content: content, language: language, startLine: startLine, presentation: presentation, filePath: filePath)
         case .json:
             JSONFileView(content: content, startLine: startLine, presentation: presentation, filePath: filePath)
-        case .image:
-            ImageOutputView(content: content)
-        case .audio:
-            AudioOutputView(content: content)
-        case .video:
-            VideoFileView(content: content)
-        case .pdf:
-            PDFFileView(content: content)
-        case .usdz:
-            USDZFileView(
-                filePath: filePath,
-                workspaceID: workspaceID,
-                fetchWorkspaceFile: fetchWorkspaceFile,
-                fetchHostFile: fetchHostFile
+        case .image, .audio, .video, .pdf, .usdz, .binary:
+            ContentUnavailableView(
+                "Preview unavailable",
+                systemImage: "doc",
+                description: Text(fileType.displayLabel)
             )
-        case .binary:
-            BinaryFileView(filePath: filePath, contentLength: content.count)
         case .plain:
             PlainTextView(content: content, startLine: startLine, presentation: presentation, filePath: filePath)
         case .csv, .tsv:
