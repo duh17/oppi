@@ -378,9 +378,23 @@ extension ChatTimelineCollectionHost.Controller {
 
     func systemEventRowConfiguration(itemID: String, item: ChatItem) -> (any UIContentConfiguration)? {
         if case .customEvent(_, let message, let presentation) = item {
+            // The collection cell has 16pt side insets and the card has 12pt
+            // inner padding on each side; measure the preview at its actual width.
+            let bodyWidth = max(1, (collectionView?.bounds.width ?? 375) - 56)
             return CustomTimelineRowConfiguration(
                 message: message,
-                presentation: presentation
+                presentation: presentation,
+                isExpanded: reducer?.expandedItemIDs.contains(itemID) == true,
+                bodyWidth: bodyWidth,
+                openFullScreen: onOpenChatReader,
+                onToggleExpand: { [weak self] in
+                    guard let self, let collectionView = self.collectionView,
+                          let index = self.currentIDs.firstIndex(of: itemID) else { return }
+                    self.collectionView(
+                        collectionView,
+                        didSelectItemAt: IndexPath(item: index, section: 0)
+                    )
+                }
             )
         }
 

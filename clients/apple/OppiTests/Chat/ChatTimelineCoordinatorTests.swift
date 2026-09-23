@@ -354,7 +354,133 @@ struct ChatTimelineCoordinatorTests {
         harness.coordinator.apply(configuration: config, to: harness.collectionView)
 
         let cell = try configuredTimelineCell(in: harness.collectionView, item: 0)
-        #expect(cell.contentConfiguration is CustomTimelineRowConfiguration)
+        let card = try #require(cell.contentConfiguration as? CustomTimelineRowConfiguration)
+        #expect(!card.canExpand)
+        #expect(!card.isExpanded)
+        #expect(card.presentation.fields?.first?.value == "Readable result")
+    }
+
+    @MainActor
+    @Test func longCustomEventTogglesBetweenPreviewAndTerminalViewport() throws {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        let body = (1...60).map { "output line \($0)" }.joined(separator: "\n")
+        let itemID = "custom-log"
+        let item = ChatItem.customEvent(
+            id: itemID,
+            message: "Job completed\n\(body)",
+            presentation: TraceEventPresentation(kind: "custom", title: "Job completed", subtitle: nil,
+                status: nil, body: body, fields: nil, accent: nil)
+        )
+        let config = makeTimelineConfiguration(
+            items: [item],
+            sessionId: "session-a",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        harness.coordinator.apply(configuration: config, to: harness.collectionView)
+
+        let collapsed = try #require(configuredTimelineCell(in: harness.collectionView, item: 0)
+            .contentConfiguration as? CustomTimelineRowConfiguration)
+        #expect(collapsed.canExpand)
+        #expect(!collapsed.isExpanded)
+        let collapsedView = CustomTimelineRowContentView(configuration: collapsed)
+        let collapsedSize = fittedTimelineSize(for: collapsedView, width: 338)
+        #expect(collapsedSize.height < 160)
+
+        harness.coordinator.collectionView(harness.collectionView, didSelectItemAt: IndexPath(item: 0, section: 0))
+        #expect(harness.reducer.expandedItemIDs.contains(itemID))
+        let expanded = try #require(configuredTimelineCell(in: harness.collectionView, item: 0)
+            .contentConfiguration as? CustomTimelineRowConfiguration)
+        #expect(expanded.isExpanded)
+        let expandedView = CustomTimelineRowContentView(configuration: expanded)
+        let expandedSize = fittedTimelineSize(for: expandedView, width: 338)
+        #expect(expandedSize.height > collapsedSize.height)
+        #expect(expandedSize.height < ToolTimelineRowContentView.maxOutputViewportHeight + 160)
+        let terminal = try #require(ChatTimelineCollectionHost.Controller.firstSubview(
+            ofType: BashToolRowView.self, in: expandedView
+        ))
+        #expect(!terminal.isHidden)
+        #expect(terminal.outputLabel.text?.contains("output line 60") == true
+            || terminal.outputLabel.attributedText?.string.contains("output line 60") == true)
+
+        harness.coordinator.collectionView(harness.collectionView, didSelectItemAt: IndexPath(item: 0, section: 0))
+        #expect(!harness.reducer.expandedItemIDs.contains(itemID))
+    }
+
+    @MainActor
+    @Test func expandedCustomEventOpensTerminalReader() throws {
+        let body = (1...40).map { "build output line \($0)" }.joined(separator: "\n")
+        var opened: FullScreenCodeContent?
+        let configuration = CustomTimelineRowConfiguration(
+            message: "Job completed\n\(body)",
+            presentation: TraceEventPresentation(
+                kind: "custom",
+                title: "Job completed",
+                subtitle: nil,
+                status: nil,
+                body: body,
+                fields: nil,
+                accent: nil
+            ),
+            isExpanded: true,
+            bodyWidth: 338,
+            openFullScreen: { payload in
+                if case .document(let content, _) = payload.kind {
+                    opened = content
+                }
+            }
+        )
+        let view = CustomTimelineRowContentView(configuration: configuration)
+        view.bounds = CGRect(x: 0, y: 0, width: 338, height: 400)
+        view.layoutIfNeeded()
+        let button = try #require(
+            ChatTimelineCollectionHost.Controller.firstSubview(ofType: UIButton.self, in: view)
+        )
+        #expect(button.accessibilityIdentifier == "custom.terminal")
+        button.sendActions(for: .touchUpInside)
+        guard case .terminal(let content, _, _, _)? = opened else {
+            Issue.record("expected terminal reader, got \(String(describing: opened))")
+            return
+        }
+        #expect(content.contains("build output line 40"))
+    }
+
+    @MainActor
+    @Test func shortAndFieldsOnlyCustomEventsDoNotExpand() {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        let rows: [ChatItem] = [
+            .customEvent(id: "short", message: "Done\nOK", presentation:
+                TraceEventPresentation(kind: "custom", title: "Done", subtitle: nil,
+                    status: nil, body: "OK", fields: nil, accent: nil)),
+            .customEvent(id: "fields", message: "Done", presentation:
+                TraceEventPresentation(kind: "custom", title: "Done", subtitle: nil,
+                    status: nil, body: nil, fields: [
+                        TraceEventPresentationField(label: "Result", value: "OK")
+                    ], accent: nil)),
+        ]
+        let config = makeTimelineConfiguration(
+            items: rows,
+            sessionId: "session-a",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        harness.coordinator.apply(configuration: config, to: harness.collectionView)
+        for (index, row) in rows.enumerated() {
+            let card = harness.coordinator.systemEventRowConfiguration(itemID: row.id, item: row)
+                as? CustomTimelineRowConfiguration
+            #expect(card?.canExpand == false)
+            harness.coordinator.collectionView(harness.collectionView,
+                didSelectItemAt: IndexPath(item: index, section: 0))
+            #expect(!harness.reducer.expandedItemIDs.contains(row.id))
+        }
     }
 
     @MainActor

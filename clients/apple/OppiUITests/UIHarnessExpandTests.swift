@@ -84,6 +84,36 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         XCTAssertLessThanOrEqual(perfGuardrailAfter - perfGuardrailBefore, 1)
     }
 
+    func testCustomLogExpandsToCappedTerminal() throws {
+        launchHarness(noStream: true, includeVisualFixtures: true)
+        let expandAll = app.descendants(matching: .any)["harness.expand.all"]
+        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
+        expandAll.tap()
+        let bottom = app.descendants(matching: .any)["harness.scroll.bottom"]
+        XCTAssertTrue(bottom.waitForExistence(timeout: 4))
+        bottom.tap()
+
+        let row = app.descendants(matching: .any)[
+            "chat.timeline.row.alpha-visual-custom-log"
+        ].firstMatch
+        let timeline = app.descendants(matching: .any)["harness.timeline"].firstMatch
+        for _ in 0..<8 where !row.isHittable {
+            timeline.swipeUp()
+        }
+        XCTAssertTrue(row.waitForExistence(timeout: 4))
+        let preview = row.descendants(matching: .any)["custom.preview"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 4))
+        XCTAssertFalse(row.descendants(matching: .any)["custom.terminal"].firstMatch.exists)
+        let collapsedHeight = row.frame.height
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.20)).tap()
+        let terminal = row.descendants(matching: .any)["custom.terminal"].firstMatch
+        XCTAssertTrue(terminal.waitForExistence(timeout: 4))
+        XCTAssertFalse(preview.exists)
+        XCTAssertGreaterThan(row.frame.height, collapsedHeight)
+        XCTAssertLessThan(row.frame.height, collapsedHeight + 700)
+        XCTAssertTrue(assertHarnessStillRunning(context: "custom log expand"))
+    }
+
     // MARK: - Compaction Expand/Collapse
 
     func testCompactionRowExpandCollapse() throws {

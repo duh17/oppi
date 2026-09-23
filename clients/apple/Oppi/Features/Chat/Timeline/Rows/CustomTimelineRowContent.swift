@@ -4,6 +4,23 @@ import UIKit
 struct CustomTimelineRowConfiguration: UIContentConfiguration {
     let message: String
     let presentation: TraceEventPresentation
+    let isExpanded: Bool
+    let bodyWidth: CGFloat
+    var openFullScreen: ((ChatReaderPayload) -> Void)?
+    var onToggleExpand: (() -> Void)?
+
+    var canExpand: Bool {
+        guard let body = presentation.body?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !body.isEmpty else { return false }
+        let font = UIFont.preferredFont(forTextStyle: .caption1)
+        let height = (body as NSString).boundingRect(
+            with: CGSize(width: max(1, bodyWidth), height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font],
+            context: nil
+        ).height
+        return height > font.lineHeight * 2 + 1
+    }
 
     func makeContentView() -> any UIView & UIContentView {
         CustomTimelineRowContentView(configuration: self)
@@ -14,7 +31,7 @@ struct CustomTimelineRowConfiguration: UIContentConfiguration {
     }
 }
 
-final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInteractionProvider {
+final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInteractionProvider, UIGestureRecognizerDelegate {
     private let containerView = UIView()
     private let stackView = UIStackView()
     private let headerStack = UIStackView()
@@ -24,14 +41,32 @@ final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInte
     private let subtitleLabel = UILabel()
     private let statusLabel = CustomTimelinePillLabel()
     private let bodyLabel = UILabel()
+    private let bashBodyView = BashToolRowView()
+    private let terminalHitControl = UIButton(type: .custom)
     private let fieldsLabel = UILabel()
 
     private var currentConfiguration: CustomTimelineRowConfiguration
-    private var interactionHandlers: TimelineRowInteractionHandlers?
+    private var contextMenuHandler: TimelineRowContextMenuHandler?
+    private lazy var cardTap = UITapGestureRecognizer(target: self, action: #selector(toggleExpand))
 
     var copyableText: String? {
         let message = currentConfiguration.message.trimmingCharacters(in: .whitespacesAndNewlines)
         return message.isEmpty ? nil : message
+    }
+
+    var additionalMenuActions: [UIAction] {
+        guard currentConfiguration.canExpand,
+              let body = currentConfiguration.presentation.body?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !body.isEmpty else { return [] }
+        return [
+            UIAction(
+                title: String(localized: "Open Full Screen"),
+                image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")
+            ) { [weak self] _ in
+                self?.openBodyFullScreen()
+            }
+        ]
     }
 
     var interactionFeedbackView: UIView { containerView }
@@ -95,7 +130,15 @@ final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInte
 
         bodyLabel.font = .preferredFont(forTextStyle: .caption1)
         bodyLabel.adjustsFontForContentSizeCategory = true
-        bodyLabel.numberOfLines = 0
+        bodyLabel.numberOfLines = 2
+        bodyLabel.lineBreakMode = .byTruncatingTail
+        bodyLabel.accessibilityIdentifier = "custom.preview"
+        terminalHitControl.translatesAutoresizingMaskIntoConstraints = false
+        terminalHitControl.accessibilityIdentifier = "custom.terminal"
+        terminalHitControl.accessibilityLabel = String(localized: "Command output")
+        terminalHitControl.addTarget(self, action: #selector(openBodyFullScreen), for: .touchUpInside)
+        cardTap.delegate = self
+        containerView.addGestureRecognizer(cardTap)
 
         fieldsLabel.font = .preferredFont(forTextStyle: .caption1)
         fieldsLabel.adjustsFontForContentSizeCategory = true
@@ -112,12 +155,14 @@ final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInte
 
         stackView.addArrangedSubview(headerStack)
         stackView.addArrangedSubview(bodyLabel)
+        stackView.addArrangedSubview(bashBodyView)
         stackView.addArrangedSubview(fieldsLabel)
+        bashBodyView.addSubview(terminalHitControl)
 
-        interactionHandlers = TimelineRowInteractionInstaller.install(
-            on: containerView,
-            provider: self
-        )
+        let handler = TimelineRowContextMenuHandler()
+        handler.provider = self
+        containerView.addInteraction(UIContextMenuInteraction(delegate: handler))
+        contextMenuHandler = handler
 
         NSLayoutConstraint.activate([
             containerView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -129,6 +174,11 @@ final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInte
             stackView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -12),
             stackView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 12),
             stackView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -12),
+
+            terminalHitControl.leadingAnchor.constraint(equalTo: bashBodyView.leadingAnchor),
+            terminalHitControl.trailingAnchor.constraint(equalTo: bashBodyView.trailingAnchor),
+            terminalHitControl.topAnchor.constraint(equalTo: bashBodyView.topAnchor),
+            terminalHitControl.bottomAnchor.constraint(equalTo: bashBodyView.bottomAnchor),
 
             iconImageView.widthAnchor.constraint(equalToConstant: 17),
             iconImageView.heightAnchor.constraint(equalToConstant: 17),
@@ -162,14 +212,89 @@ final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInte
         statusLabel.backgroundColor = accent.withAlphaComponent(0.16)
 
         let body = configuration.presentation.body?.trimmingCharacters(in: .whitespacesAndNewlines)
-        bodyLabel.isHidden = body?.isEmpty ?? true
+        let showTerminal = configuration.canExpand && configuration.isExpanded
+        bodyLabel.isHidden = body?.isEmpty ?? true || showTerminal
         bodyLabel.textColor = UIColor(palette.fg).withAlphaComponent(0.9)
         bodyLabel.text = body
+        bashBodyView.isHidden = !showTerminal
+        terminalHitControl.isHidden = !showTerminal
+        if showTerminal, let body {
+            bashBodyView.outputShouldAutoFollow = false
+            bashBodyView.applyTheme(palette)
+            let result = bashBodyView.apply(
+                input: BashRenderInput(command: nil, output: body, unwrapped: false,
+                                       isError: false, isStreaming: false),
+                outputColor: UIColor(palette.fg),
+                wasOutputVisible: false
+            )
+            bashBodyView.outputContainer.isHidden = !result.showOutput
+            bashBodyView.outputLabel.isUserInteractionEnabled = false
+            bashBodyView.outputScrollView.isScrollEnabled = true
+            bashBodyView.outputScrollView.delaysContentTouches = false
+            let mode = ToolRowViewportCalculator.ViewportMode.output
+            let geometry = ToolRowViewportCalculator.GeometryContext(
+                windowHeight: window?.bounds.height ?? UIScreen.main.bounds.height,
+                safeAreaInsets: window?.safeAreaInsets ?? .zero,
+                cellWidth: configuration.bodyWidth + 12
+            )
+            bashBodyView.outputViewportHeightConstraint?.constant = ToolRowViewportCalculator.preferredViewportHeight(
+                for: bashBodyView.outputLabel,
+                in: bashBodyView.outputContainer,
+                mode: mode,
+                expandedScrollView: nil,
+                expandedLabelWidthConstraint: nil,
+                outputScrollView: bashBodyView.outputScrollView,
+                outputUsesUnwrappedLayout: false,
+                outputLabelWidthConstraint: bashBodyView.outputLabelWidthConstraint,
+                geometry: geometry
+            )
+        } else {
+            bashBodyView.resetOutputState(outputColor: UIColor(palette.fg))
+        }
+        if showTerminal {
+            bashBodyView.bringSubviewToFront(terminalHitControl)
+        }
 
         let fields = formattedFields(configuration.presentation.fields ?? [])
         fieldsLabel.isHidden = fields == nil
         fieldsLabel.textColor = UIColor(palette.fgDim)
         fieldsLabel.attributedText = fields
+    }
+
+    @objc private func toggleExpand() {
+        guard currentConfiguration.canExpand else { return }
+        currentConfiguration.onToggleExpand?()
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard gestureRecognizer === cardTap else { return true }
+        guard currentConfiguration.canExpand else { return false }
+        var current = touch.view
+        while let candidate = current {
+            if candidate === bashBodyView
+                || candidate === terminalHitControl
+                || candidate === bashBodyView.outputContainer {
+                return false
+            }
+            current = candidate.superview
+        }
+        return true
+    }
+
+    @objc private func openBodyFullScreen() {
+        guard let body = currentConfiguration.presentation.body?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !body.isEmpty else { return }
+        let content = FullScreenCodeContent.terminal(content: body, command: nil)
+        let payload = ChatReaderPayload(content: content)
+        if let openFullScreen = currentConfiguration.openFullScreen {
+            openFullScreen(payload)
+            return
+        }
+        if ChatReaderOpenLookup.open(payload, from: self) {
+            return
+        }
+        ToolTimelineRowPresentationHelpers.presentFullScreenContent(content, from: self)
     }
 
     private func formattedFields(_ fields: [TraceEventPresentationField]) -> NSAttributedString? {

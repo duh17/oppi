@@ -1417,6 +1417,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // Full-row UIButtons own their actions. Collection selection must
             // not become a second owner or a sticky highlight.
             let itemID = currentIDs[indexPath.item]
+            if case .customEvent = currentItemByID[itemID] {
+                // The custom card owns tap/double-tap. Collection selection
+                // would steal the first tap of a fullscreen double-tap.
+                return false
+            }
             return itemID != ChatTimelineCollectionHost.loadMoreID
                 && currentWorkLineByID[itemID] == nil
         }
@@ -1541,7 +1546,24 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 // with double-tap copy gestures.
                 return
 
-            case .cacheMiss, .customEvent, .notice:
+            case .customEvent:
+                guard let row = systemEventRowConfiguration(itemID: itemID, item: item) as? CustomTimelineRowConfiguration,
+                      row.canExpand else { return }
+                AppHaptics.toolbarExpansion()
+                if reducer.expandedItemIDs.contains(itemID) {
+                    reducer.expandedItemIDs.remove(itemID)
+                } else {
+                    reducer.expandedItemIDs.insert(itemID)
+                }
+                updateLiveTailItemIDsFromCurrentState(in: collectionView)
+                anchoredReconfigureToolRow(
+                    itemID: itemID,
+                    anchorIndexPath: indexPath,
+                    in: collectionView,
+                    preserveTopEdge: true
+                )
+
+            case .cacheMiss, .notice:
                 return
 
             default:

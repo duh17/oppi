@@ -551,6 +551,17 @@ struct UIHangHarnessView: View {
                     message: "Context compacted (8192 tokens): The conversation context was compacted to stay within the model context window. Previous discussion covered architecture patterns for the ChatTimelineCollectionView, performance optimization strategies for UIKit cell reuse, and debugging approaches for main thread stalls during rapid scrolling operations with expanded tool output rows."
                 ))
 
+                let customLog = (1...50).map { "build output line \($0)" }.joined(separator: "\n")
+                items.append(.customEvent(
+                    id: "\(sessionPrefix)-visual-custom-log",
+                    message: "Background work finished\n\(customLog)",
+                    presentation: TraceEventPresentation(
+                        kind: "custom", title: "Background work finished",
+                        subtitle: nil, status: nil, body: customLog,
+                        fields: nil, accent: "info"
+                    )
+                ))
+
                 items.append(.audioClip(
                     id: "\(sessionPrefix)-visual-audio",
                     title: "Harness Audio Clip",
