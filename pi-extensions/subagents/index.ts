@@ -47,7 +47,6 @@ const WIDGET_KEY = "subagents";
 const CREATE_TIMEOUT_MS = 30_000;
 const GET_TIMEOUT_MS = 8_000;
 const MIN_WAIT_SEC = 30;
-const LIVE_REFRESH_MS = 3_000;
 
 interface OppiResult {
 	code: number | null;
@@ -145,29 +144,12 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	let idleChild: ReturnType<typeof spawn> | undefined;
 	let attentionChild: ReturnType<typeof spawn> | undefined;
 	let retryTimer: ReturnType<typeof setTimeout> | undefined;
-	let liveRefreshTimer: ReturnType<typeof setInterval> | undefined;
 	let refreshInFlight = false;
 	let refreshQueued = false;
 	let refreshGeneration = 0;
 	let waitFailures = 0;
 	let failureWarned = false;
 	const stalls = new Map<string, StallState>();
-
-	const stopLiveRefresh = () => {
-		if (liveRefreshTimer) clearInterval(liveRefreshTimer);
-		liveRefreshTimer = undefined;
-	};
-
-	const startLiveRefresh = () => {
-		if (liveRefreshTimer || closed || seen.length === 0) return;
-		liveRefreshTimer = setInterval(() => {
-			if (closed || seen.length === 0) {
-				stopLiveRefresh();
-				return;
-			}
-			refreshFromCli();
-		}, LIVE_REFRESH_MS);
-	};
 
 	const refreshWidget = () => {
 		const ui = latestUi;
@@ -203,12 +185,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			refreshQueued = false;
 			if (seen.length === 0) {
 				shown = [];
-				stopLiveRefresh();
 				refreshWidget();
 			}
 			return;
 		}
-		startLiveRefresh();
 		if (refreshInFlight) {
 			refreshQueued = true;
 			return;
@@ -218,8 +198,26 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		const requested = seen;
 		void refreshLaunchedFromCli(requested)
 			.then((next) => {
-				if (closed || generation !== refreshGeneration || seen !== requested) return;
-				shown = next;
+				if (closed || generation !== refreshGeneration) return;
+				if (seen === requested) {
+					shown = next;
+				} else {
+					// A wait result owns status; a late get can still fill in metadata.
+					const snapshots = new Map(next.map((row) => [row.id, row]));
+					shown = seen.map((row) => {
+						const snapshot = snapshots.get(row.id);
+						if (!snapshot) return row;
+						return {
+							...row,
+							title: snapshot.title,
+							link: snapshot.link,
+							model: snapshot.model ?? row.model,
+							contextTokens: snapshot.contextTokens ?? row.contextTokens,
+							contextWindow: snapshot.contextWindow ?? row.contextWindow,
+						};
+					});
+				}
+				seen = shown;
 				refreshWidget();
 			})
 			.catch(() => {
@@ -402,7 +400,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		seen = refreshLaunched([created, ...seen.filter((item) => item.id !== created.id)], []);
 		shown = seen;
 		refreshWidget();
-		refreshFromCli();
 	};
 
 	const deliverKind = (
@@ -598,6 +595,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			const name = params.name?.trim() || id.slice(0, 8);
 			rememberRow(id, name, params.model?.trim());
 			rememberWatch({ id, name, supervise: plan.supervise, attentionDelivered: false });
+			refreshFromCli();
 			if (plan.supervise) {
 				try {
 					pi.appendEntry(SUPERVISED_ENTRY, { id, name, supervise: true });
@@ -623,7 +621,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		refreshGeneration += 1;
 		refreshInFlight = false;
 		refreshQueued = false;
-		stopLiveRefresh();
 		rememberUi(ctx);
 		watched = restoreSupervised(ctx.sessionManager.getEntries());
 		for (const child of watched) rememberRow(child.id, child.name);
@@ -635,7 +632,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		closed = true;
 		refreshGeneration += 1;
 		refreshQueued = false;
-		stopLiveRefresh();
 		stopWait();
 	});
 
@@ -653,13 +649,12 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		if (event.toolName !== "bash" && event.toolName !== "background_job") return;
 		rememberUi(ctx);
 		const command = commandFromInput(event.input);
-		if (!/\boppi\s+session\s+(?:create|wait|inspect)\b/.test(command)) return;
+		if (!/\boppi\s+session\s+create\b/.test(command)) return;
 		const created = subagentFromCreate(command, textFromContent(event.content), parentId);
-		if (created) {
-			seen = refreshLaunched([created, ...seen.filter((item) => item.id !== created.id)], []);
-			if (!watched.some((item) => item.id === created.id && item.supervise)) {
-				rememberWatch({ id: created.id, name: created.title, supervise: false, attentionDelivered: false });
-			}
+		if (!created) return;
+		seen = refreshLaunched([created, ...seen.filter((item) => item.id !== created.id)], []);
+		if (!watched.some((item) => item.id === created.id && item.supervise)) {
+			rememberWatch({ id: created.id, name: created.title, supervise: false, attentionDelivered: false });
 		}
 		shown = seen;
 		refreshWidget();

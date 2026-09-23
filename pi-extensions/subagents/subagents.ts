@@ -1,9 +1,9 @@
 /**
  * Subagents launched by this parent.
  *
- * The set is the create results this session saw. Status comes from
- * `oppi session get <id>` for those ids only. There is no children list API,
- * and this module does not scan every session.
+ * The set is the create results this session saw. Status updates come from
+ * `oppi session wait`; a one-time `oppi session get <id>` snapshot fills in
+ * model and context metadata. There is no children list API.
  */
 
 export interface Subagent {
