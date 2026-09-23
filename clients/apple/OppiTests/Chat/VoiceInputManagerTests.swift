@@ -1959,6 +1959,56 @@ struct VoiceInputManagerTests {
         #expect(session.stopCallCount == 1)
     }
 
+    @Test func onDevicePartialStaysDraftUntilPauseThenSettles() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let session = MockVoiceSession()
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        manager.onDevicePauseSettleDelay = .seconds(60)
+        manager.setEngineMode(.onDevice)
+
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+        #expect(manager.state == .recording)
+        session.yieldEvent(.partialTranscript("hello world"))
+        #expect(await waitForMainActorCondition {
+            manager.currentTranscript == "hello world"
+                && manager.currentTranscriptVolatileSuffixLength == "hello world".count
+        })
+
+        manager.onDevicePauseSettleDelay = .milliseconds(20)
+        session.yieldEvent(.partialTranscript("hello world"))
+        #expect(await waitForMainActorCondition { manager.currentTranscriptVolatileSuffixLength == 0 })
+
+        manager.onDevicePauseSettleDelay = .seconds(60)
+        session.yieldEvent(.partialTranscript("hello world this"))
+        #expect(await waitForMainActorCondition {
+            manager.currentTranscriptVolatileSuffixLength == "hello world this".count
+        })
+
+        await manager.cancelRecording()
+    }
+
+    @Test func staleOnDevicePauseTimerMustNotSettleAfterANewerResult() {
+        #expect(VoiceInputManager.shouldApplyOnDevicePauseSettle(
+            cancelled: false, generation: 2, currentGeneration: 2, isRecording: true
+        ))
+        #expect(!VoiceInputManager.shouldApplyOnDevicePauseSettle(
+            cancelled: true, generation: 2, currentGeneration: 2, isRecording: true
+        ))
+        #expect(!VoiceInputManager.shouldApplyOnDevicePauseSettle(
+            cancelled: false, generation: 1, currentGeneration: 2, isRecording: true
+        ))
+        #expect(!VoiceInputManager.shouldApplyOnDevicePauseSettle(
+            cancelled: false, generation: 2, currentGeneration: 2, isRecording: false
+        ))
+    }
+
     @Test func startRecordingWithOnDeviceOnlyRequestsMicPermission() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }

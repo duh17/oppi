@@ -550,6 +550,11 @@ final class VoiceInputManager {
             return replaceTranscriptState.visibleActiveSuffixLength(in: currentTranscript)
         }
 
+        if paintsOnDevicePauseDraft {
+            if onDevicePauseSettled { return 0 }
+            return currentTranscript.count
+        }
+
         if typewriterAnimator.isAnimating {
             return min(currentTranscript.count, typewriterAnimator.visibleAnimatedSuffixLength)
         }
@@ -630,6 +635,12 @@ final class VoiceInputManager {
     private var recordingStart: ContinuousClock.Instant?
     private var resultUpdateCount = 0
     private var replaceTranscriptState = ReplaceTranscriptState()
+    /// On-device Speech keeps a long volatile window. Paint the whole take as
+    /// draft until a pause, then clear the blue tint without waiting for `isFinal`.
+    private var onDevicePauseSettled = false
+    private var onDevicePauseSettleTask: Task<Void, Never>?
+    private var onDevicePauseSettleGeneration = 0
+    var onDevicePauseSettleDelay: Duration = .milliseconds(700)
     private var lastCaptureAudioAt: ContinuousClock.Instant?
     private var captureHealthTask: Task<Void, Never>?
     private var activeCaptureRebuildID: UUID?
@@ -1819,6 +1830,7 @@ final class VoiceInputManager {
             volatileTranscript = text
             _ = clearCorrectionHighlight()
             resultUpdateCount += 1
+            noteOnDeviceLiveDraft()
             markTranscriptPresentationChanged()
             logger.debug("Volatile: \(text.count) chars")
         case .appendFinalTranscript(let text):
@@ -1827,6 +1839,7 @@ final class VoiceInputManager {
             volatileTranscript = ""
             _ = clearCorrectionHighlight()
             resultUpdateCount += 1
+            noteOnDeviceLiveDraft()
             markTranscriptPresentationChanged()
             logger.debug("Finalized append: \(text.count) chars")
         case .replaceFinalTranscript(let text, let snap, let committedText, let activeText):
@@ -1891,6 +1904,7 @@ final class VoiceInputManager {
         #endif
         typewriterAnimator.reset()
         sessionMonitor.teardown()
+        cancelOnDevicePauseSettle()
         finalizedTranscript = ""
         volatileTranscript = ""
         replaceTranscriptState.reset()
@@ -2028,6 +2042,60 @@ final class VoiceInputManager {
         if !endPlaybackCaptureInterruptionIfNeeded() {
             deactivateAudioSession()
         }
+    }
+
+    private var paintsOnDevicePauseDraft: Bool {
+        guard state == .recording else { return false }
+        switch activeEngine {
+        case .classicDictation, .modernSpeech:
+            return true
+        case .serverDictation, nil:
+            return false
+        }
+    }
+
+    private func noteOnDeviceLiveDraft() {
+        guard paintsOnDevicePauseDraft else { return }
+        onDevicePauseSettled = false
+        onDevicePauseSettleTask?.cancel()
+        onDevicePauseSettleGeneration &+= 1
+        let generation = onDevicePauseSettleGeneration
+        let delay = onDevicePauseSettleDelay
+        onDevicePauseSettleTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
+                return
+            }
+            guard let self else { return }
+            guard Self.shouldApplyOnDevicePauseSettle(
+                cancelled: Task.isCancelled,
+                generation: generation,
+                currentGeneration: self.onDevicePauseSettleGeneration,
+                isRecording: self.state == .recording
+            ) else { return }
+            self.onDevicePauseSettled = true
+            self.onDevicePauseSettleTask = nil
+            self.markTranscriptPresentationChanged()
+        }
+    }
+
+    /// A sleep that already resumed can still run after a newer result replaced
+    /// the timer. Only the current generation may settle the draft tint.
+    nonisolated static func shouldApplyOnDevicePauseSettle(
+        cancelled: Bool,
+        generation: Int,
+        currentGeneration: Int,
+        isRecording: Bool
+    ) -> Bool {
+        !cancelled && isRecording && generation == currentGeneration
+    }
+
+    private func cancelOnDevicePauseSettle() {
+        onDevicePauseSettleTask?.cancel()
+        onDevicePauseSettleTask = nil
+        onDevicePauseSettled = false
+        onDevicePauseSettleGeneration &+= 1
     }
 
     private func markTranscriptPresentationChanged() {
