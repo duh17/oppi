@@ -13,6 +13,9 @@ export interface Subagent {
 	subtitle: string;
 	link: string;
 	state: "running" | "success" | "warning" | "error";
+	model?: string;
+	contextTokens?: number;
+	contextWindow?: number;
 }
 
 export interface SubagentRow {
@@ -22,6 +25,12 @@ export interface SubagentRow {
 	detail?: string;
 	state: Subagent["state"];
 	link: string;
+	progress?: number;
+}
+
+export interface WidgetChrome {
+	title: string;
+	subtitle?: string;
 }
 
 const MAX_SUBAGENTS = 8;
@@ -46,6 +55,10 @@ export function applyGet(known: Subagent, payload: unknown): Subagent | null {
 		...known,
 		...refreshed,
 		title: titledWithAgent(name, asRecord(launch)?.agentIcon),
+		state: mergePolledState(known.state, refreshed.state),
+		model: refreshed.model ?? known.model,
+		contextTokens: refreshed.contextTokens ?? known.contextTokens,
+		contextWindow: refreshed.contextWindow ?? known.contextWindow,
 	};
 }
 
@@ -80,6 +93,7 @@ export function subagentFromCreate(command: string, text: string, parentId?: str
 	const id = stringField(data, "session_id") ?? stringField(data, "sessionId");
 	if (!id || id === parentId) return null;
 	const name = flag(command, "name") ?? shortId(id);
+	const model = flag(command, "model");
 	return {
 		id,
 		parentId,
@@ -87,6 +101,7 @@ export function subagentFromCreate(command: string, text: string, parentId?: str
 		subtitle: shortId(id),
 		link: sessionLink(id),
 		state: "running",
+		...(model ? { model } : {}),
 	};
 }
 
@@ -145,18 +160,33 @@ export function statusLabel(state: Subagent["state"]): string {
 }
 
 export function rowFallback(row: SubagentRow): string {
-	return `${row.title} ${row.subtitle} ${row.link}`;
+	return [row.title, row.subtitle, row.detail, row.link].filter(Boolean).join(" ");
+}
+
+export function widgetChrome(subagents: Subagent[]): WidgetChrome {
+	const title = subagents.length === 1 ? "1 subagent" : `${subagents.length} subagents`;
+	const subtitle = panelSummary(subagents);
+	return {
+		title,
+		...(subtitle && subtitle !== title ? { subtitle } : {}),
+	};
 }
 
 export function subagentRows(subagents: Subagent[]): SubagentRow[] {
-	return subagents.map((item) => ({
-		id: item.id,
-		title: item.title,
-		subtitle: statusLabel(item.state),
-		detail: item.subtitle,
-		state: item.state,
-		link: item.link,
-	}));
+	return subagents.map((item) => {
+		const model = shortModelName(item.model);
+		const usage = contextLabel(item.contextTokens, item.contextWindow);
+		const progress = contextProgress(item.contextTokens, item.contextWindow);
+		return {
+			id: item.id,
+			title: item.title,
+			subtitle: [statusLabel(item.state), model].filter(Boolean).join(" · "),
+			detail: usage ?? item.subtitle,
+			state: item.state,
+			link: item.link,
+			...(progress !== undefined ? { progress } : {}),
+		};
+	});
 }
 
 function sessionRecord(payload: unknown): Record<string, unknown> | null {
@@ -171,6 +201,9 @@ function subagentFromSession(
 ): Subagent {
 	const workspaceId = stringField(session, "workspaceId");
 	const name = stringField(session, "name") ?? shortId(id);
+	const model = stringField(session, "model");
+	const contextTokens = numberField(session, "contextTokens");
+	const contextWindow = numberField(session, "contextWindow");
 	return {
 		id,
 		parentId,
@@ -178,7 +211,60 @@ function subagentFromSession(
 		subtitle: shortId(id),
 		link: sessionLink(id, workspaceId),
 		state: stateFromStatus(stringField(session, "status")),
+		...(model ? { model } : {}),
+		...(contextTokens !== undefined ? { contextTokens } : {}),
+		...(contextWindow !== undefined ? { contextWindow } : {}),
 	};
+}
+
+function panelSummary(rows: Subagent[]): string | undefined {
+	if (rows.length === 0) return undefined;
+	const working = rows.filter((row) => row.state === "running").length;
+	const attention = rows.filter((row) => row.state === "warning").length;
+	const errors = rows.filter((row) => row.state === "error").length;
+	if (attention > 0) return attention === 1 ? "Needs attention" : `${attention} need attention`;
+	if (working > 0) {
+		if (working === rows.length && working === 1) return "Working";
+		return `${working} working`;
+	}
+	if (errors > 0) return errors === 1 ? "Error" : `${errors} errors`;
+	return rows.length === 1 ? "Done" : "All done";
+}
+
+function shortModelName(model: string | undefined): string | undefined {
+	if (!model) return undefined;
+	const name = model.split("/").pop() ?? model;
+	return name.replace(/^claude-/, "").replace(/^gemini-/, "");
+}
+
+function contextLabel(tokens: number | undefined, window: number | undefined): string | undefined {
+	if (window !== undefined && window > 0 && tokens !== undefined && tokens >= 0) {
+		return `${Math.round((tokens / window) * 100)}%`;
+	}
+	if (tokens !== undefined && tokens > 0) return compactCount(tokens);
+	return undefined;
+}
+
+function contextProgress(tokens: number | undefined, window: number | undefined): number | undefined {
+	if (window === undefined || window <= 0 || tokens === undefined || tokens < 0) return undefined;
+	return Math.min(1, tokens / window);
+}
+
+function compactCount(count: number): string {
+	if (count >= 1_000_000) {
+		const millions = count / 1_000_000;
+		return `${trimDecimal(millions)}M`;
+	}
+	if (count >= 1_000) {
+		const thousands = count / 1_000;
+		return `${trimDecimal(thousands)}k`;
+	}
+	return String(Math.round(count));
+}
+
+function trimDecimal(value: number): string {
+	const text = value < 10 && !Number.isInteger(value) ? value.toFixed(1) : value.toFixed(0);
+	return text.replace(/\.0$/, "");
 }
 
 export function titledWithAgent(name: string, icon: unknown): string {
@@ -201,6 +287,13 @@ function stateFromStatus(status: string | undefined): Subagent["state"] {
 	if (token === "error") return "error";
 	if (token === "attention") return "warning";
 	return "running";
+}
+
+function mergePolledState(known: Subagent["state"], polled: Subagent["state"]): Subagent["state"] {
+	// Wait owns attention. Session get has no pending-dialog field, so a busy
+	// poll must not paint Needs attention back to Working.
+	if (known === "warning" && polled === "running") return "warning";
+	return polled;
 }
 
 function envelopeData(payload: unknown): Record<string, unknown> | null {
@@ -255,4 +348,9 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function stringField(record: Record<string, unknown> | null, key: string): string | undefined {
 	const value = record?.[key];
 	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numberField(record: Record<string, unknown> | null, key: string): number | undefined {
+	const value = record?.[key];
+	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

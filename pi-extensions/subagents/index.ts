@@ -20,6 +20,7 @@ import {
 	sessionLink,
 	subagentFromCreate,
 	subagentRows,
+	widgetChrome,
 	type Subagent,
 } from "./subagents.ts";
 import {
@@ -46,6 +47,7 @@ const WIDGET_KEY = "subagents";
 const CREATE_TIMEOUT_MS = 30_000;
 const GET_TIMEOUT_MS = 8_000;
 const MIN_WAIT_SEC = 30;
+const LIVE_REFRESH_MS = 3_000;
 
 interface OppiResult {
 	code: number | null;
@@ -143,9 +145,29 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	let idleChild: ReturnType<typeof spawn> | undefined;
 	let attentionChild: ReturnType<typeof spawn> | undefined;
 	let retryTimer: ReturnType<typeof setTimeout> | undefined;
+	let liveRefreshTimer: ReturnType<typeof setInterval> | undefined;
+	let refreshInFlight = false;
+	let refreshQueued = false;
+	let refreshGeneration = 0;
 	let waitFailures = 0;
 	let failureWarned = false;
 	const stalls = new Map<string, StallState>();
+
+	const stopLiveRefresh = () => {
+		if (liveRefreshTimer) clearInterval(liveRefreshTimer);
+		liveRefreshTimer = undefined;
+	};
+
+	const startLiveRefresh = () => {
+		if (liveRefreshTimer || closed || seen.length === 0) return;
+		liveRefreshTimer = setInterval(() => {
+			if (closed || seen.length === 0) {
+				stopLiveRefresh();
+				return;
+			}
+			refreshFromCli();
+		}, LIVE_REFRESH_MS);
+	};
 
 	const refreshWidget = () => {
 		const ui = latestUi;
@@ -156,18 +178,18 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			return;
 		}
 		const rows = subagentRows(shown);
-		const title = shown.length === 1 ? "1 subagent" : `${shown.length} subagents`;
-		ui.setStatus(WIDGET_KEY, title);
+		const chrome = widgetChrome(shown);
+		ui.setStatus(WIDGET_KEY, chrome.subtitle);
 		ui.setWidget(WIDGET_KEY, () => ({
-			render: () => [title, ...rows.map(rowFallback)],
+			render: () => [chrome.title, ...rows.map(rowFallback)],
 			renderNative: () => ({
 				version: 1,
 				id: `widget:${WIDGET_KEY}`,
 				source: "widget",
 				presentation: {
 					style: "surfacePanel",
-					title,
-					subtitle: rows[0]?.subtitle ?? rows[0]?.title,
+					title: chrome.title,
+					subtitle: chrome.subtitle,
 				},
 				blocks: [{ type: "activityList", id: "subagents", rows }],
 				fallback: { lines: rows.map(rowFallback) },
@@ -177,21 +199,45 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	};
 
 	const refreshFromCli = () => {
-		if (seen.length === 0) {
-			shown = [];
-			refreshWidget();
+		if (closed || seen.length === 0) {
+			refreshQueued = false;
+			if (seen.length === 0) {
+				shown = [];
+				stopLiveRefresh();
+				refreshWidget();
+			}
 			return;
 		}
+		startLiveRefresh();
+		if (refreshInFlight) {
+			refreshQueued = true;
+			return;
+		}
+		refreshInFlight = true;
+		const generation = refreshGeneration;
 		const requested = seen;
 		void refreshLaunchedFromCli(requested)
 			.then((next) => {
-				if (seen !== requested) return;
+				if (closed || generation !== refreshGeneration || seen !== requested) return;
 				shown = next;
 				refreshWidget();
 			})
 			.catch(() => {
+				if (closed || generation !== refreshGeneration || seen !== requested) return;
 				shown = seen;
 				refreshWidget();
+			})
+			.finally(() => {
+				if (generation !== refreshGeneration) return;
+				refreshInFlight = false;
+				if (closed || seen.length === 0) {
+					refreshQueued = false;
+					return;
+				}
+				if (refreshQueued) {
+					refreshQueued = false;
+					refreshFromCli();
+				}
 			});
 	};
 
@@ -346,9 +392,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		armWait();
 	};
 
-	const rememberRow = (id: string, name: string) => {
+	const rememberRow = (id: string, name: string, model?: string) => {
 		const created = subagentFromCreate(
-			`oppi session create --name ${name} --json`,
+			`oppi session create --name ${name}${model ? ` --model ${model}` : ""} --json`,
 			JSON.stringify({ ok: true, data: { session_id: id } }),
 			parentId,
 		);
@@ -550,7 +596,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				};
 			}
 			const name = params.name?.trim() || id.slice(0, 8);
-			rememberRow(id, name);
+			rememberRow(id, name, params.model?.trim());
 			rememberWatch({ id, name, supervise: plan.supervise, attentionDelivered: false });
 			if (plan.supervise) {
 				try {
@@ -574,6 +620,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		seen = [];
 		shown = [];
 		settledIds = new Set();
+		refreshGeneration += 1;
+		refreshInFlight = false;
+		refreshQueued = false;
+		stopLiveRefresh();
 		rememberUi(ctx);
 		watched = restoreSupervised(ctx.sessionManager.getEntries());
 		for (const child of watched) rememberRow(child.id, child.name);
@@ -583,6 +633,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", () => {
 		closed = true;
+		refreshGeneration += 1;
+		refreshQueued = false;
+		stopLiveRefresh();
 		stopWait();
 	});
 
