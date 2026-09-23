@@ -61,6 +61,66 @@ final class QuickSessionE2ETests: E2ETestCase {
     }
 
     @MainActor
+    func testQuickSessionStarSavesPiOrSelectedAgentDefault() throws {
+        XCTAssertTrue(waitForElementToExist(app.collectionViews["workspace.sessionList"], timeout: 20))
+        let initialModels = try e2eLabAPIJSON(method: "GET", path: "/models")["models"] as? [[String: Any]] ?? []
+        let modelId = try XCTUnwrap(
+            initialModels.compactMap { $0["id"] as? String }.first { $0.hasPrefix("mlx-serve/") },
+            "The isolated E2E server must expose its pinned mlx-serve model"
+        )
+        let originalPiDefault = initialModels.first(where: { $0["isDefault"] as? Bool == true })?["id"] as? String
+        XCTAssertNil(originalPiDefault, "The isolated E2E Pi settings must have no default before this test")
+
+        let agentResponse = try e2eLabAPIJSON(method: "POST", path: "/agents", body: [
+            "name": "Quick star agent \(UUID().uuidString.prefix(8))",
+            "sessionDefaults": ["thinkingLevel": "high"],
+        ])
+        let agent = try XCTUnwrap(agentResponse["agent"] as? [String: Any])
+        let agentId = try XCTUnwrap(agent["id"] as? String)
+        openQuickSession()
+        tap(app.buttons["quickSession.agentPicker"], named: "choose saved Agent")
+        tap(app.buttons["quickSession.agent.\(agentId)"], named: "saved Agent", timeout: 10)
+        tap(app.buttons["session.toolbar.model"], named: "Agent model picker")
+        let agentModelSearch = app.searchFields["Search models…"]
+        if !agentModelSearch.exists { app.swipeDown() }
+        tap(agentModelSearch, named: "search for pinned Agent model")
+        agentModelSearch.typeText("E2E MLX Serve Model")
+        let agentStar = app.buttons["Set as default"]
+        if !waitForElementToExist(agentStar, timeout: 5) {
+            print("[e2e] Agent model picker accessibility: \(app.debugDescription)")
+        }
+        XCTAssertTrue(agentStar.exists, "Pinned Agent model star was not accessible")
+        tap(agentStar, named: "save Agent default")
+        assertModelPickerDismissed()
+        let saved = try e2eLabAPIJSON(method: "GET", path: "/agents/\(agentId)")
+        let definition = try XCTUnwrap((saved["agent"] as? [String: Any])?["definition"] as? [String: Any])
+        let defaults = try XCTUnwrap(definition["sessionDefaults"] as? [String: Any])
+        XCTAssertEqual(defaults["model"] as? String, modelId)
+        XCTAssertEqual(defaults["thinkingLevel"] as? String, "high")
+        let unchangedPiModels = try e2eLabAPIJSON(method: "GET", path: "/models")["models"] as? [[String: Any]] ?? []
+        XCTAssertNil(unchangedPiModels.first(where: { $0["isDefault"] as? Bool == true }),
+                     "Saving an Agent default must not change Pi's global default")
+        dismissQuickSession()
+
+        openQuickSession()
+        tap(app.buttons["quickSession.agentPicker"], named: "choose Pi")
+        tap(app.buttons["quickSession.agent.pi"], named: "plain Pi", timeout: 10)
+        tap(app.buttons["session.toolbar.model"], named: "Pi model picker")
+        let piModelSearch = app.searchFields["Search models…"]
+        if !piModelSearch.exists { app.swipeDown() }
+        tap(piModelSearch, named: "search for pinned Pi model")
+        piModelSearch.typeText("E2E MLX Serve Model")
+        let piStar = app.buttons["Set as default"]
+        if !waitForElementToExist(piStar, timeout: 5) {
+            print("[e2e] Pi model picker accessibility: \(app.debugDescription)")
+        }
+        tap(piStar, named: "save Pi default")
+        assertModelPickerDismissed()
+        let piModels = try e2eLabAPIJSON(method: "GET", path: "/models")["models"] as? [[String: Any]] ?? []
+        XCTAssertEqual(piModels.first(where: { $0["isDefault"] as? Bool == true })?["id"] as? String, modelId)
+    }
+
+    @MainActor
     func testQuickSessionDraftSurvivesDismissalAndRelaunch() {
         XCTAssertTrue(
             waitForElementToExist(app.collectionViews["workspace.sessionList"], timeout: 20),
@@ -97,6 +157,16 @@ final class QuickSessionE2ETests: E2ETestCase {
 
         replaceText(in: restoredInput, with: "")
         dismissQuickSession()
+    }
+
+    @MainActor
+    private func assertModelPickerDismissed() {
+        let title = app.navigationBars["Models"]
+        let dismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: title
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 10), .completed)
     }
 
     @MainActor

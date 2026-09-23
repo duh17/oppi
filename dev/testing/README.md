@@ -308,8 +308,8 @@ cd clients/apple
 
 Prerequisites:
 
-- oMLX/OpenAI-compatible model endpoint on `http://localhost:8400`
-- a usable non-ASR model; the harness prefers `Qwen3.6*`
+- mlx-serve OpenAI-compatible endpoint on `http://127.0.0.1:11234`
+- loaded chat model `ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit` (the harness fails instead of using another model)
 
 ### Paired-server simulator labs
 

@@ -49,6 +49,44 @@ struct AgentScheduleAPIClientTests {
         return data
     }
 
+    @Test func defaultModelWriteUsesPiSettingsRoute() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "PUT")
+            #expect(request.url?.path == "/server/resources/pi/default-model")
+            let json = try #require(
+                JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: String]
+            )
+            #expect(json == ["model": "xai/grok-4.6"])
+            return mockResponse(json: #"{"model":"xai/grok-4.6"}"#)
+        }
+        try await client.setPiDefaultModel("xai/grok-4.6")
+    }
+
+    @Test func agentDefaultModelPatchIsVersionedAndChangesOnlyModel() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "PATCH")
+            #expect(request.url?.path == "/agents/agent-1")
+            #expect(request.url?.query == "expectedVersion=3")
+            let json = try #require(
+                JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
+            )
+            #expect(Set(json.keys) == ["sessionDefaults"])
+            #expect(json["sessionDefaults"] as? [String: String] == ["model": "xai/grok-4.6"])
+            return mockResponse(json: """
+            {"agent":{"id":"agent-1","name":"Reviewer","status":"active","version":4,"definition":{"name":"Reviewer","sessionDefaults":{"model":"xai/grok-4.6","thinkingLevel":"high"}},"createdAt":1000,"updatedAt":4000}}
+            """)
+        }
+        let saved = try await client.setAgentDefaultModel(
+            agentId: "agent-1", version: 3, model: "xai/grok-4.6"
+        )
+        #expect(saved.definition.sessionDefaults?.model == "xai/grok-4.6")
+        #expect(saved.definition.sessionDefaults?.thinkingLevel == .high)
+    }
+
     @Test func agentListDecodesSavedIconSummary() async throws {
         let client = makeClient()
         defer { cleanup() }

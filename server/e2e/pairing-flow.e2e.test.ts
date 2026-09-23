@@ -9,12 +9,13 @@
  *   5. Device token authenticates all subsequent API calls
  *   6. Device can list workspaces, create sessions, and access split streams
  *
- * Requires: Docker, OMLX server on localhost:8400
+ * Requires: Docker or native server, mlx-serve on 127.0.0.1:11234 with the pinned chat model
  */
 
 import { describe, it, expect, beforeAll, inject } from "vitest";
 import {
   api,
+  e2eWorkspaceHostMount,
   generateTestInvite,
   makeE2EDevicePublicKey,
   openSessionStream,
@@ -203,6 +204,7 @@ describe("E2E: Pairing Flow", { timeout: 300_000 }, () => {
 
       const res = await api("POST", "/workspaces", deviceToken, {
         name: "e2e-pairing-workspace",
+        hostMount: e2eWorkspaceHostMount(),
       });
 
       expect(res.status).toBe(201);

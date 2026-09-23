@@ -78,6 +78,14 @@ extension APIClient {
         return try JSONDecoder().decode(PiDefaultToolsSnapshot.self, from: data)
     }
 
+    func setPiDefaultModel(_ model: String) async throws {
+        struct Request: Encodable { let model: String }
+        _ = try await put(
+            url: serverResourceURL(pathSegments: ["pi", "default-model"]),
+            body: Request(model: model)
+        )
+    }
+
     private func serverResourceURL(
         pathSegments: [String],
         queryItems: [URLQueryItem] = []

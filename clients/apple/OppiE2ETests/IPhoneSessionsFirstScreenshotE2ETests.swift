@@ -598,10 +598,10 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
 
         let expectedWorkspaceId = try e2eWorkspaceId()
         tap(app.buttons["session.toolbar.model"], named: "schedule model picker")
-        let modelTitle = app.staticTexts["E2E oMLX Model"]
+        let modelTitle = app.staticTexts["E2E MLX Serve Model"]
         XCTAssertTrue(modelTitle.waitForExistence(timeout: 20), "Schedule model picker had no model")
         let modelIdentifier = app.staticTexts.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "omlx/")
+            NSPredicate(format: "label BEGINSWITH %@", "mlx-serve/")
         ).firstMatch
         XCTAssertTrue(modelIdentifier.waitForExistence(timeout: 5), "Schedule model ID was not visible")
         let selectedModel = modelIdentifier.label

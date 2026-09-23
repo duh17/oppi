@@ -320,6 +320,13 @@ const rawApiRouteSpecs = [
     auth: "owner",
   },
   {
+    method: "PUT",
+    path: "/server/resources/pi/default-model",
+    operationId: "setPiDefaultModel",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
     method: "GET",
     path: "/models",
     operationId: "listModels",

@@ -33,7 +33,7 @@ services:
       # Keep server state durable across docker restart within one E2E run.
       # `docker compose down -v` still removes it at harness teardown.
       - oppi-e2e-data:/data/oppi
-      # Mount e2e models.json so pi can resolve the omlx provider
+      # Mount e2e models.json so pi can resolve the mlx-serve provider
       - ${E2E_MODELS_JSON:-/dev/null}:/data/pi-agent/models.json:ro
     tmpfs:
       # Host-path creation UI tests create ~/workspace/<name>.

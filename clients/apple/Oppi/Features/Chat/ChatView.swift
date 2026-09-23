@@ -2360,15 +2360,14 @@ struct ChatView: View {
         }
     }
 
-    private func applyModelSelection(_ model: ModelInfo, persist: Bool = false) {
+    private func applyModelSelection(_ model: ModelInfo) {
         AppPreferences.RecentModels.record(ModelSwitchPolicy.fullModelID(for: model))
         actionHandler.setModel(
             model,
             connection: connection,
             reducer: reducer,
             sessionStore: sessionStore,
-            sessionId: sessionId,
-            persist: persist
+            sessionId: sessionId
         )
     }
 
@@ -2753,8 +2752,18 @@ struct ChatView: View {
             currentModel: session?.model,
             onSelect: handleModelSelection,
             onSetDefault: canPersistSessionDefaults ? { model in
-                applyModelSelection(model, persist: true)
-            } : nil
+                guard let api = connection.apiClient else { throw QuickSessionError.noConnection }
+                try await ModelDefaultPersistence.save(
+                    model,
+                    agentId: session?.launch?.agentId,
+                    api: api
+                )
+                applyModelSelection(model)
+                if session?.launch?.agentId == nil, let models = try? await api.listModels() {
+                    chatState.cachedModels = models
+                }
+            } : nil,
+            defaultAgentId: session?.launch?.agentId
         )
         .presentationDetents([.medium, .large])
     }

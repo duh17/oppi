@@ -7,7 +7,8 @@ import SwiftUI
 struct ModelPickerSheet: View {
     let currentModel: String?
     let onSelect: (ModelInfo) -> Void
-    var onSetDefault: ((ModelInfo) -> Void)? = nil
+    var onSetDefault: ((ModelInfo) async throws -> Void)? = nil
+    var defaultAgentId: String? = nil
 
     @Environment(\.apiClient) private var apiClient
     @Environment(ChatSessionState.self) private var chatState
@@ -20,6 +21,10 @@ struct ModelPickerSheet: View {
     @State private var providerQuotas: ProviderQuotasInfo?
     @State private var quotaReferenceDate = Date()
     @State private var modelLoadError: String?
+    @State private var defaultModelError: String?
+    @State private var isSavingDefault = false
+    @State private var agentDefaultModelId: String?
+    @State private var piDefaultModelId: String?
     private var recentIds: [String] { AppPreferences.RecentModels.load() }
 
     private var models: [ModelInfo] { chatState.cachedModels }
@@ -100,6 +105,7 @@ struct ModelPickerSheet: View {
                     }
                 } else {
                     modelList
+                        .disabled(isSavingDefault)
                 }
             }
             .background(.themeBg)
@@ -109,6 +115,32 @@ struct ModelPickerSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .disabled(isSavingDefault)
+                }
+                if isSavingDefault {
+                    ToolbarItem(placement: .status) {
+                        ProgressView()
+                            .accessibilityLabel("Saving default model")
+                    }
+                }
+            }
+            .interactiveDismissDisabled(isSavingDefault)
+            .alert("Couldn't Set Default Model", isPresented: Binding(
+                get: { defaultModelError != nil },
+                set: { if !$0 { defaultModelError = nil } }
+            )) {
+                Button("OK", role: .cancel) { defaultModelError = nil }
+            } message: {
+                Text(defaultModelError ?? "Please try again.")
+            }
+            .task(id: defaultAgentId) {
+                agentDefaultModelId = nil
+                guard let defaultAgentId, let apiClient else { return }
+                do {
+                    let agent = try await apiClient.getAgent(defaultAgentId)
+                    if !Task.isCancelled { agentDefaultModelId = agent.definition.sessionDefaults?.model }
+                } catch {
+                    if !Task.isCancelled { defaultModelError = error.localizedDescription }
                 }
             }
             .task {
@@ -177,19 +209,34 @@ struct ModelPickerSheet: View {
 
             if let onSetDefault {
                 Button {
+                    guard !isSavingDefault else { return }
                     AppHaptics.selectionChanged()
-                    onSetDefault(model)
-                    dismiss()
+                    isSavingDefault = true
+                    Task {
+                        defer { isSavingDefault = false }
+                        do {
+                            try await onSetDefault(model)
+                            if defaultAgentId != nil {
+                                agentDefaultModelId = fullId(model)
+                            } else {
+                                piDefaultModelId = fullId(model)
+                            }
+                            dismiss()
+                        } catch {
+                            defaultModelError = error.localizedDescription
+                        }
+                    }
                 } label: {
-                    Image(systemName: model.isDefault ? "star.fill" : "star")
+                    Image(systemName: isDefaultModel(model) ? "star.fill" : "star")
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(model.isDefault ? .themeOrange : .themeComment)
+                        .foregroundStyle(isDefaultModel(model) ? .themeOrange : .themeComment)
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(model.isDefault ? "Default model" : "Set as default")
-                .accessibilityAddTraits(model.isDefault ? .isSelected : [])
+                .disabled(isSavingDefault)
+                .accessibilityLabel(isDefaultModel(model) ? "Default model" : "Set as default")
+                .accessibilityAddTraits(isDefaultModel(model) ? .isSelected : [])
                 .accessibilityIdentifier("model.picker.star.\(fullId(model))")
             }
         }
@@ -198,6 +245,12 @@ struct ModelPickerSheet: View {
         )
         .id(themeID)
         .accessibilityIdentifier("model.picker.row.\(fullId(model))")
+    }
+
+    private func isDefaultModel(_ model: ModelInfo) -> Bool {
+        if defaultAgentId != nil { return agentDefaultModelId == fullId(model) }
+        if let piDefaultModelId { return piDefaultModelId == fullId(model) }
+        return model.isDefault
     }
 
     private func isCurrentModel(_ model: ModelInfo) -> Bool {
@@ -460,6 +513,33 @@ enum ModelPickerProviderOrdering {
     }
 }
 
+
+/// One persistence path for Quick Session and an already-running saved Agent.
+@MainActor
+enum ModelDefaultPersistence {
+    static func save(_ model: ModelInfo, agentId: String?, api: APIClient) async throws {
+        let modelId = ModelSwitchPolicy.fullModelID(for: model)
+        if let agentId {
+            let agent = try await api.getAgent(agentId)
+            guard agent.status == .active else { throw ModelDefaultSaveError.archivedAgent }
+            _ = try await api.setAgentDefaultModel(
+                agentId: agentId,
+                version: agent.version,
+                model: modelId
+            )
+        } else {
+            try await api.setPiDefaultModel(modelId)
+        }
+    }
+}
+
+private enum ModelDefaultSaveError: LocalizedError {
+    case archivedAgent
+
+    var errorDescription: String? {
+        "This Agent is no longer active. Choose another Agent."
+    }
+}
 
 // MARK: - Model Row
 

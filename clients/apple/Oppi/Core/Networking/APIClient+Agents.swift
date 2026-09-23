@@ -87,6 +87,22 @@ extension APIClient {
         return try JSONDecoder().decode(AgentResponse.self, from: data).agent
     }
 
+    /// CAS patch so a model-star tap cannot overwrite a concurrent Agent edit.
+    func setAgentDefaultModel(
+        agentId: String,
+        version: Int,
+        model: String
+    ) async throws -> StoredAgentDefinition {
+        struct Defaults: Encodable { let model: String }
+        struct Patch: Encodable { let sessionDefaults: Defaults }
+        let encodedId = try percentEncodePathSegment(agentId)
+        let data = try await patch(
+            "/agents/\(encodedId)?expectedVersion=\(version)",
+            body: Patch(sessionDefaults: Defaults(model: model))
+        )
+        return try JSONDecoder().decode(AgentResponse.self, from: data).agent
+    }
+
     func updateAgentNative(
         agentId: String,
         name: String,

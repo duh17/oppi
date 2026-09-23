@@ -184,7 +184,7 @@ struct QuickSessionSheet: View {
                 ? agentModelOverride
                 : selectedModelId,
             isAgent: selectedAgentId != nil,
-            catalogModels: chatState.cachedModels
+            catalogModels: selectedChatState.cachedModels
         )
     }
 
@@ -202,6 +202,10 @@ struct QuickSessionSheet: View {
     private var selectedAgent: AgentDefinitionSummary? {
         guard let selectedAgentId else { return nil }
         return availableAgents.first(where: { $0.id == selectedAgentId })
+    }
+
+    private var selectedChatState: ChatSessionState {
+        selectedServerConnection()?.chatState ?? chatState
     }
 
     private var selectedServerIconAssetCache: IconAssetCache? {
@@ -300,8 +304,25 @@ struct QuickSessionSheet: View {
         .sheet(isPresented: $showModelPicker) {
             ModelPickerSheet(
                 currentModel: effectiveModelId,
-                onSelect: selectModel
+                onSelect: selectModel,
+                onSetDefault: { model in
+                    guard let api = selectedServerConnection()?.apiClient else {
+                        throw QuickSessionError.noConnection
+                    }
+                    let agentId = selectedAgentId
+                    try await ModelDefaultPersistence.save(model, agentId: agentId, api: api)
+                    if agentId == selectedAgentId {
+                        if agentId != nil { agentModelOverride = nil }
+                        else { selectedModelId = nil }
+                    }
+                    if agentId == nil, let models = try? await api.listModels() {
+                        selectedChatState.cachedModels = models
+                    }
+                },
+                defaultAgentId: selectedAgentId
             )
+            .environment(\.apiClient, selectedServerConnection()?.apiClient)
+            .environment(selectedChatState)
         }
         .fullScreenCover(isPresented: $showExpandedComposer) {
             ExpandedComposerView(
@@ -325,7 +346,7 @@ struct QuickSessionSheet: View {
                 onThinkingSelect: selectThinkingLevel,
                 supportedThinkingLevels: ThinkingLevelMenuSource.levels(
                     for: effectiveModelId,
-                    in: chatState.cachedModels
+                    in: selectedChatState.cachedModels
                 ),
                 allowsEmptySubmit: selectedAgentId == nil
             )
@@ -363,7 +384,12 @@ struct QuickSessionSheet: View {
         .onChange(of: selectedServerId) { _, _ in
             configureVoiceInputForSelectedServer()
             guard isInitialized else { return }
-            Task { await loadAgentsForSelectedServer() }
+            Task {
+                await loadAgentsForSelectedServer()
+                if let api = selectedServerConnection()?.apiClient {
+                    await selectedChatState.refreshModelCache(api: api)
+                }
+            }
         }
         .onChange(of: text) { _, _ in
             persistQuickSessionDraft()
@@ -490,7 +516,7 @@ struct QuickSessionSheet: View {
             thinkingLevel: effectiveThinkingLevel,
             supportedThinkingLevels: ThinkingLevelMenuSource.levels(
                 for: effectiveModelId,
-                in: chatState.cachedModels
+                in: selectedChatState.cachedModels
             ),
             onModelTap: { showModelPicker = true },
             onThinkingSelect: selectThinkingLevel
@@ -782,7 +808,7 @@ struct QuickSessionSheet: View {
         }
 
         if let api = selectedServerConnection()?.apiClient {
-            await chatState.refreshModelCache(api: api)
+            await selectedChatState.refreshModelCache(api: api)
         }
     }
 

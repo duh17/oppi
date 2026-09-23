@@ -290,6 +290,18 @@ export class ServerResourceService {
     });
   }
 
+  async setPiDefaultModel(provider: string, modelId: string): Promise<{ model: string }> {
+    return this.withMutationLock(async () => {
+      const settings = SettingsManager.create(this.catalogCwd, this.agentDir, {
+        projectTrusted: false,
+      });
+      this.throwSettingsErrors(settings.drainErrors(), "load");
+      settings.setDefaultModelAndProvider(provider, modelId);
+      await this.finishSettingsWrite(settings);
+      return { model: `${provider}/${modelId}` };
+    });
+  }
+
   async setExtensionEnabled(id: string, enabled: boolean): Promise<ServerExtensionSummary> {
     return this.withMutationLock(async () => {
       const context = await this.resolveContext();

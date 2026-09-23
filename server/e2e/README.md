@@ -4,7 +4,7 @@ End-to-end tests exercise the HTTP/TLS compatibility path against native or cont
 
 ## Prerequisites
 
-- The HTTP/TLS suites require an OMLX-compatible OpenAI API server on localhost:8400 with at least one loaded model. They prefer `Qwen3.6-*` and fall back to the first model returned by `/v1/models`.
+- The HTTP/TLS suites require mlx-serve at `http://127.0.0.1:11234` with `ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit` loaded. The harness fails in strict mode if that chat model is absent; it does not fall back to an image model.
 - Explicit Docker Compose mode requires Docker (OrbStack recommended).
 - The Tailscale benchmark requires local `tailscale`, `ssh`, `rsync`, and `scp` commands, plus a separately provisioned macOS peer reachable through batch-mode SSH. The peer requires Node.js, npm, Tailscale, and npm registry access. The runner installs locked dependencies in a unique `/tmp` directory, then removes it.
 
@@ -56,7 +56,7 @@ Relevant feature-story dispositions from `.internal/reports/feature-user-story-s
 ## Running
 
 ```bash
-# Preferred local HTTP/TLS mode: spawns the server directly and requires local OMLX
+# Preferred local HTTP/TLS mode: spawns the server directly and requires mlx-serve
 cd server && E2E_NATIVE=1 npm run test:e2e
 
 # Explicit Docker Compose HTTP/TLS mode
@@ -82,10 +82,11 @@ On Mac Studio, do not add writable repository, worktree, report, or output bind 
 | Env var               | Default         | Description                                                                  |
 | --------------------- | --------------- | ---------------------------------------------------------------------------- |
 | `E2E_PORT`            | `17760`         | Server port                                                                  |
-| `E2E_MODEL`           | auto-discovered | Model ID for sessions (resolved from `/v1/models`)                           |
-| `E2E_OMLX_PORT`       | `8400`          | Local OMLX server port                                                       |
-| `E2E_MLX_PORT`        | unset           | Legacy alias for `E2E_OMLX_PORT`                                             |
+| `E2E_MODEL`           | pinned          | `mlx-serve/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit` after `/v1/models` verification |
+| `E2E_MLX_SERVE_URL`   | `http://127.0.0.1:11234` | Host mlx-serve endpoint (omit `/v1`)                       |
+| `E2E_MLX_SERVE_DOCKER_URL` | `http://host.docker.internal:11234` | Container-to-host endpoint (omit `/v1`)         |
 | `E2E_NATIVE`          | `0`             | `1` to skip Docker, run server natively                                      |
+| `E2E_KEEP_NATIVE_DATA_DIR` | unset     | `1` to preserve the isolated native data dir and `server.log` after a test run |
 | `E2E_SERVER_DIR`      | unset           | Override native server package dir for tarball/install validation            |
 | `E2E_TLS_MODE`        | `self-signed`   | Native mode TLS setting. Apple `/pair` and `/auth/*` require HTTPS; do not use `disabled` for iOS pairing |
 | `OPPI_E2E_UI_HARNESS` | `0`             | Enables `/e2e/ui/...` injection routes for Apple extension UI snapshot tests |
@@ -116,10 +117,10 @@ e2e/
 
 The harness supports two modes:
 
-- **Docker mode** (default): builds and starts `oppi-e2e` through Docker Compose, with OMLX reached via `host.docker.internal`
+- **Docker mode** (default): builds and starts `oppi-e2e` through Docker Compose, with mlx-serve reached via `host.docker.internal`
 - **Native mode** (`E2E_NATIVE=1`): builds the server locally, starts it as a child process in a temp directory, and skips Docker cleanup
 - **Packaged native mode** (`E2E_NATIVE=1 E2E_SERVER_DIR=/path/to/node_modules/oppi-server`): runs the installed package tarball through the same native harness without rebuilding source
 
-Both modes generate a temporary `models.json` from the probed local OMLX model, preferring `Qwen3.6*` when available. They share the same test code; only server lifecycle differs.
+Both modes generate a temporary `models.json` for the pinned mlx-serve chat model after verifying it in `/v1/models`. Model-backed test workspaces use a server-visible main checkout: an isolated directory under the native data dir or Docker's `/root/workspace` tmpfs. Docker mode also requires mlx-serve to accept requests from `host.docker.internal`.
 
 Apple E2E scripts remain responsible for Xcode and simulator orchestration. Server-bootstrap details should flow through this harness shape: model discovery, server lifecycle, pairing, fixture workspace creation, invite files, and the guarded extension UI injection route.

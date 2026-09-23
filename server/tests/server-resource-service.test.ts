@@ -293,10 +293,26 @@ describe("ServerResourceService catalogs", () => {
 
     expect(existsSync(missingPackage)).toBe(false);
   });
-
 });
 
 describe("ServerResourceService mutations and skill details", () => {
+  it("persists the Pi default provider and model without replacing other settings", async () => {
+    const fixture = makeFixture();
+    writeFileSync(
+      join(fixture.agentDir, "settings.json"),
+      JSON.stringify({ defaultTools: ["read"] }),
+    );
+    const saved = await makeService(fixture).setPiDefaultModel("xai", "grok-4.6");
+    expect(saved).toEqual({ model: "xai/grok-4.6" });
+    expect(JSON.parse(readFileSync(join(fixture.agentDir, "settings.json"), "utf8"))).toMatchObject(
+      {
+        defaultProvider: "xai",
+        defaultModel: "grok-4.6",
+        defaultTools: ["read"],
+      },
+    );
+  });
+
   it("serializes fresh same-array mutations and returns authoritative summaries", async () => {
     const fixture = makeFixture();
     writeSkill(join(fixture.agentDir, "skills"), "alpha");

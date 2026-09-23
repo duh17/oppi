@@ -357,9 +357,9 @@ async function handleLocalPiSessionFixture(
     stringField(body.firstMessage)?.trim() || `Imported local Pi fixture ${sessionId}`;
   const assistantMessage =
     stringField(body.assistantMessage)?.trim() || "Imported local session fixture.";
-  const model = stringField(body.model)?.trim() || "omlx/e2e-local-model";
+  const model = stringField(body.model)?.trim() || "mlx-serve/e2e-local-model";
   const slashIndex = model.indexOf("/");
-  const provider = slashIndex > 0 ? model.slice(0, slashIndex) : "omlx";
+  const provider = slashIndex > 0 ? model.slice(0, slashIndex) : "mlx-serve";
   const modelId = slashIndex > 0 ? model.slice(slashIndex + 1) : model;
   const timestamp = new Date().toISOString();
   const root = getPiSessionsRoot();

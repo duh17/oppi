@@ -8,12 +8,13 @@
  *   4. Session deletion while the bound session stream is open
  *   5. Follow-up queue execution during an active turn
  *
- * Requires: Docker, OMLX server on localhost:8400 with a loaded model
+ * Requires: Docker or native server, mlx-serve on 127.0.0.1:11234 with the pinned chat model
  */
 
 import { describe, it, expect, beforeAll, inject } from "vitest";
 import {
   api,
+  e2eWorkspaceHostMount,
   openSessionStream,
   closeStream,
   waitForEvent,
@@ -56,7 +57,10 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
   ): Promise<{ workspaceId: string; sessionId: string }> {
     const model = inject("e2eModel");
 
-    const wsRes = await api("POST", "/workspaces", deviceToken, { name });
+    const wsRes = await api("POST", "/workspaces", deviceToken, {
+      name,
+      hostMount: e2eWorkspaceHostMount(),
+    });
     expect(wsRes.status).toBe(201);
     const workspaceId = (wsRes.json!.workspace as Record<string, unknown>).id as string;
 
@@ -78,6 +82,7 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
 
     const wsRes = await api("POST", "/workspaces", deviceToken, {
       name: "e2e-concurrent",
+      hostMount: e2eWorkspaceHostMount(),
     });
     const workspaceId = (wsRes.json!.workspace as Record<string, unknown>).id as string;
 
@@ -248,7 +253,7 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
         { startIndex, timeoutMs: 300_000 },
       );
 
-      // The local OMLX model may or may not produce thinking_delta events at level "low" —
+      // The local mlx-serve model may or may not produce thinking_delta events at level "low" —
       // we only assert the command didn't cause errors (no fatal error events).
       const fatalErrors = stream.events
         .slice(startIndex)

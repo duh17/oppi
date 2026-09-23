@@ -416,6 +416,43 @@ export function createServerResourceRoutes(
     }
   }
 
+  async function replacePiDefaultModel(
+    url: URL,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!hasNoQuery(url)) {
+      error(res, helpers, "This server-global route does not accept query parameters");
+      return;
+    }
+    let body: Record<string, unknown> | undefined;
+    try {
+      body = await parseJsonObject(req, helpers, ["model"]);
+    } catch {
+      error(res, helpers, "Request body must be valid JSON within 16 KiB");
+      return;
+    }
+    if (!body || typeof body.model !== "string") {
+      error(res, helpers, "Request body must be exactly { model: string }");
+      return;
+    }
+    try {
+      await ctx.refreshModelCatalog();
+      const candidate = ctx.getModelCatalog().find((item) => item.id === body.model);
+      if (!candidate) {
+        error(res, helpers, "Model is not available in this server's catalog");
+        return;
+      }
+      const modelId = candidate.id.startsWith(`${candidate.provider}/`)
+        ? candidate.id.slice(candidate.provider.length + 1)
+        : candidate.id;
+      const updated = await ctx.serverResources.setPiDefaultModel(candidate.provider, modelId);
+      helpers.json(res, updated);
+    } catch (cause: unknown) {
+      errorForPiConfig(res, helpers, "mutation", cause);
+    }
+  }
+
   function getMobileOutputGuide(url: URL, res: ServerResponse): void {
     if (!hasNoQuery(url)) {
       error(res, helpers, "This server-global route does not accept query parameters");
@@ -487,6 +524,10 @@ export function createServerResourceRoutes(
       if (method === "GET") await getPiDefaultTools(url, res);
       else if (method === "PUT") await replacePiDefaultTools(req, res);
       else return false;
+      return true;
+    }
+    if (path === "/server/resources/pi/default-model" && method === "PUT") {
+      await replacePiDefaultModel(url, req, res);
       return true;
     }
     if (path === "/server/mobile-output-guide") {

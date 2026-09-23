@@ -10,8 +10,11 @@ import {
   bindE2EAccessTokenFile,
   currentE2EAccessToken,
   dockerStartupCleanupCommand,
+  ensureMLXServerReady,
+  E2E_MODEL,
   E2EPairingError,
   enrollE2EDevice,
+  e2eWorkspaceHostMount,
   isRetryablePairingFailure,
   listWorkspaceSessions,
   nativeE2ETlsPosture,
@@ -50,6 +53,32 @@ describe("E2E harness helpers", () => {
   afterEach(() => {
     resetE2EAuthSessions();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("requires the pinned mlx-serve chat model instead of selecting an image model", async () => {
+    const pinned = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit";
+    const image = "ddalcu/Qwen-Image-2.1-MLX-Serve-8bit";
+    const fetchModels = vi.fn(async (url: string) => {
+      expect(url).toBe("http://127.0.0.1:11234/v1/models");
+      return jsonResponse({ data: [{ id: image }, { id: pinned }] });
+    });
+    vi.stubGlobal("fetch", fetchModels);
+    await expect(ensureMLXServerReady()).resolves.toBe(true);
+    expect(E2E_MODEL).toBe(`mlx-serve/${pinned}`);
+
+    fetchModels.mockResolvedValueOnce(jsonResponse({ data: [{ id: image }] }));
+    await expect(ensureMLXServerReady()).resolves.toBe(false);
+    expect(E2E_MODEL).toBe("");
+  });
+
+  it("provides a server-visible workspace mount in native and Docker E2E modes", () => {
+    vi.stubEnv("E2E_NATIVE", "1");
+    vi.stubEnv("E2E_NATIVE_DATA_DIR", "/tmp/isolated-e2e");
+    expect(e2eWorkspaceHostMount()).toBe("/tmp/isolated-e2e/workspace");
+
+    vi.stubEnv("E2E_NATIVE", "0");
+    expect(e2eWorkspaceHostMount()).toBe("/root/workspace");
   });
 
   it("builds source targets before checking the native server entrypoint", () => {

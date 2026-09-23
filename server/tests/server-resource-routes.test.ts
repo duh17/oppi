@@ -65,6 +65,9 @@ function makeRoutes() {
     })),
     getPiDefaultTools: vi.fn(async () => ({ defaultTools: null })),
     setPiDefaultTools: vi.fn(async (defaultTools: string[] | null) => ({ defaultTools })),
+    setPiDefaultModel: vi.fn(async (provider: string, modelId: string) => ({
+      model: `${provider}/${modelId}`,
+    })),
   };
   const refreshModelCatalog = vi.fn(async () => undefined);
   const storage = {
@@ -79,6 +82,9 @@ function makeRoutes() {
       serverResources,
       storage,
       refreshModelCatalog,
+      getModelCatalog: () => [
+        { id: "xai/grok-4.6", provider: "xai", name: "Grok 4.6", contextWindow: 500000 },
+      ],
     } as unknown as RouteContext),
     serverResources,
     storage,
@@ -483,6 +489,36 @@ describe("server resource routes", () => {
     );
     expect(empty.statusCode).toBe(200);
     expect(JSON.parse(empty.body)).toEqual({ defaultTools: [] });
+  });
+
+  it("sets the global Pi default only for a catalog model", async () => {
+    const { routes, serverResources, refreshModelCatalog } = makeRoutes();
+    const saved = await dispatch(
+      routes,
+      "PUT",
+      "/server/resources/pi/default-model",
+      jsonRequest({ model: "xai/grok-4.6" }),
+    );
+    expect(saved.statusCode).toBe(200);
+    expect(JSON.parse(saved.body)).toEqual({ model: "xai/grok-4.6" });
+    expect(serverResources.setPiDefaultModel).toHaveBeenCalledWith("xai", "grok-4.6");
+    expect(refreshModelCatalog).toHaveBeenCalled();
+
+    for (const body of [
+      { model: "missing/model" },
+      { model: "xai/grok-4.6", extra: true },
+      { model: 123 },
+      { model: "xai/" },
+    ]) {
+      const result = await dispatch(
+        routes,
+        "PUT",
+        "/server/resources/pi/default-model",
+        jsonRequest(body),
+      );
+      expect(result.statusCode).toBe(400);
+    }
+    expect(serverResources.setPiDefaultModel).toHaveBeenCalledTimes(1);
   });
 
   it("rejects invalid Pi defaultTools bodies and unexpected query parameters", async () => {

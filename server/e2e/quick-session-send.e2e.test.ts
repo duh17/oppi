@@ -8,12 +8,13 @@
  *   4. Send a simple prompt
  *   5. Verify assistant response contains E2E_QUICK_SESSION_SEND_OK
  *
- * Requires: Docker (or native), OMLX server on localhost:8400 with a loaded model
+ * Requires: Docker or native server, mlx-serve on 127.0.0.1:11234 with the pinned chat model
  */
 
 import { describe, it, expect, beforeAll, afterAll, inject } from "vitest";
 import {
   api,
+  e2eWorkspaceHostMount,
   openSessionStream,
   closeStream,
   sendPromptAndWait,
@@ -43,6 +44,7 @@ describe("E2E: Quick Session Send", { timeout: 300_000 }, () => {
     // Create workspace
     const wsRes = await api("POST", "/workspaces", deviceToken, {
       name: "e2e-quick-send-workspace",
+      hostMount: e2eWorkspaceHostMount(),
     });
 
     expect(wsRes.status).toBe(201);

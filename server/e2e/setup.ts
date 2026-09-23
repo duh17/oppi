@@ -6,14 +6,20 @@
  */
 
 import type { GlobalSetupContext } from "vitest/node";
-import { startServer, stopServer, ensureMLXServerReady, E2E_MODEL } from "./harness.js";
+import {
+  startServer,
+  stopServer,
+  ensureMLXServerReady,
+  E2E_MODEL,
+  MLX_SERVE_HOST_URL,
+} from "./harness.js";
 
 let mlxReady = false;
 
 export default async function setup({ provide }: GlobalSetupContext): Promise<() => Promise<void>> {
   mlxReady = await ensureMLXServerReady();
   if (!mlxReady) {
-    const message = "[e2e] OMLX server not available on :8400";
+    const message = `[e2e] mlx-serve or pinned Qwen3.8 Flash Next model unavailable at ${MLX_SERVE_HOST_URL}`;
     if (process.env.E2E_STRICT === "1") {
       throw new Error(`${message}; refusing to skip because E2E_STRICT=1`);
     }

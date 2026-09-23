@@ -29,7 +29,7 @@ Environment:
   OPPI_IPAD_SIM_SLOT       Dedicated sim-pool slot to use (default: 8)
   OPPI_IPAD_DEVICE_TYPE    Explicit iPad SimDeviceType identifier
   OPPI_SIM_RUNTIME         Explicit iOS SimRuntime identifier
-  E2E_OMLX_URL             Model endpoint for test-shell (default: http://localhost:8400)
+  E2E_MLX_SERVE_URL        Model endpoint for test-shell (default: http://127.0.0.1:11234)
 
 Artifacts from test-shell:
   /tmp/oppi-screenshots/ipad-main-workspace-home.png

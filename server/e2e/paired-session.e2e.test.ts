@@ -11,12 +11,13 @@
  *   7. Verifies tool_start → tool_output → tool_end lifecycle
  *   8. Reconnects the split session stream and receives fresh state
  *
- * Requires: Docker, OMLX server on localhost:8400 with a loaded model
+ * Requires: Docker or native server, mlx-serve on 127.0.0.1:11234 with the pinned chat model
  */
 
 import { describe, it, expect, beforeAll, inject } from "vitest";
 import {
   api,
+  e2eWorkspaceHostMount,
   openSessionStream,
   closeStream,
   sendPromptAndWait,
@@ -125,6 +126,7 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
 
     const res = await api("POST", "/workspaces", deviceToken, {
       name: "e2e-session-workspace",
+      hostMount: e2eWorkspaceHostMount(),
     });
 
     expect(res.status).toBe(201);
