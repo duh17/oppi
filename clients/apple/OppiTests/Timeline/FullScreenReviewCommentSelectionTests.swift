@@ -2784,6 +2784,32 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(markup.minY >= stash.maxY + FullScreenFloatingControlChrome.stackSpacing - 1)
     }
 
+    @Test func mermaidMarkupStacksBetweenPreviousFileAndStash() throws {
+        let fixture = try makeStashFixture(
+            content: .mermaid(content: "flowchart TD\nA[Start] --> B[End]", filePath: "flow.mmd"),
+            stagedCount: 1
+        )
+        // Previous file uses the same bottom-leading slot as markup when no
+        // accessory is present; the outer SwiftUI overlay is not in this fixture.
+        let previousFileSlot = try #require(fixture.controller.floatingAnnotateButtonFrameForTesting)
+        fixture.controller.setLeadingFloatingAccessoryCount(1)
+        fixture.controller.view.layoutIfNeeded()
+
+        let markup = try #require(fixture.controller.floatingAnnotateButtonFrameForTesting)
+        let stash = try #require(fixture.controller.floatingStashButtonFrameForTesting)
+        let spacing = FullScreenFloatingControlChrome.stackSpacing
+        #expect(markup.midX == previousFileSlot.midX)
+        #expect(previousFileSlot.minY >= markup.maxY + spacing - 1)
+        #expect(markup.minY >= stash.maxY + spacing - 1)
+        #expect(!markup.intersects(previousFileSlot))
+        #expect(!markup.intersects(stash))
+        #expect(!previousFileSlot.intersects(stash))
+
+        fixture.controller.setLeadingFloatingAccessoryCount(0)
+        fixture.controller.view.layoutIfNeeded()
+        #expect(fixture.controller.floatingAnnotateButtonFrameForTesting == previousFileSlot)
+    }
+
     @Test func reviewCommentStashButtonStacksAboveLeadingFileNavigator() throws {
         let fixture = try makeStashFixture(stagedCount: 1)
         fixture.controller.setLeadingFloatingAccessoryCount(1)

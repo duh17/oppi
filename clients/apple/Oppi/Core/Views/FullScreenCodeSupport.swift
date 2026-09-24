@@ -140,11 +140,12 @@ enum FullScreenFloatingControlChrome {
         button.configuration = config
     }
 
+    @discardableResult
     static func pinStandaloneButton(
         _ button: UIButton,
         to view: UIView,
         leading: Bool
-    ) {
+    ) -> NSLayoutConstraint {
         button.translatesAutoresizingMaskIntoConstraints = false
         let horizontal = leading
             ? button.leadingAnchor.constraint(
@@ -155,15 +156,17 @@ enum FullScreenFloatingControlChrome {
                 equalTo: view.safeAreaLayoutGuide.trailingAnchor,
                 constant: -trailingPadding
             )
+        let bottom = button.bottomAnchor.constraint(
+            equalTo: view.safeAreaLayoutGuide.bottomAnchor,
+            constant: -bottomPadding
+        )
         NSLayoutConstraint.activate([
             horizontal,
-            button.bottomAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.bottomAnchor,
-                constant: -bottomPadding
-            ),
+            bottom,
             button.widthAnchor.constraint(equalToConstant: controlSize),
             button.heightAnchor.constraint(equalToConstant: controlSize),
         ])
+        return bottom
     }
 }
 

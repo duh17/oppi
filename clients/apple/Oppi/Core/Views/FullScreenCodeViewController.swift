@@ -104,6 +104,7 @@ final class FullScreenCodeViewController: UIViewController {
     private var commentButton: UIButton?
     private var commentLeadingConstraint: NSLayoutConstraint?
     private var commentTopConstraint: NSLayoutConstraint?
+    private var markupBottomConstraint: NSLayoutConstraint?
     private var pickBottomConstraint: NSLayoutConstraint?
     private var stashButton: UIButton?
     private var stashBadgeLabel: UILabel?
@@ -870,6 +871,7 @@ final class FullScreenCodeViewController: UIViewController {
             commentButton = nil
             commentLeadingConstraint = nil
             commentTopConstraint = nil
+            markupBottomConstraint = nil
             pickBottomConstraint = nil
             return
         }
@@ -889,8 +891,11 @@ final class FullScreenCodeViewController: UIViewController {
             annotateButton = button
             viewController.view.addSubview(button)
             button.addTarget(self, action: #selector(annotateRenderedViewTapped), for: .touchUpInside)
-            FullScreenFloatingControlChrome.pinStandaloneButton(button, to: viewController.view, leading: true)
+            markupBottomConstraint = FullScreenFloatingControlChrome.pinStandaloneButton(
+                button, to: viewController.view, leading: true
+            )
         }
+        markupBottomConstraint?.constant = -markupBottomPadding
         if usesPickControls {
             let pick: UIButton
             if let existing = pickButton {
@@ -1126,6 +1131,12 @@ final class FullScreenCodeViewController: UIViewController {
         ])
     }
 
+    private var markupBottomPadding: CGFloat {
+        FullScreenReviewCommentStashControl.bottomPadding(
+            leadingAccessoryCount: leadingFloatingAccessoryCount
+        )
+    }
+
     private var stashBottomPadding: CGFloat {
         var accessoryCount = leadingFloatingAccessoryCount
         if annotateButton?.superview != nil {
@@ -1141,6 +1152,7 @@ final class FullScreenCodeViewController: UIViewController {
         guard leadingFloatingAccessoryCount != normalized else { return }
         leadingFloatingAccessoryCount = normalized
         guard isViewLoaded, let host = contentHostController else { return }
+        markupBottomConstraint?.constant = -markupBottomPadding
         updateStashBottomConstraint(on: host.view)
     }
 
