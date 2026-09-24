@@ -2000,6 +2000,61 @@ struct VoiceInputManagerTests {
         await manager.cancelRecording()
     }
 
+    @Test(arguments: [VoiceInputManager.TranscriptionEngine.classicDictation, .modernSpeech], [false, true])
+    func onDeviceStopDropsDraftTintWhileProcessing(
+        engine: VoiceInputManager.TranscriptionEngine, settled: Bool
+    ) async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let session = MockVoiceSession()
+        let enteredStop = AsyncGate()
+        let finishStop = AsyncGate()
+        session.stopHandler = {
+            await enteredStop.open()
+            await finishStop.wait()
+            session.finishEvents()
+        }
+        let provider = MockVoiceProvider(
+            id: engine == .modernSpeech ? .appleModernSpeech : .appleClassicDictation,
+            engine: engine
+        )
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        manager.setEngineMode(.onDevice)
+        manager.onDevicePauseSettleDelay = settled ? .milliseconds(20) : .seconds(60)
+
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+        session.yieldEvent(.partialTranscript("hello world"))
+        #expect(await waitForMainActorCondition {
+            manager.currentTranscript == "hello world"
+                && manager.currentTranscriptVolatileSuffixLength == (settled ? 0 : "hello world".count)
+        })
+        if !settled {
+            session.yieldEvent(.partialTranscript("hello world this"))
+            #expect(await waitForMainActorCondition {
+                manager.currentTranscript == "hello world this"
+                    && manager.currentTranscriptVolatileSuffixLength == "hello world this".count
+            })
+        }
+
+        let stop = Task { await manager.stopRecording() }
+        await enteredStop.wait()
+        #expect(manager.state == .processing)
+        #expect(manager.currentTranscript == (settled ? "hello world" : "hello world this"))
+        #expect(manager.currentTranscriptVolatileSuffixLength == 0)
+
+        // A partial delivered during the stop drain must not restart draft tint.
+        session.yieldEvent(.partialTranscript("hello world this again"))
+        #expect(await waitForMainActorCondition { manager.currentTranscript == "hello world this again" })
+        #expect(manager.currentTranscriptVolatileSuffixLength == 0)
+        await finishStop.open()
+        #expect(await stop.value == "hello world this again")
+    }
+
     @Test func staleOnDevicePauseTimerMustNotSettleAfterANewerResult() {
         #expect(VoiceInputManager.shouldApplyOnDevicePauseSettle(
             cancelled: false, generation: 2, currentGeneration: 2, isRecording: true

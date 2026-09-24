@@ -550,8 +550,10 @@ final class VoiceInputManager {
             return replaceTranscriptState.visibleActiveSuffixLength(in: currentTranscript)
         }
 
-        if paintsOnDevicePauseDraft {
-            return onDeviceDraftSuffixLength(in: currentTranscript)
+        if activeEngine == .classicDictation || activeEngine == .modernSpeech {
+            // Leaving recording commits the on-device draft tint, even while
+            // final results are still draining into the visible transcript.
+            return paintsOnDevicePauseDraft ? onDeviceDraftSuffixLength(in: currentTranscript) : 0
         }
 
         if typewriterAnimator.isAnimating {
