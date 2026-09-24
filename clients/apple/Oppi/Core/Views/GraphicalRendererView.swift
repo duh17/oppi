@@ -50,6 +50,40 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
     private var semanticMap: SemanticAnnotationMap?
     private var semanticCommentHandler: ((SemanticTarget) -> Void)?
     private var pickModeEnabled = false
+    var usesExternalPickControls = false {
+        didSet {
+            pickButton.isHidden = usesExternalPickControls || semanticMap?.targets.isEmpty != false
+            commentButton.isHidden = usesExternalPickControls || selectedTargetID == nil
+        }
+    }
+    var onPickStateChange: ((Bool, Bool) -> Void)?
+    var onSelectionGeometryChange: (() -> Void)?
+    func selectedTargetRect(in view: UIView) -> CGRect? {
+        guard let id = selectedTargetID, let semanticMap else { return nil }
+        return Self.visibleSelectedTargetRect(
+            targetID: id, regions: semanticMap.regions,
+            viewport: view.safeAreaLayoutGuide.layoutFrame
+        ) { [contentView] rect in contentView.convert(rect, to: view) }
+    }
+
+    static func visibleSelectedTargetRect(
+        targetID: String, regions: [SemanticRegion], viewport: CGRect,
+        convert: (CGRect) -> CGRect
+    ) -> CGRect? {
+        for region in regions.filter({ $0.targetID == targetID })
+            .sorted(by: { $0.precedence > $1.precedence }) {
+            guard let point = SemanticHitSampling.point(in: region.geometry) else { continue }
+            let bounds: CGRect
+            switch region.geometry {
+            case .rectangle(let rect), .ellipse(let rect): bounds = rect
+            case .path(let path), .strokedPath(let path, _): bounds = path.bounds
+            default: bounds = CGRect(x: point.x - 1, y: point.y - 1, width: 2, height: 2)
+            }
+            let visibleRect = convert(bounds)
+            if visibleRect.intersects(viewport) { return visibleRect }
+        }
+        return nil
+    }
     private var selectedTargetID: String?
     private let pickBanner = UILabel()
     private let pickButton = UIButton(type: .system)
@@ -129,6 +163,7 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         applyFitScaleIfNeeded()
         centerContent()
         refreshPickAccessibility()
+        if selectedTargetID != nil { onSelectionGeometryChange?() }
     }
 
     @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
@@ -186,6 +221,12 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         centerContent()
         refreshPickAccessibility()
+        onSelectionGeometryChange?()
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        refreshPickAccessibility()
+        onSelectionGeometryChange?()
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
@@ -199,7 +240,7 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         semanticMap = map
         semanticCommentHandler = onComment
         let available = map?.targets.isEmpty == false
-        pickButton.isHidden = !available
+        pickButton.isHidden = !available || usesExternalPickControls
         if !available {
             setPickMode(false)
         }
@@ -216,7 +257,7 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         pickBanner.textAlignment = .center
         pickBanner.isHidden = true
         pickBanner.accessibilityIdentifier = "semantic-pick.banner"
-        pickBanner.text = "Pick mode pauses pan and zoom. Leave pick to move the diagram."
+        pickBanner.text = "Tap an object to select it. Pinch or drag to explore."
         addSubview(pickBanner)
 
         configurePickButton(pickButton, title: "Pick object", identifier: "semantic-pick.enter")
@@ -252,7 +293,7 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         NSLayoutConstraint.activate([
             pickBanner.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             pickBanner.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            pickBanner.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            pickBanner.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 8),
             pickButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             pickButton.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -12),
             commentButton.trailingAnchor.constraint(equalTo: pickButton.leadingAnchor, constant: -8),
@@ -297,13 +338,8 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         guard semanticMap?.targets.isEmpty == false || !enabled else { return }
         pickModeEnabled = enabled
         pickTap?.isEnabled = enabled
-        scrollView.isScrollEnabled = !enabled
-        scrollView.pinchGestureRecognizer?.isEnabled = !enabled
-        for recognizer in scrollView.gestureRecognizers ?? [] {
-            if let tap = recognizer as? UITapGestureRecognizer, tap.numberOfTapsRequired == 2 {
-                tap.isEnabled = !enabled
-            }
-        }
+        // The canvas tap recognizer handles picks; the scroll view still owns
+        // multi-touch zoom and pans, including while choosing an object.
         pickBanner.isHidden = !enabled
         var buttonConfig = pickButton.configuration ?? .plain()
         buttonConfig.title = enabled ? "Browse" : "Pick object"
@@ -315,6 +351,7 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         if !enabled {
             clearSelection()
         }
+        onPickStateChange?(enabled, selectedTargetID != nil)
         refreshPickAccessibility()
     }
 
@@ -322,6 +359,12 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         let point = gesture.location(in: contentView)
         selectSemanticObject(at: point)
     }
+
+    func setExternalPickMode(_ enabled: Bool) { setPickMode(enabled) }
+    var hasSemanticTargets: Bool { semanticMap?.targets.isEmpty == false }
+    var isPickingObjects: Bool { pickModeEnabled }
+    var hasSelectedTarget: Bool { selectedTargetID != nil }
+    func commentOnExternalSelection() { commentOnSelection() }
 
     private func selectSemanticObject(at layoutPoint: CGPoint) {
         guard let semanticMap, pickModeEnabled else { return }
@@ -343,6 +386,7 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
             selectedTargetID = nil
             highlightView.regions = []
             commentButton.isHidden = true
+            onPickStateChange?(true, false)
             chooserScrollView.isHidden = false
             chooserHeightConstraint?.constant = min(320, CGFloat(hit.targets.count) * 50)
             chooserScrollView.setContentOffset(.zero, animated: false)
@@ -373,7 +417,9 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
     private func choose(_ target: SemanticTarget) {
         selectedTargetID = target.id
         highlightView.regions = semanticMap?.regions.filter { $0.targetID == target.id } ?? []
-        commentButton.isHidden = false
+        pickBanner.isHidden = true
+        commentButton.isHidden = usesExternalPickControls
+        onPickStateChange?(true, true)
         chooserScrollView.isHidden = true
         chooserHeightConstraint?.constant = 0
     }
@@ -381,7 +427,9 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
     private func clearSelection() {
         selectedTargetID = nil
         highlightView.regions = []
+        pickBanner.isHidden = !pickModeEnabled
         commentButton.isHidden = true
+        onPickStateChange?(pickModeEnabled, false)
         chooserScrollView.isHidden = true
         chooserHeightConstraint?.constant = 0
         chooserStack.arrangedSubviews.forEach {
@@ -476,6 +524,7 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
 
     var debugPickModeEnabledForTesting: Bool { pickModeEnabled }
     var debugPickScrollEnabledForTesting: Bool { scrollView.isScrollEnabled }
+    var debugPickPinchEnabledForTesting: Bool { scrollView.pinchGestureRecognizer?.isEnabled == true }
     var debugSelectedTargetIDForTesting: String? { selectedTargetID }
     var debugChooserCountForTesting: Int { chooserStack.arrangedSubviews.count }
     var debugChooserTitlesForTesting: [String] {
@@ -494,6 +543,15 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
 
     func debugSelectForTesting(at layoutPoint: CGPoint) {
         selectSemanticObject(at: layoutPoint)
+    }
+
+    func debugSelectTargetForTesting(_ id: String) {
+        guard let semanticMap, let point = SemanticHitSampling.point(for: id, in: semanticMap) else { return }
+        selectSemanticObject(at: point)
+    }
+
+    func debugPanForTesting(to offset: CGPoint) {
+        scrollView.setContentOffset(offset, animated: false)
     }
 
     func debugChooseForTesting(targetID: String) {

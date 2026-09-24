@@ -18,19 +18,14 @@ struct HTMLDOMElementAnchor: Codable, Sendable, Equatable {
     static let mainFrameAndOpenShadowScope = "main-frame-and-open-shadow-roots"
 
     func promptLines() -> [String] {
-        var lines = [
-            "**Rendered element:** \(readableLabel)",
-            "**DOM locator:** \(locatorDescription)",
-            "**Loaded source SHA-256:** \(sourceSHA256)",
-            "**Element fingerprint:** \(fingerprint)",
-            "This identifies the rendered element in the loaded HTML document. It is not an original source line. The loaded source hash is not live DOM freshness.",
-        ]
+        var lines = ["**Rendered element:** \(readableLabel)"]
+        // Page-order context, when needed, is included in readableLabel at
+        // selection time. The private DOM locator is never rendered as prose.
         if let limitation, !limitation.isEmpty {
             lines.append("**Lookup limitation:** \(Self.limitationText(limitation))")
         }
-        lines.append(
-            "Lookup scope: main frame and open shadow roots. Closed shadow roots and embedded frames stay on their container."
-        )
+        // The source hash, fingerprint, and locator remain on the persisted
+        // anchor for freshness checks; they are not useful prose for a reviewer.
         let text = sanitizedText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty, text != readableLabel {
             lines.append("**Visible text:** \(text)")

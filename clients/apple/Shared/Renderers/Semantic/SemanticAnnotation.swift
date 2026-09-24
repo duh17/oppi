@@ -510,28 +510,17 @@ struct ReviewCommentSemanticAnchor: Codable, Equatable, Sendable {
     }
 
     var promptLines: [String] {
-        var lines = [
-            "**Object:** \(label) (`\(targetID)`)",
-            "**Display key:** \(displayKey)",
-            "**Kind:** \(kind)",
-            "**Source origin:** \(sourceOrigin.rawValue)",
-            "**Source revision:** \(sourceRevision)",
-            "**Offset encoding:** \(SemanticOffsetEncoding.utf8Byte), end exclusive",
-        ]
+        var lines = ["**Diagram object:** \(SemanticChooserTitle.text(label: label, displayKey: displayKey))"]
         if isStale {
             lines.append("**Status:** stale — the original reference was kept and was not re-anchored")
         }
         if let limitation, !limitation.isEmpty {
             lines.append("**Limitation:** \(limitation)")
         }
-        if spans.isEmpty {
-            lines.append("**Source excerpt:** unavailable")
-        } else {
-            lines.append("**Source excerpt:**")
+        if !spans.isEmpty {
+            lines.append("**Source context:**")
             for span in spans {
-                lines.append(
-                    "- \(span.role.rawValue) \(span.startLine):\(span.startColumn)-\(span.endLine):\(span.endColumn) bytes \(span.startOffset)..<\(span.endOffset): \(span.excerpt)"
-                )
+                lines.append("- Line \(span.startLine)\(span.endLine == span.startLine ? "" : "–\(span.endLine)"): \(span.excerpt)")
             }
         }
         return lines

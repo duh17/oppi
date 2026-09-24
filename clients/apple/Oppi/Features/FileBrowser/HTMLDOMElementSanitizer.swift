@@ -101,6 +101,7 @@ enum HTMLDOMSelectionRejection: Error, Equatable, Sendable {
 
 struct HTMLDOMSanitizedElement: Equatable, Sendable {
     var tag: String
+    var tagOrdinal: Int? = nil
     var elementId: String?
     var classes: [String]
     var role: String?
@@ -120,9 +121,6 @@ struct HTMLDOMSanitizedElement: Equatable, Sendable {
 
     var readableLabel: String {
         var label = tag
-        if let elementId, !elementId.isEmpty {
-            label += "#\(elementId)"
-        }
         if let inputType, !inputType.isEmpty {
             label += " type=\(inputType)"
         }
@@ -134,6 +132,20 @@ struct HTMLDOMSanitizedElement: Equatable, Sendable {
         } else if !visibleText.isEmpty {
             let excerpt = visibleText.count > 80 ? String(visibleText.prefix(80)) : visibleText
             label += " \"\(excerpt)\""
+        }
+        if let tagOrdinal {
+            let suffix: String
+            switch tagOrdinal % 100 {
+            case 11...13: suffix = "th"
+            default:
+                switch tagOrdinal % 10 {
+                case 1: suffix = "st"
+                case 2: suffix = "nd"
+                case 3: suffix = "rd"
+                default: suffix = "th"
+                }
+            }
+            label += " (\(tagOrdinal)\(suffix) \(tag) on page)"
         }
         if let limitation {
             label += " (\(limitation.rawValue))"
@@ -217,6 +229,9 @@ enum HTMLDOMSelectionFreshness {
         guard let live, live.isConnected else { return .failure(.disconnected) }
         guard live.fingerprint == snapshot.fingerprint else { return .failure(.fingerprintMismatch) }
         var anchor = snapshot.anchor()
+        // Page order is presentation context, not node identity. If another
+        // control was inserted elsewhere, describe this same node as it is now.
+        anchor.readableLabel = live.readableLabel
         anchor.filePath = filePath
         return .success(anchor)
     }
@@ -282,6 +297,7 @@ enum HTMLDOMSanitizer {
         let href = firstString(attributes, keys: ["href", "src"])
         return .success(HTMLDOMSanitizedElement(
             tag: tag,
+            tagOrdinal: int(raw["tagOrdinal"]).flatMap { (1...10_000).contains($0) ? $0 : nil },
             elementId: sensitiveControl ? nil : sanitizedIdentifier(string(attributes["id"])),
             classes: sensitiveControl ? [] : sanitizedClasses(string(attributes["class"])),
             role: sensitiveControl ? nil : sanitizedToken(string(attributes["role"]), maxLength: 40),

@@ -5,6 +5,13 @@ import UIKit
 // MARK: - Fullscreen Chrome Previews
 
 struct FullscreenMermaidChromePreview: View {
+    private let themeID: ThemeID
+
+    init() {
+        themeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light" ? .light : .dark
+        ThemeRuntimeState.setThemeID(themeID)
+    }
+
     var body: some View {
         FullScreenCodeView(
             content: .mermaid(
@@ -14,8 +21,13 @@ struct FullscreenMermaidChromePreview: View {
                     Annotate --> Share[Share]
                 """,
                 filePath: "flow.mmd"
-            )
+            ),
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter { _ in },
+            reviewCommentSessionId: "preview",
+            reviewCommentSourceLabel: "Preview diagram"
         )
+        .environment(\.themeID, themeID)
+        .preferredColorScheme(themeID == .light ? .light : .dark)
         .ignoresSafeArea()
         .accessibilityIdentifier("screenshot.ready")
     }
@@ -23,13 +35,25 @@ struct FullscreenMermaidChromePreview: View {
 
 
 struct FullscreenHTMLChromePreview: View {
+    private let themeID: ThemeID
+
+    init() {
+        themeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light" ? .light : .dark
+        ThemeRuntimeState.setThemeID(themeID)
+    }
+
     var body: some View {
         FullScreenCodeView(
             content: .html(
                 content: "<h1>Note</h1><p>Annotate this page.</p>",
                 filePath: "note.html"
-            )
+            ),
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter { _ in },
+            reviewCommentSessionId: "preview",
+            reviewCommentSourceLabel: "Preview HTML"
         )
+        .environment(\.themeID, themeID)
+        .preferredColorScheme(themeID == .light ? .light : .dark)
         .ignoresSafeArea()
         .accessibilityIdentifier("screenshot.ready")
     }

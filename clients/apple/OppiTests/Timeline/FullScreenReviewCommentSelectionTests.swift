@@ -2523,7 +2523,7 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(abs(stashFrame.midY - viewingOptionsFrame.midY) <= 1)
     }
 
-    @Test func reviewCommentStashButtonStacksAboveAnnotateAndLeavesAnnotateInPlace() throws {
+    @Test func htmlAnnotateMovesTrailingWhileStashRemainsLeading() throws {
         let fixture = try makeStashFixture(
             content: .html(content: "<p>hello</p>", filePath: "note.html"),
             stagedCount: 1
@@ -2531,15 +2531,207 @@ struct FullScreenReviewCommentSelectionTests {
         let stashFrame = try #require(fixture.controller.floatingStashButtonFrameForTesting)
         let annotateFrame = try #require(fixture.controller.floatingAnnotateButtonFrameForTesting)
 
-        #expect(stashFrame.maxY < annotateFrame.minY)
-        #expect(abs(stashFrame.minX - annotateFrame.minX) <= 0.5)
-        #expect(
-            abs(
-                fixture.controller.view.bounds.maxY
-                    - annotateFrame.maxY
-                    - FullScreenFloatingControlChrome.bottomPadding
-            ) <= 0.5
+        let viewingOptionsFrame = try #require(fixture.controller.floatingViewingOptionsButtonFrameForTesting)
+        let annotate = try #require(fixture.controller.floatingAnnotateButtonForTesting)
+        let comment = try #require(fixture.controller.floatingPickCommentButtonForTesting)
+        #expect(stashFrame.maxX < fixture.controller.view.bounds.midX)
+        #expect(annotateFrame.midX > fixture.controller.view.bounds.midX)
+        #expect(annotateFrame.maxY < viewingOptionsFrame.minY)
+        #expect(annotate.showsMenuAsPrimaryAction)
+        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Visual Markup"])
+        #expect(comment.isHidden)
+        #expect(comment.accessibilityLabel == "Comment")
+    }
+
+    @Test func htmlAnnotateMenuSwitchesBetweenPickAndBrowse() async throws {
+        let fixture = try makeStashFixture(
+            content: .html(content: "<button id='save'>Save</button>", filePath: "note.html"),
+            stagedCount: 0
         )
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.rootViewController = fixture.controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let html = try #require(fixture.controller.installedBodyViewForTesting as? HTMLRenderView)
+        let annotate = try #require(fixture.controller.floatingAnnotateButtonForTesting)
+        let comment = try #require(fixture.controller.floatingPickCommentButtonForTesting)
+        #expect(html.elementPicker.usesExternalPickControls)
+        let ready = await waitForMainActorCondition(timeout: .seconds(5)) { html.isRenderReady }
+        #expect(ready)
+        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Pick Element", "Visual Markup"])
+        #expect(comment.isHidden)
+
+        html.elementPicker.enterPick()
+        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Browse", "Visual Markup"])
+        #expect(comment.isHidden)
+        html.elementPicker.exitPick()
+        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Pick Element", "Visual Markup"])
+    }
+
+    @Test func htmlPickedElementKeepsCommentAvailableAfterSelectingFullWidthParent() async throws {
+        let fixture = try makeStashFixture(
+            content: .html(content: "<style>body{margin:0}</style><main style='height:100vh;width:100vw'><button style='position:fixed;left:150px;top:300px;width:100px;height:50px'>Save</button></main>", filePath: "note.html"),
+            stagedCount: 0
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = fixture.controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let html = try #require(fixture.controller.installedBodyViewForTesting as? HTMLRenderView)
+        let comment = try #require(fixture.controller.floatingPickCommentButtonForTesting)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { html.isRenderReady })
+        let web = html.webViewForTesting
+        let rawRect = try #require(await web.evaluateJavaScript("JSON.stringify((() => { const r = document.querySelector('button').getBoundingClientRect(); return [r.x,r.y,r.width,r.height] })())") as? String)
+        let coords = try #require(JSONSerialization.jsonObject(with: Data(rawRect.utf8)) as? [Double])
+        #expect(coords.count == 4)
+        let visual = try await html.elementPicker.lookupClientForTesting.viewport()
+        let mapped = HTMLDOMViewportMapping.viewRect(
+            fromCSSViewportRect: CGRect(x: coords[0], y: coords[1], width: coords[2], height: coords[3]),
+            metrics: HTMLDOMViewportMetrics(
+                pageZoom: web.pageZoom, scrollZoomScale: web.scrollView.zoomScale,
+                visualViewportScale: visual.scale, visualViewportOffset: visual.offset,
+                viewportOriginInView: CGPoint(x: web.scrollView.adjustedContentInset.left,
+                                              y: web.scrollView.adjustedContentInset.top),
+                contentOffset: web.scrollView.contentOffset
+            )
+        )
+        html.elementPicker.enterPick()
+        html.elementPicker.pick(at: CGPoint(x: mapped.midX, y: mapped.midY))
+        let selected = await waitForMainActorCondition(timeout: .seconds(5)) {
+            fixture.controller.view.layoutIfNeeded()
+            return html.elementPicker.hasSelection && !comment.isHidden
+        }
+        #expect(selected, "pick=\(html.elementPicker.isPicking) rejection=\(String(describing: html.elementPicker.lastRejection)) mapped=\(mapped) selected=\(String(describing: html.elementPicker.snapshotForTesting?.element.readableLabel))")
+        let host = try #require(comment.superview)
+        let target = try #require(html.elementPicker.selectedTargetRect(in: host))
+        #expect(comment.frame.minX > target.maxX || comment.frame.maxX < target.minX ||
+                comment.frame.minY > target.maxY || comment.frame.maxY < target.minY)
+        #expect(comment.accessibilityLabel == "Comment")
+        #expect(html.elementPicker.parentButtonForTesting.superview?.isHidden == true)
+        let annotate = try #require(fixture.controller.floatingAnnotateButtonForTesting)
+        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Browse", "Select Parent", "Visual Markup"])
+        html.elementPicker.selectParent()
+        let parentSelected = await waitForMainActorCondition(timeout: .seconds(5)) {
+            fixture.controller.view.layoutIfNeeded()
+            return html.elementPicker.snapshotForTesting?.element.tag == "main" && !comment.isHidden
+        }
+        #expect(parentSelected, "rejection=\(String(describing: html.elementPicker.lastRejection))")
+        html.elementPicker.exitPick()
+        #expect(comment.isHidden)
+    }
+
+    @Test func contextualCommentPlacementFollowsTargetWithoutCoveringSafeArea() throws {
+        let area = CGRect(x: 0, y: 60, width: 390, height: 730)
+        let right = try #require(FullScreenPickCommentPlacement.origin(
+            for: CGRect(x: 90, y: 220, width: 80, height: 40), in: area
+        ))
+        #expect(right.x == 178)
+        #expect(right.y == 212)
+        let left = try #require(FullScreenPickCommentPlacement.origin(
+            for: CGRect(x: 340, y: 220, width: 35, height: 40), in: area
+        ))
+        #expect(left.x == 276)
+        let below = try #require(FullScreenPickCommentPlacement.origin(
+            for: CGRect(x: 12, y: 120, width: 366, height: 40), in: area
+        ))
+        #expect(below.y == 168)
+        let awayFromMenu = try #require(FullScreenPickCommentPlacement.origin(
+            for: CGRect(x: 340, y: 730, width: 35, height: 40), in: area,
+            avoiding: CGRect(x: 270, y: 730, width: 100, height: 60)
+        ))
+        #expect(!CGRect(origin: awayFromMenu, size: CGSize(width: 56, height: 56))
+            .intersects(CGRect(x: 270, y: 730, width: 100, height: 60)))
+        let fullWidthParent = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let menu = CGRect(x: 290, y: 720, width: 80, height: 70)
+        let withinParent = try #require(FullScreenPickCommentPlacement.origin(
+            for: fullWidthParent, in: area, avoiding: menu
+        ))
+        let bubble = CGRect(origin: withinParent, size: CGSize(width: 56, height: 56))
+        #expect(fullWidthParent.contains(bubble))
+        #expect(!bubble.intersects(menu))
+        #expect(FullScreenPickCommentPlacement.origin(
+            for: CGRect(x: 50, y: 820, width: 40, height: 30), in: area
+        ) == nil)
+    }
+
+    @Test func mermaidCommentRepositionsOnZoomAndPanAndHidesOffscreen() throws {
+        let fixture = try makeStashFixture(
+            content: .mermaid(content: "flowchart TD\nA[Start] --> B[End]", filePath: "flow.mmd"),
+            stagedCount: 0
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = fixture.controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        fixture.controller.view.layoutIfNeeded()
+        let body = try #require(fixture.controller.installedBodyViewForTesting as? NativeFullScreenRenderedDocumentBody)
+        let picker = try #require(body.mermaidPicker)
+        let comment = try #require(fixture.controller.floatingPickCommentButtonForTesting)
+        picker.setExternalPickMode(true)
+        picker.debugSelectTargetForTesting("node:A")
+        fixture.controller.view.layoutIfNeeded()
+        #expect(picker.hasSelectedTarget)
+        #expect(!comment.isHidden)
+        let initial = comment.frame
+        let host = try #require(comment.superview)
+        let target = try #require(picker.selectedTargetRect(in: host))
+        #expect(initial.minX > target.maxX || initial.maxX < target.minX ||
+                initial.minY > target.maxY || initial.maxY < target.minY)
+        picker.debugToggleZoomForTesting(at: CGPoint(x: 5, y: 5))
+        fixture.controller.view.layoutIfNeeded()
+        #expect(picker.debugPickScrollEnabledForTesting)
+        #expect(picker.debugPickPinchEnabledForTesting)
+        #expect(comment.frame != initial || comment.isHidden)
+        picker.debugPanForTesting(to: CGPoint(x: 0, y: 10_000))
+        fixture.controller.view.layoutIfNeeded()
+        #expect(comment.isHidden)
+        picker.debugToggleZoomForTesting(at: CGPoint(x: 5, y: 5))
+        fixture.controller.view.layoutIfNeeded()
+        #expect(!comment.isHidden, "Returning the selected object onscreen must restore Comment")
+    }
+
+    @Test func mermaidMultiRegionCommentFollowsVisibleLegendWhenSliceIsOffscreen() throws {
+        let viewport = CGRect(x: 0, y: 60, width: 390, height: 730)
+        let legend = CGRect(x: 48, y: 360, width: 120, height: 36)
+        let regions = [
+            SemanticRegion(
+                targetID: "slice:1",
+                geometry: .sector(center: CGPoint(x: 950, y: 390), radius: 100,
+                                  startAngle: 0, endAngle: .pi),
+                precedence: 10
+            ),
+            SemanticRegion(targetID: "slice:1", geometry: .rectangle(legend), precedence: 1),
+        ]
+        let selected = ZoomableGraphicalView.visibleSelectedTargetRect(
+            targetID: "slice:1", regions: regions, viewport: viewport, convert: { $0 }
+        )
+        #expect(selected == legend)
+        #expect(ZoomableGraphicalView.visibleSelectedTargetRect(
+            targetID: "slice:1", regions: regions, viewport: CGRect(x: 400, y: 0, width: 50, height: 50),
+            convert: { $0 }
+        ) == nil)
+    }
+
+    @Test func mermaidAnnotateMenuKeepsDiagramNavigationInPickMode() throws {
+        let fixture = try makeStashFixture(
+            content: .mermaid(content: "flowchart TD\nA[Start] --> B[End]", filePath: "flow.mmd"),
+            stagedCount: 0
+        )
+        let body = try #require(fixture.controller.installedBodyViewForTesting as? NativeFullScreenRenderedDocumentBody)
+        let picker = try #require(body.mermaidPicker)
+        let annotate = try #require(fixture.controller.floatingAnnotateButtonForTesting)
+        let comment = try #require(fixture.controller.floatingPickCommentButtonForTesting)
+        #expect(picker.usesExternalPickControls)
+        #expect(picker.hasSemanticTargets)
+        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Pick Object", "Visual Markup"])
+        #expect(comment.isHidden)
+
+        picker.setExternalPickMode(true)
+        #expect(picker.debugPickScrollEnabledForTesting)
+        #expect(picker.debugPickPinchEnabledForTesting)
+        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Browse", "Visual Markup"])
+        picker.setExternalPickMode(false)
+        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Pick Object", "Visual Markup"])
     }
 
     @Test func reviewCommentStashButtonStacksAboveLeadingFileNavigator() throws {

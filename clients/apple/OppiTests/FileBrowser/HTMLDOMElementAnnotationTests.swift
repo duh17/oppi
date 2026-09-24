@@ -182,7 +182,7 @@ struct HTMLDOMElementAnnotationTests {
             navigationGeneration: 2,
             sessionId: "session-a",
             filePath: "page.html",
-            readableLabel: "button#save \"Save\"",
+            readableLabel: "button \"Save\"",
             sanitizedText: "Save",
             locatorDescription: "html:0 > body:0 > button:0",
             fingerprint: "finger",
@@ -190,7 +190,7 @@ struct HTMLDOMElementAnnotationTests {
             lookupScope: HTMLDOMElementAnchor.mainFrameAndOpenShadowScope
         )
         let request = ReviewCommentSelectionRequest(
-            selectedText: "button#save \"Save\"",
+            selectedText: "button \"Save\"",
             source: ReviewCommentSourceContext(
                 sessionId: "session-a",
                 surface: .fullScreenSource,
@@ -210,15 +210,15 @@ struct HTMLDOMElementAnnotationTests {
         #expect(!saved.reference.selectedText!.contains("outerHTML"))
 
         let block = store.appendReviewBlock(to: "")
-        #expect(block.contains("**Rendered element:** button#save \"Save\""))
-        #expect(block.contains("**DOM locator:** html:0 > body:0 > button:0"))
-        #expect(block.contains("**Loaded source SHA-256:** abc123"))
-        #expect(block.contains("not an original source line"))
-        #expect(block.contains("not live DOM freshness"))
+        #expect(block.contains("**Rendered element:** button \"Save\""))
+        #expect(!block.contains("**Location in page:**"))
+        #expect(!block.contains("html:0"))
+        #expect(!block.contains("abc123"))
+        #expect(!block.contains("finger"))
         #expect(block.contains("**Lookup limitation:** Embedded frame"))
         #expect(!block.contains("page.html:4"))
         #expect(!block.contains("```html"), "DOM summary was fenced as HTML source:\n\(block)")
-        #expect(block.contains("```\nbutton#save"))
+        #expect(block.contains("```\nbutton \"Save\""))
         #expect(block.contains("> Rename this control."))
 
         let key = ReviewCommentStore.makeStorageKey(prefix: "html-dom-tests", workspaceId: "workspace", sessionId: "session-a")
@@ -233,7 +233,7 @@ struct HTMLDOMElementAnnotationTests {
         reloaded.load(workspaceId: "workspace", sessionId: "session-a")
         #expect(reloaded.stagedComments.first?.body == "Rename this control.")
         #expect(reloaded.stagedComments.first?.reference.htmlDOMAnchor == nil)
-        #expect(reloaded.stagedComments.first?.reference.selectedText == "button#save \"Save\"")
+        #expect(reloaded.stagedComments.first?.reference.selectedText == "button \"Save\"")
 
         reference["htmlDOMAnchor"] = "not-an-object"
         comments[0]["reference"] = reference
@@ -242,6 +242,94 @@ struct HTMLDOMElementAnnotationTests {
         malformed.load(workspaceId: "workspace", sessionId: "session-a")
         #expect(malformed.stagedComments.first?.body == "Rename this control.")
         #expect(malformed.stagedComments.first?.reference.htmlDOMAnchor == nil)
+    }
+
+    @Test func identicalButtonsInSeparateGroupsHaveReadableDistinctOutgoingContext() async throws {
+        let harness = try makeStashHarness()
+        let fixture = try await makeFixture(html: """
+            <style>body{margin:0}.group,button{display:block;width:120px;height:50px;padding:0}.group button[hidden]{display:none}</style>
+            <div id="first" class="group"><button hidden>Hidden</button><button>Save</button></div>
+            <div id="second" class="group"><button>Save</button></div>
+            """, router: harness.router)
+        defer { fixture.window.isHidden = true }
+        // An assigned light-DOM button has a rect, but its shadow slot is
+        // suppressed; it must not shift the two readable button positions.
+        _ = try await pageString("""
+            const host = document.createElement('div');
+            host.id = 'slot-host';
+            document.body.prepend(host);
+            host.attachShadow({mode:'open'}).innerHTML = '<slot name="hidden" aria-hidden="true"></slot>';
+            const slotted = document.createElement('button');
+            slotted.slot = 'hidden';
+            slotted.textContent = 'Ignored';
+            host.append(slotted);
+            'ok'
+            """, in: fixture.view)
+        let picker = fixture.view.htmlDOMPickControllerForTesting
+        picker.enterPick()
+        let firstRect = try await cssRect(id: "first", in: fixture.view)
+        let firstPoint = try await viewPoint(for: firstRect, in: fixture.view)
+        let firstSelection = await pickAndWait(picker, at: firstPoint)
+        let first = try #require(firstSelection)
+        let firstAnchor = try #require(picker.snapshotForTesting?.anchor())
+        let secondRect = try await cssRect(id: "second", in: fixture.view)
+        let secondPoint = try await viewPoint(for: secondRect, in: fixture.view)
+        let secondSelection = await pickAndWait(picker, at: secondPoint)
+        let second = try #require(secondSelection)
+        let secondAnchor = try #require(picker.snapshotForTesting?.anchor())
+        #expect(first.tagOrdinal == 1, "first=\(first.readableLabel) text=\(first.visibleText)")
+        #expect(second.tagOrdinal == 2)
+        let firstProse = firstAnchor.promptLines().joined(separator: "\n")
+        let secondProse = secondAnchor.promptLines().joined(separator: "\n")
+        #expect(firstProse.contains("button \"Save\" (1st button on page)"))
+        #expect(secondProse.contains("button \"Save\" (2nd button on page)"))
+        #expect(firstProse != secondProse)
+        #expect(!firstProse.contains(firstAnchor.locatorDescription))
+        #expect(!secondProse.contains(secondAnchor.locatorDescription))
+        #expect(!secondProse.contains(secondAnchor.sourceSHA256))
+        #expect(!secondProse.contains(secondAnchor.fingerprint))
+        #expect(!secondProse.contains("**In its parent:** child"))
+
+        // A different group may gain a control after selection. Its readable
+        // page order changes, but the selected node and private locator do not.
+        _ = try await pageString(
+            "const extra=document.createElement('button'); extra.textContent='Other'; document.getElementById('first').prepend(extra); 'ok'",
+            in: fixture.view
+        )
+        let raw = try await picker.lookupClientForTesting.lookup(
+            mode: "revalidate", cssPoint: .zero, locator: second.locator
+        )
+        let live = try HTMLDOMSanitizer.sanitize(raw).get()
+        #expect(live.tagOrdinal == 3)
+        #expect(live.fingerprint == second.fingerprint)
+        let selectedSnapshot = try #require(picker.snapshotForTesting)
+        let currentAnchor = try HTMLDOMSelectionFreshness.revalidated(
+            snapshot: selectedSnapshot, live: live,
+            currentGeneration: picker.navigationGeneration,
+            currentSessionId: selectedSnapshot.sessionId,
+            currentSourceSHA256: picker.loadedSourceSHA256,
+            filePath: "page.html"
+        ).get()
+        #expect(currentAnchor.readableLabel.contains("3rd button on page"))
+        picker.comment()
+        let composer = await waitForView("review-comment.inline-composer", in: fixture.host.view)
+        #expect(composer != nil)
+        #expect(picker.lastRejection == nil)
+    }
+
+    @Test func unavailableStandalonePickerStaysHiddenOnBrowseAndContextRemoval() async throws {
+        let fixture = try await makeFixture(html: Self.nestedFixture)
+        defer { fixture.window.isHidden = true }
+        let picker = fixture.view.htmlDOMPickControllerForTesting
+        #expect(picker.canPick)
+        #expect(picker.enterButtonForTesting.superview?.superview?.isHidden == false)
+        picker.enterPick()
+        picker.configure(router: nil, sourceContext: nil)
+        #expect(!picker.canPick)
+        #expect(!picker.isPicking)
+        #expect(picker.enterButtonForTesting.superview?.superview?.isHidden == true)
+        picker.exitPick()
+        #expect(picker.enterButtonForTesting.superview?.superview?.isHidden == true)
     }
 
     @Test func pickShieldOwnsTouchesAndDoesNotActivatePageControls() async throws {
@@ -266,6 +354,9 @@ struct HTMLDOMElementAnnotationTests {
         controller.pick(at: point)
         let selected = try #require(await waitForElement(id: "trap", controller: controller))
         #expect(selected.tag == "button", "selected \(selected.tag)#\(selected.elementId ?? "") bounds \(selected.cssBounds) point \(point)")
+        #expect(selected.elementId == "trap")
+        #expect(!selected.readableLabel.contains("#trap"), "The private DOM ID must not become comment prose")
+        #expect(!selected.summaryText.contains("#trap"))
         let events = try await pageString("JSON.stringify(window.__events || [])", in: fixture.view)
         let active = try await pageString("document.activeElement && document.activeElement.id", in: fixture.view)
         #expect(events == "[]")
@@ -783,8 +874,11 @@ struct HTMLDOMElementAnnotationTests {
         let prompt = harness.store.appendReviewBlock(to: "Please review.")
         #expect(prompt.contains("Please review."))
         #expect(prompt.contains("**Rendered element:**"))
-        #expect(prompt.contains("**Loaded source SHA-256:** \(hash)"))
-        #expect(prompt.contains("not an original source line"))
+        #expect(!prompt.contains(hash))
+        #expect(!prompt.contains("**DOM locator:**"))
+        #expect(!prompt.contains("**Location in page:**"))
+        #expect(!prompt.contains("**Element fingerprint:**"))
+        #expect(!prompt.contains("not an original source line"))
         #expect(prompt.contains("> Please rename this leaf."))
         #expect(harness.dispatches.isEmpty)
         #expect(harness.saves.count == 1)

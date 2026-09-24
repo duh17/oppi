@@ -299,6 +299,38 @@ final class HTMLDOMWebKitLookupClient {
       };
     }
 
+    // Readable order among rendered, composed elements distinguishes repeated
+    // controls in separate groups without exposing their private DOM locators.
+    function tagOrdinal(el) {
+      const tag = tagNameOf(el);
+      const stack = [document.documentElement];
+      let visits = 0, count = 0, position = 0;
+      while (stack.length) {
+        const node = stack.pop();
+        if (++visits > 10000) return null;
+        // Follow composed descendants, not a hidden slot's assigned controls.
+        if (node.nodeType === 1 && isHidden(node)) continue;
+        if (node.nodeType === 1 && tagNameOf(node) === tag && !visuallySuppressed(node)) {
+          const rects = node.getClientRects();
+          for (let i = 0; i < rects.length; i++) {
+            if (rects[i].width <= 0 || rects[i].height <= 0) continue;
+            count++;
+            if (node === el) position = count;
+            break;
+          }
+        }
+        let children = node.children || [];
+        if (node.shadowRoot) {
+          children = node.shadowRoot.children || [];
+        } else if (node.nodeType === 1 && tagNameOf(node) === "slot") {
+          const assigned = node.assignedElements ? node.assignedElements({ flatten: true }) : [];
+          if (assigned.length) children = assigned;
+        }
+        for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
+      }
+      return count > 1 && position > 0 ? position : null;
+    }
+
     function siblingIndex(el) {
       const parent = el.parentElement;
       if (parent) return Array.prototype.indexOf.call(parent.children, el);
@@ -391,6 +423,7 @@ final class HTMLDOMWebKitLookupClient {
         nodeToken: tokenFor(el),
         textDigest: text.digest,
         tagName: tagNameOf(el),
+        tagOrdinal: tagOrdinal(el),
         attributes: {
           id: descriptiveAttribute(el, "id"),
           class: descriptiveAttribute(el, "class"),
@@ -538,6 +571,10 @@ final class HTMLDOMPickChromeView: UIView {
     let statusLabel = UILabel()
     let selectionLabel = UILabel()
     private let stack = UIStackView()
+    private var isAvailable = false
+    var usesExternalControls = false {
+        didSet { if !isAvailable || usesExternalControls { isHidden = true } }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -608,11 +645,13 @@ final class HTMLDOMPickChromeView: UIView {
     required init?(coder: NSCoder) { nil }
 
     func setAvailable(_ available: Bool) {
-        isHidden = !available
+        isAvailable = available
+        isHidden = !available || usesExternalControls
     }
 
     func showBrowse() {
-        enterButton.isHidden = false
+        isHidden = !isAvailable || usesExternalControls
+        enterButton.isHidden = usesExternalControls
         exitButton.isHidden = true
         bannerLabel.isHidden = true
         selectionLabel.isHidden = true
@@ -621,8 +660,9 @@ final class HTMLDOMPickChromeView: UIView {
     }
 
     func showPick() {
+        isHidden = !isAvailable
         enterButton.isHidden = true
-        exitButton.isHidden = false
+        exitButton.isHidden = usesExternalControls
         bannerLabel.isHidden = false
         selectionLabel.isHidden = true
         actionRow?.isHidden = true
@@ -630,11 +670,18 @@ final class HTMLDOMPickChromeView: UIView {
 
     func showSelection(label: String, parentEnabled: Bool) {
         selectionLabel.text = label
-        selectionLabel.isHidden = false
-        actionRow?.isHidden = false
+        // The full-screen menu owns Select Parent and the target owns Comment;
+        // do not place a second card on top of the selected HTML.
+        isHidden = usesExternalControls
+        bannerLabel.isHidden = usesExternalControls
+        selectionLabel.isHidden = usesExternalControls
+        actionRow?.isHidden = usesExternalControls
+        commentButton.isHidden = usesExternalControls
         parentButton.isEnabled = parentEnabled
         commentButton.isEnabled = true
     }
+
+    func updateSelectionLabel(_ label: String) { selectionLabel.text = label }
 
     func clearSelection() {
         selectionLabel.text = nil
@@ -648,6 +695,9 @@ final class HTMLDOMPickChromeView: UIView {
         let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         statusLabel.text = trimmed.isEmpty ? nil : trimmed
         statusLabel.isHidden = trimmed.isEmpty
+        if usesExternalControls, selectionLabel.text != nil {
+            isHidden = trimmed.isEmpty
+        }
     }
 
     func setReady(_ ready: Bool) {
@@ -693,6 +743,19 @@ final class HTMLDOMPickController {
     private(set) var navigationGeneration: UInt64 = 0
     private(set) var loadedSourceSHA256 = ""
     private(set) var isPicking = false
+    var onPickStateChange: ((Bool, Bool) -> Void)?
+    var onSelectionGeometryChange: (() -> Void)?
+    func selectedTargetRect(in view: UIView) -> CGRect? {
+        guard snapshot != nil, !highlight.isHidden, let host else { return nil }
+        return highlight.convert(highlight.bounds, to: view)
+    }
+    var usesExternalPickControls: Bool {
+        get { chrome.usesExternalControls }
+        set { chrome.usesExternalControls = newValue }
+    }
+    var hasSelection: Bool { snapshot != nil }
+    var canSelectParent: Bool { snapshot?.element.hasParent == true }
+    var canPick: Bool { router != nil && sourceContext != nil && host?.isRenderReady == true }
     private(set) var staleLookupCount = 0
     private(set) var completedLookupSerial = 0
     private(set) var lastRejection: HTMLDOMSelectionRejection?
@@ -726,7 +789,8 @@ final class HTMLDOMPickController {
         chrome.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(chrome)
         NSLayoutConstraint.activate([
-            chrome.leadingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            chrome.leadingAnchor.constraint(greaterThanOrEqualTo: host.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            chrome.widthAnchor.constraint(lessThanOrEqualToConstant: 300),
             chrome.trailingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.trailingAnchor, constant: -12),
             chrome.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor, constant: 8),
         ])
@@ -774,6 +838,7 @@ final class HTMLDOMPickController {
         webView?.isUserInteractionEnabled = false
         shield.setPicking(true)
         chrome.showPick()
+        onPickStateChange?(true, false)
         host?.bringSubviewToFront(shield)
         host?.bringSubviewToFront(highlight)
         host?.bringSubviewToFront(chrome)
@@ -787,6 +852,7 @@ final class HTMLDOMPickController {
         shield.setPicking(false)
         clearSelection(status: nil)
         chrome.showBrowse()
+        onPickStateChange?(false, false)
     }
 
     private func resignPageEditing() {
@@ -1033,7 +1099,10 @@ final class HTMLDOMPickController {
                     fromCSSViewportRect: live.cssBounds,
                     metrics: responseMetrics
                 )
-                self.highlight.show(rect, label: original.element.readableLabel)
+                self.snapshot?.element = live
+                self.highlight.show(rect, label: live.readableLabel)
+                self.chrome.updateSelectionLabel(live.readableLabel)
+                self.onSelectionGeometryChange?()
                 self.lastRejection = nil
                 self.completedLookupSerial += 1
                 self.host?.bringSubviewToFront(self.highlight)
@@ -1075,6 +1144,7 @@ final class HTMLDOMPickController {
         let rect = HTMLDOMViewportMapping.viewRect(fromCSSViewportRect: element.cssBounds, metrics: responseMetrics)
         highlight.show(rect, label: element.readableLabel)
         chrome.showSelection(label: element.readableLabel, parentEnabled: element.hasParent)
+        onPickStateChange?(true, true)
         chrome.setStatus(limitationStatus(element.limitation))
         lastRejection = nil
         completedLookupSerial += 1
@@ -1249,6 +1319,8 @@ final class HTMLDOMPickController {
     private func clearSelection(status: String?) {
         snapshot = nil
         highlight.hide()
+        onSelectionGeometryChange?()
+        onPickStateChange?(isPicking, false)
         if isPicking {
             chrome.showPick()
         }

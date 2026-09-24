@@ -29,23 +29,25 @@ final class SemanticPickJourneyUITests: XCTestCase {
         try commentOn(
             diagram: "semantic-pick.diagram.flowchart",
             target: "semantic-pick.target.node.A",
-            expected: ["Start", "node:A", "A[Start]", "source", "utf8-byte"]
+            expected: ["**Diagram object:** Start · A", "A[Start]"]
         )
         try commentOn(
             diagram: "semantic-pick.diagram.pie",
             target: "semantic-pick.target.slice.1",
-            expected: ["Cats", "slice:1", "Cats"]
+            expected: ["**Diagram object:** Cats", "Cats"]
         )
         try commentOn(
             diagram: "semantic-pick.diagram.sequence",
             target: "semantic-pick.target.participant.Alice",
-            expected: ["Host", "participant:Alice", "Alice"]
+            expected: ["**Diagram object:** Host · Alice", "Alice"]
         )
 
         XCTAssertEqual(diagnostic("diag.semantic.stagedCount"), "3")
         let prompt = diagnostic("diag.semantic.prompt")
         XCTAssertTrue(prompt.contains("## Review comments"), "Outgoing prompt was not built from the stash: \(prompt)")
-        XCTAssertTrue(prompt.contains("**Object:**"), "Outgoing prompt omitted the object reference: \(prompt)")
+        XCTAssertTrue(prompt.contains("**Diagram object:**"), "Outgoing prompt omitted the object reference: \(prompt)")
+        XCTAssertFalse(prompt.contains("node:A"), "Outgoing prompt leaked an internal target ID: \(prompt)")
+        XCTAssertFalse(prompt.contains("utf8-byte"), "Outgoing prompt leaked byte offsets: \(prompt)")
     }
 
     func testTwentyChoiceAmbiguityPickerReachesFirstAndLastWithoutDiagramActivation() throws {
@@ -103,6 +105,11 @@ final class SemanticPickJourneyUITests: XCTestCase {
         let pick = app.buttons["semantic-pick.enter"]
         XCTAssertTrue(pick.waitForExistence(timeout: 8), "Pick object did not appear for \(diagram)")
         pick.tap()
+        if diagram == "semantic-pick.diagram.flowchart" {
+            let canvas = app.scrollViews.firstMatch
+            XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+            canvas.pinch(withScale: 1.3, velocity: 1)
+        }
 
         let object = app.buttons[target]
         XCTAssertTrue(object.waitForExistence(timeout: 8), "Selectable object \(target) was not exposed")

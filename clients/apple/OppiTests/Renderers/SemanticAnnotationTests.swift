@@ -516,7 +516,7 @@ struct MermaidSemanticSelectionTests {
         #expect(first.semanticMap?.regions.isEmpty == false)
     }
 
-    @MainActor @Test func outgoingPromptIncludesLabelExcerptOriginAndRevision() throws {
+    @MainActor @Test func outgoingPromptUsesReadableLabelAndSourceWithoutRawIdentity() throws {
         let source = """
         flowchart TD
         A[Start] --> B[End]
@@ -547,18 +547,19 @@ struct MermaidSemanticSelectionTests {
         )
         let block = ReviewCommentStore.reviewBlock(for: [comment])
         #expect(block.contains("Start"))
-        #expect(block.contains("node:A"))
+        #expect(block.contains("**Diagram object:** Start · A"))
         #expect(block.contains("A[Start]"))
-        #expect(block.contains("source"))
-        #expect(block.contains(anchor.sourceRevision))
-        #expect(block.contains("utf8-byte"))
+        #expect(block.contains("**Source context:**"))
+        #expect(!block.contains("node:A"))
+        #expect(!block.contains(anchor.sourceRevision))
+        #expect(!block.contains("utf8-byte"))
         let stale = anchor.markedStaleAgainst(currentRevision: "different")
         #expect(stale.isStale)
         #expect(stale.targetID == anchor.targetID)
         #expect(stale.spans == anchor.spans)
     }
 
-    @MainActor @Test func pickModePausesPanAndCancelDoesNotComment() throws {
+    @MainActor @Test func pickModeRetainsPanAndPinchWhileBrowseClearsSelection() throws {
         let source = """
         flowchart TD
         A[Start] --> B[End]
@@ -577,11 +578,15 @@ struct MermaidSemanticSelectionTests {
         view.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
         view.layoutIfNeeded()
         view.debugEnterPickForTesting()
+        let banner = try #require(view.subviews.first { $0.accessibilityIdentifier == "semantic-pick.banner" })
+        #expect(!banner.isHidden)
         #expect(view.debugPickModeEnabledForTesting)
-        #expect(view.debugPickScrollEnabledForTesting == false)
+        #expect(view.debugPickScrollEnabledForTesting)
+        #expect(view.debugPickPinchEnabledForTesting)
         let point = samplePoint(for: "node:A", in: try #require(layout.semanticMap))
         view.debugSelectForTesting(at: point)
         #expect(view.debugSelectedTargetIDForTesting == "node:A")
+        #expect(banner.isHidden)
         view.debugLeavePickForTesting()
         #expect(comments.isEmpty)
         #expect(view.debugPickScrollEnabledForTesting)
@@ -620,14 +625,14 @@ struct MermaidSemanticSelectionTests {
             currentSourceRevision: { _ in target.sourceRevision }
         )
         #expect(fresh.contains("stale") == false)
-        #expect(fresh.contains("node:A"))
+        #expect(fresh.contains("**Diagram object:** Start · A"))
         let stale = ReviewCommentStore.reviewBlock(
             for: [comment],
             currentSourceRevision: { _ in SemanticSourceRevision.hash(of: source + "\nC") }
         )
         #expect(stale.contains("**Status:** stale"))
-        #expect(stale.contains("node:A"))
-        #expect(stale.contains(target.sourceRevision))
+        #expect(stale.contains("**Diagram object:** Start · A"))
+        #expect(!stale.contains(target.sourceRevision))
         #expect(stale.contains("was not re-anchored"))
 
         let fence = "```mermaid\n\(source)\n```"
@@ -870,7 +875,7 @@ struct MermaidSemanticSelectionTests {
         #expect(reloaded.stagedComments[2].reference.htmlDOMAnchor == nil)
         #expect(reloaded.stagedComments[2].reference.semanticAnchor == nil)
         let outgoing = reloaded.appendReviewBlock(to: "")
-        #expect(outgoing.contains("node:A"))
+        #expect(outgoing.contains("**Diagram object:** Start · A"))
         #expect(outgoing.contains("button#save"))
         #expect(outgoing.contains("Legacy-style comment"))
     }

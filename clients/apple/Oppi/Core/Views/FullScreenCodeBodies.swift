@@ -5980,6 +5980,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
     private let readerPreferences: FullScreenReaderPreferences
     private let themeID: ThemeID
     private var latexZoomContentView: UIView?
+    private(set) var mermaidPicker: ZoomableGraphicalView?
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
 
@@ -6011,6 +6012,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
             zoomable.configureSemanticPick(map: layout.semanticMap) { [weak self] target in
                 self?.presentSemanticComment(for: target)
             }
+            mermaidPicker = zoomable
             zoomable.translatesAutoresizingMaskIntoConstraints = false
             addSubview(zoomable)
             NSLayoutConstraint.activate([

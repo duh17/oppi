@@ -162,6 +162,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
     private let pickController: HTMLDOMPickController
     private(set) var isRenderReady = false
     var onRenderStateChange: (() -> Void)?
+    var elementPicker: HTMLDOMPickController { pickController }
 
     init(htmlString: String, reviewCommentHandler: ((String, UIViewController?) -> Void)? = nil) {
         let wv = ReviewCommentWKWebView(frame: .zero, configuration: HTMLContentSecurity.makeConfiguration())
