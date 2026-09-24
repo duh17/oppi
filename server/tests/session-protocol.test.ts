@@ -1264,7 +1264,11 @@ describe("translatePiEvent", () => {
         ctx,
       );
       expect(result1).toHaveLength(1);
-      expect((result1[0] as Extract<ServerMessage, { type: "tool_output" }>).output).toBe("hello");
+      expect(result1[0]).toMatchObject({
+        type: "tool_output",
+        output: "hello",
+        toolCallId: "tc-1",
+      });
 
       // Second update: accumulated "hello world"
       const result2 = translatePiEvent(
@@ -1278,7 +1282,11 @@ describe("translatePiEvent", () => {
         ctx,
       );
       expect(result2).toHaveLength(1);
-      expect((result2[0] as Extract<ServerMessage, { type: "tool_output" }>).output).toBe(" world");
+      expect(result2[0]).toMatchObject({
+        type: "tool_output",
+        output: " world",
+        toolCallId: "tc-1",
+      });
     });
 
     it("emits nothing when text hasn't changed", () => {
@@ -1608,7 +1616,52 @@ describe("translatePiEvent", () => {
       );
 
       const msg = result[0] as Extract<ServerMessage, { type: "tool_output" }>;
-      expect(msg.output).toBe("data:audio/wav;base64,wavdata");
+      expect(result).toHaveLength(1);
+      expect(msg).toMatchObject({ output: "data:audio/wav;base64,wavdata", toolCallId: "tc-1" });
+
+      const withoutMime = translatePiEvent(
+        {
+          type: "tool_execution_update",
+          toolCallId: "tc-2",
+          toolName: "tts",
+          args: {},
+          partialResult: { content: [{ type: "audio", data: "fallback" }] },
+        } as AgentSessionEvent,
+        ctx,
+      );
+      expect(withoutMime).toEqual([
+        { type: "tool_output", output: "data:audio/wav;base64,fallback", toolCallId: "tc-2" },
+      ]);
+    });
+
+    it("preserves text/audio order while omitting images and data-less audio", () => {
+      const ctx = makeCtx();
+      const result = translatePiEvent(
+        {
+          type: "tool_execution_update",
+          toolCallId: "tc-mixed",
+          toolName: "read_media",
+          args: {},
+          partialResult: {
+            content: [
+              { type: "text", text: "Reading media file..." },
+              { type: "image", data: "iVBORw0KGgo=", mimeType: "image/jpeg" },
+              { type: "audio" },
+              { type: "audio", data: "UklGRiQAAABXQVZF", mimeType: "audio/wav" },
+            ],
+          },
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      expect(result).toEqual([
+        { type: "tool_output", output: "Reading media file...", toolCallId: "tc-mixed" },
+        {
+          type: "tool_output",
+          output: "data:audio/wav;base64,UklGRiQAAABXQVZF",
+          toolCallId: "tc-mixed",
+        },
+      ]);
     });
 
     it("does not emit materialized image attachment metadata from partial updates", () => {
@@ -2409,6 +2462,23 @@ describe("translatePiEvent", () => {
       ).toBeUndefined();
     });
 
+    it("accumulates successive updates without an ID without duplicating output", () => {
+      const ctx = makeCtx();
+      const update = (text: string) =>
+        translatePiEvent(
+          {
+            type: "tool_execution_update",
+            toolName: "read",
+            args: {},
+            partialResult: { content: [{ type: "text", text }] },
+          } as unknown as AgentSessionEvent,
+          ctx,
+        );
+
+      expect(update("abc")).toEqual([{ type: "tool_output", output: "abc" }]);
+      expect(update("abcdef")).toEqual([{ type: "tool_output", output: "def" }]);
+    });
+
     it("returns undefined when both toolCallId and id are missing", () => {
       const ctx = makeCtx();
       const result = translatePiEvent(
@@ -2441,10 +2511,10 @@ describe("translatePiEvent", () => {
         } as AgentSessionEvent,
         ctx,
       );
-      expect(start[0]!.type).toBe("tool_start");
+      expect(start[0]).toMatchObject({ type: "tool_start", toolCallId: "tc-1" });
 
       // Progressive updates
-      translatePiEvent(
+      const update1 = translatePiEvent(
         {
           type: "tool_execution_update",
           toolCallId: "tc-1",
@@ -2465,7 +2535,8 @@ describe("translatePiEvent", () => {
         } as AgentSessionEvent,
         ctx,
       );
-      expect((update2[0] as Extract<ServerMessage, { type: "tool_output" }>).output).toBe("lo");
+      expect(update1).toEqual([{ type: "tool_output", output: "hel", toolCallId: "tc-1" }]);
+      expect(update2).toEqual([{ type: "tool_output", output: "lo", toolCallId: "tc-1" }]);
 
       // tool_execution_end
       const end = translatePiEvent(
@@ -2481,8 +2552,20 @@ describe("translatePiEvent", () => {
 
       const outputs = end.filter((m) => m.type === "tool_output");
       expect(outputs).toHaveLength(1);
-      expect((outputs[0] as Extract<ServerMessage, { type: "tool_output" }>).output).toBe("\n");
-      expect(end.find((m) => m.type === "tool_end")).toBeTruthy();
+      expect(outputs[0]).toMatchObject({ type: "tool_output", output: "\n", toolCallId: "tc-1" });
+      expect(end.find((m) => m.type === "tool_end")).toMatchObject({
+        type: "tool_end",
+        tool: "bash",
+        toolCallId: "tc-1",
+      });
+      expect(
+        [...update1, ...update2, ...outputs]
+          .filter(
+            (m): m is Extract<ServerMessage, { type: "tool_output" }> => m.type === "tool_output",
+          )
+          .map((m) => m.output)
+          .join(""),
+      ).toBe("hello\n");
 
       // Context should be clean
       expect(ctx.partialResults.size).toBe(0);
@@ -2513,7 +2596,7 @@ describe("translatePiEvent", () => {
       );
 
       // Update tc-1
-      translatePiEvent(
+      const update1 = translatePiEvent(
         {
           type: "tool_execution_update",
           toolCallId: "tc-1",
@@ -2525,7 +2608,7 @@ describe("translatePiEvent", () => {
       );
 
       // Update tc-2
-      translatePiEvent(
+      const update2 = translatePiEvent(
         {
           type: "tool_execution_update",
           toolCallId: "tc-2",
@@ -2536,7 +2619,21 @@ describe("translatePiEvent", () => {
         ctx,
       );
 
-      expect(ctx.partialResults.get("tc-1")).toBe("file1");
+      expect(update1).toEqual([{ type: "tool_output", output: "file1", toolCallId: "tc-1" }]);
+      expect(update2).toEqual([{ type: "tool_output", output: "file2", toolCallId: "tc-2" }]);
+
+      const next1 = translatePiEvent(
+        {
+          type: "tool_execution_update",
+          toolCallId: "tc-1",
+          toolName: "read",
+          args: {},
+          partialResult: { content: [{ type: "text", text: "file1 plus" }] },
+        } as AgentSessionEvent,
+        ctx,
+      );
+      expect(next1).toEqual([{ type: "tool_output", output: " plus", toolCallId: "tc-1" }]);
+      expect(ctx.partialResults.get("tc-1")).toBe("file1 plus");
       expect(ctx.partialResults.get("tc-2")).toBe("file2");
 
       // End tc-1 — should only clear tc-1's state
@@ -2545,7 +2642,7 @@ describe("translatePiEvent", () => {
           type: "tool_execution_end",
           toolCallId: "tc-1",
           toolName: "read",
-          result: { content: [{ type: "text", text: "file1" }] },
+          result: { content: [{ type: "text", text: "file1 plus" }] },
           isError: false,
         } as AgentSessionEvent,
         ctx,
