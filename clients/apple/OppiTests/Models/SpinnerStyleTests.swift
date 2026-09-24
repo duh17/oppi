@@ -97,11 +97,11 @@ struct AppearanceStylePreferenceTests {
 
     @Test func preservedRingChoiceStaysSelectable() {
         withRestoredKey(AppPreferenceStore.Appearance.dictationIndicatorStyleKey) { key in
+            AppPreferenceStore.Appearance.setDictationIndicatorStyle(.breathing)
+            #expect(DictationIndicatorStyle.current == .breathing)
             AppPreferenceStore.Appearance.setDictationIndicatorStyle(.ring)
             #expect(AppPreferenceStore.Appearance.dictationIndicatorStyle == .ring)
             #expect(UserDefaults.standard.string(forKey: key) == "ring")
-            AppPreferenceStore.Appearance.setDictationIndicatorStyle(.breathing)
-            #expect(DictationIndicatorStyle.current == .breathing)
         }
     }
 }

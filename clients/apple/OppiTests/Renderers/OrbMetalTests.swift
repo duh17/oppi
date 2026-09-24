@@ -251,6 +251,7 @@ struct OrbMetalViewLifecycleTests {
         #expect(orb.framesSubmitted == 0)
         orb.frame = CGRect(x: 18, y: 18, width: 16, height: 16)
         orb.layoutIfNeeded()
+        activateTestScene(harness.window)
         #expect(orb.framesSubmitted == 1)
         #expect(!orb.isDriving)
         orb.stopAndDismantle()
@@ -305,38 +306,42 @@ struct OrbMetalViewLifecycleTests {
     }
 
     @Test func audioOnlyChromeUpdatesDoNotResubmitFrozenOrb() throws {
-        let harness = try makeOrbHarness(style: .working, side: 16)
-        defer { tearDown(harness) }
-        let chrome = MicButtonChromeView()
-        chrome.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
-        harness.container.addSubview(chrome)
-        chrome.apply(
-            isRecording: true,
-            isProcessing: false,
-            voiceSpectrum: VoiceSpectrumFrame(level: 0.2),
-            languageLabel: "EN",
-            accentColor: .systemBlue,
-            engineBadge: .onDevice,
-            diameter: 44,
-            animated: false
-        )
-        chrome.layoutIfNeeded()
-        let orb = try #require(firstSubview(of: chrome, type: OrbMetalView.self))
-        orb.forceReduceMotion = true
-        #expect(orb.framesSubmitted >= 1)
-        let submitted = orb.framesSubmitted
-        chrome.apply(
-            isRecording: true,
-            isProcessing: false,
-            voiceSpectrum: VoiceSpectrumFrame(level: 0.9),
-            languageLabel: "EN",
-            accentColor: .systemBlue,
-            engineBadge: .onDevice,
-            diameter: 44,
-            animated: false
-        )
-        #expect(orb.framesSubmitted == submitted)
-        #expect(orb.voiceSpectrum.level == 0.9)
+        try withRestoredDictationStyle {
+            AppPreferenceStore.Appearance.setDictationIndicatorStyle(.composing)
+            let harness = try makeOrbHarness(style: .working, side: 16)
+            defer { tearDown(harness) }
+            let chrome = MicButtonChromeView()
+            chrome.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
+            harness.container.addSubview(chrome)
+            chrome.apply(
+                isRecording: true,
+                isProcessing: false,
+                voiceSpectrum: VoiceSpectrumFrame(level: 0.2),
+                languageLabel: "EN",
+                accentColor: .systemBlue,
+                engineBadge: .onDevice,
+                diameter: 44,
+                animated: false
+            )
+            chrome.layoutIfNeeded()
+            activateTestScene(harness.window)
+            let orb = try #require(firstSubview(of: chrome, type: OrbMetalView.self))
+            orb.forceReduceMotion = true
+            #expect(orb.framesSubmitted >= 1)
+            let submitted = orb.framesSubmitted
+            chrome.apply(
+                isRecording: true,
+                isProcessing: false,
+                voiceSpectrum: VoiceSpectrumFrame(level: 0.9),
+                languageLabel: "EN",
+                accentColor: .systemBlue,
+                engineBadge: .onDevice,
+                diameter: 44,
+                animated: false
+            )
+            #expect(orb.framesSubmitted == submitted)
+            #expect(orb.voiceSpectrum.level == 0.9)
+        }
     }
 
     @Test func removingTheViewAllowsDeallocation() async throws {
@@ -608,24 +613,27 @@ struct MicButtonOrbLayoutTests {
     }
 
     @Test func preparingDoesNotFeedVoiceIntoTheOrb() {
-        let chrome = MicButtonChromeView()
-        chrome.apply(
-            isRecording: false,
-            isProcessing: false,
-            voiceSpectrum: VoiceSpectrumFrame(level: 0.9, bands: .one),
-            languageLabel: "EN",
-            accentColor: .systemBlue,
-            engineBadge: .onDevice,
-            diameter: 44,
-            animated: false,
-            isPreparing: true
-        )
-        let orb = firstSubview(of: chrome, type: OrbMetalView.self)
-        #expect(orb?.isHidden == false)
-        #expect(orb?.voiceSpectrum == .zero)
-        #expect(chrome.intrinsicContentSize == CGSize(width: 44, height: 44))
-        let labels = allLabels(in: chrome).filter { !$0.isHidden }
-        #expect(!labels.contains { $0.text == "EN" })
+        withRestoredDictationStyle {
+            AppPreferenceStore.Appearance.setDictationIndicatorStyle(.composing)
+            let chrome = MicButtonChromeView()
+            chrome.apply(
+                isRecording: false,
+                isProcessing: false,
+                voiceSpectrum: VoiceSpectrumFrame(level: 0.9, bands: .one),
+                languageLabel: "EN",
+                accentColor: .systemBlue,
+                engineBadge: .onDevice,
+                diameter: 44,
+                animated: false,
+                isPreparing: true
+            )
+            let orb = firstSubview(of: chrome, type: OrbMetalView.self)
+            #expect(orb?.isHidden == false)
+            #expect(orb?.voiceSpectrum == .zero)
+            #expect(chrome.intrinsicContentSize == CGSize(width: 44, height: 44))
+            let labels = allLabels(in: chrome).filter { !$0.isHidden }
+            #expect(!labels.contains { $0.text == "EN" })
+        }
     }
 
     @Test func uikitChromeKeepsHitTargetAndDoesNotGrow() {
@@ -847,6 +855,7 @@ private func makeOrbHarness(style: OrbStyle, side: CGFloat) throws -> OrbHarness
     window.makeKeyAndVisible()
     host.view.layoutIfNeeded()
     view.layoutIfNeeded()
+    activateTestScene(window)
     return OrbHarness(window: window, host: host, container: container, view: view, scroll: nil)
 }
 
@@ -880,7 +889,18 @@ private func makeOrbScrollHarness() throws -> OrbHarness {
     host.view.layoutIfNeeded()
     scroll.layoutIfNeeded()
     view.layoutIfNeeded()
+    activateTestScene(window)
     return OrbHarness(window: window, host: host, container: container, view: view, scroll: scroll)
+}
+
+@MainActor
+private func activateTestScene(_ window: UIWindow) {
+    // The unit-test host can remain foreground-inactive despite a visible window.
+    // Deliver the owning-scene activation signal to exercise rendering, not a
+    // production exception to the inactive-scene pause policy.
+    if let scene = window.windowScene {
+        NotificationCenter.default.post(name: UIScene.didActivateNotification, object: scene)
+    }
 }
 
 @MainActor
@@ -948,6 +968,8 @@ private func orbTimeoutMessage(_ view: OrbMetalView, expected: String) -> String
     completed=\(view.framesCompleted) skipped=\(view.framesSkipped) \
     failed=\(view.framesFailed) visible=\(view.isEffectivelyVisible) \
     windowHidden=\(view.window?.isHidden ?? true) \
+    scene=\(view.window?.windowScene?.activationState.rawValue ?? -1) \
+    app=\(UIApplication.shared.applicationState.rawValue) reducedMotion=\(UIAccessibility.isReduceMotionEnabled) \
     drawable=\(String(describing: metal?.drawableSize)) \
     device=\(metal?.device != nil) unavailable=\(view.unavailableReason ?? "nil")
     """
@@ -1016,7 +1038,7 @@ private func micFillIsClear(_ chrome: MicButtonChromeView) -> Bool {
     return alpha < 0.02
 }
 
-private func withRestoredDictationStyle(_ body: () -> Void) {
+private func withRestoredDictationStyle(_ body: () throws -> Void) rethrows {
     let key = AppPreferenceStore.Appearance.dictationIndicatorStyleKey
     let original = UserDefaults.standard.object(forKey: key)
     defer {
@@ -1026,7 +1048,7 @@ private func withRestoredDictationStyle(_ body: () -> Void) {
             UserDefaults.standard.removeObject(forKey: key)
         }
     }
-    body()
+    try body()
 }
 
 private struct OrbOpaqueColorStats {
