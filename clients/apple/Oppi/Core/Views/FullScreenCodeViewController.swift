@@ -100,10 +100,11 @@ final class FullScreenCodeViewController: UIViewController {
     private var lastNavigationPresentation: NavigationPresentation?
     private var appliedThemeID: ThemeID?
     private var annotateButton: UIButton?
+    private var pickButton: UIButton?
     private var commentButton: UIButton?
     private var commentLeadingConstraint: NSLayoutConstraint?
     private var commentTopConstraint: NSLayoutConstraint?
-    private var annotateBottomConstraint: NSLayoutConstraint?
+    private var pickBottomConstraint: NSLayoutConstraint?
     private var stashButton: UIButton?
     private var stashBadgeLabel: UILabel?
     private var stashBottomConstraint: NSLayoutConstraint?
@@ -554,6 +555,9 @@ final class FullScreenCodeViewController: UIViewController {
         if let annotateButton {
             viewController.view.bringSubviewToFront(annotateButton)
         }
+        if let pickButton {
+            viewController.view.bringSubviewToFront(pickButton)
+        }
         if let commentButton {
             viewController.view.bringSubviewToFront(commentButton)
         }
@@ -859,12 +863,14 @@ final class FullScreenCodeViewController: UIViewController {
     ) {
         guard canAnnotateRenderedContent else {
             annotateButton?.removeFromSuperview()
+            pickButton?.removeFromSuperview()
             commentButton?.removeFromSuperview()
             annotateButton = nil
+            pickButton = nil
             commentButton = nil
             commentLeadingConstraint = nil
             commentTopConstraint = nil
-            annotateBottomConstraint = nil
+            pickBottomConstraint = nil
             return
         }
 
@@ -875,35 +881,45 @@ final class FullScreenCodeViewController: UIViewController {
             FullScreenFloatingControlChrome.updateStandaloneButton(button, palette: palette)
         } else {
             button = FullScreenFloatingControlChrome.makeStandaloneButton(
-                systemImage: usesPickControls ? "cursorarrow.rays" : PaperMarkupCanvasSession.AnnotateAction.systemImage,
+                systemImage: PaperMarkupCanvasSession.AnnotateAction.systemImage,
                 accessibilityLabel: PaperMarkupCanvasSession.AnnotateAction.title,
                 accessibilityIdentifier: PaperMarkupCanvasSession.AnnotateAction.htmlViewerIdentifier,
                 palette: palette
             )
             annotateButton = button
             viewController.view.addSubview(button)
-            if usesPickControls {
-                button.translatesAutoresizingMaskIntoConstraints = false
-                let bottom = button.bottomAnchor.constraint(
+            button.addTarget(self, action: #selector(annotateRenderedViewTapped), for: .touchUpInside)
+            FullScreenFloatingControlChrome.pinStandaloneButton(button, to: viewController.view, leading: true)
+        }
+        if usesPickControls {
+            let pick: UIButton
+            if let existing = pickButton {
+                pick = existing
+                FullScreenFloatingControlChrome.updateStandaloneButton(pick, palette: palette)
+            } else {
+                pick = FullScreenFloatingControlChrome.makeStandaloneButton(
+                    systemImage: "cursorarrow.rays",
+                    accessibilityLabel: "Pick",
+                    accessibilityIdentifier: "fullscreen-code.pick.menu",
+                    palette: palette
+                )
+                pickButton = pick
+                viewController.view.addSubview(pick)
+                pick.translatesAutoresizingMaskIntoConstraints = false
+                let bottom = pick.bottomAnchor.constraint(
                     equalTo: viewController.view.safeAreaLayoutGuide.bottomAnchor,
                     constant: -pickControlsBottomPadding
                 )
-                annotateBottomConstraint = bottom
+                pickBottomConstraint = bottom
                 NSLayoutConstraint.activate([
-                    button.trailingAnchor.constraint(equalTo: viewController.view.safeAreaLayoutGuide.trailingAnchor,
-                                                     constant: -FullScreenFloatingControlChrome.trailingPadding),
+                    pick.trailingAnchor.constraint(equalTo: viewController.view.safeAreaLayoutGuide.trailingAnchor,
+                                                  constant: -FullScreenFloatingControlChrome.trailingPadding),
                     bottom,
-                    button.widthAnchor.constraint(equalToConstant: FullScreenFloatingControlChrome.controlSize),
-                    button.heightAnchor.constraint(equalToConstant: FullScreenFloatingControlChrome.controlSize),
+                    pick.widthAnchor.constraint(equalToConstant: FullScreenFloatingControlChrome.controlSize),
+                    pick.heightAnchor.constraint(equalToConstant: FullScreenFloatingControlChrome.controlSize),
                 ])
-            } else {
-                button.addTarget(self, action: #selector(annotateRenderedViewTapped), for: .touchUpInside)
-                FullScreenFloatingControlChrome.pinStandaloneButton(button, to: viewController.view, leading: true)
             }
-        }
-        if usesPickControls {
-            annotateBottomConstraint?.constant = -pickControlsBottomPadding
-            button.accessibilityLabel = "Pick and Mark Up"
+            pickBottomConstraint?.constant = -pickControlsBottomPadding
             if commentButton == nil {
                 let comment = FullScreenFloatingControlChrome.makeStandaloneButton(
                     systemImage: "text.bubble", accessibilityLabel: "Comment",
@@ -928,6 +944,7 @@ final class FullScreenCodeViewController: UIViewController {
             updatePickControls()
         }
         viewController.view.bringSubviewToFront(button)
+        if let pickButton { viewController.view.bringSubviewToFront(pickButton) }
         if let commentButton { viewController.view.bringSubviewToFront(commentButton) }
     }
 
@@ -942,7 +959,7 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     private func updatePickControls() {
-        guard let button = annotateButton, isHTMLViewer || isMermaidViewer else { return }
+        guard let button = pickButton, isHTMLViewer || isMermaidViewer else { return }
         let htmlPicker = ((installedBodyView as? HTMLRenderView) ?? liveSourceHTMLBodyView)?.elementPicker
         let diagramPicker = (installedBodyView as? NativeFullScreenRenderedDocumentBody)?.mermaidPicker
         let picking = htmlPicker?.isPicking ?? diagramPicker?.isPickingObjects ?? false
@@ -966,9 +983,7 @@ final class FullScreenCodeViewController: UIViewController {
                 htmlPicker?.selectParent()
             })
         }
-        actions.append(UIAction(title: "Visual Markup", image: UIImage(systemName: "pencil.tip")) { [weak self] _ in
-            self?.annotateRenderedViewTapped()
-        })
+        button.isEnabled = !actions.isEmpty
         button.menu = UIMenu(children: actions)
         button.showsMenuAsPrimaryAction = true
     }
@@ -979,10 +994,12 @@ final class FullScreenCodeViewController: UIViewController {
             .elementPicker.selectedTargetRect(in: host)
             ?? (installedBodyView as? NativeFullScreenRenderedDocumentBody)?
                 .mermaidPicker?.selectedTargetRect(in: host)
-        let menu = annotateButton.map { $0.convert($0.bounds, to: host) } ?? .null
+        let controls = [pickButton, annotateButton, stashButton, stashBadgeLabel].compactMap { control in
+            control.map { $0.convert($0.bounds, to: host) }
+        }
         guard let target,
               let origin = FullScreenPickCommentPlacement.origin(
-                for: target, in: host.safeAreaLayoutGuide.layoutFrame, avoiding: menu,
+                for: target, in: host.safeAreaLayoutGuide.layoutFrame, avoiding: controls,
                 size: FullScreenFloatingControlChrome.controlSize
               ) else {
             commentButton.isHidden = true
@@ -1047,6 +1064,7 @@ final class FullScreenCodeViewController: UIViewController {
             stashBadgeLabel = nil
             stashBottomConstraint = nil
             lastPresentedStashCount = 0
+            updateContextualCommentPosition()
             return
         }
 
@@ -1086,6 +1104,8 @@ final class FullScreenCodeViewController: UIViewController {
         }
         playStashMotionIfNeeded(on: button, isNew: isNew, countIncreased: countIncreased)
         lastPresentedStashCount = count
+        viewController.view.layoutIfNeeded()
+        updateContextualCommentPosition()
     }
 
     private func pinStashButton(_ button: UIButton, to view: UIView) {
@@ -1108,7 +1128,7 @@ final class FullScreenCodeViewController: UIViewController {
 
     private var stashBottomPadding: CGFloat {
         var accessoryCount = leadingFloatingAccessoryCount
-        if annotateButton?.superview != nil, !isHTMLViewer, !isMermaidViewer {
+        if annotateButton?.superview != nil {
             accessoryCount += 1
         }
         return FullScreenReviewCommentStashControl.bottomPadding(
@@ -1136,13 +1156,14 @@ final class FullScreenCodeViewController: UIViewController {
         trailingFloatingAccessoryCount = normalized
         guard isViewLoaded else { return }
         viewingOptionsBottomConstraint?.constant = -viewingOptionsBottomPadding
-        annotateBottomConstraint?.constant = -pickControlsBottomPadding
+        pickBottomConstraint?.constant = -pickControlsBottomPadding
         (contentHostController?.view ?? view).layoutIfNeeded()
     }
 
     private func updateStashBottomConstraint(on view: UIView) {
         stashBottomConstraint?.constant = -stashBottomPadding
         view.layoutIfNeeded()
+        updateContextualCommentPosition()
     }
 
     private func installStashBadge(on host: UIView, button: UIButton, palette: ThemePalette) {
@@ -2516,7 +2537,16 @@ extension FullScreenCodeViewController {
         annotateButton
     }
 
+    var floatingPickButtonForTesting: UIButton? { pickButton }
+
     var floatingPickCommentButtonForTesting: UIButton? { commentButton }
+
+    var floatingPickButtonFrameForTesting: CGRect? {
+        guard let button = pickButton,
+              let superview = button.superview else { return nil }
+        superview.layoutIfNeeded()
+        return view.convert(button.frame, from: superview)
+    }
 
     var floatingStashButtonForTesting: UIButton? {
         stashButton

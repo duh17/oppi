@@ -13,13 +13,13 @@ import UIKit
 /// 1. Top leading: Done / Back.
 /// 2. Top trailing: Share (when present), Save (when present), Copy, Source,
 ///    and extra document actions. Share stays in this bar on every viewer.
-/// 3. Bottom leading: Annotate stays here for image and non-pick viewers.
-///    Staged review comments use the same corner when `stagedCount > 0`; stack
-///    stash above Annotate when both are present. Adjacent previous-file
-///    controls occupy this corner on SwiftUI file hosts. Do not add a second
-///    stash control in the top bar.
+/// 3. Bottom leading: Annotate stays here for every markup-capable viewer,
+///    including HTML and Mermaid. Staged review comments use the same corner
+///    when `stagedCount > 0`; stack stash above Annotate when both are present.
+///    Adjacent previous-file controls occupy this corner on SwiftUI file hosts.
+///    Do not add a second stash control in the top bar.
 /// 4. Bottom trailing: next-file when present. Viewing Options / Reader stacks
-///    above next when both exist. HTML and Mermaid place their pick/markup menu
+///    above next when both exist. HTML and Mermaid place their pick-only menu
 ///    above those controls; Comment follows the selected target in the content.
 ///    Do not cover Reader, stash, or content with a bottom toolbar.
 ///
@@ -45,7 +45,7 @@ enum FullScreenViewerChrome {
 
 enum FullScreenPickCommentPlacement {
     static func origin(
-        for target: CGRect, in safeFrame: CGRect, avoiding menu: CGRect = .null, size: CGFloat = 56
+        for target: CGRect, in safeFrame: CGRect, avoiding controls: [CGRect] = [], size: CGFloat = 56
     ) -> CGPoint? {
         let area = safeFrame.insetBy(dx: 12, dy: 12)
         guard area.width >= size, area.height >= size,
@@ -61,12 +61,12 @@ enum FullScreenPickCommentPlacement {
         ]
         if let outside = candidates.first(where: { point in
             let frame = CGRect(origin: point, size: CGSize(width: size, height: size))
-            return area.contains(frame) && !frame.intersects(target) && !frame.intersects(menu)
+            return area.contains(frame) && !frame.intersects(target) && !controls.contains(where: frame.intersects)
         }) {
             return outside
         }
         // A selected body or full-width container may fill the viewport. Keep
-        // Comment available within its visible area, away from the pick menu.
+        // Comment available within its visible area, away from the floating controls.
         let visible = target.intersection(area)
         guard visible.width >= size, visible.height >= size else { return nil }
         let inset: CGFloat = 8
@@ -78,7 +78,7 @@ enum FullScreenPickCommentPlacement {
         ]
         return inside.first { point in
             let frame = CGRect(origin: point, size: CGSize(width: size, height: size))
-            return visible.contains(frame) && !frame.intersects(menu)
+            return visible.contains(frame) && !controls.contains(where: frame.intersects)
         }
     }
 }

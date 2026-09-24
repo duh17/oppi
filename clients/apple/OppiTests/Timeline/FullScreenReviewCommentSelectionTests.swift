@@ -2523,22 +2523,29 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(abs(stashFrame.midY - viewingOptionsFrame.midY) <= 1)
     }
 
-    @Test func htmlAnnotateMovesTrailingWhileStashRemainsLeading() throws {
+    @Test func htmlPickStaysTrailingWhileMarkupAndStashStackLeading() throws {
         let fixture = try makeStashFixture(
             content: .html(content: "<p>hello</p>", filePath: "note.html"),
             stagedCount: 1
         )
         let stashFrame = try #require(fixture.controller.floatingStashButtonFrameForTesting)
         let annotateFrame = try #require(fixture.controller.floatingAnnotateButtonFrameForTesting)
-
+        let pickFrame = try #require(fixture.controller.floatingPickButtonFrameForTesting)
         let viewingOptionsFrame = try #require(fixture.controller.floatingViewingOptionsButtonFrameForTesting)
         let annotate = try #require(fixture.controller.floatingAnnotateButtonForTesting)
+        let pick = try #require(fixture.controller.floatingPickButtonForTesting)
         let comment = try #require(fixture.controller.floatingPickCommentButtonForTesting)
-        #expect(stashFrame.maxX < fixture.controller.view.bounds.midX)
-        #expect(annotateFrame.midX > fixture.controller.view.bounds.midX)
-        #expect(annotateFrame.maxY < viewingOptionsFrame.minY)
-        #expect(annotate.showsMenuAsPrimaryAction)
-        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Visual Markup"])
+        #expect(annotateFrame.midX < fixture.controller.view.bounds.midX)
+        #expect(pickFrame.midX > fixture.controller.view.bounds.midX)
+        #expect(pickFrame.maxY < viewingOptionsFrame.minY)
+        #expect(annotateFrame.minY >= stashFrame.maxY + FullScreenFloatingControlChrome.stackSpacing - 1)
+        #expect(!stashFrame.intersects(annotateFrame))
+        #expect(annotate.accessibilityLabel == "Annotate")
+        #expect(!annotate.showsMenuAsPrimaryAction)
+        #expect(annotate.menu == nil)
+        #expect(pick.showsMenuAsPrimaryAction)
+        #expect(pick.accessibilityLabel == "Pick")
+        #expect(pick.menu?.children.compactMap { $0 as? UIAction }.map(\.title).allSatisfy { $0 == "Pick Element" } == true)
         #expect(comment.isHidden)
         #expect(comment.accessibilityLabel == "Comment")
     }
@@ -2554,29 +2561,31 @@ struct FullScreenReviewCommentSelectionTests {
         defer { window.isHidden = true }
         let html = try #require(fixture.controller.installedBodyViewForTesting as? HTMLRenderView)
         let annotate = try #require(fixture.controller.floatingAnnotateButtonForTesting)
+        let pick = try #require(fixture.controller.floatingPickButtonForTesting)
         let comment = try #require(fixture.controller.floatingPickCommentButtonForTesting)
+        #expect(!annotate.showsMenuAsPrimaryAction)
         #expect(html.elementPicker.usesExternalPickControls)
         let ready = await waitForMainActorCondition(timeout: .seconds(5)) { html.isRenderReady }
         #expect(ready)
-        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Pick Element", "Visual Markup"])
+        #expect(pick.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Pick Element"])
         #expect(comment.isHidden)
 
         html.elementPicker.enterPick()
         let pickChrome = try #require(html.elementPicker.enterButtonForTesting.superview?.superview as? HTMLDOMPickChromeView)
-        #expect(pickChrome.isHidden, "The full-screen Annotate menu owns pick controls")
-        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Browse", "Visual Markup"])
+        #expect(pickChrome.isHidden, "The full-screen pick menu owns pick controls")
+        #expect(pick.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Browse"])
         #expect(comment.isHidden)
         pickChrome.showSelection(label: "button Save", parentEnabled: false)
         pickChrome.setStatus("Limited selection")
         #expect(pickChrome.isHidden, "A status must not restore the full-screen pick card")
         html.elementPicker.exitPick()
-        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Pick Element", "Visual Markup"])
+        #expect(pick.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Pick Element"])
     }
 
     @Test func htmlPickedElementKeepsCommentAvailableAfterSelectingFullWidthParent() async throws {
         let fixture = try makeStashFixture(
             content: .html(content: "<style>body{margin:0}</style><main style='height:100vh;width:100vw'><button style='position:fixed;left:150px;top:300px;width:100px;height:50px'>Save</button></main>", filePath: "note.html"),
-            stagedCount: 0
+            stagedCount: 1
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = fixture.controller
@@ -2612,9 +2621,15 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(comment.frame.minX > target.maxX || comment.frame.maxX < target.minX ||
                 comment.frame.minY > target.maxY || comment.frame.maxY < target.minY)
         #expect(comment.accessibilityLabel == "Comment")
+        let markupFrame = try #require(fixture.controller.floatingAnnotateButtonFrameForTesting)
+        let stashFrame = try #require(fixture.controller.floatingStashButtonFrameForTesting)
+        let pickFrame = try #require(fixture.controller.floatingPickButtonFrameForTesting)
+        #expect(!comment.frame.intersects(markupFrame))
+        #expect(!comment.frame.intersects(stashFrame))
+        #expect(!comment.frame.intersects(pickFrame))
         #expect(html.elementPicker.parentButtonForTesting.superview?.isHidden == true)
-        let annotate = try #require(fixture.controller.floatingAnnotateButtonForTesting)
-        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Browse", "Select Parent", "Visual Markup"])
+        let pick = try #require(fixture.controller.floatingPickButtonForTesting)
+        #expect(pick.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Browse", "Select Parent"])
         html.elementPicker.selectParent()
         let parentSelected = await waitForMainActorCondition(timeout: .seconds(5)) {
             fixture.controller.view.layoutIfNeeded()
@@ -2642,18 +2657,28 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(below.y == 168)
         let awayFromMenu = try #require(FullScreenPickCommentPlacement.origin(
             for: CGRect(x: 340, y: 730, width: 35, height: 40), in: area,
-            avoiding: CGRect(x: 270, y: 730, width: 100, height: 60)
+            avoiding: [CGRect(x: 270, y: 730, width: 100, height: 60)]
         ))
         #expect(!CGRect(origin: awayFromMenu, size: CGSize(width: 56, height: 56))
             .intersects(CGRect(x: 270, y: 730, width: 100, height: 60)))
         let fullWidthParent = CGRect(x: 0, y: 0, width: 390, height: 844)
         let menu = CGRect(x: 290, y: 720, width: 80, height: 70)
         let withinParent = try #require(FullScreenPickCommentPlacement.origin(
-            for: fullWidthParent, in: area, avoiding: menu
+            for: fullWidthParent, in: area, avoiding: [menu]
         ))
         let bubble = CGRect(origin: withinParent, size: CGSize(width: 56, height: 56))
         #expect(fullWidthParent.contains(bubble))
         #expect(!bubble.intersects(menu))
+        let leadingMarkup = CGRect(x: 16, y: 712, width: 56, height: 56)
+        let leadingStash = CGRect(x: 16, y: 644, width: 56, height: 56)
+        let nearMarkup = try #require(FullScreenPickCommentPlacement.origin(
+            for: CGRect(x: 0, y: 700, width: 75, height: 100), in: area,
+            avoiding: [leadingMarkup, leadingStash, menu]
+        ))
+        let nearMarkupBubble = CGRect(origin: nearMarkup, size: CGSize(width: 56, height: 56))
+        #expect(!nearMarkupBubble.intersects(leadingMarkup))
+        #expect(!nearMarkupBubble.intersects(leadingStash))
+        #expect(!nearMarkupBubble.intersects(menu))
         #expect(FullScreenPickCommentPlacement.origin(
             for: CGRect(x: 50, y: 820, width: 40, height: 30), in: area
         ) == nil)
@@ -2725,18 +2750,38 @@ struct FullScreenReviewCommentSelectionTests {
         let body = try #require(fixture.controller.installedBodyViewForTesting as? NativeFullScreenRenderedDocumentBody)
         let picker = try #require(body.mermaidPicker)
         let annotate = try #require(fixture.controller.floatingAnnotateButtonForTesting)
+        let pick = try #require(fixture.controller.floatingPickButtonForTesting)
+        let annotateFrame = try #require(fixture.controller.floatingAnnotateButtonFrameForTesting)
+        let pickFrame = try #require(fixture.controller.floatingPickButtonFrameForTesting)
         let comment = try #require(fixture.controller.floatingPickCommentButtonForTesting)
+        #expect(annotateFrame.midX < fixture.controller.view.bounds.midX)
+        #expect(pickFrame.midX > fixture.controller.view.bounds.midX)
+        #expect(annotate.menu == nil)
         #expect(picker.usesExternalPickControls)
         #expect(picker.hasSemanticTargets)
-        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Pick Object", "Visual Markup"])
+        #expect(pick.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Pick Object"])
         #expect(comment.isHidden)
 
         picker.setExternalPickMode(true)
         #expect(picker.debugPickScrollEnabledForTesting)
         #expect(picker.debugPickPinchEnabledForTesting)
-        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Browse", "Visual Markup"])
+        #expect(pick.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Browse"])
         picker.setExternalPickMode(false)
-        #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Pick Object", "Visual Markup"])
+        #expect(pick.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Pick Object"])
+    }
+
+    @Test func mermaidMarkupAndStashStackLeadingBesidePick() throws {
+        let fixture = try makeStashFixture(
+            content: .mermaid(content: "flowchart TD\nA[Start] --> B[End]", filePath: "flow.mmd"),
+            stagedCount: 1
+        )
+        let markup = try #require(fixture.controller.floatingAnnotateButtonFrameForTesting)
+        let stash = try #require(fixture.controller.floatingStashButtonFrameForTesting)
+        let pick = try #require(fixture.controller.floatingPickButtonFrameForTesting)
+        #expect(markup.midX < fixture.controller.view.bounds.midX)
+        #expect(pick.midX > fixture.controller.view.bounds.midX)
+        #expect(!markup.intersects(stash))
+        #expect(markup.minY >= stash.maxY + FullScreenFloatingControlChrome.stackSpacing - 1)
     }
 
     @Test func reviewCommentStashButtonStacksAboveLeadingFileNavigator() throws {
