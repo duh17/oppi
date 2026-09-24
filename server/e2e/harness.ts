@@ -1019,6 +1019,8 @@ export interface StreamEvent {
   id?: string;
   method?: string;
   tool?: string;
+  toolCallId?: string;
+  output?: string;
   clientTurnId?: string;
   stage?: string;
   duplicate?: boolean;
@@ -1229,20 +1231,6 @@ export async function sendPromptAndWait(
   );
 }
 
-/**
- * Compatibility no-op. Permission gating now happens inside Pi extensions via
- * generic extension UI messages; there is no custom approval-response path.
- */
-export function autoApprovePermissions(
-  _conn: StreamConnection,
-  _sessionId: string,
-): { stop: () => void; count: () => number } {
-  return {
-    stop() {},
-    count: () => 0,
-  };
-}
-
 // ── Helpers ──
 
 function toEvent(direction: "in" | "out", msg: Record<string, unknown>, seq: number): StreamEvent {
@@ -1258,6 +1246,8 @@ function toEvent(direction: "in" | "out", msg: Record<string, unknown>, seq: num
   if (msg.id) event.id = msg.id as string;
   if (msg.method) event.method = msg.method as string;
   if (msg.tool) event.tool = msg.tool as string;
+  if (typeof msg.toolCallId === "string") event.toolCallId = msg.toolCallId;
+  if (typeof msg.output === "string") event.output = msg.output;
   if (msg.clientTurnId) event.clientTurnId = msg.clientTurnId as string;
   if (msg.stage) event.stage = msg.stage as string;
   if (typeof msg.duplicate === "boolean") event.duplicate = msg.duplicate;

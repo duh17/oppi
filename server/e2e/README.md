@@ -30,7 +30,8 @@ Exercises the full session lifecycle for a paired device:
 2. Verify `GET /workspaces/:workspaceId/sessions` snapshots
 3. Open `WS /workspaces/:workspaceId/sessions/:sessionId/stream`
 4. Send prompt, receive assistant response (text_delta + agent_end)
-5. Send prompt requiring tool use, verify tool_start → tool_end lifecycle
+5. Send a prompt requiring bash to print `E2E_TOOL_OK`; require correlated
+   tool_start → tool_output containing the marker → tool_end before agent_end
 6. Reconnect the split session stream and verify fresh state
 7. Session isolation between workspaces
 8. Workspace cleanup
@@ -45,13 +46,13 @@ The runner accepts the SSH target and peer Tailscale IP only through environment
 
 Relevant feature-story dispositions from `.internal/reports/feature-user-story-status.csv`:
 
-| Story                                      | Server evidence                                      | Disposition          |
-| ------------------------------------------ | ---------------------------------------------------- | -------------------- |
-| `SERVER-001`                               | Creates a workspace session and opens its focused stream | Automated         |
-| `SERVER-014`                               | Focused stream, app-event stream, reconnect, and REST catch-up | Automated       |
-| `SERVER-021`                               | No HTTP shortcut; the normal HTTP/TLS suites remain separate | Automated server evidence |
-| `SERVER-023`                               | Dictation start, binary PCM, stop, and deterministic final transcript | Automated |
-| `SERVER-029`                               | Existing file route ownership is exercised by full and ranged reads | Automated transport evidence |
+| Story        | Server evidence                                                       | Disposition                  |
+| ------------ | --------------------------------------------------------------------- | ---------------------------- |
+| `SERVER-001` | Creates a workspace session and opens its focused stream              | Automated                    |
+| `SERVER-014` | Focused stream, app-event stream, reconnect, and REST catch-up        | Automated                    |
+| `SERVER-021` | No HTTP shortcut; the normal HTTP/TLS suites remain separate          | Automated server evidence    |
+| `SERVER-023` | Dictation start, binary PCM, stop, and deterministic final transcript | Automated                    |
+| `SERVER-029` | Existing file route ownership is exercised by full and ranged reads   | Automated transport evidence |
 
 ## Running
 
@@ -79,22 +80,22 @@ On Mac Studio, do not add writable repository, worktree, report, or output bind 
 
 ## Configuration
 
-| Env var               | Default         | Description                                                                  |
-| --------------------- | --------------- | ---------------------------------------------------------------------------- |
-| `E2E_PORT`            | `17760`         | Server port                                                                  |
-| `E2E_MODEL`           | pinned          | `mlx-serve/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit` after `/v1/models` verification |
-| `E2E_MLX_SERVE_URL`   | `http://127.0.0.1:11234` | Host mlx-serve endpoint (omit `/v1`)                       |
-| `E2E_MLX_SERVE_DOCKER_URL` | `http://host.docker.internal:11234` | Container-to-host endpoint (omit `/v1`)         |
-| `E2E_NATIVE`          | `0`             | `1` to skip Docker, run server natively                                      |
-| `E2E_KEEP_NATIVE_DATA_DIR` | unset     | `1` to preserve the isolated native data dir and `server.log` after a test run |
-| `E2E_SERVER_DIR`      | unset           | Override native server package dir for tarball/install validation            |
-| `E2E_TLS_MODE`        | `self-signed`   | Native mode TLS setting. Apple `/pair` and `/auth/*` require HTTPS; do not use `disabled` for iOS pairing |
-| `OPPI_E2E_UI_HARNESS` | `0`             | Enables `/e2e/ui/...` injection routes for Apple extension UI snapshot tests |
+| Env var                    | Default                             | Description                                                                                               |
+| -------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `E2E_PORT`                 | `17760`                             | Server port                                                                                               |
+| `E2E_MODEL`                | pinned                              | `mlx-serve/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit` after `/v1/models` verification              |
+| `E2E_MLX_SERVE_URL`        | `http://127.0.0.1:11234`            | Host mlx-serve endpoint (omit `/v1`)                                                                      |
+| `E2E_MLX_SERVE_DOCKER_URL` | `http://host.docker.internal:11234` | Container-to-host endpoint (omit `/v1`)                                                                   |
+| `E2E_NATIVE`               | `0`                                 | `1` to skip Docker, run server natively                                                                   |
+| `E2E_KEEP_NATIVE_DATA_DIR` | unset                               | `1` to preserve the isolated native data dir and `server.log` after a test run                            |
+| `E2E_SERVER_DIR`           | unset                               | Override native server package dir for tarball/install validation                                         |
+| `E2E_TLS_MODE`             | `self-signed`                       | Native mode TLS setting. Apple `/pair` and `/auth/*` require HTTPS; do not use `disabled` for iOS pairing |
+| `OPPI_E2E_UI_HARNESS`      | `0`                                 | Enables `/e2e/ui/...` injection routes for Apple extension UI snapshot tests                              |
 
 Tailscale benchmark-only variables:
 
 | Env var                      | Default                | Description                                                 |
-| --------------------------- | ---------------------- | ----------------------------------------------------------- |
+| ---------------------------- | ---------------------- | ----------------------------------------------------------- |
 | `TAILSCALE_BENCH_SSH_TARGET` | required               | Batch-mode SSH target for the separate macOS peer           |
 | `TAILSCALE_BENCH_TARGET_IP`  | required               | Peer Tailscale IP used by Oppi and direct-path verification |
 | `TAILSCALE_BENCH_REGION`     | `US Pacific Northwest` | Coarse, non-identifying region written to the report        |

@@ -18,7 +18,6 @@ import {
   openSessionStream,
   closeStream,
   waitForEvent,
-  autoApprovePermissions,
   listWorkspaceSessions,
   pairFreshDevice,
 } from "./harness.js";
@@ -98,8 +97,6 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
 
     const stream1 = await openSessionStream(deviceToken, workspaceId, session1Id);
     const stream2 = await openSessionStream(deviceToken, workspaceId, session2Id);
-    const approver1 = autoApprovePermissions(stream1, session1Id);
-    const approver2 = autoApprovePermissions(stream2, session2Id);
 
     try {
       const startIndex1 = stream1.events.length;
@@ -146,8 +143,6 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
       expect(stream1.events.some((e) => e.sessionId === session2Id)).toBe(false);
       expect(stream2.events.some((e) => e.sessionId === session1Id)).toBe(false);
     } finally {
-      approver1.stop();
-      approver2.stop();
       await closeStream(stream1);
       await closeStream(stream2);
       await api("DELETE", `/workspaces/${workspaceId}`, deviceToken);
@@ -161,7 +156,6 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
 
     const { workspaceId, sessionId } = await createWorkspaceAndSession("e2e-model-switch");
     const stream = await openSessionStream(deviceToken, workspaceId, sessionId);
-    const approver = autoApprovePermissions(stream, sessionId);
 
     try {
       const { provider, modelId } = parseModelId(inject("e2eModel"));
@@ -202,7 +196,6 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
         { startIndex, timeoutMs: 300_000 },
       );
     } finally {
-      approver.stop();
       await closeStream(stream);
       await api("DELETE", `/workspaces/${workspaceId}`, deviceToken);
     }
@@ -215,7 +208,6 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
 
     const { workspaceId, sessionId } = await createWorkspaceAndSession("e2e-thinking-level");
     const stream = await openSessionStream(deviceToken, workspaceId, sessionId);
-    const approver = autoApprovePermissions(stream, sessionId);
 
     try {
       // Set thinking level to "low"
@@ -260,7 +252,6 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
         .filter((e) => e.direction === "in" && e.type === "error" && e.sessionId === sessionId);
       expect(fatalErrors).toHaveLength(0);
     } finally {
-      approver.stop();
       await closeStream(stream);
       await api("DELETE", `/workspaces/${workspaceId}`, deviceToken);
     }
@@ -298,7 +289,6 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
 
     const { workspaceId, sessionId } = await createWorkspaceAndSession("e2e-follow-up-queue");
     const stream = await openSessionStream(deviceToken, workspaceId, sessionId);
-    const approver = autoApprovePermissions(stream, sessionId);
 
     try {
       const startIndex = stream.events.length;
@@ -382,7 +372,6 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
         { startIndex: queueItemStartIdx, timeoutMs: 300_000 },
       );
     } finally {
-      approver.stop();
       await closeStream(stream);
       await api("DELETE", `/workspaces/${workspaceId}`, deviceToken);
     }

@@ -5,7 +5,7 @@
  *   1. Pre-paired device creates a workspace
  *   2. Creates a session with a local model
  *   3. Opens the split session WebSocket
- *   4. Sends a prompt, auto-approves permissions on the session stream
+ *   4. Sends a prompt on the session stream
  *   5. Verifies assistant response arrives (text_delta + agent_end)
  *   6. Sends a prompt requiring tool use (bash)
  *   7. Verifies tool_start → tool_output → tool_end lifecycle
@@ -21,7 +21,6 @@ import {
   openSessionStream,
   closeStream,
   sendPromptAndWait,
-  autoApprovePermissions,
   restartServerPreservingData,
   sessionStreamURL,
   isSecureTransport,
@@ -228,7 +227,6 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     if (!lmsReady()) return;
 
     const stream = await openSessionStream(deviceToken, workspaceId, sessionId);
-    const approver = autoApprovePermissions(stream, sessionId);
 
     try {
       const startIndex = stream.events.length;
@@ -263,7 +261,6 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
       // Model should have responded (exact text may vary with local model)
       expect(assistantText.trim().length).toBeGreaterThan(0);
     } finally {
-      approver.stop();
       await closeStream(stream);
     }
   });
@@ -293,7 +290,6 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     if (!lmsReady()) return;
 
     const stream = await openSessionStream(deviceToken, workspaceId, sessionId);
-    const approver = autoApprovePermissions(stream, sessionId);
 
     try {
       const startIndex = stream.events.length;
@@ -310,28 +306,34 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
         .slice(startIndex)
         .filter((e) => e.direction === "in" && e.sessionId === sessionId);
 
-      // Verify agent lifecycle
-      const agentStart = sessionEvents.find((e) => e.type === "agent_start");
-      const agentEnd = sessionEvents.find((e) => e.type === "agent_end");
-      expect(agentStart).toBeTruthy();
-      expect(agentEnd).toBeTruthy();
+      const agentStartIdx = sessionEvents.findIndex((e) => e.type === "agent_start");
+      const agentEndIdx = sessionEvents.findIndex((e) => e.type === "agent_end");
+      expect(agentStartIdx).toBeGreaterThanOrEqual(0);
+      expect(agentEndIdx).toBeGreaterThan(agentStartIdx);
 
-      // Verify tool lifecycle (model may or may not use bash - depends on LLM)
-      const toolStarts = sessionEvents.filter((e) => e.type === "tool_start");
-      const toolEnds = sessionEvents.filter((e) => e.type === "tool_end");
+      const toolStartIdx = sessionEvents.findIndex(
+        (e) => e.type === "tool_start" && e.tool === "bash" && !!e.toolCallId,
+      );
+      expect(toolStartIdx).toBeGreaterThan(agentStartIdx);
+      const toolCallId = sessionEvents[toolStartIdx]!.toolCallId;
+      const toolEndIdx = sessionEvents.findIndex(
+        (e, index) =>
+          index > toolStartIdx &&
+          e.type === "tool_end" &&
+          e.tool === "bash" &&
+          e.toolCallId === toolCallId,
+      );
+      expect(toolEndIdx).toBeGreaterThan(toolStartIdx);
+      expect(agentEndIdx).toBeGreaterThan(toolEndIdx);
 
-      // Some tool calls emit multiple tool_start previews before a single tool_end.
-      if (toolStarts.length > 0) {
-        expect(approver.count()).toBe(0);
-        expect(toolEnds.length).toBeGreaterThan(0);
-
-        const firstToolStartIdx = sessionEvents.findIndex((e) => e.type === "tool_start");
-        const firstToolEndIdx = sessionEvents.findIndex((e) => e.type === "tool_end");
-        expect(firstToolStartIdx).toBeGreaterThanOrEqual(0);
-        expect(firstToolEndIdx).toBeGreaterThan(firstToolStartIdx);
-      }
+      // Pi can stream the stdout in chunks; require the marker in actual output
+      // from this bash call, between its start and end (not in assistant text).
+      const outputs = sessionEvents
+        .slice(toolStartIdx + 1, toolEndIdx)
+        .filter((e) => e.type === "tool_output" && e.toolCallId === toolCallId);
+      expect(outputs.length).toBeGreaterThan(0);
+      expect(outputs.map((e) => e.output ?? "").join("")).toContain("E2E_TOOL_OK");
     } finally {
-      approver.stop();
       await closeStream(stream);
     }
   });

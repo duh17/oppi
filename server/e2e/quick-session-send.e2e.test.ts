@@ -18,7 +18,6 @@ import {
   openSessionStream,
   closeStream,
   sendPromptAndWait,
-  autoApprovePermissions,
   pairFreshDevice,
 } from "./harness.js";
 
@@ -77,7 +76,6 @@ describe("E2E: Quick Session Send", { timeout: 300_000 }, () => {
     if (!lmsReady()) return;
 
     const stream = await openSessionStream(deviceToken, workspaceId, sessionId);
-    const approver = autoApprovePermissions(stream, sessionId);
 
     try {
       const startIndex = stream.events.length;
@@ -111,7 +109,6 @@ describe("E2E: Quick Session Send", { timeout: 300_000 }, () => {
       expect(assistantText.trim().length).toBeGreaterThan(0);
       expect(assistantText).toContain("E2E_QUICK_SESSION_SEND_OK");
     } finally {
-      approver.stop();
       await closeStream(stream);
     }
   });
