@@ -660,10 +660,10 @@ final class HTMLDOMPickChromeView: UIView {
     }
 
     func showPick() {
-        isHidden = !isAvailable
+        isHidden = !isAvailable || usesExternalControls
         enterButton.isHidden = true
         exitButton.isHidden = usesExternalControls
-        bannerLabel.isHidden = false
+        bannerLabel.isHidden = usesExternalControls
         selectionLabel.isHidden = true
         actionRow?.isHidden = true
     }
@@ -695,8 +695,8 @@ final class HTMLDOMPickChromeView: UIView {
         let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         statusLabel.text = trimmed.isEmpty ? nil : trimmed
         statusLabel.isHidden = trimmed.isEmpty
-        if usesExternalControls, selectionLabel.text != nil {
-            isHidden = trimmed.isEmpty
+        if usesExternalControls {
+            isHidden = true
         }
     }
 

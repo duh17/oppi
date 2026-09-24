@@ -2562,8 +2562,13 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(comment.isHidden)
 
         html.elementPicker.enterPick()
+        let pickChrome = try #require(html.elementPicker.enterButtonForTesting.superview?.superview as? HTMLDOMPickChromeView)
+        #expect(pickChrome.isHidden, "The full-screen Annotate menu owns pick controls")
         #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Browse", "Visual Markup"])
         #expect(comment.isHidden)
+        pickChrome.showSelection(label: "button Save", parentEnabled: false)
+        pickChrome.setStatus("Limited selection")
+        #expect(pickChrome.isHidden, "A status must not restore the full-screen pick card")
         html.elementPicker.exitPick()
         #expect(annotate.menu?.children.compactMap { $0 as? UIAction }.map(\.title) == ["Pick Element", "Visual Markup"])
     }
