@@ -51,6 +51,19 @@ oppi config get asr.sttEndpoint
 oppi config get asr.provider
 ```
 
+## Dictation Dictionary
+
+The paired server stores short vocabulary hints in **All Workspaces** and **This Workspace** lists. Edit the same lists in iPhone Server Settings, a workspace's settings, or the CLI:
+
+```bash
+oppi dictionary list
+oppi dictionary add --phrase 'Project name'
+oppi dictionary add --workspace <id> --phrase 'Workspace term'
+oppi dictionary list --workspace <id>
+```
+
+Agents can inspect past sessions and add selected phrases with `oppi dictionary`; conversations are not harvested automatically. The lists are hints, not guaranteed corrections. On-device dictation can use them without sending phrases to server ASR. For server dictation, the iPhone has a separate, default-off consent to send selected phrases to the paired server and its configured speech provider. Use `oppi dictionary --help` for batch input, removal, and workspace cleanup.
+
 ## Voice / TTS
 
 TTS is not a single built-in endpoint. Extensions provide synthesis. Common server-side pieces:

@@ -38,9 +38,16 @@ Example:
 
 ## [Unreleased]
 
+### Added
+
+- **Client/Server:** A Dictation Dictionary can be edited on iPhone or through `oppi dictionary`. All-workspace and per-workspace lists share short vocabulary hints; agents can curate them from past sessions through the CLI.
+- **Client:** Pick HTML elements and Mermaid objects for review comments, with readable target descriptions and contextual Comment controls in full-screen viewers.
+
 ### Changed
 
+- **Client:** New orbs animate for dictation and the agent's thinking/working indicator, adapted from Thinking Orbs designs by Jakub Antalik and a Swift port by Haplo LLC. The dictation orb responds to voice. On-device dictation prefers Apple's DictationTranscriber, which accepts Dictionary phrase hints and gave better results than SpeechTranscriber in our normal-path use; SpeechTranscriber remains the fallback.
 - **Server:** Bundled Pi runtime moves to `0.87.1`.
+- **Mirror:** Mirrored Pi `turn_end` frames omit duplicate message bodies and tool results.
 
 ## [0.49.1] - 2026-09-18
 

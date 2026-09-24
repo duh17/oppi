@@ -78,42 +78,35 @@ struct WhatsNewView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
-    /// Builds 49–51 · Changes since Build 48
+    /// Build 52 · Changes since Build 51
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            id: "richer-documents",
-            icon: "doc.text",
-            iconColor: .themeBlue,
-            title: String(localized: "Richer documents"),
-            description: String(localized: "Tree-sitter syntax highlighting for JavaScript, TypeScript, Python, Go, Rust, Java, C, C++, Bash, HTML, CSS, Ruby, YAML, and TOML. CSV and TSV open as tables, HEIC and HEIF as images. USDZ opens in RealityView. GeoJSON and TopoJSON open as maps.")
-        ),
-        WhatsNewFeature(
-            id: "improved-dictation",
-            icon: "waveform.badge.microphone",
-            iconColor: .themeGreen,
-            title: String(localized: "Improved dictation"),
-            description: String(localized: "On-device dictation uses the iOS 27 dictation engine by default, supports AirPods, and no longer interrupts other audio.")
-        ),
-        WhatsNewFeature(
-            id: "full-screen-viewers",
-            icon: "rectangle.portrait.and.arrow.right",
-            iconColor: .themeOrange,
-            title: String(localized: "Full-screen viewers"),
-            description: String(localized: "Maps and diagrams hide Viewing Options until Source. Tool calls expand from the right. Large bash output, code, diffs, and thinking traces open without hanging. Viewing Options stay clear of previous/next.")
-        ),
-        WhatsNewFeature(
-            id: "session-chrome",
-            icon: "rectangle.grid.1x2",
+            id: "voice-orbs",
+            icon: "waveform",
             iconColor: .themePurple,
-            title: String(localized: "Simpler session chrome"),
-            description: String(localized: "Session lists put Message and dictation on the left, Files on the right. Pi sessions always use the official Pi mark.")
+            title: String(localized: "New animated orbs"),
+            description: String(localized: "The dictation orb responds to your voice. A separate orb animates while the agent is thinking or working.")
         ),
         WhatsNewFeature(
-            id: "stability",
-            icon: "wrench.and.screwdriver",
-            iconColor: .themeYellow,
-            title: String(localized: "Stability"),
-            description: String(localized: "File reader chrome, host wiki links, session search, file browser, review comments, and other reliability fixes.")
+            id: "dictation-dictionary",
+            icon: "text.book.closed",
+            iconColor: .themeGreen,
+            title: String(localized: "Dictation Dictionary"),
+            description: String(localized: "Add jargon on iPhone or through the CLI, for all workspaces or just one. Agents can curate the same lists from past sessions.")
+        ),
+        WhatsNewFeature(
+            id: "annotate-documents",
+            icon: "text.bubble",
+            iconColor: .themeBlue,
+            title: String(localized: "Annotate HTML and diagrams"),
+            description: String(localized: "Pick an HTML element or Mermaid object for a review comment. Visual Markup has its own control.")
+        ),
+        WhatsNewFeature(
+            id: "pi-runtime",
+            icon: "terminal",
+            iconColor: .themeOrange,
+            title: String(localized: "Pi 0.87.1"),
+            description: String(localized: "The server now bundles Pi 0.87.1 for managed sessions.")
         ),
     ]
 

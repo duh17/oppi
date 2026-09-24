@@ -233,9 +233,7 @@ export async function getFileIndex(workspaceRoot: string): Promise<FileIndexResp
 }
 
 function isMountlessSandboxMain(workspace: Workspace, worktreeId: string): boolean {
-  return (
-    worktreeId === "main" && workspace.runtime === "sandbox" && !workspace.hostMount?.trim()
-  );
+  return worktreeId === "main" && workspace.runtime === "sandbox" && !workspace.hostMount?.trim();
 }
 
 export function createWorkspaceFileRoutes(

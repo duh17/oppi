@@ -73,7 +73,7 @@ Session creation body:
 { "model": "<model-id>", "stream_config": { "contextual_strings": ["Foo Bar", "Yuwp"] } }
 ```
 
-`stream_config` is optional. Omit it when the take has no vocabulary hints. Apple clients currently send no `contextual_strings`; the field stays on `dictation_start` for a future vocabulary source. Do not send conversation text through it. Reintroduce an explicit Server opt-in if phrases leave the device. `contextual_strings` is a bounded phrase list (max 100 phrases, 256 UTF-8 bytes each, 8192 UTF-8 bytes total). It is vocabulary data, not a client-supplied system prompt. The backend must still accept a create body with no `stream_config`.
+`stream_config` is optional. Omit it when the take has no vocabulary hints. Apple clients select phrases from the paired server's global and workspace Dictation Dictionary lists. On-device dictation can use those hints locally; server dictation sends selected phrases on `dictation_start` only after a separate, default-off iPhone consent for the paired server and configured provider. Do not send conversation text through it. `contextual_strings` is a bounded phrase list (max 100 phrases, 256 UTF-8 bytes each, 8192 UTF-8 bytes total). It is vocabulary data, not a client-supplied system prompt. The backend must still accept a create body with no `stream_config`.
 
 Create response:
 
