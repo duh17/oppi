@@ -30,6 +30,31 @@ struct WorkspaceCatalogAvailabilityTests {
         ) == .unavailable)
     }
 
+    @Test func offlineEmptyCatalogCannotMasqueradeAsAuthoritativeEmpty() {
+        #expect(WorkspaceCatalogAvailability(
+            hasWorkspaces: false,
+            isLoaded: true,
+            isSyncing: false,
+            lastSyncFailed: false,
+            hasAPIClient: false
+        ) == .unavailable)
+        #expect(WorkspaceCatalogAvailability(
+            hasWorkspaces: false,
+            isLoaded: false,
+            isSyncing: false,
+            lastSyncFailed: false,
+            hasAPIClient: false,
+            isPreparing: true
+        ) == .loading)
+        #expect(WorkspaceCatalogAvailability(
+            hasWorkspaces: true,
+            isLoaded: true,
+            isSyncing: false,
+            lastSyncFailed: false,
+            hasAPIClient: false
+        ) == .available)
+    }
+
     @Test func cachedCatalogRemainsAvailableAfterRefreshFailure() {
         #expect(WorkspaceCatalogAvailability(
             hasWorkspaces: true,
@@ -37,6 +62,15 @@ struct WorkspaceCatalogAvailabilityTests {
             isSyncing: false,
             lastSyncFailed: true
         ) == .available)
+    }
+}
+
+@Suite("Session inbox transport availability")
+struct SessionInboxTransportAvailabilityTests {
+    @Test func neverConnectedServerIsUnavailableUntilPreparedOrConnected() {
+        #expect(SessionInboxTransportAvailability.isUnavailable(hasAPIClient: false, isPreparing: false))
+        #expect(!SessionInboxTransportAvailability.isUnavailable(hasAPIClient: false, isPreparing: true))
+        #expect(!SessionInboxTransportAvailability.isUnavailable(hasAPIClient: true, isPreparing: false))
     }
 }
 

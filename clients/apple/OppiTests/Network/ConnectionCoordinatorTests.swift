@@ -69,6 +69,206 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.activeServerId == "sha256:restore-a")
     }
 
+    @Test func offlinePairedShellRemainsSelectedAfterTransportFailure() async {
+        let (coordinator, _) = makeCoordinator()
+        let healthy = makeServer(id: "sha256:healthy", name: "Healthy")
+        let offline = makeServer(id: "sha256:offline", name: "Offline")
+        coordinator.serverStore.addOrUpdate(healthy)
+        coordinator.serverStore.addOrUpdate(offline)
+        coordinator.switchToServer(healthy)
+        coordinator._serverInfoBootstrapForTesting = { _, _ in throw URLError(.timedOut) }
+
+        #expect(coordinator.restoreActiveServer(offline.id))
+        #expect(coordinator.activeServerId == offline.id)
+        await coordinator.prepareSelectedServerShell(for: offline)
+
+        #expect(coordinator.activeServerId == offline.id)
+        #expect(coordinator.activeConnection.workspaceStore.activeServerId == offline.id)
+        #expect(coordinator.activeConnection.apiClient == nil)
+        #expect(coordinator.serverStore.server(for: offline.id) != nil)
+    }
+
+    @Test func supersededReadinessCannotReplacePickerSelection() async {
+        let (coordinator, _) = makeCoordinator()
+        let stale = makeServer(id: "sha256:picker-stale", name: "Stale")
+        let selected = makeServer(id: "sha256:picker-selected", name: "Selected")
+        coordinator.serverStore.addOrUpdate(stale)
+        coordinator.serverStore.addOrUpdate(selected)
+        let gate = CoordinatorPreparationGate()
+        coordinator._initialLANEndpointForTesting = { id in
+            if id == stale.id { await gate.suspendPreparation() }
+            return nil
+        }
+
+        let pending = Task { await coordinator.switchToServerReady(stale) }
+        await gate.waitUntilStarted()
+        #expect(coordinator.restoreActiveServer(selected.id))
+        await gate.release()
+
+        #expect(await pending.value == false)
+        #expect(coordinator.activeServerId == selected.id)
+    }
+
+    @Test func currentFastPathCannotCancelPendingNavigation() async {
+        let (coordinator, _) = makeCoordinator()
+        let current = makeServer(id: "sha256:current-fast", name: "Current")
+        let target = makeServer(id: "sha256:pending-target", name: "Target")
+        coordinator.serverStore.addOrUpdate(current)
+        coordinator.serverStore.addOrUpdate(target)
+        coordinator.switchToServer(current)
+        let gate = CoordinatorPreparationGate()
+        coordinator._initialLANEndpointForTesting = { id in
+            if id == target.id { await gate.suspendPreparation() }
+            return nil
+        }
+        let pending = Task { await coordinator.switchToServerReady(target) }
+        await gate.waitUntilStarted()
+        // Launch can finish preparing the previously active host while navigation waits.
+        #expect(await coordinator.switchToServerReady(current))
+        await gate.release()
+        #expect(await pending.value)
+        #expect(coordinator.activeServerId == target.id)
+    }
+
+    @Test func rejectedFastPathDoesNotCancelPendingNavigation() async {
+        let (coordinator, _) = makeCoordinator()
+        let current = makeServer(id: "sha256:current-rejected", name: "Current")
+        let target = makeServer(id: "sha256:pending-rejected", name: "Target")
+        coordinator.serverStore.addOrUpdate(current)
+        coordinator.serverStore.addOrUpdate(target)
+        coordinator.switchToServer(current)
+        let gate = CoordinatorPreparationGate()
+        coordinator._initialLANEndpointForTesting = { id in
+            if id == target.id { await gate.suspendPreparation() }
+            return nil
+        }
+        let pending = Task { await coordinator.switchToServerReady(target) }
+        await gate.waitUntilStarted()
+        #expect(await coordinator.switchToServerReady(current, shouldActivate: { false }) == false)
+        await gate.release()
+        #expect(await pending.value)
+        #expect(coordinator.activeServerId == target.id)
+    }
+
+    @Test func laterPreparedSwitchWinsEvenWhenEarlierPreparationFinishesFirst() async {
+        let (coordinator, _) = makeCoordinator()
+        let earlier = makeServer(id: "sha256:earlier-ready", name: "Earlier")
+        let later = makeServer(id: "sha256:later-ready", name: "Later")
+        coordinator.serverStore.addOrUpdate(earlier)
+        coordinator.serverStore.addOrUpdate(later)
+        let earlierGate = CoordinatorPreparationGate()
+        let laterGate = CoordinatorPreparationGate()
+        coordinator._initialLANEndpointForTesting = { id in
+            if id == earlier.id { await earlierGate.suspendPreparation() }
+            if id == later.id { await laterGate.suspendPreparation() }
+            return nil
+        }
+
+        let first = Task { await coordinator.switchToServerReady(earlier) }
+        await earlierGate.waitUntilStarted()
+        let second = Task { await coordinator.switchToServerReady(later) }
+        await laterGate.waitUntilStarted()
+        await earlierGate.release()
+        #expect(await first.value == false)
+        #expect(coordinator.activeServerId != earlier.id)
+        await laterGate.release()
+        #expect(await second.value)
+        #expect(coordinator.activeServerId == later.id)
+        #expect(coordinator.activeConnection.apiClient != nil)
+    }
+
+    @Test func addingServerCannotOverrideNewerPickerSelection() async {
+        let (coordinator, _) = makeCoordinator()
+        let paired = makeServer(id: "sha256:pair-pending", name: "Paired")
+        let selected = makeServer(id: "sha256:picker-newer", name: "Selected")
+        coordinator.serverStore.addOrUpdate(selected)
+        let gate = CoordinatorPreparationGate()
+        coordinator._initialLANEndpointForTesting = { id in
+            if id == paired.id { await gate.suspendPreparation() }
+            return nil
+        }
+
+        let pending = Task { await coordinator.addServerReady(paired, switchTo: true) }
+        await gate.waitUntilStarted()
+        #expect(coordinator.restoreActiveServer(selected.id))
+        await gate.release()
+
+        #expect(await pending.value == .pairedWithoutSelection, "Pairing succeeded without selecting the host")
+        #expect(coordinator.activeServerId == selected.id)
+        #expect(coordinator.serverStore.server(for: paired.id) != nil)
+    }
+
+    @Test func removedPendingPairDoesNotResurrectAfterFailure() async {
+        let (coordinator, _) = makeCoordinator()
+        let paired = makeServer(id: "sha256:pair-removed", name: "Removed")
+        let gate = CoordinatorPreparationGate()
+        coordinator._initialLANEndpointForTesting = { id in
+            if id == paired.id { await gate.suspendPreparation() }
+            return nil
+        }
+
+        let pending = Task { await coordinator.addServerReady(paired, switchTo: true) }
+        await gate.waitUntilStarted()
+        await coordinator.removeServer(id: paired.id)
+        await gate.release()
+
+        #expect(await pending.value == .failed)
+        #expect(coordinator.serverStore.server(for: paired.id) == nil)
+        #expect(coordinator.connections[paired.id] == nil)
+    }
+
+    @Test func removedAndRepairedHostRejectsOldPreparation() async {
+        let (coordinator, _) = makeCoordinator()
+        let old = makeServer(id: "sha256:reused-id", name: "Old", host: "old.test")
+        let newer = makeServer(id: old.id, name: "New", host: "new.test")
+        let gate = CoordinatorPreparationGate()
+        var first = true
+        coordinator._initialLANEndpointForTesting = { _ in
+            if first {
+                first = false
+                await gate.suspendPreparation()
+            }
+            return nil
+        }
+
+        let pending = Task { await coordinator.addServerReady(old, switchTo: true) }
+        await gate.waitUntilStarted()
+        await coordinator.removeServer(id: old.id)
+        #expect(await coordinator.addServerReady(newer, switchTo: true) == .selected)
+        let selected = coordinator.connections[old.id]
+        await gate.release()
+
+        #expect(await pending.value == .failed)
+        #expect(coordinator.serverStore.server(for: old.id)?.credentials.host == "new.test")
+        #expect(coordinator.connections[old.id] === selected)
+        #expect(coordinator.activeConnection.credentials?.host == "new.test")
+    }
+
+    @Test func removedHostPreparationCannotRestoreConnection() async {
+        let (coordinator, _) = makeCoordinator()
+        let removed = makeServer(id: "sha256:picker-removed", name: "Removed")
+        let remaining = makeServer(id: "sha256:picker-remaining", name: "Remaining")
+        coordinator.serverStore.addOrUpdate(removed)
+        coordinator.serverStore.addOrUpdate(remaining)
+        coordinator.restoreActiveServer(removed.id)
+        let gate = CoordinatorPreparationGate()
+        coordinator._initialLANEndpointForTesting = { id in
+            if id == removed.id { await gate.suspendPreparation() }
+            return nil
+        }
+
+        let pending = Task { await coordinator.prepareSelectedServerShell(for: removed) }
+        await gate.waitUntilStarted()
+        await coordinator.removeServer(id: removed.id)
+        #expect(coordinator.serverStore.server(for: removed.id) == nil)
+        await gate.release()
+        _ = await pending.value
+
+        #expect(coordinator.serverStore.server(for: removed.id) == nil)
+        #expect(coordinator.connections[removed.id] == nil)
+        #expect(coordinator.activeServerId != removed.id)
+    }
+
     @Test func switchToSameServerIsNoOp() {
         let (coordinator, _) = makeCoordinator()
         let server = makeServer(id: "sha256:same-test", name: "Studio")
@@ -125,6 +325,177 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.activeServerId == newerServer.id)
         #expect(navigation.workspacePath.count == 1)
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "newer-session")
+    }
+
+    @Test func joinedSuccessfulPreparationReturnsReadyConnectionToBothCallers() async {
+        let (coordinator, _) = makeCoordinator()
+        let server = makeServer(id: "sha256:joined-ready", name: "Joined")
+        coordinator.serverStore.addOrUpdate(server)
+        let preparationGate = CoordinatorPreparationGate()
+        let joinedGate = CoordinatorPreparationGate()
+        coordinator._initialLANEndpointForTesting = { _ in
+            await preparationGate.suspendPreparation()
+            return nil
+        }
+        coordinator._onConnectionPreparationJoinedForTesting = { id in
+            guard id == server.id else { return }
+            await joinedGate.suspendPreparation()
+        }
+
+        let first = Task { await coordinator.ensureConnectionReady(for: server) }
+        await preparationGate.waitUntilStarted()
+        let second = Task { await coordinator.apiClientReady(for: server.id) }
+        await joinedGate.waitUntilStarted()
+        await preparationGate.release()
+        let prepared = await first.value // Owner removes the completed single-flight slot first.
+        await joinedGate.release()
+        let joinedClient = await second.value
+        #expect(prepared === coordinator.connection(for: server.id))
+        #expect(prepared.hasViableConfiguredTransport)
+        #expect(prepared.apiClient != nil)
+        #expect(joinedClient === prepared.apiClient, "A joined caller must not receive the disconnected sentinel")
+        #expect(await coordinator.switchToServerReady(server))
+        #expect(coordinator.activeConnection === prepared)
+    }
+
+    @Test func joinedPreparationCannotAdoptRepairedServerAfterRemoval() async {
+        let (coordinator, store) = makeCoordinator()
+        let old = makeServer(id: "sha256:joined-replaced", name: "Old", host: "old.test")
+        let replacement = makeServer(id: old.id, name: "New", host: "new.test")
+        store.addOrUpdate(old)
+        let gate = CoordinatorPreparationGate()
+        let joined = CoordinatorPreparationGate()
+        coordinator._initialLANEndpointForTesting = { _ in await gate.suspendPreparation(); return nil }
+        coordinator._onConnectionPreparationJoinedForTesting = { _ in await joined.suspendPreparation() }
+
+        let first = Task { await coordinator.ensureConnectionReady(for: old) }
+        await gate.waitUntilStarted()
+        let second = Task { await coordinator.apiClientReady(for: old.id) }
+        await joined.waitUntilStarted()
+        await gate.release()
+        let original = await first.value
+        #expect(original.apiClient != nil)
+        await coordinator.removeServer(id: old.id)
+        store.addOrUpdate(replacement)
+        let newConnection = await coordinator.ensureConnectionReady(for: replacement)
+        #expect(newConnection.apiClient != nil)
+        #expect(newConnection !== original)
+        await joined.release()
+        #expect(await second.value == nil, "The old waiter must not adopt a new pairing at the same ID")
+    }
+
+    @Test func repairingDuringPreparationRetriesWithNewCredentials() async {
+        let (coordinator, store) = makeCoordinator()
+        let old = makeServer(id: "sha256:repair-in-flight", name: "Old", host: "old.test")
+        let replacement = makeServer(id: old.id, name: "New", host: "new.test")
+        store.addOrUpdate(old)
+        let gate = CoordinatorPreparationGate()
+        coordinator._initialLANEndpointForTesting = { _ in
+            if store.server(for: old.id)?.credentials.host == "old.test" {
+                await gate.suspendPreparation()
+            }
+            return nil
+        }
+        let joined = CoordinatorPreparationGate()
+        coordinator._onConnectionPreparationJoinedForTesting = { _ in await joined.suspendPreparation() }
+        let original = Task { await coordinator.ensureConnectionReady(for: old) }
+        await gate.waitUntilStarted()
+        let repaired = Task { await coordinator.addServerReady(replacement, switchTo: true) }
+        await joined.waitUntilStarted()
+        await joined.release()
+        await gate.release()
+        _ = await original.value
+        #expect(await repaired.value == .selected)
+        #expect(store.server(for: old.id)?.credentials.host == "new.test")
+        #expect(coordinator.activeConnection.credentials?.host == "new.test")
+    }
+
+    @Test func joinedRefreshFollowsCoalescedBoundaryRetry() async {
+        let (coordinator, store) = makeCoordinator()
+        let server = makeServer(id: "sha256:boundary-joined", name: "Boundary")
+        store.addOrUpdate(server)
+        coordinator.restoreActiveServer(server.id)
+        let firstGate = CoordinatorPreparationGate()
+        let retryGate = CoordinatorPreparationGate()
+        let joinedGate = CoordinatorPreparationGate()
+        var attempts = 0
+        coordinator._initialLANEndpointForTesting = { _ in
+            attempts += 1
+            if attempts == 1 { await firstGate.suspendPreparation() }
+            if attempts == 2 { await retryGate.suspendPreparation() }
+            return nil
+        }
+        var bootstrapCalls = 0
+        let info = successfulServerInfo()
+        coordinator._serverInfoBootstrapForTesting = { _, _ in
+            bootstrapCalls += 1
+            if bootstrapCalls == 1 { throw URLError(.timedOut) }
+            return info
+        }
+        coordinator._onConnectionPreparationJoinedForTesting = { _ in await joinedGate.suspendPreparation() }
+
+        let original = Task { await coordinator.prepareSelectedServerShell(for: server) }
+        await firstGate.waitUntilStarted()
+        let joined = Task { await coordinator.apiClientReady(for: server.id) }
+        await joinedGate.waitUntilStarted()
+        await coordinator.recoverUnconfiguredServerAfterBoundary(server.id)
+        await joinedGate.release()
+        await firstGate.release()
+        await retryGate.waitUntilStarted()
+        await retryGate.release()
+        _ = await original.value
+        #expect(await joined.value != nil, "Joined refresh must follow the boundary retry")
+        #expect(coordinator.connection(for: server.id)?.apiClient != nil)
+    }
+
+    @Test func selectedOfflineHostHydratesItsOwnCachedCatalog() async {
+        let (coordinator, store) = makeCoordinator()
+        let first = makeServer(id: "sha256:cache-first", name: "First")
+        let second = makeServer(id: "sha256:cache-second", name: "Second")
+        store.addOrUpdate(first)
+        store.addOrUpdate(second)
+        let root = FileManager.default.temporaryDirectory.appending(path: "selected-cache-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = TimelineCache(rootURL: root)
+        await cache.saveWorkspaces([makeTestWorkspace(id: "cached-second", name: "Cached")], serverId: second.id)
+        coordinator.restoreActiveServer(first.id)
+        coordinator.restoreActiveServer(second.id)
+        let shell = coordinator.activeConnection
+        shell.workspaceStore._cacheForTesting = cache
+        coordinator._serverInfoBootstrapForTesting = { _, _ in throw URLError(.timedOut) }
+
+        await coordinator.prepareSelectedServerShell(for: second)
+
+        #expect(coordinator.activeServerId == second.id)
+        #expect(shell.workspaceStore.workspaces.map(\.name) == ["Cached"])
+        #expect(shell.apiClient == nil)
+    }
+
+    @Test func joinedPreparationRejectsRepairedTransportIdentity() async {
+        let (coordinator, store) = makeCoordinator()
+        let original = makeServer(id: "sha256:joined-repair", name: "Original", host: "old.test")
+        let replacement = makeServer(id: original.id, name: "Replacement", host: "new.test")
+        store.addOrUpdate(original)
+        let gate = CoordinatorPreparationGate()
+        let joined = CoordinatorPreparationGate()
+        coordinator._initialLANEndpointForTesting = { _ in await gate.suspendPreparation(); return nil }
+        coordinator._onConnectionPreparationJoinedForTesting = { _ in await joined.suspendPreparation() }
+
+        let first = Task { await coordinator.ensureConnectionReady(for: original) }
+        await gate.waitUntilStarted()
+        let second = Task { await coordinator.apiClientReady(for: original.id) }
+        await joined.waitUntilStarted()
+        store.addOrUpdate(replacement)
+        await gate.release()
+        let stale = await first.value
+        await joined.release()
+
+        #expect(stale.apiClient == nil, "An old-route preparation must not be returned after re-pair")
+        let joinedClient = await second.value
+        let current = await coordinator.ensureConnectionReady(for: replacement)
+        #expect(joinedClient === current.apiClient, "A waiter may retry the canonical new route")
+        #expect(current.apiClient != nil)
+        #expect(current.credentials?.host == "new.test")
     }
 
     @Test func missingBonjourCandidateUsesPairedTransport() async {
@@ -322,7 +693,7 @@ struct ConnectionCoordinatorTests {
         let freshPair = try #require(PairedServer(from: leftover.credentials.withAuthToken("dt_fresh_pair")))
         let added = await coordinator.addServerReady(freshPair, switchTo: false)
 
-        #expect(added)
+        #expect(added == .pairedWithoutSelection)
         let current = try #require(store.server(for: leftover.id))
         #expect(current.deviceCredential == nil)
         #expect(current.token == "dt_fresh_pair")
@@ -350,7 +721,7 @@ struct ConnectionCoordinatorTests {
         emptyWriter.deviceCredential = nil
         let added = await coordinator.addServerReady(emptyWriter, switchTo: false)
 
-        #expect(added)
+        #expect(added == .pairedWithoutSelection)
         let current = try #require(store.server(for: leftover.id))
         #expect(current.deviceCredential?.accessToken == "at_replacement")
         #expect(current.token.isEmpty)
@@ -378,7 +749,7 @@ struct ConnectionCoordinatorTests {
         let freshPair = try #require(PairedServer(from: leftover.credentials.withAuthToken("dt_fresh_pair")))
         let added = await coordinator.addServerReady(freshPair, switchTo: false)
 
-        #expect(!added)
+        #expect(added == .failed)
         let current = try #require(store.server(for: leftover.id))
         #expect(current.deviceCredential?.accessToken == "at_replacement")
         #expect(current.token.isEmpty)
@@ -465,6 +836,23 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.serverStore.server(for: "sha256:remove-test") == nil)
         #expect(coordinator.connections["sha256:remove-test"] == nil)
         #expect(coordinator.activeServerId != "sha256:remove-test")
+    }
+
+    @Test func removingSelectedHostSelectsOfflineRemainingShell() async {
+        let (coordinator, _) = makeCoordinator()
+        let removed = makeServer(id: "sha256:remove-offline-a", name: "Removed")
+        let offline = makeServer(id: "sha256:remove-offline-b", name: "Offline")
+        coordinator.serverStore.addOrUpdate(removed)
+        coordinator.serverStore.addOrUpdate(offline)
+        coordinator.restoreActiveServer(removed.id)
+        coordinator._serverInfoBootstrapForTesting = { _, _ in throw URLError(.timedOut) }
+
+        await coordinator.removeServer(id: removed.id)
+
+        #expect(coordinator.activeServerId == offline.id)
+        #expect(coordinator.activeConnection.workspaceStore.activeServerId == offline.id)
+        #expect(coordinator.activeConnection.apiClient == nil)
+        #expect(coordinator.serverStore.server(for: offline.id) != nil)
     }
 
     @Test func removeActiveServerSwitchesToNext() async {

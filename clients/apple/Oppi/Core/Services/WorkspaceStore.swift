@@ -335,8 +335,12 @@ final class WorkspaceStore {
     /// Used during app launch to populate the workspace list before revealing
     /// the UI. Returns `true` if any cached data was applied.
     @discardableResult
-    func loadCachedCatalog(serverId: String) async -> Bool {
+    func loadCachedCatalog(
+        serverId: String,
+        isCurrent: @escaping @MainActor () -> Bool = { true }
+    ) async -> Bool {
         let cache = _cacheForTesting ?? TimelineCache.shared
+        guard serverLoaded[serverId] != true else { return false }
 
         if !serverId.isEmpty && !serverOrder.contains(serverId) {
             serverOrder.append(serverId)
@@ -344,6 +348,7 @@ final class WorkspaceStore {
         ensureFreshness(for: serverId)
 
         let cached = await loadCachedCatalog(serverId: serverId, cache: cache)
+        guard !Task.isCancelled, isCurrent(), serverLoaded[serverId] != true else { return false }
 
         if let cws = cached.workspaces {
             workspacesByServer[serverId] = cws

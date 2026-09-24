@@ -576,7 +576,7 @@ struct HostSwitcherMenu: View {
 
     let current: PairedServer
     let destination: HostSwitcherDestination
-    var onSwitch: ((PairedServer) async -> Void)?
+    var onSwitch: ((PairedServer) -> Void)?
 
     private var servers: [PairedServer] {
         serverStore.servers
@@ -586,7 +586,7 @@ struct HostSwitcherMenu: View {
         Menu {
             ForEach(servers) { server in
                 Button {
-                    Task { await switchHost(server) }
+                    switchHost(server)
                 } label: {
                     Label(
                         menuTitle(for: server),
@@ -640,12 +640,14 @@ struct HostSwitcherMenu: View {
         .accessibilityValue(badgeState(for: current).title)
     }
 
-    private func switchHost(_ server: PairedServer) async {
-        if let onSwitch {
-            await onSwitch(server)
-            return
+    private func switchHost(_ server: PairedServer) {
+        // Selection is local; a failed HTTPS bootstrap must not keep the old host selected.
+        guard coordinator.restoreActiveServer(server.id) else { return }
+        onSwitch?(server)
+        Task {
+            // Preparation updates this host's transport, never the current selection.
+            await coordinator.prepareSelectedServerShell(for: server)
         }
-        _ = await coordinator.switchToServerReady(server)
     }
 
     private func menuTitle(for server: PairedServer) -> String {

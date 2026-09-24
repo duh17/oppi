@@ -461,9 +461,12 @@ extension E2ETestCase {
     }
 }
 
-private enum E2ELabServerContext {
+enum E2ELabServerContext {
     static func baseURL() throws -> URL {
-        let inviteURLString = try inviteURLString()
+        try baseURL(inviteURLString: inviteURLString())
+    }
+
+    static func baseURL(inviteURLString: String) throws -> URL {
         guard let url = URL(string: inviteURLString),
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let inviteValue = components.queryItems?.first(where: { $0.name == "invite" })?.value,

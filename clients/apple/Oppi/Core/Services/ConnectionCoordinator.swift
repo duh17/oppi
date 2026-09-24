@@ -17,6 +17,12 @@ enum PreparedServerActivation {
     }
 }
 
+enum ServerPairingOutcome: Equatable {
+    case failed
+    case pairedWithoutSelection
+    case selected
+}
+
 private struct ConnectionPreparation {
     let id: UUID
     let credentials: ServerCredentials
@@ -54,6 +60,7 @@ final class ConnectionCoordinator {
     /// Currently focused server ID (fingerprint). The server whose data
     /// is displayed in the main UI.
     private(set) var activeServerId: String?
+    private var selectionRevision = 0
 
     /// Per-server connections. Each has its own WS, stores, reducer.
     private(set) var connections: [String: ServerConnection] = [:]
@@ -81,6 +88,7 @@ final class ConnectionCoordinator {
     var _onRefreshAllServersForTesting: (() -> Void)?
     var _onRefreshInactiveServerForTesting: ((String) -> Void)?
     var _onConnectionPreparedForTesting: ((String, ServerConnection) -> Void)?
+    var _onConnectionPreparationJoinedForTesting: ((String) async -> Void)?
     var _initialLANEndpointForTesting: (@MainActor (String) async -> LANDiscoveredEndpoint?)?
     var _serverInfoBootstrapForTesting: ServerConnectionInfoBootstrap?
     var _apiClientFactoryForTesting: ServerConnectionAPIClientFactory?
@@ -116,6 +124,19 @@ final class ConnectionCoordinator {
     private(set) var preparingServerIds: Set<String> = []
     private var connectionPreparationTasks: [String: ConnectionPreparation] = [:]
     private var retryPreparationAfterBoundaryServerIds: Set<String> = []
+    private var serverLifetimes: [String: UUID] = [:]
+
+    private func serverLifetime(for id: String) -> UUID {
+        if let lifetime = serverLifetimes[id] { return lifetime }
+        let lifetime = UUID()
+        serverLifetimes[id] = lifetime
+        return lifetime
+    }
+
+    private func isCurrentPreparation(_ id: UUID, serverId: String) -> Bool {
+        !Task.isCancelled && connectionPreparationTasks[serverId]?.id == id
+            && serverStore.server(for: serverId) != nil
+    }
 
     #if DEBUG
     /// Synchronous HTTP-only seam retained for tests that exercise LAN endpoint
@@ -159,6 +180,8 @@ final class ConnectionCoordinator {
     func activatePairedServerShell(_ server: PairedServer) -> ServerConnection {
         let connection = stagePairedServerConnection(server)
         activeServerId = server.id
+        selectionRevision += 1
+        MetricKitService.shared.setUploadClient(connection.apiClient)
         return connection
     }
 
@@ -171,6 +194,21 @@ final class ConnectionCoordinator {
         if server.id == activeServerId { return true }
         _ = activatePairedServerShell(server)
         return true
+    }
+
+    /// Finish a picker selection without letting a late transport result choose the host.
+    func prepareSelectedServerShell(for server: PairedServer) async {
+        let connection = stagePairedServerConnection(server)
+        await connection.workspaceStore.loadCachedCatalog(serverId: server.id, isCurrent: {
+            self.serverStore.server(for: server.id) != nil
+                && self.connections[server.id] === connection
+        })
+        let prepared = await ensureConnectionReady(for: server)
+        if activeServerId == server.id,
+           serverStore.server(for: server.id) != nil,
+           prepared !== disconnectedSentinel {
+            MetricKitService.shared.setUploadClient(prepared.apiClient)
+        }
     }
 
     private func stagePairedServerConnection(_ server: PairedServer) -> ServerConnection {
@@ -190,16 +228,41 @@ final class ConnectionCoordinator {
         forceReconfigure: Bool = false
     ) async -> ServerConnection {
         let serverId = server.id
+        guard serverStore.server(for: serverId) != nil else { return disconnectedSentinel }
+        let lifetime = serverLifetime(for: serverId)
         if let preparation = connectionPreparationTasks[serverId] {
+            #if DEBUG
+            await _onConnectionPreparationJoinedForTesting?(serverId)
+            #endif
             let prepared = await preparation.task.value ?? disconnectedSentinel
-            let latestServer = serverStore.server(for: serverId) ?? server
+            guard !Task.isCancelled,
+                  serverLifetimes[serverId] == lifetime,
+                  let latestServer = serverStore.server(for: serverId) else { return disconnectedSentinel }
             let requestChanged = preparation.credentials.transportIdentity != latestServer.credentials.transportIdentity
-            if forceReconfigure, !preparation.isForced || requestChanged {
+            if let current = connectionPreparationTasks[serverId], current.id != preparation.id {
+                // Another waiter replaced this flight. Join its result rather than
+                // returning the obsolete flight's sentinel to the new pairing.
+                return await ensureConnectionReady(for: latestServer, forceReconfigure: forceReconfigure)
+            }
+            if prepared === disconnectedSentinel,
+               retryPreparationAfterBoundaryServerIds.contains(serverId),
+               connections[serverId]?.canAutomaticallyRetryInitialTransport == true {
+                retryPreparationAfterBoundaryServerIds.remove(serverId)
+                finishConnectionPreparation(serverId: serverId, id: preparation.id)
+                return await ensureConnectionReady(for: latestServer, forceReconfigure: forceReconfigure)
+            }
+            if requestChanged || (forceReconfigure && !preparation.isForced) {
                 finishConnectionPreparation(serverId: serverId, id: preparation.id)
                 return await ensureConnectionReady(
                     for: latestServer,
-                    forceReconfigure: true
+                    forceReconfigure: forceReconfigure || requestChanged
                 )
+            }
+            if connectionPreparationTasks[serverId] == nil {
+                // The owner consumed this flight; it may already be retrying
+                // a coalesced network boundary. Follow that new flight if present.
+                guard connections[serverId] === prepared,
+                      prepared.hasViableConfiguredTransport else { return disconnectedSentinel }
             }
             return prepared
         }
@@ -214,14 +277,15 @@ final class ConnectionCoordinator {
         }
 
         preparingServerIds.insert(serverId)
+        let preparationID = UUID()
         let task = Task<ServerConnection?, Never> { @MainActor [weak self] in
             guard let self else { return nil }
             return await self.prepareConnection(
                 for: self.serverStore.server(for: serverId) ?? latestServer,
-                forceReconfigure: forceReconfigure
+                forceReconfigure: forceReconfigure,
+                preparationID: preparationID
             )
         }
-        let preparationID = UUID()
         connectionPreparationTasks[serverId] = ConnectionPreparation(
             id: preparationID,
             credentials: latestServer.credentials,
@@ -229,15 +293,23 @@ final class ConnectionCoordinator {
             task: task
         )
         let prepared = await task.value
+        guard serverLifetimes[serverId] == lifetime,
+              connectionPreparationTasks[serverId]?.id == preparationID else { return disconnectedSentinel }
         finishConnectionPreparation(serverId: serverId, id: preparationID)
+        guard let currentServer = serverStore.server(for: serverId) else { return disconnectedSentinel }
 
         let retryAfterBoundary = retryPreparationAfterBoundaryServerIds.remove(serverId) != nil
         if prepared?.credentials == nil,
            retryAfterBoundary,
            connections[serverId]?.canAutomaticallyRetryInitialTransport == true {
-            return await ensureConnectionReady(for: serverStore.server(for: serverId) ?? server)
+            return await ensureConnectionReady(for: currentServer)
         }
-        return prepared ?? disconnectedSentinel
+        guard let prepared,
+              connections[serverId] === prepared,
+              prepared.hasSameTransportIdentity(as: currentServer.credentials) else {
+            return disconnectedSentinel
+        }
+        return prepared
     }
 
     private func finishConnectionPreparation(serverId: String, id: UUID) {
@@ -248,10 +320,12 @@ final class ConnectionCoordinator {
 
     private func prepareConnection(
         for server: PairedServer,
-        forceReconfigure: Bool = false
+        forceReconfigure: Bool = false,
+        preparationID: UUID
     ) async -> ServerConnection? {
         let serverId = server.id
         let initialLANEndpoint = await initialLANEndpoint(for: server)
+        guard isCurrentPreparation(preparationID, serverId: serverId) else { return nil }
         if let existing = connections[serverId] {
             let sameRoute = existing.hasSameTransportIdentity(as: server.credentials)
             if sameRoute {
@@ -277,18 +351,26 @@ final class ConnectionCoordinator {
                 guard await configureConnection(
                     existing,
                     credentials: server.credentials,
-                    preservingPersistentStreams: forceReconfigure
+                    preservingPersistentStreams: forceReconfigure,
+                    preparationID: preparationID
                 ) else {
                     logger.error("Failed to prepare paired server transport")
                     return nil
                 }
+                guard isCurrentPreparation(preparationID, serverId: serverId),
+                      connections[serverId] === existing else { return nil }
                 await reconcileLANDiscoveredDuringTransportSetup(
                     connection: existing,
                     server: server,
-                    initialEndpoint: initialLANEndpoint
+                    initialEndpoint: initialLANEndpoint,
+                    preparationID: preparationID
                 )
+                guard isCurrentPreparation(preparationID, serverId: serverId),
+                      connections[serverId] === existing else { return nil }
                 adoptLatestSameRouteCredentials(on: existing, serverId: serverId)
             }
+            guard isCurrentPreparation(preparationID, serverId: serverId),
+                  connections[serverId] === existing else { return nil }
             #if DEBUG
             _onConnectionPreparedForTesting?(serverId, existing)
             #endif
@@ -301,15 +383,19 @@ final class ConnectionCoordinator {
         guard await configureConnection(
             connection,
             credentials: server.credentials,
+            preparationID: preparationID
         ) else {
             logger.error("Failed to configure connection for \(server.name, privacy: .public)")
             return nil
         }
+        guard isCurrentPreparation(preparationID, serverId: serverId) else { return nil }
         await reconcileLANDiscoveredDuringTransportSetup(
             connection: connection,
             server: server,
-            initialEndpoint: initialLANEndpoint
+            initialEndpoint: initialLANEndpoint,
+            preparationID: preparationID
         )
+        guard isCurrentPreparation(preparationID, serverId: serverId) else { return nil }
         adoptLatestSameRouteCredentials(on: connection, serverId: serverId)
         initializeStores(for: connection, serverId: serverId)
         #if DEBUG
@@ -333,11 +419,13 @@ final class ConnectionCoordinator {
     private func reconcileLANDiscoveredDuringTransportSetup(
         connection: ServerConnection,
         server: PairedServer,
-        initialEndpoint: LANDiscoveredEndpoint?
+        initialEndpoint: LANDiscoveredEndpoint?,
+        preparationID: UUID
     ) async {
         var reconciledEndpoint = initialEndpoint
         while true {
             let latestEndpoint = await initialLANEndpoint(for: server)
+            guard isCurrentPreparation(preparationID, serverId: server.id) else { return }
             guard latestEndpoint != reconciledEndpoint else { return }
 
             // Bonjour can change again while an asynchronous transport setup
@@ -358,19 +446,23 @@ final class ConnectionCoordinator {
     private func configureConnection(
         _ connection: ServerConnection,
         credentials: ServerCredentials,
-        preservingPersistentStreams: Bool = false
+        preservingPersistentStreams: Bool = false,
+        preparationID: UUID
     ) async -> Bool {
-        let deviceCredentialObserver: ServerConnectionDeviceCredentialObserver = { [weak self] result in
-            guard let self,
+        let deviceCredentialObserver: ServerConnectionDeviceCredentialObserver = { [weak self, weak connection] result in
+            guard let self, let connection,
                   let serverId = credentials.normalizedServerFingerprint,
-                  let expectedDeviceId = credentials.deviceCredential?.deviceId else { return }
+                  let expectedDeviceId = credentials.deviceCredential?.deviceId,
+                  self.serverStore.server(for: serverId) != nil,
+                  (self.isCurrentPreparation(preparationID, serverId: serverId)
+                    || self.connections[serverId] === connection) else { return }
             do {
                 let merged = try self.serverStore.persistDeviceCredentialRefresh(
                     id: serverId,
                     expectedDeviceId: expectedDeviceId,
                     result: result
                 )
-                self.connections[serverId]?.applyPersistedDeviceCredential(merged)
+                connection.applyPersistedDeviceCredential(merged)
             } catch {
                 ClientLog.error("DeviceCredential", "Failed to persist device-credential refresh", metadata: [
                     "serverId": serverId,
@@ -715,15 +807,18 @@ final class ConnectionCoordinator {
         _ server: PairedServer,
         shouldActivate: @escaping @MainActor () -> Bool = { true }
     ) async -> Bool {
-        if server.id == activeServerId, let connection = connections[server.id] {
-            if connection.hasSameTransportIdentity(as: server.credentials) {
-                connection.applyPersistedSameRouteCredentials(server.credentials)
-                if connection.hasViableConfiguredTransport {
-                    return shouldActivate()
-                }
-            }
+        guard serverStore.server(for: server.id) != nil else { return false }
+        if server.id == activeServerId, let connection = connections[server.id],
+           connection.hasSameTransportIdentity(as: server.credentials),
+           connection.hasViableConfiguredTransport {
+            guard shouldActivate() else { return false }
+            connection.applyPersistedSameRouteCredentials(server.credentials)
+            return true
         }
-
+        guard shouldActivate() else { return false }
+        // Claim only a real pending selection; completion order must not override request order.
+        selectionRevision += 1
+        let requestedRevision = selectionRevision
         return await PreparedServerActivation.run(
             prepare: {
                 let connection = await self.ensureConnectionReady(for: server)
@@ -733,7 +828,11 @@ final class ConnectionCoordinator {
                 }
                 return connection
             },
-            shouldActivate: shouldActivate,
+            shouldActivate: {
+                self.serverStore.server(for: server.id) != nil
+                    && self.selectionRevision == requestedRevision
+                    && shouldActivate()
+            },
             activate: { connection in
                 self.activatePreparedConnection(connection, server: server)
             }
@@ -742,6 +841,7 @@ final class ConnectionCoordinator {
 
     private func activatePreparedConnection(_ connection: ServerConnection, server: PairedServer) {
         activeServerId = server.id
+        selectionRevision += 1
         MetricKitService.shared.setUploadClient(connection.apiClient)
         logger.warning("Switched to server \(server.name, privacy: .public) (\(server.id.prefix(16), privacy: .public))")
     }
@@ -794,7 +894,9 @@ final class ConnectionCoordinator {
     // MARK: - Server Lifecycle
 
     @discardableResult
-    func addServerReady(_ server: PairedServer, switchTo: Bool = true) async -> Bool {
+    func addServerReady(_ server: PairedServer, switchTo: Bool = true) async -> ServerPairingOutcome {
+        if switchTo { selectionRevision += 1 }
+        let requestedRevision = selectionRevision
         let previous = serverStore.server(for: server.id)
         serverStore.addOrUpdate(
             server,
@@ -802,50 +904,69 @@ final class ConnectionCoordinator {
         )
         // Re-pair preserves local badge via ServerStore. Configure from
         // that canonical merged row, not the incoming automatic PairedServer.
-        guard let canonical = serverStore.server(for: server.id) else { return false }
+        guard let canonical = serverStore.server(for: server.id) else { return .failed }
+        let lifetime = serverLifetime(for: server.id)
         let connection = await ensureConnectionReady(for: canonical)
+        guard serverLifetimes[server.id] == lifetime else { return .failed }
         guard connection !== disconnectedSentinel else {
             // Transport setup failed closed. Do not leave unusable replacement
             // credentials persisted; restore the prior pairing when this was a re-pair.
-            if let previous {
-                // Restore the prior pairing, including a stored at_ that a
-                // failed dt_-only re-pair must not leave discarded.
-                serverStore.addOrUpdate(
-                    previous,
-                    replacingStoredDeviceCredential: previous.deviceCredential != nil
-                        || !previous.token.isEmpty
-                )
-            } else {
-                serverStore.remove(id: server.id)
+            // Removal or a newer re-pair may have replaced this row while
+            // preparation was suspended; never resurrect/overwrite either.
+            if serverStore.server(for: server.id) == canonical {
+                if let previous {
+                    // Restore the prior pairing, including a stored at_ that a
+                    // failed dt_-only re-pair must not leave discarded.
+                    serverStore.addOrUpdate(
+                        previous,
+                        replacingStoredDeviceCredential: previous.deviceCredential != nil
+                            || !previous.token.isEmpty
+                    )
+                } else {
+                    serverStore.remove(id: server.id)
+                }
             }
-            return false
+            return .failed
         }
         if switchTo {
+            guard selectionRevision == requestedRevision,
+                  serverStore.server(for: server.id) != nil else { return .pairedWithoutSelection }
             activatePreparedConnection(connection, server: canonical)
+            return .selected
         }
-        return true
+        return .pairedWithoutSelection
     }
 
     /// Remove a server. Cleans up all associated data.
     func removeServer(id: String) async {
-        // Disconnect and remove the server's connection
-        if let conn = connections[id] {
+        // Revoke pending activation even when an inactive pairing is removed.
+        selectionRevision += 1
+        serverStore.remove(id: id)
+        let removedLifetime = UUID()
+        serverLifetimes[id] = removedLifetime
+        connectionPreparationTasks.removeValue(forKey: id)?.task.cancel()
+        preparingServerIds.remove(id)
+        retryPreparationAfterBoundaryServerIds.remove(id)
+        // Remove identity before suspension so a re-pair cannot observe or reuse it.
+        let removedConnection = connections.removeValue(forKey: id)
+        if let conn = removedConnection {
             conn.disconnectSession()
             conn.disconnectStream()
             conn.disconnectAppEventStream()
             await conn.shutdownTransport()
         }
-        connections.removeValue(forKey: id)
-
-        serverStore.remove(id: id)
 
         logger.warning("Removed server \(id.prefix(16), privacy: .public)")
 
+        // If re-paired during shutdown, this removal no longer owns the row.
+        guard serverLifetimes[id] == removedLifetime,
+              serverStore.server(for: id) == nil else { return }
         // If we removed the active server, switch to the first remaining
         if id == activeServerId {
             activeServerId = nil
             if let firstServer = serverStore.servers.first {
-                _ = await switchToServerReady(firstServer)
+                _ = restoreActiveServer(firstServer.id)
+                await prepareSelectedServerShell(for: firstServer)
             }
         }
     }

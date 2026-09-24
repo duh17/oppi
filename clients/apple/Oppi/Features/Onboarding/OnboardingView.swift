@@ -204,11 +204,13 @@ struct OnboardingView: View {
                 return
             }
 
-            guard await coordinator.addServerReady(pairedServer, switchTo: false),
-                  await coordinator.switchToServerReady(pairedServer) else {
+            let pairingOutcome = await coordinator.addServerReady(pairedServer, switchTo: true)
+            guard pairingOutcome != .failed else {
                 connectionTest = .failed("Connection blocked by server transport policy")
                 return
             }
+            // A newer picker selection owns navigation, even if this pairing succeeded.
+            guard pairingOutcome == .selected else { return }
 
             // Load sessions into the connection that was just selected. The
             // environment connection can still point at the previous server for

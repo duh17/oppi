@@ -35,12 +35,19 @@ enum WorkspaceCatalogAvailability: Equatable {
     case empty
     case available
 
-    init(hasWorkspaces: Bool, isLoaded: Bool, isSyncing: Bool, lastSyncFailed: Bool) {
+    init(
+        hasWorkspaces: Bool,
+        isLoaded: Bool,
+        isSyncing: Bool,
+        lastSyncFailed: Bool,
+        hasAPIClient: Bool = true,
+        isPreparing: Bool = false
+    ) {
         if hasWorkspaces {
             self = .available
-        } else if isSyncing {
+        } else if isSyncing || isPreparing {
             self = .loading
-        } else if lastSyncFailed {
+        } else if lastSyncFailed || !hasAPIClient {
             self = .unavailable
         } else if isLoaded {
             self = .empty
@@ -52,6 +59,12 @@ enum WorkspaceCatalogAvailability: Equatable {
 
 enum WorkspaceSidebarDisclosurePolicy {
     static let defaultExpanded = true
+}
+
+enum SessionInboxTransportAvailability {
+    static func isUnavailable(hasAPIClient: Bool, isPreparing: Bool) -> Bool {
+        !hasAPIClient && !isPreparing
+    }
 }
 
 struct WorkspaceSidebarPrimaryUtilityItem: Equatable {
@@ -170,6 +183,7 @@ struct SessionInboxView: View {
 
     @State private var searchStore = SessionSearchStore()
     @State private var error: String?
+    @State private var failedRetryServerId: String?
     @State private var isCreating = false
     @State private var pendingDelete: SessionInboxPendingDelete?
     @State private var expandedStoppedGroupIDs: Set<String> = []
@@ -660,8 +674,8 @@ struct SessionInboxView: View {
         HostSwitcherMenu(
             current: current,
             destination: .inbox,
-            onSwitch: { server in
-                await switchVisibleServer(to: server)
+            onSwitch: { _ in
+                switchVisibleServer()
             }
         )
     }
@@ -725,8 +739,7 @@ struct SessionInboxView: View {
         }
     }
 
-    private func switchVisibleServer(to server: PairedServer) async {
-        guard await coordinator.switchToServerReady(server) else { return }
+    private func switchVisibleServer() {
         error = nil
         navigation.showAllWorkspaceSessions()
     }
@@ -736,14 +749,37 @@ struct SessionInboxView: View {
         await coordinator.refreshServer(activeServerId, force: true)
     }
 
+    private func retryVisibleServer() async {
+        guard let activeServerId else { return }
+        failedRetryServerId = nil
+        if activeConnection?.apiClient == nil {
+            await coordinator.retryServerConnection(activeServerId)
+        } else {
+            await refreshVisibleServer()
+        }
+        if self.activeServerId == activeServerId {
+            failedRetryServerId = selectedServerRefreshFailed || selectedServerTransportUnavailable
+                ? activeServerId : nil
+        }
+    }
+
     private var selectedServerRefreshFailed: Bool {
         guard let activeConnection else { return false }
         return activeConnection.workspaceStore.lastSyncFailed
             || activeConnection.sessionStore.lastSyncFailed
     }
 
+    private var selectedServerTransportUnavailable: Bool {
+        guard let activeServerId, let activeConnection else { return false }
+        return SessionInboxTransportAvailability.isUnavailable(
+            hasAPIClient: activeConnection.apiClient != nil,
+            isPreparing: coordinator.preparingServerIds.contains(activeServerId)
+        )
+    }
+
     private var selectedServerIsSyncing: Bool {
-        activeConnection?.workspaceStore.isSyncing == true
+        (activeServerId.map { coordinator.preparingServerIds.contains($0) } ?? false)
+            || activeConnection?.workspaceStore.isSyncing == true
             || activeConnection?.sessionStore.isSyncing == true
     }
 
@@ -761,14 +797,16 @@ struct SessionInboxView: View {
                 systemImage: "arrow.triangle.2.circlepath",
                 description: Text("Refreshing \(selectedServer.name)…")
             )
-        } else if selectedServerRefreshFailed, let selectedServer {
+        } else if (selectedServerRefreshFailed || selectedServerTransportUnavailable), let selectedServer {
             ContentUnavailableView {
                 Label("Server Data Unavailable", systemImage: "exclamationmark.triangle.fill")
             } description: {
-                Text("\(selectedServer.name) couldn't refresh its workspace or session data.")
+                Text(failedRetryServerId == activeServerId
+                    ? "\(selectedServer.name) is still unavailable after retry."
+                    : "\(selectedServer.name)'s workspace and session data are unavailable.")
             } actions: {
                 Button("Retry") {
-                    Task { await refreshVisibleServer() }
+                    Task { await retryVisibleServer() }
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -1576,7 +1614,9 @@ struct WorkspaceSidebarView: View {
                             hasWorkspaces: !workspaces.isEmpty,
                             isLoaded: workspaceStore?.isLoaded ?? false,
                             isSyncing: workspaceStore?.isSyncing ?? false,
-                            lastSyncFailed: workspaceStore?.lastSyncFailed ?? false
+                            lastSyncFailed: workspaceStore?.lastSyncFailed ?? false,
+                            hasAPIClient: connection?.apiClient != nil,
+                            isPreparing: coordinator.preparingServerIds.contains(serverId)
                         )
 
                         switch availability {
@@ -1593,7 +1633,13 @@ struct WorkspaceSidebarView: View {
                                 Label("Workspaces unavailable", systemImage: "exclamationmark.triangle.fill")
                                     .foregroundStyle(.themeOrange)
                                 Button("Retry") {
-                                    Task { await coordinator.refreshServer(serverId, force: true) }
+                                    Task {
+                                        if connection?.apiClient == nil {
+                                            await coordinator.retryServerConnection(serverId)
+                                        } else {
+                                            await coordinator.refreshServer(serverId, force: true)
+                                        }
+                                    }
                                 }
                                 .buttonStyle(.bordered)
                             }
@@ -1611,6 +1657,15 @@ struct WorkspaceSidebarView: View {
                                 .padding(.horizontal, 8)
 
                         case .available:
+                            if connection == nil
+                                || connection?.serverHealth(forServer: serverId).transportState == .disconnected
+                                || workspaceStore?.lastSyncFailed == true {
+                                Label("Saved workspaces may be out of date", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.themeOrange)
+                                    .padding(.vertical, 8)
+                                    .padding(.horizontal, 8)
+                            }
                             ForEach(workspaces) { workspace in
                                 let target = WorkspaceNavTarget(serverId: serverId, workspace: workspace)
                                 let status = workspaceSessionStatus(

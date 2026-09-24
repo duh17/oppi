@@ -626,8 +626,12 @@ struct OppiApp: App {
         // Must run BEFORE reconnectOnLaunch to prevent stale simulator
         // Keychain entries from flooding the ephemeral Docker server with
         // 401s on every old device token.
-        if let e2eInvite = ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"],
-           let e2eURL = URL(string: e2eInvite) {
+        // A focused two-server UI test can override a stale invite inherited from
+        // the simulator's test runner, or skip replay after opening its second link.
+        let e2eOverride = ProcessInfo.processInfo.environment["OPPI_E2E_LAUNCH_INVITE"]
+        let e2eInvite = e2eOverride == "skip" ? nil :
+            (e2eOverride ?? ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"])
+        if let e2eInvite, let e2eURL = URL(string: e2eInvite) {
             if e2eInviteProcessedThisProcess {
                 os_log(.error, "[E2E] Invite already processed this process; skipping duplicate bootstrap")
                 navigation.launchPhase = .ready
@@ -1398,13 +1402,17 @@ struct OppiApp: App {
         }
         inviteBootstrapInFlight = true
         defer { inviteBootstrapInFlight = false }
+#if DEBUG
+        let isE2EInviteLaunch = ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil
+            || ProcessInfo.processInfo.environment["OPPI_E2E_LAUNCH_INVITE"] != nil
+#endif
         let existingCredentials = credentials.normalizedServerFingerprint
             .flatMap { serverStore.server(for: $0)?.credentials }
             ?? serverStore.server(forHost: credentials.host, port: credentials.port)?.credentials
         do {
 #if DEBUG
             let bootstrap: InviteBootstrapResult
-            if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil {
+            if isE2EInviteLaunch {
                 if E2EAppAuthBootstrap.shouldReuseExistingPairing(
                     existing: existingCredentials,
                     invite: credentials
@@ -1440,12 +1448,12 @@ struct OppiApp: App {
             ) else {
                 throw InviteBootstrapError.message("Missing server fingerprint in invite credentials")
             }
-            guard await coordinator.addServerReady(
-                pairedServer,
-                switchTo: true
-            ) else {
+            let pairingOutcome = await coordinator.addServerReady(pairedServer, switchTo: true)
+            guard pairingOutcome != .failed else {
                 throw InviteBootstrapError.message("Connection blocked by server transport policy")
             }
+            // A newer selection owns the active connection; pairing still succeeded.
+            guard pairingOutcome == .selected else { return }
 
             // Reset the newly selected connection. The environment connection
             // can still point at the previous server during deep-link handling.
@@ -1469,7 +1477,7 @@ struct OppiApp: App {
                 await coordinator.registerPushWithAllServers()
             }
 #if DEBUG
-            if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] == nil {
+            if !isE2EInviteLaunch {
                 selectedConnection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.name)"
             }
 #else
@@ -1478,7 +1486,7 @@ struct OppiApp: App {
         } catch {
             connection.sessionStore.markSyncFailed()
 #if DEBUG
-            if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil, !serverStore.servers.isEmpty {
+            if isE2EInviteLaunch, !serverStore.servers.isEmpty {
                 navigation.showOnboarding = false
                 navigation.launchPhase = .ready
                 return
@@ -1949,7 +1957,9 @@ struct OppiApp: App {
         )
         var selectedServerReady = false
         if preparedConnection.credentials != nil,
-           preparedConnection.apiClient != nil {
+           preparedConnection.apiClient != nil,
+           coordinator.activeServerId == server.id {
+            // The picker may have selected another paired shell during bootstrap.
             selectedServerReady = await coordinator.switchToServerReady(server)
         }
         if selectedServerReady {

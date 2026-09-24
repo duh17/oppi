@@ -188,7 +188,7 @@ struct SessionInboxHostChangeTests {
         let source = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
         let slice = try sourceSlice(
             source,
-            start: "private func switchVisibleServer(to server: PairedServer) async {",
+            start: "private func switchVisibleServer() {",
             end: "private func refreshVisibleServer() async {"
         )
         #expect(slice.contains("showAllWorkspaceSessions()"))
@@ -208,14 +208,16 @@ struct SessionInboxHostChangeTests {
 @Suite("Host-job compact switch")
 @MainActor
 struct HostJobCompactSwitchTests {
-    @Test func defaultHostSwitchPathDoesNotPopToAllSessions() throws {
+    @Test func defaultHostSwitchPathSelectsShellWithoutPopping() throws {
         let source = try appleSource("Oppi/Features/Workspaces/WorkspaceHomeView.swift")
         let slice = try sourceSlice(
             source,
-            start: "private func switchHost(_ server: PairedServer) async {",
+            start: "private func switchHost(_ server: PairedServer) {",
             end: "private func menuTitle(for server: PairedServer) -> String {"
         )
-        #expect(slice.contains("switchToServerReady(server)"))
+        #expect(slice.contains("restoreActiveServer(server.id)"))
+        #expect(slice.contains("prepareSelectedServerShell(for: server)"))
+        #expect(!slice.contains("switchToServerReady(server)"))
         #expect(!slice.contains("showAllWorkspaceSessions"))
     }
 
