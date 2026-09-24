@@ -113,7 +113,7 @@ import {
 import { createSttProvider } from "./create-stt-provider.js";
 import { DEFAULT_XAI_STT_MODEL } from "./xai-stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
-import { fetchProviderQuotas } from "./provider-quota.js";
+import { fetchProviderQuotas, quotaAdaptersForProviders } from "./provider-quota.js";
 import {
   garbageCollectUploadStore,
   resolveUploadStoreConfig,
@@ -839,7 +839,16 @@ export class Server {
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
       refreshModelCatalog: (options) => this.refreshModelCatalog(options),
       getModelCatalog: () => this.models.getAll(),
-      getProviderQuotasStatus: () => fetchProviderQuotas({ modelRuntime: this.modelRuntime }),
+      getProviderQuotasStatus: async () => {
+        await this.extensionProviderCatalog.sync();
+        return fetchProviderQuotas({
+          modelRuntime: this.modelRuntime,
+          adapters: quotaAdaptersForProviders(
+            this.extensionProviderCatalog.getRegisteredProviderIds(),
+            this.extensionProviderCatalog.getQuotaAdapters(this.modelRuntime),
+          ),
+        });
+      },
       searchIndex: this.searchIndex ?? undefined,
       appEvents: this.appEventStreamMux,
       serverStartedAt: Date.now(),

@@ -1,15 +1,194 @@
 import { describe, expect, it, vi } from "vitest";
+import { extensionQuotaAdapter, parseExtensionQuota } from "../src/provider-quota/extension.js";
 
 import {
   fetchCodexProviderQuota,
   fetchOpenCodeGoProviderQuota,
   fetchProviderQuotas,
+  quotaAdaptersForProviders,
   fetchXaiProviderQuota,
   deriveProviderQuotaPacing,
   normalizeProviderQuotaWindows,
   type ProviderQuotaAdapter,
   type ProviderQuotaWindow,
 } from "../src/provider-quota.js";
+
+describe("extension-provided quotas", () => {
+  const source = { providerId: "custom", displayName: "Custom", fetch: vi.fn() };
+
+  it("normalizes a safe quota DTO and drops extra fields", () => {
+    const quota = parseExtensionQuota(
+      {
+        authenticated: true,
+        planType: "team",
+        windows: [
+          {
+            key: "weekly",
+            shortLabel: "7d",
+            title: "Weekly",
+            usedPercent: 32,
+            limitWindowSeconds: 604800,
+            resetAt: 1800000000,
+            includeWeekdayInReset: true,
+            secret: "not forwarded",
+          },
+        ],
+        credits: { hasCredits: false, unlimited: false, balance: null, secret: "not forwarded" },
+        prepaidBalanceCents: null,
+        credential: "not forwarded",
+      },
+      source,
+      123,
+    );
+    expect(quota).toMatchObject({
+      providerId: "custom",
+      displayName: "Custom",
+      fetchedAt: 123,
+      windows: [{ usedPercent: 32, remainingPercent: 68 }],
+    });
+    expect(JSON.stringify(quota)).not.toContain("not forwarded");
+    expect(Number.isInteger(quota.windows[0]?.limitWindowSeconds)).toBe(true);
+  });
+
+  it.each([
+    {
+      authenticated: true,
+      windows: [
+        {
+          key: "weekly",
+          shortLabel: "7d",
+          title: "Weekly",
+          usedPercent: NaN,
+          limitWindowSeconds: 604800,
+          resetAt: 1800000000,
+          includeWeekdayInReset: true,
+        },
+      ],
+    },
+    {
+      authenticated: true,
+      windows: [
+        {
+          key: "weekly",
+          shortLabel: "7d",
+          title: "Weekly",
+          usedPercent: 10,
+          limitWindowSeconds: 1.5,
+          resetAt: 1800000000,
+          includeWeekdayInReset: true,
+        },
+      ],
+    },
+    { authenticated: true, windows: Array.from({ length: 13 }, () => ({})) },
+    { authenticated: true, planType: "x".repeat(81), windows: [] },
+    { authenticated: true, windows: new Array(1) },
+  ])("rejects a malformed extension payload instead of breaking iOS decoding", (payload) => {
+    expect(() => parseExtensionQuota(payload, source, 123)).toThrow(
+      "Invalid extension quota response",
+    );
+  });
+
+  it("never forwards a custom provider token to the built-in provider endpoint", async () => {
+    const adapter = extensionQuotaAdapter(
+      {
+        providerId: "xai",
+        displayName: "Other xAI",
+        fetch: async () => ({ authenticated: true, windows: [] }),
+      },
+      { hasConfiguredAuth: () => true, getAuth: vi.fn() } as never,
+      new AbortController().signal,
+    );
+    const builtins = quotaAdaptersForProviders(["xai"], [adapter]);
+    expect(builtins.filter((candidate) => candidate.providerId === "xai")).toEqual([adapter]);
+    expect(
+      quotaAdaptersForProviders(["xai"], []).some((candidate) => candidate.providerId === "xai"),
+    ).toBe(false);
+  });
+
+  it("does not expose an extension's error text or unknown fields to clients", () => {
+    const result = parseExtensionQuota(
+      {
+        authenticated: true,
+        windows: [],
+        error: "upstream body contained arbitrary secret",
+        payload: { accessToken: "private" },
+      },
+      source,
+      123,
+    );
+    expect(result.error).toBe("Extension quota unavailable");
+    expect(JSON.stringify(result)).not.toContain("private");
+  });
+
+  it("does not call an extension without configured credentials", async () => {
+    const fetch = vi.fn();
+    const adapter = extensionQuotaAdapter(
+      { providerId: "custom", displayName: "Custom", fetch },
+      { hasConfiguredAuth: () => false, getAuth: vi.fn() } as never,
+      new AbortController().signal,
+    );
+    const result = await adapter.fetch({ modelRuntime: { getAuth: vi.fn() }, now: () => 123 });
+    expect(result.authenticated).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("enforces the deadline when an extension ignores its timeout signal", async () => {
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    try {
+      const adapter = extensionQuotaAdapter(
+        { providerId: "custom", displayName: "Custom", fetch: () => new Promise(() => {}) },
+        { hasConfiguredAuth: () => true, getAuth: vi.fn() } as never,
+        new AbortController().signal,
+      );
+      const pending = adapter.fetch({ modelRuntime: { getAuth: vi.fn() } });
+      deadline.abort();
+      await expect(pending).rejects.toThrow(
+        "Extension quota request failed or returned invalid data",
+      );
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it("bounds an extension that ignores abort and isolates it from healthy adapters", async () => {
+    const controller = new AbortController();
+    const adapter = extensionQuotaAdapter(
+      { providerId: "custom", displayName: "Custom", fetch: () => new Promise(() => {}) },
+      { hasConfiguredAuth: () => true, getAuth: vi.fn() } as never,
+      controller.signal,
+    );
+    const pending = fetchProviderQuotas({
+      modelRuntime: { getAuth: vi.fn() },
+      now: () => 123,
+      adapters: [
+        adapter,
+        {
+          providerId: "healthy",
+          displayName: "Healthy",
+          fetch: async () => ({
+            providerId: "healthy",
+            displayName: "Healthy",
+            authenticated: true,
+            planType: null,
+            windows: [],
+            credits: null,
+            prepaidBalanceCents: null,
+            fetchedAt: 123,
+          }),
+        },
+      ],
+    });
+    controller.abort();
+    const result = await pending;
+    expect(result.providers[0]).toMatchObject({
+      providerId: "custom",
+      windows: [],
+      error: "Custom quota fetch failed: Extension quota request failed or returned invalid data",
+    });
+    expect(result.providers[1]).toMatchObject({ providerId: "healthy", authenticated: true });
+  });
+});
 
 describe("fetchCodexProviderQuota", () => {
   it("returns unauthenticated when no openai-codex credential is stored", async () => {

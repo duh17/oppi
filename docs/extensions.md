@@ -46,6 +46,64 @@ The setting does not modify standalone Pi or terminal-owned mirrored sessions. A
 
 For ordinary Pi extensions, disabled rows are still visible in the server catalog. Pi does not execute disabled extension factories merely to manufacture diagnostics or contributed capabilities, so disabled rows can honestly show discovery state without a speculative load error. Enabled extensions can report Pi loader diagnostics and contributed tools or commands when Pi provides them.
 
+## Provider quota extension API
+
+A globally enabled Pi extension can add quota data to **Server → Model Providers**, the model picker, `oppi quota`, and `oppi models`. Register the model provider with Pi first, then emit an Oppi quota declaration **inside the extension factory**. The quota callback runs only when a client requests `/server/provider-quotas`; do not fetch usage while the factory loads. Plain Pi ignores the declaration. **To show quota under Connected on the Server screen, sign in to the provider there or with Pi `/login` first.** An environment-only API key enables the model picker and `oppi quota`, but the Server screen classifies providers as Connected only when credentials are saved in Pi's auth store.
+
+The example below is a template, **not an Anthropic integration**. Replace the example endpoint, model metadata, and response fields with your provider's documented contract before installing it. Save it as a Pi extension (for example, `~/.pi/agent/extensions/example-quota.ts`); do not put API keys in the file.
+
+```typescript
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  pi.registerProvider("example-cloud", {
+    name: "Example Cloud",
+    api: "openai-completions",
+    baseUrl: "https://example.invalid/v1",
+    apiKey: "$EXAMPLE_API_KEY",
+    models: [{
+      id: "example-model", name: "Example Model", reasoning: false,
+      input: ["text"], contextWindow: 100000, maxTokens: 8000,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    }],
+  });
+
+  pi.events.emit("oppi:provider-quota:v1", {
+    providerId: "example-cloud",
+    displayName: "Example Cloud",
+    async fetch({ signal, getAuth }: {
+      signal: AbortSignal;
+      getAuth: () => Promise<{ apiKey?: string } | undefined>;
+    }) {
+      const auth = await getAuth(); // scoped to example-cloud; never returns a refresh token
+      if (!auth?.apiKey) return { authenticated: false, windows: [] };
+      const response = await fetch("https://example.invalid/usage", {
+        headers: { Authorization: `Bearer ${auth.apiKey}` }, signal,
+      });
+      if (!response.ok) throw new Error(`Usage request failed (${response.status})`);
+      const usage = await response.json() as { usedPercent: number; resetAt: number };
+      return {
+        authenticated: true,
+        planType: null,
+        windows: [{
+          key: "five_hour", shortLabel: "5h", title: "5-hour",
+          usedPercent: usage.usedPercent,
+          limitWindowSeconds: 18_000, resetAt: usage.resetAt,
+          includeWeekdayInReset: false,
+        }],
+        credits: null, prepaidBalanceCents: null,
+      };
+    },
+  });
+}
+```
+
+**Declaration contract (`oppi:provider-quota:v1`):** `providerId` must match a provider registered by the same globally enabled extension resource and match `^[a-z0-9][a-z0-9._-]{0,79}$`. `displayName` is optional; it defaults to the ID. `fetch({ signal, getAuth })` returns a promise with `authenticated: boolean` and `windows: []` (up to 12). `getAuth()` resolves the provider's Pi request auth (`apiKey`, `headers`, `baseUrl`) and may refresh OAuth; it does not expose the stored credential or refresh token. For an unauthenticated account return `{ authenticated: false, windows: [] }`. Oppi does not call the callback when the provider has no configured auth.
+
+Each window needs `key`, `shortLabel`, `title`, `usedPercent` (finite, 0–100), `limitWindowSeconds` and `resetAt` (nonnegative integer seconds or `null`), and `includeWeekdayInReset: boolean`. Optional result fields are `planType: string | null`, `credits: { hasCredits: boolean, unlimited: boolean, balance: string | null } | null`, `prepaidBalanceCents: number | null` (nonnegative integer cents), and `error: string`. Oppi computes `remainingPercent`, pacing, and `fetchedAt`; extra fields are discarded. Strings, windows, and errors are bounded. Invalid results become a generic error row rather than breaking the quota screen. Do not put tokens or upstream response bodies in errors.
+
+The server loads declarations from global/user Pi resources, not project-local extensions. If two declarations claim one ID, Oppi ignores both quota callbacks and reports a diagnostic. An extension-registered provider ID replaces that ID's built-in quota adapter **even without a quota callback**, so a custom token is never sent to a built-in quota URL. Removing or disabling the extension restores the built-in adapter. The quota route rescans global provider resources when they change; the callback has a 10-second deadline and must honor `signal`. Each quota request invokes the callback; cache upstream responses in the extension when needed. Active model sessions still need `/reload` to pick up provider changes. Pi currently stores one credential per provider ID, and the existing Oppi screen shows one quota row per provider; this API does not add OMP-style multiple-subscription accounts. There is no Pi quota API yet; this event channel is Oppi's extension-facing bridge, not a Pi model-provider method.
+
 ## Extension surfaces
 
 | Surface                 | Enabled by                                                    | Declared in                              | Loaded by          | Notes                                                                                                         |

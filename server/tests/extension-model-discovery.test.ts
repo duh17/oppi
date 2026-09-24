@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Provider } from "@earendil-works/pi-ai";
 
+import { fetchProviderQuotas, quotaAdaptersForProviders } from "../src/provider-quota.js";
 import {
   applyPendingProviderRegistrations,
   discoverExtensionProviders,
@@ -35,7 +36,9 @@ function makeExtensionsResult(
   } as unknown as LoadExtensionsResult;
 }
 
-function makeTarget(overrides: Partial<ProviderRegistrationTarget> = {}): ProviderRegistrationTarget & {
+function makeTarget(
+  overrides: Partial<ProviderRegistrationTarget> = {},
+): ProviderRegistrationTarget & {
   registerProvider: ReturnType<typeof vi.fn>;
   registerNativeProvider: ReturnType<typeof vi.fn>;
 } {
@@ -81,11 +84,9 @@ describe("applyPendingProviderRegistrations", () => {
 
   it("isolates a throwing registration and continues with the rest", () => {
     const target = makeTarget({
-      registerProvider: vi
-        .fn()
-        .mockImplementation((name: string) => {
-          if (name === "broken") throw new Error("bad provider");
-        }),
+      registerProvider: vi.fn().mockImplementation((name: string) => {
+        if (name === "broken") throw new Error("bad provider");
+      }),
     });
     const result = makeExtensionsResult([
       { name: "broken", config: CONFIG, extensionPath: "broken.ts" },
@@ -95,9 +96,7 @@ describe("applyPendingProviderRegistrations", () => {
     const applied = applyPendingProviderRegistrations(target, result);
 
     expect(applied.registeredProviderIds).toEqual(["good"]);
-    expect(applied.diagnostics).toEqual([
-      { extensionPath: "broken.ts", message: "bad provider" },
-    ]);
+    expect(applied.diagnostics).toEqual([{ extensionPath: "broken.ts", message: "bad provider" }]);
     // Both entries are still drained from the queue.
     expect(result.runtime.pendingProviderRegistrations).toEqual([]);
   });
@@ -263,7 +262,11 @@ export default function (pi) {
   });
 });
 
-function staticProviderExtension(providerId: string, modelId: string): string {
+function staticProviderExtension(
+  providerId: string,
+  modelId: string,
+  quotaDeclaration = "",
+): string {
   return `
 export default function (pi) {
   pi.registerProvider(${JSON.stringify(providerId)}, {
@@ -283,6 +286,7 @@ export default function (pi) {
       },
     ],
   });
+  ${quotaDeclaration}
 }
 `;
 }
@@ -335,6 +339,184 @@ describe("ExtensionProviderCatalog", () => {
       extensionsDir,
     };
   }
+
+  it("loads a provider-owned quota callback without fetching until the native quota route asks", async () => {
+    const extension = staticProviderExtension(
+      "quotaext",
+      "quota-model",
+      `
+      pi.events.emit("oppi:provider-quota:v1", {
+        providerId: "quotaext",
+        displayName: "Quota Example",
+        async fetch({ getAuth, signal }) {
+          const auth = await getAuth();
+          const response = await fetch("https://example.invalid/usage", {
+            headers: { Authorization: "Bearer " + auth.apiKey }, signal,
+          });
+          return response.json();
+        },
+      });`,
+    );
+    const { catalog, runtime } = await setupCatalog(extension);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          authenticated: true,
+          planType: "sample",
+          windows: [
+            {
+              key: "five_hour",
+              shortLabel: "5h",
+              title: "5-hour",
+              usedPercent: 25,
+              limitWindowSeconds: 18000,
+              resetAt: 1_800_000_000,
+              includeWeekdayInReset: false,
+            },
+          ],
+          credits: null,
+          prepaidBalanceCents: null,
+        }),
+      ),
+    );
+    try {
+      await catalog.sync();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      const status = await fetchProviderQuotas({
+        modelRuntime: runtime,
+        adapters: catalog.getQuotaAdapters(runtime),
+        now: () => 1000,
+      });
+      expect(status.providers).toMatchObject([
+        {
+          providerId: "quotaext",
+          displayName: "Quota Example",
+          authenticated: true,
+          planType: "sample",
+          windows: [{ usedPercent: 25, remainingPercent: 75 }],
+        },
+      ]);
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      expect(fetchSpy.mock.calls[0]?.[1]).toMatchObject({
+        headers: { Authorization: "Bearer test-key" },
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("rejects quota claims without a registered provider and duplicate claims", async () => {
+    const extension = staticProviderExtension(
+      "claimext",
+      "model",
+      `
+      pi.events.emit("oppi:provider-quota:v1", { providerId: "other", fetch: async () => ({}) });
+      pi.events.emit("oppi:provider-quota:v1", { providerId: "claimext", fetch: async () => ({}) });
+      pi.events.emit("oppi:provider-quota:v1", { providerId: "claimext", fetch: async () => ({}) });`,
+    );
+    const { catalog, runtime } = await setupCatalog(extension);
+    const result = await catalog.sync();
+    expect(result.diagnostics.map((d) => d.message)).toEqual(
+      expect.arrayContaining([
+        "Invalid or unregistered quota source",
+        "Duplicate quota source for claimext",
+      ]),
+    );
+    expect(catalog.getQuotaAdapters(runtime)).toEqual([]);
+  });
+
+  it("rejects a claim emitted by another resource or a failing factory", async () => {
+    const { catalog, runtime, extensionsDir } = await setupCatalog(
+      staticProviderExtension("ownedprov", "model"),
+    );
+    writeFileSync(
+      join(extensionsDir, "other.ts"),
+      `
+export default function (pi) {
+  pi.events.emit("oppi:provider-quota:v1", {
+    providerId: "ownedprov", fetch: async () => ({ authenticated: true, windows: [] }),
+  });
+  throw new Error("failed quota factory");
+}
+`,
+    );
+    const result = await catalog.sync();
+    expect(result.registeredProviderIds).toContain("ownedprov");
+    expect(result.diagnostics.map((d) => d.message)).toEqual(
+      expect.arrayContaining([
+        "Failed to load extension: failed quota factory",
+        "Invalid or unregistered quota source",
+      ]),
+    );
+    expect(catalog.getQuotaAdapters(runtime)).toEqual([]);
+  });
+
+  it("does not run an earlier owner's quota callback after another resource overrides its ID", async () => {
+    const { catalog, runtime, extensionsDir } = await setupCatalog(
+      staticProviderExtension(
+        "sharedprov",
+        "first-model",
+        `
+        pi.events.emit("oppi:provider-quota:v1", {
+          providerId: "sharedprov", fetch: async () => ({ authenticated: true, windows: [] }),
+        });`,
+      ),
+    );
+    writeFileSync(
+      join(extensionsDir, "z-provider.ts"),
+      staticProviderExtension("sharedprov", "last-model"),
+    );
+    await catalog.sync();
+    expect(modelIds(runtime)).toContain("sharedprov/last-model");
+    expect(catalog.getQuotaAdapters(runtime)).toEqual([]);
+  });
+
+  it("isolates a throwing quota declaration without breaking provider discovery", async () => {
+    const { catalog, runtime } = await setupCatalog(
+      staticProviderExtension(
+        "getterprov",
+        "model",
+        `
+      pi.events.emit("oppi:provider-quota:v1", {
+        get providerId() { throw new Error("bad getter") },
+      });`,
+      ),
+    );
+    const result = await catalog.sync();
+    expect(result.registeredProviderIds).toContain("getterprov");
+    expect(result.diagnostics.map((d) => d.message)).toContain(
+      "Invalid or unregistered quota source",
+    );
+    expect(catalog.getQuotaAdapters(runtime)).toEqual([]);
+  });
+
+  it("drops a quota source when its extension is removed and suppresses old built-in adapters", async () => {
+    const extension = staticProviderExtension(
+      "xai",
+      "override",
+      `
+      pi.events.emit("oppi:provider-quota:v1", { providerId: "xai", fetch: async () => ({
+        authenticated: false, windows: [],
+      }) });`,
+    );
+    const { catalog, runtime, extensionsDir } = await setupCatalog(extension);
+    await catalog.sync();
+    expect(
+      quotaAdaptersForProviders(
+        catalog.getRegisteredProviderIds(),
+        catalog.getQuotaAdapters(runtime),
+      ).filter((adapter) => adapter.providerId === "xai"),
+    ).toHaveLength(1);
+    rmSync(join(extensionsDir, "test-provider.ts"));
+    await catalog.sync();
+    expect(catalog.getQuotaAdapters(runtime)).toEqual([]);
+    expect(
+      quotaAdaptersForProviders(
+        catalog.getRegisteredProviderIds(),
+        catalog.getQuotaAdapters(runtime),
+      ).filter((adapter) => adapter.providerId === "xai"),
+    ).toHaveLength(1);
+  });
 
   it("skips a second sync when provider sources are unchanged", async () => {
     const { catalog } = await setupCatalog(staticProviderExtension("hotprov", "hot-model"));
@@ -471,7 +653,13 @@ export default function (pi) {
 
   it("does not reload on every call after a failed sync of unchanged sources", async () => {
     const { runtime, cwd, agentDir } = await setupCatalog(
-      staticProviderExtension("keepprov", "keep-model"),
+      staticProviderExtension(
+        "keepprov",
+        "keep-model",
+        `
+        pi.events.emit("oppi:provider-quota:v1", { providerId: "keepprov",
+          fetch: async () => ({ authenticated: true, windows: [] }) });`,
+      ),
     );
     let failRefresh = false;
     const catalog = new ExtensionProviderCatalog(
@@ -488,6 +676,7 @@ export default function (pi) {
     );
 
     expect((await catalog.sync()).registeredProviderIds).toContain("keepprov");
+    expect(catalog.getQuotaAdapters(runtime)).toHaveLength(1);
     failRefresh = true;
     const failed = await catalog.sync({ force: true });
     expect(failed.skipped).toBe(false);
@@ -500,6 +689,7 @@ export default function (pi) {
     const skipped = await catalog.sync();
     expect(skipped.skipped).toBe(true);
     expect(skipped.registeredProviderIds).toContain("keepprov");
+    expect(catalog.getQuotaAdapters(runtime)).toEqual([]);
   });
 });
 

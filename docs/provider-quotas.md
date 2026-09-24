@@ -88,7 +88,8 @@ Pace uses the current remaining percent and reset time. It does not use observed
 ## Code
 
 - Derivation: `server/src/provider-quota/shared.ts` (`deriveProviderQuotaPacing`)
-- Add a provider: `server/src/provider-quota/adapters/registry.ts`
+- Built-in provider adapters: `server/src/provider-quota/adapters/registry.ts`
+- Extension-provided quota: [Provider quota extension API](extensions.md#provider-quota-extension-api). Extensions own provider-specific auth, fetch, and parsing; Oppi validates and renders the shared quota shape.
 - Apple presentation: `clients/apple/Oppi/Features/Servers/ServerDetailView.swift`
 
 Do not branch Apple UI on provider names. Keep provider-specific parsing in the adapter.

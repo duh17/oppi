@@ -39,6 +39,18 @@ async function fetchAdapterQuota(
   }
 }
 
+/** A custom provider owns its credentials; never pass them to a built-in quota endpoint. */
+export function quotaAdaptersForProviders(
+  registeredProviderIds: readonly string[],
+  extensionAdapters: readonly ProviderQuotaAdapter[],
+): readonly ProviderQuotaAdapter[] {
+  const registered = new Set(registeredProviderIds);
+  return [
+    ...defaultProviderQuotaAdapters.filter((adapter) => !registered.has(adapter.providerId)),
+    ...extensionAdapters,
+  ];
+}
+
 export async function fetchProviderQuotas(
   options: FetchProviderQuotasOptions,
 ): Promise<ProviderQuotasStatus> {

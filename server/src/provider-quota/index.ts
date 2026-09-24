@@ -35,7 +35,7 @@ export {
   UPSTREAM_TIMEOUT_MS,
 } from "./shared.js";
 
-export { fetchProviderQuotas } from "./fetch.js";
+export { fetchProviderQuotas, quotaAdaptersForProviders } from "./fetch.js";
 export {
   codexProviderQuotaAdapter,
   defaultProviderQuotaAdapters,

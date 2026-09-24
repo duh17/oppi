@@ -20,14 +20,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  createEventBus,
   DefaultPackageManager,
   SettingsManager,
   discoverAndLoadExtensions,
+  type EventBus,
   type LoadExtensionsResult,
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 
 import { createLogger } from "./logger.js";
+import {
+  EXTENSION_PROVIDER_QUOTA_CHANNEL,
+  extensionQuotaAdapter,
+  parseExtensionQuotaSource,
+  type ExtensionQuotaSource,
+} from "./provider-quota/extension.js";
+import type { ProviderQuotaAdapter } from "./provider-quota/types.js";
 
 const log = createLogger({ base: { component: "extension_model_discovery" } });
 
@@ -195,6 +204,8 @@ export type ExtensionProviderCatalogRuntime = ProviderRegistrationTarget &
 export class ExtensionProviderCatalog {
   private lastFingerprint?: string;
   private readonly registeredIds = new Set<string>();
+  private quotaSources: ExtensionQuotaSource[] = [];
+  private quotaGeneration = new AbortController();
   private queue: Promise<void> = Promise.resolve();
   private readonly discoveryRoot = mkdtempSync(join(tmpdir(), "oppi-provider-catalog-"));
 
@@ -202,6 +213,18 @@ export class ExtensionProviderCatalog {
     private readonly modelRuntime: ExtensionProviderCatalogRuntime,
     private readonly options: ExtensionProviderDiscoveryOptions,
   ) {}
+
+  getQuotaAdapters(
+    modelRuntime: Pick<ModelRuntime, "getAuth" | "hasConfiguredAuth">,
+  ): ProviderQuotaAdapter[] {
+    return this.quotaSources.map((source) =>
+      extensionQuotaAdapter(source, modelRuntime, this.quotaGeneration.signal),
+    );
+  }
+
+  getRegisteredProviderIds(): readonly string[] {
+    return [...this.registeredIds];
+  }
 
   async sync(options: ExtensionProviderSyncOptions = {}): Promise<ExtensionProviderSyncResult> {
     const run = this.queue.then(() => this.syncExclusive(options));
@@ -237,8 +260,14 @@ export class ExtensionProviderCatalog {
       };
     }
 
+    // A reload must stop callbacks before provider ownership or auth changes.
+    this.quotaGeneration.abort();
+    this.quotaSources = [];
     try {
-      const { applied, diagnostics, removedProviderIds } = await this.loadAndReplace();
+      const { applied, diagnostics, removedProviderIds, quotaSources } =
+        await this.loadAndReplace();
+      this.quotaGeneration = new AbortController();
+      this.quotaSources = quotaSources;
       this.lastFingerprint = fingerprint;
 
       for (const diagnostic of diagnostics) {
@@ -263,6 +292,8 @@ export class ExtensionProviderCatalog {
         unregisteredProviderIds: removedProviderIds,
       };
     } catch (error) {
+      // Keep old callbacks revoked even if provider reconciliation failed midway.
+      this.quotaSources = [];
       // Remember the stamp so a broken source is not reloaded on every GET /models.
       // force:true or a later fingerprint change still retries.
       this.lastFingerprint = fingerprint;
@@ -281,6 +312,7 @@ export class ExtensionProviderCatalog {
     applied: AppliedProviderRegistrations;
     diagnostics: ExtensionProviderDiagnostic[];
     removedProviderIds: string[];
+    quotaSources: ExtensionQuotaSource[];
   }> {
     const settingsManager = SettingsManager.create(this.options.cwd, this.options.agentDir, {
       projectTrusted: false,
@@ -304,20 +336,45 @@ export class ExtensionProviderCatalog {
     // Unique empty root so discoverAndLoadExtensions does not also scan the
     // real cwd/.pi/extensions or agentDir/extensions. Paths already come from
     // the skip-resolve. mkdtempSync (not a fixed $TMPDIR name) owns the dir.
-    const extensionsResult = await discoverAndLoadExtensions(
-      enabledPaths,
-      this.discoveryRoot,
-      this.discoveryRoot,
-    );
+    // Only capture declarations during global extension loading. This catalog
+    // runtime never starts a session, so callbacks must not fetch until requested.
+    const eventBus = createEventBus();
+    const loads: Array<{ path: string; result: LoadExtensionsResult; claims: unknown[] }> = [];
+    try {
+      for (const path of enabledPaths) {
+        const claims: unknown[] = [];
+        // One emitter per resource gives quota declarations the same ownership
+        // boundary as its queued Pi provider registrations. Other channels still
+        // share the bus across extensions during catalog discovery.
+        const scopedBus: EventBus = {
+          on: eventBus.on.bind(eventBus),
+          emit(channel, data) {
+            if (channel === EXTENSION_PROVIDER_QUOTA_CHANNEL) claims.push(data);
+            else eventBus.emit(channel, data);
+          },
+        };
+        const result = await discoverAndLoadExtensions(
+          [path],
+          this.discoveryRoot,
+          this.discoveryRoot,
+          scopedBus,
+        );
+        loads.push({ path, result, claims });
+      }
+    } finally {
+      eventBus.clear();
+    }
     const diagnostics: ExtensionProviderDiagnostic[] = [
       ...skippedSources.map((source) => ({
         extensionPath: source,
         message: "Package is not installed; the model catalog will not install it",
       })),
-      ...extensionsResult.errors.map((error) => ({
-        extensionPath: error.path,
-        message: error.error,
-      })),
+      ...loads.flatMap(({ result }) =>
+        result.errors.map((error) => ({
+          extensionPath: error.path,
+          message: error.error,
+        })),
+      ),
     ];
 
     // Unregister first so a re-registration replaces instead of merging leftover
@@ -335,10 +392,48 @@ export class ExtensionProviderCatalog {
     }
     this.registeredIds.clear();
 
-    const applied = applyPendingProviderRegistrations(this.modelRuntime, extensionsResult);
+    const applied: AppliedProviderRegistrations = { registeredProviderIds: [], diagnostics: [] };
+    const quotaSources: Array<{ source: ExtensionQuotaSource; path: string }> = [];
+    const finalOwner = new Map<string, string>();
+    const claimed = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const load of loads) {
+      const registered = applyPendingProviderRegistrations(this.modelRuntime, load.result);
+      applied.registeredProviderIds.push(...registered.registeredProviderIds);
+      applied.diagnostics.push(...registered.diagnostics);
+      for (const providerId of registered.registeredProviderIds) {
+        this.registeredIds.add(providerId);
+        finalOwner.set(providerId, load.path);
+      }
+      for (const claim of load.claims) {
+        let source: ExtensionQuotaSource | undefined;
+        try {
+          source = parseExtensionQuotaSource(claim);
+        } catch {
+          // A throwing getter is an invalid declaration, not a failed reload.
+        }
+        if (
+          !source ||
+          load.result.extensions.length !== 1 ||
+          !registered.registeredProviderIds.includes(source.providerId)
+        ) {
+          diagnostics.push({
+            extensionPath: load.path,
+            message: "Invalid or unregistered quota source",
+          });
+          continue;
+        }
+        if (claimed.has(source.providerId)) duplicates.add(source.providerId);
+        claimed.add(source.providerId);
+        quotaSources.push({ source, path: load.path });
+      }
+    }
     diagnostics.push(...applied.diagnostics);
-    for (const providerId of applied.registeredProviderIds) {
-      this.registeredIds.add(providerId);
+    for (const id of duplicates) {
+      diagnostics.push({
+        extensionPath: "provider quota",
+        message: `Duplicate quota source for ${id}`,
+      });
     }
     await this.modelRuntime.refresh({ allowNetwork: false });
     const nextIds = new Set(applied.registeredProviderIds);
@@ -346,6 +441,12 @@ export class ExtensionProviderCatalog {
       applied,
       diagnostics,
       removedProviderIds: previousIds.filter((providerId) => !nextIds.has(providerId)),
+      quotaSources: quotaSources
+        .filter(
+          ({ source, path }) =>
+            !duplicates.has(source.providerId) && finalOwner.get(source.providerId) === path,
+        )
+        .map(({ source }) => source),
     };
   }
 }
