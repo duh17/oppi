@@ -277,7 +277,7 @@ Oppi $VERSION aligns mobile supervision with the current Pi runtime: live termin
 
 ### Prerequisites
 - macOS 26.0+
-- Node.js 24.0.0 or newer installed on the Mac
+- Node.js 22.19.0 or newer installed on the Mac (sandbox workspaces need 23.6.0+)
 - \`npm install -g oppi-server@latest\`
 
 ### Install

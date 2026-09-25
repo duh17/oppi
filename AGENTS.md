@@ -39,7 +39,7 @@ Oppi brings [Pi](https://github.com/badlogic/pi-mono) coding sessions to iPhone,
 
 ## Cursor Cloud specific instructions
 
-Cloud Agent VM is Linux: only `server/` runs here; Apple clients need macOS and Xcode. Server requires Node 24+ (`engines.node >=24`). `node`, `npm`, `npx`, and `bun` already resolve correctly in every shell (Node 24 shadows the platform Node 22 shim), so plain `node`/`npm` and built `oppi` CLI need no source step.
+Cloud Agent VM is Linux: only `server/` runs here; Apple clients need macOS and Xcode. Server requires Node 22.19+ (`engines.node >=22.19.0`); sandbox workspaces need Node 23.6+. `node`, `npm`, `npx`, and `bun` already resolve correctly in every shell (Node 24 shadows the platform Node 22 shim), so plain `node`/`npm` and built `oppi` CLI need no source step.
 
 Two injected settings break the suite unless cleared per invocation:
 
