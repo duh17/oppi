@@ -107,8 +107,8 @@ struct MacToolAudioPlaybackControllerTests {
             Issue.record("Expected owner-socket attachment sources")
             return
         }
-        #expect(controlSource.requestPath == "/control-sessions/sess-1/attachments/att%209")
-        #expect(workspaceSource.requestPath == "/sessions/sess-1/attachments/att%209")
+        #expect(controlSource.target == .route("/control-sessions/sess-1/attachments/att%209"))
+        #expect(workspaceSource.target == .route("/sessions/sess-1/attachments/att%209"))
         #expect(!controlSource.identity.contains("sk_secret"))
         #expect(!workspaceSource.identity.contains("sk_secret"))
     }

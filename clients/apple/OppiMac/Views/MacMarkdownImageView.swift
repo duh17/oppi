@@ -292,7 +292,7 @@ enum MacMarkdownImageLoader {
     }
 }
 
-/// Owner Unix-socket fetch for workspace/session files. Never sends `sk_` over HTTPS.
+/// Owner Unix-socket fetch for workspace, session, and host files. Never sends `sk_` over HTTPS.
 enum MacMarkdownWorkspaceFileLoader {
     static func resolvedPath(_ source: String, sourceDirectory: String?) -> String {
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -303,22 +303,18 @@ enum MacMarkdownWorkspaceFileLoader {
         return (directory as NSString).appendingPathComponent(trimmed)
     }
 
-    static func workspaceRawRequestPath(
+    static func workspaceFileRequest(
         workspaceID: String,
         path: String,
         worktreeId: String? = nil
-    ) -> String? {
-        MacUnixSocketMediaPath.workspaceRaw(
-            workspaceID: workspaceID,
-            filePath: path,
-            worktreeId: worktreeId
-        )
+    ) -> MacCurrentFileRequest? {
+        MacCurrentFileRequest(origin: .workspace(workspaceID: workspaceID, worktreeId: worktreeId), path: path)
     }
 
-    static func workspaceRawRequestPath(for plan: FileViewerPlan) -> String? {
+    static func workspaceFileRequest(for plan: FileViewerPlan) -> MacCurrentFileRequest? {
         switch plan.source {
         case .workspaceFile(let workspaceID, let path):
-            return workspaceRawRequestPath(
+            return workspaceFileRequest(
                 workspaceID: workspaceID,
                 path: path,
                 worktreeId: plan.worktreeId
@@ -337,21 +333,19 @@ enum MacMarkdownWorkspaceFileLoader {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !workspaceID.isEmpty else { return nil }
 
-        if let sessionID, !sessionID.isEmpty, let client = MacWorkspaceClient.localOwner() {
-            if let data = try? await client.getSessionRawFileData(
-                workspaceId: workspaceID,
-                sessionId: sessionID,
-                path: trimmed
-            ), !data.isEmpty {
-                return data
-            }
+        if let sessionID, !sessionID.isEmpty,
+           let data = await ownerData(MacCurrentFileRequest(
+               origin: .session(workspaceID: workspaceID, sessionID: sessionID),
+               path: trimmed
+           )) {
+            return data
         }
 
-        return await workspaceRawData(
+        return await ownerData(workspaceFileRequest(
             workspaceID: workspaceID,
             path: trimmed,
             worktreeId: worktreeId
-        )
+        ))
     }
 
     static func data(for plan: FileViewerPlan, sessionID: String?) async -> Data? {
@@ -364,7 +358,7 @@ enum MacMarkdownWorkspaceFileLoader {
                 worktreeId: plan.worktreeId
             )
         case .hostFile(let path):
-            return await hostRawData(path: path)
+            return await hostData(path: path)
         case .workspaceReviewDiff:
             return nil
         }
@@ -395,48 +389,20 @@ enum MacMarkdownWorkspaceFileLoader {
         }
     }
 
-    private static func hostRawData(path: String) async -> Data? {
+    private static func hostData(path: String) async -> Data? {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        if let data = await hostSocketData(path: trimmed), !data.isEmpty {
+        if let data = await ownerData(MacCurrentFileRequest(origin: .host, path: trimmed)) {
             return data
         }
         let expanded = (trimmed as NSString).expandingTildeInPath
         return try? Data(contentsOf: URL(fileURLWithPath: expanded))
     }
 
-    private static func hostSocketData(path: String) async -> Data? {
-        guard let token = MacAPIClient.readOwnerToken() else { return nil }
-        let dataDir = NSString("~/.config/oppi").expandingTildeInPath
-        let client = MacUnixSocketHTTPClient(socketPath: MacLocalAPISocket.path(dataDir: dataDir))
-        var components = URLComponents()
-        components.path = "/files/raw"
-        components.queryItems = [URLQueryItem(name: "path", value: path)]
-        guard let requestPath = components.string else { return nil }
-        do {
-            let response = try await client.perform(
-                macLocalAuthenticatedRequest(method: "GET", path: requestPath, token: token)
-            )
-            guard (200..<300).contains(response.statusCode), !response.body.isEmpty else {
-                return nil
-            }
-            return response.body
-        } catch {
-            return nil
-        }
-    }
-
-    private static func workspaceRawData(
-        workspaceID: String,
-        path: String,
-        worktreeId: String?
-    ) async -> Data? {
-        guard let client = MacWorkspaceClient.localOwner() else { return nil }
-        guard let data = try? await client.getWorkspaceRawFileData(
-            workspaceId: workspaceID,
-            path: path,
-            worktreeId: worktreeId
-        ), !data.isEmpty else {
+    /// Non-empty bytes from the local owner server, or `nil`.
+    private static func ownerData(_ request: MacCurrentFileRequest?) async -> Data? {
+        guard let request, let client = MacWorkspaceClient.localOwner(),
+              let data = try? await client.getCurrentFileData(request), !data.isEmpty else {
             return nil
         }
         return data

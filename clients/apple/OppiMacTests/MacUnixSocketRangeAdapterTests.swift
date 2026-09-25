@@ -113,7 +113,7 @@ struct MacUnixSocketRangeAdapterTests {
 
     @Test func ownerSourceIdentityAndAssetURLNeverCarryOwnerToken() {
         let source = MacOwnerMediaSource.make(
-            requestPath: "/workspaces/ws/raw/clip.mp4",
+            target: .route("/workspaces/ws/raw/clip.mp4"),
             socketPath: "/tmp/oppi.sock",
             token: "sk_secret",
             contentTypeHint: "video/mp4",
@@ -121,10 +121,8 @@ struct MacUnixSocketRangeAdapterTests {
         )
         let assetURL = MacAuthenticatedMediaPlaybackSession.makeAssetURL()
 
-        #expect(source.requestPath == "/workspaces/ws/raw/clip.mp4")
         #expect(source.socketPath == "/tmp/oppi.sock")
         #expect(!source.identity.contains("sk_"))
-        #expect(!source.requestPath.contains("sk_"))
         #expect(!source.socketPath.contains("sk_"))
         #expect(assetURL.scheme == "oppi-media")
         #expect(assetURL.host == "owner-socket")
@@ -133,17 +131,7 @@ struct MacUnixSocketRangeAdapterTests {
         #expect(!assetURL.absoluteString.contains("http"))
     }
 
-    @Test func mediaPathsEncodeWorkspaceSessionAndAttachmentRoutes() throws {
-        let workspace = try #require(
-            MacUnixSocketMediaPath.workspaceRaw(workspaceID: "ws 1", filePath: "clips/demo.mp4")
-        )
-        let session = try #require(
-            MacUnixSocketMediaPath.sessionRaw(
-                workspaceID: "ws-1",
-                sessionID: "sess-1",
-                filePath: "out/demo.mp4"
-            )
-        )
+    @Test func mediaPathsEncodeAttachmentRoutes() throws {
         let attachment = try #require(
             MacUnixSocketMediaPath.sessionAttachment(sessionID: "sess-1", attachmentID: "att-9")
         )
@@ -155,27 +143,8 @@ struct MacUnixSocketRangeAdapterTests {
             )
         )
 
-        #expect(workspace == "/workspaces/ws%201/raw/clips/demo.mp4")
-        #expect(session == "/workspaces/ws-1/sessions/sess-1/raw/out/demo.mp4")
         #expect(attachment == "/sessions/sess-1/attachments/att-9")
         #expect(controlAttachment == "/control-sessions/sess-1/attachments/att-9")
-        #expect(
-            MacUnixSocketMediaPath.workspaceRaw(
-                workspaceID: "ws-1",
-                filePath: "clips/demo.mp4",
-                worktreeId: "wt_feature"
-            ) == "/workspaces/ws-1/raw/clips/demo.mp4?worktreeId=wt_feature"
-        )
-        #expect(
-            MacUnixSocketMediaPath.workspaceRaw(
-                workspaceID: "ws-1",
-                filePath: "clips/demo.mp4",
-                worktreeId: WorkspaceWorktree.mainId
-            ) == "/workspaces/ws-1/raw/clips/demo.mp4"
-        )
-        #expect(!workspace.contains("sk_"))
-        #expect(!session.contains("sk_"))
-        #expect(!attachment.contains("sk_"))
     }
 
     @Test func rangeFetchUsesOwnerSocketRequestNotLoopbackHTTP() async throws {
@@ -191,7 +160,7 @@ struct MacUnixSocketRangeAdapterTests {
             )
         )
         let source = MacOwnerMediaSource.make(
-            requestPath: "/workspaces/ws/raw/clip.mp4",
+            target: .route("/workspaces/ws/raw/clip.mp4"),
             socketPath: "/tmp/oppi.sock",
             token: "sk_secret",
             contentTypeHint: "video/mp4",
@@ -224,7 +193,7 @@ struct MacUnixSocketRangeAdapterTests {
             )
         )
         let source = MacOwnerMediaSource.make(
-            requestPath: "/workspaces/ws/raw/clip.mp4",
+            target: .route("/workspaces/ws/raw/clip.mp4"),
             socketPath: "/tmp/oppi.sock",
             token: "sk_secret",
             contentTypeHint: "video/mp4",
@@ -273,11 +242,13 @@ struct MacUnixSocketRangeAdapterTests {
             Issue.record("Expected owner-socket playback, got \(playback)")
             return
         }
-        #expect(source.requestPath == "/workspaces/ws-mac/sessions/sess-mac/raw/clips/demo.mp4")
+        #expect(
+            source.requestPath()
+                == "/files/current?origin=session&sessionId=sess-mac&path=clips%2Fdemo.mp4"
+        )
         #expect(source.socketPath == "/tmp/oppi.sock")
         #expect(source.contentTypeHint == "video/mp4")
         #expect(!source.identity.contains("sk_"))
-        #expect(!source.requestPath.contains("sk_"))
     }
 
     @Test func markdownWorkspaceVideoPlaybackSendsWorktreeQueryOnRawRangePath() throws {
@@ -312,9 +283,15 @@ struct MacUnixSocketRangeAdapterTests {
             Issue.record("Expected main-checkout playback, got \(main)")
             return
         }
-        #expect(featureSource.requestPath == "/workspaces/ws-1/raw/clips/demo.mp4?worktreeId=wt_feature")
-        #expect(mainSource.requestPath == "/workspaces/ws-1/raw/clips/demo.mp4")
-        #expect(!featureSource.requestPath.contains("sk_"))
+        #expect(
+            featureSource.requestPath()
+                == "/files/current?origin=workspace&workspaceId=ws-1&worktreeId=wt_feature&path=clips%2Fdemo.mp4"
+        )
+        #expect(
+            mainSource.requestPath()
+                == "/files/current?origin=workspace&workspaceId=ws-1&path=clips%2Fdemo.mp4"
+        )
+        #expect(featureSource.identity != mainSource.identity)
     }
 
     @Test func workspaceFileAudioAndVideoPlayThroughOwnerSocket() throws {
@@ -391,9 +368,13 @@ struct MacUnixSocketRangeAdapterTests {
             Issue.record("Expected control-session audio to use the Unix-socket adapter, got \(controlAudio)")
             return
         }
-        #expect(videoSource.requestPath == "/workspaces/ws-1/raw/clips/demo.mp4")
-        #expect(audioSource.requestPath == "/sessions/sess-1/attachments/att-1")
-        #expect(controlAudioSource.requestPath == "/control-sessions/control-1/attachments/att-1")
+        #expect(
+            videoSource.requestPath()
+                == "/files/current?origin=workspace&workspaceId=ws-1&path=clips%2Fdemo.mp4"
+        )
+        // Attachment IDs are not current files.
+        #expect(audioSource.requestPath() == "/sessions/sess-1/attachments/att-1")
+        #expect(controlAudioSource.requestPath() == "/control-sessions/control-1/attachments/att-1")
         #expect(!videoSource.identity.contains("sk_"))
         #expect(!audioSource.identity.contains("sk_"))
         #expect(!controlAudioSource.identity.contains("sk_"))
@@ -450,9 +431,15 @@ struct MacUnixSocketRangeAdapterTests {
             Issue.record("Expected main-checkout video to use the Unix-socket adapter, got \(main)")
             return
         }
-        #expect(featureSource.requestPath == "/workspaces/ws-1/raw/clips/demo.mp4?worktreeId=wt_feature")
-        #expect(mainSource.requestPath == "/workspaces/ws-1/raw/clips/demo.mp4")
-        #expect(!featureSource.requestPath.contains("sk_"))
+        #expect(
+            featureSource.requestPath()
+                == "/files/current?origin=workspace&workspaceId=ws-1&worktreeId=wt_feature&path=clips%2Fdemo.mp4"
+        )
+        #expect(
+            mainSource.requestPath()
+                == "/files/current?origin=workspace&workspaceId=ws-1&path=clips%2Fdemo.mp4"
+        )
+        #expect(featureSource.identity != mainSource.identity)
     }
 
     @Test func markdownVideoViewDoesNotDownloadWorkspaceFilesToTemp() throws {
@@ -532,7 +519,7 @@ struct MacUnixSocketRangeAdapterTests {
     private func makeRangeAdapter(transport: GateableLocalHTTPTransport) -> MacUnixSocketRangeAdapter {
         MacUnixSocketRangeAdapter(
             source: MacOwnerMediaSource.make(
-                requestPath: "/workspaces/ws/raw/clip.mp4",
+                target: .route("/workspaces/ws/raw/clip.mp4"),
                 socketPath: "/tmp/oppi.sock",
                 token: "sk_secret",
                 contentTypeHint: "video/mp4",

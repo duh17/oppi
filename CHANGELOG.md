@@ -48,6 +48,7 @@ Example:
 - **Client:** New orbs animate for dictation and the agent's thinking/working indicator, adapted from Thinking Orbs designs by Jakub Antalik and a Swift port by Haplo LLC. The dictation orb responds to voice. On-device dictation prefers Apple's DictationTranscriber, which accepts Dictionary phrase hints and gave better results than SpeechTranscriber in our normal-path use; SpeechTranscriber remains the fallback.
 - **Server:** Bundled Pi runtime moves to `0.87.1`.
 - **Mirror:** Mirrored Pi `turn_end` frames omit duplicate message bodies and tool results.
+- **Mac:** Workspace, session, and host file reads, Markdown images and audio, and inline video always use `/files/current`. OppiMac does not keep the iOS legacy-route fallback.
 
 ## [0.49.1] - 2026-09-18
 

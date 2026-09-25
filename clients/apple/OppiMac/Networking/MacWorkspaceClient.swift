@@ -505,32 +505,12 @@ actor MacWorkspaceClient {
         return try Self.decodeWorkspaceReviewDiff(data)
     }
 
-    func getSessionRawFileData(workspaceId: String, sessionId: String, path: String) async throws -> Data {
-        try await get(
-            url: try makeURL(
-                pathSegments: ["workspaces", workspaceId, "sessions", sessionId, "raw", path]
-            )
-        )
-    }
-
-    /// Fetch workspace file bytes. Omitting `worktreeId` matches the server's
-    /// main-checkout default. `main` is omitted so raw URLs keep that identity.
-    func getWorkspaceRawFileData(
-        workspaceId: String,
-        path: String,
-        worktreeId: String? = nil
-    ) async throws -> Data {
-        var queryItems: [URLQueryItem] = []
-        if let worktreeId = FileViewerPlan.normalizedWorktreeId(worktreeId) {
-            queryItems.append(URLQueryItem(name: "worktreeId", value: worktreeId))
+    /// Current-file bytes through `/files/current`.
+    func getCurrentFileData(_ request: MacCurrentFileRequest) async throws -> Data {
+        guard let target = request.requestTarget() else {
+            throw MacWorkspaceClientError.invalidURL
         }
-        return try await get(
-            url: try makeURL(
-                pathSegments: ["workspaces", workspaceId, "raw"],
-                appendedPath: path,
-                queryItems: queryItems
-            )
-        )
+        return try await send(method: "GET", target: target)
     }
 
     /// Fetch untruncated tool output from the server temp-file side channel.
@@ -1060,7 +1040,11 @@ actor MacWorkspaceClient {
     }
 
     private func send(method: String, url: URL, body: Data? = nil, contentType: String? = nil) async throws -> Data {
-        let response = try await sendRaw(method: method, url: url, body: body, contentType: contentType)
+        try await send(method: method, target: requestTarget(from: url), body: body, contentType: contentType)
+    }
+
+    private func send(method: String, target: String, body: Data? = nil, contentType: String? = nil) async throws -> Data {
+        let response = try await sendRaw(method: method, target: target, body: body, contentType: contentType)
         try checkStatus(response)
         return response.body
     }
@@ -1071,7 +1055,15 @@ actor MacWorkspaceClient {
         body: Data? = nil,
         contentType: String? = nil
     ) async throws -> MacLocalHTTPResponse {
-        let path = requestTarget(from: url)
+        try await sendRaw(method: method, target: requestTarget(from: url), body: body, contentType: contentType)
+    }
+
+    private func sendRaw(
+        method: String,
+        target path: String,
+        body: Data? = nil,
+        contentType: String? = nil
+    ) async throws -> MacLocalHTTPResponse {
         workspaceLogger.debug("\(method) \(path)")
         return try await transport.perform(
             macLocalAuthenticatedRequest(

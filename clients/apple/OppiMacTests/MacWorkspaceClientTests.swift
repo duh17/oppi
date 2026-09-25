@@ -847,64 +847,6 @@ struct MacWorkspaceClientTests {
         #expect(!requests[1].path.contains("https"))
     }
 
-    @Test func getWorkspaceRawFileDataAppendsWorktreeQueryAfterSwitch() async throws {
-        let transport = RecordingLocalHTTPTransport(
-            response: MacLocalHTTPResponse(
-                statusCode: 200,
-                headers: ["content-type": "text/plain"],
-                body: Data("feature-bytes".utf8)
-            )
-        )
-        let client = MacWorkspaceClient(
-            socketPath: "/tmp/oppi-test.sock",
-            token: "sk_owner",
-            transport: transport
-        )
-
-        let main = try await client.getWorkspaceRawFileData(
-            workspaceId: "ws-1",
-            path: "Notes.md",
-            worktreeId: WorkspaceWorktree.mainId
-        )
-        let feature = try await client.getWorkspaceRawFileData(
-            workspaceId: "ws-1",
-            path: "clips/demo.mp4",
-            worktreeId: "wt_feature"
-        )
-
-        let requests = await transport.requests
-        #expect(main == Data("feature-bytes".utf8))
-        #expect(feature == Data("feature-bytes".utf8))
-        #expect(requests.map(\.method) == ["GET", "GET"])
-        #expect(requests[0].path == "/workspaces/ws-1/raw/Notes.md")
-        #expect(queryValue("worktreeId", in: requests[0].path) == nil)
-        #expect(requests[1].path.hasPrefix("/workspaces/ws-1/raw/clips/demo.mp4"))
-        #expect(queryValue("worktreeId", in: requests[1].path) == "wt_feature")
-        #expect(requests[1].headers["Authorization"] == "Bearer sk_owner")
-        #expect(!requests[1].path.contains("https"))
-    }
-
-    @Test func getWorkspaceRawFileDataOmitsWorktreeQueryWhenUnscoped() async throws {
-        let transport = RecordingLocalHTTPTransport(
-            response: MacLocalHTTPResponse(
-                statusCode: 200,
-                headers: ["content-type": "text/plain"],
-                body: Data("main-bytes".utf8)
-            )
-        )
-        let client = MacWorkspaceClient(
-            socketPath: "/tmp/oppi-test.sock",
-            token: "sk_owner",
-            transport: transport
-        )
-
-        _ = try await client.getWorkspaceRawFileData(workspaceId: "ws-1", path: "Notes.md")
-
-        let request = try #require(await transport.requests.first)
-        #expect(request.path == "/workspaces/ws-1/raw/Notes.md")
-        #expect(queryValue("worktreeId", in: request.path) == nil)
-    }
-
     @Test func listWorkspaceDirectoryOmitsWorktreeQueryWhenUnscoped() async throws {
         let transport = RecordingLocalHTTPTransport(
             response: MacLocalHTTPResponse(

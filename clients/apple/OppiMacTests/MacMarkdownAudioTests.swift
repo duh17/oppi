@@ -26,7 +26,7 @@ struct MacMarkdownAudioTests {
             session: { _ in controlRecord },
             workspace: { _ in Issue.record("Declared control must not invent a workspace"); return nil }
         )
-        #expect(host.media.requestPath == "/files/raw?path=/work/clip.wav")
+        #expect(host.media.requestPath() == "/files/current?origin=host&path=%2Fwork%2Fclip.wav")
         let sandboxSession = sessionRecord(workspace: "sandbox", worktree: "session-branch")
         var workspace = Workspace(id: "sandbox", name: "Fixture", createdAt: Date(), updatedAt: Date())
         workspace.runtime = .sandbox
@@ -35,7 +35,10 @@ struct MacMarkdownAudioTests {
             input, token: "sk_fixture", socketPath: "/fixture.sock",
             session: { _ in sandboxSession }, workspace: { _ in sandboxWorkspace }
         )
-        #expect(sandbox.media.requestPath == "/workspaces/sandbox/sessions/s/raw/%2Fwork%2Fclip.wav")
+        #expect(
+            sandbox.media.requestPath()
+                == "/files/current?origin=session&sessionId=s&path=%2Fwork%2Fclip.wav"
+        )
         #expect(sandbox.filePlan.source == .workspaceFile(workspaceID: "sandbox", path: "/work/clip.wav"))
         #expect(sandbox.filePlan.worktreeId == "session-branch")
     }
@@ -85,8 +88,8 @@ struct MacMarkdownAudioTests {
         let request = request(path: "/work/clip.wav", kind: .hostFile, session: "s")
         let host = try await resolve(request, runtime: .host)
         let sandbox = try await resolve(request, runtime: .sandbox)
-        #expect(host.media.requestPath == "/files/raw?path=/work/clip.wav")
-        #expect(sandbox.media.requestPath == "/workspaces/w/sessions/s/raw/%2Fwork%2Fclip.wav")
+        #expect(host.media.requestPath() == "/files/current?origin=host&path=%2Fwork%2Fclip.wav")
+        #expect(sandbox.media.requestPath() == "/files/current?origin=session&sessionId=s&path=%2Fwork%2Fclip.wav")
         #expect(!sandbox.media.identity.contains("sk_fixture"))
         #expect(try await sandbox.media.authorizationProvider() == "Bearer sk_fixture")
     }
@@ -110,10 +113,13 @@ struct MacMarkdownAudioTests {
 
     @Test func encodedHostPathAndSandboxOpenFallbackRetainOrigin() async throws {
         let host = try await resolve(request(path: "/work/a+b & c.wav", kind: .hostFile))
-        #expect(host.media.requestPath == "/files/raw?path=/work/a%2Bb%20%26%20c.wav")
+        #expect(host.media.requestPath() == "/files/current?origin=host&path=%2Fwork%2Fa%2Bb%20%26%20c.wav")
         #expect(host.filePlan.source == .hostFile(path: "/work/a+b & c.wav"))
         let sandbox = try await resolve(request(path: "/work/clip.wav", kind: .hostFile, worktree: "branch+one"), runtime: .sandbox)
-        #expect(sandbox.media.requestPath == "/workspaces/w/raw/%2Fwork%2Fclip.wav?worktreeId=branch%2Bone")
+        #expect(
+            sandbox.media.requestPath()
+                == "/files/current?origin=workspace&workspaceId=w&worktreeId=branch%2Bone&path=%2Fwork%2Fclip.wav"
+        )
         #expect(sandbox.filePlan.source == .workspaceFile(workspaceID: "w", path: "/work/clip.wav"))
         #expect(sandbox.filePlan.worktreeId == "branch+one")
     }
@@ -130,10 +136,11 @@ struct MacMarkdownAudioTests {
                 )
             }
             let requests = await transport.requests
-            #expect(requests.count == 1)
-            #expect(requests.first?.path == "/workspaces/w/sessions/s/raw/clips%2Fclip.wav")
-            #expect(requests.first?.headers["Authorization"] == "Bearer sk_fixture")
-            #expect(requests.first?.headers["Range"] == "bytes=0-3")
+            #expect(requests.map(\.path) == [
+                "/files/current?origin=session&sessionId=s&path=clips%2Fclip.wav",
+            ])
+            #expect(requests.allSatisfy { $0.headers["Authorization"] == "Bearer sk_fixture" })
+            #expect(requests.last?.headers["Range"] == "bytes=0-3")
         }
     }
 
@@ -141,10 +148,13 @@ struct MacMarkdownAudioTests {
         let main = try await resolve(request(worktree: "main"))
         let branch = try await resolve(request(worktree: "branch one"))
         let session = try await resolve(request(session: "s", worktree: "branch one"))
-        #expect(main.media.requestPath == "/workspaces/w/raw/clips%2Fclip.wav")
-        #expect(branch.media.requestPath == "/workspaces/w/raw/clips%2Fclip.wav?worktreeId=branch%20one")
+        #expect(main.media.requestPath() == "/files/current?origin=workspace&workspaceId=w&path=clips%2Fclip.wav")
+        #expect(
+            branch.media.requestPath()
+                == "/files/current?origin=workspace&workspaceId=w&worktreeId=branch%20one&path=clips%2Fclip.wav"
+        )
+        #expect(session.media.requestPath() == "/files/current?origin=session&sessionId=s&path=clips%2Fclip.wav")
         #expect(main.media.identity != branch.media.identity)
-        #expect(session.media.requestPath == "/workspaces/w/sessions/s/raw/clips%2Fclip.wav")
     }
 
     @Test func missingOrDeniedContextNeverFallsBackToOwnerHost() async {
@@ -331,7 +341,9 @@ struct MacMarkdownAudioTests {
     }
 
     private func resolve(_ request: MacMarkdownAudioRequest, runtime: WorkspaceRuntime = .host) async throws -> MacMarkdownAudioSource.Resolved {
-        try await MacMarkdownAudioSource.resolve(request, token: "sk_fixture", socketPath: "/fixture.sock") { id in
+        try await MacMarkdownAudioSource.resolve(
+            request, token: "sk_fixture", socketPath: "/fixture.sock"
+        ) { id in
             var workspace = Workspace(id: id, name: "Fixture", createdAt: Date(timeIntervalSince1970: 0), updatedAt: Date(timeIntervalSince1970: 0))
             workspace.runtime = runtime
             return workspace

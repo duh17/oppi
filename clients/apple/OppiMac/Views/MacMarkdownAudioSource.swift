@@ -58,37 +58,22 @@ enum MacMarkdownAudioSource {
         }
         try Task.checkCancellation()
 
-        let requestPath: String
+        let origin: MacCurrentFileRequest.Origin
         if useHost {
-            var components = URLComponents()
-            components.path = "/files/raw"
-            components.queryItems = [URLQueryItem(name: "path", value: path)]
-            guard let encoded = components.string else { throw Unavailable.source }
-            requestPath = encoded.replacingOccurrences(of: "+", with: "%2B")
+            origin = .host
         } else {
+            // Server origin resolution owns sandbox guest→host mapping.
             guard let workspaceID else { throw Unavailable.source }
-            let prefix: [String]
             if let sessionID = nonEmpty(reference.sourceSessionID) {
-                prefix = ["workspaces", workspaceID, "sessions", sessionID, "raw"]
+                origin = .session(workspaceID: workspaceID, sessionID: sessionID)
             } else {
-                prefix = ["workspaces", workspaceID, "raw"]
+                origin = .workspace(workspaceID: workspaceID, worktreeId: worktreeId)
             }
-            // Match APIClient.makeSessionRawURL/makeWorkspaceRawURL: encode the
-            // complete file path as one segment, preserving a guest leading '/'.
-            // Server resolveWorkspaceUserPath owns sandbox guest→host mapping.
-            var allowed = CharacterSet.urlPathAllowed
-            allowed.remove(charactersIn: "/%+?#&")
-            let segments = (prefix + [path]).compactMap { $0.addingPercentEncoding(withAllowedCharacters: allowed) }
-            guard segments.count == prefix.count + 1 else { throw Unavailable.source }
-            let route = "/" + segments.joined(separator: "/")
-            requestPath = reference.sourceSessionID.flatMap(nonEmpty) == nil
-                ? MacUnixSocketMediaPath.appendWorktreeQuery(route, worktreeId: worktreeId)
-                    .replacingOccurrences(of: "+", with: "%2B")
-                : route
         }
+        guard let fileRequest = MacCurrentFileRequest(origin: origin, path: path) else { throw Unavailable.source }
         let ext = (path as NSString).pathExtension
         let media = MacOwnerMediaSource.make(
-            requestPath: requestPath, socketPath: socketPath, token: token,
+            target: .currentFile(fileRequest), socketPath: socketPath, token: token,
             contentTypeHint: MacMediaMimeType.hint(forPathExtension: ext), sourceFileExtension: ext
         )
         let filePlan: FileViewerPlan = useHost ? .hostFile(path: path) : .workspaceFile(

@@ -78,7 +78,7 @@ struct MacMarkdownAudioVisualGateTests {
             return workspace
         }
         #expect(!resolved.media.identity.contains("sk_fixture"))
-        #expect(!resolved.media.requestPath.contains("sk_"))
+        #expect(resolved.media.requestPath()?.contains("sk_") == false)
         let session = MacAuthenticatedMediaPlaybackSession(source: resolved.media, transport: transport)
         session.player.isMuted = true
         session.player.volume = 0
@@ -100,7 +100,9 @@ struct MacMarkdownAudioVisualGateTests {
         let delivered = await transport.deliveredBytes
         #expect(!requests.isEmpty)
         #expect(requests.allSatisfy { $0.method == "GET" })
-        #expect(requests.allSatisfy { $0.path == "/workspaces/w/raw/clips%2Fclip.wav" })
+        #expect(requests.allSatisfy {
+            $0.path == "/files/current?origin=workspace&workspaceId=w&path=clips%2Fclip.wav"
+        })
         #expect(requests.allSatisfy { $0.headers["Authorization"] == "Bearer sk_fixture" })
         #expect(requests.allSatisfy { $0.headers["Range"]?.hasPrefix("bytes=") == true })
         #expect(requests.allSatisfy { !$0.path.contains("sk_") && !$0.path.contains("http") })
@@ -148,8 +150,10 @@ struct MacMarkdownAudioVisualGateTests {
         let playing = await waitUntil(timeout: .seconds(4), host: host) {
             play.accessibilityLabel() == "Pause audio"
         }
-        let recorded = server.snapshot()
+        let snapshot = server.snapshot()
+        let recorded = snapshot.filter { $0.path != "/server/info" }
         #expect(requests.count == 1)
+        #expect(snapshot.filter { $0.path == "/server/info" }.isEmpty, "Mac does not probe /server/info for file routes")
         #expect(requests.first?.embed.filePath == "clips/sample.wav")
         #expect(requests.first?.worktreeId == "feature-audio")
         #expect(server.deliveredBytes > 0)
@@ -157,7 +161,7 @@ struct MacMarkdownAudioVisualGateTests {
         #expect(recorded.allSatisfy { $0.authorization == "Bearer sk_fixture" })
         #expect(recorded.allSatisfy { $0.range?.hasPrefix("bytes=") == true })
         #expect(recorded.allSatisfy {
-            $0.path == "/workspaces/audio-fixture/raw/clips%2Fsample.wav?worktreeId=feature-audio"
+            $0.path == "/files/current?origin=workspace&workspaceId=audio-fixture&worktreeId=feature-audio&path=clips%2Fsample.wav"
         })
         #expect(recorded.allSatisfy { !$0.path.contains("sk_") && !$0.path.contains("http") })
         #expect(playing, "Production Markdown click must reach Pause/Playing through the real backend, not merely receive bytes")
@@ -291,6 +295,7 @@ private final class UnixRangeHTTPFixture: @unchecked Sendable {
     let socketPath: String
     private let body: Data
     private let contentType: String
+    private let serverInfo: Data?
     private let listenFD: Int32
     private let queue = DispatchQueue(label: "dev.chenda.OppiMac.markdown-audio-range")
     private let lock = NSLock()
@@ -298,14 +303,16 @@ private final class UnixRangeHTTPFixture: @unchecked Sendable {
     private var records: [UnixRangeHTTPRecord] = []
     private let gate = AudioDeliveryGate()
 
-    private init(socketPath: String, body: Data, contentType: String, listenFD: Int32) {
+    private init(socketPath: String, body: Data, contentType: String, serverInfo: Data?, listenFD: Int32) {
         self.socketPath = socketPath
         self.body = body
         self.contentType = contentType
+        self.serverInfo = serverInfo
         self.listenFD = listenFD
     }
 
-    static func start(body: Data, contentType: String) throws -> UnixRangeHTTPFixture {
+    /// `currentFilesVersion` makes `/server/info` report that capability; nil serves only ranges.
+    static func start(body: Data, contentType: String, currentFilesVersion: Int? = nil) throws -> UnixRangeHTTPFixture {
         let socketPath = "/tmp/oppi-md-audio-\(UUID().uuidString).sock"
         unlink(socketPath)
         let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
@@ -320,8 +327,11 @@ private final class UnixRangeHTTPFixture: @unchecked Sendable {
             Darwin.close(fd)
             throw POSIXError(.EIO)
         }
+        let serverInfo = currentFilesVersion.map {
+            Data(#"{"capabilities":{"currentFiles":{"version":\#($0)}}}"#.utf8)
+        }
         let server = UnixRangeHTTPFixture(
-            socketPath: socketPath, body: body, contentType: contentType, listenFD: fd
+            socketPath: socketPath, body: body, contentType: contentType, serverInfo: serverInfo, listenFD: fd
         )
         server.queue.async { server.acceptLoop() }
         return server
@@ -397,10 +407,23 @@ private final class UnixRangeHTTPFixture: @unchecked Sendable {
             authorization: headers["authorization"],
             range: headers["range"]
         )
-        let reply = MarkdownAudioRangeReply.response(
-            body: body, contentType: contentType, rangeHeader: record.range
-        )
-        let reason = reply.statusCode == 206 ? "Partial Content" : "Range Not Satisfiable"
+        let reply: MacLocalHTTPResponse
+        if record.path == "/server/info", let serverInfo {
+            reply = MacLocalHTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json", "content-length": "\(serverInfo.count)"],
+                body: serverInfo
+            )
+        } else {
+            reply = MarkdownAudioRangeReply.response(
+                body: body, contentType: contentType, rangeHeader: record.range
+            )
+        }
+        let reason = switch reply.statusCode {
+        case 200: "OK"
+        case 206: "Partial Content"
+        default: "Range Not Satisfiable"
+        }
         var header = "HTTP/1.1 \(reply.statusCode) \(reason)\r\n"
         for key in reply.headers.keys.sorted() {
             header += "\(key): \(reply.headers[key] ?? "")\r\n"

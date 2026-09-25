@@ -71,9 +71,14 @@ struct MacHTMLPreviewTests {
         #expect(MacHTMLPreviewSecurity.allowsEmbeddedNavigation(to: try #require(URL(string: "blob:https://example.com/id"))))
         #expect(!MacHTMLPreviewSecurity.allowsEmbeddedNavigation(to: try #require(URL(string: "file:///tmp/report.html"))))
         #expect(!MacHTMLPreviewSecurity.allowsEmbeddedNavigation(to: try #require(URL(string: "https://example.com"))))
-        #expect(MacHTMLPreviewSecurity.isHostRawFileURL(
-            try #require(URL(string: "https://example.com/files/raw?path=/tmp/report.html"))
-        ))
+        for route in [
+            "https://example.com/files/raw?path=/tmp/report.html",
+            "http://127.0.0.1:7749/files/current?origin=host&path=%2Ftmp%2Freport.html",
+            "https://example.com/files/current/sidecars?origin=host&path=%2Ftmp%2Fclip.mp4",
+        ] {
+            #expect(MacHTMLPreviewSecurity.isCurrentFileReadURL(try #require(URL(string: route))))
+        }
+        #expect(!MacHTMLPreviewSecurity.isCurrentFileReadURL(try #require(URL(string: "https://example.com/files/currently"))))
         #expect(!MacHTMLPreviewSecurity.allowsEmbeddedNavigation(
             to: try #require(URL(string: "https://example.com/files/raw?path=/tmp/report.html"))
         ))

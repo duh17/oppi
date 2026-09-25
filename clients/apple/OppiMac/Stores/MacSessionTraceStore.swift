@@ -999,11 +999,11 @@ final class MacSessionTraceStore {
             }
         }
         do {
-            let data = try await client.getSessionRawFileData(
-                workspaceId: target.workspaceId,
-                sessionId: target.sessionId,
+            guard let request = MacCurrentFileRequest(
+                origin: .session(workspaceID: target.workspaceId, sessionID: target.sessionId),
                 path: path
-            )
+            ) else { throw MacWorkspaceClientError.invalidURL }
+            let data = try await client.getCurrentFileData(request)
             guard selectedTarget == target,
                   sessionFilePreviewRequestId == requestId,
                   !Task.isCancelled else { return }

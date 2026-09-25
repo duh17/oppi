@@ -77,7 +77,7 @@ struct MacWorkspaceFileBrowserTests {
         #expect(feature != main)
     }
 
-    @Test func rawLoaderRequestPathSendsWorktreeQueryForTheSelectedCheckout() {
+    @Test func loaderRequestSendsWorktreeQueryForTheSelectedCheckout() {
         let feature = FileViewerPlan.workspaceFile(
             workspaceID: "ws-1",
             path: "Notes.md",
@@ -89,30 +89,22 @@ struct MacWorkspaceFileBrowserTests {
             worktreeId: WorkspaceWorktree.mainId
         )
 
+        let featureRequest = MacMarkdownWorkspaceFileLoader.workspaceFileRequest(for: feature)
+        let mainRequest = MacMarkdownWorkspaceFileLoader.workspaceFileRequest(for: main)
         #expect(
-            MacMarkdownWorkspaceFileLoader.workspaceRawRequestPath(for: feature)
-                == "/workspaces/ws-1/raw/Notes.md?worktreeId=wt_feature"
+            featureRequest?.requestTarget()
+                == "/files/current?origin=workspace&workspaceId=ws-1&worktreeId=wt_feature&path=Notes.md"
         )
+        #expect(mainRequest?.requestTarget() == "/files/current?origin=workspace&workspaceId=ws-1&path=Notes.md")
         #expect(
-            MacMarkdownWorkspaceFileLoader.workspaceRawRequestPath(for: main)
-                == "/workspaces/ws-1/raw/Notes.md"
-        )
-        #expect(
-            MacMarkdownWorkspaceFileLoader.workspaceRawRequestPath(
-                workspaceID: "ws-1",
-                path: "clips/demo.mp4",
-                worktreeId: "wt_feature"
-            ) == "/workspaces/ws-1/raw/clips/demo.mp4?worktreeId=wt_feature"
-        )
-        #expect(
-            MacMarkdownWorkspaceFileLoader.workspaceRawRequestPath(
+            MacMarkdownWorkspaceFileLoader.workspaceFileRequest(
                 workspaceID: "ws-1",
                 path: MacMarkdownWorkspaceFileLoader.resolvedPath(
                     "diagram.png",
                     sourceDirectory: "docs"
                 ),
                 worktreeId: "wt_feature"
-            ) == "/workspaces/ws-1/raw/docs/diagram.png?worktreeId=wt_feature"
+            )?.requestTarget() == "/files/current?origin=workspace&workspaceId=ws-1&worktreeId=wt_feature&path=docs%2Fdiagram.png"
         )
     }
 
@@ -250,15 +242,7 @@ struct MacWorkspaceFileBrowserTests {
         #expect(shell.contains("reopenDocumentForSelectedWorktree"))
         #expect(client.contains("func listWorkspaceDirectory("))
         #expect(client.contains("worktreeId: String? = nil"))
-        #expect(client.contains("func getWorkspaceRawFileData("))
         #expect(client.contains("queryItems.append(URLQueryItem(name: \"worktreeId\""))
-
-        let loader = try source(named: "OppiMac/Views/MacMarkdownImageView.swift")
-        #expect(loader.contains("getWorkspaceRawFileData("))
-        #expect(loader.contains("worktreeId: worktreeId"))
-        #expect(loader.contains("worktreeId: plan.worktreeId"))
-        #expect(loader.contains("var worktreeId: String? = nil"))
-        #expect(loader.contains("sessionID: sessionID,\n                    worktreeId: worktreeId"))
 
         let video = try source(named: "OppiMac/Views/MacMarkdownVideoView.swift")
         #expect(video.contains("worktreeId: worktreeId"))

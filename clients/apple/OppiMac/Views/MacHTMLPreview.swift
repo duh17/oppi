@@ -3,7 +3,7 @@ import SwiftUI
 import WebKit
 
 /// Host HTML/SVG stay on fetch → `loadHTMLString` + CSP.
-/// WKWebView must not URL-load `/files/raw`.
+/// WKWebView must not URL-load `/files/raw` or `/files/current*`.
 enum MacHTMLPreviewLoadMode: Equatable, Sendable {
     case htmlString
     case none
@@ -49,9 +49,13 @@ enum MacHTMLPreviewSecurity {
         return scheme == "http" || scheme == "https"
     }
 
-    static func isHostRawFileURL(_ url: URL?) -> Bool {
+    /// Authenticated current-file routes (`/files/raw`, `/files/current`,
+    /// `/files/current/sidecars`) must never be URL-loaded by WKWebView.
+    static func isCurrentFileReadURL(_ url: URL?) -> Bool {
         guard let url, isHTTPURL(url) else { return false }
-        return url.path == "/files/raw" || url.path.hasSuffix("/files/raw")
+        return ["/files/raw", "/files/current", "/files/current/sidecars"].contains { route in
+            url.path == route || url.path.hasSuffix(route)
+        }
     }
 
     static func webViewLoadMode(for path: String) -> MacHTMLPreviewLoadMode {
@@ -244,7 +248,7 @@ enum MacSVGPreviewSecurity {
     }
 }
 
-/// WKWebView adapter: `loadHTMLString` only, CSP injected, no `/files/raw` URL loads.
+/// WKWebView adapter: `loadHTMLString` only, CSP injected, no current-file URL loads.
 /// HTML keeps inline script. SVG uses `MacSVGPreviewSecurity` instead of the HTML CSP.
 struct MacHTMLWebView: NSViewRepresentable {
     let html: String
@@ -295,7 +299,7 @@ struct MacHTMLWebView: NSViewRepresentable {
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
-            if MacHTMLPreviewSecurity.isHostRawFileURL(navigationAction.request.url) {
+            if MacHTMLPreviewSecurity.isCurrentFileReadURL(navigationAction.request.url) {
                 decisionHandler(.cancel)
                 return
             }
@@ -317,7 +321,7 @@ struct MacHTMLWebView: NSViewRepresentable {
             for navigationAction: WKNavigationAction,
             windowFeatures: WKWindowFeatures
         ) -> WKWebView? {
-            if MacHTMLPreviewSecurity.isHostRawFileURL(navigationAction.request.url) {
+            if MacHTMLPreviewSecurity.isCurrentFileReadURL(navigationAction.request.url) {
                 return nil
             }
             if MacHTMLPreviewSecurity.isHTTPURL(navigationAction.request.url),

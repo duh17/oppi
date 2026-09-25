@@ -115,60 +115,23 @@ enum MacUnixSocketMediaResponseValidator {
 
 enum MacUnixSocketMediaError: Error, Equatable {
     case emptyAuthorization
+    case invalidRequestPath
     case http(String)
 }
 
 enum MacUnixSocketMediaPath {
-    static func workspaceRaw(
-        workspaceID: String,
-        filePath: String,
-        worktreeId: String? = nil
-    ) -> String? {
-        guard let path = encode(prefix: ["workspaces", workspaceID, "raw"], filePath: filePath) else {
-            return nil
-        }
-        return appendWorktreeQuery(path, worktreeId: worktreeId)
-    }
-
-    static func appendWorktreeQuery(_ path: String, worktreeId: String?) -> String {
-        guard let worktreeId = FileViewerPlan.normalizedWorktreeId(worktreeId) else { return path }
-        var allowed = CharacterSet.urlQueryAllowed
-        allowed.remove(charactersIn: "/&=?#")
-        let encoded = worktreeId.addingPercentEncoding(withAllowedCharacters: allowed) ?? worktreeId
-        return "\(path)?worktreeId=\(encoded)"
-    }
-
-    static func sessionRaw(workspaceID: String, sessionID: String, filePath: String) -> String? {
-        encode(prefix: ["workspaces", workspaceID, "sessions", sessionID, "raw"], filePath: filePath)
-    }
-
     static func sessionAttachment(
         sessionID: String,
         attachmentID: String,
         scope: SessionRouteScope? = nil
     ) -> String? {
         let route = scope == .control ? "control-sessions" : "sessions"
-        return encode(prefix: [route, sessionID, "attachments", attachmentID], filePath: nil)
-    }
-
-    private static func encode(prefix: [String], filePath: String?) -> String? {
-        var segments = prefix
-        if let filePath {
-            let trimmed = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return nil }
-            segments.append(
-                contentsOf: trimmed.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-            )
-        }
-        let encoded = segments.compactMap(encodePathSegment)
-        guard encoded.count == segments.count, !encoded.isEmpty else { return nil }
-        return "/" + encoded.joined(separator: "/")
-    }
-
-    private static func encodePathSegment(_ segment: String) -> String? {
         var allowed = CharacterSet.urlPathAllowed
         allowed.remove(charactersIn: "/%+?#&")
-        return segment.addingPercentEncoding(withAllowedCharacters: allowed)
+        let segments = [route, sessionID, "attachments", attachmentID]
+        let encoded = segments.compactMap { $0.addingPercentEncoding(withAllowedCharacters: allowed) }
+        guard encoded.count == segments.count else { return nil }
+        return "/" + encoded.joined(separator: "/")
     }
 }
 
@@ -194,7 +157,14 @@ enum MacMediaMimeType {
 /// Owner Unix-socket media endpoint. The `sk_` token stays in the Authorization
 /// header and is never placed on an AVPlayer URL or TCP loopback request.
 struct MacAuthenticatedMediaSource: Sendable {
-    let requestPath: String
+    enum Target: Sendable, Hashable {
+        /// Fixed owner route, such as a session attachment.
+        case route(String)
+        /// Current-file bytes through `/files/current`.
+        case currentFile(MacCurrentFileRequest)
+    }
+
+    let target: Target
     let socketPath: String
     let authorizationProvider: @Sendable () async throws -> String
     let contentTypeHint: String?
@@ -202,24 +172,33 @@ struct MacAuthenticatedMediaSource: Sendable {
 
     var identity: String {
         [
-            requestPath,
+            requestPath() ?? "",
             socketPath,
             contentTypeHint ?? "",
             sourceFileExtension ?? "",
         ].joined(separator: "|")
     }
+
+    func requestPath() -> String? {
+        switch target {
+        case .route(let path):
+            return path
+        case .currentFile(let request):
+            return request.requestTarget()
+        }
+    }
 }
 
 enum MacOwnerMediaSource {
     static func make(
-        requestPath: String,
+        target: MacAuthenticatedMediaSource.Target,
         socketPath: String,
         token: String,
         contentTypeHint: String?,
         sourceFileExtension: String?
     ) -> MacAuthenticatedMediaSource {
         MacAuthenticatedMediaSource(
-            requestPath: requestPath,
+            target: target,
             socketPath: socketPath,
             authorizationProvider: { "Bearer \(token)" },
             contentTypeHint: contentTypeHint,
@@ -234,20 +213,11 @@ enum MacOwnerMediaSource {
         socketPath: String,
         worktreeId: String? = nil
     ) -> MacAuthenticatedMediaSource? {
-        guard let requestPath = MacUnixSocketMediaPath.workspaceRaw(
-            workspaceID: workspaceID,
-            filePath: path,
-            worktreeId: worktreeId
-        ) else {
-            return nil
-        }
-        let ext = (path as NSString).pathExtension
-        return make(
-            requestPath: requestPath,
-            socketPath: socketPath,
+        currentFile(
+            origin: .workspace(workspaceID: workspaceID, worktreeId: worktreeId),
+            path: path,
             token: token,
-            contentTypeHint: MacMediaMimeType.hint(forPathExtension: ext),
-            sourceFileExtension: ext.isEmpty ? nil : ext
+            socketPath: socketPath
         )
     }
 
@@ -258,16 +228,28 @@ enum MacOwnerMediaSource {
         token: String,
         socketPath: String
     ) -> MacAuthenticatedMediaSource? {
-        guard let requestPath = MacUnixSocketMediaPath.sessionRaw(
-            workspaceID: workspaceID,
-            sessionID: sessionID,
-            filePath: path
-        ) else {
+        currentFile(
+            origin: .session(workspaceID: workspaceID, sessionID: sessionID),
+            path: path,
+            token: token,
+            socketPath: socketPath
+        )
+    }
+
+    private static func currentFile(
+        origin: MacCurrentFileRequest.Origin,
+        path: String,
+        token: String,
+        socketPath: String
+    ) -> MacAuthenticatedMediaSource? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let request = MacCurrentFileRequest(origin: origin, path: trimmed),
+              request.requestTarget() != nil else {
             return nil
         }
-        let ext = (path as NSString).pathExtension
+        let ext = (trimmed as NSString).pathExtension
         return make(
-            requestPath: requestPath,
+            target: .currentFile(request),
             socketPath: socketPath,
             token: token,
             contentTypeHint: MacMediaMimeType.hint(forPathExtension: ext),
@@ -291,7 +273,7 @@ enum MacOwnerMediaSource {
             return nil
         }
         return make(
-            requestPath: requestPath,
+            target: .route(requestPath),
             socketPath: socketPath,
             token: token,
             contentTypeHint: mimeType,
@@ -373,9 +355,12 @@ enum MacUnixSocketRangeClient {
         guard !authorization.isEmpty else {
             throw MacUnixSocketMediaError.emptyAuthorization
         }
+        guard let path = source.requestPath() else {
+            throw MacUnixSocketMediaError.invalidRequestPath
+        }
         let request = MacUnixSocketMediaRequest.make(
             method: "GET",
-            path: source.requestPath,
+            path: path,
             authorization: authorization,
             range: range
         )

@@ -98,12 +98,12 @@ struct MacWikiFileLinkTests {
         #expect(main.id == "workspace-file:ws-1:docs/Notes.md")
         #expect(blank.worktreeId == nil)
         #expect(
-            MacMarkdownWorkspaceFileLoader.workspaceRawRequestPath(for: feature)
-                == "/workspaces/ws-1/raw/docs/Notes.md?worktreeId=wt_feature"
+            MacMarkdownWorkspaceFileLoader.workspaceFileRequest(for: feature)?.requestTarget()
+                == "/files/current?origin=workspace&workspaceId=ws-1&worktreeId=wt_feature&path=docs%2FNotes.md"
         )
         #expect(
-            MacMarkdownWorkspaceFileLoader.workspaceRawRequestPath(for: main)
-                == "/workspaces/ws-1/raw/docs/Notes.md"
+            MacMarkdownWorkspaceFileLoader.workspaceFileRequest(for: main)?.requestTarget()
+                == "/files/current?origin=workspace&workspaceId=ws-1&path=docs%2FNotes.md"
         )
         #expect(
             MacWikiFileLinkRouting.decision(for: url, worktreeId: "wt_feature")
@@ -130,8 +130,8 @@ struct MacWikiFileLinkTests {
         #expect(plan.worktreeId == "wt_feature")
         #expect(plan.id == "workspace-file:ws-1:wt_feature:docs/Notes.md")
         #expect(
-            MacMarkdownWorkspaceFileLoader.workspaceRawRequestPath(for: plan)
-                == "/workspaces/ws-1/raw/docs/Notes.md?worktreeId=wt_feature"
+            MacMarkdownWorkspaceFileLoader.workspaceFileRequest(for: plan)?.requestTarget()
+                == "/files/current?origin=workspace&workspaceId=ws-1&worktreeId=wt_feature&path=docs%2FNotes.md"
         )
     }
 
