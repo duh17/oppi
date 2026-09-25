@@ -38,7 +38,9 @@ final class NativeMarkdownVideoView: UIView {
     private var playbackObservation: AnyCancellable?
     private var lastAppliedPlayer: AVPlayer?
     private var lastAppliedFailed = false
-    private var selectedTrackIndex = 0
+    /// Caption label and language control on the player overlay, driven by the
+    /// player's clock so fullscreen keeps captions after AVKit detaches this view.
+    private let captions = TimedTextCaptionOverlay()
     private let playbackModel = AuthenticatedMediaPlayerModel()
     private var currentSource: AuthenticatedMediaSource?
     private var isPlaybackVisible = true
@@ -49,7 +51,6 @@ final class NativeMarkdownVideoView: UIView {
     private var renderingMode: ContentRenderingMode = .live
     private var sourceProvider: MarkdownVideoMediaSourceProvider?
     private var sidecarProvider: TimedTextSidecarProvider?
-    private var timedText = TimedText.LoadResult.empty
     private var sidecarTask: Task<Void, Never>?
     private(set) var reservedHeight: CGFloat = MarkdownInlineVideoLayout.reservedHeight(forWidth: .nan)
     private(set) var isStaticFallback = false
@@ -79,7 +80,7 @@ final class NativeMarkdownVideoView: UIView {
         resolutionTask = nil
         sidecarTask?.cancel()
         sidecarTask = nil
-        timedText = .empty
+        captions.setTimedText(.empty)
         currentIdentity = nil
         removePlayer()
     }
@@ -110,7 +111,7 @@ final class NativeMarkdownVideoView: UIView {
         self.renderingMode = renderingMode
         self.sourceProvider = sourceProvider
         self.sidecarProvider = sidecarProvider
-        timedText = .empty
+        captions.setTimedText(.empty)
         sidecarTask?.cancel()
         hasCommittedRevealGeometry = shouldCommitRevealGeometry(renderingMode: renderingMode)
         applyReservedHeight(nextHeight)
@@ -292,8 +293,7 @@ final class NativeMarkdownVideoView: UIView {
             onPictureInPictureChange: { [weak self] active in self?.playbackModel.setPictureInPicture(active) },
             onPictureInPictureDidStop: { [weak self] attached in
                 self?.playbackModel.handleDidStopPictureInPicture(hostIsAttached: attached)
-            },
-            onSelectCaptionTrack: nil
+            }
         )
         host.delegate = playerDelegate
         host.player = playbackModel.player
@@ -377,7 +377,13 @@ final class NativeMarkdownVideoView: UIView {
                 openButton.accessibilityHint = String(localized: "Opens the video file")
             }
         }
-        refreshPlayerCaptions()
+        if let overlay = playerController.contentOverlayView {
+            captions.attach(to: overlay)
+        }
+        captions.setPlayer(playbackModel.player)
+#if DEBUG
+        AuthenticatedMediaE2EPlaybackProbe.install(on: playerController, model: playbackModel)
+#endif
     }
 
     private func loadSidecar(for embed: MarkdownVideoEmbed) {
@@ -387,37 +393,14 @@ final class NativeMarkdownVideoView: UIView {
             let result = await sidecarProvider(embed.filePath, .video, embed.reference)
             await MainActor.run {
                 guard let self, !Task.isCancelled, self.currentEmbed == embed else { return }
-                self.timedText = result
-                self.selectedTrackIndex = result.selectedIndex
-                self.refreshPlayerCaptions()
+                self.captions.setTimedText(result)
             }
         }
     }
 
-    private func refreshPlayerCaptions() {
-        guard let controller = playerController else { return }
-        if let overlay = controller.contentOverlayView {
-            let caption = timedText.tracks.indices.contains(selectedTrackIndex)
-                ? TimedText.currentCue(in: timedText.tracks[selectedTrackIndex].cues, at: playbackModel.currentTime)?.text
-                : nil
-            TimedTextCaptionOverlay.apply(
-                caption: caption,
-                tracks: timedText.tracks,
-                selectedIndex: selectedTrackIndex,
-                onSelectTrack: { [weak self] index in
-                    self?.selectedTrackIndex = index
-                    self?.refreshPlayerCaptions()
-                },
-                to: overlay
-            )
-        }
-#if DEBUG
-        AuthenticatedMediaE2EPlaybackProbe.install(on: controller, model: playbackModel)
-#endif
-    }
-
     private func removePlayer() {
         playbackObservation = nil
+        captions.setPlayer(nil)
         playbackModel.teardown()
         if let host = playerController {
             host.player = nil

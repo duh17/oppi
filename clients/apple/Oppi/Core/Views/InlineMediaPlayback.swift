@@ -1223,191 +1223,159 @@ struct FullScreenEndHandoff: @unchecked Sendable {
     }
 }
 
-enum TimedTextCaptionOverlay {
+/// Sidecar captions on an `AVPlayerViewController.contentOverlayView`.
+///
+/// The player's own clock drives the label: a periodic time observer maps
+/// player time → `TimedText.currentCue` → `UILabel`. AVKit detaches the inline
+/// host during fullscreen, so captions must not depend on SwiftUI
+/// `updateUIViewController`, layout, or any other host callback to advance.
+/// Track selection stays here too; it never round-trips through SwiftUI state.
+///
+/// The overlay is documented for noninteractive content, but the language
+/// button lives there because it must follow the video into fullscreen.
+@MainActor
+final class TimedTextCaptionOverlay {
     static let captionTag = 0x0C4D
     static let languageTag = 0x0C4E
+    static let refreshInterval = CMTime(seconds: 0.2, preferredTimescale: 600)
 
-    static func apply(
-        caption: String?,
-        tracks: [TimedText.Track],
-        selectedIndex: Int,
-        onSelectTrack: ((Int) -> Void)?,
-        to overlay: UIView
-    ) {
-        applyCaption(caption, to: overlay)
-        applyLanguageControl(
-            tracks: tracks,
-            selectedIndex: selectedIndex,
-            onSelectTrack: onSelectTrack,
-            to: overlay
-        )
+    private let label = UILabel()
+    private let languageButton = UIButton(type: .system)
+    private var constraints: [NSLayoutConstraint] = []
+    private(set) var tracks: [TimedText.Track] = []
+    private(set) var selectedIndex = 0
+    private weak var observedPlayer: AVPlayer?
+    private var timeObserver: Any?
+
+    init() {
+        label.tag = Self.captionTag
+        label.numberOfLines = 3
+        label.textAlignment = .center
+        label.font = .preferredFont(forTextStyle: .subheadline)
+        label.textColor = .white
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        label.layer.cornerRadius = 8
+        label.layer.masksToBounds = true
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.isHidden = true
+
+        languageButton.tag = Self.languageTag
+        languageButton.accessibilityLabel = "Caption language"
+        languageButton.tintColor = .white
+        languageButton.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        languageButton.layer.cornerRadius = 18
+        languageButton.translatesAutoresizingMaskIntoConstraints = false
+        languageButton.setImage(UIImage(systemName: "captions.bubble"), for: .normal)
+        languageButton.showsMenuAsPrimaryAction = true
+        languageButton.isHidden = true
     }
 
-    private static func applyCaption(_ text: String?, to overlay: UIView) {
-        let label: UILabel
-        if let existing = overlay.viewWithTag(captionTag) as? UILabel {
-            label = existing
-        } else {
-            label = UILabel()
-            label.tag = captionTag
-            label.numberOfLines = 3
-            label.textAlignment = .center
-            label.font = .preferredFont(forTextStyle: .subheadline)
-            label.textColor = .white
-            label.backgroundColor = UIColor.black.withAlphaComponent(0.55)
-            label.layer.cornerRadius = 8
-            label.layer.masksToBounds = true
-            label.translatesAutoresizingMaskIntoConstraints = false
-            overlay.addSubview(label)
-            NSLayoutConstraint.activate([
-                label.leadingAnchor.constraint(greaterThanOrEqualTo: overlay.leadingAnchor, constant: 16),
-                label.trailingAnchor.constraint(lessThanOrEqualTo: overlay.trailingAnchor, constant: -16),
-                label.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
-                label.bottomAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.bottomAnchor, constant: -52),
-            ])
+    isolated deinit {
+        removeTimeObserver()
+    }
+
+    /// Install the label and language control on `overlay`. Idempotent; a new
+    /// overlay (a replacement player controller) takes the views over.
+    func attach(to overlay: UIView) {
+        guard label.superview !== overlay || languageButton.superview !== overlay else { return }
+        NSLayoutConstraint.deactivate(constraints)
+        label.removeFromSuperview()
+        languageButton.removeFromSuperview()
+        overlay.addSubview(label)
+        overlay.addSubview(languageButton)
+        constraints = [
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: overlay.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: overlay.trailingAnchor, constant: -16),
+            label.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            label.bottomAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.bottomAnchor, constant: -52),
+            languageButton.topAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.topAnchor, constant: 10),
+            languageButton.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -10),
+            languageButton.widthAnchor.constraint(equalToConstant: 36),
+            languageButton.heightAnchor.constraint(equalToConstant: 36),
+        ]
+        NSLayoutConstraint.activate(constraints)
+        refresh()
+    }
+
+    /// Observe `player`'s clock. The observer on a previous player is removed
+    /// here, on replacement or `nil`, never because an inline host detached.
+    func setPlayer(_ player: AVPlayer?) {
+        guard player !== observedPlayer || (player != nil) != (timeObserver != nil) else { return }
+        removeTimeObserver()
+        observedPlayer = player
+        if let player {
+            timeObserver = player.addPeriodicTimeObserver(
+                forInterval: Self.refreshInterval,
+                queue: .main
+            ) { [weak self] time in
+                MainActor.assumeIsolated {
+                    self?.showCaption(at: time.seconds)
+                }
+            }
         }
+        refresh()
+    }
+
+    func setTimedText(_ result: TimedText.LoadResult) {
+        tracks = result.tracks
+        selectedIndex = result.selectedIndex
+        applyLanguageControl()
+        refresh()
+    }
+
+    func select(_ index: Int) {
+        guard tracks.indices.contains(index), index != selectedIndex else { return }
+        selectedIndex = index
+        applyLanguageControl()
+        refresh()
+    }
+
+    /// Stop observing and drop captions. Safe to call more than once.
+    func dispose() {
+        setPlayer(nil)
+        setTimedText(.empty)
+    }
+
+    private func refresh() {
+        showCaption(at: observedPlayer?.currentTime().seconds ?? .nan)
+    }
+
+    private func showCaption(at seconds: TimeInterval) {
+        let text = tracks.indices.contains(selectedIndex)
+            ? TimedText.currentCue(in: tracks[selectedIndex].cues, at: seconds)?.text
+            : nil
         let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        label.text = trimmed.isEmpty ? nil : "  \(trimmed)  "
-        label.isHidden = trimmed.isEmpty
+        let display = trimmed.isEmpty ? nil : "  \(trimmed)  "
+        if label.text != display {
+            label.text = display
+        }
+        label.isHidden = display == nil
     }
 
-    private static func applyLanguageControl(
-        tracks: [TimedText.Track],
-        selectedIndex: Int,
-        onSelectTrack: ((Int) -> Void)?,
-        to overlay: UIView
-    ) {
-        let button: CaptionLanguageButton
-        if let existing = overlay.viewWithTag(languageTag) as? CaptionLanguageButton {
-            button = existing
-        } else {
-            button = CaptionLanguageButton(frame: .zero)
-            button.tag = languageTag
-            button.accessibilityLabel = "Caption language"
-            button.tintColor = .white
-            button.backgroundColor = UIColor.black.withAlphaComponent(0.45)
-            button.layer.cornerRadius = 18
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.setImage(UIImage(systemName: "captions.bubble"), for: .normal)
-            button.showsMenuAsPrimaryAction = true
-            overlay.addSubview(button)
-            NSLayoutConstraint.activate([
-                button.topAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.topAnchor, constant: 10),
-                button.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -10),
-                button.widthAnchor.constraint(equalToConstant: 36),
-                button.heightAnchor.constraint(equalToConstant: 36),
-            ])
-        }
-        button.handler.onSelectTrack = onSelectTrack
+    private func applyLanguageControl() {
         let showsControl = tracks.count > 1
-        button.isHidden = !showsControl
+        languageButton.isHidden = !showsControl
         guard showsControl else {
-            button.menu = nil
-            button.menuSignature = ""
+            languageButton.menu = nil
             return
         }
-        let signature = "\(selectedIndex)|" + tracks.map(\.languageLabel).joined(separator: "\u{1f}")
-        guard button.menuSignature != signature else { return }
-        button.menuSignature = signature
-        let handler = button.handler
-        button.menu = UIMenu(children: tracks.indices.map { index in
+        languageButton.menu = UIMenu(children: tracks.indices.map { index in
             UIAction(
                 title: tracks[index].languageLabel,
                 state: index == selectedIndex ? .on : .off
-            ) { _ in
-                handler.select(index)
+            ) { [weak self] _ in
+                self?.select(index)
             }
         })
     }
 
-    private final class CaptionLanguageButton: UIButton {
-        let handler = TrackSelectionHandler()
-        var menuSignature = ""
-    }
-
-    private final class TrackSelectionHandler: @unchecked Sendable {
-        var onSelectTrack: ((Int) -> Void)?
-
-        func select(_ index: Int) {
-            onSelectTrack?(index)
+    private func removeTimeObserver() {
+        if let timeObserver, let observedPlayer {
+            observedPlayer.removeTimeObserver(timeObserver)
         }
+        timeObserver = nil
+        observedPlayer = nil
     }
-}
-
-struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
-    let player: AVPlayer
-    var playbackModel: AuthenticatedMediaPlayerModel? = nil
-    var captionText: String? = nil
-    var captionTracks: [TimedText.Track] = []
-    var selectedCaptionTrackIndex: Int = 0
-    var onSelectCaptionTrack: ((Int) -> Void)? = nil
-    var onFullScreenChange: ((Bool) -> Void)?
-    var onFullScreenWillEnd: (() -> Void)?
-    var onFullScreenDidEnd: ((Bool) -> Void)?
-    var onFullScreenTransitionFinished: (() -> Void)?
-    var onPictureInPictureChange: ((Bool) -> Void)?
-    var onPictureInPictureDidStop: ((Bool) -> Void)?
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(
-            onFullScreenChange: onFullScreenChange,
-            onFullScreenWillEnd: onFullScreenWillEnd,
-            onFullScreenDidEnd: onFullScreenDidEnd,
-            onFullScreenTransitionFinished: onFullScreenTransitionFinished,
-            onPictureInPictureChange: onPictureInPictureChange,
-            onPictureInPictureDidStop: onPictureInPictureDidStop,
-            onSelectCaptionTrack: onSelectCaptionTrack
-        )
-    }
-
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let controller = AVPlayerViewController()
-        controller.delegate = context.coordinator
-        configure(controller)
-        controller.player = player
-        return controller
-    }
-
-    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
-        context.coordinator.onFullScreenChange = onFullScreenChange
-        context.coordinator.onFullScreenWillEnd = onFullScreenWillEnd
-        context.coordinator.onFullScreenDidEnd = onFullScreenDidEnd
-        context.coordinator.onFullScreenTransitionFinished = onFullScreenTransitionFinished
-        context.coordinator.onPictureInPictureChange = onPictureInPictureChange
-        context.coordinator.onPictureInPictureDidStop = onPictureInPictureDidStop
-        context.coordinator.onSelectCaptionTrack = onSelectCaptionTrack
-        if uiViewController.player !== player {
-            uiViewController.player = player
-        }
-        uiViewController.delegate = context.coordinator
-        configure(uiViewController, onSelectTrack: context.coordinator.onSelectCaptionTrack)
-    }
-
-    private func configure(
-        _ controller: AVPlayerViewController,
-        onSelectTrack: ((Int) -> Void)? = nil
-    ) {
-        InlineVideoPlayerConfiguration.apply(to: controller)
-        guard let overlay = controller.contentOverlayView else {
-#if DEBUG
-            AuthenticatedMediaE2EPlaybackProbe.install(on: controller, model: playbackModel)
-#endif
-            return
-        }
-        TimedTextCaptionOverlay.apply(
-            caption: captionText,
-            tracks: captionTracks,
-            selectedIndex: selectedCaptionTrackIndex,
-            onSelectTrack: onSelectTrack ?? onSelectCaptionTrack,
-            to: overlay
-        )
-#if DEBUG
-        AuthenticatedMediaE2EPlaybackProbe.install(on: controller, model: playbackModel)
-#endif
-    }
-
-    typealias Coordinator = InlineVideoPlayerDelegate
-
 }
 
 @MainActor
@@ -1429,7 +1397,6 @@ final class InlineVideoPlayerDelegate: NSObject, AVPlayerViewControllerDelegate 
     var onFullScreenTransitionFinished: (() -> Void)?
     var onPictureInPictureChange: ((Bool) -> Void)?
     var onPictureInPictureDidStop: ((Bool) -> Void)?
-    var onSelectCaptionTrack: ((Int) -> Void)?
     private var wasPlayingBeforeFullScreen = false
 
     init(
@@ -1438,8 +1405,7 @@ final class InlineVideoPlayerDelegate: NSObject, AVPlayerViewControllerDelegate 
         onFullScreenDidEnd: ((Bool) -> Void)?,
         onFullScreenTransitionFinished: (() -> Void)?,
         onPictureInPictureChange: ((Bool) -> Void)?,
-        onPictureInPictureDidStop: ((Bool) -> Void)?,
-        onSelectCaptionTrack: ((Int) -> Void)?
+        onPictureInPictureDidStop: ((Bool) -> Void)?
     ) {
         self.onFullScreenChange = onFullScreenChange
         self.onFullScreenWillEnd = onFullScreenWillEnd
@@ -1447,7 +1413,6 @@ final class InlineVideoPlayerDelegate: NSObject, AVPlayerViewControllerDelegate 
         self.onFullScreenTransitionFinished = onFullScreenTransitionFinished
         self.onPictureInPictureChange = onPictureInPictureChange
         self.onPictureInPictureDidStop = onPictureInPictureDidStop
-        self.onSelectCaptionTrack = onSelectCaptionTrack
     }
 
     func playerViewController(

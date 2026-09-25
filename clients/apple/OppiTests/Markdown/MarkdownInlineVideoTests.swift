@@ -873,12 +873,22 @@ struct MarkdownInlineVideoTests {
         #expect(video.debugIsPlaybackVisibleForTesting)
         delegate.playerViewControllerDidStopPictureInPicture(controller)
         #expect(!model.debugIsPictureInPictureForTesting)
-        model.currentTime = 2
+        // Captions follow the player clock: swap the unreachable source for a
+        // local file the test can seek.
+        model.teardown()
+        let player = model.debugInstallStandalonePlayerForTesting(
+            item: AVPlayerItem(url: try knownGoodH264URL())
+        )
+        let playerReady = await waitForTimelineCondition(timeoutMs: 4_000) { @MainActor in
+            controller.player === player && player.currentItem?.status == .readyToPlay
+        }
+        #expect(playerReady)
+        await seekExactly(player, to: 2)
         let captionUpdated = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
             (controller.contentOverlayView?.viewWithTag(TimedTextCaptionOverlay.captionTag) as? UILabel)?.text == "  fr  "
         }
         #expect(captionUpdated)
-        model.currentTime = 4
+        await seekExactly(player, to: 4)
         let captionCleared = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
             controller.contentOverlayView?.viewWithTag(TimedTextCaptionOverlay.captionTag)?.isHidden == true
         }
@@ -893,6 +903,57 @@ struct MarkdownInlineVideoTests {
         #expect(video.debugPlayerControllerForTesting === controller)
         #expect(controller.parent === video.debugPlayerSlotForTesting)
         #expect(controller.parent !== parent)
+    }
+
+    @MainActor
+    @Test("caption overlay follows the player clock without a host update and releases replaced players")
+    func captionOverlayFollowsPlayerClockAcrossReplacement() async throws {
+        // A bare overlay outside any window or SwiftUI host: AVKit fullscreen
+        // detaches the inline host, so nothing but the player may drive text.
+        let overlay = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
+        let captions = TimedTextCaptionOverlay()
+        captions.attach(to: overlay)
+        let track = TimedText.Track(
+            candidate: .init(fileName: "movie.en.vtt", path: "movie.en.vtt", format: .vtt, language: "en"),
+            cues: [
+                .init(text: "One", startTime: 1, endTime: 3),
+                .init(text: "Two", startTime: 3, endTime: 5),
+            ]
+        )
+        let label = try #require(overlay.viewWithTag(TimedTextCaptionOverlay.captionTag) as? UILabel)
+        func caption() -> String? { label.isHidden ? nil : label.text }
+
+        let first = TimeObserverCountingPlayer(playerItem: AVPlayerItem(url: try knownGoodH264URL()))
+        captions.setPlayer(first)
+        #expect(first.activeTimeObservers == 1)
+        // Sidecar completion after the player attached still shows captions.
+        captions.setTimedText(.init(tracks: [track], selectedIndex: 0))
+        let firstReady = await waitForTimelineCondition(timeoutMs: 4_000) { @MainActor in
+            first.currentItem?.status == .readyToPlay
+        }
+        #expect(firstReady)
+
+        await seekExactly(first, to: 2)
+        #expect(await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in caption() == "  One  " })
+        await seekExactly(first, to: 4)
+        #expect(await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in caption() == "  Two  " })
+        await seekExactly(first, to: 6)
+        #expect(await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in caption() == nil })
+
+        let second = TimeObserverCountingPlayer(playerItem: AVPlayerItem(url: try knownGoodH264URL()))
+        captions.setPlayer(second)
+        #expect(first.activeTimeObservers == 0)
+        #expect(second.activeTimeObservers == 1)
+        let secondReady = await waitForTimelineCondition(timeoutMs: 4_000) { @MainActor in
+            second.currentItem?.status == .readyToPlay
+        }
+        #expect(secondReady)
+        await seekExactly(second, to: 2)
+        #expect(await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in caption() == "  One  " })
+
+        captions.dispose()
+        #expect(second.activeTimeObservers == 0)
+        #expect(caption() == nil)
     }
 
     @MainActor
@@ -1809,6 +1870,47 @@ private struct FileBrowserStylePlayerHost: View {
         }
         .frame(height: knob.height)
     }
+}
+
+/// Counts live periodic time observers so tests can prove add/remove pairing.
+private final class TimeObserverCountingPlayer: AVPlayer {
+    nonisolated(unsafe) private(set) var activeTimeObservers = 0
+
+    override nonisolated func addPeriodicTimeObserver(
+        forInterval interval: CMTime,
+        queue: DispatchQueue?,
+        using block: @escaping @Sendable (CMTime) -> Void
+    ) -> Any {
+        activeTimeObservers += 1
+        return super.addPeriodicTimeObserver(forInterval: interval, queue: queue, using: block)
+    }
+
+    override nonisolated func removeTimeObserver(_ observer: Any) {
+        activeTimeObservers -= 1
+        super.removeTimeObserver(observer)
+    }
+}
+
+/// Default seek tolerance can snap to the fixture's keyframe; cue checks need
+/// the exact requested time.
+@MainActor
+private func seekExactly(_ player: AVPlayer, to seconds: Double) async {
+    await player.seek(
+        to: CMTime(seconds: seconds, preferredTimescale: 600),
+        toleranceBefore: .zero,
+        toleranceAfter: .zero
+    )
+}
+
+private func knownGoodH264URL() throws -> URL {
+    let url = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appendingPathComponent("Fixtures/known-good-h264.mp4")
+    guard FileManager.default.fileExists(atPath: url.path) else {
+        throw CocoaError(.fileNoSuchFile)
+    }
+    return url
 }
 
 private func waitUntil(

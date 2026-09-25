@@ -404,13 +404,17 @@ struct FileBrowserContentView: View {
 
     @ViewBuilder
     private func videoView(_ source: AuthenticatedMediaSource) -> some View {
+        // `loadedMediaPath` changes with `content`, so the loader always names
+        // the file behind `source`. The player host runs it once per source and
+        // attaches captions to the overlay itself, even during fullscreen.
+        let timedTextLoader = loadedMediaPath.flatMap { makeTimedTextLoader(path: $0, kind: .video) }
         GeometryReader { geometry in
             AuthenticatedMediaPlayerView(
                 source: source,
                 height: min(max(geometry.size.height * 0.34, 220), 420),
                 unavailableTitle: "Video preview unavailable",
                 unavailableSystemImage: "film.slash",
-                timedText: timedText
+                timedTextLoader: timedTextLoader
             )
             .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -516,7 +520,6 @@ struct FileBrowserContentView: View {
                 guard isCurrentFile(requestedPath) else { return }
                 loadedMediaPath = requestedPath
                 content = .video(source)
-                await loadTimedText(api: api, path: requestedPath, kind: .video)
             case .audio:
                 let source = try await mediaSource(
                     api: api,

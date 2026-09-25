@@ -671,8 +671,9 @@ struct MarkdownInlineAudioTests {
     @Test("one caption renderer on the player overlay keeps language control")
     func singleCaptionSurfaceKeepsLanguageControl() async throws {
         let model = AuthenticatedMediaPlayerModel()
-        _ = model.debugInstallStandalonePlayerForTesting()
-        model.currentTime = 1
+        let avPlayer = model.debugInstallStandalonePlayerForTesting(
+            item: AVPlayerItem(url: try knownGoodH264URL())
+        )
         let timedText = TimedText.LoadResult(
             tracks: [
                 TimedText.Track(
@@ -708,7 +709,7 @@ struct MarkdownInlineAudioTests {
                 height: 180,
                 isActive: false,
                 model: model,
-                timedText: timedText
+                timedTextLoader: { timedText }
             )
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 220))
@@ -718,12 +719,23 @@ struct MarkdownInlineAudioTests {
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
 
+        // The host applies the loaded sidecar to the overlay itself.
         let playerController = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
-            captionPlayerController(in: host) != nil
+            captionPlayerController(in: host)?.contentOverlayView?
+                .viewWithTag(TimedTextCaptionOverlay.languageTag)?.isHidden == false
         }
         #expect(playerController)
         let player = try #require(captionPlayerController(in: host))
         let overlay = try #require(player.contentOverlayView)
+        let ready = await waitForTimelineCondition(timeoutMs: 4_000) { @MainActor in
+            avPlayer.currentItem?.status == .readyToPlay
+        }
+        #expect(ready)
+        await avPlayer.seek(to: CMTime(seconds: 1, preferredTimescale: 600))
+        let captioned = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            (overlay.viewWithTag(TimedTextCaptionOverlay.captionTag) as? UILabel)?.text == "  Hello  "
+        }
+        #expect(captioned)
         overlay.layoutIfNeeded()
 
         let overlayLanguage = timelineAllViews(in: overlay).compactMap { $0 as? UIButton }.first {
@@ -855,4 +867,15 @@ private func captionPlayerController(in host: UIViewController) -> AVPlayerViewC
             }
             return nil
         }.first
+}
+
+private func knownGoodH264URL() throws -> URL {
+    let url = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appendingPathComponent("Fixtures/known-good-h264.mp4")
+    guard FileManager.default.fileExists(atPath: url.path) else {
+        throw CocoaError(.fileNoSuchFile)
+    }
+    return url
 }

@@ -1,5 +1,6 @@
 @preconcurrency import AVFoundation
 import AVKit
+import Combine
 import Foundation
 import SwiftUI
 import UIKit
@@ -1344,13 +1345,10 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
     @Published var player: AVPlayer?
     @Published var isLoading = false
     @Published var errorMessage: String?
-    @Published var currentTime: TimeInterval = 0
 
     private var playbackSession: AuthenticatedMediaPlaybackSession?
     private var statusObservation: NSKeyValueObservation?
     private var presentationSizeObservation: NSKeyValueObservation?
-    private var timeObserver: Any?
-    private weak var timeObservedPlayer: AVPlayer?
     private var preparedIdentity: String?
     private var recordedStartIdentity: String?
     private var recordedErrorIdentity: String?
@@ -1381,7 +1379,7 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
         @unknown default: tcs = "other"
         }
         let waiting = player?.reasonForWaitingToPlay?.rawValue ?? "none"
-        let seconds = player?.currentTime().seconds ?? currentTime
+        let seconds = player?.currentTime().seconds ?? 0
         let timeLabel = seconds.isFinite ? String(format: "%.3f", seconds) : "nan"
         let err = item?.error == nil ? "none" : "yes"
         let mid = String(UInt(bitPattern: ObjectIdentifier(self)), radix: 16)
@@ -1428,8 +1426,6 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
         let player = playbackSession.player
         self.playbackSession = playbackSession
         self.player = player
-        currentTime = 0
-        startTimeObserver(on: player)
 
         presentationSizeObservation = player.currentItem?.observe(\.presentationSize, options: [.initial, .new]) { [weak self] item, _ in
             let width = item.presentationSize.width
@@ -1605,11 +1601,9 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
         statusObservation = nil
         presentationSizeObservation?.invalidate()
         presentationSizeObservation = nil
-        stopTimeObserver()
         playbackSession?.teardown()
         playbackSession = nil
         player = nil
-        currentTime = 0
         isLoading = false
         ownership.isFullScreen = false
         ownership.isPictureInPicture = false
@@ -1625,30 +1619,12 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
             recordedErrorIdentity = nil
         }
     }
-
-    private func startTimeObserver(on player: AVPlayer) {
-        stopTimeObserver()
-        timeObserver = player.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 0.2, preferredTimescale: 600),
-            queue: .main
-        ) { [weak self] time in
-            let seconds = time.seconds
-            Task { @MainActor in
-                self?.currentTime = seconds
-            }
-        }
-        timeObservedPlayer = player
-    }
-
-    private func stopTimeObserver() {
-        if let timeObserver, let timeObservedPlayer {
-            timeObservedPlayer.removeTimeObserver(timeObserver)
-        }
-        timeObserver = nil
-        timeObservedPlayer = nil
-    }
 }
 
+/// Thin SwiftUI adapter. SwiftUI lifecycle (appear, disappear, `isActive`)
+/// drives preparation and visibility only. `AuthenticatedMediaPlayerHostController`
+/// owns the player controller, loading/error chrome, and the caption clock, so
+/// captions keep following the player while AVKit presents fullscreen.
 struct AuthenticatedMediaPlayerView: View {
     let source: AuthenticatedMediaSource
     var height: CGFloat = 260
@@ -1663,7 +1639,10 @@ struct AuthenticatedMediaPlayerView: View {
     var telemetrySource = "authenticated_media"
     var telemetryMode = "inline"
     var telemetrySessionId: String? = nil
-    var timedText: TimedText.LoadResult = .empty
+    /// Sidecar caption loader. The host runs it once per source and applies
+    /// the result to the player overlay directly, so video appears first and
+    /// captions attach later without another SwiftUI update.
+    var timedTextLoader: (() async -> TimedText.LoadResult)? = nil
 
     private let injectedModel: AuthenticatedMediaPlayerModel?
     @StateObject private var ownedModel = AuthenticatedMediaPlayerModel()
@@ -1683,7 +1662,7 @@ struct AuthenticatedMediaPlayerView: View {
         telemetryMode: String = "inline",
         telemetrySessionId: String? = nil,
         model: AuthenticatedMediaPlayerModel? = nil,
-        timedText: TimedText.LoadResult = .empty
+        timedTextLoader: (() async -> TimedText.LoadResult)? = nil
     ) {
         self.source = source
         self.height = height
@@ -1698,128 +1677,29 @@ struct AuthenticatedMediaPlayerView: View {
         self.telemetrySource = telemetrySource
         self.telemetryMode = telemetryMode
         self.telemetrySessionId = telemetrySessionId
-        self.timedText = timedText
+        self.timedTextLoader = timedTextLoader
         injectedModel = model
     }
 
     var body: some View {
-        AuthenticatedMediaPlayerSurface(
-            source: source,
-            height: height,
-            cornerRadius: cornerRadius,
-            autoplay: autoplay,
-            isActive: isActive,
-            unavailableTitle: unavailableTitle,
-            unavailableSystemImage: unavailableSystemImage,
-            failureActionTitle: failureActionTitle,
-            onFailureAction: onFailureAction,
-            onPresentationSize: onPresentationSize,
-            telemetrySource: telemetrySource,
-            telemetryMode: telemetryMode,
-            telemetrySessionId: telemetrySessionId,
-            timedText: timedText,
-            model: injectedModel ?? ownedModel
-        )
-    }
-}
-
-private struct AuthenticatedMediaPlayerSurface: View {
-    let source: AuthenticatedMediaSource
-    var height: CGFloat
-    var cornerRadius: CGFloat
-    var autoplay: Bool
-    var isActive: Bool
-    var unavailableTitle: String
-    var unavailableSystemImage: String
-    var failureActionTitle: String?
-    var onFailureAction: (() -> Void)?
-    var onPresentationSize: (@MainActor @Sendable (CGSize) -> Void)?
-    var telemetrySource: String
-    var telemetryMode: String
-    var telemetrySessionId: String?
-    var timedText: TimedText.LoadResult
-    @ObservedObject var model: AuthenticatedMediaPlayerModel
-    @State private var selectedTrackIndex: Int?
-
-    var body: some View {
+        let model = injectedModel ?? ownedModel
 #if DEBUG
         let _ = AuthenticatedMediaPlayerTesting.record(model, source: source)
 #endif
-        Group {
-            if let player = model.player {
-                AVPlayerViewControllerContainer(
-                    player: player,
-                    playbackModel: model,
-                    captionText: currentCaptionText,
-                    captionTracks: timedText.tracks,
-                    selectedCaptionTrackIndex: resolvedTrackIndex,
-                    onSelectCaptionTrack: { index in
-                        selectedTrackIndex = index
-                    },
-                    onFullScreenChange: { fullScreen in
-                        if fullScreen {
-                            model.setFullScreen(true)
-                            WorkspaceMediaOverlayPost.begin()
-                        }
-                    },
-                    onFullScreenWillEnd: { model.handleWillEndFullScreen() },
-                    onFullScreenDidEnd: { attached in
-                        model.handleDidEndFullScreen(hostIsAttached: attached)
-                    },
-                    onFullScreenTransitionFinished: {
-                        WorkspaceMediaOverlayPost.end()
-                    },
-                    onPictureInPictureChange: { active in
-                        if active {
-                            model.setPictureInPicture(true)
-                        }
-                    },
-                    onPictureInPictureDidStop: { attached in
-                        model.handleDidStopPictureInPicture(hostIsAttached: attached)
-                    }
-                )
-                    .frame(maxWidth: .infinity)
-                    .frame(height: height)
-                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-            } else if let errorMessage = model.errorMessage {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(Color.themeBgHighlight)
-                    .frame(height: height)
-                    .overlay {
-                        VStack(spacing: 6) {
-                            Image(systemName: unavailableSystemImage)
-                                .font(.caption)
-                                .foregroundStyle(.themeComment)
-                            Text(unavailableTitle)
-                                .font(.caption2)
-                                .foregroundStyle(.themeComment)
-                            Text(errorMessage)
-                                .font(.caption2)
-                                .foregroundStyle(.themeComment.opacity(0.8))
-                                .multilineTextAlignment(.center)
-                                .lineLimit(3)
-                                .padding(.horizontal, 12)
-                            if let failureActionTitle, let onFailureAction {
-                                AuthenticatedMediaFailureActionButton(
-                                    title: failureActionTitle,
-                                    action: onFailureAction
-                                )
-                            }
-                        }
-                    }
-            } else {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(Color.themeBgHighlight)
-                    .frame(height: height)
-                    .overlay {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-            }
-        }
-        .onChange(of: timedText) { _, _ in
-            selectedTrackIndex = timedText.selectedIndex
-        }
+        AuthenticatedMediaPlayerHost(
+            source: source,
+            model: model,
+            chrome: AuthenticatedMediaPlayerHostController.Chrome(
+                unavailableTitle: unavailableTitle,
+                unavailableSystemImage: unavailableSystemImage,
+                failureActionTitle: failureActionTitle,
+                onFailureAction: onFailureAction
+            ),
+            timedTextLoader: timedTextLoader
+        )
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         .task(id: "\(source.identity)|\(isActive)") {
             model.setVisible(isActive)
             guard isActive else { return }
@@ -1839,57 +1719,248 @@ private struct AuthenticatedMediaPlayerSurface: View {
             model.handleDisappear()
         }
     }
+}
 
-    private var resolvedTrackIndex: Int {
-        selectedTrackIndex ?? timedText.selectedIndex
+private struct AuthenticatedMediaPlayerHost: UIViewControllerRepresentable {
+    let source: AuthenticatedMediaSource
+    let model: AuthenticatedMediaPlayerModel
+    let chrome: AuthenticatedMediaPlayerHostController.Chrome
+    let timedTextLoader: (() async -> TimedText.LoadResult)?
+
+    func makeUIViewController(context: Context) -> AuthenticatedMediaPlayerHostController {
+        AuthenticatedMediaPlayerHostController(model: model)
     }
 
-    private var currentCaptionText: String? {
-        guard timedText.tracks.indices.contains(resolvedTrackIndex) else { return nil }
-        return TimedText.currentCue(
-            in: timedText.tracks[resolvedTrackIndex].cues,
-            at: model.currentTime
-        )?.text
+    func updateUIViewController(_ controller: AuthenticatedMediaPlayerHostController, context: Context) {
+        controller.update(
+            model: model,
+            sourceIdentity: source.identity,
+            chrome: chrome,
+            timedTextLoader: timedTextLoader
+        )
+    }
+
+    static func dismantleUIViewController(_ controller: AuthenticatedMediaPlayerHostController, coordinator: ()) {
+        controller.dispose()
     }
 }
 
-struct AuthenticatedMediaFailureActionButton: UIViewRepresentable {
-    let title: String
-    let action: () -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(action: action)
+/// UIKit owner for an inline authenticated video: the child
+/// `AVPlayerViewController`, its delegate, loading/error chrome, and the
+/// caption overlay. Model state arrives through `objectWillChange`; the caption
+/// label follows the player's own clock, never a SwiftUI update pass.
+@MainActor
+final class AuthenticatedMediaPlayerHostController: UIViewController {
+    struct Chrome {
+        var unavailableTitle: String
+        var unavailableSystemImage: String
+        var failureActionTitle: String?
+        var onFailureAction: (() -> Void)?
     }
 
-    func makeUIView(context: Context) -> AuthenticatedMediaFailureActionView {
-        let view = AuthenticatedMediaFailureActionView()
-        view.apply(title: title, target: context.coordinator, action: #selector(Coordinator.tap))
-        return view
+    private(set) var model: AuthenticatedMediaPlayerModel
+    let playerController = AVPlayerViewController()
+    private var playerDelegate: InlineVideoPlayerDelegate?
+    private let captions = TimedTextCaptionOverlay()
+    private let loadingIndicator = UIActivityIndicatorView(style: .medium)
+    private let failureStack = UIStackView()
+    private let failureIcon = UIImageView()
+    private let failureTitle = UILabel()
+    private let failureMessage = UILabel()
+    private let failureAction = AuthenticatedMediaFailureActionView()
+    private var chrome = Chrome(
+        unavailableTitle: "Media preview unavailable",
+        unavailableSystemImage: "play.slash"
+    )
+    private var modelObservation: AnyCancellable?
+    private var timedTextSourceIdentity: String?
+    private var timedTextTask: Task<Void, Never>?
+    private var hasStartedTimedTextLoad = false
+
+    init(model: AuthenticatedMediaPlayerModel) {
+        self.model = model
+        super.init(nibName: nil, bundle: nil)
     }
 
-    func updateUIView(_ uiView: AuthenticatedMediaFailureActionView, context: Context) {
-        context.coordinator.action = action
-        uiView.apply(title: title, target: context.coordinator, action: #selector(Coordinator.tap))
-    }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
 
-    func sizeThatFits(
-        _ proposal: ProposedViewSize,
-        uiView: AuthenticatedMediaFailureActionView,
-        context: Context
-    ) -> CGSize {
-        uiView.intrinsicContentSize
-    }
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
 
-    final class Coordinator: NSObject {
-        var action: () -> Void
-
-        init(action: @escaping () -> Void) {
-            self.action = action
+        InlineVideoPlayerConfiguration.apply(to: playerController)
+        let playerDelegate = InlineVideoPlayerDelegate(
+            onFullScreenChange: { [weak self] fullScreen in
+                guard fullScreen, let self else { return }
+                self.model.setFullScreen(true)
+                WorkspaceMediaOverlayPost.begin()
+            },
+            onFullScreenWillEnd: { [weak self] in self?.model.handleWillEndFullScreen() },
+            onFullScreenDidEnd: { [weak self] attached in
+                self?.model.handleDidEndFullScreen(hostIsAttached: attached)
+            },
+            onFullScreenTransitionFinished: { WorkspaceMediaOverlayPost.end() },
+            onPictureInPictureChange: { [weak self] active in
+                guard active else { return }
+                self?.model.setPictureInPicture(true)
+            },
+            onPictureInPictureDidStop: { [weak self] attached in
+                self?.model.handleDidStopPictureInPicture(hostIsAttached: attached)
+            }
+        )
+        self.playerDelegate = playerDelegate
+        playerController.delegate = playerDelegate
+        addChild(playerController)
+        playerController.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(playerController.view)
+        playerController.didMove(toParent: self)
+        if let overlay = playerController.contentOverlayView {
+            captions.attach(to: overlay)
         }
 
-        @objc func tap() {
-            action()
+        loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
+        loadingIndicator.hidesWhenStopped = true
+        view.addSubview(loadingIndicator)
+
+        setupFailureViews()
+        view.addSubview(failureStack)
+
+        NSLayoutConstraint.activate([
+            playerController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            playerController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            playerController.view.topAnchor.constraint(equalTo: view.topAnchor),
+            playerController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            loadingIndicator.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            loadingIndicator.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            failureStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            failureStack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            failureStack.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 12),
+            failureStack.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -12),
+        ])
+
+        applyChrome()
+        observeModel()
+        refreshPlaybackState()
+    }
+
+    func update(
+        model: AuthenticatedMediaPlayerModel,
+        sourceIdentity: String,
+        chrome: Chrome,
+        timedTextLoader: (() async -> TimedText.LoadResult)?
+    ) {
+        let modelChanged = model !== self.model
+        self.model = model
+        self.chrome = chrome
+        loadTimedTextIfNeeded(sourceIdentity: sourceIdentity, loader: timedTextLoader)
+        guard isViewLoaded else { return }
+        applyChrome()
+        if modelChanged {
+            observeModel()
         }
+        refreshPlaybackState()
+    }
+
+    /// Host destruction. Cancels a pending sidecar load and removes the
+    /// caption time observer from the current player.
+    func dispose() {
+        timedTextTask?.cancel()
+        timedTextTask = nil
+        modelObservation = nil
+        captions.dispose()
+    }
+
+    private func observeModel() {
+        // Published values emit before mutation; render on the next main-queue turn.
+        modelObservation = model.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { [weak self] in self?.refreshPlaybackState() }
+        }
+    }
+
+    private func loadTimedTextIfNeeded(
+        sourceIdentity: String,
+        loader: (() async -> TimedText.LoadResult)?
+    ) {
+        if timedTextSourceIdentity != sourceIdentity {
+            timedTextSourceIdentity = sourceIdentity
+            timedTextTask?.cancel()
+            timedTextTask = nil
+            hasStartedTimedTextLoad = false
+            captions.setTimedText(.empty)
+        }
+        guard !hasStartedTimedTextLoad, let loader else { return }
+        hasStartedTimedTextLoad = true
+        timedTextTask = Task { [weak self] in
+            let result = await loader()
+            guard let self, !Task.isCancelled, self.timedTextSourceIdentity == sourceIdentity else { return }
+            self.timedTextTask = nil
+            self.captions.setTimedText(result)
+        }
+    }
+
+    private func refreshPlaybackState() {
+        guard isViewLoaded else { return }
+        let player = model.player
+        if playerController.player !== player {
+            playerController.player = player
+        }
+        captions.setPlayer(player)
+        let failed = player == nil && model.errorMessage != nil
+        playerController.view.isHidden = player == nil
+        failureStack.isHidden = !failed
+        failureMessage.text = model.errorMessage
+        if player == nil, !failed {
+            loadingIndicator.startAnimating()
+        } else {
+            loadingIndicator.stopAnimating()
+        }
+        view.backgroundColor = player == nil
+            ? UIColor(ThemeRuntimeState.currentPalette().bgHighlight)
+            : .clear
+#if DEBUG
+        AuthenticatedMediaE2EPlaybackProbe.install(on: playerController, model: model)
+#endif
+    }
+
+    private func setupFailureViews() {
+        let comment = UIColor(ThemeRuntimeState.currentPalette().comment)
+        failureStack.axis = .vertical
+        failureStack.alignment = .center
+        failureStack.spacing = 6
+        failureStack.translatesAutoresizingMaskIntoConstraints = false
+        failureStack.isHidden = true
+
+        failureIcon.tintColor = comment
+        failureIcon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .caption1)
+        failureTitle.font = .preferredFont(forTextStyle: .caption2)
+        failureTitle.adjustsFontForContentSizeCategory = true
+        failureTitle.textColor = comment
+        failureTitle.textAlignment = .center
+        failureMessage.font = .preferredFont(forTextStyle: .caption2)
+        failureMessage.adjustsFontForContentSizeCategory = true
+        failureMessage.textColor = comment.withAlphaComponent(0.8)
+        failureMessage.textAlignment = .center
+        failureMessage.numberOfLines = 3
+
+        for view in [failureIcon, failureTitle, failureMessage, failureAction] as [UIView] {
+            failureStack.addArrangedSubview(view)
+        }
+    }
+
+    private func applyChrome() {
+        failureIcon.image = UIImage(systemName: chrome.unavailableSystemImage)
+        failureTitle.text = chrome.unavailableTitle
+        if let title = chrome.failureActionTitle, chrome.onFailureAction != nil {
+            failureAction.apply(title: title, target: self, action: #selector(performFailureAction))
+            failureAction.isHidden = false
+        } else {
+            failureAction.isHidden = true
+        }
+    }
+
+    @objc private func performFailureAction() {
+        chrome.onFailureAction?()
     }
 }
 
@@ -2373,8 +2444,8 @@ extension AuthenticatedMediaPlayerModel {
         player = nil
     }
 
-    func debugInstallStandalonePlayerForTesting() -> AVPlayer {
-        let player = AVPlayer()
+    func debugInstallStandalonePlayerForTesting(item: AVPlayerItem? = nil) -> AVPlayer {
+        let player = AVPlayer(playerItem: item)
         self.player = player
         debugDidTeardownForTesting = false
         return player
