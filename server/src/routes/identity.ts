@@ -172,10 +172,11 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
 
     const piCliVersion = typeof ctx.piCliVersion === "string" ? ctx.piCliVersion.trim() : "";
+    const update = ctx.serverUpdate?.infoSnapshot();
     helpers.json(res, {
       name: hostname(),
       version: ctx.serverVersion,
-      ...(ctx.serverUpdate ? { update: ctx.serverUpdate.snapshot() } : {}),
+      ...(update ? { update } : {}),
       uptime: uptimeSeconds,
       os: process.platform,
       arch: process.arch,

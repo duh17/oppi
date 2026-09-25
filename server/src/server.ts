@@ -520,7 +520,8 @@ export class Server {
         DesktopCompanionViewSessionClient,
         "fetchViewSession"
       >;
-      onRestartAfterUpdate?: (mode: ServerRestartMode) => void;
+      onRestartAfterUpdate?: (mode: ServerRestartMode, targetVersion: string) => void;
+      restartNeededVersion?: string;
     },
   ) {
     this.storage = storage;
@@ -530,6 +531,7 @@ export class Server {
       options?.desktopCompanionViewSessionClient ?? new DesktopCompanionViewSessionClient();
     this.serverUpdate = new ServerUpdateService({
       onRestart: options?.onRestartAfterUpdate,
+      restartNeededVersion: options?.restartNeededVersion,
     });
     this.piExecutable = resolvePiExecutable();
 
@@ -1022,7 +1024,7 @@ export class Server {
 
   async stop(): Promise<void> {
     this.stopUploadGcLoop();
-    this.scheduleRunner.stop();
+    await this.scheduleRunner.stop();
     this.opsMetrics.stop();
     this.resourceSampler.stop();
     this.stopBonjourAdvertisement();
@@ -1263,6 +1265,8 @@ export class Server {
 
   private closeWebSocketServer(): Promise<void> {
     this.closeActiveConnections(WS_CLOSE_GOING_AWAY, "Server shutting down");
+    for (const timer of this.accessExpiryTimers.values()) clearTimeout(timer);
+    this.accessExpiryTimers.clear();
     const closeLocal = new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
         for (const ws of this.localWss.clients) ws.terminate();

@@ -1,9 +1,9 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { createServer, type Server as HttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { localApiRequest } from "../src/cli/local-api-client.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createIdentityRoutes } from "../src/routes/identity.js";
 import { createServerUpdateRoutes } from "../src/routes/server-update.js";
@@ -13,7 +13,10 @@ import {
   restartUpdatedProcess,
   serveUpdatedProcess,
 } from "../src/server-update.js";
+import { Server } from "../src/server.js";
+import { Storage } from "../src/storage.js";
 import { SERVER_UPDATE_ERROR } from "../src/types/server-update.js";
+import type { ServerUpdateInfo } from "../src/types/server-update.js";
 import { getPackageInfo, packageRootDir } from "../src/version.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
@@ -274,10 +277,44 @@ describe("ServerUpdateService", () => {
     }
   });
 
-  it("restores a fresh server after foreground exec fails through onRestart", async () => {
+  it("restores the real server with a restart-needed snapshot after failed foreground exec", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-update-recovery-"));
     const execve = process.execve;
-    let listener: HttpServer | undefined;
+    const home = process.env.HOME;
+    const oppiDataDir = process.env.OPPI_DATA_DIR;
+    const npmPrefix = process.env.npm_config_prefix;
+    process.env.HOME = join(dir, "home");
+    process.env.OPPI_DATA_DIR = join(dir, "data");
+    process.env.npm_config_prefix = join(dir, "npm-prefix");
+    mkdirSync(process.env.HOME, { recursive: true });
+    mkdirSync(process.env.npm_config_prefix, { recursive: true });
+    const storage = new Storage(join(dir, "data"));
+    storage.ensurePaired();
+    storage.updateConfig({ host: "127.0.0.1", port: 0, tls: { mode: "disabled" } });
+    let server: Server;
+    let updateStarted = false;
+    let resolveRestore: (() => void) | undefined;
+    let rejectRestore: ((error: unknown) => void) | undefined;
+    const restored = new Promise<void>((resolve, reject) => {
+      resolveRestore = resolve;
+      rejectRestore = reject;
+    });
+    const onRestartAfterUpdate = (mode: "manual" | "reexec" | "launchd", targetVersion: string) => {
+      void serveUpdatedProcess(
+        mode,
+        () => server.stop(),
+        async () => {
+          server = new Server(storage, undefined, {
+            onRestartAfterUpdate,
+            restartNeededVersion: targetVersion,
+          });
+          await server.start();
+          resolveRestore?.();
+        },
+        (restartMode) => restartUpdatedProcess(restartMode, () => false),
+      ).catch(rejectRestore);
+    };
+    server = new Server(storage, undefined, { onRestartAfterUpdate });
     try {
       Object.defineProperty(process, "execve", {
         configurable: true,
@@ -286,48 +323,51 @@ describe("ServerUpdateService", () => {
         },
       });
       useFakeNpm(dir, { global: true, latest: "9.9.9" });
-      const calls: string[] = [];
-      listener = createServer((_req, res) => {
-        res.end("still serving");
+      await server.start();
+      await vi.waitFor(async () => {
+        const info = await localApiRequest<{ update?: ServerUpdateInfo }>(storage, "/server/info");
+        expect(info.update?.latestVersion).toBe("9.9.9");
+        expect(info.update?.installKind).toBe("npm-global");
       });
-      await new Promise<void>((resolve) => listener?.listen(0, "127.0.0.1", resolve));
-      const address = listener.address();
-      if (!address || typeof address === "string") throw new Error("missing test listener");
-      const port = address.port;
-      const service = new ServerUpdateService({
-        onRestart: (mode) => {
-          void serveUpdatedProcess(
-            mode,
-            async () => {
-              await new Promise<void>((resolve, reject) =>
-                listener?.close((err) => (err ? reject(err) : resolve())),
-              );
-              calls.push("stopped");
-            },
-            async () => {
-              listener = createServer((_req, res) => {
-                res.end("still serving");
-              });
-              await new Promise<void>((resolve) => listener?.listen(port, "127.0.0.1", resolve));
-              calls.push("restored");
-            },
-            (mode) => restartUpdatedProcess(mode, () => false),
+      const started = await localApiRequest<ServerUpdateInfo>(storage, "/server/update", {
+        method: "POST",
+        body: { version: "9.9.9" },
+      });
+      updateStarted = true;
+      expect(started.status).toBe("installing");
+      await restored;
+      await expect(
+        localApiRequest(storage, "/server/update", {
+          method: "POST",
+          body: { version: "9.9.9" },
+        }),
+      ).rejects.toMatchObject({ status: 409, code: SERVER_UPDATE_ERROR.updateInProgress });
+      await vi.waitFor(
+        async () => {
+          const info = await localApiRequest<{ version: string; update?: ServerUpdateInfo }>(
+            storage,
+            "/server/info",
           );
+          expect(info.version).toBe(getPackageInfo().version);
+          expect(info.update).toMatchObject({ status: "restart-needed", targetVersion: "9.9.9" });
         },
-      });
-      await service.refreshLatest();
-      expect((await service.beginUpdate("9.9.9")).ok).toBe(true);
-      await vi.waitFor(() => expect(calls).toEqual(["stopped", "restored"]), { timeout: 8_000 });
-      expect(await (await fetch(`http://127.0.0.1:${port}/server/info`)).text()).toBe(
-        "still serving",
+        { timeout: 4_000 },
       );
     } finally {
-      if (listener?.listening)
-        await new Promise<void>((resolve) => listener?.close(() => resolve()));
+      if (updateStarted) await restored.catch(() => {});
+      await server.stop().catch(() => {});
       Object.defineProperty(process, "execve", { configurable: true, value: execve });
+      for (const [key, value] of [
+        ["HOME", home],
+        ["OPPI_DATA_DIR", oppiDataDir],
+        ["npm_config_prefix", npmPrefix],
+      ] as const) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it("rejects arbitrary and empty versions at the boundary", async () => {
     const service = new ServerUpdateService();
@@ -361,13 +401,24 @@ describe("POST /server/update and GET /server/info", () => {
       expect(handled).toBe(true);
       expect(performance.now() - startedAt).toBeLessThan(500);
       expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body) as {
-        update: { latestVersion: string | null; status: string; installKind: string };
-      };
-      expect(body.update.latestVersion).toBeNull();
-      expect(body.update.status).toBe("idle");
-      expect(body.update.installKind).toBe("other");
+      const body = JSON.parse(res.body) as { update?: ServerUpdateInfo };
+      expect(body.update).toBeUndefined();
       await service.refreshLatest();
+      await vi.waitFor(() => expect(service.infoSnapshot()?.installKind).toBe("other"), {
+        timeout: 4_000,
+      });
+      const after = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: "/server/info",
+        url: new URL("http://localhost/server/info"),
+        req: {} as never,
+        res: after as never,
+      });
+      expect((JSON.parse(after.body) as { update: ServerUpdateInfo }).update).toMatchObject({
+        installKind: "other",
+        latestVersion: null,
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

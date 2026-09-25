@@ -24,7 +24,8 @@ export interface AgentScheduleRunnerDeps extends AgentScheduleDispatchDeps {
 
 export class AgentScheduleRunner {
   private timer: ReturnType<typeof setInterval> | null = null;
-  private running = false;
+  private runInFlight: Promise<void> | null = null;
+  private stopped = false;
   private readonly nowMs: () => number;
   private readonly intervalMs: number;
   private readonly leaseMs: number;
@@ -40,7 +41,7 @@ export class AgentScheduleRunner {
   }
 
   start(): void {
-    if (this.timer) return;
+    if (this.timer || this.stopped) return;
     this.timer = setInterval(() => {
       void this.runOnce();
     }, this.intervalMs);
@@ -49,24 +50,30 @@ export class AgentScheduleRunner {
     void this.runOnce();
   }
 
-  stop(): void {
-    if (!this.timer) return;
-    clearInterval(this.timer);
+  async stop(): Promise<void> {
+    this.stopped = true;
+    if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    await this.runInFlight;
   }
 
-  async runOnce(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
-    try {
-      const now = this.nowMs();
-      this.materializeDueRuns(now);
-      await this.dispatchReadyRuns(now);
-    } catch (error) {
-      log.error("agent_schedule_runner.tick.failed", { error: safeErrorMessage(error) });
-    } finally {
-      this.running = false;
-    }
+  runOnce(): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    if (this.runInFlight) return this.runInFlight;
+    const run = (async () => {
+      try {
+        const now = this.nowMs();
+        this.materializeDueRuns(now);
+        await this.dispatchReadyRuns(now);
+      } catch (error) {
+        log.error("agent_schedule_runner.tick.failed", { error: safeErrorMessage(error) });
+      }
+    })();
+    this.runInFlight = run;
+    void run.finally(() => {
+      if (this.runInFlight === run) this.runInFlight = null;
+    });
+    return run;
   }
 
   private materializeDueRuns(now: number): void {
@@ -99,17 +106,17 @@ export class AgentScheduleRunner {
 
   private async dispatchReadyRuns(now: number): Promise<void> {
     const store = this.deps.storage.getAgentScheduleStore();
-    const claimed = store.claimReadyRuns({
-      now,
-      ownerId: this.ownerId,
-      leaseMs: this.leaseMs,
-      limit: this.limit,
-      kinds: ["due"],
-    });
-    if (claimed.length === 0) return;
-
     const hooks = createAgentScheduleDispatchHooks(this.deps, this.ownerId);
-    for (const run of claimed) {
+    for (let i = 0; i < this.limit && !this.stopped; i++) {
+      // Claim only when ready to dispatch; stop must not strand a batch of leases.
+      const run = store.claimReadyRuns({
+        now,
+        ownerId: this.ownerId,
+        leaseMs: this.leaseMs,
+        limit: 1,
+        kinds: ["due"],
+      })[0];
+      if (!run) break;
       try {
         await store.dispatchClaimedRun(run.id, hooks, {
           leaseOwner: this.ownerId,

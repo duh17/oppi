@@ -975,14 +975,12 @@ struct ServerDetailView: View {
         updatePollTask?.cancel()
         let task = Task { @MainActor in
             let deadline = Date().addingTimeInterval(180)
-            var sawRestarting = false
             while !Task.isCancelled, Date() < deadline {
                 try? await Task.sleep(for: .seconds(1))
                 if Task.isCancelled { return }
                 do {
                     let next = try await api.serverInfo()
                     info = next
-                    sawRestarting = sawRestarting || next.update?.isRestarting == true
                     error = nil
                     if next.update?.isFailed == true {
                         updateInFlight = false
@@ -1001,7 +999,7 @@ struct ServerDetailView: View {
                     // Connection drop during restart is expected.
                 }
             }
-            if sawRestarting && !Task.isCancelled {
+            if !Task.isCancelled {
                 updateDidNotReturn = true
             }
             updateInFlight = false

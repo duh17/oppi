@@ -168,10 +168,17 @@ export class ServerUpdateService {
   private installKindCache: Awaited<ReturnType<typeof resolveInstallKindAsync>> | null = null;
   private installKindInFlight: Promise<Awaited<ReturnType<typeof resolveInstallKindAsync>>> | null =
     null;
-  private readonly onRestart?: (mode: ServerRestartMode) => void;
+  private readonly onRestart?: (mode: ServerRestartMode, targetVersion: string) => void;
 
-  constructor(options?: { onRestart?: (mode: ServerRestartMode) => void }) {
+  constructor(options?: {
+    onRestart?: (mode: ServerRestartMode, targetVersion: string) => void;
+    restartNeededVersion?: string;
+  }) {
     this.onRestart = options?.onRestart;
+    if (options?.restartNeededVersion) {
+      this.status = "restart-needed";
+      this.targetVersion = options.restartNeededVersion;
+    }
   }
 
   /** Kick a non-blocking registry lookup. Safe to call from server start. */
@@ -206,6 +213,12 @@ export class ServerUpdateService {
       void this.refreshLatest();
     }
     return this.buildSnapshot();
+  }
+
+  /** A lookup in progress is not a resolved non-updatable install. */
+  infoSnapshot(): ServerUpdateInfo | undefined {
+    this.snapshot();
+    return this.installKindCache ? this.buildSnapshot() : undefined;
   }
 
   async beginUpdate(versionRaw: unknown): Promise<ServerUpdateBeginResult> {
@@ -310,7 +323,7 @@ export class ServerUpdateService {
       this.status = mode === "manual" ? "restart-needed" : "restarting";
       this.error = undefined;
       log.info("server_update.install_succeeded", { version, restartMode: mode });
-      this.scheduleRestart(mode);
+      this.scheduleRestart(mode, version);
     } catch (err: unknown) {
       this.status = "failed";
       this.error = safeErrorMessage(err);
@@ -320,12 +333,12 @@ export class ServerUpdateService {
     }
   }
 
-  private scheduleRestart(mode: ServerRestartMode): void {
+  private scheduleRestart(mode: ServerRestartMode, version: string): void {
     if (!this.onRestart) return;
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
-      this.onRestart?.(mode);
+      this.onRestart?.(mode, version);
     }, RESTART_FLUSH_MS);
   }
 

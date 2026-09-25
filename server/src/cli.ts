@@ -170,7 +170,7 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
     });
   }
 
-  const onRestartAfterUpdate = (mode: ServerRestartMode): void => {
+  const onRestartAfterUpdate = (mode: ServerRestartMode, targetVersion: string): void => {
     console.log("");
     console.log(
       mode === "manual"
@@ -182,7 +182,10 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
       () => stopServing(server),
       async () => {
         // stop() is terminal for a Server; replace it rather than calling start twice.
-        server = new Server(storage, apnsConfig, { onRestartAfterUpdate });
+        server = new Server(storage, apnsConfig, {
+          onRestartAfterUpdate,
+          restartNeededVersion: targetVersion,
+        });
         await server.start();
         shuttingDown = false;
       },

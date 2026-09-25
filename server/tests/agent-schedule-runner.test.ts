@@ -131,6 +131,48 @@ describe("agent schedule runner", () => {
     expect(sessions[0]?.launch?.modelPolicy).toBeUndefined();
   });
 
+  it("drains the active dispatch and starts no more work after stop", async () => {
+    const scheduleIds: string[] = [];
+    for (const name of ["First", "Second"]) {
+      const schedule = store.createSchedule(
+        { name, trigger: { type: "at", at: 1_000, timeZone: "UTC" }, action: action() },
+        500,
+      );
+      scheduleIds.push(schedule.id);
+    }
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    startSession.mockImplementation(async (sessionId: string) => {
+      await gate;
+      return makeSession({ id: sessionId });
+    });
+    const runner = new AgentScheduleRunner({
+      storage: storage(),
+      sessions: { startSession, sendPrompt },
+      ensureSessionContextWindow: (session) => session,
+      nowMs: () => 2_000,
+    });
+    const tick = runner.runOnce();
+    await vi.waitFor(() => expect(startSession).toHaveBeenCalledTimes(1));
+    let stopped = false;
+    const stop = runner.stop().then(() => {
+      stopped = true;
+    });
+    await runner.runOnce();
+    expect(stopped).toBe(false);
+    expect(startSession).toHaveBeenCalledTimes(1);
+    release?.();
+    await Promise.all([tick, stop]);
+    expect(stopped).toBe(true);
+    await runner.runOnce();
+    expect(startSession).toHaveBeenCalledTimes(1);
+    expect(scheduleIds.flatMap((id) => store.listRuns(id).map((run) => run.status)).sort()).toEqual(
+      ["completed", "pending"],
+    );
+  });
+
   it("applies a schedule thinking override to the launched session", async () => {
     const schedule = store.createSchedule(
       {
