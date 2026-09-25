@@ -271,8 +271,9 @@ enum SessionFileURL {
     }
 }
 
-/// Client-local URL for an owner-host image fetched with authenticated
-/// full-byte GET `/files/raw`. Distinct from workspace/session file URLs so
+/// Client-local identity URL for an owner-host image. It is never requested
+/// directly: the bytes come from an authenticated full-byte GET on the
+/// host-origin current-file read. Distinct from workspace/session file URLs so
 /// sandbox remapping can reuse the AV host-file route instead of pretending
 /// the image is a workspace path.
 ///
@@ -1894,7 +1895,7 @@ enum FlatSegment: Sendable {
     ///   firstCheckout; nil/main omit the query so cache identity stays
     ///   checkout-aware.
     /// - **Owner-host paths** (`/`, `~/`, local `file://`): `HostFileURL`,
-    ///   fetched later with authenticated GET `/files/raw`.
+    ///   fetched later with an authenticated host-origin current-file GET.
     /// - **Absolute http(s) URLs**: passed through for tap-to-load / block.
     ///
     /// Skips `data:` URIs and other non-file schemes.

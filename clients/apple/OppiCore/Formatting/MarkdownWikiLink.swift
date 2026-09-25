@@ -357,7 +357,7 @@ enum ResourceReferenceMatch: Hashable, Sendable {
                   reference.fileCandidatePath != nil else {
                 return false
             }
-            // HEAD /files/raw may replace a tilde or symlink candidate with
+            // A host-origin HEAD may replace a tilde or symlink candidate with
             // the canonical realpath. Matching still uses source-server scope.
             return reference.sourceServerID == nil || file.serverID == reference.sourceServerID
         }
@@ -1550,7 +1550,7 @@ enum MarkdownWikiLinkRewriter {
     }
 
     /// RFC 3986 network-path reference. Not a POSIX file and must not become
-    /// owner-host `/files/raw`.
+    /// an owner-host read.
     private static func isRFC3986NetworkPath(_ destination: String) -> Bool {
         destination.hasPrefix("//")
     }

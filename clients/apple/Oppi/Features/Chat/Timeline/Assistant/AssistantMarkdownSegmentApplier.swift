@@ -308,7 +308,7 @@ final class AssistantMarkdownSegmentApplier {
     /// Closure for fetching files from the active session working directory.
     var fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
 
-    /// Closure for fetching owner-host images through GET `/files/raw`.
+    /// Closure for fetching owner-host images through the host-origin current-file read.
     /// Sandbox injection remaps guest POSIX paths the same way AV does.
     var fetchHostFile: ((_ path: String) async throws -> Data)?
 

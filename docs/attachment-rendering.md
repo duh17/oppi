@@ -299,9 +299,9 @@ The server owns attachment materialization and serving.
 - Sniff image/audio/video headers where practical; do not trust only file extensions.
 - Copy bytes from helper-approved paths, generated temp files, or authenticated uploads.
 - Do not expose an HTTP API that attaches arbitrary server paths by name.
-- Keep workspace `contents`/`raw` lexically inside the workspace, then follow in-tree symlink names even when the target is outside. Host-workspace session-origin reads may follow an explicit real path, including symlink targets; sandbox session-origin reads 403s outside and guest-escape paths.
+- Keep workspace `contents` and legacy `raw` lexically inside the workspace, then follow in-tree symlink names even when the target is outside. Host-workspace workspace-origin and session-origin current-file reads may follow an explicit real path, including symlink targets; sandbox workspace-origin and session-origin reads 403 outside and guest-escape paths.
 - Serve stored media through authenticated `GET` and `HEAD` requests to `/sessions/{sessionId}/attachments/{attachmentId}`.
-- Serve current-file media through authenticated, range-capable `GET` and `HEAD` requests to `/files/current` when the server reports `currentFiles`; otherwise use the matching legacy origin route (workspace `raw`, session-raw, or `/files/raw`). Host-origin reads (`/files/current?origin=host` or `/files/raw`) and host-workspace session-origin reads (`/files/current?origin=session` or session-raw) may follow an unreported absolute, outside, or symlink-target file. Workspace `raw` stays lexically inside the workspace.
+- Serve current-file media through authenticated, range-capable `GET` and `HEAD` requests to `/files/current` when the server reports `currentFiles`; otherwise use the matching legacy origin route (workspace `raw`, session-raw, or `/files/raw`). Host-origin reads (`/files/current?origin=host` or `/files/raw`), host-workspace session-origin reads (`/files/current?origin=session` or session-raw), and host-workspace `/files/current?origin=workspace` reads may follow an unreported absolute, outside, or symlink-target file. Legacy workspace `raw` stays lexically inside the workspace.
 - Use workspace-scoped attachment routes only for upload creation and upload content.
 - Support byte ranges for audio and video.
 - Delete attachments when the owning session is deleted.
@@ -338,7 +338,7 @@ Clients render attachments from metadata and authenticated byte sources.
 - Route remote URLs through the existing tap-to-load remote image policy.
 - Keep attachment endpoints authenticated and session-scoped.
 - Build timeline attachment and session-file providers even when API-client or workspace metadata is still loading; resolve that context when the fetch starts so cached rows can recover.
-- Keep workspace lexical containment (in-tree symlinks may resolve outside) separate from authenticated host-origin reads (`/files/current?origin=host` or legacy `/files/raw`) and host-workspace session-origin reads (`/files/current?origin=session` or legacy session-raw). Fuzzy `/paths` is not a secret-file ACL.
+- Do not rely on workspace lexical containment for byte reads. It covers workspace listings and legacy workspace `raw` (in-tree symlinks may resolve outside), not authenticated host-origin reads (`/files/current?origin=host` or legacy `/files/raw`) or host-workspace workspace-origin and session-origin current-file reads (legacy session-raw included). Fuzzy `/paths` is not a secret-file ACL.
 - Avoid logging full file paths or attachment text when it can contain private data.
 - Treat stored attachments as durable session history until the session or attachment is deleted.
 

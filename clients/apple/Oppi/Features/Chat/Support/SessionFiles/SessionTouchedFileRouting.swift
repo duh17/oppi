@@ -1,10 +1,10 @@
 import Foundation
 
-/// Chooses host-browse vs session-raw for a session-touched file.
+/// Chooses the host origin vs the session origin for a session-touched file.
 ///
-/// Sandbox workspaces always use session-raw. Guest paths like
+/// Sandbox workspaces always use the session origin. Guest paths like
 /// `/workspace/<slug>/…` are absolute POSIX strings, so treating them as
-/// host paths would send `GET /files/raw` and 404.
+/// host paths would send a host-origin read and 404.
 enum SessionTouchedFileLoadRoute: Equatable {
     case hostFile(path: String)
     case sessionRaw(path: String)
@@ -45,12 +45,12 @@ enum SessionTouchedFileLoadRoute: Equatable {
     }
 }
 
-/// Session-origin markdown readers keep guest/worktree children on session-raw.
+/// Session-origin markdown readers keep guest/worktree children on the session origin.
 ///
-/// Sandbox and unknown runtime stay on session-raw even when wiki classification
+/// Sandbox and unknown runtime stay on the session origin even when wiki classification
 /// labels an absolute guest path `hostFile`. Do not infer host ownership from a
 /// leading `/` or missing workspace metadata. Confirmed host-workspace `/Users`
-/// and `~/` links use `/files/raw`.
+/// and `~/` links use the host origin.
 enum SessionOriginLinkedFileRouting {
     static func routesThroughSessionRaw(
         kind: ResourceReferenceKind,

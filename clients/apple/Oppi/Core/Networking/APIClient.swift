@@ -1923,7 +1923,7 @@ actor APIClient: ClientLogUploading {
         return try await get(url: makeCurrentFileURL(.session(workspaceId: workspaceId, sessionId: sessionId), path: path))
     }
 
-    /// Fetch a workspace file by path (images, etc.) from the workspace raw endpoint.
+    /// Fetch a workspace file by path (images, etc.) through the workspace-origin current-file read.
     ///
     /// Used by `MarkdownImageView` to load images referenced in markdown with relative paths.
     /// Returns raw `Data` so the caller can decode as `UIImage`.
@@ -1996,7 +1996,7 @@ actor APIClient: ClientLogUploading {
         }
     }
 
-    /// Fetch an authenticated host file through GET `/files/raw?path=`.
+    /// Fetch an authenticated owner-host file through the host-origin current-file read.
     func browseHostFile(
         path: String,
         controlSessionId: String? = nil
@@ -2036,7 +2036,7 @@ actor APIClient: ClientLogUploading {
     /// Build a bearer-authenticated media source for AVPlayer resource loading.
     ///
     /// AVPlayer receives a local `oppi-media://` asset URL. The resource loader
-    /// translates byte-range requests to this raw endpoint with the normal
+    /// translates byte-range requests to the workspace-origin current-file URL with the normal
     /// `Authorization: Bearer ...` header.
     func makeWorkspaceMediaSource(
         workspaceId: String,
@@ -2056,7 +2056,7 @@ actor APIClient: ClientLogUploading {
     }
 
     /// Build a bearer-authenticated, range-capable media source for a file
-    /// addressable through the owning session's raw-file capability.
+    /// addressable through the owning session's session-origin current-file read.
     func makeSessionFileMediaSource(
         workspaceId: String,
         sessionId: String,

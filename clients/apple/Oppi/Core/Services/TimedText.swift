@@ -1,6 +1,6 @@
 import Foundation
 
-/// mpv-style sidecar matching and parsers for workspace/session lyrics and captions.
+/// mpv-style sidecar matching and parsers for workspace, session, and host lyrics and captions.
 ///
 /// Same directory, same stem, optional language suffix:
 /// `stem(.lang)?.(lrc|vtt|srt|ass|ssa)`. Times are never invented.

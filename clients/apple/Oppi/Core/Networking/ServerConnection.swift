@@ -149,7 +149,7 @@ enum MarkdownVideoMediaSourceRoute: Equatable {
                 }
                 if let workspace, !workspace.isEmpty {
                     // Guest POSIX paths are not owner-host files. Prefer the
-                    // workspace media route over GET /files/raw.
+                    // workspace origin over the host origin.
                     return .workspace(
                         workspaceID: workspace,
                         path: path,
@@ -177,7 +177,7 @@ enum MarkdownVideoMediaSourceRoute: Equatable {
 
     /// Absolute / `~/` / `file://` markdown images use the same host-file
     /// route as AV. Unknown catalog runtime is treated as owner-host read;
-    /// only a known sandbox workspace remaps away from `/files/raw`.
+    /// only a known sandbox workspace remaps away from the host origin.
     static func resolveHostFile(
         path: String,
         workspaceID: String?,

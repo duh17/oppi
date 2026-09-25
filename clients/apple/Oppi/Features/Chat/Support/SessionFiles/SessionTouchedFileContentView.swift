@@ -47,7 +47,7 @@ enum SessionFileFullScreenContentBuilder {
 
 /// Displays content of a file reported by the session.
 ///
-/// Loads workspace files and reported external paths via the session raw API, then renders using
+/// Loads workspace files and reported external paths via the session-origin current-file read, then renders using
 /// `FileContentView` — the same renderer used by the file browser.
 /// HTML files default to rendered preview via `HTMLFileView` in document mode.
 struct SessionTouchedFileContentView: View {

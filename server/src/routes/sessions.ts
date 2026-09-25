@@ -894,6 +894,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return true;
     }
 
+    // Legacy session-raw bytes for iOS builds that predate currentFiles; see
+    // /files/current?origin=session.
     const wsSessionRawMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/raw\/(.+)$/);
     if (wsSessionRawMatch && (method === "GET" || method === "HEAD")) {
       const requestedPath = decodeWorkspaceRoutePath(wsSessionRawMatch[3]);

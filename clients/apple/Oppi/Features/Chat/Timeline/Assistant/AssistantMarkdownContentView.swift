@@ -59,7 +59,7 @@ final class AssistantMarkdownContentView: UIView {
         let sessionID: String?
         /// File-reader links keep using the exact source-session file route.
         let routesFileReferencesThroughSession: Bool
-        /// Sandbox origin keeps guest `/workspace/...` children on session-raw.
+        /// Sandbox origin keeps guest `/workspace/...` children on the session origin.
         let workspaceRuntime: WorkspaceRuntime?
         let serverBaseURL: URL?
         /// Path of the source markdown file in the workspace (e.g. "docs/readme.md").

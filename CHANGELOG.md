@@ -42,13 +42,19 @@ Example:
 
 - **Client/Server:** A Dictation Dictionary can be edited on iPhone or through `oppi dictionary`. All-workspace and per-workspace lists share short vocabulary hints; agents can curate them from past sessions through the CLI.
 - **Client:** Pick HTML elements and Mermaid objects for review comments, with readable target descriptions and contextual Comment controls in full-screen viewers.
+- **Client/Server:** Host videos show adjacent `clip.srt` and `clip.<lang>.srt` captions in chat and the file browser, with the same language picker as workspace video.
+- **Protocol:** Servers report `capabilities.currentFiles` and serve every workspace, session, and host file read through `GET/HEAD /files/current?origin=…`, plus bounded same-stem caption discovery at `/files/current/sidecars`. iOS switches only when the server reports the capability; the legacy workspace `raw`, session-raw, and `/files/raw` routes stay for older iOS builds.
 
 ### Changed
 
 - **Client:** New orbs animate for dictation and the agent's thinking/working indicator, adapted from Thinking Orbs designs by Jakub Antalik and a Swift port by Haplo LLC. The dictation orb responds to voice. On-device dictation prefers Apple's DictationTranscriber, which accepts Dictionary phrase hints and gave better results than SpeechTranscriber in our normal-path use; SpeechTranscriber remains the fallback.
 - **Server:** Bundled Pi runtime moves to `0.87.1`.
 - **Mirror:** Mirrored Pi `turn_end` frames omit duplicate message bodies and tool results.
-- **Mac:** Workspace, session, and host file reads, Markdown images and audio, and inline video always use `/files/current`. OppiMac does not keep the iOS legacy-route fallback.
+
+### Fixed
+
+- **Server:** Sandbox workspace file reads and listings no longer follow symlinks out of the mount. Every byte read comes from a handle verified against the checked path, so a symlink swapped in after the check returns 404.
+- **Server:** An aborted media Range request (common when a player seeks) closes its file handle instead of crashing `oppi serve` on Node's DEP0137 garbage-collection close.
 
 ## [0.49.1] - 2026-09-18
 

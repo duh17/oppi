@@ -369,7 +369,8 @@ export function createWorkspaceFileRoutes(
       return true;
     }
 
-    // GET/HEAD /workspaces/:id/raw/:path — raw bytes for previews/media.
+    // GET/HEAD /workspaces/:id/raw/:path — legacy lexically confined bytes for
+    // iOS builds that predate currentFiles; see /files/current?origin=workspace.
     const rawMatch = path.match(/^\/workspaces\/([^/]+)\/raw\/(.+)$/);
     if (rawMatch && (normalizedMethod === "GET" || normalizedMethod === "HEAD")) {
       const requestedPath = decodeWorkspaceRoutePath(rawMatch[2]);

@@ -4,7 +4,7 @@ import Foundation
 /// wiki-link file lookup.
 ///
 /// Chat timeline images still go through `APIClient.fetchWorkspaceFile` (the
-/// workspace raw endpoint), never session raw. A missing or foreign source
+/// workspace-origin current-file read), never the session origin. A missing or foreign source
 /// session lists main (`nil`). A non-main worktree 404 then retries main so a
 /// gitignored file can still load.
 enum WorkspaceMarkdownImageFileLookup {
