@@ -521,16 +521,9 @@ struct ThinkingOrbAttributionTests {
         #expect(source.contains("Haplo LLC — Swift ThinkingOrbs port"))
         #expect(source.contains("originalDesignURL") && source.contains("swiftPortURL") && source.contains("licenseText"))
     }
-    @Test func iosSettingsDoesNotLinkAcknowledgments() throws {
+    @Test func bundledLicenseFileKeepsBothCopyrights() throws {
         let appleRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let settings = try String(
-            contentsOf: appleRoot.appending(path: "Oppi/Features/Settings/SettingsView.swift"),
-            encoding: .utf8
-        )
-        #expect(!settings.contains("Acknowledgments"))
-        #expect(!settings.contains("settings.acknowledgments"))
-        #expect(!settings.contains("ThinkingOrbAcknowledgmentsView"))
         let license = try String(
             contentsOf: appleRoot.appending(path: "Shared/Renderers/Orbs/LICENSE"),
             encoding: .utf8

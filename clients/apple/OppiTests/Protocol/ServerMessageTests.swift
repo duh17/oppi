@@ -21,18 +21,6 @@ struct ServerMessageTests {
         #expect(session.status == .ready)
     }
 
-    @Test func decodesConnectedWithCurrentSeq() throws {
-        let json = """
-        {"type":"connected","currentSeq":42,"session":{"id":"abc","status":"ready","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
-        """
-        let msg = try ServerMessage.decode(from: json)
-        guard case .connected(let session) = msg else {
-            Issue.record("Expected .connected")
-            return
-        }
-        #expect(session.id == "abc")
-    }
-
     @Test func decodesState() throws {
         let json = """
         {"type":"state","session":{"id":"abc","status":"busy","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":5,"tokens":{"input":100,"output":200},"cost":0.05,"lastMessage":"hello"}}

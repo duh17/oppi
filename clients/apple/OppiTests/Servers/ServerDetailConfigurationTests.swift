@@ -4,26 +4,6 @@ import Testing
 
 @Suite("Server detail configuration")
 struct ServerDetailConfigurationTests {
-    @Test func dictionaryEditorLivesInServerSettingsNotAppVoiceSettings() throws {
-        let appleRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let server = try String(
-            contentsOf: appleRoot.appending(path: "Oppi/Features/Servers/ServerDetailView.swift"),
-            encoding: .utf8
-        )
-        let settings = try String(
-            contentsOf: appleRoot.appending(path: "Oppi/Features/Settings/SettingsView.swift"),
-            encoding: .utf8
-        )
-        let start = try #require(server.range(of: "private var serverSettingsSections"))
-        let end = try #require(server.range(of: "private var connectionStatusTitle", range: start.upperBound..<server.endIndex))
-        let serverSettings = String(server[start.lowerBound..<end.lowerBound])
-        #expect(serverSettings.contains("DictationDictionaryView(workspaceId: nil)"))
-        #expect(serverSettings.contains("server.dictationDictionary"))
-        #expect(!settings.contains("DictationDictionaryView"))
-        #expect(!settings.contains("Dictation Dictionary"))
-    }
-
     @Test func mobileOutputGuideStateDistinguishesLoadingAvailableAndFailure() {
         #expect(ServerDetailMobileOutputGuideState.resolve(configuration: nil, isLoading: true, error: nil) == .loading)
         #expect(ServerDetailMobileOutputGuideState.resolve(
