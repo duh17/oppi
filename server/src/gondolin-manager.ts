@@ -7,13 +7,10 @@
  */
 
 import { chmodSync, lstatSync, mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
-import {
-  createShadowPathPredicate,
-  type CreateHttpHooksOptions,
-  type CreateHttpHooksResult,
-} from "@earendil-works/gondolin";
+import type { CreateHttpHooksOptions, CreateHttpHooksResult } from "@earendil-works/gondolin";
 import type { Workspace } from "./types.js";
 import { GUEST_WORKSPACE, type GondolinVm } from "./gondolin-ops.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -85,10 +82,17 @@ const DEFAULT_SHADOW_FILE_NAMES = new Set([
 ]);
 const DEFAULT_SHADOW_DIR_NAMES = new Set([".aws", ".azure", ".gnupg", ".ssh", ".pi", ".kube"]);
 
-// Prefix-closed at the mount root via Gondolin; basename/segment rules still
-// hide the same names anywhere under the mount. Case is folded first so
-// `/.CONFIG/gcloud/...` and `/.SSH` match the path list, not only exact case.
-const matchesShadowedPath = createShadowPathPredicate(DEFAULT_SHADOW_PATHS);
+// Prefix-closed at the mount root; basename/segment rules still hide the same
+// names anywhere under the mount. Case is folded first so `/.CONFIG/gcloud/...`
+// and `/.SSH` match the path list, not only exact case.
+function matchesShadowedPath(ctx: { path: string }): boolean {
+  const p = ctx.path;
+  for (const shadow of DEFAULT_SHADOW_PATHS) {
+    const normalized = shadow.toLowerCase();
+    if (p === normalized || p.startsWith(`${normalized}/`)) return true;
+  }
+  return false;
+}
 
 /** Guest path where Pi discovers selected skills. Must stay under workspace `.pi/skills`. */
 function sandboxPiOverlayGuestPath(guestWorkspacePath: string): string {
@@ -276,6 +280,9 @@ export function buildVmHttpHooks(
 export async function defaultVmFactory(
   options: VmFactoryOptions,
 ): Promise<GondolinVm & { close(): Promise<void> }> {
+  const unsupported = sandboxUnsupportedNodeMessage();
+  if (unsupported) throw new Error(unsupported);
+
   // Dynamic import — only loaded when sandbox mode is used.
   const { VM, RealFSProvider, ReadonlyProvider, ShadowProvider, createHttpHooks } =
     await import("@earendil-works/gondolin");
@@ -529,6 +536,49 @@ export class GondolinManager {
     log.info("gondolin.vm_ready", { workspaceId: workspace.id });
     return vm;
   }
+}
+
+/**
+ * Gondolin declares `engines.node >=23.6.0`. Read that floor from the installed
+ * package so sandbox setup fails with a version message instead of an import error.
+ */
+export function sandboxUnsupportedNodeMessage(nodeVersion = process.versions.node): string | null {
+  const minimum = gondolinEnginesNodeMinimum();
+  if (compareNodeVersion(nodeVersion, minimum) >= 0) return null;
+  const current = nodeVersion.replace(/^v/i, "");
+  return `Sandbox workspaces require Node.js ${minimum} or newer (this process is running Node.js ${current}).`;
+}
+
+function gondolinEnginesNodeMinimum(): string {
+  try {
+    const require = createRequire(import.meta.url);
+    const pkg = require("@earendil-works/gondolin/package.json") as {
+      engines?: { node?: string };
+    };
+    const match = pkg.engines?.node?.trim().match(/>=\s*([0-9]+(?:\.[0-9]+){0,2})/);
+    if (match?.[1]) return match[1];
+  } catch {
+    // Fall through to the last known gondolin engines floor.
+  }
+  return "23.6.0";
+}
+
+function compareNodeVersion(left: string, right: string): number {
+  const a = parseNodeVersion(left);
+  const b = parseNodeVersion(right);
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return 0;
+}
+
+function parseNodeVersion(version: string): [number, number, number] {
+  const match = version
+    .trim()
+    .replace(/^v/i, "")
+    .match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  if (!match) return [0, 0, 0];
+  return [Number(match[1]), Number(match[2] ?? 0), Number(match[3] ?? 0)];
 }
 
 /**

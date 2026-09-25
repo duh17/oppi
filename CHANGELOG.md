@@ -49,6 +49,7 @@ Example:
 
 - **Client:** New orbs animate for dictation and the agent's thinking/working indicator, adapted from Thinking Orbs designs by Jakub Antalik and a Swift port by Haplo LLC. The dictation orb responds to voice. On-device dictation prefers Apple's DictationTranscriber, which accepts Dictionary phrase hints and gave better results than SpeechTranscriber in our normal-path use; SpeechTranscriber remains the fallback.
 - **Server:** Bundled Pi runtime moves to `0.87.1`.
+- **Server:** The Node.js requirement is 22.19.0 or newer, matching Pi. Sandbox workspaces still need Node.js 23.6+.
 - **Mirror:** Mirrored Pi `turn_end` frames omit duplicate message bodies and tool results.
 
 ### Fixed

@@ -82,7 +82,7 @@ Create a workspace in the app and start a session.
 
 ## Requirements
 
-- Node.js 24+
+- Node.js 22.19+ (sandbox workspaces need Node.js 23.6+)
 - [Pi](https://github.com/badlogic/pi-mono) runtime dependency, installed automatically with the npm package
 - At least one Pi provider configured with `pi auth` or an API key such as `ANTHROPIC_API_KEY`
 - macOS or Linux

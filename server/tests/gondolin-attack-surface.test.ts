@@ -15,13 +15,22 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
-import { isQemuAvailable, GondolinManager } from "../src/gondolin-manager.js";
+import {
+  isQemuAvailable,
+  GondolinManager,
+  sandboxUnsupportedNodeMessage,
+} from "../src/gondolin-manager.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 import { createGondolinBashOps } from "../src/gondolin-ops.js";
 
 let qemuAvailable = false;
 
 beforeAll(async () => {
+  const nodeError = sandboxUnsupportedNodeMessage();
+  if (nodeError) {
+    console.log(`[attack-surface] Skipping: ${nodeError}`);
+    return;
+  }
   qemuAvailable = await isQemuAvailable();
   if (!qemuAvailable) {
     console.log("[attack-surface] Skipping: QEMU not installed");

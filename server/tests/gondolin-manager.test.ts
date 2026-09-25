@@ -1,4 +1,4 @@
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { lstatSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -124,9 +124,7 @@ describe("withSandboxPiOverlayMounts", () => {
   });
 
   it("leaves mounts unchanged when no skill mounts live under workspace .pi", () => {
-    const mounts = [
-      { hostPath: "/host/extensions", guestPath: "/tmp/oppi-agent-extensions" },
-    ];
+    const mounts = [{ hostPath: "/host/extensions", guestPath: "/tmp/oppi-agent-extensions" }];
     expect(withSandboxPiOverlayMounts("/workspace/slug", mounts)).toEqual(mounts);
   });
 
@@ -142,6 +140,22 @@ describe("withSandboxPiOverlayMounts", () => {
 // ─── defaultVmFactory ───
 
 describe("defaultVmFactory", () => {
+  const originalNodeVersion = process.versions.node;
+
+  beforeEach(() => {
+    Object.defineProperty(process.versions, "node", {
+      value: "23.6.0",
+      configurable: true,
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process.versions, "node", {
+      value: originalNodeVersion,
+      configurable: true,
+    });
+  });
+
   it("passes allowWebSockets: false into VM.create", async () => {
     const vm = {
       exec: vi.fn(async () => ({ stdout: "/bin/bash\n" })),
@@ -180,11 +194,7 @@ describe("defaultVmFactory", () => {
 
     const mounts = vi.mocked(VM.create).mock.calls.at(-1)?.[0]?.vfs?.mounts ?? {};
     expect(Object.keys(mounts)).toEqual(
-      expect.arrayContaining([
-        guestWorkspacePath,
-        overlayGuestPath,
-        skillMount.guestPath,
-      ]),
+      expect.arrayContaining([guestWorkspacePath, overlayGuestPath, skillMount.guestPath]),
     );
     expect(overlayGuestPath).toBe("/workspace/deep-research/.pi");
     const overlay = mounts[overlayGuestPath] as InstanceType<typeof ReadonlyProvider>;
@@ -208,6 +218,19 @@ describe("defaultVmFactory", () => {
     const mounts = vi.mocked(VM.create).mock.calls.at(-1)?.[0]?.vfs?.mounts ?? {};
     expect(Object.keys(mounts)).toEqual([guestWorkspacePath, "/tmp/oppi-agent-extensions"]);
     expect(mounts[`${guestWorkspacePath}/.pi`]).toBeUndefined();
+  });
+
+  it("names gondolin's Node floor when the process is too old", async () => {
+    Object.defineProperty(process.versions, "node", {
+      value: "22.19.0",
+      configurable: true,
+    });
+    vi.mocked(VM.create).mockClear();
+
+    await expect(defaultVmFactory({ hostCwd: "/tmp/oppi-sandbox-old-node" })).rejects.toThrow(
+      /Sandbox workspaces require Node\.js 23\.6\.0 or newer \(this process is running Node\.js 22\.19\.0\)/,
+    );
+    expect(VM.create).not.toHaveBeenCalled();
   });
 });
 

@@ -52,7 +52,7 @@ The iOS share extension accepts text, URLs, images, and files. Choose a paired-s
 
 ## Quick start
 
-You need Node.js 24+ and at least one Pi provider configured through `pi auth` or an API key such as `ANTHROPIC_API_KEY`. Self-signed TLS on Linux also requires `openssl` on PATH.
+You need Node.js 22.19+ and at least one Pi provider configured through `pi auth` or an API key such as `ANTHROPIC_API_KEY`. Sandbox workspaces need Node.js 23.6+ and QEMU. Self-signed TLS on Linux also requires `openssl` on PATH.
 
 Install and start:
 

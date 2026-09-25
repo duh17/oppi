@@ -44,7 +44,7 @@ beforeEach(() => {
   mockRealpathSync.mockImplementation((path: string) => path);
   mockReadFileSync.mockImplementation((path: string) => {
     if (path.endsWith("package.json")) {
-      return JSON.stringify({ engines: { node: ">=23.6.0" } });
+      return JSON.stringify({ engines: { node: ">=22.19.0" } });
     }
     return "";
   });
@@ -265,7 +265,7 @@ describe("runtime resolution", () => {
     const result = installService("/tmp/data");
     expect(result.ok).toBe(false);
     expect(result.message).toContain("Node.js 20.11.1 found");
-    expect(result.message).toContain("23.6.0 or newer");
+    expect(result.message).toContain("22.19.0 or newer");
   });
 
   it("returns error when no runtime found", () => {
@@ -276,7 +276,7 @@ describe("runtime resolution", () => {
     const result = installService("/tmp/data");
 
     expect(result.ok).toBe(false);
-    expect(result.message).toContain("Node.js 23.6.0 or newer not found");
+    expect(result.message).toContain("Node.js 22.19.0 or newer not found");
   });
 });
 

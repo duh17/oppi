@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { Worker } from "node:worker_threads";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import {
   resolveTlsConfig,
@@ -23,10 +24,18 @@ export function prepareTlsForServerOffMainThread(
   if (!resolved.enabled) return Promise.resolve(resolved);
 
   const workerLocation = resolveWorkerLocation();
-  const worker = new Worker(workerLocation.url, {
-    workerData: { config, dataDir, options },
-    ...(workerLocation.source ? { execArgv: ["--import", "tsx"] } : {}),
-  });
+  const workerData = { config, dataDir, options };
+  // Node 22.18+ loads a Worker .ts entry with native type stripping, which does
+  // not rewrite .js → .ts specifiers. tsx's `--import tsx` auto-register runs in
+  // worker threads only on Node 24.11.1+/26 (registerHooks); on 22 it registers
+  // only on the main thread. Bootstrap source workers through tsx/esm/api.
+  const worker = workerLocation.source
+    ? new Worker(sourceTlsWorkerBootstrap(workerLocation.url), {
+        eval: true,
+        type: "module",
+        workerData,
+      } as WorkerOptions)
+    : new Worker(workerLocation.url, { workerData });
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -64,4 +73,12 @@ function resolveWorkerLocation(): { url: URL; source: boolean } {
   if (existsSync(fileURLToPath(sourceUrl))) return { url: sourceUrl, source: true };
 
   throw new Error("Could not locate the TLS preparation worker");
+}
+
+function sourceTlsWorkerBootstrap(sourceUrl: URL): string {
+  const tsxApi = pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm/api")).href;
+  return `import { register } from ${JSON.stringify(tsxApi)};
+register();
+await import(${JSON.stringify(sourceUrl.href)});
+`;
 }

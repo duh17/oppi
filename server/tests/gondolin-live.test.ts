@@ -20,6 +20,7 @@ import { join } from "node:path";
 import {
   isQemuAvailable,
   GondolinManager,
+  sandboxUnsupportedNodeMessage,
   type VmFactoryOptions,
 } from "../src/gondolin-manager.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
@@ -36,6 +37,11 @@ import {
 let qemuAvailable = false;
 
 beforeAll(async () => {
+  const nodeError = sandboxUnsupportedNodeMessage();
+  if (nodeError) {
+    console.log(`[gondolin-live] Skipping: ${nodeError}`);
+    return;
+  }
   qemuAvailable = await isQemuAvailable();
   if (!qemuAvailable) {
     console.log("[gondolin-live] Skipping: QEMU not installed");
