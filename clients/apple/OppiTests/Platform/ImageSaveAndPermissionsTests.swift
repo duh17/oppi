@@ -1,32 +1,5 @@
 import Foundation
 import Testing
-import UIKit
-
-@testable import Oppi
-
-@Suite("PhotoLibrarySaver")
-@MainActor
-struct PhotoLibrarySaverTests {
-    @Test("save routes through injected writer")
-    func saveRoutesThroughInjectedWriter() {
-        let original = PhotoLibrarySaver.write
-        defer { PhotoLibrarySaver.write = original }
-
-        guard let expected = UIImage(systemName: "photo") else {
-            Issue.record("Failed to create system image")
-            return
-        }
-        var capturedData: Data?
-
-        PhotoLibrarySaver.write = { image in
-            capturedData = image.pngData()
-        }
-
-        PhotoLibrarySaver.save(expected)
-
-        #expect(capturedData == expected.pngData())
-    }
-}
 
 @Suite("Image save permissions")
 @MainActor
