@@ -2,18 +2,32 @@
  * Background shell jobs.
  *
  * Bash waits 15 seconds. If the command is still running, it becomes a
- * background job, a composer pill shows it, and the output is injected as a
- * follow-up. A trailing `&` backgrounds immediately. Polling a running job is
- * blocked.
+ * background job and the composer pill shows it. Finished results are batched
+ * at a safe model boundary, or sent once when the session is idle. A trailing
+ * `&` backgrounds immediately. Polling a running job is blocked.
  */
 
-import type { ExtensionAPI, ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import type {
+	AgentBeforeSettleEvent,
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionUIContext,
+	SessionShutdownEvent,
+	TurnEndEvent,
+} from "@earendil-works/pi-coding-agent";
 import { createLocalBashOperations } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import {
+	boundaryDelivery,
+	consumeSettleSuppression,
+	createResultBuffer,
+	nextIdleFlushDelay,
+	shutdownDelivery,
+} from "./delivery.ts";
 import {
 	BACKGROUND_POLICY,
 	backgroundPill,
@@ -63,11 +77,26 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 	const shell = readShellSettings();
 	const operations = createLocalBashOperations({ shellPath: shell.shellPath });
 	let closed = false;
+	let idle = true;
+	let suppressIdleWake = false;
+	let generation = 0;
+	let flushTimer: ReturnType<typeof setTimeout> | undefined;
+	let flushStartedAt: number | undefined;
 	let latestUi: ExtensionUIContext | undefined;
+	const buffer = createResultBuffer();
+	const cancelFlush = () => {
+		if (flushTimer) clearTimeout(flushTimer);
+		flushTimer = undefined;
+		flushStartedAt = undefined;
+	};
 	const refreshPill = () => {
 		const ui = latestUi;
 		if (!ui) return;
-		const pill = backgroundPill(manager.visibleRunning());
+		const pending = new Set(buffer.pendingIds());
+		const visible = manager
+			.list()
+			.filter((job) => job.backgrounded && (job.status === "running" || pending.has(job.id)));
+		const pill = backgroundPill(visible);
 		if (!pill) {
 			ui.setStatus(PILL_KEY, undefined);
 			ui.setWidget(PILL_KEY, undefined);
@@ -102,24 +131,84 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 			invalidate() {},
 		}));
 	};
+	const sendBatch = (content: string, details: Record<string, unknown>) => {
+		pi.sendMessage(
+			{
+				customType: "background-job",
+				content,
+				display: true,
+				details,
+			},
+			{ deliverAs: "followUp", triggerTurn: true },
+		);
+	};
+	const scheduleIdleFlush = () => {
+		if (closed || suppressIdleWake || buffer.pendingCount() === 0) return;
+		const scheduled = generation;
+		const next = nextIdleFlushDelay(Date.now(), flushStartedAt);
+		flushStartedAt = next.startedAt;
+		if (flushTimer) clearTimeout(flushTimer);
+		flushTimer = setTimeout(() => {
+			flushTimer = undefined;
+			flushStartedAt = undefined;
+			if (closed || suppressIdleWake || scheduled !== generation || !idle) return;
+			const taken = buffer.take();
+			if (!taken) return;
+			try {
+				sendBatch(taken.batch.content, {
+					jobIds: taken.batch.jobIds,
+					statuses: taken.batch.statuses,
+					omitted: taken.batch.omitted,
+				});
+			} catch {
+				taken.undo();
+			}
+			refreshPill();
+			if (buffer.pendingCount() > 0) scheduleIdleFlush();
+		}, next.delay);
+		flushTimer.unref?.();
+	};
+	const drainBoundary = (event: TurnEndEvent | AgentBeforeSettleEvent) => {
+		if (event.outcome !== "completed") {
+			suppressIdleWake = true;
+			cancelFlush();
+			return undefined;
+		}
+		const decision = boundaryDelivery({
+			pending: buffer.pendingCount(),
+			outcome: event.outcome,
+			alreadyContinuing: event.continue,
+		});
+		if (!decision.append) return undefined;
+		const taken = buffer.take();
+		if (!taken) return undefined;
+		refreshPill();
+		return {
+			entries: [
+				...event.entries,
+				{
+					type: "custom_message" as const,
+					customType: "background-job",
+					content: taken.batch.content,
+					display: true,
+					details: {
+						jobIds: taken.batch.jobIds,
+						statuses: taken.batch.statuses,
+						omitted: taken.batch.omitted,
+					},
+				},
+			],
+			...(decision.continue ? { continue: true } : {}),
+		};
+	};
 	const manager = createJobManager({
 		exec: (request) => operations.exec(request.command, request.cwd, request),
 		onChange: refreshPill,
 		onDeliver: (delivery) => {
 			if (closed) return;
-			try {
-				pi.sendMessage(
-					{
-						customType: "background-job",
-						content: delivery.text,
-						display: true,
-						details: { jobId: delivery.jobId, status: delivery.status },
-					},
-					{ deliverAs: "followUp", triggerTurn: true },
-				);
-			} catch {
-				// The session can shut down between exit and delivery.
-			}
+			buffer.enqueue({ jobId: delivery.jobId, status: delivery.status, text: delivery.text });
+			refreshPill();
+			if (idle && !suppressIdleWake) scheduleIdleFlush();
 		},
 	});
 
@@ -130,12 +219,12 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "bash",
 		label: "bash",
-		description: `Execute a bash command. ${BACKGROUND_POLICY.afterWait} ${BACKGROUND_POLICY.immediate} ${BACKGROUND_POLICY.stayForeground} A backgrounded command shows a job pill and injects its output as a follow-up. Do not poll for it.`,
+		description: `Execute a bash command. ${BACKGROUND_POLICY.afterWait} ${BACKGROUND_POLICY.immediate} ${BACKGROUND_POLICY.stayForeground} A backgrounded command shows a job pill. Finished output is delivered in one batch, not one reply per job. Do not poll for it.`,
 		promptSnippet: "Execute bash commands. Commands still running after 15s become background jobs.",
 		promptGuidelines: [
 			BACKGROUND_POLICY.afterWait,
 			BACKGROUND_POLICY.immediate,
-			"A running background job shows a pill. Its output is injected as a follow-up. Never poll it with sleep, ps, pgrep, top, pidwait, or log tailing. Do other work, or end your reply and wait to be woken.",
+			"A running background job shows a pill. Finished results arrive together at the next safe boundary, or once if this session is idle. Do not reply only to acknowledge them. Never poll with sleep, ps, pgrep, top, pidwait, or log tailing.",
 			"Do not use bash or background_job for commands that read or print secrets. Use secret_run.",
 		],
 		executionMode: "parallel",
@@ -172,8 +261,8 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 		name: "background_job",
 		label: "background job",
 		description:
-			"Start or cancel a background shell job. Use start for builds, tests, servers, watchers, installs, and any command you would otherwise background or poll. Returns immediately. Output is injected as a follow-up when the job finishes. Do not poll with sleep, ps, pgrep, top, pidwait, or log tailing. Do other work, or end your reply and wait to be woken. cancel stops a job; it is not a status check.",
-		promptSnippet: "Run a long shell command in the background and receive its output as a follow-up",
+			"Start or cancel a background shell job. Use start for builds, tests, servers, watchers, installs, and any command you would otherwise background or poll. Returns immediately. Output is delivered in one batch when it is safe to read, not once per job. Do not poll with sleep, ps, pgrep, top, pidwait, or log tailing. Do other work, or end your reply and wait to be woken. cancel stops a job; it is not a status check.",
+		promptSnippet: "Run a long shell command in the background and receive its output in a batched follow-up",
 		promptGuidelines: [
 			"background_job start backgrounds immediately. Ordinary bash already backgrounds itself after 15 seconds, or immediately when the command ends in &.",
 			"Use background_job cancel only to stop a job. Do not call it to check whether a job finished.",
@@ -251,8 +340,30 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", (_event, ctx) => {
+		generation += 1;
+		cancelFlush();
+		buffer.clear();
+		closed = false;
+		idle = true;
+		suppressIdleWake = false;
 		rememberUi(ctx);
 		refreshPill();
+	});
+
+	pi.on("agent_start", () => {
+		idle = false;
+		suppressIdleWake = false;
+		cancelFlush();
+	});
+
+	pi.on("turn_end", (event) => drainBoundary(event));
+	pi.on("agent_before_settle", (event) => drainBoundary(event));
+
+	pi.on("agent_settled", () => {
+		idle = true;
+		const settled = consumeSettleSuppression(suppressIdleWake);
+		suppressIdleWake = settled.suppressIdleWake;
+		if (settled.flush) scheduleIdleFlush();
 	});
 
 	pi.on("tool_call", (event) => {
@@ -275,8 +386,42 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.on("session_shutdown", () => {
+	pi.on("session_shutdown", (_event: SessionShutdownEvent) => {
+		generation += 1;
 		closed = true;
+		cancelFlush();
+		const mode = shutdownDelivery({ runActive: !idle });
+		while (buffer.pendingCount() > 0) {
+			const taken = buffer.take();
+			if (!taken) break;
+			const details = {
+				jobIds: taken.batch.jobIds,
+				statuses: taken.batch.statuses,
+				omitted: taken.batch.omitted,
+			};
+			const append = () => {
+				pi.sendMessage(
+					{
+						customType: "background-job",
+						content: taken.batch.content,
+						display: true,
+						details,
+					},
+					{ triggerTurn: false },
+				);
+			};
+			try {
+				if (mode === "followUp") sendBatch(taken.batch.content, details);
+				else append();
+			} catch {
+				try {
+					append();
+				} catch {
+					// The outgoing session is already going away.
+				}
+			}
+		}
+		buffer.clear();
 		manager.shutdown();
 		refreshPill();
 	});

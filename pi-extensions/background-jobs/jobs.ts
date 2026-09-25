@@ -2,8 +2,9 @@
  * Background shell jobs for the Pi extension.
  *
  * A start returns immediately. The runner keeps the process alive, and the
- * manager delivers one follow-up when it ends. Shutdown suppresses that
- * wake-up so a dying session does not start another turn.
+ * manager records one result when it ends. The extension batches those
+ * results. Shutdown suppresses delivery so a dying session does not start
+ * another turn.
  */
 
 export const POLL_RULE =
@@ -14,7 +15,7 @@ const DEFAULT_MAX_RUNNING = 8;
 const DEFAULT_MAX_STORED_CHARS = 64_000;
 
 export function formatBackgroundNotice(jobId: string): string {
-	return `Backgrounded as job ${jobId}; its output is injected into the conversation as a follow-up the moment it finishes. ${POLL_RULE}`;
+	return `Backgrounded as job ${jobId}; its output is delivered in a batched follow-up, not one reply per job. ${POLL_RULE}`;
 }
 
 export const BACKGROUND_POLICY = {
@@ -61,7 +62,7 @@ export interface BackgroundPill {
 	title: string;
 	subtitle: string;
 	lines: string[];
-	rows: Array<{ id: string; title: string; subtitle: string; state: "running" }>;
+	rows: Array<{ id: string; title: string; subtitle: string; state: "running" | "success" | "warning" | "error" }>;
 	/** Last lines of running-job output. The existing widget reader shows this; it is not a model update. */
 	terminal: string[];
 }
@@ -69,26 +70,48 @@ export interface BackgroundPill {
 export function backgroundPill(
 	jobs: Array<{ id: string; command: string; status: JobStatus; backgrounded: boolean; output?: string }>,
 ): BackgroundPill | undefined {
-	const running = jobs.filter((job) => job.status === "running" && job.backgrounded);
-	if (running.length === 0) return undefined;
-	const title = running.length === 1 ? "1 job" : `${running.length} jobs`;
-	const first = compactCommand(running[0]?.command ?? "");
-	const subtitle = running.length === 1 ? first : `${first} +${running.length - 1}`;
+	const visible = jobs.filter((job) => job.backgrounded);
+	const running = visible.filter((job) => job.status === "running");
+	const finished = visible.filter((job) => job.status !== "running");
+	if (running.length === 0 && finished.length === 0) return undefined;
+	const title =
+		running.length > 0
+			? running.length === 1
+				? "1 job"
+				: `${running.length} jobs`
+			: finished.length === 1
+				? "1 result"
+				: `${finished.length} results`;
+	const first = compactCommand((running[0] ?? finished[0])?.command ?? "");
+	const runningSubtitle = running.length <= 1 ? first : `${first} +${running.length - 1}`;
+	const subtitle =
+		running.length > 0 && finished.length > 0
+			? `${runningSubtitle} · ${finished.length} ready`
+			: running.length > 0
+				? runningSubtitle
+				: first;
 	const status = `${title} · ${subtitle}`.slice(0, 160);
-	const terminal = terminalTail(running);
+	const terminal = terminalTail(visible);
 	return {
 		status,
 		title,
 		subtitle,
-		lines: [status, ...running.map((job) => `${job.id} ${compactCommand(job.command)}`), ...terminal],
-		rows: running.map((job) => ({
+		lines: [status, ...visible.map((job) => `${job.id} ${job.status} ${compactCommand(job.command)}`), ...terminal],
+		rows: visible.map((job) => ({
 			id: job.id,
 			title: job.id,
 			subtitle: compactCommand(job.command),
-			state: "running" as const,
+			state: pillState(job.status),
 		})),
 		terminal,
 	};
+}
+
+function pillState(status: JobStatus): "running" | "success" | "warning" | "error" {
+	if (status === "running") return "running";
+	if (status === "completed") return "success";
+	if (status === "cancelled") return "warning";
+	return "error";
 }
 
 export function outputTail(output: string, maxLines = 16): string[] {
@@ -374,7 +397,7 @@ export function createJobManager(options: {
 			if (job.settled) {
 				return {
 					ok: false,
-					error: `${jobId} already finished. Its result was injected as a follow-up. Do not poll.`,
+					error: `${jobId} already finished. Its result is delivered with other finished jobs. Do not poll.`,
 				};
 			}
 			job.cancelRequested = true;

@@ -1,9 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-	CACHE_TOUCH_MS,
 	attentionText,
-	cacheTouchDelayMs,
-	cacheTouchText,
+	cacheWarmingOverride,
 	isFailedWaitEnvelope,
 	isSettledStatus,
 	launchPlan,
@@ -15,7 +13,6 @@ import {
 	reduceWait,
 	restoreSupervised,
 	settlementText,
-	shouldCacheTouch,
 	shouldClearAttention,
 	waitPlan,
 	type WatchChild,
@@ -28,46 +25,23 @@ const running: WatchChild = {
 	attentionDelivered: false,
 };
 
-describe("subagent cache touch", () => {
-	test("touches only when the parent is idle, a supervised child is still running, and 4 minutes have passed", () => {
-		const base = {
-			now: 1_000_000,
-			lastParentTouch: 1_000_000,
-			idle: true,
-			children: [running],
-			settledIds: new Set<string>(),
-		};
-		expect(shouldCacheTouch(base)).toBe(false);
-		expect(shouldCacheTouch({ ...base, now: base.lastParentTouch + CACHE_TOUCH_MS })).toBe(true);
-		expect(shouldCacheTouch({ ...base, now: base.lastParentTouch + CACHE_TOUCH_MS, idle: false })).toBe(false);
+describe("subagent cache warming", () => {
+	test("asks Pi to warm only when a pending child makes the refresh worth its cost", () => {
 		expect(
-			shouldCacheTouch({
-				...base,
-				now: base.lastParentTouch + CACHE_TOUCH_MS,
-				children: [{ ...running, supervise: false }],
-			}),
-		).toBe(false);
+			cacheWarmingOverride({ pendingSupervised: true, action: "stop", warmCost: 0.01, missCost: 0.08 }),
+		).toEqual({ action: "warm" });
 		expect(
-			shouldCacheTouch({
-				...base,
-				now: base.lastParentTouch + CACHE_TOUCH_MS,
-				children: [{ ...running, attentionDelivered: true }],
-			}),
-		).toBe(false);
-		expect(cacheTouchDelayMs({ ...base, now: base.lastParentTouch + 60_000 })).toBe(CACHE_TOUCH_MS - 60_000);
-		expect(cacheTouchDelayMs({ ...base, idle: false })).toBeUndefined();
-	});
-
-	test("one check-in covers the batch and forbids another wait", () => {
-		const text = cacheTouchText([
-			running,
-			{ ...running, id: "child-2222", name: "worker" },
-		]);
-		expect(text).toContain("scout");
-		expect(text).toContain("worker");
-		expect(text).toContain("No tool calls");
-		expect(text).toContain("session list");
-		expect(text).not.toContain("independent ready work");
+			cacheWarmingOverride({ pendingSupervised: true, action: "warm", warmCost: 0.01, missCost: 0.08 }),
+		).toBeUndefined();
+		expect(
+			cacheWarmingOverride({ pendingSupervised: false, action: "stop", warmCost: 0.01, missCost: 0.08 }),
+		).toBeUndefined();
+		expect(
+			cacheWarmingOverride({ pendingSupervised: true, action: "stop", warmCost: 0.05, missCost: 0.09 }),
+		).toBeUndefined();
+		expect(
+			cacheWarmingOverride({ pendingSupervised: true, action: "stop", warmCost: Number.NaN, missCost: 1 }),
+		).toBeUndefined();
 	});
 
 	test("launch receipt tells the parent not to wait, and attention pauses the warm", () => {
@@ -151,12 +125,9 @@ describe("supervision loop", () => {
 				data: { session_id: "bash-1", status: "ready", reason: "idle" },
 			}),
 			now: 10_000,
-			lastParentTouch: 10_000,
-			idle: true,
 			stalls: new Map(),
 		});
 		expect(effect.settle).toEqual([]);
-		expect(effect.touch).toBe(false);
 		expect(effect.widgetSettle).toEqual(["bash-1"]);
 		const afterRelease = waitPlan([widgetOnly, active], new Set(["active-1"]));
 		expect(afterRelease.eitherIds).toEqual(["bash-1"]);
@@ -169,12 +140,9 @@ describe("supervision loop", () => {
 			settledIds: new Set(),
 			reading: readWait({ ok: true, data: { session_id: "latched-1", status: "ready", reason: "idle", output_delta: "done" } }),
 			now: 10_000,
-			lastParentTouch: 10_000,
-			idle: true,
 			stalls: new Map(),
 		});
 		expect(effect.settle.map((item) => item.id)).toEqual(["latched-1"]);
-		expect(effect.touch).toBe(false);
 	});
 
 	test("a timeout without pending_dialogs does not clear attention", () => {
@@ -184,14 +152,12 @@ describe("supervision loop", () => {
 			children: [latched],
 			settledIds: new Set(),
 			reading: readWait({ ok: true, data: { timed_out: true, sessions: [{ session_id: "latched-1", status: "busy" }] } }),
-			now: CACHE_TOUCH_MS + 1,
-			lastParentTouch: 0,
-			idle: true,
+			now: 1,
 			stalls: new Map(),
 		});
 		expect(effect.clearAttention).toEqual([]);
 		expect(effect.attention).toEqual([]);
-		expect(effect.touch).toBe(false);
+		expect(effect.stall).toEqual([]);
 	});
 
 	test("a failed wait envelope is not a successful timeout", () => {
@@ -199,15 +165,15 @@ describe("supervision loop", () => {
 		expect(isFailedWaitEnvelope({ ok: true, data: { timed_out: true, sessions: [] } }, 0)).toBe(false);
 	});
 
-	test("settlement starts a visible parent turn and a check-in does not display", () => {
+	test("settlement starts a visible parent turn and there is no cache-touch delivery", () => {
 		expect(parentDelivery("settled")).toEqual({
 			customType: "subagent-settled",
 			display: true,
 			deliverAs: "followUp",
 			triggerTurn: true,
 		});
-		expect(parentDelivery("touch").display).toBe(false);
-		expect(parentDelivery("touch").triggerTurn).toBe(true);
+		expect(parentDelivery("attention").customType).toBe("subagent-attention");
+		expect(parentDelivery("failure").triggerTurn).toBe(true);
 	});
 });
 

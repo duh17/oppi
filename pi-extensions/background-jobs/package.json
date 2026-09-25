@@ -2,10 +2,10 @@
   "name": "background-jobs",
   "version": "0.1.0",
   "private": true,
-  "description": "Reference Pi extension: background a long shell command and deliver its output as a follow-up.",
+  "description": "Reference Pi extension: background a long shell command and deliver finished output in one batch.",
   "type": "module",
   "keywords": ["pi-package", "pi-extension", "oppi"],
-  "files": ["index.ts", "jobs.ts", "README.md", "package.json"],
+  "files": ["index.ts", "jobs.ts", "delivery.ts", "README.md", "package.json"],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },

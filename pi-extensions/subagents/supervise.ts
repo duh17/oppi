@@ -1,12 +1,13 @@
 /**
  * Supervision policy for the subagent tool.
  *
- * A 4-minute check-in is a real parent model message, the same warm the old
- * `oppi session wait` produced by returning. Widget refreshes and CLI polls
- * do not call the model, so they do not count.
+ * Settlement, attention, stall, and wait failure wake the parent. Ordinary
+ * waiting does not. Prompt-cache refresh belongs to Pi's warmer; this module
+ * only asks it to continue when a supervised child is still going to report
+ * back and the refresh is worth the cost.
  */
 
-export const CACHE_TOUCH_MS = 4 * 60 * 1000;
+export const CACHE_WARM_SAVINGS_FLOOR = 0.05;
 export const SUPERVISED_ENTRY = "subagent-supervised";
 export const CALLER_ENV = "OPPI_CALLER_SESSION_ID";
 const SETTLEMENT_CLIP = 1200;
@@ -18,13 +19,6 @@ export interface WatchChild {
 	attentionDelivered: boolean;
 }
 
-export interface CacheTouchInput {
-	now: number;
-	lastParentTouch: number;
-	idle: boolean;
-	children: WatchChild[];
-	settledIds: ReadonlySet<string>;
-}
 
 export interface LaunchPlanInput {
 	workspace: string;
@@ -64,38 +58,37 @@ export interface StoredEntry {
 	data?: unknown;
 }
 
-export function warmableChildren(input: Pick<CacheTouchInput, "children" | "settledIds">): WatchChild[] {
-	return input.children.filter(
-		(child) => child.supervise && !input.settledIds.has(child.id) && !child.attentionDelivered,
-	);
+export function hasPendingSupervision(children: WatchChild[], settledIds: ReadonlySet<string>): boolean {
+	return children.some((child) => child.supervise && !settledIds.has(child.id));
 }
 
-export function shouldCacheTouch(input: CacheTouchInput): boolean {
-	if (!input.idle) return false;
-	if (warmableChildren(input).length === 0) return false;
-	return input.now - input.lastParentTouch >= CACHE_TOUCH_MS;
-}
-
-export function cacheTouchDelayMs(input: CacheTouchInput): number | undefined {
-	if (!input.idle || warmableChildren(input).length === 0) return undefined;
-	return Math.max(0, CACHE_TOUCH_MS - (input.now - input.lastParentTouch));
-}
-
-export function cacheTouchText(children: WatchChild[]): string {
-	const names = children.map((child) => `${child.name} (${child.id.slice(0, 8)})`).join(", ");
-	return `Subagent check-in. Still running: ${names}. Reply with one short line. No tool calls. Do not relaunch, poll, session wait, session get, session inspect, or session list.`;
+/**
+ * Ask Pi to refresh only when a supervised child will report back and a
+ * certain continuation would clear Pi's own savings floor. Returning nothing
+ * leaves Pi's decision, and another extension's decision, alone.
+ */
+export function cacheWarmingOverride(input: {
+	pendingSupervised: boolean;
+	action: "warm" | "stop";
+	warmCost: number;
+	missCost: number;
+}): { action: "warm" } | undefined {
+	if (!input.pendingSupervised || input.action === "warm") return undefined;
+	if (!Number.isFinite(input.warmCost) || !Number.isFinite(input.missCost)) return undefined;
+	if (input.missCost - input.warmCost < CACHE_WARM_SAVINGS_FLOOR) return undefined;
+	return { action: "warm" };
 }
 
 export function launchReceipt(input: { name: string; id: string; supervise: boolean; link: string }): string {
 	if (!input.supervise) {
-		return `Launched ${input.name} ${input.id}. Not supervising, so this session will not get cache check-ins. Collect it later. Do not wait. ${input.link}`;
+		return `Launched ${input.name} ${input.id}. Not supervising, so this session will not be woken when it finishes. Collect it later. Do not wait. ${input.link}`;
 	}
-	return `Launched ${input.name} ${input.id}. Supervising. The result arrives as a follow-up. A check-in lands about every 4 minutes while it runs so this session's prompt cache stays warm. Do not poll with session wait, session get, session inspect, or session list. Inspect a settled child only when that follow-up reply is not enough. ${input.link}`;
+	return `Launched ${input.name} ${input.id}. Supervising. The result arrives as a follow-up. Waiting does not send acknowledgment turns. Do not poll with session wait, session get, session inspect, or session list. Inspect a settled child only when that follow-up reply is not enough. ${input.link}`;
 
 }
 
 export function attentionText(input: { name: string; link: string }): string {
-	return `Subagent needs attention: ${input.name} ${input.link}. Answer it in that session. Check-ins pause for this child until it is busy again. Do not relaunch.`;
+	return `Subagent needs attention: ${input.name} ${input.link}. Answer it in that session. Supervision pauses for this child until it is busy again. Do not relaunch.`;
 }
 
 export function isSettledStatus(status: string | undefined): boolean {
@@ -138,7 +131,7 @@ export function isFailedWaitEnvelope(payload: unknown, exitCode: number | null):
 	return true;
 }
 
-export type DeliveryKind = "settled" | "attention" | "stalled" | "touch" | "failure";
+export type DeliveryKind = "settled" | "attention" | "stalled" | "failure";
 
 export function parentDelivery(kind: DeliveryKind): {
 	customType: string;
@@ -150,12 +143,11 @@ export function parentDelivery(kind: DeliveryKind): {
 		settled: "subagent-settled",
 		attention: "subagent-attention",
 		stalled: "subagent-stalled",
-		touch: "subagent-cache-touch",
 		failure: "subagent-wait-failed",
 	}[kind];
 	return {
 		customType,
-		display: kind !== "touch",
+		display: true,
 		deliverAs: "followUp",
 		triggerTurn: true,
 	};
@@ -168,7 +160,6 @@ export interface WaitEffect {
 	stall: string[];
 	widgetSettle: string[];
 	widgetAttention: string[];
-	touch: boolean;
 	stalls: Map<string, StallState>;
 }
 
@@ -177,8 +168,6 @@ export function reduceWait(input: {
 	settledIds: ReadonlySet<string>;
 	reading: WaitReading;
 	now: number;
-	lastParentTouch: number;
-	idle: boolean;
 	stalls: Map<string, StallState>;
 }): WaitEffect {
 	const stalls = new Map(input.stalls);
@@ -222,18 +211,7 @@ export function reduceWait(input: {
 		stalls.set(record.id, stall.state);
 		if (stall.stalled) stallIds.push(record.id);
 	}
-	const latched = new Set([...input.children.filter((child) => child.attentionDelivered).map((child) => child.id), ...attention, ...stallIds]);
-	for (const id of clearAttention) latched.delete(id);
-	for (const item of settle) latched.delete(item.id);
-	const warmable = input.children.filter((child) => child.supervise && !input.settledIds.has(child.id) && !latched.has(child.id) && !settle.some((item) => item.id === child.id));
-	const touch = settle.length === 0 && attention.length === 0 && stallIds.length === 0 && input.reading.timedOut && shouldCacheTouch({
-		now: input.now,
-		lastParentTouch: input.lastParentTouch,
-		idle: input.idle,
-		children: warmable.map((child) => ({ ...child, attentionDelivered: false })),
-		settledIds: input.settledIds,
-	});
-	return { settle, attention, clearAttention, stall: stallIds, widgetSettle, widgetAttention, touch, stalls };
+	return { settle, attention, clearAttention, stall: stallIds, widgetSettle, widgetAttention, stalls };
 }
 
 export interface WaitRecord {

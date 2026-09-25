@@ -1,8 +1,8 @@
 /**
  * Reference extension: launch and list this session's Oppi subagents.
  *
- * The tool is the supervise path. A 4-minute check-in is a real parent model
- * message, so the prompt cache stays warm the way `oppi session wait` used to.
+ * The tool is the supervise path. Settlement, attention, stall, and wait
+ * failure start a parent turn. Waiting does not. Pi owns prompt-cache refresh.
  * The widget only remembers launches from this parent and refreshes those ids.
  * Copy this package if you want the same tool and widget. A row tap uses the
  * existing session link. This package does not add a client screen.
@@ -25,9 +25,9 @@ import {
 } from "./subagents.ts";
 import {
 	attentionText,
-	cacheTouchDelayMs,
-	cacheTouchText,
+	cacheWarmingOverride,
 	CALLER_ENV,
+	hasPendingSupervision,
 	isFailedWaitEnvelope,
 	launchPlan,
 	launchReceipt,
@@ -46,7 +46,7 @@ import {
 const WIDGET_KEY = "subagents";
 const CREATE_TIMEOUT_MS = 30_000;
 const GET_TIMEOUT_MS = 8_000;
-const MIN_WAIT_SEC = 30;
+const OBSERVATION_WAIT_SEC = 4 * 60;
 
 interface OppiResult {
 	code: number | null;
@@ -137,8 +137,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	let latestUi: ExtensionUIContext | undefined;
 	let parentId: string | undefined;
 	let closed = false;
-	let idle = true;
-	let lastParentTouch = 0;
 	let waitGeneration = 0;
 	let eitherChild: ReturnType<typeof spawn> | undefined;
 	let idleChild: ReturnType<typeof spawn> | undefined;
@@ -244,14 +242,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		parentId = ctx.sessionManager.getSessionId();
 	};
 
-	const touchInput = () => ({
-		now: Date.now(),
-		lastParentTouch,
-		idle,
-		children: watched,
-		settledIds,
-	});
-
 	const deliver = (
 		customType: string,
 		content: string,
@@ -264,7 +254,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				{ customType, content, display, details },
 				{ deliverAs: "followUp", triggerTurn: true },
 			);
-			lastParentTouch = Date.now();
 			return true;
 		} catch {
 			return false;
@@ -291,11 +280,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		}
 	};
 
-	const waitSeconds = () => {
-		const delay = cacheTouchDelayMs(touchInput());
-		const ms = delay === undefined ? 4 * 60 * 1000 : delay;
-		return Math.max(MIN_WAIT_SEC, Math.ceil(ms / 1000));
-	};
+	const waitSeconds = () => OBSERVATION_WAIT_SEC;
 
 	const scheduleRetry = (generation: number) => {
 		if (retryTimer || generation !== waitGeneration) return;
@@ -403,7 +388,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	};
 
 	const deliverKind = (
-		kind: "settled" | "attention" | "stalled" | "touch" | "failure",
+		kind: "settled" | "attention" | "stalled" | "failure",
 		content: string,
 		details: Record<string, unknown>,
 	) => {
@@ -417,8 +402,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			settledIds,
 			reading,
 			now: Date.now(),
-			lastParentTouch,
-			idle,
 			stalls,
 		});
 		for (const [id, state] of effect.stalls) stalls.set(id, state);
@@ -474,14 +457,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		if (effect.stall.length > 0) {
 			deliverKind(
 				"stalled",
-				`Subagent stalled: ${effect.stall.map((id) => `${watched.find((child) => child.id === id)?.name ?? id} ${sessionLink(id)}`).join(", ")}. Check-ins pause until it changes. Do not relaunch.`,
+				`Subagent stalled: ${effect.stall.map((id) => `${watched.find((child) => child.id === id)?.name ?? id} ${sessionLink(id)}`).join(", ")}. Supervision stays quiet until it changes. Do not relaunch.`,
 				{ ids: effect.stall },
 			);
 			return;
-		}
-		if (effect.touch) {
-			const running = watched.filter((child) => child.supervise && !settledIds.has(child.id) && !child.attentionDelivered);
-			if (running.length > 0) deliverKind("touch", cacheTouchText(running), { ids: running.map((item) => item.id) });
 		}
 	};
 
@@ -505,12 +484,12 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		name: "subagent",
 		label: "subagent",
 		description:
-			"Launch an Oppi subagent and, by default, supervise it. Supervision returns immediately. The result arrives as a follow-up and starts a parent turn. While a supervised child is still running and this session is idle, one short check-in about every 4 minutes starts a parent model turn so the prompt cache stays warm. Do not poll with session wait, session get, session inspect, or session list. Inspect a settled child only when the follow-up reply is not enough. Pass supervise false for a detached hand-off; that path does not check in.",
-		promptSnippet: "Launch and supervise an Oppi subagent without leaving this session's prompt cache cold.",
+			"Launch an Oppi subagent and, by default, supervise it. Supervision returns immediately. Settlement, attention, stall, and wait failure arrive as a follow-up and start a parent turn. Waiting does not send acknowledgment turns. Do not poll with session wait, session get, session inspect, or session list. Inspect a settled child only when the follow-up reply is not enough. Pass supervise false for a detached hand-off; that path does not wake this session.",
+		promptSnippet: "Launch and supervise an Oppi subagent. Results wake this session; waiting does not.",
 		promptGuidelines: [
 			"Use subagent launch instead of bash oppi session create and oppi session wait for Oppi children.",
-			"supervise defaults to true. The result arrives as a follow-up and starts a parent turn. A check-in about every 4 minutes keeps this session's prompt cache warm. Reply to a check-in with one short line and no tool calls. Do not poll. Inspect a settled child only when the follow-up reply is not enough.",
-			"Pass supervise false for a detached hand-off. That path does not check in and must not be waited on.",
+			"supervise defaults to true. The result arrives as a follow-up and starts a parent turn. Do not poll. Inspect a settled child only when the follow-up reply is not enough. Do not expect periodic check-in turns.",
+			"Pass supervise false for a detached hand-off. That path does not wake this session and must not be waited on.",
 			"Pass model, thinking, and agent explicitly. auto_stop true for supervised crew. allow_nested only for a detached Donkey Master.",
 			"release stops supervision only. It does not stop the child session.",
 		],
@@ -531,7 +510,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			auto_stop: Type.Optional(Type.Boolean({ description: "Stop the child when it settles. True for supervised crew." })),
 			allow_nested: Type.Optional(Type.Boolean({ description: "Let this child spawn sessions. Detached Donkey Master only." })),
 			idempotency_key: Type.Optional(Type.String({ description: "Stable key for one logical launch." })),
-			supervise: Type.Optional(Type.Boolean({ description: "Keep the parent cache warm and deliver the result. Default true." })),
+			supervise: Type.Optional(Type.Boolean({ description: "Wake this session when the child settles, needs attention, stalls, or the wait fails. Waiting does not send acknowledgment turns. Default true." })),
 			session_id: Type.Optional(Type.String({ description: "Child id to release." })),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -549,7 +528,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				const remaining = waitPlan(watched, settledIds);
 				if (remaining.eitherIds.length === 0 && remaining.idleIds.length === 0) stopWait();
 				else armWait();
-				return { content: [{ type: "text", text: `Stopped supervising ${id}. The session keeps running. No further check-ins.` }] };
+				return { content: [{ type: "text", text: `Stopped supervising ${id}. The session keeps running. This session will not be woken for it.` }] };
 			}
 			if (!parentId) {
 				return {
@@ -613,8 +592,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		closed = false;
-		idle = true;
-		lastParentTouch = Date.now();
 		seen = [];
 		shown = [];
 		settledIds = new Set();
@@ -635,15 +612,14 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		stopWait();
 	});
 
-	pi.on("agent_start", () => {
-		idle = false;
-		lastParentTouch = Date.now();
-	});
-
-	pi.on("agent_settled", () => {
-		idle = true;
-		lastParentTouch = Date.now();
-	});
+	pi.on("cache_warming_decision", (event) =>
+		cacheWarmingOverride({
+			pendingSupervised: hasPendingSupervision(watched, settledIds),
+			action: event.action,
+			warmCost: event.warmCost,
+			missCost: event.missCost,
+		}),
+	);
 
 	pi.on("tool_result", (event, ctx) => {
 		if (event.toolName !== "bash" && event.toolName !== "background_job") return;

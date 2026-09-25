@@ -245,6 +245,19 @@ describe("background pill", () => {
 		expect(pill?.rows[0]?.subtitle.length).toBeLessThanOrEqual(48);
 		expect(pill?.terminal).toEqual(["# bash-52", "line one", "line two"]);
 	});
+
+	test("keeps a finished result visible without pretending it is still running", () => {
+		const pill = backgroundPill([
+			{ id: "bash-1", command: "npm test", status: "running", backgrounded: true },
+			{ id: "bash-2", command: "go test", status: "failed", backgrounded: true },
+		]);
+		expect(pill?.title).toBe("1 job");
+		expect(pill?.subtitle).toContain("1 ready");
+		expect(pill?.rows.map((row) => row.state)).toEqual(["running", "error"]);
+		expect(backgroundPill([{ id: "bash-3", command: "echo hi", status: "completed", backgrounded: true }])?.title).toBe(
+			"1 result",
+		);
+	});
 });
 
 describe("job manager", () => {
