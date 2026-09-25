@@ -33,6 +33,7 @@ struct ServerInfo: Codable, Sendable, Equatable {
         let restartMode: String
 
         var isAppUpdatable: Bool { installKind == "npm-global" }
+        var isIdle: Bool { status == "idle" }
         var isInstalling: Bool { status == "installing" }
         var isRestarting: Bool { status == "restarting" }
         var isFailed: Bool { status == "failed" }

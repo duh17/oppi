@@ -985,15 +985,19 @@ struct ServerDetailView: View {
                     break
                 }
                 try? await Task.sleep(for: .seconds(1))
-                if Task.isCancelled { return }
+                if Task.isCancelled { break }
                 do {
                     var next = try await api.serverInfo()
-                    // A replacement server omits `update` until its install lookup
-                    // resolves; keep the in-flight snapshot instead of blanking it.
-                    if next.update == nil { next.update = info?.update }
+                    let reported = next.update
+                    // A same-version replacement server (failed exec) omits `update`
+                    // until its install lookup resolves; keep the in-flight snapshot
+                    // instead of blanking it. A new version means the update landed.
+                    if next.update == nil, next.version == previousVersion {
+                        next.update = info?.update
+                    }
                     info = next
                     error = nil
-                    if next.update?.isInstalling == true {
+                    if reported?.isInstalling == true {
                         notSettlingSince = nil
                     } else if notSettlingSince == nil {
                         notSettlingSince = Date()
@@ -1008,6 +1012,12 @@ struct ServerDetailView: View {
                         return
                     }
                     if next.update?.isRestartNeeded == true {
+                        updateInFlight = false
+                        return
+                    }
+                    // The host answered idle on the same version: it is serving
+                    // normally, so show its real state rather than "did not come back".
+                    if reported?.isIdle == true {
                         updateInFlight = false
                         return
                     }
