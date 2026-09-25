@@ -61,6 +61,7 @@ Example:
 - **Server:** Sandbox workspace file reads and listings no longer follow symlinks out of the mount. Every byte read comes from a handle verified against the checked path, so a symlink swapped in after the check returns 404.
 - **Server:** An aborted media Range request (common when a player seeks) closes its file handle instead of crashing `oppi serve` on Node's DEP0137 garbage-collection close.
 - **Client:** Video sidecar captions keep following playback in native fullscreen for chat embeds and the file browser instead of freezing on the last inline caption.
+- **Server:** First `oppi serve` keeps `tls.mode=disabled` when `publicUrl` and `proxy.trustedPeers` configure a trusted private-HTTP reverse proxy, instead of switching to self-signed TLS and breaking the proxy's HTTP upstream. Direct installs still default to self-signed TLS.
 
 ## [0.49.1] - 2026-09-18
 

@@ -2619,41 +2619,51 @@ exit 1
   });
 });
 
+function setCliConfig(dir: string, key: string, value: string): void {
+  const { exitCode } = run(["config", "set", key, value], { OPPI_DATA_DIR: dir });
+  expect(exitCode).toBe(0);
+}
+
+function readTlsMode(dir: string): string | undefined {
+  const { stdout, exitCode } = run(["config", "get", "tls"], { OPPI_DATA_DIR: dir });
+  expect(exitCode).toBe(0);
+  return (JSON.parse(stdout) as { mode?: string }).mode;
+}
+
+function decodeConnectInvite(stdout: string): {
+  host?: string;
+  port?: number;
+  scheme?: string;
+  tlsCertFingerprint?: string;
+} {
+  const link = stripAnsi(stdout).match(/oppi:\/\/connect\?[^\s]+/);
+  expect(link).not.toBeNull();
+  const invite = new URL(link![0]).searchParams.get("invite");
+  expect(invite).toBeTruthy();
+  const envelope = JSON.parse(Buffer.from(invite!, "base64url").toString("utf-8")) as {
+    signedPayload?: string;
+  };
+  expect(envelope.signedPayload).toBeTruthy();
+  return JSON.parse(Buffer.from(envelope.signedPayload!, "base64url").toString("utf-8")) as {
+    host?: string;
+    port?: number;
+    scheme?: string;
+    tlsCertFingerprint?: string;
+  };
+}
+
 describe("oppi serve (first-run tls bootstrap)", () => {
   it("upgrades legacy disabled TLS to self-signed on first serve", async () => {
     const serveDir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-tls-"));
 
     try {
       const freePort = await getFreePort();
-      const { stdout: defaultTlsJson, exitCode: defaultExitCode } = run(["config", "get", "tls"], {
-        OPPI_DATA_DIR: serveDir,
-      });
-      expect(defaultExitCode).toBe(0);
-      const defaultTls = JSON.parse(defaultTlsJson) as { mode?: string };
-      expect(defaultTls.mode).toBe("self-signed");
+      expect(readTlsMode(serveDir)).toBe("self-signed");
 
-      const { exitCode: setDisabledExitCode } = run(
-        ["config", "set", "tls", '{"mode":"disabled"}'],
-        { OPPI_DATA_DIR: serveDir },
-      );
-      expect(setDisabledExitCode).toBe(0);
-
-      const { exitCode: setPortExitCode } = run(["config", "set", "port", String(freePort)], {
-        OPPI_DATA_DIR: serveDir,
-      });
-      expect(setPortExitCode).toBe(0);
-
-      const { exitCode: setHostExitCode } = run(["config", "set", "host", "127.0.0.1"], {
-        OPPI_DATA_DIR: serveDir,
-      });
-      expect(setHostExitCode).toBe(0);
-
-      const { stdout: beforeTlsJson, exitCode: beforeExitCode } = run(["config", "get", "tls"], {
-        OPPI_DATA_DIR: serveDir,
-      });
-      expect(beforeExitCode).toBe(0);
-      const beforeTls = JSON.parse(beforeTlsJson) as { mode?: string };
-      expect(beforeTls.mode).toBe("disabled");
+      setCliConfig(serveDir, "tls", '{"mode":"disabled"}');
+      setCliConfig(serveDir, "port", String(freePort));
+      setCliConfig(serveDir, "host", "127.0.0.1");
+      expect(readTlsMode(serveDir)).toBe("disabled");
 
       // `serve` is long-running; stop it once startup reaches the invite output.
       const serveStdout = await runUntilOutput(
@@ -2663,18 +2673,97 @@ describe("oppi serve (first-run tls bootstrap)", () => {
         60_000,
       );
 
-      const strippedServe = serveStdout.replace(/\x1b\[[0-9;]*m/g, "");
+      const strippedServe = stripAnsi(serveStdout);
+      expect(strippedServe).toContain("First run — TLS mode set to self-signed");
       expect(strippedServe).toContain("Scan this QR code in Oppi:");
       expect(strippedServe).toContain("oppi://connect?");
       expect(strippedServe).not.toContain("✓ Paired");
       expect(strippedServe).not.toContain("Waiting for connections...");
+      expect(readTlsMode(serveDir)).toBe("self-signed");
+    } finally {
+      rmSync(serveDir, { recursive: true, force: true });
+    }
+  }, 90_000);
 
-      const { stdout: afterTlsJson, exitCode: afterExitCode } = run(["config", "get", "tls"], {
-        OPPI_DATA_DIR: serveDir,
+  it("preserves disabled TLS for a trusted private-HTTP reverse proxy on first serve", async () => {
+    const serveDir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-proxy-tls-"));
+
+    try {
+      const freePort = await getFreePort();
+      setCliConfig(serveDir, "host", "127.0.0.1");
+      setCliConfig(serveDir, "port", String(freePort));
+      setCliConfig(serveDir, "tls", '{"mode":"disabled"}');
+      setCliConfig(serveDir, "publicUrl", "https://oppi.example.com");
+      setCliConfig(serveDir, "proxy.trustedPeers", '["127.0.0.1/32","::1/128"]');
+      expect(readTlsMode(serveDir)).toBe("disabled");
+
+      const serveStdout = await runUntilOutput(
+        ["serve"],
+        "oppi://connect?",
+        { OPPI_DATA_DIR: serveDir },
+        60_000,
+      );
+
+      const strippedServe = stripAnsi(serveStdout);
+      expect(strippedServe).not.toContain("First run — TLS mode set to self-signed");
+      expect(strippedServe).toContain("First run — owner token generated");
+      expect(strippedServe).toContain("Public:    https://oppi.example.com");
+      expect(strippedServe).toContain(
+        `Listener:  http://127.0.0.1:${freePort} (tls.mode=disabled)`,
+      );
+      expect(strippedServe).toContain("Proxy:     trustedPeers 127.0.0.1, ::1");
+      expect(strippedServe).toContain("Scan this QR code in Oppi:");
+      expect(strippedServe).not.toContain("✓ Paired");
+      expect(strippedServe).not.toContain("Waiting for connections...");
+      expect(strippedServe).not.toContain("Cert pin:");
+
+      const invite = decodeConnectInvite(serveStdout);
+      expect(invite).toMatchObject({
+        host: "oppi.example.com",
+        port: 443,
+        scheme: "https",
       });
-      expect(afterExitCode).toBe(0);
-      const afterTls = JSON.parse(afterTlsJson) as { mode?: string };
-      expect(afterTls.mode).toBe("self-signed");
+      expect(invite.tlsCertFingerprint).toBeUndefined();
+      expect(readTlsMode(serveDir)).toBe("disabled");
+    } finally {
+      rmSync(serveDir, { recursive: true, force: true });
+    }
+  }, 90_000);
+
+  it("does not preserve disabled TLS when publicUrl is set without trustedPeers", async () => {
+    const serveDir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-publicurl-tls-"));
+
+    try {
+      const freePort = await getFreePort();
+      setCliConfig(serveDir, "host", "127.0.0.1");
+      setCliConfig(serveDir, "port", String(freePort));
+      setCliConfig(serveDir, "tls", '{"mode":"disabled"}');
+      setCliConfig(serveDir, "publicUrl", "https://oppi.example.com");
+      expect(readTlsMode(serveDir)).toBe("disabled");
+
+      const serveStdout = await runUntilOutput(
+        ["serve"],
+        "oppi://connect?",
+        { OPPI_DATA_DIR: serveDir },
+        60_000,
+      );
+
+      const strippedServe = stripAnsi(serveStdout);
+      expect(strippedServe).toContain("First run — TLS mode set to self-signed");
+      expect(strippedServe).toContain("Public:    https://oppi.example.com");
+      expect(strippedServe).toContain(
+        `Listener:  https://127.0.0.1:${freePort} (tls.mode=self-signed)`,
+      );
+      expect(strippedServe).not.toContain("Proxy:     trustedPeers");
+      expect(strippedServe).not.toContain("✓ Paired");
+
+      const invite = decodeConnectInvite(serveStdout);
+      expect(invite).toMatchObject({
+        host: "oppi.example.com",
+        port: 443,
+        scheme: "https",
+      });
+      expect(readTlsMode(serveDir)).toBe("self-signed");
     } finally {
       rmSync(serveDir, { recursive: true, force: true });
     }

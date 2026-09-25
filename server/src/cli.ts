@@ -37,7 +37,7 @@ import {
 } from "./tls.js";
 import type { ServerConfig } from "./types.js";
 import { generateInvite, type GeneratedInvite } from "./invite.js";
-import { parsePublicUrl } from "./proxy-config.js";
+import { allowsTrustedPrivateHttpBind, parsePublicUrl } from "./proxy-config.js";
 import { getPackageInfo } from "./version.js";
 import {
   getServiceStatus,
@@ -121,8 +121,11 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
 
   // Auto-init: generate owner token + identity keys if this is a fresh install.
   if (!wasPaired) {
-    const currentTlsMode = storage.getConfig().tls?.mode ?? "disabled";
-    if (currentTlsMode === "disabled") {
+    const current = storage.getConfig();
+    const currentTlsMode = current.tls?.mode ?? "disabled";
+    // Direct first-run keeps HTTPS. A configured trusted private-HTTP reverse
+    // proxy must stay plaintext so the listener matches publicUrl + trustedPeers.
+    if (currentTlsMode === "disabled" && !allowsTrustedPrivateHttpBind(current)) {
       storage.updateConfig({ tls: { mode: "self-signed" } });
       console.log(c.green("  ✓ First run — TLS mode set to self-signed"));
     }
