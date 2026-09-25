@@ -228,7 +228,7 @@ Eligible extensions are the `FileType` audio set: `wav`, `mp3`, `m4a`, `aac`, `f
 
 Use `![[scene.usdz]]` or `![label](scene.usdz)` to embed a current workspace, worktree, session-reported, or exact owner host USDZ file. Use `[[scene.usdz]]` or `[label](scene.usdz)` when the file must remain an ordinary navigable link that opens the document viewer.
 
-The inline slot is reserved 1:1. Chat scroll wins until the user taps Interact; Done restores scroll. Drag orbits, pinch zooms, and two-finger pans the model. There is no auto-spin. Reduce Motion adds no decorative motion. Expand presents a separate RealityKit scene from the same downloaded file; that full-screen viewer is immediately interactive and may reset the camera to a framed default. Oppi does not embed remote USDZ URLs, `data:`, attachment IDs, `.blend`, or `.glb` through this syntax. Those targets never become a USDZ segment and do not start a fetch. Loading, error, retry, and open-file fallback stay on the slot. Export uses a static card with no fetch or GPU mount. Authenticated workspace, worktree, session, and host raw GET requests use the 50 MB image/PDF cap, write a bounded local `.usdz` file, then load asynchronously in RealityKit.
+The inline slot is reserved 1:1. Chat scroll wins until the user taps Interact; Done restores scroll. Drag orbits, pinch zooms, and two-finger pans the model. There is no auto-spin. Reduce Motion adds no decorative motion. Expand presents a separate RealityKit scene from the same downloaded file; that full-screen viewer is immediately interactive and may reset the camera to a framed default. Oppi does not embed remote USDZ URLs, `data:`, attachment IDs, `.blend`, or `.glb` through this syntax. Those targets never become a USDZ segment and do not start a fetch. Loading, error, retry, and open-file fallback stay on the slot. Export uses a static card with no fetch or GPU mount. Authenticated workspace, worktree, session, and host current-file GET requests use the 50 MB image/PDF cap, write a bounded local `.usdz` file, then load asynchronously in RealityKit.
 
 ## Extension authoring API
 
@@ -278,7 +278,7 @@ Use workspace/session file routes for current project files, PDFs, reports, and 
 - a file addressed relative to the session workspace or worktree
 - an explicit real path on a host workspace, including in-tree symlink targets and absolute/~ host paths
 
-Session raw-file routes require owner authentication and session ownership. On a host workspace they serve an explicit real path that exists, including in-tree symlink targets and absolute/~ host paths; pairing/auth is the gate. Sandbox session-raw stays confined and 403s outside or guest-escape paths. Current-file audio and video stream through authenticated `GET`/`HEAD` requests to `/workspaces/{workspaceId}/sessions/{sessionId}/raw/{path+}` with single-range byte responses.
+Session-origin current-file reads require owner authentication and session ownership. On a host workspace they serve an explicit real path that exists, including in-tree symlink targets and absolute/~ host paths; pairing/auth is the gate. Sandbox session-origin reads stay confined and 403s outside or guest-escape paths. Current-file audio and video stream through authenticated `GET`/`HEAD` requests to `/files/current` when the server reports `currentFiles`, otherwise to the matching legacy origin route (workspace `raw`, session-raw, or `/files/raw`), with single-range byte responses.
 
 Use stored tool attachments for media associated with a message or tool result:
 
@@ -299,9 +299,9 @@ The server owns attachment materialization and serving.
 - Sniff image/audio/video headers where practical; do not trust only file extensions.
 - Copy bytes from helper-approved paths, generated temp files, or authenticated uploads.
 - Do not expose an HTTP API that attaches arbitrary server paths by name.
-- Keep workspace `contents`/`raw` lexically inside the workspace, then follow in-tree symlink names even when the target is outside. Host-workspace session-raw may follow an explicit real path, including symlink targets; sandbox session-raw 403s outside and guest-escape paths.
+- Keep workspace `contents`/`raw` lexically inside the workspace, then follow in-tree symlink names even when the target is outside. Host-workspace session-origin reads may follow an explicit real path, including symlink targets; sandbox session-origin reads 403s outside and guest-escape paths.
 - Serve stored media through authenticated `GET` and `HEAD` requests to `/sessions/{sessionId}/attachments/{attachmentId}`.
-- Serve current-file media through authenticated, range-capable `GET` and `HEAD` requests to `/workspaces/{workspaceId}/sessions/{sessionId}/raw/{path+}`. On a host workspace that path may be an unreported absolute, outside, or symlink-target file.
+- Serve current-file media through authenticated, range-capable `GET` and `HEAD` requests to `/files/current` when the server reports `currentFiles`; otherwise use the matching legacy origin route (workspace `raw`, session-raw, or `/files/raw`). Host-origin reads (`/files/current?origin=host` or `/files/raw`) and host-workspace session-origin reads (`/files/current?origin=session` or session-raw) may follow an unreported absolute, outside, or symlink-target file. Workspace `raw` stays lexically inside the workspace.
 - Use workspace-scoped attachment routes only for upload creation and upload content.
 - Support byte ranges for audio and video.
 - Delete attachments when the owning session is deleted.
@@ -338,7 +338,7 @@ Clients render attachments from metadata and authenticated byte sources.
 - Route remote URLs through the existing tap-to-load remote image policy.
 - Keep attachment endpoints authenticated and session-scoped.
 - Build timeline attachment and session-file providers even when API-client or workspace metadata is still loading; resolve that context when the fetch starts so cached rows can recover.
-- Keep workspace lexical containment (in-tree symlinks may resolve outside) separate from authenticated host-workspace session-raw and host `/files/raw`. Fuzzy `/paths` is not a secret-file ACL.
+- Keep workspace lexical containment (in-tree symlinks may resolve outside) separate from authenticated host-origin reads (`/files/current?origin=host` or legacy `/files/raw`) and host-workspace session-origin reads (`/files/current?origin=session` or legacy session-raw). Fuzzy `/paths` is not a secret-file ACL.
 - Avoid logging full file paths or attachment text when it can contain private data.
 - Treat stored attachments as durable session history until the session or attachment is deleted.
 
