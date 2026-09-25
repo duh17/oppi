@@ -64,7 +64,7 @@ export class AgentScheduleRunner {
       try {
         const now = this.nowMs();
         this.materializeDueRuns(now);
-        await this.dispatchReadyRuns(now);
+        await this.dispatchReadyRuns();
       } catch (error) {
         log.error("agent_schedule_runner.tick.failed", { error: safeErrorMessage(error) });
       }
@@ -104,13 +104,15 @@ export class AgentScheduleRunner {
     }
   }
 
-  private async dispatchReadyRuns(now: number): Promise<void> {
+  private async dispatchReadyRuns(): Promise<void> {
     const store = this.deps.storage.getAgentScheduleStore();
     const hooks = createAgentScheduleDispatchHooks(this.deps, this.ownerId);
     for (let i = 0; i < this.limit && !this.stopped; i++) {
       // Claim only when ready to dispatch; stop must not strand a batch of leases.
+      // Stamp each lease from the current time: earlier dispatches in this tick
+      // may have awaited long enough that a tick-start lease is already expired.
       const run = store.claimReadyRuns({
-        now,
+        now: this.nowMs(),
         ownerId: this.ownerId,
         leaseMs: this.leaseMs,
         limit: 1,

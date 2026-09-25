@@ -974,14 +974,30 @@ struct ServerDetailView: View {
     private func pollUpdateUntilSettled(api: APIClient, previousVersion: String?) async {
         updatePollTask?.cancel()
         let task = Task { @MainActor in
-            let deadline = Date().addingTimeInterval(180)
-            while !Task.isCancelled, Date() < deadline {
+            // The server allows npm install -g up to 5 minutes, so an answering
+            // `installing` host is still working. "Did not come back" means it
+            // stopped answering, or sat in `restarting`, for the restart grace.
+            let hardDeadline = Date().addingTimeInterval(7 * 60)
+            let restartGrace: TimeInterval = 120
+            var notSettlingSince: Date?
+            while !Task.isCancelled, Date() < hardDeadline {
+                if let notSettlingSince, Date().timeIntervalSince(notSettlingSince) > restartGrace {
+                    break
+                }
                 try? await Task.sleep(for: .seconds(1))
                 if Task.isCancelled { return }
                 do {
-                    let next = try await api.serverInfo()
+                    var next = try await api.serverInfo()
+                    // A replacement server omits `update` until its install lookup
+                    // resolves; keep the in-flight snapshot instead of blanking it.
+                    if next.update == nil { next.update = info?.update }
                     info = next
                     error = nil
+                    if next.update?.isInstalling == true {
+                        notSettlingSince = nil
+                    } else if notSettlingSince == nil {
+                        notSettlingSince = Date()
+                    }
                     if next.update?.isFailed == true {
                         updateInFlight = false
                         return
@@ -997,6 +1013,7 @@ struct ServerDetailView: View {
                     }
                 } catch {
                     // Connection drop during restart is expected.
+                    if notSettlingSince == nil { notSettlingSince = Date() }
                 }
             }
             if !Task.isCancelled {
@@ -1016,8 +1033,18 @@ struct ServerDetailView: View {
         }
 
         do {
-            info = try await api.serverInfo()
+            let previousVersion = info?.version
+            let next = try await api.serverInfo()
+            info = next
             error = nil
+            // The host answered, so a stale "did not come back" no longer applies;
+            // its real update status is shown instead.
+            if updateDidNotReturn {
+                updateDidNotReturn = false
+                if let previousVersion, next.version != previousVersion {
+                    coordinator.connection(for: pairedServer.id)?.noteServerVersionAfterUpdate(next.version)
+                }
+            }
         } catch {
             self.error = error.localizedDescription
         }

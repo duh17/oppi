@@ -1040,6 +1040,11 @@ export class Server {
       await this.closeWebSocketServer();
     } catch (error: unknown) {
       shutdownError = error;
+    } finally {
+      // A throw above skips closeWebSocketServer; these timers must not keep a
+      // stopped Server alive after an update restore replaces it.
+      for (const timer of this.accessExpiryTimers.values()) clearTimeout(timer);
+      this.accessExpiryTimers.clear();
     }
 
     const closeResults = await Promise.allSettled([
