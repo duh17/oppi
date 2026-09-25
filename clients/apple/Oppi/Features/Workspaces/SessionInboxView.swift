@@ -348,7 +348,16 @@ struct SessionInboxView: View {
         let data = viewData
 
         List {
-            if showsProviderSetupPrompt, let selectedServer {
+            if showsMinimumServerVersionNotice, let selectedServer {
+                ProviderSetupPromptListSection {
+                    ServerVersionPromptCard {
+                        navigation.openHostSwitcherDestination(
+                            .serverSettings,
+                            serverId: selectedServer.id
+                        )
+                    }
+                }
+            } else if showsProviderSetupPrompt, let selectedServer {
                 ProviderSetupPromptListSection {
                     providerSetupPrompt(for: selectedServer)
                 }
@@ -405,7 +414,7 @@ struct SessionInboxView: View {
 
                 if ProviderSetupPromptPolicy.shouldShowInboxEmptyState(
                     isEmpty: data.isEmpty,
-                    showsProviderSetup: showsProviderSetupPrompt
+                    showsProviderSetup: showsProviderSetupPrompt || showsMinimumServerVersionNotice
                 ) {
                     Section {
                         emptyState
@@ -579,10 +588,17 @@ struct SessionInboxView: View {
         }
     }
 
+    private var showsMinimumServerVersionNotice: Bool {
+        selectedWorkspace == nil
+            && selectedServer != nil
+            && ServerReleaseVersion.isBelowMinimum(activeConnection?.connectedServerVersion)
+    }
+
     private var showsProviderSetupPrompt: Bool {
         selectedWorkspace == nil
             && ProviderSetupPromptPolicy.shouldShow(for: providerSetupState)
             && selectedServer != nil
+            && !showsMinimumServerVersionNotice
     }
 
     private var inboxNavigationTitle: String {

@@ -234,7 +234,8 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Oppi server and CLI versions are installed together as the oppi-server npm package.",
-      "Restart the running server after an update.",
+      "Only a global npm install can be updated this way. The iPhone Server screen uses the same check.",
+      "Restart the running server after a CLI update. An in-app update restarts the process itself.",
     ],
     examples: [{ command: "oppi update --check" }, { command: "oppi update" }],
   },

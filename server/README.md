@@ -203,7 +203,7 @@ Schedules store a trigger and an action. `oppi schedule create` accepts `--at`, 
 
 ### Install and update modes
 
-- **npm global install:** npm owns both server code and the `oppi` executable used by humans, the Mac app, and managed host sessions. Use `oppi update` or `npm install -g oppi-server@latest` to upgrade, and `npm uninstall -g oppi-server` to remove it.
+- **npm global install:** npm owns both server code and the `oppi` executable used by humans, the Mac app, and managed host sessions. Use `oppi update`, the iPhone **Server** screen, or `npm install -g oppi-server@latest` to upgrade, and `npm uninstall -g oppi-server` to remove it. The app and CLI share the same global-npm check and install only an already-discovered latest version.
 - **Mac app:** requires the npm global install and does not bundle or seed another server runtime.
 - **Git/bootstrap install:** git owns server code. Use `git pull && npm install && npm run build` to upgrade a checkout. For a machine-wide development CLI, run `bash setup.sh --install`; it source-links `oppi` to the checkout and installs the LaunchAgent from that exact link. `OPPI_SERVER_PATH` remains available for explicit Mac development launches.
 

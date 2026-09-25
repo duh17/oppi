@@ -122,6 +122,10 @@ oppi server restart
 
 `oppi server restart` is operator-only. A Pi Control session runs with host-user authority, so inspect the current state before changing configuration and tell the user when a restart is required.
 
+## Updating the server
+
+A global npm install can be updated from iPhone **Server** settings or with `oppi update`. See [Server settings](usage.md#server-settings). Git checkouts still use `git pull && npm install && npm run build`.
+
 ## What not to put in config
 
 - Owner tokens and pairing secrets (use `oppi pair` / `oppi token`)

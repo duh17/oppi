@@ -18,6 +18,7 @@ export type * from "./types/local-sessions.js";
 export type * from "./types/workspace-requests.js";
 export * from "./types/telemetry.js";
 export type * from "./types/protocol.js";
+export * from "./types/server-update.js";
 export type * from "./types/push.js";
 export type * from "./types/invite.js";
 export type * from "./types/schedules.js";

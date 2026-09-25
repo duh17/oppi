@@ -32,11 +32,16 @@ function findPackageJson(startDir: string): string | undefined {
   return undefined;
 }
 
+/** Directory that contains this install's package.json, if it can be found. */
+export function packageRootDir(): string | undefined {
+  const packagePath = findPackageJson(dirname(fileURLToPath(import.meta.url)));
+  return packagePath ? dirname(packagePath) : undefined;
+}
+
 export function getPackageInfo(): PackageInfo {
   if (cachedPackageInfo) return cachedPackageInfo;
 
-  const moduleDir = dirname(fileURLToPath(import.meta.url));
-  const packagePath = findPackageJson(moduleDir);
+  const packagePath = findPackageJson(dirname(fileURLToPath(import.meta.url)));
   if (!packagePath) {
     cachedPackageInfo = { name: "oppi-server", version: "0.0.0-dev" };
     return cachedPackageInfo;

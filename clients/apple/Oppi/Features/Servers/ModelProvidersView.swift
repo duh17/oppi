@@ -24,6 +24,41 @@ enum ProviderSetupPromptPolicy {
     }
 }
 
+struct ServerVersionPromptCard: View {
+    let onOpen: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(ServerUpdatePresentation.minimumVersionNoticeTitle, systemImage: "arrow.down.app")
+                .font(.headline)
+                .foregroundStyle(.themeFg)
+
+            Text(ServerUpdatePresentation.minimumVersionNoticeMessage)
+                .font(.subheadline)
+                .foregroundStyle(.themeComment)
+
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+
+                Button(ServerUpdatePresentation.minimumVersionNoticeAction, action: onOpen)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .accessibilityIdentifier("workspace.minimumServerVersion.open")
+
+                Spacer(minLength: 0)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(.themeComment.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(.themeComment.opacity(0.18), lineWidth: 1)
+        )
+        .accessibilityIdentifier("workspace.minimumServerVersion.notice")
+    }
+}
+
 struct ProviderSetupPromptCard: View {
     let message: String
     let openAccessibilityIdentifier: String

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { compareNpmVersions, isNpmVersionNewer } from "../src/cli/npm-version.js";
+import {
+  compareNpmVersions,
+  isNpmVersionNewer,
+  isValidNpmVersion,
+} from "../src/cli/npm-version.js";
 
 describe("npm version comparison", () => {
   it("treats a stable release as newer than its prerelease", () => {
@@ -19,5 +23,12 @@ describe("npm version comparison", () => {
 
   it("rejects invalid registry versions deterministically", () => {
     expect(() => compareNpmVersions("latest", "1.2.3")).toThrow("Invalid semantic version");
+  });
+
+  it("accepts exact SemVer strings and rejects tags", () => {
+    expect(isValidNpmVersion("0.50.0")).toBe(true);
+    expect(isValidNpmVersion("1.2.3-beta.1")).toBe(true);
+    expect(isValidNpmVersion("latest")).toBe(false);
+    expect(isValidNpmVersion("")).toBe(false);
   });
 });

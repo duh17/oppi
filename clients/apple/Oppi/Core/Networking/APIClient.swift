@@ -470,6 +470,15 @@ actor APIClient: ClientLogUploading {
         return recordCapabilities(try JSONDecoder().decode(ServerInfo.self, from: data))
     }
 
+    /// Start an exact-version npm update of a globally installed oppi-server.
+    func startServerUpdate(version: String) async throws -> ServerInfo.UpdateInfo {
+        struct Body: Encodable {
+            let version: String
+        }
+        let data = try await post("/server/update", body: Body(version: version))
+        return try JSONDecoder().decode(ServerInfo.UpdateInfo.self, from: data)
+    }
+
     private func recordCapabilities(_ info: ServerInfo) -> ServerInfo {
         currentFilesVersion = info.capabilities?.currentFiles?.version ?? 0
         return info

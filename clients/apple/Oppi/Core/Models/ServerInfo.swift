@@ -20,6 +20,24 @@ struct ServerInfo: Codable, Sendable, Equatable {
     let images: ImageSettingsInfo?
     let capabilities: Capabilities?
     let stats: ServerStats
+    var update: UpdateInfo? = nil
+
+    struct UpdateInfo: Codable, Sendable, Equatable {
+        let installKind: String
+        let latestVersion: String?
+        let available: Bool
+        let manualCommand: String
+        let status: String
+        var targetVersion: String? = nil
+        var error: String? = nil
+        let restartMode: String
+
+        var isAppUpdatable: Bool { installKind == "npm-global" }
+        var isInstalling: Bool { status == "installing" }
+        var isRestarting: Bool { status == "restarting" }
+        var isFailed: Bool { status == "failed" }
+        var needsManualRestart: Bool { restartMode == "manual" }
+    }
 
     struct IdentityInfo: Codable, Sendable, Equatable {
         let fingerprint: String

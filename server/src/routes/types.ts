@@ -14,6 +14,7 @@ import type { DesktopCompanionStill } from "../desktop-companion-still-client.js
 import type { DesktopCompanionViewSession } from "../desktop-companion-view-session-client.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ServerResourceService } from "../server-resource-service.js";
+import type { ServerUpdateService } from "../server-update.js";
 
 /** Services needed by route handlers — injected by Server. */
 export interface RouteContext {
@@ -35,6 +36,8 @@ export interface RouteContext {
   piVersion: string;
   /** Installed Pi TUI/CLI version. Omit when detection is unknown/empty. */
   piCliVersion?: string;
+  /** In-app npm update of this server process. */
+  serverUpdate?: ServerUpdateService;
   /** Close upgraded sockets owned by a newly revoked device. */
   onDeviceRevoked?: (deviceId: string) => void;
   /** Close every network device socket when the owner token rotates. */

@@ -334,6 +334,10 @@ describe("GET /server/info", () => {
     expect(body.uptime).toBeTypeOf("number");
     expect(body.os).toBeTypeOf("string");
     expect(body.runtimeUpdate).toBeUndefined();
+    expect(body.update?.installKind).toMatch(/^(npm-global|other)$/);
+    expect(body.update?.status).toBe("idle");
+    expect(body.update).toHaveProperty("latestVersion");
+    expect(body.update?.manualCommand).toMatch(/npm install -g oppi-server/);
     expect(body.capabilities?.sessionStream?.version).toBe(1);
     expect(body.capabilities?.appEventStream?.version).toBe(1);
     expect(body.capabilities?.extensionNativeUI).toEqual({

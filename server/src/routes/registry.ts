@@ -136,6 +136,7 @@ const settingsOperationIds = new Set<string>([
   "setServerExtensionEnabled",
   "getMobileOutputGuide",
   "setMobileOutputGuide",
+  "updateServer",
   "getPiSystemPrompt",
   "getPiDefaultTools",
   "setPiDefaultTools",
@@ -286,6 +287,15 @@ const rawApiRouteSpecs = [
     operationId: "setServerExtensionEnabled",
     surface: "admin",
     auth: "owner",
+  },
+  {
+    method: "POST",
+    path: "/server/update",
+    operationId: "updateServer",
+    surface: "admin",
+    auth: "owner",
+    description:
+      "Install an exact already-discovered latest oppi-server version for a global npm install",
   },
   {
     method: "GET",

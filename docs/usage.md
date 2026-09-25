@@ -80,6 +80,16 @@ Create and edit sheets can open a **Pi Control** session (ordinary Pi with globa
 
 Pick models from the in-app picker. Remaining provider quota and pace live on **Server** detail → **Model Providers**. The CLI also has `oppi quota` and `oppi models`. See [Provider quotas](provider-quotas.md).
 
+## Server settings
+
+**Server** (host switcher → Server Settings) shows the paired server version.
+
+When a newer `oppi-server` is on npm and this host is a global npm install, the screen shows **Update available** and an **Update** button. Confirming names the version and warns that running sessions will be interrupted. Oppi installs that exact version, restarts the server, and reconnects.
+
+Git checkouts, Docker images, and other non-npm installs show a copyable `npm install -g oppi-server@…` command instead of a button. `oppi update` on the host uses the same install check.
+
+If this app build needs a newer server than the one you are connected to, All Sessions shows a single notice that opens Server. That notice goes away after you update and reconnect.
+
 ## What stays Pi
 
 Oppi does not replace Pi's coding-agent manual. Use [Pi's usage guide](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/usage.md) for slash commands, skills, compaction, the TUI, and the extensions API. Oppi documents only mobile daily use and the [extension overlay](extensions.md).

@@ -131,6 +131,7 @@ const settingsOperationIds = [
   "setServerExtensionEnabled",
   "getMobileOutputGuide",
   "setMobileOutputGuide",
+  "updateServer",
   "getPiSystemPrompt",
   "getPiDefaultTools",
   "setPiDefaultTools",

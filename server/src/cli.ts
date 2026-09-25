@@ -9,11 +9,9 @@
 import * as c from "./ansi.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { renderTerminal as renderQR } from "./qr.js";
-import { readFileSync, existsSync, statSync, realpathSync } from "node:fs";
-import { execSync, spawn } from "node:child_process";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { basename, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { runCli } from "./cli/runner.js";
 import {
   getLocalHostname,
@@ -64,6 +62,13 @@ import {
 } from "./cli/help.js";
 import { localApiRequest } from "./cli/local-api-client.js";
 import { isNpmVersionNewer } from "./cli/npm-version.js";
+import { resolveInstallKind } from "./install-kind.js";
+import {
+  fetchLatestPublishedVersion,
+  installGlobalPackage,
+  restartUpdatedProcess,
+} from "./server-update.js";
+import type { ServerRestartMode } from "./types/server-update.js";
 import { cmdConfig } from "./cli/commands/config.js";
 import { setCapturedCliExitCode, writeJsonEnvelope } from "./cli/output.js";
 
@@ -148,10 +153,9 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
 
   // Load APNs config from config file if present
   const apnsConfig = loadAPNsConfig(storage);
-  const server = new Server(storage, apnsConfig);
   let shuttingDown = false;
 
-  async function shutdown(code: number, reason?: string): Promise<void> {
+  async function stopServing(target: Server, reason?: string): Promise<void> {
     if (shuttingDown) {
       return;
     }
@@ -161,10 +165,28 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
       console.log(`\n${reason}`);
     }
 
-    await server.stop().catch((err: unknown) => {
+    await target.stop().catch((err: unknown) => {
       console.error(c.red("Shutdown error:"), safeErrorMessage(err));
     });
+  }
 
+  const server = new Server(storage, apnsConfig, {
+    onRestartAfterUpdate: (mode: ServerRestartMode) => {
+      void (async () => {
+        console.log("");
+        if (mode === "manual") {
+          console.log(c.yellow("  Installed. Restart this Oppi server to use the new version."));
+        } else {
+          console.log(c.dim("  Restarting with the updated Oppi server..."));
+        }
+        await stopServing(server);
+        restartUpdatedProcess(mode);
+      })();
+    },
+  });
+
+  async function shutdown(code: number, reason?: string): Promise<void> {
+    await stopServing(server, reason);
     process.exit(code);
   }
 
@@ -925,67 +947,20 @@ function cmdServer(action: string | undefined, flags: Record<string, string>): v
   process.exit(1);
 }
 
-function currentPackageDir(): string | undefined {
-  let dir = dirname(fileURLToPath(import.meta.url));
-  for (let i = 0; i < 5; i++) {
-    const candidate = join(dir, "package.json");
-    if (existsSync(candidate)) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return undefined;
-}
-
-function isLikelyGlobalNpmInstall(packageName: string): boolean {
-  try {
-    const packageDir = currentPackageDir();
-    if (!packageDir) return false;
-    const globalRoot = execSync("npm root -g", {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    if (!globalRoot) return false;
-    const installed = realpathSync(packageDir);
-    const expected = realpathSync(join(globalRoot, packageName));
-    return installed === expected;
-  } catch {
-    return false;
-  }
-}
-
-async function runInherited(command: string, args: string[]): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, {
-      stdio: "inherit",
-      shell: process.platform === "win32",
-    });
-    child.on("error", reject);
-    child.on("close", (code, signal) => {
-      if (code === 0) resolve();
-      else if (signal) reject(new Error(`${command} ${args.join(" ")} terminated by ${signal}`));
-      else reject(new Error(`${command} ${args.join(" ")} exited with code ${code ?? "unknown"}`));
-    });
-  });
-}
-
 async function cmdSelfUpdate(flags: Record<string, string>): Promise<void> {
   const info = getPackageInfo();
+  const install = resolveInstallKind(info.name);
   console.log("  " + c.bold("Updating Oppi server"));
   console.log("");
   console.log(`  Current: ${c.dim(`${info.name}@${info.version}`)}`);
 
-  let latest = "latest";
+  let latest: string | null = null;
   try {
-    const registryLatest = execSync(`npm view ${info.name} version`, {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    if (!registryLatest) throw new Error("npm returned an empty version");
+    latest = await fetchLatestPublishedVersion(info.name);
+    if (!latest) throw new Error("npm returned an empty version");
 
-    const newer = isNpmVersionNewer(registryLatest, info.version);
-    const currentAhead = isNpmVersionNewer(info.version, registryLatest);
-    latest = registryLatest;
+    const newer = isNpmVersionNewer(latest, info.version);
+    const currentAhead = isNpmVersionNewer(info.version, latest);
     const label = newer
       ? `${c.green(latest)} ${c.yellow("(update available)")}`
       : currentAhead
@@ -998,20 +973,21 @@ async function cmdSelfUpdate(flags: Record<string, string>): Promise<void> {
   }
   console.log("");
 
+  const target = latest ?? "latest";
   if (flags.check === "true" || flags.dry === "true") {
-    if (latest !== "latest" && !isNpmVersionNewer(latest, info.version)) {
+    if (latest && !isNpmVersionNewer(latest, info.version)) {
       console.log(c.green("  Oppi server is already current."));
     } else {
       console.log(c.yellow("  Update available."));
     }
-    console.log(c.dim(`  Command: npm install -g ${info.name}@latest`));
+    console.log(c.dim(`  Command: npm install -g ${info.name}@${target}`));
     console.log("");
     return;
   }
 
-  if (!isLikelyGlobalNpmInstall(info.name)) {
+  if (!install.updatable) {
     console.log(c.yellow("  This Oppi CLI does not look like a global npm install."));
-    console.log(c.dim("  npm global:   npm install -g oppi-server@latest"));
+    console.log(c.dim(`  npm global:   ${install.manualCommand}`));
     console.log(c.dim("  git checkout: git pull && npm install && npm run build"));
     console.log(
       c.dim("  Mac app:      install the shared CLI with npm install -g oppi-server@latest"),
@@ -1020,7 +996,16 @@ async function cmdSelfUpdate(flags: Record<string, string>): Promise<void> {
     process.exit(1);
   }
 
-  await runInherited("npm", ["install", "-g", `${info.name}@latest`]);
+  const result = await installGlobalPackage(info.name, target, { inheritStdio: true });
+  if (!result.ok) {
+    console.log("");
+    console.log(c.red("  Update failed."));
+    if (result.output.trim()) {
+      console.log(c.dim(result.output.trim()));
+    }
+    console.log("");
+    process.exit(1);
+  }
   console.log("");
   console.log(c.green("  Updated Oppi server."));
   console.log(c.dim("  Restart any running Oppi server process to use the new version."));

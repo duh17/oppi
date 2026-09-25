@@ -64,3 +64,8 @@ export function compareNpmVersions(leftRaw: string, rightRaw: string): number {
 export function isNpmVersionNewer(candidate: string, current: string): boolean {
   return compareNpmVersions(candidate, current) > 0;
 }
+
+/** True when `raw` is a SemVer string npm would accept as an exact version. */
+export function isValidNpmVersion(raw: string): boolean {
+  return parseSemanticVersion(raw) !== null;
+}

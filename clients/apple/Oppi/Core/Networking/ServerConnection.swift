@@ -210,6 +210,8 @@ enum MarkdownVideoMediaSourceRoute: Equatable {
 final class ServerConnection {
     // Public state
     private(set) var credentials: ServerCredentials?
+    /// `GET /server/info` version from the last successful bootstrap or capability refresh.
+    private(set) var connectedServerVersion: String?
 
     // Networking
     private(set) var apiClient: APIClient?
@@ -963,6 +965,7 @@ final class ServerConnection {
             self.serverResourceStore.switchServer(to: serverId)
         }
         self.endpointSelection = endpointSelection
+        self.connectedServerVersion = nil
         self.dictationStreamAvailable = false
         self.appEventStreamAvailable = false
         self.appEventStreamTransportState = .disconnected
@@ -1699,6 +1702,7 @@ final class ServerConnection {
         _ info: ServerInfo,
         startAppEventStream: Bool
     ) {
+        connectedServerVersion = info.version
         let capabilities = info.capabilities
         dictationStreamAvailable = capabilities?.dictationStream?.version ?? 0 >= 1
         appEventStreamAvailable = capabilities?.appEventStream?.version ?? 0 >= 1

@@ -102,6 +102,8 @@ import {
   removeRetiredRuntimeStatusFile,
   RETIRED_RUNTIME_STATUS_FILENAME,
 } from "./version.js";
+import { ServerUpdateService } from "./server-update.js";
+import type { ServerRestartMode } from "./types/server-update.js";
 import { SessionTitleGenerator } from "./session-title-generator.js";
 import { DictationManager } from "./dictation-manager.js";
 import {
@@ -491,6 +493,7 @@ export class Server {
   private sessionRuntimes!: SessionRuntimes;
   // REST route handler (dispatch + all HTTP handlers)
   private routes!: RouteHandler;
+  private readonly serverUpdate: ServerUpdateService;
   // WebSocket message command dispatcher for full-session commands
   private wsMessageHandler!: WsMessageHandler;
   // Dictation pipeline capability source for ASR streams
@@ -517,6 +520,7 @@ export class Server {
         DesktopCompanionViewSessionClient,
         "fetchViewSession"
       >;
+      onRestartAfterUpdate?: (mode: ServerRestartMode) => void;
     },
   ) {
     this.storage = storage;
@@ -524,6 +528,9 @@ export class Server {
       options?.desktopCompanionStillClient ?? new DesktopCompanionStillClient();
     this.desktopCompanionViewSessionClient =
       options?.desktopCompanionViewSessionClient ?? new DesktopCompanionViewSessionClient();
+    this.serverUpdate = new ServerUpdateService({
+      onRestart: options?.onRestartAfterUpdate,
+    });
     this.piExecutable = resolvePiExecutable();
 
     const dataDir = storage.getDataDir();
@@ -855,6 +862,7 @@ export class Server {
       serverVersion: Server.VERSION,
       piVersion: Server.readEmbeddedPiAgentVersion(),
       piCliVersion: optionalPiCliVersion(Server.detectPiVersion(this.piExecutable)),
+      serverUpdate: this.serverUpdate,
       onDeviceRevoked: (deviceId) => this.closeConnectionsForDevice(deviceId),
       onOwnerTokenRotated: () => this.closeAllDeviceConnections(),
       stopWorkspaceVm: (workspaceId) => SdkBackend.stopWorkspaceVm(workspaceId),
@@ -892,6 +900,8 @@ export class Server {
         file: RETIRED_RUNTIME_STATUS_FILENAME,
       });
     }
+
+    this.serverUpdate.start();
 
     const finishStartup = async (): Promise<void> => {
       if (this.httpServer?.listening) {

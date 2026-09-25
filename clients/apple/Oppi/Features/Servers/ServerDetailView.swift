@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Detail view for a paired oppi server.
 ///
@@ -133,6 +134,10 @@ struct ServerDetailView: View {
     @State private var apiKeyEditorProvider: ProviderAuthProviderStatus?
     @State private var apiKeyDraft = ""
     @State private var showAddServer = false
+    @State private var showUpdateConfirmation = false
+    @State private var updateInFlight = false
+    @State private var copiedManualCommand = false
+    @State private var updatePollTask: Task<Void, Never>?
 
     private var pairedServer: PairedServer {
         ServerDetailModelProvidersNavigation.visibleServer(
@@ -198,6 +203,8 @@ struct ServerDetailView: View {
         .onDisappear {
             flowPollTask?.cancel()
             flowPollTask = nil
+            updatePollTask?.cancel()
+            updatePollTask = nil
         }
         .confirmationDialog(
             removeDialogTitle,
@@ -210,6 +217,18 @@ struct ServerDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(removeDialogMessage)
+        }
+        .confirmationDialog(
+            updateConfirmationTitle,
+            isPresented: $showUpdateConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Update") {
+                Task { await startServerUpdate() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(ServerUpdatePresentation.confirmationMessage)
         }
         .sheet(isPresented: $isFlowSheetPresented, onDismiss: handleFlowSheetDismissed) {
             providerFlowSheet
@@ -302,6 +321,10 @@ struct ServerDetailView: View {
             Text("Pi SDK is the embedded Pi coding-agent package that runs Oppi sessions. Pi TUI is the installed pi CLI on this host.")
         }
 
+        if info != nil {
+            serverUpdateSection
+        }
+
         Section {
             ServerModelProvidersNavigationRow(
                 summary: providerConfigurationSummary,
@@ -379,6 +402,83 @@ struct ServerDetailView: View {
             }
         } footer: {
             Text("This only removes pairing from this iPhone. It does not delete the server or its data.")
+        }
+    }
+
+    private var updateConfirmationTitle: String {
+        let version = info?.update?.latestVersion ?? info?.update?.targetVersion ?? "the latest version"
+        return ServerUpdatePresentation.confirmationTitle(version: version)
+    }
+
+    @ViewBuilder
+    private var serverUpdateSection: some View {
+        let update = info?.update
+        let belowMinimum = ServerReleaseVersion.isBelowMinimum(info?.version)
+        Section {
+            if let update {
+                if update.isInstalling || update.isRestarting || updateInFlight {
+                    HStack {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(
+                            ServerUpdatePresentation.progressLabel(
+                                status: update.status,
+                                restartMode: update.restartMode
+                            )
+                        )
+                    }
+                    .accessibilityIdentifier("server.update.progress")
+                } else if update.isFailed, let message = update.error, !message.isEmpty {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.themeOrange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("server.update.error")
+                }
+
+                if update.available, update.isAppUpdatable, !update.isInstalling, !update.isRestarting {
+                    if let latest = update.latestVersion {
+                        Text(ServerUpdatePresentation.availableTitle(latestVersion: latest))
+                            .accessibilityIdentifier("server.update.available")
+                    }
+                    Button("Update") {
+                        showUpdateConfirmation = true
+                    }
+                    .disabled(updateInFlight)
+                    .accessibilityIdentifier("server.update.button")
+                } else if !update.isAppUpdatable {
+                    Text(update.manualCommand)
+                        .font(.footnote.monospaced())
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("server.update.manualCommand")
+                    Button(copiedManualCommand ? "Copied" : "Copy Command") {
+                        UIPasteboard.general.string = update.manualCommand
+                        copiedManualCommand = true
+                    }
+                    .accessibilityIdentifier("server.update.manualCopy")
+                }
+            } else if belowMinimum {
+                Text(ServerUpdatePresentation.minimumVersionNoticeTitle)
+                    .accessibilityIdentifier("server.update.available")
+                Text(ServerUpdatePresentation.fallbackManualCommand)
+                    .font(.footnote.monospaced())
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("server.update.manualCommand")
+                Button(copiedManualCommand ? "Copied" : "Copy Command") {
+                    UIPasteboard.general.string = ServerUpdatePresentation.fallbackManualCommand
+                    copiedManualCommand = true
+                }
+                .accessibilityIdentifier("server.update.manualCopy")
+            }
+        } header: {
+            Text("Update")
+        } footer: {
+            if update?.isAppUpdatable == true {
+                Text("Updating installs a new oppi-server from npm and restarts this host. Running sessions are interrupted.")
+            } else {
+                Text("This install cannot be updated from the app. Run the command on the host, then restart the server.")
+            }
         }
     }
 
@@ -831,6 +931,60 @@ struct ServerDetailView: View {
 
             dismiss()
         }
+    }
+
+    private func startServerUpdate() async {
+        guard let version = info?.update?.latestVersion, !version.isEmpty else { return }
+        guard let api = await prepareAPIClient() else {
+            error = "Unable to prepare server transport"
+            return
+        }
+        let previousVersion = info?.version
+        updateInFlight = true
+        do {
+            let started = try await api.startServerUpdate(version: version)
+            if var current = info {
+                current.update = started
+                info = current
+            }
+            await pollUpdateUntilSettled(api: api, previousVersion: previousVersion)
+        } catch {
+            self.error = error.localizedDescription
+            updateInFlight = false
+        }
+    }
+
+    private func pollUpdateUntilSettled(api: APIClient, previousVersion: String?) async {
+        updatePollTask?.cancel()
+        let task = Task { @MainActor in
+            let deadline = Date().addingTimeInterval(180)
+            while !Task.isCancelled, Date() < deadline {
+                try? await Task.sleep(for: .seconds(1))
+                if Task.isCancelled { return }
+                do {
+                    let next = try await api.serverInfo()
+                    info = next
+                    error = nil
+                    if next.update?.isFailed == true {
+                        updateInFlight = false
+                        return
+                    }
+                    if let previousVersion, next.version != previousVersion {
+                        updateInFlight = false
+                        return
+                    }
+                    if next.update?.isRestarting == true, next.update?.needsManualRestart == true {
+                        updateInFlight = false
+                        return
+                    }
+                } catch {
+                    // Connection drop during restart is expected.
+                }
+            }
+            updateInFlight = false
+        }
+        updatePollTask = task
+        await task.value
     }
 
     private func load() async {

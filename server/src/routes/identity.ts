@@ -175,6 +175,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     helpers.json(res, {
       name: hostname(),
       version: ctx.serverVersion,
+      ...(ctx.serverUpdate ? { update: ctx.serverUpdate.snapshot() } : {}),
       uptime: uptimeSeconds,
       os: process.platform,
       arch: process.arch,

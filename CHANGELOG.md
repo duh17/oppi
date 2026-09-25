@@ -40,6 +40,10 @@ Example:
 
 ### Added
 
+- **Client:** Server settings can update a globally installed `oppi-server` with one tap, then reconnect. A single All Sessions notice points at Server when the paired host is older than this app build (0.50.0).
+- **Server:** `GET /server/info` reports install kind and a cached latest npm version. `POST /server/update` installs that exact version for global npm installs, then restarts the process (in-place `execve`, or a non-zero LaunchAgent exit so KeepAlive brings it back).
+- **Protocol:** Additive `update` object on `GET /server/info` and owner `POST /server/update`.
+- **Docs:** In-app server update on the Server settings usage page and README upgrade section.
 - **Client/Server:** A Dictation Dictionary can be edited on iPhone or through `oppi dictionary`. All-workspace and per-workspace lists share short vocabulary hints; agents can curate them from past sessions through the CLI.
 - **Client:** Pick HTML elements and Mermaid objects for review comments, with readable target descriptions and contextual Comment controls in full-screen viewers.
 - **Client/Server:** Host videos show adjacent `clip.srt` and `clip.<lang>.srt` captions in chat and the file browser, with the same language picker as workspace video.
