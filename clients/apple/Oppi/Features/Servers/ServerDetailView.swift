@@ -136,6 +136,7 @@ struct ServerDetailView: View {
     @State private var showAddServer = false
     @State private var showUpdateConfirmation = false
     @State private var updateInFlight = false
+    @State private var updateDidNotReturn = false
     @State private var copiedManualCommand = false
     @State private var updatePollTask: Task<Void, Never>?
 
@@ -414,8 +415,17 @@ struct ServerDetailView: View {
     private var serverUpdateSection: some View {
         let update = info?.update
         let belowMinimum = ServerReleaseVersion.isBelowMinimum(info?.version)
+        if belowMinimum || update?.available == true || update?.isInstalling == true
+            || update?.isRestarting == true || update?.isRestartNeeded == true
+            || update?.isFailed == true || updateInFlight || updateDidNotReturn
+            || (update != nil && update?.isAppUpdatable == false) {
         Section {
-            if let update {
+            if updateDidNotReturn {
+                Label("Server did not come back. Nothing was rolled back — check the host.",
+                      systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.themeOrange)
+                    .accessibilityIdentifier("server.update.didNotReturn")
+            } else if let update {
                 if update.isInstalling || update.isRestarting || updateInFlight {
                     HStack {
                         ProgressView()
@@ -428,6 +438,10 @@ struct ServerDetailView: View {
                         )
                     }
                     .accessibilityIdentifier("server.update.progress")
+                } else if update.isRestartNeeded {
+                    Label("Installed. Restart this Oppi server on the host to use the new version.",
+                          systemImage: "arrow.clockwise")
+                        .accessibilityIdentifier("server.update.restartNeeded")
                 } else if update.isFailed, let message = update.error, !message.isEmpty {
                     Label(message, systemImage: "exclamationmark.triangle")
                         .font(.footnote)
@@ -437,7 +451,8 @@ struct ServerDetailView: View {
                         .accessibilityIdentifier("server.update.error")
                 }
 
-                if update.available, update.isAppUpdatable, !update.isInstalling, !update.isRestarting {
+                if update.available, update.isAppUpdatable, !update.isInstalling,
+                   !update.isRestarting, !update.isRestartNeeded, !updateDidNotReturn {
                     if let latest = update.latestVersion {
                         Text(ServerUpdatePresentation.availableTitle(latestVersion: latest))
                             .accessibilityIdentifier("server.update.available")
@@ -479,6 +494,7 @@ struct ServerDetailView: View {
             } else {
                 Text("This install cannot be updated from the app. Run the command on the host, then restart the server.")
             }
+        }
         }
     }
 
@@ -941,6 +957,7 @@ struct ServerDetailView: View {
         }
         let previousVersion = info?.version
         updateInFlight = true
+        updateDidNotReturn = false
         do {
             let started = try await api.startServerUpdate(version: version)
             if var current = info {
@@ -958,28 +975,34 @@ struct ServerDetailView: View {
         updatePollTask?.cancel()
         let task = Task { @MainActor in
             let deadline = Date().addingTimeInterval(180)
+            var sawRestarting = false
             while !Task.isCancelled, Date() < deadline {
                 try? await Task.sleep(for: .seconds(1))
                 if Task.isCancelled { return }
                 do {
                     let next = try await api.serverInfo()
                     info = next
+                    sawRestarting = sawRestarting || next.update?.isRestarting == true
                     error = nil
                     if next.update?.isFailed == true {
                         updateInFlight = false
                         return
                     }
                     if let previousVersion, next.version != previousVersion {
+                        coordinator.connection(for: pairedServer.id)?.noteServerVersionAfterUpdate(next.version)
                         updateInFlight = false
                         return
                     }
-                    if next.update?.isRestarting == true, next.update?.needsManualRestart == true {
+                    if next.update?.isRestartNeeded == true {
                         updateInFlight = false
                         return
                     }
                 } catch {
                     // Connection drop during restart is expected.
                 }
+            }
+            if sawRestarting && !Task.isCancelled {
+                updateDidNotReturn = true
             }
             updateInFlight = false
         }

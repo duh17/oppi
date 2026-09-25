@@ -8,11 +8,7 @@
 import { spawn } from "node:child_process";
 
 import { isNpmVersionNewer, isValidNpmVersion } from "./cli/npm-version.js";
-import {
-  isLikelyGlobalNpmInstall,
-  manualUpdateCommand,
-  resolveInstallKind,
-} from "./install-kind.js";
+import { manualUpdateCommand, resolveInstallKindAsync } from "./install-kind.js";
 import { getServiceStatus } from "./launchd.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -91,7 +87,10 @@ export function isCurrentLaunchdJob(): boolean {
  * is unavailable and this is the LaunchAgent, exit 1 so KeepAlive restarts
  * after ThrottleInterval (5s).
  */
-export function restartUpdatedProcess(mode: ServerRestartMode): void {
+export function restartUpdatedProcess(
+  mode: ServerRestartMode,
+  isLaunchdJob: () => boolean = isCurrentLaunchdJob,
+): boolean {
   if (mode === "reexec") {
     const env: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
@@ -99,21 +98,34 @@ export function restartUpdatedProcess(mode: ServerRestartMode): void {
     }
     const execve = process.execve;
     if (typeof execve !== "function") {
-      if (isCurrentLaunchdJob()) process.exit(1);
-      process.exit(0);
+      if (isLaunchdJob()) process.exit(1);
+      return false;
     }
     try {
       execve(process.execPath, process.argv, env);
     } catch (err: unknown) {
       log.error("server_update.reexec_failed", { error: safeErrorMessage(err) });
-      if (isCurrentLaunchdJob()) process.exit(1);
-      process.exit(0);
+      if (isLaunchdJob()) process.exit(1);
+      return false;
     }
+    return false;
   }
-  if (mode === "launchd") {
-    process.exit(1);
-  }
-  process.exit(0);
+  if (mode === "launchd") process.exit(1);
+  return false;
+}
+
+// Called by the CLI's actual onRestart callback. A failed foreground exec
+// must bring up a fresh Server: start() on the stopped instance duplicates
+// upgrade listeners and does not restore its stopped subsystems.
+export async function serveUpdatedProcess(
+  mode: ServerRestartMode,
+  stop: () => Promise<void>,
+  restore: () => Promise<void>,
+  restart: (mode: ServerRestartMode) => boolean = restartUpdatedProcess,
+): Promise<void> {
+  if (mode === "manual") return;
+  await stop();
+  if (!restart(mode)) await restore();
 }
 
 function runNpm(
@@ -153,8 +165,9 @@ export class ServerUpdateService {
   private latestInFlight: Promise<string | null> | null = null;
   private installInFlight: Promise<void> | null = null;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
-  private installKindAt = 0;
-  private installKindCache: ReturnType<typeof resolveInstallKind> | null = null;
+  private installKindCache: Awaited<ReturnType<typeof resolveInstallKindAsync>> | null = null;
+  private installKindInFlight: Promise<Awaited<ReturnType<typeof resolveInstallKindAsync>>> | null =
+    null;
   private readonly onRestart?: (mode: ServerRestartMode) => void;
 
   constructor(options?: { onRestart?: (mode: ServerRestartMode) => void }) {
@@ -164,6 +177,7 @@ export class ServerUpdateService {
   /** Kick a non-blocking registry lookup. Safe to call from server start. */
   start(): void {
     void this.refreshLatest();
+    void this.resolveInstall();
   }
 
   async refreshLatest(): Promise<string | null> {
@@ -194,9 +208,14 @@ export class ServerUpdateService {
     return this.buildSnapshot();
   }
 
-  beginUpdate(versionRaw: unknown): ServerUpdateBeginResult {
+  async beginUpdate(versionRaw: unknown): Promise<ServerUpdateBeginResult> {
     const update = this.snapshot();
-    if (this.status === "installing" || this.status === "restarting" || this.installInFlight) {
+    if (
+      this.status === "installing" ||
+      this.status === "restarting" ||
+      this.status === "restart-needed" ||
+      this.installInFlight
+    ) {
       return {
         ok: false,
         status: 409,
@@ -219,7 +238,18 @@ export class ServerUpdateService {
     const version = versionRaw.trim();
 
     const packageInfo = getPackageInfo();
-    if (!isLikelyGlobalNpmInstall(packageInfo.name)) {
+    const install = await this.resolveInstall();
+    // Two requests can wait on the same initial npm root lookup.
+    if (this.installInFlight) {
+      return {
+        ok: false,
+        status: 409,
+        code: SERVER_UPDATE_ERROR.updateInProgress,
+        message: "An update is already in progress",
+        update: this.snapshot(),
+      };
+    }
+    if (!install.updatable) {
       return {
         ok: false,
         status: 400,
@@ -276,10 +306,11 @@ export class ServerUpdateService {
         log.warn("server_update.install_failed", { version, error: this.error });
         return;
       }
-      this.status = "restarting";
+      const mode = resolveRestartMode();
+      this.status = mode === "manual" ? "restart-needed" : "restarting";
       this.error = undefined;
-      log.info("server_update.install_succeeded", { version, restartMode: resolveRestartMode() });
-      this.scheduleRestart();
+      log.info("server_update.install_succeeded", { version, restartMode: mode });
+      this.scheduleRestart(mode);
     } catch (err: unknown) {
       this.status = "failed";
       this.error = safeErrorMessage(err);
@@ -289,29 +320,33 @@ export class ServerUpdateService {
     }
   }
 
-  private scheduleRestart(): void {
+  private scheduleRestart(mode: ServerRestartMode): void {
     if (!this.onRestart) return;
     if (this.restartTimer) clearTimeout(this.restartTimer);
-    const mode = resolveRestartMode();
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
       this.onRestart?.(mode);
     }, RESTART_FLUSH_MS);
   }
 
-  private currentInstall(): ReturnType<typeof resolveInstallKind> {
-    if (this.installKindCache && Date.now() - this.installKindAt < 60_000) {
-      return this.installKindCache;
+  private resolveInstall(): Promise<Awaited<ReturnType<typeof resolveInstallKindAsync>>> {
+    if (this.installKindCache) return Promise.resolve(this.installKindCache);
+    if (!this.installKindInFlight) {
+      this.installKindInFlight = resolveInstallKindAsync(getPackageInfo().name).then((value) => {
+        this.installKindCache = value;
+        return value;
+      });
     }
-    const value = resolveInstallKind(getPackageInfo().name);
-    this.installKindCache = value;
-    this.installKindAt = Date.now();
-    return value;
+    return this.installKindInFlight;
   }
 
   private buildSnapshot(): ServerUpdateInfo {
     const packageInfo = getPackageInfo();
-    const install = this.currentInstall();
+    const install = this.installKindCache ?? {
+      kind: "other" as const,
+      updatable: false,
+      manualCommand: manualUpdateCommand(packageInfo.name),
+    };
     const latest = this.latestVersion;
     const available =
       install.updatable && latest !== null && isNpmVersionNewer(latest, packageInfo.version);

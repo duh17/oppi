@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer, type Server as HttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,7 +8,11 @@ import { createRouteHelpers } from "../src/routes/http.js";
 import { createIdentityRoutes } from "../src/routes/identity.js";
 import { createServerUpdateRoutes } from "../src/routes/server-update.js";
 import type { RouteContext } from "../src/routes/types.js";
-import { ServerUpdateService } from "../src/server-update.js";
+import {
+  ServerUpdateService,
+  restartUpdatedProcess,
+  serveUpdatedProcess,
+} from "../src/server-update.js";
 import { SERVER_UPDATE_ERROR } from "../src/types/server-update.js";
 import { getPackageInfo, packageRootDir } from "../src/version.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
@@ -18,6 +23,7 @@ const originalFakeLatest = process.env.FAKE_NPM_LATEST;
 const originalViewFail = process.env.FAKE_NPM_VIEW_FAIL;
 const originalInstallFail = process.env.FAKE_NPM_INSTALL_FAIL;
 const originalInstallSleep = process.env.FAKE_NPM_INSTALL_SLEEP;
+const originalRootSleep = process.env.FAKE_NPM_ROOT_SLEEP;
 
 function restoreEnv(): void {
   process.env.PATH = originalPath;
@@ -27,6 +33,7 @@ function restoreEnv(): void {
     ["FAKE_NPM_VIEW_FAIL", originalViewFail],
     ["FAKE_NPM_INSTALL_FAIL", originalInstallFail],
     ["FAKE_NPM_INSTALL_SLEEP", originalInstallSleep],
+    ["FAKE_NPM_ROOT_SLEEP", originalRootSleep],
   ] as const) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -44,6 +51,7 @@ function writeFakeNpm(dir: string): string {
     join(bin, "npm"),
     `#!/bin/sh
 if [ "$1" = "root" ] && [ "$2" = "-g" ]; then
+  if [ -n "\${FAKE_NPM_ROOT_SLEEP:-}" ]; then sleep "\${FAKE_NPM_ROOT_SLEEP}"; fi
   printf '%s\\n' "\${FAKE_NPM_ROOT}"
   exit 0
 fi
@@ -149,7 +157,7 @@ describe("ServerUpdateService", () => {
       useFakeNpm(dir, { global: true, latest: "9.9.9" });
       const service = new ServerUpdateService();
       expect(await service.refreshLatest()).toBe("9.9.9");
-      const result = service.beginUpdate("1.0.0");
+      const result = await service.beginUpdate("1.0.0");
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected rejection");
       expect(result.code).toBe(SERVER_UPDATE_ERROR.versionNotLatest);
@@ -166,7 +174,7 @@ describe("ServerUpdateService", () => {
       useFakeNpm(dir, { latest: "9.9.9" });
       const service = new ServerUpdateService();
       expect(await service.refreshLatest()).toBe("9.9.9");
-      const result = service.beginUpdate("9.9.9");
+      const result = await service.beginUpdate("9.9.9");
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected rejection");
       expect(result.code).toBe(SERVER_UPDATE_ERROR.installNotUpdatable);
@@ -182,9 +190,9 @@ describe("ServerUpdateService", () => {
       useFakeNpm(dir, { global: true, latest: "9.9.9", installSleepSec: "1" });
       const service = new ServerUpdateService();
       expect(await service.refreshLatest()).toBe("9.9.9");
-      const first = service.beginUpdate("9.9.9");
+      const first = await service.beginUpdate("9.9.9");
       expect(first.ok).toBe(true);
-      const second = service.beginUpdate("9.9.9");
+      const second = await service.beginUpdate("9.9.9");
       expect(second.ok).toBe(false);
       if (second.ok) throw new Error("expected rejection");
       expect(second.code).toBe(SERVER_UPDATE_ERROR.updateInProgress);
@@ -206,7 +214,7 @@ describe("ServerUpdateService", () => {
       useFakeNpm(dir, { global: true, latest: "9.9.9", installFail: true });
       const service = new ServerUpdateService();
       expect(await service.refreshLatest()).toBe("9.9.9");
-      const started = service.beginUpdate("9.9.9");
+      const started = await service.beginUpdate("9.9.9");
       expect(started.ok).toBe(true);
       await vi.waitFor(
         () => {
@@ -227,7 +235,7 @@ describe("ServerUpdateService", () => {
       useFakeNpm(dir, { global: true, latest: "9.9.9" });
       const service = new ServerUpdateService();
       expect(await service.refreshLatest()).toBe("9.9.9");
-      const started = service.beginUpdate("9.9.9");
+      const started = await service.beginUpdate("9.9.9");
       expect(started.ok).toBe(true);
       await vi.waitFor(
         () => {
@@ -241,10 +249,90 @@ describe("ServerUpdateService", () => {
     }
   });
 
-  it("rejects arbitrary and empty versions at the boundary", () => {
+  it("keeps serving after manual install through onRestart", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-update-manual-"));
+    const execve = process.execve;
+    try {
+      useFakeNpm(dir, { global: true, latest: "9.9.9" });
+      Object.defineProperty(process, "execve", { configurable: true, value: undefined });
+      const stop = vi.fn(async () => {});
+      const restore = vi.fn(async () => {});
+      const service = new ServerUpdateService({
+        onRestart: (mode) => {
+          void serveUpdatedProcess(mode, stop, restore);
+        },
+      });
+      await service.refreshLatest();
+      expect((await service.beginUpdate("9.9.9")).ok).toBe(true);
+      await vi.waitFor(() => expect(service.snapshot().status).toBe("restart-needed"));
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(stop).not.toHaveBeenCalled();
+      expect(restore).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "execve", { configurable: true, value: execve });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores a fresh server after foreground exec fails through onRestart", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-update-recovery-"));
+    const execve = process.execve;
+    let listener: HttpServer | undefined;
+    try {
+      Object.defineProperty(process, "execve", {
+        configurable: true,
+        value: () => {
+          throw new Error("exec denied");
+        },
+      });
+      useFakeNpm(dir, { global: true, latest: "9.9.9" });
+      const calls: string[] = [];
+      listener = createServer((_req, res) => {
+        res.end("still serving");
+      });
+      await new Promise<void>((resolve) => listener?.listen(0, "127.0.0.1", resolve));
+      const address = listener.address();
+      if (!address || typeof address === "string") throw new Error("missing test listener");
+      const port = address.port;
+      const service = new ServerUpdateService({
+        onRestart: (mode) => {
+          void serveUpdatedProcess(
+            mode,
+            async () => {
+              await new Promise<void>((resolve, reject) =>
+                listener?.close((err) => (err ? reject(err) : resolve())),
+              );
+              calls.push("stopped");
+            },
+            async () => {
+              listener = createServer((_req, res) => {
+                res.end("still serving");
+              });
+              await new Promise<void>((resolve) => listener?.listen(port, "127.0.0.1", resolve));
+              calls.push("restored");
+            },
+            (mode) => restartUpdatedProcess(mode, () => false),
+          );
+        },
+      });
+      await service.refreshLatest();
+      expect((await service.beginUpdate("9.9.9")).ok).toBe(true);
+      await vi.waitFor(() => expect(calls).toEqual(["stopped", "restored"]), { timeout: 8_000 });
+      expect(await (await fetch(`http://127.0.0.1:${port}/server/info`)).text()).toBe(
+        "still serving",
+      );
+    } finally {
+      if (listener?.listening)
+        await new Promise<void>((resolve) => listener?.close(() => resolve()));
+      Object.defineProperty(process, "execve", { configurable: true, value: execve });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects arbitrary and empty versions at the boundary", async () => {
     const service = new ServerUpdateService();
     for (const version of ["latest", "", 1, null, undefined, { version: "1.0.0" }]) {
-      const result = service.beginUpdate(version);
+      const result = await service.beginUpdate(version);
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected rejection");
       expect(result.code).toBe(SERVER_UPDATE_ERROR.invalidVersion);
@@ -258,9 +346,11 @@ describe("POST /server/update and GET /server/info", () => {
     try {
       useFakeNpm(dir, { viewFail: true });
       const service = new ServerUpdateService();
-      await service.refreshLatest();
+      process.env.FAKE_NPM_ROOT_SLEEP = "1";
+      service.start();
       const dispatch = createIdentityRoutes(identityCtx(service), createRouteHelpers());
       const res = makeResponse();
+      const startedAt = performance.now();
       const handled = await dispatch({
         method: "GET",
         path: "/server/info",
@@ -269,6 +359,7 @@ describe("POST /server/update and GET /server/info", () => {
         res: res as never,
       });
       expect(handled).toBe(true);
+      expect(performance.now() - startedAt).toBeLessThan(500);
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body) as {
         update: { latestVersion: string | null; status: string; installKind: string };
@@ -276,6 +367,7 @@ describe("POST /server/update and GET /server/info", () => {
       expect(body.update.latestVersion).toBeNull();
       expect(body.update.status).toBe("idle");
       expect(body.update.installKind).toBe("other");
+      await service.refreshLatest();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

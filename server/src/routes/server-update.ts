@@ -42,7 +42,7 @@ export function createServerUpdateRoutes(
     }
 
     const version = (body as { version?: unknown }).version;
-    const result = service.beginUpdate(version);
+    const result = await service.beginUpdate(version);
     if (!result.ok) {
       log.info("server_update.rejected", { code: result.code });
       helpers.json(res, { error: result.message, code: result.code }, result.status);

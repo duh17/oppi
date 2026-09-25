@@ -2,7 +2,7 @@
 export type ServerInstallKind = "npm-global" | "other";
 
 /** In-flight or last completed in-app update. */
-export type ServerUpdateStatus = "idle" | "installing" | "restarting" | "failed";
+export type ServerUpdateStatus = "idle" | "installing" | "restarting" | "restart-needed" | "failed";
 
 /**
  * How the process will come back after a successful `npm install -g`.

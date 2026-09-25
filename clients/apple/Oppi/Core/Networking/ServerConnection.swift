@@ -1698,6 +1698,10 @@ final class ServerConnection {
         await task.value
     }
 
+    func noteServerVersionAfterUpdate(_ version: String) {
+        connectedServerVersion = version
+    }
+
     private func applyStreamCapabilities(
         _ info: ServerInfo,
         startAppEventStream: Bool

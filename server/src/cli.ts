@@ -66,7 +66,7 @@ import { resolveInstallKind } from "./install-kind.js";
 import {
   fetchLatestPublishedVersion,
   installGlobalPackage,
-  restartUpdatedProcess,
+  serveUpdatedProcess,
 } from "./server-update.js";
 import type { ServerRestartMode } from "./types/server-update.js";
 import { cmdConfig } from "./cli/commands/config.js";
@@ -170,20 +170,28 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
     });
   }
 
-  const server = new Server(storage, apnsConfig, {
-    onRestartAfterUpdate: (mode: ServerRestartMode) => {
-      void (async () => {
-        console.log("");
-        if (mode === "manual") {
-          console.log(c.yellow("  Installed. Restart this Oppi server to use the new version."));
-        } else {
-          console.log(c.dim("  Restarting with the updated Oppi server..."));
-        }
-        await stopServing(server);
-        restartUpdatedProcess(mode);
-      })();
-    },
-  });
+  const onRestartAfterUpdate = (mode: ServerRestartMode): void => {
+    console.log("");
+    console.log(
+      mode === "manual"
+        ? c.yellow("  Installed. Restart this Oppi server to use the new version.")
+        : c.dim("  Restarting with the updated Oppi server..."),
+    );
+    void serveUpdatedProcess(
+      mode,
+      () => stopServing(server),
+      async () => {
+        // stop() is terminal for a Server; replace it rather than calling start twice.
+        server = new Server(storage, apnsConfig, { onRestartAfterUpdate });
+        await server.start();
+        shuttingDown = false;
+      },
+    ).catch((err: unknown) => {
+      console.error(c.red("Update restart recovery failed:"), safeErrorMessage(err));
+      process.exit(1);
+    });
+  };
+  let server = new Server(storage, apnsConfig, { onRestartAfterUpdate });
 
   async function shutdown(code: number, reason?: string): Promise<void> {
     await stopServing(server, reason);
@@ -954,7 +962,7 @@ async function cmdSelfUpdate(flags: Record<string, string>): Promise<void> {
   console.log("");
   console.log(`  Current: ${c.dim(`${info.name}@${info.version}`)}`);
 
-  let latest: string | null = null;
+  let latest: string | null;
   try {
     latest = await fetchLatestPublishedVersion(info.name);
     if (!latest) throw new Error("npm returned an empty version");
@@ -968,18 +976,20 @@ async function cmdSelfUpdate(flags: Record<string, string>): Promise<void> {
         : c.dim(`${latest} (current)`);
     console.log(`  Latest:  ${label}`);
   } catch {
-    console.log(c.yellow("  Could not check npm for the latest version."));
-    console.log(c.dim("  Continuing with npm install -g oppi-server@latest."));
+    console.log(c.red("  Could not determine the latest npm version; update refused."));
+    process.exitCode = 1;
+    return;
   }
   console.log("");
 
-  const target = latest ?? "latest";
+  if (!latest || !isNpmVersionNewer(latest, info.version)) {
+    console.log(c.green("  Oppi server is already current or ahead of the registry."));
+    if (flags.check !== "true" && flags.dry !== "true") process.exitCode = 1;
+    return;
+  }
+  const target = latest;
   if (flags.check === "true" || flags.dry === "true") {
-    if (latest && !isNpmVersionNewer(latest, info.version)) {
-      console.log(c.green("  Oppi server is already current."));
-    } else {
-      console.log(c.yellow("  Update available."));
-    }
+    console.log(c.yellow("  Update available."));
     console.log(c.dim(`  Command: npm install -g ${info.name}@${target}`));
     console.log("");
     return;

@@ -36,6 +36,7 @@ struct ServerInfo: Codable, Sendable, Equatable {
         var isInstalling: Bool { status == "installing" }
         var isRestarting: Bool { status == "restarting" }
         var isFailed: Bool { status == "failed" }
+        var isRestartNeeded: Bool { status == "restart-needed" }
         var needsManualRestart: Bool { restartMode == "manual" }
     }
 

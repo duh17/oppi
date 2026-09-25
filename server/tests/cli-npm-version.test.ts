@@ -1,10 +1,58 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { getPackageInfo } from "../src/version.js";
 
 import {
   compareNpmVersions,
   isNpmVersionNewer,
   isValidNpmVersion,
 } from "../src/cli/npm-version.js";
+
+describe("oppi update registry version rule", () => {
+  it.each([
+    ["unknown", "1", "Could not determine the latest npm version"],
+    ["current", "0", "already current or ahead"],
+  ])("refuses %s without invoking install", (_name, fail, message) => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-cli-update-"));
+    try {
+      const bin = join(dir, "bin");
+      mkdirSync(bin);
+      writeFileSync(
+        join(bin, "npm"),
+        `#!/bin/sh
+if [ "$1" = "view" ]; then
+  if [ "${fail}" = "1" ]; then exit 1; fi
+  echo "${getPackageInfo().version}"
+  exit 0
+fi
+if [ "$1" = "root" ]; then echo "${dir}/prefix/lib/node_modules"; exit 0; fi
+echo "unexpected install" >&2
+exit 44
+`,
+        { mode: 0o755 },
+      );
+      const run = spawnSync("bun", ["src/cli.ts", "update"], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        timeout: 15_000,
+        env: {
+          ...process.env,
+          HOME: dir,
+          OPPI_DATA_DIR: join(dir, "data"),
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+        },
+      });
+      expect(run.status).toBe(1);
+      expect(run.stdout).toContain(message);
+      expect(run.stderr).not.toContain("unexpected install");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("npm version comparison", () => {
   it("treats a stable release as newer than its prerelease", () => {
