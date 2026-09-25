@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { constants } from "node:fs";
 import { access, open, opendir, realpath, stat, type FileHandle } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, resolve } from "node:path";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
@@ -124,7 +125,7 @@ async function openVerifiedFile(
  * Serve GET/HEAD bytes with one single-byte-range policy (200/206/416).
  * Headers are written only after the verified open, so an open failure is a
  * clean 500 and a swapped path a 404 instead of a truncated 200. Returns the
- * response status.
+ * response status once the body transfer ends and the handle is closed.
  */
 export async function sendFileBytes(
   req: IncomingMessage | undefined,
@@ -181,17 +182,21 @@ export async function sendFileBytes(
   }
 
   // An empty file has no readable range; createReadStream on a handle still
-  // ends cleanly, and autoClose releases the handle.
+  // ends cleanly. A client abort (players cancel most Range GETs) must still
+  // close the handle: `pipe` only unpipes on abort, leaving the handle for GC,
+  // and Node's DEP0137 GC close crashes the server. `pipeline` destroys the
+  // source on abort, and the explicit close covers every path. Headers are
+  // already sent, so failures here are contained: no 500 body, no rejection
+  // escaping to the void'd HTTP handler.
   const stream = handle.createReadStream(byteRange ?? {});
-  stream.once("error", (error) => {
-    if (!res.headersSent) {
-      sendJsonError(res, 500, "Failed to read file");
-      return;
-    }
-    res.destroy(error);
-  });
   res.writeHead(status, headers);
-  stream.pipe(res as NodeJS.WritableStream);
+  try {
+    await pipeline(stream, res);
+  } catch {
+    if (!res.destroyed) res.destroy();
+  } finally {
+    await handle.close().catch(() => {});
+  }
   return status;
 }
 

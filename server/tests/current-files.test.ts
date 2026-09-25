@@ -9,12 +9,34 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { FileHandle } from "node:fs/promises";
+import {
+  createServer,
+  request as httpRequest,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+// Record every handle `sendFileBytes` opens so a test can prove it was closed
+// (a closed FileHandle reports fd -1). Opens pass through unchanged.
+const openedHandles = vi.hoisted(() => [] as { path: string; handle: FileHandle }[]);
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      openedHandles.push({ path: String(args[0]), handle });
+      return handle;
+    },
+  };
+});
 
 import { sendFileBytes, statServableFile } from "../src/current-file.js";
 import { listDirectoryEntries } from "../src/directory-listing.js";
@@ -470,6 +492,65 @@ describe("checked path swapped before the bytes are served", () => {
       expect(status).toBe(404);
       expect(res.statusCode).toBe(404);
       expect(res.text()).not.toContain("host-secret");
+    }
+  });
+
+  it("closes the file handle when a client aborts a Range GET mid-transfer", async () => {
+    const root = tempRoot("oppi-range-abort-");
+    const clip = join(root, "clip.mp4");
+    // Far larger than socket and stream buffers, so the abort lands mid-transfer.
+    writeFileSync(clip, Buffer.alloc(8 * 1024 * 1024, 7));
+    const checked = await statServableFile(clip);
+    if (checked.kind !== "ok") throw new Error(`fixture not servable: ${checked.kind}`);
+
+    const served: { sending: Promise<number>; closed: Promise<unknown> }[] = [];
+    const server = createServer((req, res) => {
+      served.push({
+        closed: once(res, "close"),
+        sending: sendFileBytes(req, res, req.method ?? "GET", checked.file, {
+          rangeLogTag: "test",
+        }),
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const get = (range: string, abortOnFirstChunk: boolean) =>
+      new Promise<{ status: number; bytes: number }>((resolveGet, rejectGet) => {
+        const req = httpRequest({ port, host: "127.0.0.1", headers: { range } }, (res) => {
+          let bytes = 0;
+          res.on("data", (chunk: Buffer) => {
+            bytes += chunk.length;
+            if (abortOnFirstChunk) {
+              req.destroy();
+              resolveGet({ status: res.statusCode ?? 0, bytes });
+            }
+          });
+          res.on("end", () => resolveGet({ status: res.statusCode ?? 0, bytes }));
+        });
+        req.on("error", (error) => {
+          if (!abortOnFirstChunk) rejectGet(error);
+        });
+        req.end();
+      });
+
+    try {
+      const aborted = await get("bytes=1024-", true);
+      expect(aborted.status).toBe(206);
+      expect(aborted.bytes).toBeGreaterThan(0);
+      await served[0].closed;
+      expect(await served[0].sending).toBe(206);
+      const abortedHandles = openedHandles.filter((entry) => entry.path === clip);
+      expect(abortedHandles).toHaveLength(1);
+      expect(abortedHandles[0].handle.fd).toBe(-1);
+
+      const next = await get("bytes=0-99", false);
+      expect(next).toEqual({ status: 206, bytes: 100 });
+      expect(await served[1].sending).toBe(206);
+    } finally {
+      server.closeAllConnections();
+      server.close();
     }
   });
 
