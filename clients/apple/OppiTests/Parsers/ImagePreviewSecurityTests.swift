@@ -207,8 +207,14 @@ struct HTMLContentSecurityTests {
         #expect(!HTMLContentSecurity.allowsEmbeddedNavigation(
             to: try #require(URL(string: "https://example.com/files/raw?path=/tmp/report.html"))
         ))
-        #expect(HTMLContentSecurity.isHostRawFileURL(
+        #expect(HTMLContentSecurity.isCurrentFileReadURL(
             try #require(URL(string: "https://example.com/files/raw?path=/tmp/report.html"))
+        ))
+        #expect(HTMLContentSecurity.isCurrentFileReadURL(
+            try #require(URL(string: "https://example.com/files/current?origin=host&path=/tmp/report.html"))
+        ))
+        #expect(!HTMLContentSecurity.isCurrentFileReadURL(
+            try #require(URL(string: "https://example.com/files/currently"))
         ))
     }
 

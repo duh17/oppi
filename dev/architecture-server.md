@@ -117,7 +117,8 @@ graph TD
 | `routes/*`                                        | HTTP parsing, auth-checked route boundaries, response shapes, app-event emission                                     | lifecycle, list, trace, or runtime policy  |
 | `session-lifecycle-service.ts`                    | create/import, resume/open, stop, fork, delete, and mirror promotion policy                                          | HTTP response mapping                      |
 | `session-list-service.ts`                         | recent/workspace/archive session row shaping, active runtime overlays, local-session catalog joins                   | route query parsing                        |
-| `session-trace-service.ts`                        | trace source precedence, tool output lookup, overall diffs, changed-file summaries, and raw changed-file read policy | streaming bytes to HTTP responses          |
+| `session-trace-service.ts`                        | trace source precedence, tool output lookup, overall diffs, changed-file summaries, and session-raw result mapping   | streaming bytes to HTTP responses          |
+| `current-file.ts`                                 | current-file origin resolution, sandbox realpath confinement, servable-file limits, byte ranges, sidecar discovery  | route parsing and HTTP status mapping      |
 | `session-title-generator.ts` + `token-usage.ts`   | Provider-owned Pi model requests and static built-in pricing lookup                                                  | session lifecycle or route behavior        |
 | `agent-launch-service.ts`                         | idempotent saved-Agent and schedule launches into managed sessions                                                   | HTTP response mapping                      |
 | `agent-schedules.ts` + `agent-schedule-runner.ts` | durable schedule definitions, due-run materialization, lease claiming, dispatch, and run history                     | Apple UI routing                           |
@@ -149,7 +150,7 @@ The server's supported remote boundary is HTTPS/WSS with per-device P-256 keys a
 - `routes/server-resources.ts` — server-global Skill/extension catalogs, server-authored capabilities, contained Skill file reads, enable/disable, and Mobile Output Guide configuration.
 - `routes/uploads.ts` — chat attachment upload records and content.
 - `routes/workspace-files.ts` — workspace path, directory, and raw-file routes.
-- `routes/host-files.ts` — authenticated exact-path host-file GET/HEAD and home-directory listings.
+- `routes/host-files.ts` — unified `/files/current` reads and same-stem sidecar discovery, legacy exact-path host `/files/raw`, and home-directory listings.
 - `routes/themes.ts`, `routes/skills.ts`, `routes/provider-auth.ts`, `routes/telemetry.ts`, and E2E harness routes.
 
 WebSocket upgrade paths are explicit:
@@ -307,8 +308,8 @@ Keep these high-churn modules small and explicit:
 | Managed runtime                             | `server/src/sessions.ts`, `server/src/session-*.ts`, `server/src/sdk-backend.ts`                                                                                                       |
 | Terminal mirror runtime                     | `server/src/runtime-router.ts`, `server/src/pi-tui-mirror-runtime.ts`, `server/src/pi-tui-mirror-contract.ts`, `pi-extensions/oppi-mirror/extensions/oppi-mirror.ts`                   |
 | Extension UI relay                          | `server/src/sdk-ui-bridge.ts`, `server/src/extension-ui-contract.ts`, `server/src/extension-ui-state.ts`, `server/src/session-agent-events.ts`                                         |
-| Workspace files and media                   | `server/src/routes/workspace-files.ts`, `server/src/file-serving-policy.ts`, `server/src/routes/uploads.ts`, `server/src/session-attachments.ts`, `server/src/http-range.ts`           |
-| Host file raw                               | `server/src/routes/host-files.ts`, `server/src/host-file-path.ts`, `server/src/file-serving-policy.ts`, `server/src/http-range.ts`                                                     |
+| Workspace files and media                   | `server/src/routes/workspace-files.ts`, `server/src/current-file.ts`, `server/src/file-serving-policy.ts`, `server/src/routes/uploads.ts`, `server/src/session-attachments.ts`, `server/src/http-range.ts` |
+| Current-file and host file reads            | `server/src/routes/host-files.ts`, `server/src/current-file.ts`, `server/src/host-file-path.ts`, `server/src/file-serving-policy.ts`, `server/src/http-range.ts`                      |
 | Protocol contract                           | `server/src/types/protocol.ts`, `server/src/types.ts`, `protocol/*.json`                                                                                                               |
 | Pi model/auth and pricing                   | `server/src/session-title-generator.ts`, `server/src/token-usage.ts`, `server/src/model-catalog.ts`                                                                                    |
 | Provider usage quotas                       | [provider-quotas.md](../docs/provider-quotas.md); `server/src/provider-quota/` (built-in adapters and generic extension quota declarations share the DTO and Apple compact/detail presentation) |

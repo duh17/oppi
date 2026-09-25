@@ -321,8 +321,8 @@ describe("file transport security parity", () => {
     );
     await rawFinished;
 
-    expect(errors).toEqual([{ status: 500, message: "Failed to read file" }]);
     expect(rawRes.statusCode).toBe(500);
+    expect(JSON.parse(rawRes.body.toString("utf8"))).toEqual({ error: "Failed to read file" });
   });
 
   it("serves workspace raw byte ranges with partial-content headers", async () => {

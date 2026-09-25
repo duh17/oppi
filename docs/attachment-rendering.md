@@ -188,16 +188,16 @@ Current client behavior:
 
 ## Markdown image resolution
 
-Markdown `![]()` and `![[]]` embed Oppi-backed images through the same origin-first decision as video and audio. Public HTTPS images stay tap-to-load. Owner-host files use authenticated full-byte GET `/files/raw` (not range). Sandbox sessions remap guest POSIX paths the same way inline AV does and never use owner `/files/raw` for guest paths.
+Markdown `![]()` and `![[]]` embed Oppi-backed images through the same origin-first decision as video and audio. Public HTTPS images stay tap-to-load. Owner-host files use an authenticated full-byte GET (not range) on the host-origin current-file route: `/files/current?origin=host` when the server reports `currentFiles`, otherwise `/files/raw`. Sandbox sessions remap guest POSIX paths the same way inline AV does and never use a host-origin read for guest paths.
 
 | Markdown source                        | Current behavior                                                                                            |
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `![x](images/a.png)`                   | Resolves as a workspace-relative file when the renderer has workspace context.                              |
 | `![[docs/a.png]]`                      | Same native image view as `![]()` for an Oppi-backed image.                                                 |
 | `![x](../images/a.png)`                | Resolves relative to the markdown file directory when the source file path is known.                        |
-| `![x](/abs/path.png)`                  | Owner-host image. Authenticated GET `/files/raw` on render.                                                 |
-| `![x](~/a.png)`                        | Owner-host image. Authenticated GET `/files/raw` on render.                                                 |
-| `![x](file:///abs/path.png)`           | Local `file://` owner-host image. Authenticated GET `/files/raw` on render.                                 |
+| `![x](/abs/path.png)`                  | Owner-host image. Authenticated host-origin current-file GET on render.                                                 |
+| `![x](~/a.png)`                        | Owner-host image. Authenticated host-origin current-file GET on render.                                                 |
+| `![x](file:///abs/path.png)`           | Local `file://` owner-host image. Authenticated host-origin current-file GET on render.                                 |
 | `![x](https://example.com/a.png)`      | Shows a tap-to-load remote image prompt before fetching.                                                    |
 | `![x](http://...)`, localhost, LAN IPs | Blocked by the remote image policy.                                                                         |
 | `![x](data:...)`                       | Skipped by the markdown image resolver.                                                                     |
@@ -216,13 +216,13 @@ Inline video uses Oppi's authenticated range-streaming player. Playback never st
 
 The player always reserves 16:9 geometry because wiki-file syntax has no dimensions. Playback metadata never resizes an embed, including later remounts. Portrait and landscape clips letterbox inside that slot. Image and PDF export always use the deterministic fallback card; source export keeps the original Markdown.
 
-Workspace and session video can overlay same-directory sidecar captions (`stem(.lang)?.(vtt|srt|ass|ssa)`). Auto-pick uses a bare stem, then the device locale, then the first match. A language control appears only when more than one sidecar matches. Session and sandbox files probe exact `stem.ext` names and never list the directory. Host `/files/raw` media keeps playing with no sidecar. Captions follow `AVPlayer.currentTime` in an overlay; Oppi does not inject AVPlayer closed captions.
+Workspace, host, and session video can overlay same-directory sidecar captions (`stem(.lang)?.(vtt|srt|ass|ssa)`). Auto-pick uses a bare stem, then the device locale, then the first match. A language control appears only when more than one sidecar matches. Session and sandbox files probe exact `stem.ext` names and never list the directory. Host files ask the server for bounded same-stem discovery beside the existing video (`/files/current/sidecars`), which returns only matching regular-file names, never a directory listing. A server without the `currentFiles` capability returns no host sidecars, and the video still plays. A missing, oversized, unreadable, or unparseable sidecar never blocks playback. Captions follow `AVPlayer.currentTime` in an overlay; Oppi does not inject AVPlayer closed captions.
 
 ## Markdown inline audio
 
 Use `![[audio-file]]` or `![label](audio-file)` to embed a current workspace, worktree, session-reported, or exact owner host audio file as a compact native player strip. Use `[[audio-file]]` or `[label](audio-file)` when the file must remain an ordinary navigable link that opens the lyrics-first full-screen player.
 
-Eligible extensions are the `FileType` audio set: `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`, `opus`, and `caf`. The strip is compact (about 56–72 pt) and never uses 16:9 video geometry. Playback never starts automatically. Expand, or a plain `[[audio-file]]` link, opens the full-screen player. The full-screen player shares the original audio file through the iOS share sheet and keeps its filename. Wiki audio without a transcript or sidecar shows “No lyrics”. Workspace and session audio can load same-directory sidecar lyrics (`stem(.lang)?.(lrc|vtt|srt|ass|ssa)`) on expand, not on the compact strip. Host files do not load sidecars. Voice `audio_presentation` rows keep the message transcript and do not fetch a sidecar. Oppi does not embed remote audio sites, arbitrary URLs, HTML `<audio>`, `data:`, `attachment:` IDs, or `javascript:` through this syntax. Those targets never become an audio segment and do not start a fetch. Failure keeps the strip up with “Audio unavailable” and an open-file fallback.
+Eligible extensions are the `FileType` audio set: `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`, `opus`, and `caf`. The strip is compact (about 56–72 pt) and never uses 16:9 video geometry. Playback never starts automatically. Expand, or a plain `[[audio-file]]` link, opens the full-screen player. The full-screen player shares the original audio file through the iOS share sheet and keeps its filename. Wiki audio without a transcript or sidecar shows “No lyrics”. Workspace and session audio can load same-directory sidecar lyrics (`stem(.lang)?.(lrc|vtt|srt|ass|ssa)`) on expand, not on the compact strip. Host files use the same bounded same-stem discovery as host video. Voice `audio_presentation` rows keep the message transcript and do not fetch a sidecar. Oppi does not embed remote audio sites, arbitrary URLs, HTML `<audio>`, `data:`, `attachment:` IDs, or `javascript:` through this syntax. Those targets never become an audio segment and do not start a fetch. Failure keeps the strip up with “Audio unavailable” and an open-file fallback.
 
 ## Markdown inline USDZ
 

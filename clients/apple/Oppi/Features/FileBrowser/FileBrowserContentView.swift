@@ -699,11 +699,12 @@ struct FileBrowserContentView: View {
                 makeMarkdownUSDZFile: { embed in
                     try await markdownUSDZFile(api: api, embed: embed)
                 },
-                makeTimedTextSidecar: { [workspaceId, worktreeId, sessionId, workspaceRuntime] mediaPath, kind, reference in
+                makeTimedTextSidecar: { [workspaceId, worktreeId, sessionId, controlSessionId, workspaceRuntime] mediaPath, kind, reference in
                     if case .sessionFile = source {
                         return await Self.loadTimedTextResult(
                             api: api, path: mediaPath, kind: kind, source: source,
-                            workspaceId: workspaceId, worktreeId: worktreeId
+                            workspaceId: workspaceId, worktreeId: worktreeId,
+                            controlSessionId: controlSessionId
                         )
                     }
                     return await TimedText.load(
@@ -836,7 +837,8 @@ struct FileBrowserContentView: View {
             kind: kind,
             source: source,
             workspaceId: workspaceId,
-            worktreeId: worktreeId
+            worktreeId: worktreeId,
+            controlSessionId: controlSessionId
         )
         guard isCurrentFile(path) else { return }
         timedText = result
@@ -851,6 +853,7 @@ struct FileBrowserContentView: View {
         let source = source
         let workspaceId = workspaceId
         let worktreeId = worktreeId
+        let controlSessionId = controlSessionId
         return {
             await Self.loadTimedTextResult(
                 api: api,
@@ -858,7 +861,8 @@ struct FileBrowserContentView: View {
                 kind: kind,
                 source: source,
                 workspaceId: workspaceId,
-                worktreeId: worktreeId
+                worktreeId: worktreeId,
+                controlSessionId: controlSessionId
             )
         }
     }
@@ -869,50 +873,22 @@ struct FileBrowserContentView: View {
         kind: TimedText.MediaKind,
         source: FileBrowserContentSource,
         workspaceId: String,
-        worktreeId: String?
+        worktreeId: String?,
+        controlSessionId: String?
     ) async -> TimedText.LoadResult {
-        let access: TimedText.Access
-        switch source {
+        let route: MarkdownVideoMediaSourceRoute = switch source {
         case .hostFile:
-            access = TimedText.Access(
-                sourceKind: .host,
-                fetchFile: { _ in throw CocoaError(.fileNoSuchFile) }
-            )
+            .host(path: path)
         case .sessionFile(let sessionId):
-            access = TimedText.Access(
-                sourceKind: .session,
-                fetchFile: { sidecarPath in
-                    try await api.getSessionFileData(
-                        workspaceId: workspaceId,
-                        sessionId: sessionId,
-                        path: sidecarPath
-                    )
-                }
-            )
+            .session(workspaceID: workspaceId, sessionID: sessionId, path: path)
         case .workspaceFile:
-            access = TimedText.Access(
-                sourceKind: .workspace,
-                listDirectory: { directory in
-                    try await api.listWorkspaceDirectory(
-                        workspaceId: workspaceId,
-                        path: directory,
-                        worktreeId: worktreeId
-                    ).entries.filter { !$0.isDirectory }.map(\.name)
-                },
-                fetchFile: { sidecarPath in
-                    try await api.browseWorkspaceFile(
-                        workspaceId: workspaceId,
-                        path: sidecarPath,
-                        worktreeId: worktreeId
-                    )
-                }
-            )
+            .workspace(workspaceID: workspaceId, path: path, worktreeID: worktreeId)
         }
         return await TimedText.load(
             mediaPath: path,
             kind: kind,
             locale: .current,
-            access: access
+            access: TimedText.access(for: route, api: api, controlSessionId: controlSessionId)
         )
     }
 

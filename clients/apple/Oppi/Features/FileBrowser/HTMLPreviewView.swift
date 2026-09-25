@@ -115,9 +115,13 @@ enum HTMLContentSecurity {
         return scheme == "http" || scheme == "https"
     }
 
-    static func isHostRawFileURL(_ url: URL?) -> Bool {
+    /// Authenticated current-file routes (`/files/raw`, `/files/current`,
+    /// `/files/current/sidecars`) must never be URL-loaded by WKWebView.
+    static func isCurrentFileReadURL(_ url: URL?) -> Bool {
         guard let url, isHTTPURL(url) else { return false }
-        return url.path == "/files/raw" || url.path.hasSuffix("/files/raw")
+        return ["/files/raw", "/files/current", "/files/current/sidecars"].contains { route in
+            url.path == route || url.path.hasSuffix(route)
+        }
     }
 }
 
@@ -127,7 +131,7 @@ enum HostFilePreviewWebViewLoadMode: Equatable {
 }
 
 /// Host HTML/SVG must stay on fetch -> `loadHTMLString` + CSP.
-/// Direct WKWebView URL loads of `/files/raw` are forbidden.
+/// Direct WKWebView URL loads of current-file routes are forbidden.
 enum HostFilePreviewPolicy {
     static func usesStringFetchViewer(for path: String) -> Bool {
         webViewLoadMode(for: path) == .htmlString
@@ -312,7 +316,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
-        if HTMLContentSecurity.isHostRawFileURL(navigationAction.request.url) {
+        if HTMLContentSecurity.isCurrentFileReadURL(navigationAction.request.url) {
             decisionHandler(.cancel)
             return
         }
@@ -334,7 +338,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        if HTMLContentSecurity.isHostRawFileURL(navigationAction.request.url) {
+        if HTMLContentSecurity.isCurrentFileReadURL(navigationAction.request.url) {
             return nil
         }
         if HTMLContentSecurity.isHTTPURL(navigationAction.request.url),

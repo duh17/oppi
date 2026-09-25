@@ -229,27 +229,56 @@ struct TimedTextTests {
         #expect(TimedText.currentCue(in: cues, at: 5)?.text == nil)
     }
 
-    @Test("host access never lists or fetches a sidecar")
-    func hostNeverLoadsSidecar() async {
+    @Test("host video discovers bare and language sidecars beside an absolute path")
+    func hostDiscoversBareAndLanguageSidecars() async {
+        let recorder = TimedTextPathRecorder()
+        let files = [
+            "/Users/owner/Movies/clip.srt": "1\n00:00:01,000 --> 00:00:02,000\nBare\n",
+            "/Users/owner/Movies/clip.fr.srt": "1\n00:00:01,000 --> 00:00:02,000\nFR\n",
+        ]
         let access = TimedText.Access(
             sourceKind: .host,
-            listDirectory: { _ in
-                Issue.record("host must not list")
-                return ["clip.lrc"]
+            sidecarNames: { mediaPath in
+                recorder.listed.append(mediaPath)
+                return ["clip.fr.srt", "clip.srt", "clip.lrc"]
             },
+            fetchFile: { path in
+                recorder.fetched.append(path)
+                if let text = files[path] { return Data(text.utf8) }
+                throw APIError.server(status: 404, message: "missing")
+            }
+        )
+        let result = await TimedText.load(
+            mediaPath: "/Users/owner/Movies/clip.mp4",
+            kind: .video,
+            locale: Locale(identifier: "fr"),
+            access: access
+        )
+        #expect(recorder.listed == ["/Users/owner/Movies/clip.mp4"])
+        // Video ignores .lrc; both subtitle tracks are offered, bare wins.
+        #expect(Set(recorder.fetched) == Set(files.keys))
+        #expect(result.showsLanguageControl)
+        #expect(result.selected?.candidate.fileName == "clip.srt")
+        #expect(TimedText.currentCue(in: result.selected?.cues ?? [], at: 1.5)?.text == "Bare")
+    }
+
+    @Test("host discovery failure, such as an older server, yields no tracks")
+    func hostDiscoveryFailureIsEmpty() async {
+        let access = TimedText.Access(
+            sourceKind: .host,
+            sidecarNames: { _ in throw CocoaError(.featureUnsupported) },
             fetchFile: { _ in
-                Issue.record("host must not fetch sidecar")
+                Issue.record("no sidecar should be fetched")
                 return Data()
             }
         )
         let result = await TimedText.load(
-            mediaPath: "/tmp/clip.m4a",
-            kind: .audio,
+            mediaPath: "/tmp/clip.mp4",
+            kind: .video,
             locale: Locale(identifier: "en"),
             access: access
         )
         #expect(result.tracks.isEmpty)
-        #expect(!result.showsLanguageControl)
     }
 
     @Test("session load probes exact stem.ext and has no language picker")
@@ -258,7 +287,7 @@ struct TimedTextTests {
         let files = ["media/clip.vtt": "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nHi\n"]
         let access = TimedText.Access(
             sourceKind: .session,
-            listDirectory: { _ in
+            sidecarNames: { _ in
                 Issue.record("session must not list")
                 return []
             },
@@ -292,7 +321,7 @@ struct TimedTextTests {
         ]
         let access = TimedText.Access(
             sourceKind: .workspace,
-            listDirectory: { path in
+            sidecarNames: { path in
                 recorder.listed.append(path)
                 return ["clip.en.srt", "clip.zh.vtt", "notes.txt", "other.lrc"]
             },
@@ -310,7 +339,7 @@ struct TimedTextTests {
             locale: Locale(identifier: "zh-Hans"),
             access: access
         )
-        #expect(recorder.listed == ["media/"])
+        #expect(recorder.listed == ["media/clip.mp4"])
         #expect(result.showsLanguageControl)
         #expect(result.tracks.map(\.candidate.fileName).sorted() == ["clip.en.srt", "clip.zh.vtt"])
         #expect(result.selected?.candidate.fileName == "clip.zh.vtt")
@@ -322,7 +351,7 @@ struct TimedTextTests {
     func workspaceMissingSidecarIsEmpty() async {
         let access = TimedText.Access(
             sourceKind: .workspace,
-            listDirectory: { _ in ["clip.m4a", "readme.md"] },
+            sidecarNames: { _ in ["clip.m4a", "readme.md"] },
             fetchFile: { _ in
                 Issue.record("no sidecar should be fetched")
                 return Data()
@@ -383,7 +412,7 @@ struct TimedTextTests {
                 sessionID: "session-a",
                 workspaceRuntime: nil
             ),
-            listDirectory: { path in
+            sidecarNames: { path in
                 recorder.listed.append(path)
                 return ["clip.en.srt", "clip.zh.vtt", "clip.mp4"]
             },
@@ -401,7 +430,7 @@ struct TimedTextTests {
             locale: Locale(identifier: "en"),
             access: access
         )
-        #expect(recorder.listed == ["media/"])
+        #expect(recorder.listed == ["media/clip.mp4"])
         #expect(!recorder.fetched.contains("media/clip.vtt"))
         #expect(result.showsLanguageControl)
         #expect(Set(result.tracks.map(\.candidate.fileName)) == ["clip.en.srt", "clip.zh.vtt"])
@@ -464,7 +493,7 @@ struct TimedTextTests {
         ]
         let access = TimedText.Access(
             sourceKind: .workspace,
-            listDirectory: { _ in ["clip.en.srt", "clip.zh.vtt"] },
+            sidecarNames: { _ in ["clip.en.srt", "clip.zh.vtt"] },
             fetchFile: { path in
                 if let text = files[path] {
                     return Data(text.utf8)

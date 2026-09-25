@@ -305,6 +305,10 @@ actor APIClient: ClientLogUploading {
     private let trustDelegate: PinnedServerTrustDelegate
     private let availabilityObserver: APIClientAvailabilityObserver?
     nonisolated private let responseFailureObserverBox = APIClientResponseFailureObserverBox()
+    /// `/files/current` version reported by this client's own `/server/info`.
+    /// Zero keeps the legacy per-origin routes, so an older server never
+    /// receives a sandbox path on its origin-blind host route.
+    private var currentFilesVersion = 0
 
     init(
         environment: OppiClientEnvironment,
@@ -463,7 +467,12 @@ actor APIClient: ClientLogUploading {
     /// Fetch server metadata (version, uptime, stats) for the server detail view.
     func serverInfo() async throws -> ServerInfo {
         let data = try await get("/server/info")
-        return try JSONDecoder().decode(ServerInfo.self, from: data)
+        return recordCapabilities(try JSONDecoder().decode(ServerInfo.self, from: data))
+    }
+
+    private func recordCapabilities(_ info: ServerInfo) -> ServerInfo {
+        currentFilesVersion = info.capabilities?.currentFiles?.version ?? 0
+        return info
     }
 
     /// Fetch authenticated server metadata while bounding the entire request.
@@ -485,7 +494,7 @@ actor APIClient: ClientLogUploading {
             (data, response) = try await bootstrapData(for: retry, deadline: bootstrapDeadline)
         }
         try checkStatus(response, data: data)
-        return try JSONDecoder().decode(ServerInfo.self, from: data)
+        return recordCapabilities(try JSONDecoder().decode(ServerInfo.self, from: data))
     }
 
     /// Client timezone offset in minutes (e.g. PDT = -420).
@@ -1911,7 +1920,7 @@ actor APIClient: ClientLogUploading {
 
     /// Fetch raw data for a workspace file or an external path reported by the session.
     func getSessionFileData(workspaceId: String, sessionId: String, path: String) async throws -> Data {
-        return try await get(url: makeSessionRawURL(workspaceId: workspaceId, sessionId: sessionId, path: path))
+        return try await get(url: makeCurrentFileURL(.session(workspaceId: workspaceId, sessionId: sessionId), path: path))
     }
 
     /// Fetch a workspace file by path (images, etc.) from the workspace raw endpoint.
@@ -1919,13 +1928,7 @@ actor APIClient: ClientLogUploading {
     /// Used by `MarkdownImageView` to load images referenced in markdown with relative paths.
     /// Returns raw `Data` so the caller can decode as `UIImage`.
     func fetchWorkspaceFile(workspaceID: String, path: String, worktreeId: String? = nil) async throws -> Data {
-        return try await get(
-            url: makeWorkspaceRawURL(
-                workspaceId: workspaceID,
-                path: path,
-                queryItems: workspaceWorktreeQueryItems(worktreeId)
-            )
-        )
+        try await browseWorkspaceFile(workspaceId: workspaceID, path: path, worktreeId: worktreeId)
     }
 
     // MARK: - Workspace File Browser
@@ -1977,19 +1980,13 @@ actor APIClient: ClientLogUploading {
     ///
     /// Returns raw file content as `Data`. For text files, decode to String with UTF-8.
     func browseWorkspaceFile(workspaceId: String, path: String, worktreeId: String? = nil) async throws -> Data {
-        return try await get(
-            url: makeWorkspaceRawURL(
-                workspaceId: workspaceId,
-                path: path,
-                queryItems: workspaceWorktreeQueryItems(worktreeId)
-            )
-        )
+        try await get(url: makeCurrentFileURL(.workspace(workspaceId: workspaceId, worktreeId: worktreeId), path: path))
     }
 
     /// Exact-path existence check for an owner host file. 404 is unresolved.
     /// A 200 response yields the server's canonical realpath when present.
     func resolveHostFile(path: String) async throws -> String? {
-        let url = try makeHostRawURL(path: path)
+        let url = try makeCurrentFileURL(.host(controlSessionId: nil), path: path)
         do {
             let (_, response) = try await request("HEAD", url: url)
             try checkStatus(response, data: Data())
@@ -2014,7 +2011,7 @@ actor APIClient: ClientLogUploading {
         controlSessionId: String? = nil
     ) async throws -> (data: Data, resolvedPath: String?) {
         let (data, response) = try await request(
-            "GET", url: makeHostRawURL(path: path, controlSessionId: controlSessionId)
+            "GET", url: makeCurrentFileURL(.host(controlSessionId: controlSessionId), path: path)
         )
         try checkStatus(response, data: data)
         return (data, HostRawFileHeaders.resolvedPath(from: response))
@@ -2027,7 +2024,7 @@ actor APIClient: ClientLogUploading {
         sourceFileExtension: String? = nil
     ) throws -> AuthenticatedMediaSource {
         AuthenticatedMediaSource(
-            url: try makeHostRawURL(path: path, controlSessionId: controlSessionId),
+            url: try makeCurrentFileURL(.host(controlSessionId: controlSessionId), path: path),
             authorizationProvider: mediaAuthorizationProvider(),
             tlsCertFingerprint: tlsCertFingerprint,
             tlsServerName: environment.tlsServerName,
@@ -2049,11 +2046,7 @@ actor APIClient: ClientLogUploading {
         sourceFileExtension: String? = nil
     ) throws -> AuthenticatedMediaSource {
         AuthenticatedMediaSource(
-            url: try makeWorkspaceRawURL(
-                workspaceId: workspaceId,
-                path: path,
-                queryItems: workspaceWorktreeQueryItems(worktreeId)
-            ),
+            url: try makeCurrentFileURL(.workspace(workspaceId: workspaceId, worktreeId: worktreeId), path: path),
             authorizationProvider: mediaAuthorizationProvider(),
             tlsCertFingerprint: tlsCertFingerprint,
             tlsServerName: environment.tlsServerName,
@@ -2072,13 +2065,23 @@ actor APIClient: ClientLogUploading {
         sourceFileExtension: String? = nil
     ) throws -> AuthenticatedMediaSource {
         AuthenticatedMediaSource(
-            url: try makeSessionRawURL(workspaceId: workspaceId, sessionId: sessionId, path: path),
+            url: try makeCurrentFileURL(.session(workspaceId: workspaceId, sessionId: sessionId), path: path),
             authorizationProvider: mediaAuthorizationProvider(),
             tlsCertFingerprint: tlsCertFingerprint,
             tlsServerName: environment.tlsServerName,
             contentTypeHint: contentTypeHint,
             sourceFileExtension: sourceFileExtension
         )
+    }
+
+    /// Same-stem timed-text sidecar names beside an existing media file.
+    /// Requires `currentFiles`; older servers have no bounded host discovery,
+    /// so callers treat the thrown error as "no sidecars".
+    func listCurrentFileSidecars(_ origin: CurrentFileOrigin, mediaPath: String) async throws -> [String] {
+        guard currentFilesVersion >= 1 else { throw CocoaError(.featureUnsupported) }
+        struct Response: Decodable { let names: [String] }
+        let data = try await get(url: makeCurrentFileURL(origin, path: mediaPath, sidecars: true))
+        return try JSONDecoder().decode(Response.self, from: data).names
     }
 
     /// Build a bearer-authenticated media source for a session attachment.
@@ -2140,7 +2143,7 @@ actor APIClient: ClientLogUploading {
     /// Relative paths resolve against the session workspace or worktree. The server also accepts
     /// exact external paths present in that session's changed-file metadata or tool arguments.
     func browseSessionTouchedFile(workspaceId: String, sessionId: String, path: String) async throws -> Data {
-        return try await get(url: makeSessionRawURL(workspaceId: workspaceId, sessionId: sessionId, path: path))
+        try await getSessionFileData(workspaceId: workspaceId, sessionId: sessionId, path: path)
     }
 
     // MARK: - Device Token
@@ -2551,39 +2554,75 @@ actor APIClient: ClientLogUploading {
         )
     }
 
-    private func makeWorkspaceRawURL(
-        workspaceId: String,
-        path: String,
-        queryItems: [URLQueryItem] = []
-    ) throws -> URL {
-        try makeURL(
-            pathSegments: ["workspaces", workspaceId, "raw", path],
-            queryItems: queryItems
-        )
+    /// Namespace a current-file path resolves in. It selects resolution only;
+    /// pairing/auth is the host-file gate and sandbox paths stay confined.
+    enum CurrentFileOrigin: Sendable, Equatable {
+        /// Absolute or `~/` owner-host path; relative paths resolve from the
+        /// declared control session's cwd when one is given.
+        case host(controlSessionId: String?)
+        case workspace(workspaceId: String, worktreeId: String?)
+        /// Workspace session cwd. `workspaceId` is only for the legacy route.
+        case session(workspaceId: String, sessionId: String)
     }
 
-    private func makeHostRawURL(
+    /// One current-file URL. Servers that report `currentFiles` get
+    /// `/files/current?origin=…`; older servers keep the route that matches
+    /// the origin, never a less restrictive one.
+    private func makeCurrentFileURL(
+        _ origin: CurrentFileOrigin,
         path: String,
-        controlSessionId: String? = nil
+        sidecars: Bool = false
     ) throws -> URL {
-        var queryItems = [URLQueryItem(name: "path", value: path)]
-        if let controlSessionId, !controlSessionId.isEmpty {
-            queryItems.append(URLQueryItem(name: "controlSessionId", value: controlSessionId))
+        guard currentFilesVersion >= 1 else {
+            return try makeLegacyFileURL(origin, path: path)
         }
+        var queryItems: [URLQueryItem]
+        switch origin {
+        case .host(let controlSessionId):
+            if let controlSessionId, !controlSessionId.isEmpty {
+                queryItems = [
+                    URLQueryItem(name: "origin", value: "session"),
+                    URLQueryItem(name: "sessionId", value: controlSessionId),
+                ]
+            } else {
+                queryItems = [URLQueryItem(name: "origin", value: "host")]
+            }
+        case .workspace(let workspaceId, let worktreeId):
+            queryItems = [
+                URLQueryItem(name: "origin", value: "workspace"),
+                URLQueryItem(name: "workspaceId", value: workspaceId),
+            ] + workspaceWorktreeQueryItems(worktreeId)
+        case .session(_, let sessionId):
+            queryItems = [
+                URLQueryItem(name: "origin", value: "session"),
+                URLQueryItem(name: "sessionId", value: sessionId),
+            ]
+        }
+        queryItems.append(URLQueryItem(name: "path", value: path))
         return try makeURL(
-            pathSegments: ["files", "raw"],
+            pathSegments: sidecars ? ["files", "current", "sidecars"] : ["files", "current"],
             queryItems: queryItems
         )
     }
 
-    private func makeSessionRawURL(
-        workspaceId: String,
-        sessionId: String,
-        path: String
-    ) throws -> URL {
-        try makeURL(
-            pathSegments: ["workspaces", workspaceId, "sessions", sessionId, "raw", path]
-        )
+    private func makeLegacyFileURL(_ origin: CurrentFileOrigin, path: String) throws -> URL {
+        switch origin {
+        case .host(let controlSessionId):
+            var queryItems = [URLQueryItem(name: "path", value: path)]
+            if let controlSessionId, !controlSessionId.isEmpty {
+                queryItems.append(URLQueryItem(name: "controlSessionId", value: controlSessionId))
+            }
+            return try makeURL(pathSegments: ["files", "raw"], queryItems: queryItems)
+        case .workspace(let workspaceId, let worktreeId):
+            return try makeURL(
+                pathSegments: ["workspaces", workspaceId, "raw", path],
+                queryItems: workspaceWorktreeQueryItems(worktreeId)
+            )
+        case .session(let workspaceId, let sessionId):
+            return try makeURL(
+                pathSegments: ["workspaces", workspaceId, "sessions", sessionId, "raw", path]
+            )
+        }
     }
 
     private func makeSkillFileURL(name: String, path: String, cwd: String? = nil) throws -> URL {

@@ -43,6 +43,8 @@ struct ServerInfo: Codable, Sendable, Equatable {
         let appEventStream: CapabilityVersion?
         let extensionNativeUI: ExtensionNativeUICapability?
         var controlSessions: CapabilityVersion? = nil
+        /// Unified `/files/current` reads and bounded sidecar discovery.
+        var currentFiles: CapabilityVersion? = nil
     }
 
     struct CapabilityVersion: Codable, Sendable, Equatable {

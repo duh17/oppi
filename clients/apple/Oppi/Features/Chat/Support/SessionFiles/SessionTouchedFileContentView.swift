@@ -353,27 +353,18 @@ struct SessionTouchedFileContentView: View {
                 workspaceRuntime: workspaceRuntime,
                 hostMount: workspaceHostMount
             )
-            switch route {
+            let mediaRoute: MarkdownVideoMediaSourceRoute = switch route {
             case .hostFile:
-                return .empty
+                .host(path: mediaPath)
             case .sessionRaw(let rawPath):
-                let access = TimedText.Access(
-                    sourceKind: .session,
-                    fetchFile: { path in
-                        try await api.getSessionFileData(
-                            workspaceId: workspaceId,
-                            sessionId: sessionId,
-                            path: path
-                        )
-                    }
-                )
-                return await TimedText.load(
-                    mediaPath: rawPath,
-                    kind: kind,
-                    locale: .current,
-                    access: access
-                )
+                .session(workspaceID: workspaceId, sessionID: sessionId, path: rawPath)
             }
+            return await TimedText.load(
+                mediaPath: mediaRoute.path,
+                kind: kind,
+                locale: .current,
+                access: TimedText.access(for: mediaRoute, api: api)
+            )
         }
         let requestedPath = currentFilePath
         let route = SessionTouchedFileLoadRoute.resolve(

@@ -1486,6 +1486,62 @@ struct APIClientTests {
         #expect(source.contentTypeHint == "video/mp4")
     }
 
+    @Test func currentFileReadsSwitchOnlyAfterThisServerReportsTheCapability() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        let serverInfo = { (capabilities: String) in
+            """
+            {"name":"Test","version":"1.0","uptime":1,"os":"darwin","arch":"arm64","hostname":"test","nodeVersion":"22","piVersion":"1","configVersion":1,"capabilities":\(capabilities),"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":0,"modelCount":0}}
+            """
+        }
+        func query(_ source: AuthenticatedMediaSource) -> [String: String] {
+            let items = URLComponents(url: source.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            return Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
+        }
+
+        // An older server: no capability, so a sandbox session read stays on
+        // session-raw and never becomes an origin-blind host read.
+        MockURLProtocol.handler = { _ in self.mockResponse(json: serverInfo(#"{"controlSessions":{"version":1}}"#)) }
+        _ = try await client.serverInfo()
+        let legacy = try await client.makeSessionFileMediaSource(
+            workspaceId: "w1", sessionId: "s1", path: "/workspace/demo/clip.mp4"
+        )
+        #expect(legacy.url.path == "/workspaces/w1/sessions/s1/raw//workspace/demo/clip.mp4")
+        await #expect(throws: CocoaError.self) {
+            try await client.listCurrentFileSidecars(.host(controlSessionId: nil), mediaPath: "/tmp/clip.mp4")
+        }
+
+        MockURLProtocol.handler = { _ in self.mockResponse(json: serverInfo(#"{"currentFiles":{"version":1}}"#)) }
+        _ = try await client.serverInfo()
+        let session = try await client.makeSessionFileMediaSource(
+            workspaceId: "w1", sessionId: "s1", path: "/workspace/demo/clip.mp4"
+        )
+        #expect(session.url.path == "/files/current")
+        #expect(query(session) == ["origin": "session", "sessionId": "s1", "path": "/workspace/demo/clip.mp4"])
+        let workspace = try await client.makeWorkspaceMediaSource(
+            workspaceId: "w1", path: "media/clip.mp4", worktreeId: "wt-1"
+        )
+        #expect(query(workspace) == [
+            "origin": "workspace", "workspaceId": "w1", "worktreeId": "wt-1", "path": "media/clip.mp4",
+        ])
+        let host = try await client.makeHostFileMediaSource(path: "~/Movies/clip.mp4")
+        #expect(query(host) == ["origin": "host", "path": "~/Movies/clip.mp4"])
+        let control = try await client.makeHostFileMediaSource(path: "clip.mp4", controlSessionId: "c1")
+        #expect(query(control) == ["origin": "session", "sessionId": "c1", "path": "clip.mp4"])
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/files/current/sidecars")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            #expect(items.first(where: { $0.name == "origin" })?.value == "host")
+            #expect(items.first(where: { $0.name == "path" })?.value == "~/Movies/clip.mp4")
+            return self.mockResponse(json: #"{"names":["clip.srt","clip.en.srt"],"truncated":false}"#)
+        }
+        let names = try await client.listCurrentFileSidecars(
+            .host(controlSessionId: nil), mediaPath: "~/Movies/clip.mp4"
+        )
+        #expect(names == ["clip.srt", "clip.en.srt"])
+    }
+
     @Test func sessionFileMediaSourceUsesSessionRawRouteForExternalPath() async throws {
         let client = makeClient()
         let source = try await client.makeSessionFileMediaSource(

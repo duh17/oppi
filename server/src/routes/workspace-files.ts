@@ -1,27 +1,19 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { Dirent, Stats } from "node:fs";
-import { createReadStream } from "node:fs";
-import { opendir, stat } from "node:fs/promises";
-import { join, extname, relative } from "node:path";
+import type { Dirent } from "node:fs";
+import { opendir } from "node:fs/promises";
+import { join, relative } from "node:path";
+import { resolveWorkspaceFileRoot, sendFileBytes, statServableFile } from "../current-file.js";
 import {
   listDirectoryEntries,
   resolveContainedPath as resolveWorkspaceFilePath,
 } from "../directory-listing.js";
 import {
   decodeWorkspaceRoutePath,
-  getContentType,
-  isBrowseMediaContentType,
-  isStreamingMediaContentType,
-  MAX_BROWSE_IMAGE_FILE_SIZE,
-  MAX_BROWSE_TEXT_FILE_SIZE,
   SEARCH_IGNORE_DIRS,
   SEARCH_ROOT_IGNORE_DIRS,
 } from "../file-serving-policy.js";
-import { logRejectedByteRange, parseByteRangeHeader } from "../http-range.js";
-import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type { DirectoryListingResponse, FileIndexResponse, Workspace } from "../types.js";
 import { resolveWorkspaceUserPath } from "../workspace-user-path.js";
-import { resolveWorkspaceWorktree } from "../worktrees.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 export {
@@ -41,33 +33,11 @@ export {
   resolveContainedPath as resolveWorkspaceFilePath,
 } from "../directory-listing.js";
 
-const MAX_IMAGE_FILE_SIZE = MAX_BROWSE_IMAGE_FILE_SIZE;
-const MAX_TEXT_FILE_SIZE = MAX_BROWSE_TEXT_FILE_SIZE;
 const WALK_MAX_DEPTH = 12;
 const MAX_INDEX_PATHS = 50_000;
 const MAX_WALK_DIRECTORIES = 10_000;
 const MAX_WALK_ENTRIES = 100_000;
 const MAX_WALK_ENTRIES_PER_DIRECTORY = MAX_WALK_ENTRIES;
-
-function pipeFileStream(
-  filePath: string,
-  res: ServerResponse,
-  range?: { start: number; end: number },
-): void {
-  const stream = range
-    ? createReadStream(filePath, { start: range.start, end: range.end })
-    : createReadStream(filePath);
-
-  stream.on("error", (error) => {
-    if (!res.headersSent) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Failed to read file" }));
-      return;
-    }
-    res.destroy(error);
-  });
-  stream.pipe(res as NodeJS.WritableStream);
-}
 
 interface SearchWalkResult {
   paths: string[];
@@ -232,10 +202,6 @@ export async function getFileIndex(workspaceRoot: string): Promise<FileIndexResp
   return result;
 }
 
-function isMountlessSandboxMain(workspace: Workspace, worktreeId: string): boolean {
-  return worktreeId === "main" && workspace.runtime === "sandbox" && !workspace.hostMount?.trim();
-}
-
 export function createWorkspaceFileRoutes(
   ctx: RouteContext,
   helpers: RouteHelpers,
@@ -245,24 +211,13 @@ export function createWorkspaceFileRoutes(
     url: URL,
     res: ServerResponse,
   ): string | null {
-    const worktreeId = url.searchParams.get("worktreeId")?.trim();
-    // Mountless sandbox sessions still store worktreeId "main". There is no
-    // git worktree list, so that id is the sandbox host mount, not a missing
-    // checkout. A real unknown worktree, including main on a mountless host
-    // workspace, stays 404 and must not fall through to the user home.
-    if (!worktreeId || isMountlessSandboxMain(workspace, worktreeId)) {
-      return resolveSdkSessionCwd(workspace);
-    }
-
-    const worktree = resolveWorkspaceWorktree(workspace, worktreeId, {
-      dataDir: ctx.storage.getDataDir(),
-    });
-    if (!worktree) {
-      helpers.error(res, 404, "Worktree not found");
-      return null;
-    }
-
-    return worktree.path;
+    const root = resolveWorkspaceFileRoot(
+      workspace,
+      url.searchParams.get("worktreeId") ?? undefined,
+      ctx.storage.getDataDir(),
+    );
+    if (!root) helpers.error(res, 404, "Worktree not found");
+    return root;
   }
 
   async function handleBrowseFile(
@@ -291,84 +246,31 @@ export function createWorkspaceFileRoutes(
       helpers.error(res, 404, "File not found");
       return;
     }
-    const realFile = await resolveWorkspaceFilePath(workspaceRoot, mappedPath);
+    // Host workspaces follow in-tree symlink names; sandbox mounts stay confined.
+    const realFile = await resolveWorkspaceFilePath(workspaceRoot, mappedPath, {
+      confineSymlinks: workspace.runtime === "sandbox",
+    });
     if (!realFile) {
       helpers.error(res, 404, "File not found");
       return;
     }
 
-    let fileStat: Stats;
-    try {
-      fileStat = await stat(realFile);
-    } catch {
-      helpers.error(res, 404, "File not found");
-      return;
-    }
-
-    if (!fileStat.isFile()) {
-      helpers.error(res, 404, "Not a file");
-      return;
-    }
-
-    const ext = extname(requestedPath).toLowerCase();
-    const filename = requestedPath.split("/").pop() ?? requestedPath;
-    const contentType = getContentType(ext, filename);
-
-    // Streaming media (video/audio/HLS) has no size limit — served via createReadStream
-    // with no memory buffering. Images/PDF capped at 50MB, text at 10MB.
-    if (!isStreamingMediaContentType(contentType)) {
-      const isMedia = isBrowseMediaContentType(contentType);
-      const maxSize = isMedia ? MAX_IMAGE_FILE_SIZE : MAX_TEXT_FILE_SIZE;
-      if (fileStat.size > maxSize) {
-        const limitMB = Math.round(maxSize / (1024 * 1024));
-        helpers.error(res, 413, `File too large (max ${limitMB}MB)`);
+    const servable = await statServableFile(realFile, requestedPath);
+    switch (servable.kind) {
+      case "ok":
+        await sendFileBytes(req, res, method, servable.file, { rangeLogTag: "workspace-raw" });
         return;
-      }
-    }
-
-    const commonHeaders = {
-      "Content-Type": contentType,
-      "Cache-Control": "private, no-cache",
-      "Accept-Ranges": "bytes",
-    };
-    const range = parseByteRangeHeader(req.headers?.range, fileStat.size);
-    const isHeadRequest = method.toUpperCase() === "HEAD";
-
-    if (range.kind === "invalid" || range.kind === "unsatisfiable") {
-      logRejectedByteRange("workspace-raw", req.headers?.range, range.kind, fileStat.size);
-      res.writeHead(416, {
-        ...commonHeaders,
-        "Content-Range": `bytes */${fileStat.size}`,
-        "Content-Length": "0",
-      });
-      res.end();
-      return;
-    }
-
-    if (range.kind === "valid") {
-      const contentLength = range.end - range.start + 1;
-      res.writeHead(206, {
-        ...commonHeaders,
-        "Content-Range": `bytes ${range.start}-${range.end}/${fileStat.size}`,
-        "Content-Length": contentLength.toString(),
-      });
-      if (isHeadRequest) {
-        res.end();
+      case "not-file":
+        helpers.error(res, 404, "Not a file");
         return;
-      }
-      pipeFileStream(realFile, res, range);
-      return;
+      case "too-large":
+        helpers.error(res, 413, `File too large (max ${servable.maxSizeMegabytes}MB)`);
+        return;
+      case "missing":
+      case "unreadable":
+        helpers.error(res, 404, "File not found");
+        return;
     }
-
-    res.writeHead(200, {
-      ...commonHeaders,
-      "Content-Length": fileStat.size.toString(),
-    });
-    if (isHeadRequest) {
-      res.end();
-      return;
-    }
-    pipeFileStream(realFile, res);
   }
 
   async function handleListDirectory(
@@ -397,7 +299,9 @@ export function createWorkspaceFileRoutes(
       helpers.error(res, 404, "Directory not found");
       return;
     }
-    const result = await listDirectoryEntries(workspaceRoot, mappedPath);
+    const result = await listDirectoryEntries(workspaceRoot, mappedPath, {
+      confineSymlinks: workspace.runtime === "sandbox",
+    });
 
     if (!result) {
       helpers.error(res, 404, "Directory not found");

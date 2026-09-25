@@ -1274,7 +1274,7 @@ extension NativeMarkdownImageView: WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
     ) {
-        if HTMLContentSecurity.isHostRawFileURL(navigationAction.request.url) {
+        if HTMLContentSecurity.isCurrentFileReadURL(navigationAction.request.url) {
             decisionHandler(.cancel)
             return
         }

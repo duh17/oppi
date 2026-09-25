@@ -1,15 +1,8 @@
 import { homedir } from "node:os";
-import { extname, isAbsolute, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { access, readFile, realpath, stat } from "node:fs/promises";
 
-import {
-  getContentType,
-  isBrowseMediaContentType,
-  isStreamingMediaContentType,
-  MAX_BROWSE_IMAGE_FILE_SIZE,
-  MAX_BROWSE_TEXT_FILE_SIZE,
-} from "./file-serving-policy.js";
+import { resolveCurrentFilePath, statServableFile } from "./current-file.js";
 import { isPathWithinRoot } from "./git-utils.js";
 import {
   collectFileMutations,
@@ -21,7 +14,6 @@ import { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionRuntimes } from "./runtime-router.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import { WorkspaceWorktreeError } from "./worktrees.js";
-import { resolveWorkspaceUserPath } from "./workspace-user-path.js";
 import type { Storage } from "./storage.js";
 import {
   collectSessionTraceJsonlPaths,
@@ -416,81 +408,46 @@ export class SessionTraceService {
     session: Session;
     path: string;
   }): Promise<SessionRawFileResult> {
-    const reqPath = params.path;
-    if (!reqPath) {
+    if (!params.path) {
       return { kind: "path-required" };
     }
 
     const workspaceRoot = this.resolveSdkCwdOrNull(params.workspace, params.session);
     if (!workspaceRoot) return { kind: "workspace-root-not-found" };
-    let realWorkspaceRoot: string;
-    try {
-      realWorkspaceRoot = await realpath(workspaceRoot);
-    } catch {
-      return { kind: "workspace-root-not-found" };
-    }
-
-    const mappedPath = resolveWorkspaceUserPath({
-      workspace: params.workspace,
-      requestedPath: reqPath,
-      session: params.session,
-      dataDir: this.deps.storage.getDataDir(),
-    });
-    const requestedPath =
-      mappedPath ??
-      (params.workspace.runtime === "sandbox"
-        ? null
-        : resolveSessionRawPath(reqPath, realWorkspaceRoot));
-    if (!requestedPath) {
-      return { kind: "path-outside-workspace" };
-    }
-
-    let resolvedPath: string;
-    try {
-      resolvedPath = await realpath(requestedPath);
-    } catch {
-      return { kind: "file-not-found" };
-    }
 
     // Host workspaces: pairing/auth is the gate. Sandbox stays confined after realpath.
-    if (
-      params.workspace.runtime === "sandbox" &&
-      !isPathWithinRoot(resolvedPath, realWorkspaceRoot)
-    ) {
-      return { kind: "path-outside-workspace" };
+    const resolved = await resolveCurrentFilePath(
+      {
+        kind: "workspace",
+        workspace: params.workspace,
+        root: workspaceRoot,
+        dataDir: this.deps.storage.getDataDir(),
+      },
+      params.path,
+    );
+    switch (resolved.kind) {
+      case "root-not-found":
+        return { kind: "workspace-root-not-found" };
+      case "outside-sandbox":
+        return { kind: "path-outside-workspace" };
+      case "not-found":
+        return { kind: "file-not-found" };
+      case "ok":
+        break;
     }
 
-    let fileStat: Awaited<ReturnType<typeof stat>>;
-    try {
-      fileStat = await stat(resolvedPath);
-    } catch {
-      return { kind: "file-not-found" };
+    const servable = await statServableFile(resolved.file.realPath);
+    switch (servable.kind) {
+      case "ok":
+        return { kind: "ok", ...servable.file };
+      case "not-file":
+        return { kind: "not-file" };
+      case "too-large":
+        return { kind: "file-too-large", maxSizeMegabytes: servable.maxSizeMegabytes };
+      case "missing":
+      case "unreadable":
+        return { kind: "file-not-found" };
     }
-
-    if (!fileStat.isFile()) {
-      return { kind: "not-file" };
-    }
-
-    const ext = extname(resolvedPath).toLowerCase();
-    const filename = resolvedPath.split("/").pop() ?? resolvedPath;
-    const contentType = getContentType(ext, filename);
-    if (!isStreamingMediaContentType(contentType)) {
-      const isMedia = isBrowseMediaContentType(contentType);
-      const maxSize = isMedia ? MAX_BROWSE_IMAGE_FILE_SIZE : MAX_BROWSE_TEXT_FILE_SIZE;
-      if (fileStat.size > maxSize) {
-        return {
-          kind: "file-too-large",
-          maxSizeMegabytes: Math.round(maxSize / (1024 * 1024)),
-        };
-      }
-    }
-
-    return {
-      kind: "ok",
-      filePath: resolvedPath,
-      contentType,
-      size: fileStat.size,
-    };
   }
 
   private async readCurrentFileText(
@@ -639,23 +596,6 @@ export class SessionTraceService {
 
     return existingPaths(candidates);
   }
-}
-
-function resolveSessionRawPath(requestedPath: string, workspaceRoot: string): string | null {
-  if (requestedPath.toLowerCase().startsWith("file:")) {
-    try {
-      const url = new URL(requestedPath);
-      return url.protocol === "file:" ? fileURLToPath(url) : null;
-    } catch {
-      return null;
-    }
-  }
-
-  if (requestedPath === "~" || requestedPath.startsWith("~/")) {
-    return resolve(requestedPath.replace(/^~(?=\/|$)/, homedir()));
-  }
-
-  return isAbsolute(requestedPath) ? resolve(requestedPath) : resolve(workspaceRoot, requestedPath);
 }
 
 async function existingPaths(candidates: string[]): Promise<string[]> {

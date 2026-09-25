@@ -1,21 +1,20 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createReadStream, constants } from "node:fs";
-import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { extname, isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 
 import { isDeclaredControlSession } from "../control-session.js";
-import { listDirectoryEntries } from "../directory-listing.js";
 import {
-  decodeWorkspaceRoutePath,
-  getContentType,
-  isBrowseMediaContentType,
-  isStreamingMediaContentType,
-  MAX_BROWSE_IMAGE_FILE_SIZE,
-  MAX_BROWSE_TEXT_FILE_SIZE,
-} from "../file-serving-policy.js";
-import { encodeHostResolvedPathHeader, expandExactHostPath } from "../host-file-path.js";
-import { logRejectedByteRange, parseByteRangeHeader } from "../http-range.js";
+  listTimedTextSidecars,
+  resolveCurrentFilePath,
+  resolvedPathHeaders,
+  resolveWorkspaceFileRoot,
+  sendFileBytes,
+  statServableFile,
+  type CurrentFileOrigin,
+  type ResolvedCurrentFile,
+} from "../current-file.js";
+import { listDirectoryEntries } from "../directory-listing.js";
+import { decodeWorkspaceRoutePath } from "../file-serving-policy.js";
 import { createLogger, type Logger } from "../logger.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type { DirectoryListingResponse } from "../types.js";
@@ -28,25 +27,18 @@ export interface HostFileRouteOptions {
 
 const defaultLog = createLogger({ base: { component: "host_files" } });
 
-function pipeFileStream(
-  filePath: string,
-  res: ServerResponse,
-  range?: { start: number; end: number },
-): void {
-  const stream = range
-    ? createReadStream(filePath, { start: range.start, end: range.end })
-    : createReadStream(filePath);
+/** Query keys accepted by `/files/current`; anything else fails closed. */
+const CURRENT_FILE_QUERY_KEYS = new Set([
+  "path",
+  "origin",
+  "workspaceId",
+  "worktreeId",
+  "sessionId",
+]);
 
-  stream.on("error", (error) => {
-    if (!res.headersSent) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Failed to read file" }));
-      return;
-    }
-    res.destroy(error);
-  });
-  stream.pipe(res as NodeJS.WritableStream);
-}
+type CurrentFileRequest =
+  | { kind: "ok"; origin: CurrentFileOrigin; path: string; originKind: string }
+  | { kind: "error"; status: number; message: string };
 
 export function createHostFileRoutes(
   ctx: RouteContext,
@@ -56,14 +48,243 @@ export function createHostFileRoutes(
   const log = options.logger ?? defaultLog;
   const homeDir = options.homeDir;
 
+  /** Control sessions share one server-owned cwd; invalid roots fail closed. */
+  function controlSessionCwd(sessionId: string | null): string | null {
+    if (!sessionId) return null;
+    const session = ctx.storage.getSession(sessionId);
+    if (!session || !isDeclaredControlSession(session)) return null;
+    try {
+      return resolveSdkSessionCwd(undefined, session, { dataDir: ctx.storage.getDataDir() });
+    } catch {
+      // The runtime rejects symlinked/non-directory control roots. File reads
+      // must reject the same invalid origin, not follow it to alternate bytes.
+      return null;
+    }
+  }
+
+  /**
+   * Parse the unified current-file origin. Origin selects path resolution; it
+   * never falls back to a less restrictive origin.
+   *
+   * - `origin=host`: absolute, `~`, or local `file://` owner-host paths.
+   * - `origin=workspace&workspaceId[&worktreeId]`: the selected checkout or mount.
+   * - `origin=session&sessionId`: the session's actual cwd (worktree, sandbox
+   *   mount, or control-session cwd).
+   */
+  function parseCurrentFileRequest(url: URL): CurrentFileRequest {
+    const params = url.searchParams;
+    for (const key of new Set(params.keys())) {
+      if (!CURRENT_FILE_QUERY_KEYS.has(key) || params.getAll(key).length !== 1) {
+        return { kind: "error", status: 400, message: `Invalid query parameter: ${key}` };
+      }
+    }
+    const path = params.get("path") ?? "";
+    if (!path) return { kind: "error", status: 400, message: "path parameter required" };
+    const originKind = params.get("origin");
+    const workspaceId = params.get("workspaceId");
+    const worktreeId = params.get("worktreeId");
+    const sessionId = params.get("sessionId");
+    const conflict = {
+      kind: "error",
+      status: 400,
+      message: "Conflicting origin parameters",
+    } as const;
+    const dataDir = ctx.storage.getDataDir();
+
+    switch (originKind) {
+      case "host":
+        if (workspaceId !== null || worktreeId !== null || sessionId !== null) return conflict;
+        return { kind: "ok", origin: { kind: "host", homeDir }, path, originKind };
+      case "workspace": {
+        if (!workspaceId || sessionId !== null) return conflict;
+        const workspace = ctx.storage.getWorkspace(workspaceId);
+        if (!workspace) return { kind: "error", status: 404, message: "Workspace not found" };
+        const root = resolveWorkspaceFileRoot(workspace, worktreeId ?? undefined, dataDir);
+        if (!root) return { kind: "error", status: 404, message: "Worktree not found" };
+        return {
+          kind: "ok",
+          origin: { kind: "workspace", workspace, root, dataDir },
+          path,
+          originKind,
+        };
+      }
+      case "session": {
+        if (!sessionId || workspaceId !== null || worktreeId !== null) return conflict;
+        const session = ctx.storage.getSession(sessionId);
+        if (!session) return { kind: "error", status: 404, message: "Session not found" };
+        if (isDeclaredControlSession(session)) {
+          const cwd = controlSessionCwd(sessionId);
+          if (!cwd) return { kind: "error", status: 404, message: "Session root not found" };
+          return {
+            kind: "ok",
+            origin: { kind: "host", cwd: () => cwd, homeDir },
+            path,
+            originKind,
+          };
+        }
+        const workspace = session.workspaceId
+          ? ctx.storage.getWorkspace(session.workspaceId)
+          : undefined;
+        if (!workspace) return { kind: "error", status: 404, message: "Workspace not found" };
+        let root: string;
+        try {
+          root = resolveSdkSessionCwd(workspace, session, { dataDir });
+        } catch {
+          return { kind: "error", status: 404, message: "Session root not found" };
+        }
+        return {
+          kind: "ok",
+          origin: { kind: "workspace", workspace, root, dataDir },
+          path,
+          originKind,
+        };
+      }
+      default:
+        return { kind: "error", status: 400, message: "Invalid origin" };
+    }
+  }
+
+  async function resolveCurrentFileRequest(
+    url: URL,
+    res: ServerResponse,
+  ): Promise<{ file: ResolvedCurrentFile; originKind: string } | { status: number }> {
+    const request = parseCurrentFileRequest(url);
+    if (request.kind === "error") {
+      helpers.error(res, request.status, request.message);
+      return { status: request.status };
+    }
+    const resolved = await resolveCurrentFilePath(request.origin, request.path);
+    switch (resolved.kind) {
+      case "ok":
+        return { file: resolved.file, originKind: request.originKind };
+      case "outside-sandbox":
+        helpers.error(res, 403, "Path outside sandbox workspace");
+        return { status: 403 };
+      case "root-not-found":
+        helpers.error(res, 404, "Workspace root not found");
+        return { status: 404 };
+      case "not-found":
+        helpers.error(res, 404, "File not found");
+        return { status: 404 };
+    }
+  }
+
+  async function handleCurrentFile(
+    method: string,
+    url: URL,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    let status = 404;
+    let originKind: string | undefined;
+    try {
+      const resolved = await resolveCurrentFileRequest(url, res);
+      if ("status" in resolved) {
+        status = resolved.status;
+        return;
+      }
+      originKind = resolved.originKind;
+      const servable = await statServableFile(resolved.file.realPath, resolved.file.lexicalPath);
+      switch (servable.kind) {
+        case "ok":
+          status = await sendFileBytes(req, res, method, servable.file, {
+            rangeLogTag: "current-file",
+            extraHeaders: resolvedPathHeaders(resolved.file),
+          });
+          return;
+        case "too-large":
+          status = 413;
+          helpers.error(res, 413, `File too large (max ${servable.maxSizeMegabytes}MB)`);
+          return;
+        case "not-file":
+        case "missing":
+        case "unreadable":
+          helpers.error(res, 404, "File not found");
+          return;
+      }
+    } finally {
+      log.info("currentfile.read", { method, origin: originKind, status });
+    }
+  }
+
+  async function handleCurrentFileSidecars(url: URL, res: ServerResponse): Promise<void> {
+    const resolved = await resolveCurrentFileRequest(url, res);
+    if ("status" in resolved) return;
+    const servable = await statServableFile(resolved.file.realPath, resolved.file.lexicalPath);
+    if (servable.kind !== "ok" && servable.kind !== "too-large") {
+      helpers.error(res, 404, "File not found");
+      return;
+    }
+    helpers.json(res, await listTimedTextSidecars(resolved.file));
+  }
+
+  /** Legacy `/files/raw`: the host origin with optional control-session cwd; errors are 404. */
+  async function handleHostRawFile(
+    method: string,
+    url: URL,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    let status = 404;
+    let resolvedPath: string | null = null;
+    let size: number | null = null;
+
+    try {
+      const resolved = await resolveCurrentFilePath(
+        {
+          kind: "host",
+          homeDir,
+          cwd: () => controlSessionCwd(url.searchParams.get("controlSessionId")),
+        },
+        url.searchParams.get("path") ?? "",
+      );
+      if (resolved.kind !== "ok") {
+        helpers.error(res, 404, "File not found");
+        return;
+      }
+      resolvedPath = resolved.file.realPath;
+      const servable = await statServableFile(resolvedPath);
+      if (servable.kind === "too-large") {
+        status = 413;
+        helpers.error(res, 413, `File too large (max ${servable.maxSizeMegabytes}MB)`);
+        return;
+      }
+      if (servable.kind !== "ok") {
+        helpers.error(res, 404, "File not found");
+        return;
+      }
+      size = servable.file.size;
+      // Authenticated clients need the canonical path for tap-time disclosure
+      // and the viewer title. Audit logs already use it.
+      status = await sendFileBytes(req, res, method, servable.file, {
+        rangeLogTag: "host-raw",
+        extraHeaders: resolvedPathHeaders(resolved.file),
+      });
+    } finally {
+      log.info("hostfile.read", { method, size, status });
+      log.debug("hostfile.read.path", { method, realpath: resolvedPath, size, status });
+    }
+  }
+
   return async ({ method, path, url, req, res }) => {
     const normalizedMethod = method.toUpperCase();
+    const readsBytes = normalizedMethod === "GET" || normalizedMethod === "HEAD";
+
+    if (path === "/files/current") {
+      if (!readsBytes) return false;
+      await handleCurrentFile(normalizedMethod, url, req, res);
+      return true;
+    }
+
+    if (path === "/files/current/sidecars") {
+      if (normalizedMethod !== "GET") return false;
+      await handleCurrentFileSidecars(url, res);
+      return true;
+    }
 
     if (path === "/files/raw") {
-      if (normalizedMethod !== "GET" && normalizedMethod !== "HEAD") {
-        return false;
-      }
-      await handleHostRawFile(normalizedMethod, url, req, res, helpers, log, ctx, homeDir);
+      if (!readsBytes) return false;
+      await handleHostRawFile(normalizedMethod, url, req, res);
       return true;
     }
 
@@ -119,177 +340,4 @@ async function handleListHostDirectory(
     truncated: result.truncated,
   };
   helpers.json(res, response);
-}
-
-function resolveRequestedHostPath(
-  requestedPath: string,
-  controlSessionId: string | null,
-  ctx: RouteContext,
-  homeDir: string | undefined,
-): string | null {
-  const exactHostPath = expandExactHostPath(requestedPath, { homeDir });
-  if (exactHostPath) return exactHostPath;
-
-  // Relative paths have meaning only when the caller names an existing,
-  // declared control session. All control sessions share this dedicated cwd.
-  if (!controlSessionId || !requestedPath || requestedPath.includes("\0")) return null;
-  if (requestedPath.startsWith("~") || requestedPath.toLowerCase().startsWith("file:")) {
-    return null;
-  }
-  const session = ctx.storage.getSession(controlSessionId);
-  if (!session || !isDeclaredControlSession(session)) return null;
-  try {
-    return resolve(
-      resolveSdkSessionCwd(undefined, session, { dataDir: ctx.storage.getDataDir() }),
-      requestedPath,
-    );
-  } catch {
-    // The runtime rejects symlinked/non-directory control roots. File reads
-    // must reject the same invalid origin, not follow it to alternate bytes.
-    return null;
-  }
-}
-
-async function handleHostRawFile(
-  method: string,
-  url: URL,
-  req: IncomingMessage,
-  res: ServerResponse,
-  helpers: RouteHelpers,
-  log: Logger,
-  ctx: RouteContext,
-  homeDir: string | undefined,
-): Promise<void> {
-  let status = 404;
-  let resolvedPath: string | null = null;
-  let size: number | null = null;
-
-  const finish = (nextStatus: number): void => {
-    status = nextStatus;
-  };
-
-  try {
-    const requestedPath = url.searchParams.get("path") ?? "";
-    const expanded = resolveRequestedHostPath(
-      requestedPath,
-      url.searchParams.get("controlSessionId"),
-      ctx,
-      homeDir,
-    );
-    if (!expanded) {
-      helpers.error(res, 404, "File not found");
-      finish(404);
-      return;
-    }
-
-    try {
-      resolvedPath = await realpath(expanded);
-    } catch {
-      helpers.error(res, 404, "File not found");
-      finish(404);
-      return;
-    }
-
-    let fileStat: Awaited<ReturnType<typeof stat>>;
-    try {
-      fileStat = await stat(resolvedPath);
-    } catch {
-      helpers.error(res, 404, "File not found");
-      finish(404);
-      return;
-    }
-
-    if (!fileStat.isFile()) {
-      helpers.error(res, 404, "File not found");
-      finish(404);
-      return;
-    }
-
-    try {
-      await access(resolvedPath, constants.R_OK);
-    } catch {
-      helpers.error(res, 404, "File not found");
-      finish(404);
-      return;
-    }
-
-    size = fileStat.size;
-    const filename = resolvedPath.split("/").pop() ?? resolvedPath;
-    const contentType = getContentType(extname(resolvedPath), filename);
-
-    if (!isStreamingMediaContentType(contentType)) {
-      const isMedia = isBrowseMediaContentType(contentType);
-      const maxSize = isMedia ? MAX_BROWSE_IMAGE_FILE_SIZE : MAX_BROWSE_TEXT_FILE_SIZE;
-      if (fileStat.size > maxSize) {
-        const limitMB = Math.round(maxSize / (1024 * 1024));
-        helpers.error(res, 413, `File too large (max ${limitMB}MB)`);
-        finish(413);
-        return;
-      }
-    }
-
-    const commonHeaders = {
-      "Content-Type": contentType,
-      "Cache-Control": "private, no-cache",
-      "Accept-Ranges": "bytes",
-      // Authenticated clients need the canonical path for tap-time
-      // disclosure and the viewer title. Audit logs already use it.
-      // Percent-encode so Node writeHead accepts non-ASCII realpaths.
-      // HostRawFileHeaders decodes the same wire form.
-      "X-Oppi-Resolved-Path": encodeHostResolvedPathHeader(resolvedPath),
-    };
-    const range = parseByteRangeHeader(req.headers?.range, fileStat.size);
-    const isHeadRequest = method === "HEAD";
-
-    if (range.kind === "invalid" || range.kind === "unsatisfiable") {
-      logRejectedByteRange("host-raw", req.headers?.range, range.kind, fileStat.size);
-      res.writeHead(416, {
-        ...commonHeaders,
-        "Content-Range": `bytes */${fileStat.size}`,
-        "Content-Length": "0",
-      });
-      res.end();
-      finish(416);
-      return;
-    }
-
-    if (range.kind === "valid") {
-      const contentLength = range.end - range.start + 1;
-      res.writeHead(206, {
-        ...commonHeaders,
-        "Content-Range": `bytes ${range.start}-${range.end}/${fileStat.size}`,
-        "Content-Length": contentLength.toString(),
-      });
-      finish(206);
-      if (isHeadRequest) {
-        res.end();
-        return;
-      }
-      pipeFileStream(resolvedPath, res, range);
-      return;
-    }
-
-    res.writeHead(200, {
-      ...commonHeaders,
-      "Content-Length": fileStat.size.toString(),
-    });
-    finish(200);
-    if (isHeadRequest) {
-      res.end();
-      return;
-    }
-    pipeFileStream(resolvedPath, res);
-  } finally {
-    log.info("hostfile.read", {
-      method,
-      size,
-      status,
-    });
-    log.debug("hostfile.read.path", {
-      method,
-      realpath: resolvedPath,
-      size,
-      status,
-    });
-  }
 }

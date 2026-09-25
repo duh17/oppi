@@ -72,13 +72,15 @@ enum TimedText {
 
     struct Access: Sendable {
         var sourceKind: SourceKind
-        var listDirectory: (@Sendable (String) async throws -> [String])?
+        /// Candidate file names beside the media path (workspace listing or
+        /// bounded host sidecar discovery). Session access probes instead.
+        var sidecarNames: (@Sendable (_ mediaPath: String) async throws -> [String])?
         var fetchFile: @Sendable (String) async throws -> Data
         var isMissing: @Sendable (Error) -> Bool
 
         init(
             sourceKind: SourceKind,
-            listDirectory: (@Sendable (String) async throws -> [String])? = nil,
+            sidecarNames: (@Sendable (_ mediaPath: String) async throws -> [String])? = nil,
             fetchFile: @escaping @Sendable (String) async throws -> Data,
             isMissing: @escaping @Sendable (Error) -> Bool = { error in
                 if case APIError.server(let status, _) = error, status == 404 {
@@ -88,7 +90,7 @@ enum TimedText {
             }
         ) {
             self.sourceKind = sourceKind
-            self.listDirectory = listDirectory
+            self.sidecarNames = sidecarNames
             self.fetchFile = fetchFile
             self.isMissing = isMissing
         }
@@ -226,12 +228,10 @@ enum TimedText {
         access: Access
     ) async -> LoadResult {
         switch access.sourceKind {
-        case .host:
-            return .empty
         case .session:
             return await loadSession(mediaPath: mediaPath, kind: kind, access: access)
-        case .workspace:
-            return await loadWorkspace(mediaPath: mediaPath, kind: kind, locale: locale, access: access)
+        case .host, .workspace:
+            return await loadDiscovered(mediaPath: mediaPath, kind: kind, locale: locale, access: access)
         }
     }
 
@@ -249,12 +249,24 @@ enum TimedText {
         }
     }
 
-    static func access(for route: MarkdownVideoMediaSourceRoute, api: APIClient) -> Access {
+    /// The one sidecar access per media origin. Host discovery needs a server
+    /// with `currentFiles`; an older server yields no host sidecars.
+    static func access(
+        for route: MarkdownVideoMediaSourceRoute,
+        api: APIClient,
+        controlSessionId: String? = nil
+    ) -> Access {
         switch route {
         case .host:
+            let origin = APIClient.CurrentFileOrigin.host(controlSessionId: controlSessionId)
             return Access(
                 sourceKind: .host,
-                fetchFile: { _ in throw CocoaError(.fileNoSuchFile) }
+                sidecarNames: { mediaPath in
+                    try await api.listCurrentFileSidecars(origin, mediaPath: mediaPath)
+                },
+                fetchFile: { path in
+                    try await api.browseHostFile(path: path, controlSessionId: controlSessionId)
+                }
             )
         case .session(let workspaceID, let sessionID, _):
             return Access(
@@ -270,10 +282,10 @@ enum TimedText {
         case .workspace(let workspaceID, _, let worktreeID):
             return Access(
                 sourceKind: .workspace,
-                listDirectory: { path in
+                sidecarNames: { mediaPath in
                     try await api.listWorkspaceDirectory(
                         workspaceId: workspaceID,
-                        path: path,
+                        path: parentDirectoryPath(forMediaPath: mediaPath),
                         worktreeId: worktreeID
                     ).entries.filter { !$0.isDirectory }.map(\.name)
                 },
@@ -308,7 +320,12 @@ enum TimedText {
         let session = sessionID?.trimmingCharacters(in: .whitespacesAndNewlines)
         switch sourceKind {
         case .host:
-            return .empty
+            return await load(
+                mediaPath: mediaPath,
+                kind: kind,
+                locale: locale,
+                access: access(for: .host(path: mediaPath), api: api)
+            )
         case .workspace:
             guard let workspace, !workspace.isEmpty else { return .empty }
             return await load(
@@ -419,16 +436,16 @@ enum TimedText {
         return .empty
     }
 
-    private static func loadWorkspace(
+    private static func loadDiscovered(
         mediaPath: String,
         kind: MediaKind,
         locale: Locale,
         access: Access
     ) async -> LoadResult {
-        guard let listDirectory = access.listDirectory else { return .empty }
+        guard let sidecarNames = access.sidecarNames else { return .empty }
         let names: [String]
         do {
-            names = try await listDirectory(parentDirectoryPath(forMediaPath: mediaPath))
+            names = try await sidecarNames(mediaPath)
         } catch {
             return .empty
         }

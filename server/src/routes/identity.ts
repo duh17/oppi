@@ -195,6 +195,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       capabilities: {
         sessionStream: { version: 1 },
         controlSessions: { version: 1 },
+        currentFiles: { version: 1 },
         appEventStream: { version: 1 },
         dictationStream: isDictationStreamEnabled(config.asr) ? { version: 1 } : undefined,
         extensionNativeUI: {

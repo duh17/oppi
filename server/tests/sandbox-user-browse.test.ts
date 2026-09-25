@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -297,6 +297,57 @@ describe("sandbox user browse of host-mount artifacts", () => {
       expect(listing.handled).toBe(true);
       expect(listing.res.statusCode).toBe(404);
       expect(JSON.parse(listing.res.body)).toEqual({ error: "Worktree not found" });
+    });
+
+    it("does not follow file or directory symlinks out of the sandbox mount", async () => {
+      const { hostMount, workspace } = seedSandboxMount();
+      const outside = tempDir("oppi-sandbox-outside-");
+      writeFileSync(join(outside, "secret.txt"), "host-secret");
+      symlinkSync(join(outside, "secret.txt"), join(hostMount, "escape.txt"));
+      symlinkSync(outside, join(hostMount, "escape-dir"));
+      writeFileSync(join(hostMount, "inside.txt"), "inside");
+      symlinkSync("inside.txt", join(hostMount, "inside-alias.txt"));
+
+      for (const requestedPath of [
+        "escape.txt",
+        "escape-dir/secret.txt",
+        "/workspace/deep-research/escape.txt",
+        "/workspace/deep-research/escape-dir/secret.txt",
+      ]) {
+        const file = await dispatchWorkspace(
+          workspace,
+          "HEAD",
+          `/workspaces/${workspace.id}/raw/${encodeURIComponent(requestedPath)}`,
+        );
+        expect(file.handled).toBe(true);
+        expect({ path: requestedPath, status: file.res.statusCode }).toEqual({
+          path: requestedPath,
+          status: 404,
+        });
+      }
+
+      for (const requestedPath of ["escape-dir", "/workspace/deep-research/escape-dir"]) {
+        const listing = await dispatchWorkspace(
+          workspace,
+          "GET",
+          `/workspaces/${workspace.id}/contents/${encodeURIComponent(requestedPath)}`,
+        );
+        expect(listing.handled).toBe(true);
+        expect({ path: requestedPath, status: listing.res.statusCode }).toEqual({
+          path: requestedPath,
+          status: 404,
+        });
+        expect(listing.res.body).not.toContain("secret.txt");
+      }
+
+      // An in-mount symlink keeps working.
+      const alias = await dispatchWorkspace(
+        workspace,
+        "HEAD",
+        `/workspaces/${workspace.id}/raw/inside-alias.txt`,
+      );
+      expect(alias.res.statusCode).toBe(200);
+      expect(alias.res.headers["Content-Length"]).toBe("6");
     });
 
     it("rejects /etc/passwd, tilde paths, and a different workspace slug", async () => {
