@@ -3,21 +3,6 @@ const HLS_CONTENT_TYPES = new Set(["application/vnd.apple.mpegurl", "application
 export const MAX_BROWSE_IMAGE_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 export const MAX_BROWSE_TEXT_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
-export const ALLOWED_EXTENSIONS = new Set([
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".gif",
-  ".webp",
-  ".bmp",
-  ".tif",
-  ".tiff",
-  ".ico",
-  ".svg",
-  ".heic",
-  ".heif",
-]);
-
 const IMAGE_CONTENT_TYPES: Record<string, string> = {
   ".apng": "image/apng",
   ".avif": "image/avif",

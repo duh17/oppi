@@ -17,7 +17,6 @@ import { resolveWorkspaceUserPath } from "../workspace-user-path.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 export {
-  ALLOWED_EXTENSIONS,
   decodeWorkspaceRoutePath,
   getContentType,
   isBrowseMediaContentType,

@@ -13,7 +13,6 @@ import type { Workspace } from "../src/types.js";
 import { makeResponse } from "./harness/route-test-helpers.js";
 
 import {
-  ALLOWED_EXTENSIONS,
   SEARCH_IGNORE_DIRS,
   SEARCH_ROOT_IGNORE_DIRS,
   SENSITIVE_FILE_PATTERNS,
@@ -25,35 +24,6 @@ import {
   listDirectoryEntries,
   getFileIndex,
 } from "../src/routes/workspace-files.js";
-
-// MARK: - ALLOWED_EXTENSIONS
-
-describe("ALLOWED_EXTENSIONS", () => {
-  test("allows image extensions", () => {
-    for (const ext of [
-      ".png",
-      ".jpg",
-      ".jpeg",
-      ".gif",
-      ".webp",
-      ".bmp",
-      ".tif",
-      ".tiff",
-      ".ico",
-      ".svg",
-      ".heic",
-      ".heif",
-    ]) {
-      expect(ALLOWED_EXTENSIONS.has(ext), `should allow ${ext}`).toBe(true);
-    }
-  });
-
-  test("rejects non-image extensions", () => {
-    for (const ext of [".env", ".key", ".ts", ".js", ".json", ".txt", ".sh", ".py", ""]) {
-      expect(ALLOWED_EXTENSIONS.has(ext), `should reject ${ext}`).toBe(false);
-    }
-  });
-});
 
 // MARK: - resolveWorkspaceFilePath
 
