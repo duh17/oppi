@@ -47,6 +47,7 @@ const sessionOperationIds = [
   "headHostRaw",
   "getCurrentFile",
   "headCurrentFile",
+  "putCurrentFile",
   "listCurrentFileSidecars",
   "getHostContentsRoot",
   "getHostContents",
@@ -389,5 +390,32 @@ describe("api route registry", () => {
     expect(paths.has("/workspaces/{workspaceId}/review/diff")).toBe(false);
     expect(paths.has("/workspaces/{workspaceId}/git/changes")).toBe(false);
     expect(paths.has("/workspaces/{workspaceId}/system-prompt/base")).toBe(false);
+  });
+
+  it("keeps legacy raw byte routes read-only; the only file write is workspace-origin /files/current", () => {
+    const legacyRawPaths = [
+      "/workspaces/{workspaceId}/raw/{path+}",
+      "/files/raw",
+      "/workspaces/{workspaceId}/sessions/{sessionId}/raw/{path+}",
+    ];
+    for (const path of legacyRawPaths) {
+      const methods = apiRouteSpecs
+        .filter((route) => route.path === path)
+        .map((route) => route.method);
+      expect(methods.length, `${path} must stay registered for older clients`).toBeGreaterThan(0);
+      expect(
+        methods.filter((method) => method !== "GET" && method !== "HEAD"),
+        path,
+      ).toEqual([]);
+    }
+
+    const fileWrites = apiRouteSpecs.filter(
+      (route) =>
+        (route.method === "PUT" || route.method === "POST" || route.method === "PATCH") &&
+        (route.path.includes("/raw") || route.path.startsWith("/files/")),
+    );
+    expect(fileWrites.map((route) => `${route.method} ${route.path}`)).toEqual([
+      "PUT /files/current",
+    ]);
   });
 });

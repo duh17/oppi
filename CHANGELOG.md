@@ -48,6 +48,8 @@ Example:
 - **Client:** Pick HTML elements and Mermaid objects for review comments, with readable target descriptions and contextual Comment controls in full-screen viewers.
 - **Client/Server:** Host videos show adjacent `clip.srt` and `clip.<lang>.srt` captions in chat and the file browser, with the same language picker as workspace video.
 - **Protocol:** Servers report `capabilities.currentFiles` and serve every workspace, session, and host file read through `GET/HEAD /files/current?origin=…`, plus bounded same-stem caption discovery at `/files/current/sidecars`. iOS switches only when the server reports the capability; the legacy workspace `raw`, session-raw, and `/files/raw` routes stay for older iOS builds.
+- **Client:** Edit existing workspace text files (Markdown, code, JSON, plain text up to 1 MiB, selected worktree included) on iPhone and iPad. Edit is explicit from the reader; typing stays local in one UIKit text view, saves after 1 second idle, and keeps a protected on-device draft. Preview shows the current draft. If the file changed on the server, autosave stops and offers Review Changes, Use Disk Version, or Replace Disk Version; a deleted file is never recreated. Bytes are saved exactly as typed, with no line-ending, BOM, Unicode, or JSON normalization.
+- **Server/Protocol:** `capabilities.workspaceFileEditing` (`version`, `maxBytes`). Eligible workspace-origin `GET/HEAD /files/current` responses carry a strong `ETag`. `PUT /files/current?origin=workspace` requires one concrete `If-Match` and returns `200 {etag,size,mtimeMs}`, `412`, `404`, `413`, `415`, or `428`; it never creates files. Host and session origins and the legacy raw routes stay read-only. Rename is not compare-and-swap against other same-host writers.
 
 ### Changed
 

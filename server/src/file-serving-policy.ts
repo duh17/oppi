@@ -2,6 +2,7 @@ const HLS_CONTENT_TYPES = new Set(["application/vnd.apple.mpegurl", "application
 
 export const MAX_BROWSE_IMAGE_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 export const MAX_BROWSE_TEXT_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+export const MAX_WORKSPACE_FILE_EDIT_BYTES = 1_048_576; // 1 MiB
 
 const IMAGE_CONTENT_TYPES: Record<string, string> = {
   ".apng": "image/apng",
@@ -288,4 +289,13 @@ export function getContentType(ext: string, filename: string): string {
   if (mediaType) return mediaType;
 
   return "application/octet-stream";
+}
+
+/** Markdown, code, JSON, and plain text. Reuses getContentType; not a second stack. */
+export function isWorkspaceEditorTextPath(requestedPath: string): boolean {
+  const filename = requestedPath.replaceAll("\\", "/").split("/").filter(Boolean).pop() ?? "";
+  if (!filename) return false;
+  const contentType = getContentType("", filename);
+  const normalized = normalizeContentType(contentType);
+  return normalized.startsWith("text/") || normalized === "application/json";
 }

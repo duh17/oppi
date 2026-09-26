@@ -15,6 +15,7 @@ You choose the server, workspace, model providers, speech-to-text service, and t
 - Model, speech, and voice providers can receive the content needed for the operation you choose. Their privacy policies and retention rules apply.
 - Public builds upload diagnostics only after you enable **Settings → Privacy & Security → Send Diagnostics to Server**. Diagnostics go to your paired server, not to a hosted Oppi service.
 - Remote connections use authenticated HTTPS/WSS, including LAN and Tailscale HTTPS. The network path can see ordinary connection metadata such as IP addresses, hostnames, timing, and traffic volume.
+- Unsaved workspace file edits are kept as protected draft files in the app's sandbox until the paired server confirms the save, or until you choose Use Disk Version.
 - Removing a server from the app removes its local pairing credential. It does not delete the server, workspace files, session history, provider data, or backups.
 
 ## Data locations and control boundaries

@@ -106,6 +106,17 @@ GET /files/current/sidecars?origin=host&path=~/Movies/clip.mp4
 
 iOS switches to this route only after the same server reports `currentFiles` in `/server/info`. Against an older server it keeps the legacy route for the file's origin: workspace `raw`, session-raw, or host `/files/raw`. It never sends a sandbox path to `/files/raw`. The legacy routes stay available for older iOS builds, with their existing path semantics and status codes, except that an existing file the server cannot read now returns 404 on workspace `raw` and session-raw, as it already did on `/files/raw`. WKWebView must not URL-load any current-file route.
 
+### Editing workspace files
+
+On iPhone and iPad, a workspace text file can be edited when the server reports `capabilities.workspaceFileEditing`. Files open in the reader; tap **Edit** to type. Markdown, code, JSON, and plain text up to the advertised `maxBytes` (1 MiB) are eligible, in the selected checkout or worktree. Host-origin and session-origin files, binaries, symlinks, and files outside the workspace stay read-only. A server without the capability is read-only.
+
+- Typing is local. The app saves 1 second after you stop, one request at a time, and keeps an on-device draft until the server confirms the save. **Preview** renders the current draft. **Done**, Back, and leaving the app save the draft first and never wait for the network.
+- Saves use `PUT /files/current?origin=workspace&workspaceId=<id>&worktreeId=<id>&path=<path>` with the raw bytes and `If-Match` set to the strong `ETag` (`"sha256-<hex>"`) from the read. `*` is refused, a missing tag returns 428, a changed file returns 412, and a missing file returns 404; the server never creates a file. Legacy `raw` routes are read-only.
+- If the file changed on the server, autosave stops and your edits stay. **Review Changes** shows the disk version against your draft. **Use Disk Version** discards your edits. **Replace Disk Version** writes your draft only if the disk still matches the version you reviewed. If the file was deleted, the app keeps your draft, reopens it in a deleted state even after the app restarts, and does not recreate the file. If the on-device draft cannot be written, the editor says so instead of claiming your edits are kept.
+- If a save times out after it was sent, the app re-reads the file before trying again.
+- Bytes are saved exactly as typed. Line endings, BOM, Unicode form, JSON formatting, and the trailing newline are not normalized.
+- The server compares the tag immediately before an atomic rename, but rename is not compare-and-swap. An agent, git, or shell writing the same file at that moment can still race the save.
+
 ### Recommended agent instruction
 
 Copy this into a Pi or agent system prompt:

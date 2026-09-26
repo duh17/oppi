@@ -65,6 +65,13 @@ struct ServerInfo: Codable, Sendable, Equatable {
         var controlSessions: CapabilityVersion? = nil
         /// Unified `/files/current` reads and bounded sidecar discovery.
         var currentFiles: CapabilityVersion? = nil
+        /// Guarded `PUT /files/current?origin=workspace`. Missing means read-only.
+        var workspaceFileEditing: WorkspaceFileEditingCapability? = nil
+    }
+
+    struct WorkspaceFileEditingCapability: Codable, Sendable, Equatable {
+        let version: Int
+        let maxBytes: Int
     }
 
     struct CapabilityVersion: Codable, Sendable, Equatable {

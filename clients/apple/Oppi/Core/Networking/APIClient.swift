@@ -309,6 +309,9 @@ actor APIClient: ClientLogUploading {
     /// Zero keeps the legacy per-origin routes, so an older server never
     /// receives a sandbox path on its origin-blind host route.
     private var currentFilesVersion = 0
+    /// `workspaceFileEditing` from this client's own `/server/info`. Nil keeps
+    /// every file read-only; there is no write fallback on a legacy byte route.
+    private var workspaceFileEditing: ServerInfo.WorkspaceFileEditingCapability?
 
     init(
         environment: OppiClientEnvironment,
@@ -481,6 +484,7 @@ actor APIClient: ClientLogUploading {
 
     private func recordCapabilities(_ info: ServerInfo) -> ServerInfo {
         currentFilesVersion = info.capabilities?.currentFiles?.version ?? 0
+        workspaceFileEditing = info.capabilities?.workspaceFileEditing
         return info
     }
 
@@ -1990,6 +1994,123 @@ actor APIClient: ClientLogUploading {
     /// Returns raw file content as `Data`. For text files, decode to String with UTF-8.
     func browseWorkspaceFile(workspaceId: String, path: String, worktreeId: String? = nil) async throws -> Data {
         try await get(url: makeCurrentFileURL(.workspace(workspaceId: workspaceId, worktreeId: worktreeId), path: path))
+    }
+
+    // MARK: - Workspace File Editing
+
+    /// Editing capability for this server. Requires `currentFiles` because reads
+    /// and writes both use `/files/current`. Nil means read-only.
+    func workspaceFileEditingCapability() -> ServerInfo.WorkspaceFileEditingCapability? {
+        guard currentFilesVersion >= 1,
+              let workspaceFileEditing,
+              workspaceFileEditing.version >= 1,
+              workspaceFileEditing.maxBytes > 0 else { return nil }
+        return workspaceFileEditing
+    }
+
+    /// `GET /files/current?origin=workspace` with the strong ETag of the exact
+    /// returned bytes. Only on servers that advertise `workspaceFileEditing`.
+    func readWorkspaceFileForEditing(
+        workspaceId: String,
+        path: String,
+        worktreeId: String? = nil
+    ) async throws -> WorkspaceFileDiskSnapshot {
+        guard workspaceFileEditingCapability() != nil else {
+            throw CocoaError(.featureUnsupported)
+        }
+        let url = try makeWorkspaceFileEditURL(workspaceId: workspaceId, path: path, worktreeId: worktreeId)
+        let (data, response) = try await performAuthorized {
+            var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+            req.httpMethod = "GET"
+            return req
+        }
+        try checkStatus(response, data: data)
+        let etag = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag")
+        return WorkspaceFileDiskSnapshot(bytes: data, etag: etag)
+    }
+
+    func readWorkspaceFileForEditingOutcome(
+        workspaceId: String,
+        path: String,
+        worktreeId: String?
+    ) async -> WorkspaceFileReadOutcome {
+        do {
+            return .snapshot(try await readWorkspaceFileForEditing(
+                workspaceId: workspaceId,
+                path: path,
+                worktreeId: worktreeId
+            ))
+        } catch let APIError.server(status, _) where status == 404 {
+            return .missing
+        } catch let APIError.codedServer(status, _, _) where status == 404 {
+            return .missing
+        } catch {
+            return .failed
+        }
+    }
+
+    /// Guarded write of an existing workspace text file. The only file-write URL
+    /// this client builds: `PUT /files/current?origin=workspace`, one concrete
+    /// `If-Match`, raw bytes. Legacy raw routes stay read-only.
+    func writeWorkspaceFile(
+        workspaceId: String,
+        path: String,
+        worktreeId: String?,
+        bytes: Data,
+        ifMatch: String
+    ) async -> WorkspaceFileWriteOutcome {
+        guard workspaceFileEditingCapability() != nil, !ifMatch.isEmpty, ifMatch != "*" else {
+            return .rejected(status: 0, message: "Editing is not available on this server")
+        }
+        let data: Data
+        let response: URLResponse
+        do {
+            let url = try makeWorkspaceFileEditURL(workspaceId: workspaceId, path: path, worktreeId: worktreeId)
+            (data, response) = try await performAuthorized {
+                var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+                req.httpMethod = "PUT"
+                req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+                req.setValue(ifMatch, forHTTPHeaderField: "If-Match")
+                req.httpBody = bytes
+                return req
+            }
+        } catch {
+            return WorkspaceFileWriteFailureClassifier.outcome(for: error)
+        }
+        guard let http = response as? HTTPURLResponse else { return .unknown }
+        switch http.statusCode {
+        case 200:
+            struct Body: Decodable { let etag: String }
+            guard let body = try? JSONDecoder().decode(Body.self, from: data), !body.etag.isEmpty else {
+                return .unknown
+            }
+            return .saved(etag: body.etag)
+        case 412:
+            return .stale
+        case 404:
+            return .missing
+        default:
+            struct ErrorBody: Decodable { let error: String }
+            let message = (try? JSONDecoder().decode(ErrorBody.self, from: data).error)
+                ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
+            return .rejected(status: http.statusCode, message: message)
+        }
+    }
+
+    private func makeWorkspaceFileEditURL(
+        workspaceId: String,
+        path: String,
+        worktreeId: String?
+    ) throws -> URL {
+        try makeURL(
+            pathSegments: ["files", "current"],
+            queryItems: [
+                URLQueryItem(name: "origin", value: "workspace"),
+                URLQueryItem(name: "workspaceId", value: workspaceId),
+            ] + workspaceWorktreeQueryItems(worktreeId) + [
+                URLQueryItem(name: "path", value: path),
+            ]
+        )
     }
 
     /// Exact-path existence check for an owner host file. 404 is unresolved.

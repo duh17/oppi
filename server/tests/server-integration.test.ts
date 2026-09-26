@@ -340,6 +340,10 @@ describe("GET /server/info", () => {
     expect(body.update?.manualCommand).toMatch(/npm install -g oppi-server/);
     expect(body.capabilities?.sessionStream?.version).toBe(1);
     expect(body.capabilities?.appEventStream?.version).toBe(1);
+    expect(body.capabilities?.workspaceFileEditing).toEqual({
+      version: 1,
+      maxBytes: 1_048_576,
+    });
     expect(body.capabilities?.extensionNativeUI).toEqual({
       version: 1,
       capabilities: [

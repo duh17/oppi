@@ -146,6 +146,17 @@ struct FileBrowserContentView: View {
     @State private var loadedApiClient: APIClient?
     @State private var timedText = TimedText.LoadResult.empty
     @State private var timedTextLoadFinished = false
+    /// Tagged read of the displayed bytes. Nil when the server did not offer
+    /// this file for editing; missing capability or other origins stay read-only.
+    @State private var editBase: WorkspaceFileDiskSnapshot?
+    @State private var editMaxBytes: Int?
+    @State private var editSession: WorkspaceFileEditSession?
+    @State private var isEditing = false
+    @State private var isShowingEditPreview = false
+    @State private var editorReplacement: WorkspaceFileEditorReplacement?
+    @State private var isReviewingEdit = false
+    @State private var isConfirmingUseDisk = false
+    @State private var editNotice: String?
 
     private var currentSelection: FileBrowserSelection {
         activeSelection ?? FileBrowserSelection(path: filePath, name: fileName, size: fileSize)
@@ -175,7 +186,7 @@ struct FileBrowserContentView: View {
     /// When true, the SwiftUI navigation bar is hidden and the UIKit
     /// viewer's internal nav bar provides all chrome.
     private var isUsingFileViewer: Bool {
-        if case .text = content { return true }
+        if case .text = content { return !isEditing }
         return false
     }
 
@@ -190,6 +201,11 @@ struct FileBrowserContentView: View {
 
     private var shouldHideHostNavigationBar: Bool {
         shouldShowEmbeddedNavigationChrome && isUsingFileViewer
+    }
+
+    private var isEditingText: Bool {
+        if case .text = content { return isEditing && editSession != nil }
+        return false
     }
 
     private var parentOwnsBackSwipe: Bool {
@@ -240,8 +256,8 @@ struct FileBrowserContentView: View {
                 navigateBackToFileList
             )
             .modifier(AdjacentFileNavigatorControls(
-                canGoPrevious: adjacentSelection(.previous) != nil,
-                canGoNext: adjacentSelection(.next) != nil,
+                canGoPrevious: !isEditingText && adjacentSelection(.previous) != nil,
+                canGoNext: !isEditingText && adjacentSelection(.next) != nil,
                 onPrevious: { navigateToAdjacentFile(.previous) },
                 onNext: { navigateToAdjacentFile(.next) }
             ))
@@ -255,7 +271,9 @@ struct FileBrowserContentView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(shouldHideHostNavigationBar ? .hidden : .automatic, for: .navigationBar)
         .toolbar {
-            if chromeMode == .pushed, !isUsingFileViewer {
+            if isEditingText, let editSession {
+                editingToolbar(session: editSession)
+            } else if chromeMode == .pushed, !isUsingFileViewer {
                 ToolbarItem(placement: .topBarTrailing) {
                     if let shareable = shareableContent() {
                         FileShareButton(content: shareable, style: .icon)
@@ -267,6 +285,33 @@ struct FileBrowserContentView: View {
                     }
                 }
             }
+        }
+        .sheet(isPresented: $isReviewingEdit) {
+            if let editSession {
+                WorkspaceFileConflictReviewView(
+                    session: editSession,
+                    filePath: currentFilePath,
+                    onUseDisk: {
+                        isReviewingEdit = false
+                        useDiskVersion()
+                    },
+                    onReplace: {
+                        editSession.replaceDiskVersion()
+                        isReviewingEdit = false
+                    },
+                    onClose: { isReviewingEdit = false }
+                )
+            }
+        }
+        .alert(
+            String(localized: "Use Disk Version?"),
+            isPresented: $isConfirmingUseDisk
+        ) {
+            Button(String(localized: "Discard My Edits"), role: .destructive) { useDiskVersion() }
+                .accessibilityIdentifier("workspace-file-editor.use-disk.confirm")
+            Button(String(localized: "Cancel"), role: .cancel) {}
+        } message: {
+            Text(String(localized: "Your unsaved edits to this file will be discarded."))
         }
         .task(id: currentFilePath) { await loadContent() }
         .task { await checkNetworkCost() }
@@ -294,19 +339,11 @@ struct FileBrowserContentView: View {
                 description: Text(message)
             )
         case .text(let text):
-            EmbeddedFileViewerView(
-                content: fullScreenContent(text: text),
-                reviewCommentSessionId: sessionId,
-                lineAnchor: activeSelection == nil ? lineAnchor : nil,
-                lineAnchorNotice: onLineAnchorNotice,
-                showsNavigationChrome: shouldShowEmbeddedNavigationChrome,
-                backSwipeAction: navigateBackToFileList,
-                markdownViewportIntent: markdownViewportRestore?.intent(for: currentFilePath),
-                addToChatDestination: addToChatDestination,
-                leadingFloatingAccessoryCount: adjacentFileNavigatorLeadingAccessoryCount,
-                trailingFloatingAccessoryCount: adjacentFileNavigatorTrailingAccessoryCount
-            )
-            .ignoresSafeArea(edges: shouldShowEmbeddedNavigationChrome ? .top : [])
+            if isEditing, let editSession {
+                editorView(session: editSession)
+            } else {
+                readerView(text: text)
+            }
         case .image(let data):
             imageView(data)
         case .video(let source):
@@ -331,6 +368,219 @@ struct FileBrowserContentView: View {
                 systemImage: "doc.fill",
                 description: Text("This file type cannot be displayed as text.")
             )
+        }
+    }
+
+    // MARK: - Text Reader and Editor
+
+    @ViewBuilder
+    private func readerView(text: String) -> some View {
+        EmbeddedFileViewerView(
+            content: fullScreenContent(text: text),
+            reviewCommentSessionId: sessionId,
+            lineAnchor: activeSelection == nil ? lineAnchor : nil,
+            lineAnchorNotice: onLineAnchorNotice,
+            showsNavigationChrome: shouldShowEmbeddedNavigationChrome,
+            backSwipeAction: navigateBackToFileList,
+            navigationActions: editNavigationActions,
+            markdownViewportIntent: markdownViewportRestore?.intent(for: currentFilePath),
+            addToChatDestination: addToChatDestination,
+            leadingFloatingAccessoryCount: adjacentFileNavigatorLeadingAccessoryCount,
+            trailingFloatingAccessoryCount: adjacentFileNavigatorTrailingAccessoryCount
+        )
+        .ignoresSafeArea(edges: shouldShowEmbeddedNavigationChrome ? .top : [])
+    }
+
+    @ViewBuilder
+    private func editorView(session: WorkspaceFileEditSession) -> some View {
+        WorkspaceFileEditorView(
+            session: session,
+            isShowingPreview: isShowingEditPreview,
+            replacementText: editorReplacement,
+            makePreview: { text in
+                UIHostingController(rootView: EmbeddedFileViewerView(
+                    content: fullScreenContent(text: text),
+                    showsNavigationChrome: false
+                ))
+            }
+        )
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                WorkspaceFileEditBanner(
+                    session: session,
+                    onReview: { isReviewingEdit = true },
+                    onUseDisk: { isConfirmingUseDisk = true }
+                )
+                if let editNotice {
+                    Text(editNotice)
+                        .font(.footnote)
+                        .foregroundStyle(.themeComment)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private func editingToolbar(session: WorkspaceFileEditSession) -> some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Text(WorkspaceFileEditStatusPresentation.label(for: session.status))
+                .font(.footnote)
+                .foregroundStyle(.themeComment)
+                .accessibilityIdentifier("workspace-file-editor.status")
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Button(isShowingEditPreview ? String(localized: "Source") : String(localized: "Preview")) {
+                isShowingEditPreview.toggle()
+            }
+            .accessibilityIdentifier("workspace-file-editor.preview-toggle")
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Button(String(localized: "Done")) { endEditing() }
+                .fontWeight(.semibold)
+                .accessibilityIdentifier("workspace-file-editor.done")
+        }
+    }
+
+    private var editNavigationActions: [FullScreenViewerNavigationAction] {
+        guard editIdentity(for: currentFilePath) != nil,
+              editMaxBytes != nil,
+              editBase != nil || editSession != nil else { return [] }
+        return [
+            FullScreenViewerNavigationAction(
+                id: "workspace-file-edit",
+                title: String(localized: "Edit"),
+                accessibilityLabel: String(localized: "Edit File"),
+                handler: { beginEditing() }
+            ),
+        ]
+    }
+
+    /// Server + workspace + worktree + path. Only workspace-origin files on a
+    /// known server are editable; host and session origins stay read-only.
+    private func editIdentity(for path: String) -> WorkspaceFileEditIdentity? {
+        guard source == .workspaceFile,
+              let serverId, !serverId.isEmpty,
+              !workspaceId.isEmpty else { return nil }
+        return WorkspaceFileEditIdentity(
+            serverId: serverId,
+            workspaceId: workspaceId,
+            worktreeId: worktreeId,
+            path: path
+        )
+    }
+
+    private func resetEditState() {
+        editBase = nil
+        editMaxBytes = nil
+        editSession = nil
+        isEditing = false
+        isShowingEditPreview = false
+        editorReplacement = nil
+        isReviewingEdit = false
+        editNotice = nil
+    }
+
+    /// Record the tagged read and adopt a live session or recover a stored
+    /// draft. Returns the text the reader should show when it differs from disk.
+    private func prepareEditing(
+        identity: WorkspaceFileEditIdentity,
+        snapshot: WorkspaceFileDiskSnapshot,
+        maxBytes: Int,
+        api: APIClient
+    ) -> String? {
+        editMaxBytes = maxBytes
+        editBase = snapshot.etag == nil ? nil : snapshot
+        let registry = WorkspaceFileEditSessionRegistry.shared
+        if let live = registry.session(for: identity) {
+            editSession = live
+            if live.hasUnsavedChanges, live.status.stopsAutosave || live.recoveredDraft {
+                isEditing = true
+            }
+            return live.hasUnsavedChanges ? live.currentText : nil
+        }
+        guard snapshot.etag != nil,
+              WorkspaceFileDraftStore.shared.loadResult(identity) != .none,
+              let recovered = WorkspaceFileEditSession(
+                  identity: identity,
+                  disk: snapshot,
+                  maxBytes: maxBytes,
+                  transport: .api(api)
+              ) else { return nil }
+        // A recovered draft, or a notice that an unreadable one was moved aside.
+        guard recovered.recoveredDraft || recovered.draftNotice != nil else { return nil }
+        registry.register(recovered)
+        editSession = recovered
+        isEditing = true
+        return recovered.currentText
+    }
+
+    private static func isNotFound(_ error: Error) -> Bool {
+        switch error {
+        case APIError.server(let status, _), APIError.codedServer(let status, _, _):
+            return status == 404
+        default:
+            return false
+        }
+    }
+
+    private func beginEditing() {
+        guard let identity = editIdentity(for: currentFilePath),
+              let maxBytes = editMaxBytes,
+              let api = loadedApiClient ?? apiClient else { return }
+        let registry = WorkspaceFileEditSessionRegistry.shared
+        let session: WorkspaceFileEditSession
+        if let live = registry.session(for: identity) {
+            session = live
+        } else if let existing = editSession, existing.identity == identity {
+            // Keeps the newest acknowledged tag after an earlier edit settled.
+            session = existing
+            registry.register(existing)
+        } else if let editBase, let created = WorkspaceFileEditSession(
+            identity: identity,
+            disk: editBase,
+            maxBytes: maxBytes,
+            transport: .api(api)
+        ) {
+            session = created
+            registry.register(created)
+        } else {
+            return
+        }
+        editSession = session
+        editNotice = nil
+        isShowingEditPreview = false
+        isEditing = true
+    }
+
+    /// Done: show the current draft in the reader. The editor teardown
+    /// checkpoints and starts the save; the network is not awaited.
+    private func endEditing() {
+        guard let editSession else {
+            isEditing = false
+            return
+        }
+        let text = editSession.currentText
+        isShowingEditPreview = false
+        isEditing = false
+        content = .text(text)
+    }
+
+    private func useDiskVersion() {
+        guard let editSession else { return }
+        Task {
+            switch await editSession.useDiskVersion() {
+            case .replaced(let text):
+                editNotice = nil
+                editorReplacement = WorkspaceFileEditorReplacement(text: text)
+                content = .text(text)
+            case .missing, .notEditable:
+                resetEditState()
+                await loadContent(force: true)
+            case .unavailable:
+                editNotice = String(localized: "Couldn't read the disk version. Your edits were not changed.")
+            }
         }
     }
 
@@ -469,6 +719,11 @@ struct FileBrowserContentView: View {
             content = .error("Not connected")
             return
         }
+        // Reappearing over an open editor must not reload over the buffer.
+        if isEditing, let editSession,
+           editSession.identity == editIdentity(for: currentSelection.path) {
+            return
+        }
 
         let requestedSelection = currentSelection
         let requestedPath = requestedSelection.path
@@ -504,6 +759,7 @@ struct FileBrowserContentView: View {
 
         loadedMediaPath = nil
         loadedHostFilePath = nil
+        resetEditState()
         timedText = .empty
         timedTextLoadFinished = false
         beginUSDZSafeLoading()
@@ -560,7 +816,42 @@ struct FileBrowserContentView: View {
                 content = .usdz(handle)
             case .image, .pdf, .text, .binary:
                 let data: Data
-                if source == .hostFile {
+                var editedText: String?
+                if requestedCategory == .text,
+                   let identity = editIdentity(for: requestedPath),
+                   let capability = await api.workspaceFileEditingCapability() {
+                    // One tagged read: the edit base is exactly the displayed bytes.
+                    let snapshot: WorkspaceFileDiskSnapshot
+                    do {
+                        snapshot = try await api.readWorkspaceFileForEditing(
+                            workspaceId: workspaceId,
+                            path: requestedPath,
+                            worktreeId: worktreeId
+                        )
+                    } catch let error where Self.isNotFound(error) {
+                        // Gone on the server: a kept draft reopens in the
+                        // non-writing deleted state instead of an error page.
+                        guard isCurrentFile(requestedPath) else { return }
+                        guard let session = WorkspaceFileEditRecovery.sessionForMissingFile(
+                            identity: identity,
+                            maxBytes: capability.maxBytes,
+                            transport: .api(api)
+                        ) else { throw error }
+                        editMaxBytes = capability.maxBytes
+                        editSession = session
+                        isEditing = true
+                        content = .text(session.currentText)
+                        return
+                    }
+                    guard isCurrentFile(requestedPath) else { return }
+                    data = snapshot.bytes
+                    editedText = prepareEditing(
+                        identity: identity,
+                        snapshot: snapshot,
+                        maxBytes: capability.maxBytes,
+                        api: api
+                    )
+                } else if source == .hostFile {
                     let file = try await api.browseHostFileContent(
                         path: requestedPath, controlSessionId: controlSessionId
                     )
@@ -585,7 +876,9 @@ struct FileBrowserContentView: View {
                 case .pdf: content = .pdf(data)
                 case .binary: content = .binary
                 case .text:
-                    if let text = String(data: data, encoding: .utf8) {
+                    if let editedText {
+                        content = .text(editedText)
+                    } else if let text = String(data: data, encoding: .utf8) {
                         content = .text(text)
                     } else {
                         content = .binary

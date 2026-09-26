@@ -8,6 +8,7 @@ import {
   resolveCurrentFilePath,
   resolvedPathHeaders,
   resolveWorkspaceFileRoot,
+  sendExactFileBytes,
   sendFileBytes,
   statServableFile,
   type CurrentFileOrigin,
@@ -18,6 +19,13 @@ import { decodeWorkspaceRoutePath } from "../file-serving-policy.js";
 import { createLogger, type Logger } from "../logger.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type { DirectoryListingResponse } from "../types.js";
+import {
+  evaluateIfMatch,
+  inspectWorkspaceFileForEdit,
+  putWorkspaceFile,
+  readBoundedRequestBody,
+  WORKSPACE_FILE_EDIT_MAX_BYTES,
+} from "../workspace-file-edit.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 export interface HostFileRouteOptions {
@@ -147,7 +155,15 @@ export function createHostFileRoutes(
   async function resolveCurrentFileRequest(
     url: URL,
     res: ServerResponse,
-  ): Promise<{ file: ResolvedCurrentFile; originKind: string } | { status: number }> {
+  ): Promise<
+    | {
+        file: ResolvedCurrentFile;
+        originKind: string;
+        origin: CurrentFileOrigin;
+        path: string;
+      }
+    | { status: number }
+  > {
     const request = parseCurrentFileRequest(url);
     if (request.kind === "error") {
       helpers.error(res, request.status, request.message);
@@ -156,7 +172,12 @@ export function createHostFileRoutes(
     const resolved = await resolveCurrentFilePath(request.origin, request.path);
     switch (resolved.kind) {
       case "ok":
-        return { file: resolved.file, originKind: request.originKind };
+        return {
+          file: resolved.file,
+          originKind: request.originKind,
+          origin: request.origin,
+          path: request.path,
+        };
       case "outside-sandbox":
         helpers.error(res, 403, "Path outside sandbox workspace");
         return { status: 403 };
@@ -186,12 +207,36 @@ export function createHostFileRoutes(
       originKind = resolved.originKind;
       const servable = await statServableFile(resolved.file.realPath, resolved.file.lexicalPath);
       switch (servable.kind) {
-        case "ok":
+        case "ok": {
+          const extraHeaders = resolvedPathHeaders(resolved.file);
+          // ETag only when the query origin is workspace, not session→workspace.
+          if (
+            originKind === "workspace" &&
+            resolved.origin.kind === "workspace" &&
+            !req.headers.range
+          ) {
+            const inspection = await inspectWorkspaceFileForEdit({
+              workspace: resolved.origin.workspace,
+              root: resolved.origin.root,
+              requestedPath: resolved.path,
+              dataDir: resolved.origin.dataDir,
+            });
+            if (inspection.kind === "eligible") {
+              status = sendExactFileBytes(
+                res,
+                method,
+                { bytes: inspection.bytes, contentType: servable.file.contentType },
+                { ...extraHeaders, ETag: inspection.etag },
+              );
+              return;
+            }
+          }
           status = await sendFileBytes(req, res, method, servable.file, {
             rangeLogTag: "current-file",
-            extraHeaders: resolvedPathHeaders(resolved.file),
+            extraHeaders,
           });
           return;
+        }
         case "too-large":
           status = 413;
           helpers.error(res, 413, `File too large (max ${servable.maxSizeMegabytes}MB)`);
@@ -204,6 +249,88 @@ export function createHostFileRoutes(
       }
     } finally {
       log.info("currentfile.read", { method, origin: originKind, status });
+    }
+  }
+
+  async function handleCurrentFilePut(
+    url: URL,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    let status = 404;
+    let originKind: string | undefined;
+    let workspaceId: string | undefined;
+    let relativePath: string | undefined;
+    let size: number | null = null;
+    try {
+      const request = parseCurrentFileRequest(url);
+      if (request.kind === "error") {
+        status = request.status;
+        helpers.error(res, request.status, request.message);
+        return;
+      }
+      originKind = request.originKind;
+      relativePath = request.path;
+      if (request.originKind !== "workspace" || request.origin.kind !== "workspace") {
+        status = 404;
+        helpers.error(res, 404, "File not found");
+        return;
+      }
+      workspaceId = request.origin.workspace.id;
+
+      const precondition = evaluateIfMatch(req.headers["if-match"]);
+      if (precondition.kind === "missing") {
+        status = 428;
+        helpers.error(res, 428, "If-Match precondition required");
+        return;
+      }
+      if (precondition.kind === "wildcard" || precondition.kind === "invalid") {
+        status = 412;
+        helpers.error(res, 412, "Precondition failed");
+        return;
+      }
+
+      const body = await readBoundedRequestBody(req, WORKSPACE_FILE_EDIT_MAX_BYTES);
+      if (body.kind === "too-large") {
+        status = 413;
+        helpers.error(
+          res,
+          413,
+          `File too large (max ${Math.round(WORKSPACE_FILE_EDIT_MAX_BYTES / (1024 * 1024))}MB)`,
+        );
+        req.resume();
+        return;
+      }
+      if (body.kind === "error") {
+        status = 400;
+        helpers.error(res, 400, "Failed to read body");
+        return;
+      }
+      size = body.bytes.length;
+
+      const result = await putWorkspaceFile({
+        workspace: request.origin.workspace,
+        root: request.origin.root,
+        requestedPath: request.path,
+        dataDir: request.origin.dataDir,
+        ifMatch: req.headers["if-match"],
+        body: body.bytes,
+      });
+      if (result.kind === "error") {
+        status = result.status;
+        helpers.error(res, result.status, result.message);
+        return;
+      }
+      status = 200;
+      helpers.json(res, result.response);
+    } finally {
+      log.info("currentfile.write", {
+        origin: originKind,
+        workspaceId,
+        path: relativePath,
+        status,
+        ...(size !== null ? { size } : {}),
+      });
     }
   }
 
@@ -271,6 +398,10 @@ export function createHostFileRoutes(
     const readsBytes = normalizedMethod === "GET" || normalizedMethod === "HEAD";
 
     if (path === "/files/current") {
+      if (normalizedMethod === "PUT") {
+        await handleCurrentFilePut(url, req, res);
+        return true;
+      }
       if (!readsBytes) return false;
       await handleCurrentFile(normalizedMethod, url, req, res);
       return true;

@@ -200,6 +200,33 @@ export async function sendFileBytes(
   return status;
 }
 
+/**
+ * Send already-read bytes. Used when an ETag must hash the exact body that
+ * goes on the wire, so a later open cannot observe a different file.
+ */
+export function sendExactFileBytes(
+  res: ServerResponse,
+  method: string,
+  file: { bytes: Buffer; contentType: string },
+  extraHeaders?: Record<string, string>,
+): number {
+  const headers: Record<string, string> = {
+    "Content-Type": file.contentType,
+    "Cache-Control": "private, no-cache",
+    "Accept-Ranges": "bytes",
+    "Content-Length": file.bytes.length.toString(),
+    ...extraHeaders,
+  };
+  if (method.toUpperCase() === "HEAD") {
+    res.writeHead(200, headers);
+    res.end();
+    return 200;
+  }
+  res.writeHead(200, headers);
+  res.end(file.bytes);
+  return 200;
+}
+
 /** `X-Oppi-Resolved-Path` for a host realpath. Never send it for sandbox files. */
 export function resolvedPathHeaders(file: ResolvedCurrentFile): Record<string, string> {
   return file.confinedRoot

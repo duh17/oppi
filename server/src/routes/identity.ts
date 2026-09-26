@@ -8,7 +8,8 @@ import { isLocalRequest, resolveRequestProvenance } from "../request-trust.js";
 import { SourceRateLimiter } from "../source-rate-limit.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
 import { isDictationStreamEnabled } from "../dictation-types.js";
-import type { RegisterDeviceTokenRequest } from "../types.js";
+import { MAX_WORKSPACE_FILE_EDIT_BYTES } from "../file-serving-policy.js";
+import type { RegisterDeviceTokenRequest, WorkspaceFileEditingCapability } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import {
   aggregateDailyDetail,
@@ -198,6 +199,10 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         sessionStream: { version: 1 },
         controlSessions: { version: 1 },
         currentFiles: { version: 1 },
+        workspaceFileEditing: {
+          version: 1,
+          maxBytes: MAX_WORKSPACE_FILE_EDIT_BYTES,
+        } satisfies WorkspaceFileEditingCapability,
         appEventStream: { version: 1 },
         dictationStream: isDictationStreamEnabled(config.asr) ? { version: 1 } : undefined,
         extensionNativeUI: {

@@ -52,6 +52,7 @@ const sessionOperationIds = new Set<string>([
   "headHostRaw",
   "getCurrentFile",
   "headCurrentFile",
+  "putCurrentFile",
   "listCurrentFileSidecars",
   "getHostContentsRoot",
   "getHostContents",
@@ -594,6 +595,15 @@ const rawApiRouteSpecs = [
     operationId: "headCurrentFile",
     surface: "core",
     auth: "owner",
+  },
+  {
+    method: "PUT",
+    path: "/files/current",
+    operationId: "putCurrentFile",
+    surface: "core",
+    auth: "owner",
+    description:
+      "Guarded write of an existing workspace text file. origin=workspace only; requires one concrete If-Match; does not create.",
   },
   {
     method: "GET",

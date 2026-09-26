@@ -375,6 +375,7 @@ describe("identity module", () => {
           version: number;
           capabilities: string[];
         };
+        workspaceFileEditing: { version: number; maxBytes: number };
       };
     };
     expect(body.uploadProtocol).toEqual({ version: 1, maxFileBytes: 123, maxTurnBytes: 456 });
@@ -387,6 +388,10 @@ describe("identity module", () => {
         "extension-native-ui:v1:surface-native",
         "extension-native-ui:v1:osc8-links",
       ],
+    });
+    expect(body.capabilities.workspaceFileEditing).toEqual({
+      version: 1,
+      maxBytes: 1_048_576,
     });
   });
 

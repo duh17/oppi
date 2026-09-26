@@ -23,3 +23,16 @@ export interface FileIndexResponse {
   paths: string[];
   truncated: boolean;
 }
+
+/** Advertised on GET /server/info. Missing capability means the client stays read-only. */
+export interface WorkspaceFileEditingCapability {
+  version: 1;
+  maxBytes: number;
+}
+
+/** JSON body for PUT /files/current?origin=workspace. */
+export interface WorkspaceFileEditWriteResponse {
+  etag: string;
+  size: number;
+  mtimeMs: number;
+}
