@@ -332,6 +332,8 @@ struct FullScreenMarkdownAsyncRenderTests {
         let png = try #require(makePreviewTestImage().pngData())
 
         #expect(ImageMediaInspector.inspect(data: gif, mimeType: nil).normalizedMimeType == "image/gif")
+        #expect(ImageMediaInspector.inspect(data: gif, mimeType: nil).isAnimated)
+        #expect(!ImageMediaInspector.inspect(data: gif, mimeType: nil).prefersWebRenderer)
         #expect(ImageMediaInspector.inspect(data: webP, mimeType: nil).normalizedMimeType == "image/webp")
         #expect(
             ImageMediaInspector.inspect(data: png, mimeType: "image/gif").normalizedMimeType == "image/png",
@@ -371,14 +373,15 @@ struct FullScreenMarkdownAsyncRenderTests {
             )
             let loaded = await waitForTimelineCondition(timeoutMs: 10_000) { @MainActor in
                 fixture.reader.view.layoutIfNeeded()
-                return previewCase.expectedMimeType == nil
-                    ? imageView.debugHasRasterPreviewForTesting
-                    : imageView.debugWebRendererSettledForTesting
+                if previewCase.expectedMimeType == "image/svg+xml" {
+                    return imageView.debugWebRendererSettledForTesting
+                }
+                return imageView.debugHasRasterPreviewForTesting
             }
             #expect(loaded, "\(previewCase.path) did not settle into its tappable Markdown image renderer")
 
-            if let expectedMimeType = previewCase.expectedMimeType {
-                #expect(imageView.debugDataPreviewMimeTypeForTesting == expectedMimeType)
+            if previewCase.expectedMimeType == "image/svg+xml" {
+                #expect(imageView.debugDataPreviewMimeTypeForTesting == previewCase.expectedMimeType)
                 let renderer = try #require(imageView.debugWebRendererForTesting)
                 #expect(
                     await webImageElementDecoded(renderer),
@@ -387,6 +390,10 @@ struct FullScreenMarkdownAsyncRenderTests {
                 let tapTarget = try #require(imageView.debugDataPreviewTapTargetForTesting)
                 tapTarget.sendActions(for: .touchUpInside)
             } else {
+                if previewCase.expectedMimeType == "image/gif" {
+                    #expect(imageView.debugDataPreviewMimeTypeForTesting == "image/gif")
+                    #expect(imageView.debugWebRendererForTesting == nil)
+                }
                 imageView.debugOpenRasterPreviewForTesting()
             }
 
@@ -448,12 +455,11 @@ struct FullScreenMarkdownAsyncRenderTests {
         )
         let firstSettled = await waitForTimelineCondition(timeoutMs: 10_000) { @MainActor in
             host.view.layoutIfNeeded()
-            return first.debugWebRendererSettledForTesting
+            return first.debugHasRasterPreviewForTesting
+                && first.debugDataPreviewMimeTypeForTesting == "image/gif"
         }
         #expect(firstSettled)
-        #expect(first.debugDataPreviewMimeTypeForTesting == "image/gif")
-        let firstRenderer = try #require(first.debugWebRendererForTesting)
-        #expect(await webImageElementDecoded(firstRenderer))
+        #expect(first.debugWebRendererForTesting == nil)
         #expect(fetchCount == 1)
 
         first.removeFromSuperview()
@@ -466,20 +472,20 @@ struct FullScreenMarkdownAsyncRenderTests {
         )
         let cacheHitSettled = await waitForTimelineCondition(timeoutMs: 10_000) { @MainActor in
             host.view.layoutIfNeeded()
-            return cached.debugWebRendererSettledForTesting
+            return cached.debugHasRasterPreviewForTesting
+                && cached.debugDataPreviewMimeTypeForTesting == "image/gif"
         }
         #expect(cacheHitSettled)
         #expect(fetchCount == 1, "Cache hit unexpectedly fetched the session image again")
-        #expect(cached.debugDataPreviewMimeTypeForTesting == "image/gif")
-        let cachedRenderer = try #require(cached.debugWebRendererForTesting)
-        #expect(await webImageElementDecoded(cachedRenderer))
+        #expect(cached.debugWebRendererForTesting == nil)
 
-        let tapTarget = try #require(cached.debugDataPreviewTapTargetForTesting)
-        tapTarget.sendActions(for: .touchUpInside)
+        cached.debugOpenRasterPreviewForTesting()
         let opened = await waitForTimelineCondition(timeoutMs: 500) { @MainActor in
             host.presentedViewController is UINavigationController
         }
-        #expect(opened, "The real animated-image tap control did not open focused preview chrome")
+        #expect(opened, "The animated image tap did not open focused preview chrome")
+        let navigation = try #require(host.presentedViewController as? UINavigationController)
+        #expect(navigation.viewControllers.first is FullScreenImageDataPreviewViewController)
         host.dismiss(animated: false)
     }
 

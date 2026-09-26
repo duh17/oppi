@@ -1,3 +1,4 @@
+import Accessibility
 import AVFoundation
 import AVKit
 import ImageIO
@@ -418,8 +419,9 @@ enum ImageMediaInspector {
             return pixelSize.width / pixelSize.height
         }
 
+        /// SVG needs WebKit. Animated GIF and APNG play on `UIImageView`.
         var prefersWebRenderer: Bool {
-            isAnimated || normalizedMimeType == "image/svg+xml"
+            normalizedMimeType == "image/svg+xml"
         }
     }
 
@@ -481,6 +483,131 @@ enum ImageMediaInspector {
 
         return UIImage(data: data)
     }
+}
+
+/// Plays one GIF or APNG frame at a time on an image view.
+///
+/// ImageIO owns timing and disposal. The image view's `scaleAspectFit` keeps
+/// the ratio. A stopped gate ends the background animator on the next frame.
+@MainActor
+final class InlineAnimatedRasterPlayback {
+    private weak var imageView: UIImageView?
+    private var generation = 0
+    private var gate: RasterPlaybackGate?
+
+    func start(data: Data, imageView: UIImageView, maxPixelSize: CGFloat) {
+        stop()
+        self.imageView = imageView
+        imageView.contentMode = .scaleAspectFit
+        imageView.image = ImageMediaInspector.downsampledImage(data: data, maxPixelSize: maxPixelSize)
+        guard AccessibilitySettings.animatedImagesEnabled else { return }
+
+        generation += 1
+        let token = generation
+        let gate = RasterPlaybackGate()
+        self.gate = gate
+        let cfData = data as CFData
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            _ = CGAnimateImageDataWithBlock(cfData, nil) { _, cgImage, stop in
+                if gate.stopped {
+                    stop.pointee = true
+                    return
+                }
+                let frame = UIImage(cgImage: cgImage)
+                Task { @MainActor [weak self] in
+                    guard let self, self.generation == token, !gate.stopped else {
+                        gate.stopped = true
+                        return
+                    }
+                    self.imageView?.image = frame
+                }
+            }
+        }
+    }
+
+    func stop() {
+        generation += 1
+        gate?.stopped = true
+        gate = nil
+    }
+}
+
+/// Image view that plays GIF or APNG bytes without a web view.
+@MainActor
+final class InlineAnimatedRasterView: UIImageView {
+    private let playback = InlineAnimatedRasterPlayback()
+    private var sourceData: Data?
+    private var sourceIdentity: String?
+    private var maxPixelSize: CGFloat = 1_600
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentMode = .scaleAspectFit
+        clipsToBounds = true
+        isUserInteractionEnabled = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(animatedImagesSettingChanged),
+            name: AccessibilitySettings.animatedImagesEnabledDidChangeNotification,
+            object: nil
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    func display(data: Data, maxPixelSize: CGFloat) {
+        let nextIdentity = "\(data.count)-\(maxPixelSize)-\(data.prefix(16))-\(data.suffix(16))"
+        if nextIdentity == sourceIdentity, image != nil { return }
+        sourceIdentity = nextIdentity
+        sourceData = data
+        self.maxPixelSize = maxPixelSize
+        playback.start(data: data, imageView: self, maxPixelSize: maxPixelSize)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            playback.stop()
+            sourceIdentity = nil
+        } else if let sourceData {
+            playback.start(data: sourceData, imageView: self, maxPixelSize: maxPixelSize)
+        }
+    }
+
+    func stop() {
+        playback.stop()
+    }
+
+    @objc private func animatedImagesSettingChanged() {
+        guard let sourceData else { return }
+        playback.start(data: sourceData, imageView: self, maxPixelSize: maxPixelSize)
+    }
+}
+
+struct InlineAnimatedRasterRepresentable: UIViewRepresentable {
+    let data: Data
+    var maxPixelSize: CGFloat = 1_600
+
+    func makeUIView(context: Context) -> InlineAnimatedRasterView {
+        let view = InlineAnimatedRasterView(frame: .zero)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        view.display(data: data, maxPixelSize: maxPixelSize)
+        return view
+    }
+
+    func updateUIView(_ view: InlineAnimatedRasterView, context: Context) {
+        view.display(data: data, maxPixelSize: maxPixelSize)
+    }
+}
+
+private final class RasterPlaybackGate: @unchecked Sendable {
+    var stopped = false
 }
 
 // MARK: - Image Preview Web Security
@@ -1034,6 +1161,7 @@ struct DataImagePreviewView: View {
         case loading
         case staticImage(UIImage, CGFloat?)
         case animated(String, CGFloat?, Data, String?)
+        case animatedRaster(Data, CGFloat?, String?)
         case failure
     }
 
@@ -1087,6 +1215,18 @@ struct DataImagePreviewView: View {
                         },
                     aspectRatio: aspectRatio
                 )
+            case .animatedRaster(let bytes, let aspectRatio, let mimeType):
+                renderedImage(
+                    InlineAnimatedRasterRepresentable(data: bytes, maxPixelSize: maxPixelSize)
+                        .onTapGesture {
+                            if let openChatReader {
+                                openChatReader(.imageData(bytes, mimeType: mimeType))
+                            } else {
+                                FullScreenImageDataPreviewPresenter.present(data: bytes, mimeType: mimeType)
+                            }
+                        },
+                    aspectRatio: aspectRatio
+                )
             case .animated(let dataURLString, let aspectRatio, let data, let mimeType):
                 renderedImage(
                     AnimatedImageWebView(dataURLString: dataURLString)
@@ -1105,8 +1245,11 @@ struct DataImagePreviewView: View {
             phase = await Task.detached(priority: .userInitiated) {
                 let info = ImageMediaInspector.inspect(data: data, mimeType: mimeType)
                 let aspectRatio = info.aspectRatio ?? MediaMimeType.extractSVGViewBoxAspectRatio(data)
+                if info.isAnimated, !info.prefersWebRenderer {
+                    return Phase.animatedRaster(data, aspectRatio, info.normalizedMimeType)
+                }
                 if info.prefersWebRenderer {
-                    let normalizedMimeType = MediaMimeType.safeImageMimeType(info.normalizedMimeType, fallback: "image/gif")
+                    let normalizedMimeType = MediaMimeType.safeImageMimeType(info.normalizedMimeType, fallback: "image/svg+xml")
                     let dataURLString = "data:\(normalizedMimeType);base64,\(data.base64EncodedString())"
                     return Phase.animated(dataURLString, aspectRatio, data, normalizedMimeType)
                 }

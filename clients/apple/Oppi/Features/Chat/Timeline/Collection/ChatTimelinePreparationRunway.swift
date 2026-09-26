@@ -1149,6 +1149,7 @@ actor TimelineSerialRasterPreparer {
         )
         let inspection = ImageMediaInspector.inspect(data: data, mimeType: pathMimeType)
         guard !inspection.prefersWebRenderer,
+              !inspection.isAnimated,
               let sourcePixelSize = inspection.pixelSize,
               ImageViewportSizing.validatedHeightToWidthRatio(
                   width: sourcePixelSize.width,

@@ -740,7 +740,7 @@ struct UserTimelineRowContentTests {
         #expect(firstSubview(ofType: UIActivityIndicatorView.self, in: thumbnails[0]) != nil)
         let rendered = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
             firstSubview(ofType: UIImageView.self, in: thumbnails[0])?.image != nil
-                && firstSubview(ofType: AnimatedImageWebContainerView.self, in: thumbnails[1]) != nil
+                && firstSubview(ofType: InlineAnimatedRasterView.self, in: thumbnails[1]) != nil
                 && allLabelTexts(in: thumbnails[2]).contains("Image preview unavailable")
         }
         #expect(rendered)

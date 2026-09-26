@@ -842,6 +842,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
 private final class UserTimelineImageThumbnailView: UIView {
     enum Content: Sendable {
         case image(UIImage)
+        case animatedRaster(Data)
         case web(String)
         case failure
     }
@@ -862,8 +863,11 @@ private final class UserTimelineImageThumbnailView: UIView {
     nonisolated static func decode(data: Data, mimeType: String) -> Content {
         let info = ImageMediaInspector.inspect(data: data, mimeType: mimeType)
         if info.prefersWebRenderer {
-            let mime = MediaMimeType.safeImageMimeType(info.normalizedMimeType, fallback: "image/gif")
+            let mime = MediaMimeType.safeImageMimeType(info.normalizedMimeType, fallback: "image/svg+xml")
             return .web("data:\(mime);base64,\(data.base64EncodedString())")
+        }
+        if info.isAnimated {
+            return .animatedRaster(data)
         }
         if let image = ImageMediaInspector.downsampledImage(data: data, maxPixelSize: 512) {
             return .image(image)
@@ -889,6 +893,19 @@ private final class UserTimelineImageThumbnailView: UIView {
                     return
                 }
                 ToolTimelineRowPresentationHelpers.presentFullScreenImage(resolved, from: self)
+            }
+        case .animatedRaster(let bytes):
+            let player = InlineAnimatedRasterView(frame: .zero)
+            player.display(data: bytes, maxPixelSize: 512)
+            install(player)
+            onTap = { [weak self] in
+                if let self, ChatReaderOpenLookup.open(
+                    .imageData(data, mimeType: mimeType),
+                    from: self
+                ) {
+                    return
+                }
+                FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
             }
         case .web(let dataURL):
             let web = AnimatedImageWebContainerView()

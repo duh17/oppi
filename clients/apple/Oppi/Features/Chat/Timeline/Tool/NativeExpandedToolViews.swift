@@ -997,6 +997,7 @@ final class NativeExpandedInlineImageView: UIView {
     }
 
     private let animatedImageView = AnimatedImageWebContainerView()
+    private let animatedRasterPlayback = InlineAnimatedRasterPlayback()
 
     private static func validateAttachmentData(
         _ data: Data,
@@ -1142,8 +1143,20 @@ final class NativeExpandedInlineImageView: UIView {
         }
     }
 
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            animatedRasterPlayback.stop()
+            return
+        }
+        if animatedImageView.isHidden, let data = previewData {
+            animatedRasterPlayback.start(data: data, imageView: imageView, maxPixelSize: maxPixelSize)
+        }
+    }
+
     private func prepareForDecode() {
         decodeTask?.cancel()
+        animatedRasterPlayback.stop()
         imageView.image = nil
         imageView.isHidden = false
         animatedImageView.isHidden = true
@@ -1173,16 +1186,30 @@ final class NativeExpandedInlineImageView: UIView {
             return
         }
         if info.prefersWebRenderer {
-            let normalizedMimeType = MediaMimeType.safeImageMimeType(info.normalizedMimeType, fallback: "image/gif")
+            let normalizedMimeType = MediaMimeType.safeImageMimeType(info.normalizedMimeType, fallback: "image/svg+xml")
             let dataURLString = "data:\(normalizedMimeType);base64,\(data.base64EncodedString())"
             let aspectRatio = info.aspectRatio ?? MediaMimeType.extractSVGViewBoxAspectRatio(data)
             await MainActor.run { [weak self] in
                 guard let self, self.decodedKey == key else { return }
+                self.animatedRasterPlayback.stop()
                 self.applyAnimatedImage(
                     dataURLString: dataURLString,
                     aspectRatio: aspectRatio,
                     data: data,
                     mimeType: normalizedMimeType
+                )
+            }
+            return
+        }
+        if info.isAnimated {
+            let normalizedMimeType = MediaMimeType.safeImageMimeType(info.normalizedMimeType, fallback: "image/gif")
+            let aspectRatio = info.aspectRatio
+            await MainActor.run { [weak self] in
+                guard let self, self.decodedKey == key else { return }
+                self.applyAnimatedRaster(
+                    data: data,
+                    mimeType: normalizedMimeType,
+                    aspectRatio: aspectRatio
                 )
             }
             return
@@ -1329,7 +1356,32 @@ final class NativeExpandedInlineImageView: UIView {
         )
     }
 
+    private func applyAnimatedRaster(
+        data: Data,
+        mimeType: String,
+        aspectRatio: CGFloat?
+    ) {
+        imageView.isHidden = false
+        animatedImageView.isHidden = true
+        placeholder.stopAnimating()
+        placeholder.isHidden = true
+        failureLabel.isHidden = true
+        accessibilityLabel = "Image preview"
+        accessibilityValue = nil
+        previewData = data
+        previewMimeType = mimeType
+        if let aspectRatio, aspectRatio > 0 {
+            naturalHeightToWidthRatio = ImageViewportSizing.validatedHeightToWidthRatio(1 / aspectRatio)
+        } else {
+            naturalHeightToWidthRatio = nil
+        }
+        animatedRasterPlayback.start(data: data, imageView: imageView, maxPixelSize: maxPixelSize)
+        updatePreviewHeightIfNeeded()
+        notifyPreviewSizeChanged()
+    }
+
     private func applyDecodedImage(_ image: UIImage?) {
+        animatedRasterPlayback.stop()
         imageView.image = image
         imageView.isHidden = false
         animatedImageView.isHidden = true
@@ -1386,6 +1438,13 @@ final class NativeExpandedInlineImageView: UIView {
     }
 
     @objc private func handleTap() {
+        if let data = previewData, let mimeType = previewMimeType, animatedImageView.isHidden {
+            if ChatReaderOpenLookup.open(.imageData(data, mimeType: mimeType), from: self) {
+                return
+            }
+            FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
+            return
+        }
         guard let image = imageView.image else { return }
         if ChatReaderOpenLookup.open(.image(image), from: self) {
             return

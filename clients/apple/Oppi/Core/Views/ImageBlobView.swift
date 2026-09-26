@@ -85,7 +85,7 @@ struct ImageBlobView: View {
                 }
 
                 let info = ImageMediaInspector.inspect(data: data, mimeType: mimeType)
-                if info.prefersWebRenderer {
+                if info.isAnimated || info.prefersWebRenderer {
                     return .animated(data, mimeType)
                 }
 

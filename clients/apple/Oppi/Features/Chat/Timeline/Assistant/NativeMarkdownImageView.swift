@@ -23,10 +23,12 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Mark
 final class NativeMarkdownImageView: UIView {
     private static let imageCache = NSCache<NSURL, UIImage>()
     private static let svgDataCache = NSCache<NSURL, NSData>()
+    private static let animatedRasterDataCache = NSCache<NSURL, NSData>()
 
     private enum PreparedImageArtifact {
         case raster(image: UIImage, pixelSize: CGSize)
         case web(data: Data, mimeType: String, aspectRatio: CGFloat?)
+        case animatedRaster(data: Data, mimeType: String, aspectRatio: CGFloat?)
     }
 
     private struct PreparedImageResult {
@@ -58,14 +60,16 @@ final class NativeMarkdownImageView: UIView {
     private let remotePromptLabel = UILabel()
     private let remoteLoadButton = UIButton(type: .system)
 
-    /// Web view for rendering SVG and animated images that UIImage doesn't support.
-    /// Created lazily on first web-rendered image load to avoid WKWebView
-    /// overhead for raster-image-only messages.
+    /// Web view for SVG. GIF and APNG play on the image view.
+    /// Created lazily so raster-only messages do not pay for WKWebView.
     private var svgWebView: ReviewCommentWKWebView?
     private var svgTapOverlay: UIControl?
     private let svgHTMLTracker = HTMLContentTracker()
     private var svgPreviewData: Data?
     private var svgPreviewMimeType: String?
+    private var animatedRasterData: Data?
+    private var animatedRasterMimeType: String?
+    private let animatedRasterPlayback = InlineAnimatedRasterPlayback()
 
     private struct RequestIdentity: Equatable {
         let url: URL
@@ -235,10 +239,16 @@ final class NativeMarkdownImageView: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil, preparesForDisplay {
-            activatePreparedDisplay()
-        } else if window == nil {
+        if window == nil {
             svgHTMLTracker.markNotReady()
+            animatedRasterPlayback.stop()
+            return
+        }
+        if preparesForDisplay {
+            activatePreparedDisplay()
+        }
+        if let data = animatedRasterData {
+            animatedRasterPlayback.start(data: data, imageView: imageView, maxPixelSize: 1_600)
         }
     }
 
@@ -324,6 +334,9 @@ final class NativeMarkdownImageView: UIView {
             usesCanonicalLoadingForCurrentRequest = false
             svgPreviewData = nil
             svgPreviewMimeType = nil
+            animatedRasterData = nil
+            animatedRasterMimeType = nil
+            animatedRasterPlayback.stop()
             svgHTMLTracker.resetLoadedContent()
             #if DEBUG
             debugPixelReservedHeightForTesting = nil
@@ -348,6 +361,14 @@ final class NativeMarkdownImageView: UIView {
 
         // Check synchronous cache first — works for markdown surfaces that do
         // not use the timeline's destination-size broker.
+        if let cachedAnimated = Self.animatedRasterDataCache.object(forKey: url as NSURL),
+           let artifact = Self.preparedAnimatedRasterArtifact(
+               data: cachedAnimated as Data,
+               filePath: url.path
+           ) {
+            presentPreparedImage(artifact, url: url)
+            return
+        }
         if let cached = Self.imageCache.object(forKey: url as NSURL) {
             showLoadedState(image: cached)
             return
@@ -595,6 +616,9 @@ final class NativeMarkdownImageView: UIView {
             if let artifact = Self.preparedWebArtifact(data: data, filePath: filePath) {
                 return PreparedImageResult(artifact: artifact, filePath: filePath)
             }
+            if let artifact = Self.preparedAnimatedRasterArtifact(data: data, filePath: filePath) {
+                return PreparedImageResult(artifact: artifact, filePath: filePath)
+            }
             let pixelSize = Self.pixelSize(of: data)
             if let pixelSize {
                 Self.publishRasterMetadata(pixelSize, for: url, operationID: id)
@@ -666,13 +690,33 @@ final class NativeMarkdownImageView: UIView {
         guard inspection.prefersWebRenderer else { return nil }
         let mimeType = MediaMimeType.safeImageMimeType(
             inspection.normalizedMimeType,
-            fallback: MediaMimeType.isSVGData(data) ? "image/svg+xml" : "image/gif"
+            fallback: "image/svg+xml"
         )
         return .web(
             data: data,
             mimeType: mimeType,
             aspectRatio: inspection.aspectRatio
                 ?? MediaMimeType.extractSVGViewBoxAspectRatio(data)
+        )
+    }
+
+    private static func preparedAnimatedRasterArtifact(
+        data: Data,
+        filePath: String
+    ) -> PreparedImageArtifact? {
+        let pathMimeType = MediaMimeType.imageMimeType(
+            forPathExtension: (filePath as NSString).pathExtension
+        )
+        let inspection = ImageMediaInspector.inspect(data: data, mimeType: pathMimeType)
+        guard inspection.isAnimated, !inspection.prefersWebRenderer else { return nil }
+        let mimeType = MediaMimeType.safeImageMimeType(
+            inspection.normalizedMimeType,
+            fallback: "image/gif"
+        )
+        return .animatedRaster(
+            data: data,
+            mimeType: mimeType,
+            aspectRatio: inspection.aspectRatio
         )
     }
 
@@ -700,6 +744,13 @@ final class NativeMarkdownImageView: UIView {
         case .web(let data, let mimeType, let aspectRatio):
             Self.svgDataCache.setObject(data as NSData, forKey: url as NSURL)
             showSVGLoadedState(
+                data: data,
+                mimeType: mimeType,
+                aspectRatio: aspectRatio
+            )
+        case .animatedRaster(let data, let mimeType, let aspectRatio):
+            Self.animatedRasterDataCache.setObject(data as NSData, forKey: url as NSURL)
+            showAnimatedRasterState(
                 data: data,
                 mimeType: mimeType,
                 aspectRatio: aspectRatio
@@ -869,6 +920,7 @@ final class NativeMarkdownImageView: UIView {
         hideRemotePrompt()
         svgWebView?.isHidden = true
         svgTapOverlay?.isHidden = true
+        animatedRasterPlayback.stop()
     }
 
     private func showLoadedState(image: UIImage) {
@@ -881,9 +933,40 @@ final class NativeMarkdownImageView: UIView {
 
         applyFittedDisplayHeight(width: image.size.width, height: image.size.height)
 
+        animatedRasterData = nil
+        animatedRasterMimeType = nil
+        animatedRasterPlayback.stop()
         imageView.image = image
         imageView.isHidden = false
         backgroundColor = .clear
+        configureLoadedAccessibility()
+        publishPreparedGeometry()
+    }
+
+    private func showAnimatedRasterState(
+        data: Data,
+        mimeType: String,
+        aspectRatio: CGFloat?
+    ) {
+        spinner.stopAnimating()
+        altLabel.isHidden = true
+        errorLabel.isHidden = true
+        hideRemotePrompt()
+        svgWebView?.isHidden = true
+        svgTapOverlay?.isHidden = true
+        svgPreviewData = nil
+        svgPreviewMimeType = nil
+
+        animatedRasterData = data
+        animatedRasterMimeType = mimeType
+        if let aspectRatio, aspectRatio > 0 {
+            applyFittedDisplayHeight(width: 1, height: 1 / aspectRatio)
+        } else if let pixelSize = Self.pixelSize(of: data) {
+            applyFittedDisplayHeight(width: pixelSize.width, height: pixelSize.height)
+        }
+        imageView.isHidden = false
+        backgroundColor = .clear
+        animatedRasterPlayback.start(data: data, imageView: imageView, maxPixelSize: 1_600)
         configureLoadedAccessibility()
         publishPreparedGeometry()
     }
@@ -1152,6 +1235,21 @@ final class NativeMarkdownImageView: UIView {
 
     @discardableResult
     private func openRasterPreview() -> Bool {
+        if let data = animatedRasterData, let mimeType = animatedRasterMimeType {
+            if ChatReaderOpenLookup.open(.imageData(data, mimeType: mimeType), from: self) {
+                return true
+            }
+            if let presenter = nearestViewController() {
+                FullScreenImageDataPreviewPresenter.present(
+                    data: data,
+                    mimeType: mimeType,
+                    from: presenter
+                )
+            } else {
+                FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
+            }
+            return true
+        }
         guard let image = imageView.image, !imageView.isHidden else { return false }
         if ChatReaderOpenLookup.open(.image(image), from: self) {
             return true
@@ -1223,7 +1321,7 @@ extension NativeMarkdownImageView {
     }
 
     var debugDataPreviewMimeTypeForTesting: String? {
-        svgPreviewMimeType
+        animatedRasterMimeType ?? svgPreviewMimeType
     }
 
     var debugWebRendererSettledForTesting: Bool {
@@ -1260,6 +1358,7 @@ extension NativeMarkdownImageView {
     static func debugResetPreparedArtifactsForTesting() {
         imageCache.removeAllObjects()
         svgDataCache.removeAllObjects()
+        animatedRasterDataCache.removeAllObjects()
         inFlightLoads.values.forEach { $0.task.cancel() }
         inFlightLoads.removeAll()
         debugPreparedOperationCount = 0
