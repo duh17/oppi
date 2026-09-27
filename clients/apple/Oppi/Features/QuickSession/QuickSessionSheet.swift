@@ -68,6 +68,13 @@ private struct QuickSessionSlashCommandLoadKey: Equatable {
     let apiClientIdentifier: ObjectIdentifier?
 }
 
+private struct QuickSessionFileIndexLoadKey: Equatable {
+    let serverId: String?
+    let workspaceId: String?
+    let worktreeId: String
+    let apiClientIdentifier: ObjectIdentifier?
+}
+
 private enum QuickSessionSlashCommandLoadResult: Sendable {
     case promptTemplates([SlashCommand])
     case skills([SlashCommand])
@@ -251,6 +258,18 @@ struct QuickSessionSheet: View {
         )
     }
 
+    private var fileIndexLoadKey: QuickSessionFileIndexLoadKey {
+        QuickSessionFileIndexLoadKey(
+            serverId: selectedServerId,
+            workspaceId: selectedWorkspace?.id,
+            worktreeId: QuickSessionWorktreePickerPolicy.resolvedWorktreeId(
+                selectedId: selectedWorktreeId,
+                worktrees: worktrees
+            ),
+            apiClientIdentifier: slashCommandLoadKey.apiClientIdentifier
+        )
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let rootFrame = proxy.frame(in: .global)
@@ -348,8 +367,8 @@ struct QuickSessionSheet: View {
                 isBusy: false,
                 busyStreamingBehavior: .followUp,
                 slashCommands: slashCommands,
-                fileSuggestions: [],
-                onFileSuggestionQuery: nil,
+                fileSuggestions: selectedChatState.fileSuggestions,
+                onFileSuggestionQuery: updateFileSuggestions,
                 session: nil,
                 modelOverride: effectiveModelId ?? modelPresentation.pillText,
                 providerOverride: modelPresentation.pillProvider,
@@ -393,7 +412,16 @@ struct QuickSessionSheet: View {
         .task(id: slashCommandLoadKey) {
             await loadSlashCommands(for: slashCommandLoadKey)
         }
-        .task(id: selectedWorkspace?.id) {
+        .task(id: fileIndexLoadKey) {
+            ensureFileIndex(for: fileIndexLoadKey)
+        }
+        .onChange(of: selectedServerConnection()?.fileIndexStore.paths) { _, _ in
+            // The first @ query can arrive before /paths finishes loading.
+            if case .atFile(let query) = ComposerAutocomplete.context(for: text) {
+                updateFileSuggestions(query)
+            }
+        }
+        .task(id: slashCommandLoadKey) {
             await loadWorktrees(for: selectedWorkspace)
         }
         .onChange(of: selectedServerId) { _, _ in
@@ -473,8 +501,8 @@ struct QuickSessionSheet: View {
                 showForceStop: false,
                 isForceStopInFlight: false,
                 slashCommands: slashCommands,
-                fileSuggestions: [],
-                onFileSuggestionQuery: nil,
+                fileSuggestions: selectedChatState.fileSuggestions,
+                onFileSuggestionQuery: updateFileSuggestions,
                 onSend: handleSend,
                 onStop: {},
                 onForceStop: {},
@@ -978,6 +1006,39 @@ struct QuickSessionSheet: View {
                 }
             }
         }
+    }
+
+    private func ensureFileIndex(for key: QuickSessionFileIndexLoadKey) {
+        guard key == fileIndexLoadKey, let serverId = key.serverId,
+              let workspaceId = key.workspaceId,
+              let connection = coordinator.connection(for: serverId) else { return }
+        connection.clearFileSuggestions()
+        guard let api = connection.apiClient,
+              ObjectIdentifier(api) == key.apiClientIdentifier else { return }
+        connection.fileIndexStore.ensureLoaded(
+            workspaceId: workspaceId,
+            worktreeId: key.worktreeId,
+            apiClient: api
+        )
+        if case .atFile(let query) = ComposerAutocomplete.context(for: text) {
+            connection.fetchFileSuggestions(query: query)
+        }
+    }
+
+    private func updateFileSuggestions(_ query: String?) {
+        guard let connection = selectedServerConnection() else { return }
+        guard let query else {
+            connection.clearFileSuggestions()
+            return
+        }
+        let key = fileIndexLoadKey
+        guard let workspaceId = key.workspaceId,
+              connection.fileIndexStore.workspaceId == workspaceId,
+              connection.fileIndexStore.worktreeId == key.worktreeId else {
+            connection.clearFileSuggestions()
+            return
+        }
+        connection.fetchFileSuggestions(query: query)
     }
 
     private func selectedServerConnection() -> ServerConnection? {

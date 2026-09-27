@@ -82,6 +82,31 @@ struct QuickSessionSkillSlashCommandTests {
     }
 }
 
+@Suite("Quick Session File Mentions")
+struct QuickSessionFileMentionWiringTests {
+    @Test func bothComposersUseSelectedCheckoutSuggestions() throws {
+        let sheet = try appleSource("Oppi/Features/QuickSession/QuickSessionSheet.swift")
+        let expanded = try sourceSlice(sheet, start: "ExpandedComposerView(", end: ".task {\n            await setupInitialState()")
+        let inline = try sourceSlice(sheet, start: "ChatInputBar(", end: ".padding(.top, 6)")
+
+        for composer in [expanded, inline] {
+            #expect(composer.contains("fileSuggestions: selectedChatState.fileSuggestions"))
+            #expect(composer.contains("onFileSuggestionQuery: updateFileSuggestions"))
+            #expect(!composer.contains("fileSuggestions: []"))
+            #expect(!composer.contains("onFileSuggestionQuery: nil"))
+        }
+
+        let index = try sourceSlice(sheet, start: "private var fileIndexLoadKey:", end: "var body: some View")
+        #expect(index.contains("QuickSessionWorktreePickerPolicy.resolvedWorktreeId("))
+        #expect(index.contains("serverId: selectedServerId"))
+        #expect(index.contains("workspaceId: selectedWorkspace?.id"))
+        #expect(sheet.contains(".task(id: fileIndexLoadKey)"))
+        #expect(sheet.contains("connection.fileIndexStore.ensureLoaded("))
+        #expect(sheet.contains("connection.fetchFileSuggestions(query: query)"))
+        #expect(sheet.contains("connection.clearFileSuggestions()"))
+    }
+}
+
 @Suite("Quick Session Launch Routing")
 struct QuickSessionLaunchRoutingTests {
     @Test func plainPiAllowsEmptyPromptWithoutAutoSend() throws {
