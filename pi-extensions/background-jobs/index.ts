@@ -3,8 +3,9 @@
  *
  * Bash waits 15 seconds. If the command is still running, it becomes a
  * background job and the composer pill shows it. Finished results are batched
- * at a safe model boundary, or sent once when the session is idle. A trailing
- * `&` backgrounds immediately. Polling a running job is blocked.
+ * at a safe model boundary, or sent once when the session is idle. A final
+ * turn stays busy while jobs run; Stop and queued input interrupt that wait.
+ * A trailing `&` backgrounds immediately. Polling a running job is blocked.
  */
 
 import type {
@@ -83,6 +84,7 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 	let flushTimer: ReturnType<typeof setTimeout> | undefined;
 	let flushStartedAt: number | undefined;
 	let latestUi: ExtensionUIContext | undefined;
+	let wakeTurnWait: (() => void) | undefined;
 	const buffer = createResultBuffer();
 	const cancelFlush = () => {
 		if (flushTimer) clearTimeout(flushTimer);
@@ -207,6 +209,7 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 		onDeliver: (delivery) => {
 			if (closed) return;
 			buffer.enqueue({ jobId: delivery.jobId, status: delivery.status, text: delivery.text });
+			wakeTurnWait?.();
 			refreshPill();
 			if (idle && !suppressIdleWake) scheduleIdleFlush();
 		},
@@ -356,7 +359,37 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 		cancelFlush();
 	});
 
-	pi.on("turn_end", (event) => drainBoundary(event));
+	pi.on("turn_end", async (event, ctx) => {
+		const signal = ctx.signal;
+		// Wait only when the model would otherwise finish. Tool results, buffered
+		// job results, and already-queued continuations must keep moving normally.
+		// turn_end still has Pi's live abort signal; agent_before_settle does not.
+		if (
+			!closed && signal && !signal.aborted && event.outcome === "completed" &&
+			!event.continue && !event.context.canContinue && !ctx.hasPendingMessages() &&
+			buffer.pendingCount() === 0 && manager.visibleRunning().length > 0
+		) {
+			await new Promise<void>((resolve) => {
+				const finish = () => {
+					clearInterval(inputCheck);
+					signal.removeEventListener("abort", finish);
+					wakeTurnWait = undefined;
+					resolve();
+				};
+				// Pi exposes no queue-change event to extensions. Check only its
+				// in-memory input queue, never shell/process state or the provider.
+				const inputCheck = setInterval(() => {
+					if (ctx.hasPendingMessages()) finish();
+				}, 100);
+				wakeTurnWait = finish;
+				signal.addEventListener("abort", finish, { once: true });
+			});
+		}
+		if (closed) return undefined;
+		// A result and Stop can arrive together. Retain the result without
+		// asking for another model request after the user has stopped the run.
+		return drainBoundary(signal?.aborted ? { ...event, outcome: "aborted" } : event);
+	});
 	pi.on("agent_before_settle", (event) => drainBoundary(event));
 
 	pi.on("agent_settled", () => {
@@ -389,6 +422,7 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 	pi.on("session_shutdown", (_event: SessionShutdownEvent) => {
 		generation += 1;
 		closed = true;
+		wakeTurnWait?.();
 		cancelFlush();
 		const mode = shutdownDelivery({ runActive: !idle });
 		while (buffer.pendingCount() > 0) {
