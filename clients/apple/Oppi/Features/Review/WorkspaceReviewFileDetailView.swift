@@ -107,12 +107,23 @@ struct WorkspaceReviewFileDetailView: View {
     @State private var navigateToQuickAction: QuickActionSessionNavDestination?
     @State private var quickActionOptions: [WorkspaceQuickActionOption] = []
     @State private var isLoadingQuickActions = false
+    /// The current-bytes reader has its text editor open.
+    @State private var isEditingCurrentFile = false
+    /// Bumped when an edit ends so Changes reloads once the save lands.
+    @State private var diffRevision = 0
 
     private var currentFile: WorkspaceReviewFile {
         activeFile ?? file
     }
 
 #if DEBUG
+    var debugWorktreeIdForTesting: String? { worktreeId }
+    var debugServerIdForTesting: String? { serverId }
+
+    func debugCurrentFileContentForTesting() -> FileBrowserContentView {
+        currentFileContent
+    }
+
     @ViewBuilder
     private var reviewMotionDebugMarker: some View {
         if ProcessInfo.processInfo.environment["OPPI_FILE_MOTION_MARKER"] == "1" {
@@ -157,7 +168,8 @@ struct WorkspaceReviewFileDetailView: View {
     }
 
     private var diffTaskID: String {
-        [workspaceId, selectedSessionId ?? "", worktreeId ?? "", currentFile.path].joined(separator: "|")
+        [workspaceId, selectedSessionId ?? "", worktreeId ?? "", currentFile.path, String(diffRevision)]
+            .joined(separator: "|")
     }
 
     private var quickActionTaskID: String {
@@ -207,10 +219,12 @@ struct WorkspaceReviewFileDetailView: View {
         }
         .environment(\.horizontalBackSwipeAction, horizontalBackSwipeAction)
         .filePushTransition(id: currentFile.path, direction: fileTransitionDirection)
-        .horizontalBackSwipeGesture(isEnabled: allowsHorizontalBackSwipe && parentOwnsBackSwipe) { dismiss() }
+        .horizontalBackSwipeGesture(
+            isEnabled: allowsHorizontalBackSwipe && !isEditingCurrentFile && parentOwnsBackSwipe
+        ) { dismiss() }
         .modifier(AdjacentFileNavigatorControls(
-            canGoPrevious: adjacentReviewFile(.previous) != nil,
-            canGoNext: adjacentReviewFile(.next) != nil,
+            canGoPrevious: !isEditingCurrentFile && adjacentReviewFile(.previous) != nil,
+            canGoNext: !isEditingCurrentFile && adjacentReviewFile(.next) != nil,
             onPrevious: { navigateToAdjacentReviewFile(.previous) },
             onNext: { navigateToAdjacentReviewFile(.next) }
         ))
@@ -250,13 +264,16 @@ struct WorkspaceReviewFileDetailView: View {
             }
         }
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                if toolbarState.showsShare, let shareable = toolbarShareableContent {
-                    FileShareButton(content: shareable, style: .icon)
-                }
+            // The editor owns the bar while typing: status, Preview, Done.
+            if !isEditingCurrentFile {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    if toolbarState.showsShare, let shareable = toolbarShareableContent {
+                        FileShareButton(content: shareable, style: .icon)
+                    }
 
-                if toolbarState.showsActionMenu {
-                    actionMenu
+                    if toolbarState.showsActionMenu {
+                        actionMenu
+                    }
                 }
             }
         }
@@ -329,7 +346,7 @@ struct WorkspaceReviewFileDetailView: View {
     }
 
     private var horizontalBackSwipeAction: (@MainActor @Sendable () -> Void)? {
-        guard allowsHorizontalBackSwipe else { return nil }
+        guard allowsHorizontalBackSwipe, !isEditingCurrentFile else { return nil }
         return { dismiss() }
     }
 
@@ -341,23 +358,13 @@ struct WorkspaceReviewFileDetailView: View {
         guard currentRenderer == .review else { return false }
         guard let diff else { return true }
         if isDeletedFile { return diff.hunks.isEmpty }
-        if isNewFile { return !currentContentInstallsUIKitBackSwipe(diff.currentText) }
+        // The current-bytes reader owns its own back swipe.
+        if isNewFile { return false }
 
         switch selectedTab {
         case .diff:
             return diff.hunks.isEmpty
         case .current:
-            return !currentContentInstallsUIKitBackSwipe(diff.currentText)
-        }
-    }
-
-    private func currentContentInstallsUIKitBackSwipe(_ text: String) -> Bool {
-        switch FileType.detect(from: currentFile.path, content: text) {
-        case .code, .json, .plain, .graphviz:
-            return true
-        case .markdown, .html, .image, .audio, .video, .pdf, .usdz, .binary,
-             .latex, .orgMode, .mermaid, .csv, .tsv,
-             .geojson, .topojson:
             return false
         }
     }
@@ -403,18 +410,30 @@ struct WorkspaceReviewFileDetailView: View {
 
             Divider().overlay(.themeComment.opacity(0.2))
 
-            FileBrowserContentView(
-                workspaceId: workspaceId,
-                worktreeId: worktreeId,
-                serverId: serverId,
-                filePath: currentFile.path,
-                fileName: currentFile.path.lastPathComponentForDisplay,
-                chromeMode: .treePane,
-                allowsHorizontalBackSwipe: allowsHorizontalBackSwipe,
-                showsSwiftUIReviewCommentStashOverlay: false
-            )
+            currentFileContent
         }
         .background(.themeBgDark)
+    }
+
+    /// Current bytes of the file in this checkout, read through the workspace
+    /// origin, so an eligible text file offers Edit. Deleted files never get
+    /// here: they stay diff-only and are never recreated.
+    private var currentFileContent: FileBrowserContentView {
+        FileBrowserContentView(
+            workspaceId: workspaceId,
+            worktreeId: worktreeId,
+            serverId: serverId,
+            filePath: currentFile.path,
+            fileName: currentFile.path.lastPathComponentForDisplay,
+            sessionId: selectedSessionId,
+            chromeMode: .treePane,
+            allowsHorizontalBackSwipe: allowsHorizontalBackSwipe,
+            showsSwiftUIReviewCommentStashOverlay: false,
+            onEditingChange: { editing in
+                isEditingCurrentFile = editing
+                if !editing { diffRevision += 1 }
+            }
+        )
     }
 
     private func content(diff: WorkspaceReviewDiffResponse) -> some View {
@@ -428,17 +447,11 @@ struct WorkspaceReviewFileDetailView: View {
             )
 
             if isNewFile {
-                // New file: skip tabs, show syntax-highlighted content directly
+                // New file: no prior content to diff; show the current bytes.
                 Divider().overlay(.themeComment.opacity(0.2))
 
-                FileContentView(
-                    content: diff.currentText,
-                    filePath: currentFile.path,
-                    presentation: .document,
-                    worktreeId: worktreeId
-                )
-                .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                currentFileContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if isDeletedFile {
                 // Deleted file: skip tabs, show diff (the only useful view)
                 Divider().overlay(.themeComment.opacity(0.2))
@@ -451,14 +464,17 @@ struct WorkspaceReviewFileDetailView: View {
                 .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                Picker("View", selection: $selectedTab) {
-                    ForEach(DetailTab.allCases) { tab in
-                        Text(tab.title).tag(tab)
+                // Editing locks the File tab until Done.
+                if !isEditingCurrentFile {
+                    Picker("View", selection: $selectedTab) {
+                        ForEach(DetailTab.allCases) { tab in
+                            Text(tab.title).tag(tab)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
 
                 Divider().overlay(.themeComment.opacity(0.2))
 
@@ -472,23 +488,13 @@ struct WorkspaceReviewFileDetailView: View {
                         )
                         .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
                     case .current:
-                        currentContent(diff: diff)
+                        currentFileContent
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .background(.themeBgDark)
-    }
-
-    private func currentContent(diff: WorkspaceReviewDiffResponse) -> some View {
-        FileContentView(
-            content: diff.currentText,
-            filePath: currentFile.path,
-            presentation: .document,
-            worktreeId: worktreeId
-        )
-        .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
     }
 
     private func startEmptySession() async {
@@ -597,9 +603,10 @@ struct WorkspaceReviewFileDetailView: View {
         }
     }
 
+    /// File changes clear `diff` before this runs. A reload of the same file
+    /// after an edit keeps the shown diff (and the mounted File tab) until the
+    /// new one arrives.
     private func loadDiff(for requestedFile: WorkspaceReviewFile) async {
-        diff = nil
-        error = nil
         guard WorkspaceReviewFileRenderingPolicy.renderer(
             for: requestedFile.path,
             status: requestedFile.status
@@ -608,6 +615,8 @@ struct WorkspaceReviewFileDetailView: View {
             error = "Server is offline."
             return
         }
+        await waitForSaveInFlight(path: requestedFile.path)
+        guard isCurrentReviewFile(requestedFile) else { return }
 
         isLoading = true
         defer {
@@ -625,6 +634,18 @@ struct WorkspaceReviewFileDetailView: View {
             guard isCurrentReviewFile(requestedFile) else { return }
             self.error = error.localizedDescription
         }
+    }
+
+    /// Done starts the save without waiting; the diff must show the saved bytes.
+    private func waitForSaveInFlight(path: String) async {
+        guard let serverId, !serverId.isEmpty else { return }
+        let identity = WorkspaceFileEditIdentity(
+            serverId: serverId,
+            workspaceId: workspaceId,
+            worktreeId: worktreeId,
+            path: path
+        )
+        await WorkspaceFileEditSessionRegistry.shared.session(for: identity)?.waitForInFlightWrite()
     }
 
     private func loadBestAvailableDiff(api: APIClient, file: WorkspaceReviewFile) async throws -> WorkspaceReviewDiffResponse {

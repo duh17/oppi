@@ -194,6 +194,8 @@ enum FileBrowserTreeNavigationReducer {
 
 enum FileBrowserLayoutMode: Equatable {
     case adaptive
+    /// Chat file panel: one compact list. Directories open inline because the
+    /// panel's stack has no workspace destinations; files push the full reader.
     case compactOnly
 }
 
@@ -219,20 +221,17 @@ struct FileBrowserView: View {
     let scope: FileBrowserScope
     let initialPath: String
     let layoutMode: FileBrowserLayoutMode
-    let contentChromeMode: FileBrowserContentChromeMode
 
     init(
         serverId: String? = nil,
         scope: FileBrowserScope,
         initialPath: String,
-        layoutMode: FileBrowserLayoutMode = .adaptive,
-        contentChromeMode: FileBrowserContentChromeMode = .pushed
+        layoutMode: FileBrowserLayoutMode = .adaptive
     ) {
         self.serverId = serverId
         self.scope = scope
         self.initialPath = initialPath
         self.layoutMode = layoutMode
-        self.contentChromeMode = contentChromeMode
     }
 
     init(
@@ -240,15 +239,13 @@ struct FileBrowserView: View {
         workspaceId: String,
         worktreeId: String? = nil,
         initialPath: String,
-        layoutMode: FileBrowserLayoutMode = .adaptive,
-        contentChromeMode: FileBrowserContentChromeMode = .pushed
+        layoutMode: FileBrowserLayoutMode = .adaptive
     ) {
         self.init(
             serverId: serverId,
             scope: .workspace(workspaceId: workspaceId, worktreeId: worktreeId),
             initialPath: initialPath,
-            layoutMode: layoutMode,
-            contentChromeMode: contentChromeMode
+            layoutMode: layoutMode
         )
     }
 
@@ -332,7 +329,7 @@ struct FileBrowserView: View {
     }
 
     private var usesInlineCompactDirectoryNavigation: Bool {
-        layoutMode == .compactOnly && contentChromeMode == .treePane
+        layoutMode == .compactOnly
     }
 
     private var shouldShowInlineDirectoryBackButton: Bool {
@@ -993,8 +990,7 @@ struct FileBrowserView: View {
                         serverId: serverId,
                         scope: scope,
                         initialPath: dirPath,
-                        layoutMode: layoutMode,
-                        contentChromeMode: contentChromeMode
+                        layoutMode: layoutMode
                     )
                 } label: {
                     compactListRowContent { label }
@@ -1125,7 +1121,7 @@ struct FileBrowserView: View {
             fileName: name,
             source: contentSource,
             fileSize: size,
-            chromeMode: contentChromeMode,
+            chromeMode: .pushed,
             navigationContext: navigationContext,
             markdownViewportRestore: store
         )
@@ -1258,7 +1254,6 @@ struct FileBrowserView: View {
                 "path": safeDebugPath(path),
                 "reason": "missing_api_client",
                 "layoutMode": String(describing: layoutMode),
-                "contentChromeMode": String(describing: contentChromeMode),
             ])
             return
         }
@@ -1285,7 +1280,6 @@ struct FileBrowserView: View {
                 "workspaceId": workspaceId,
                 "path": safeDebugPath(path),
                 "layoutMode": String(describing: layoutMode),
-                "contentChromeMode": String(describing: contentChromeMode),
             ]) { current, _ in current }
             ClientLog.error("FileBrowser", "Directory load failed", metadata: metadata)
         }

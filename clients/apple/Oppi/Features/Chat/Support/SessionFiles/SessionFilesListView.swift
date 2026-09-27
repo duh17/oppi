@@ -27,6 +27,7 @@ struct SessionFilesListView: View {
     var searchText: String = ""
     var fileDetailReviewCommentScope: ReviewCommentSelectionScope? = nil
     var serverId: String? = nil
+    var worktreeId: String? = nil
 
     @Environment(GitStatusStore.self) private var gitStatusStore
     @Environment(\.apiClient) private var apiClient
@@ -221,12 +222,9 @@ struct SessionFilesListView: View {
             {
                 // Git-changed file → push to diff/review detail (needs tabs + actions)
                 NavigationLink {
-                    WorkspaceReviewFileDetailView(
+                    reviewDetail(
                         workspaceId: workspaceId,
-                        selectedSessionId: sessionId,
                         file: gitFile.toReviewFile(),
-                        serverId: serverId,
-                        reviewCommentSelectionScopeOverride: makeFileDetailReviewCommentScope(),
                         navigationFiles: reviewNavigationFiles
                     )
                 } label: {
@@ -263,6 +261,28 @@ struct SessionFilesListView: View {
             }
         }
     }
+
+    private func reviewDetail(
+        workspaceId: String,
+        file: WorkspaceReviewFile,
+        navigationFiles: [WorkspaceReviewFile]
+    ) -> WorkspaceReviewFileDetailView {
+        WorkspaceReviewFileDetailView(
+            workspaceId: workspaceId,
+            selectedSessionId: sessionId,
+            file: file,
+            worktreeId: worktreeId,
+            serverId: serverId,
+            reviewCommentSelectionScopeOverride: makeFileDetailReviewCommentScope(),
+            navigationFiles: navigationFiles
+        )
+    }
+
+#if DEBUG
+    func debugReviewDetailForTesting(workspaceId: String, file: WorkspaceReviewFile) -> WorkspaceReviewFileDetailView {
+        reviewDetail(workspaceId: workspaceId, file: file, navigationFiles: [file])
+    }
+#endif
 
     @MainActor
     private func makeFileDetailReviewCommentScope() -> ReviewCommentSelectionScope? {

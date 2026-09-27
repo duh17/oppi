@@ -85,6 +85,8 @@ struct ChatFileBrowserPanel: View {
     @Binding var selectedTab: ChatFileBrowserPanelTab
     var fileDetailReviewCommentScope: ReviewCommentSelectionScope?
     var serverId: String? = nil
+    /// The session's checkout. Every reader and editor opened here uses it.
+    var worktreeId: String? = nil
 
     @State private var changedSearchText = ""
 
@@ -149,28 +151,15 @@ struct ChatFileBrowserPanel: View {
     private var content: some View {
         switch selectedTab {
         case .changed:
-            SessionFilesListView(
-                sessionId: sessionId,
-                workspaceId: workspaceId,
-                changedFiles: changedFiles,
-                searchText: changedSearchText,
-                fileDetailReviewCommentScope: fileDetailReviewCommentScope,
-                serverId: serverId
-            )
-            .searchable(
-                text: $changedSearchText,
-                placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search changed files"
-            )
+            changedFilesList
+                .searchable(
+                    text: $changedSearchText,
+                    placement: .navigationBarDrawer(displayMode: .always),
+                    prompt: "Search changed files"
+                )
         case .all:
             if let workspaceId {
-                FileBrowserView(
-                    serverId: serverId,
-                    workspaceId: workspaceId,
-                    initialPath: "",
-                    layoutMode: .compactOnly,
-                    contentChromeMode: .treePane
-                )
+                allFilesBrowser(workspaceId: workspaceId)
             } else {
                 ContentUnavailableView(
                     "No Workspace",
@@ -181,4 +170,34 @@ struct ChatFileBrowserPanel: View {
             }
         }
     }
+
+    private var changedFilesList: SessionFilesListView {
+        SessionFilesListView(
+            sessionId: sessionId,
+            workspaceId: workspaceId,
+            changedFiles: changedFiles,
+            searchText: changedSearchText,
+            fileDetailReviewCommentScope: fileDetailReviewCommentScope,
+            serverId: serverId,
+            worktreeId: worktreeId
+        )
+    }
+
+    private func allFilesBrowser(workspaceId: String) -> FileBrowserView {
+        FileBrowserView(
+            serverId: serverId,
+            workspaceId: workspaceId,
+            worktreeId: worktreeId,
+            initialPath: "",
+            layoutMode: .compactOnly
+        )
+    }
+
+#if DEBUG
+    var debugChangedFilesListForTesting: SessionFilesListView { changedFilesList }
+
+    func debugAllFilesBrowserForTesting(workspaceId: String) -> FileBrowserView {
+        allFilesBrowser(workspaceId: workspaceId)
+    }
+#endif
 }

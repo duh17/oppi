@@ -36,6 +36,38 @@ enum FileBrowserContentRenderingPolicy {
 
     /// The file browser already owns the filename in navigation chrome.
     static let audioPlayerTitlePresentation: AudioLyricsPlayerTitlePresentation = .hostOwnsTitle
+
+    enum EditPlacement: Equatable {
+        /// The embedded UIKit reader shows its own navigation bar; Edit is one of its actions.
+        case readerNavigationAction
+        /// The UIKit reader bar is hidden (tree pane); Edit is a SwiftUI toolbar item.
+        case toolbar
+    }
+
+    static func editPlacement(
+        for chromeMode: FileBrowserContentChromeMode,
+        source: FileBrowserContentSource
+    ) -> EditPlacement {
+        showsNavigationChrome(for: chromeMode, source: source) ? .readerNavigationAction : .toolbar
+    }
+
+    /// Which checkout an edit writes to. A worktree is always named; main is
+    /// named only when the owning chat session runs on a worktree, so the
+    /// difference is visible before typing.
+    static func checkoutSubtitle(
+        source: FileBrowserContentSource,
+        worktreeId: String?,
+        sessionWorktreeId: String?
+    ) -> String? {
+        guard source == .workspaceFile else { return nil }
+        if let worktreeId, !worktreeId.isEmpty {
+            return String(localized: "Worktree \(worktreeId)")
+        }
+        if let sessionWorktreeId, !sessionWorktreeId.isEmpty {
+            return String(localized: "Main checkout")
+        }
+        return nil
+    }
 }
 
 enum FileBrowserMediaLoadPolicy {
@@ -105,6 +137,8 @@ struct FileBrowserContentView: View {
     /// Parent review hosts keep one stash overlay. Nested file content must not
     /// draw a second pill on top of previous-file.
     var showsSwiftUIReviewCommentStashOverlay = true
+    /// Parent hosts hide their own file navigation while the text editor is open.
+    var onEditingChange: ((Bool) -> Void)? = nil
 
 #if DEBUG
     var debugHasMarkdownViewportRestoreForTesting: Bool {
@@ -119,6 +153,9 @@ struct FileBrowserContentView: View {
     var debugSessionIdForTesting: String? { sessionId }
     var debugControlSessionIdForTesting: String? { controlSessionId }
     var debugServerIdForTesting: String? { serverId }
+    var debugWorkspaceIdForTesting: String { workspaceId }
+    var debugWorktreeIdForTesting: String? { worktreeId }
+    var debugChromeModeForTesting: FileBrowserContentChromeMode { chromeMode }
 
     func debugFullScreenContentForTesting(text: String, api: APIClient) -> FullScreenCodeContent {
         fullScreenContent(text: text, api: api)
@@ -130,6 +167,7 @@ struct FileBrowserContentView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
+    @Environment(SessionStore.self) private var sessionStore: SessionStore?
     @State private var activeSelection: FileBrowserSelection?
     @State private var fileTransitionDirection: FileBrowserNavigationDirection = .next
     @State private var content: FileContentPhase = .loading
@@ -273,6 +311,13 @@ struct FileBrowserContentView: View {
         .toolbar {
             if isEditingText, let editSession {
                 editingToolbar(session: editSession)
+            } else if isUsingFileViewer, canBeginEditing,
+                      FileBrowserContentRenderingPolicy.editPlacement(for: chromeMode, source: source) == .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(String(localized: "Edit")) { beginEditing() }
+                        .accessibilityLabel(String(localized: "Edit File"))
+                        .accessibilityIdentifier("workspace-file-editor.edit")
+                }
             } else if chromeMode == .pushed, !isUsingFileViewer {
                 ToolbarItem(placement: .topBarTrailing) {
                     if let shareable = shareableContent() {
@@ -313,6 +358,7 @@ struct FileBrowserContentView: View {
         } message: {
             Text(String(localized: "Your unsaved edits to this file will be discarded."))
         }
+        .onChange(of: isEditingText) { _, editing in onEditingChange?(editing) }
         .task(id: currentFilePath) { await loadContent() }
         .task { await checkNetworkCost() }
         .onChange(of: filePath) { _, _ in
@@ -406,6 +452,17 @@ struct FileBrowserContentView: View {
         )
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 0) {
+                if let checkoutSubtitle {
+                    Text(checkoutSubtitle)
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("workspace-file-editor.checkout")
+                }
                 WorkspaceFileEditBanner(
                     session: session,
                     onReview: { isReviewingEdit = true },
@@ -443,10 +500,26 @@ struct FileBrowserContentView: View {
         }
     }
 
+    /// The server offered these displayed bytes for editing, or a session exists.
+    private var canBeginEditing: Bool {
+        editIdentity(for: currentFilePath) != nil
+            && editMaxBytes != nil
+            && (editBase != nil || editSession != nil)
+    }
+
+    private var checkoutSubtitle: String? {
+        FileBrowserContentRenderingPolicy.checkoutSubtitle(
+            source: source,
+            worktreeId: worktreeId,
+            sessionWorktreeId: sessionId.flatMap { sessionStore?.session(id: $0) }
+                .flatMap { $0.workspaceId == workspaceId ? $0.worktreeId : nil }
+        )
+    }
+
     private var editNavigationActions: [FullScreenViewerNavigationAction] {
-        guard editIdentity(for: currentFilePath) != nil,
-              editMaxBytes != nil,
-              editBase != nil || editSession != nil else { return [] }
+        guard canBeginEditing,
+              FileBrowserContentRenderingPolicy.editPlacement(for: chromeMode, source: source)
+                == .readerNavigationAction else { return [] }
         return [
             FullScreenViewerNavigationAction(
                 id: "workspace-file-edit",

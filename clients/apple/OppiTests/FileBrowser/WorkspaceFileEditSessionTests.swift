@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -742,5 +743,113 @@ struct WorkspaceFileEditorSurfaceTests {
         #expect(controller.session.currentText.hasSuffix("!"))
         harness.scripted.resolveNext(.saved(etag: tag("b")))
         #expect(await eventually { controller.session.status == .saved })
+    }
+}
+
+// MARK: - Tree-pane Edit entry
+
+/// Serves `/server/info` with editing capability and one tagged workspace read.
+private final class TreePaneEditURLProtocol: URLProtocol, @unchecked Sendable {
+    static let host = "tree-pane-edit.test"
+    static let body = Data("# Notes\n- first\n".utf8)
+
+    static func makeClient() -> APIClient {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [TreePaneEditURLProtocol.self]
+        return APIClient(
+            environment: OppiClientEnvironment(baseURL: URL(string: "https://\(host)")!, bearerToken: "sk_test"),
+            configuration: config
+        )
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == host }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let url = request.url!
+        let status: Int
+        var headers = ["Content-Type": "application/json"]
+        let data: Data
+        if url.path == "/server/info" {
+            status = 200
+            data = Data("""
+            {"name":"Test","version":"1.0","uptime":1,"os":"darwin","arch":"arm64","hostname":"test","nodeVersion":"22","piVersion":"1","configVersion":1,"capabilities":{"currentFiles":{"version":1},"workspaceFileEditing":{"version":1,"maxBytes":1048576}},"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":0,"modelCount":0}}
+            """.utf8)
+        } else if url.path == "/files/current" {
+            status = 200
+            headers = ["Content-Type": "text/markdown; charset=utf-8", "ETag": tag("a")]
+            data = Self.body
+        } else {
+            status = 404
+            data = Data(#"{"error":"not found"}"#.utf8)
+        }
+        let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+@Suite("Workspace file edit entry")
+@MainActor
+struct WorkspaceFileEditEntryTests {
+    /// The tree pane hides the reader's UIKit bar, so Edit must be a SwiftUI
+    /// toolbar item. The editor mount and autosave in this layout are covered
+    /// by the iPad landscape E2E.
+    @Test func treePaneTextWithEditBaseShowsToolbarEdit() async throws {
+        let client = TreePaneEditURLProtocol.makeClient()
+        _ = try await client.serverInfo()
+        let content = UIHostingController(rootView: FileBrowserContentView(
+            workspaceId: "w-tree",
+            serverId: "srv-tree-\(UUID().uuidString)",
+            filePath: "notes.md",
+            fileName: "notes.md",
+            chromeMode: .treePane
+        )
+        .environment(\.apiClient, client))
+        let host = UINavigationController(rootViewController: content)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        var edit: UIBarButtonItem?
+        let shown = await waitForMainActorCondition(timeout: .seconds(5)) {
+            host.view.layoutIfNeeded()
+            edit = Self.barButtonItem(titled: "Edit", in: content)
+            return edit != nil
+        }
+        #expect(shown, "tree-pane reader offered no Edit; items: \(Self.titles(in: content))")
+        let item = try #require(edit)
+
+        #expect(Self.activate(item))
+        let editing = await waitForMainActorCondition(timeout: .seconds(5)) {
+            host.view.layoutIfNeeded()
+            return Self.barButtonItem(titled: "Done", in: content) != nil
+                && Self.barButtonItem(titled: "Edit", in: content) == nil
+        }
+        #expect(editing, "Edit did not switch to the editing toolbar; items: \(Self.titles(in: content))")
+    }
+
+    /// SwiftUI hosts toolbar buttons as custom views titled by their label.
+    private static func barButtonItem(titled title: String, in controller: UIViewController) -> UIBarButtonItem? {
+        barButtonItems(in: controller).first { $0.title == title && $0.customView != nil }
+    }
+
+    private static func barButtonItems(in controller: UIViewController) -> [UIBarButtonItem] {
+        (controller.navigationItem.rightBarButtonItems ?? [])
+            + controller.navigationItem.trailingItemGroups.flatMap(\.barButtonItems)
+    }
+
+    private static func titles(in controller: UIViewController) -> String {
+        barButtonItems(in: controller).map { $0.title ?? "-" }.joined(separator: ", ")
+    }
+
+    /// SwiftUI wires a hosted toolbar button's tap as the item's target-action.
+    private static func activate(_ item: UIBarButtonItem) -> Bool {
+        guard let action = item.action else { return false }
+        return UIApplication.shared.sendAction(action, to: item.target, from: item, for: nil)
     }
 }

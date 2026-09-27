@@ -145,6 +145,50 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
         XCTAssertEqual(try diskString(), external, "recovery wrote over the external change")
     }
 
+    /// iPad landscape shows the file tree beside a tree-pane reader. That pane
+    /// hides the reader's UIKit bar, so Edit lives in the SwiftUI toolbar.
+    func testIPadLandscapeTreePaneEditAutosaves() throws {
+        try XCTSkipUnless(
+            min(app.frame.width, app.frame.height) >= 700,
+            "iPad tree-pane editing needs an iPad simulator"
+        )
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let rotated = Date().addingTimeInterval(5)
+        while Date() < rotated, app.frame.width < app.frame.height {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertGreaterThan(app.frame.width, app.frame.height, "iPad did not rotate to landscape")
+
+        try openFile()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fileBrowser.tree"].waitForExistence(timeout: 10),
+            "landscape Files did not show the file tree"
+        )
+        tap(app.buttons["workspace-file-editor.edit"], named: "tree-pane Edit", timeout: 15)
+        XCTAssertTrue(editorTextView.waitForExistence(timeout: 10), "editor text view did not appear")
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fileBrowser.tree"].exists,
+            "editing replaced the tree layout"
+        )
+
+        editorTextView.tap()
+        editorTextView.typeText("IPAD")
+        XCTAssertTrue(waitForDisk(timeout: 15) { $0.contains("IPAD") }, "idle autosave did not reach disk")
+        XCTAssertTrue(waitForStatus("Saved", timeout: 10), "status did not settle on Saved")
+        XCTAssertEqual(
+            try diskString().replacingOccurrences(of: "IPAD", with: ""),
+            Self.original,
+            "untouched bytes changed (CRLF, missing trailing newline)"
+        )
+
+        tap(app.buttons["workspace-file-editor.done"], named: "Done")
+        XCTAssertTrue(
+            app.buttons["workspace-file-editor.edit"].waitForExistence(timeout: 10),
+            "Done did not return to the tree-pane reader"
+        )
+    }
+
     // MARK: Helpers
 
     private var editorTextView: XCUIElement {

@@ -2562,7 +2562,8 @@ struct ChatView: View {
                 changedFiles: session?.changeStats?.changedFiles ?? [],
                 selectedTab: $selectedFilePanelTab,
                 fileDetailReviewCommentScope: .activeSession(reviewCommentSelectionRouter),
-                serverId: serverIdHint ?? connection.currentServerId
+                serverId: serverIdHint ?? connection.currentServerId,
+                worktreeId: session?.worktreeId
             )
             .navigationTitle("Files")
             .navigationBarTitleDisplayMode(.inline)

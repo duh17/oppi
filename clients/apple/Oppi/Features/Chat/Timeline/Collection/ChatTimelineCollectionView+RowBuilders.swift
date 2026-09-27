@@ -308,26 +308,47 @@ extension ChatTimelineCollectionHost.Controller {
         from sourceView: UIView,
         presenter: UIViewController
     ) {
-        guard let apiClient = connection?.apiClient else { return }
+        guard let connection, let apiClient = connection.apiClient else { return }
 
-        let isHostPath = MarkdownWikiLinkRewriter.resolvedHostPath(pill.path) != nil
-        let view = FileBrowserContentView(
-            workspaceId: workspaceId,
-            serverId: serverId,
-            filePath: pill.path,
-            fileName: pill.label,
-            source: isHostPath ? .hostFile : .workspaceFile,
-            sessionId: sessionId,
-            fileSize: nil
-        )
+        let view = userMessagePathPillFileContent(for: pill, workspaceId: workspaceId)
         .environment(\.apiClient, apiClient)
         .environment(audioPlayer)
+        .environment(connection.sessionStore)
         .environment(
             \.reviewCommentSelectionScope,
             interactionContext.reviewCommentSelectionRouter.map(ReviewCommentSelectionScope.activeSession)
         )
 
         presentTimelineViewer(view, from: sourceView, presenter: presenter)
+    }
+
+    /// Upload pills open the session-origin copy the server materialized in
+    /// the session's checkout. Review and repo pills open the workspace file in
+    /// the session's checkout, so Edit writes where the agent works.
+    func userMessagePathPillFileContent(
+        for pill: UserMessagePathPill,
+        workspaceId: String
+    ) -> FileBrowserContentView {
+        let source: FileBrowserContentSource
+        if MarkdownWikiLinkRewriter.resolvedHostPath(pill.path) != nil {
+            source = .hostFile
+        } else if pill.kind == .uploadedFile {
+            source = .sessionFile(sessionId: sessionId)
+        } else {
+            source = .workspaceFile
+        }
+        let session = connection?.sessionStore.session(id: sessionId)
+        let sessionWorktreeId = session?.workspaceId == workspaceId ? session?.worktreeId : nil
+        return FileBrowserContentView(
+            workspaceId: workspaceId,
+            worktreeId: source == .workspaceFile ? sessionWorktreeId : nil,
+            serverId: serverId,
+            filePath: pill.path,
+            fileName: pill.label,
+            source: source,
+            sessionId: sessionId,
+            fileSize: nil
+        )
     }
 
     private func presentTimelineViewer<Content: View>(

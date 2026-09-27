@@ -189,7 +189,7 @@ struct FileBrowserReviewCommentSelectionTests {
     }
 
     @Test func workspaceLinkedFileDestinationIsReservedForWorkspaceStack() {
-        // compactOnly/treePane stays in-sheet; the workspace destination is not registered there.
+        // compactOnly stays in-sheet; the workspace destination is not registered there.
         #expect(
             FileBrowserTreeNavigationReducer.shouldUseWorkspaceLinkedFileDestination(
                 usesInlineCompactNavigation: true,

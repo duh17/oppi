@@ -371,6 +371,48 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("timeline file pills open the session's checkout; uploads keep their session origin")
+    func timelineFilePillsOpenSessionCheckout() {
+        let sessionId = "pill-checkout"
+        let harness = makeTimelineHarness(sessionId: sessionId)
+        harness.connection.setPreviewServerId("server-1")
+        harness.connection.sessionStore.switchServer(to: "server-1")
+        var session = makeTestSession(id: sessionId, workspaceId: "ws-test")
+        session.worktreeId = "wt-agent"
+        harness.connection.sessionStore.upsert(session)
+        harness.coordinator.apply(
+            configuration: makeTimelineConfiguration(
+                sessionId: sessionId,
+                reducer: harness.reducer,
+                toolOutputStore: harness.toolOutputStore,
+                toolArgsStore: harness.toolArgsStore,
+                connection: harness.connection,
+                scrollController: harness.scrollController,
+                audioPlayer: harness.audioPlayer,
+                serverId: "server-1"
+            ),
+            to: harness.collectionView
+        )
+
+        for kind in [UserMessagePathPill.Kind.repoFile, .reviewFile] {
+            let reader = harness.coordinator.userMessagePathPillFileContent(
+                for: UserMessagePathPill(kind: kind, path: "docs/notes.md"),
+                workspaceId: "ws-test"
+            )
+            #expect(reader.debugSourceForTesting == .workspaceFile, "\(kind)")
+            #expect(reader.debugWorktreeIdForTesting == "wt-agent", "\(kind) must not open main")
+            #expect(reader.debugServerIdForTesting == "server-1", "\(kind)")
+        }
+
+        let upload = harness.coordinator.userMessagePathPillFileContent(
+            for: UserMessagePathPill(kind: .uploadedFile, path: ".pi/attachments/\(sessionId)/turn/photo.txt"),
+            workspaceId: "ws-test"
+        )
+        #expect(upload.debugSourceForTesting == .sessionFile(sessionId: sessionId))
+        #expect(upload.debugWorktreeIdForTesting == nil)
+    }
+
+    @MainActor
     @Test("commit quick-action destination pushes inside the SwiftUI navigation stack")
     func commitQuickActionDestinationPushesInsideNavigationStack() async throws {
         let connection = ServerConnection()
