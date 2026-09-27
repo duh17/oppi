@@ -7,6 +7,7 @@ import type {
   CredentialInfo,
   Provider,
 } from "@earendil-works/pi-ai";
+import { CredentialSynchronizationError } from "@earendil-works/pi-coding-agent";
 import { ProviderAuthManager } from "../src/provider-auth/provider-auth-manager.js";
 import { ProviderAuthError } from "../src/provider-auth/types.js";
 
@@ -76,6 +77,14 @@ function makeProvider(
       ...(auth.apiKey ? { apiKey: { login: vi.fn() } as never } : {}),
     },
   } as Provider;
+}
+
+function createCommitGate(): { promise: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => {};
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 async function waitFor(predicate: () => boolean, attempts = 20): Promise<void> {
@@ -288,6 +297,230 @@ describe("ProviderAuthManager", () => {
 
     expect(manager.getFlow(started.flowId).lastProgress).toBe("Could not open browser on server");
     manager.cancelFlow(started.flowId, "done");
+  });
+
+  it("expires a stale flow on read without breaking later provider-auth calls", async () => {
+    let now = 1_000_000;
+    const providers = [makeProvider("openai-codex", "ChatGPT (Codex)")];
+    const runtime = new FakeModelRuntime(providers, {
+      "openai-codex": async (_type, interaction) => {
+        await interaction.prompt({ type: "manual_code", message: "Paste code" });
+        return oauthCredential();
+      },
+    });
+    const manager = new ProviderAuthManager({
+      modelRuntime: runtime,
+      flowTtlMs: 60_000,
+      now: () => now,
+    });
+
+    const started = manager.startFlow("openai-codex", "none");
+    await waitFor(() => manager.getFlow(started.flowId).status === "awaiting_manual_code");
+
+    now += 60_001;
+    expect(manager.getFlow(started.flowId)).toMatchObject({
+      status: "expired",
+      error: "Flow expired",
+    });
+    expect(manager.getFlow(started.flowId).status).toBe("expired");
+    expect(() => manager.submitManualCode(started.flowId, "late")).toThrowError(ProviderAuthError);
+    expect(manager.listProviders().map((provider) => provider.id)).toEqual(["openai-codex"]);
+  });
+
+  it.each([
+    { url: "javascript:alert(1)", accepted: false },
+    { url: "http://auth.example.com/authorize", accepted: false },
+    { url: "https://auth.example.com/authorize", accepted: true },
+    { url: "http://localhost:1455/auth/callback", accepted: true },
+    { url: "http://127.0.0.1:1455/auth/callback", accepted: true },
+    { url: "http://[::1]:1455/auth/callback", accepted: true },
+  ])("auth_url $url accepted=$accepted", async ({ url, accepted }) => {
+    const providers = [makeProvider("openai-codex", "ChatGPT (Codex)")];
+    const runtime = new FakeModelRuntime(providers, {
+      "openai-codex": async (_type, interaction) => {
+        interaction.notify({ type: "auth_url", url });
+        await interaction.prompt({ type: "manual_code", message: "Paste code" });
+        return oauthCredential();
+      },
+    });
+    const openBrowser = vi.fn();
+    const manager = new ProviderAuthManager({ modelRuntime: runtime, openBrowser });
+
+    const started = manager.startFlow("openai-codex", "server_browser");
+    await waitFor(
+      () =>
+        openBrowser.mock.calls.length > 0 || manager.getFlow(started.flowId).status === "failed",
+    );
+    const flow = manager.getFlow(started.flowId);
+
+    if (accepted) {
+      expect(flow.status).toBe("awaiting_manual_code");
+      expect(flow.auth?.url).toBe(url);
+      expect(openBrowser).toHaveBeenCalledWith(url);
+      manager.cancelFlow(started.flowId);
+    } else {
+      expect(flow).toMatchObject({
+        status: "failed",
+        error: "Provider returned an unsafe sign-in URL",
+      });
+      expect(flow.auth).toBeUndefined();
+      expect(openBrowser).not.toHaveBeenCalled();
+    }
+  });
+
+  it("fails a device-code flow whose verification URL is unsafe", async () => {
+    const providers = [makeProvider("github-copilot", "GitHub Copilot")];
+    const runtime = new FakeModelRuntime(providers, {
+      "github-copilot": async (_type, interaction) => {
+        interaction.notify({
+          type: "device_code",
+          verificationUri: "javascript:alert(1)",
+          userCode: "ABCD-1234",
+        });
+        await interaction.prompt({ type: "manual_code", message: "Paste code" });
+        return oauthCredential();
+      },
+    });
+    const manager = new ProviderAuthManager({ modelRuntime: runtime });
+
+    const started = manager.startFlow("github-copilot", "phone_browser");
+    await waitFor(() => manager.getFlow(started.flowId).status === "failed");
+
+    expect(manager.getFlow(started.flowId).auth).toBeUndefined();
+  });
+
+  it("does not open the server browser for an auth_url that arrives after cancel", async () => {
+    const providers = [makeProvider("openai-codex", "ChatGPT (Codex)")];
+    let notify: AuthInteraction["notify"] | undefined;
+    const runtime = new FakeModelRuntime(providers, {
+      "openai-codex": async (_type, interaction) => {
+        notify = interaction.notify;
+        await interaction.prompt({ type: "manual_code", message: "Paste code" });
+        return oauthCredential();
+      },
+    });
+    const openBrowser = vi.fn();
+    const manager = new ProviderAuthManager({ modelRuntime: runtime, openBrowser });
+
+    const started = manager.startFlow("openai-codex", "server_browser");
+    await waitFor(() => manager.getFlow(started.flowId).status === "awaiting_manual_code");
+    manager.cancelFlow(started.flowId);
+
+    notify?.({ type: "auth_url", url: "https://auth.openai.com/oauth/authorize" });
+    await Promise.resolve();
+
+    expect(openBrowser).not.toHaveBeenCalled();
+    expect(manager.getFlow(started.flowId)).toMatchObject({ status: "cancelled" });
+    expect(manager.getFlow(started.flowId).auth).toBeUndefined();
+  });
+
+  it("lets a later auth_url launch the server browser after a failed launch", async () => {
+    const providers = [makeProvider("openai-codex", "ChatGPT (Codex)")];
+    let notify: AuthInteraction["notify"] | undefined;
+    const runtime = new FakeModelRuntime(providers, {
+      "openai-codex": async (_type, interaction) => {
+        notify = interaction.notify;
+        interaction.notify({ type: "auth_url", url: "https://auth.example.com/first" });
+        await interaction.prompt({ type: "manual_code", message: "Paste code" });
+        return oauthCredential();
+      },
+    });
+    const openBrowser = vi
+      .fn<(url: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("xdg-open exited with code 3"))
+      .mockResolvedValue(undefined);
+    const manager = new ProviderAuthManager({ modelRuntime: runtime, openBrowser });
+
+    const started = manager.startFlow("openai-codex", "server_browser");
+    await waitFor(
+      () => manager.getFlow(started.flowId).lastProgress === "Could not open browser on server",
+    );
+
+    notify?.({ type: "auth_url", url: "https://auth.example.com/second" });
+    await waitFor(() => openBrowser.mock.calls.length === 2);
+    expect(openBrowser).toHaveBeenLastCalledWith("https://auth.example.com/second");
+
+    // Once a launch succeeded, later auth URLs do not open another window.
+    await Promise.resolve();
+    notify?.({ type: "auth_url", url: "https://auth.example.com/third" });
+    for (let tick = 0; tick < 10; tick += 1) await Promise.resolve();
+    expect(openBrowser).toHaveBeenCalledTimes(2);
+    manager.cancelFlow(started.flowId);
+  });
+
+  it("does not launch the server browser when the flow ends before the launch runs", async () => {
+    const providers = [makeProvider("openai-codex", "ChatGPT (Codex)")];
+    let notify: AuthInteraction["notify"] | undefined;
+    const runtime = new FakeModelRuntime(providers, {
+      "openai-codex": async (_type, interaction) => {
+        notify = interaction.notify;
+        await interaction.prompt({ type: "manual_code", message: "Paste code" });
+        return oauthCredential();
+      },
+    });
+    const openBrowser = vi.fn();
+    const manager = new ProviderAuthManager({ modelRuntime: runtime, openBrowser });
+
+    const started = manager.startFlow("openai-codex", "server_browser");
+    await waitFor(() => manager.getFlow(started.flowId).status === "awaiting_manual_code");
+
+    notify?.({ type: "auth_url", url: "https://auth.example.com/authorize" });
+    manager.cancelFlow(started.flowId);
+    for (let tick = 0; tick < 10; tick += 1) await Promise.resolve();
+
+    expect(openBrowser).not.toHaveBeenCalled();
+    expect(manager.getFlow(started.flowId).status).toBe("cancelled");
+  });
+
+  it("completes and refreshes when the credential saved but local sync failed", async () => {
+    const providers = [makeProvider("openai-codex", "ChatGPT (Codex)")];
+    const runtime = new FakeModelRuntime(providers, {
+      "openai-codex": async () => {
+        throw new CredentialSynchronizationError("openai-codex", "login", oauthCredential(), {
+          cause: new Error("models.json locked"),
+        });
+      },
+    });
+    let refreshCount = 0;
+    const manager = new ProviderAuthManager({
+      modelRuntime: runtime,
+      onCredentialsChanged: () => {
+        refreshCount += 1;
+      },
+    });
+
+    const started = manager.startFlow("openai-codex", "none");
+    await waitFor(() => refreshCount === 1);
+
+    expect(manager.getFlow(started.flowId)).toMatchObject({ status: "completed" });
+    expect(manager.getFlow(started.flowId).error).toBeUndefined();
+  });
+
+  it("refreshes a sync-failed login that commits after cancel without reviving the flow", async () => {
+    const providers = [makeProvider("openai-codex", "ChatGPT (Codex)")];
+    const commit = createCommitGate();
+    const runtime = new FakeModelRuntime(providers, {
+      "openai-codex": async () => {
+        await commit.promise;
+        throw new CredentialSynchronizationError("openai-codex", "login", oauthCredential(), {
+          cause: new Error("models.json locked"),
+        });
+      },
+    });
+    let refreshCount = 0;
+    const manager = new ProviderAuthManager({
+      modelRuntime: runtime,
+      onCredentialsChanged: () => {
+        refreshCount += 1;
+      },
+    });
+
+    const started = manager.startFlow("openai-codex", "none");
+    manager.cancelFlow(started.flowId);
+    commit.resolve();
+    await waitFor(() => refreshCount === 1);
+
+    expect(manager.getFlow(started.flowId)).toMatchObject({ status: "cancelled" });
   });
 
   it("cancels active flow and rejects further manual input", async () => {

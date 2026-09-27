@@ -55,7 +55,8 @@ export interface ProviderAuthFlowRecord {
   readonly abortController: AbortController;
   readonly flowType: ProviderAuthFlowType;
   readonly launchMode: ProviderAuthLaunchMode;
-  browserOpened: boolean;
+  /** Server-browser launch state for `server_browser` flows. */
+  browserLaunch: "none" | "launching" | "opened";
   promptWaiter?: Deferred<string>;
   manualCodeWaiter?: Deferred<string>;
   snapshot: ProviderAuthFlowSnapshot;
@@ -117,7 +118,7 @@ export class ProviderAuthFlowStore {
       flowType,
       launchMode,
       abortController: new AbortController(),
-      browserOpened: false,
+      browserLaunch: "none",
       snapshot,
     };
 
@@ -246,7 +247,9 @@ export class ProviderAuthFlowStore {
         !isTerminalProviderAuthStatus(record.snapshot.status) &&
         record.snapshot.expiresAt <= now
       ) {
-        this.markTerminal(flowId, "expired", "Flow expired");
+        // Mutate the record directly. Going through get()/update() would call
+        // prune() again before the status is terminal and recurse forever.
+        this.settleTerminal(record, "expired", "Flow expired");
       }
     }
   }
@@ -256,22 +259,36 @@ export class ProviderAuthFlowStore {
     status: ProviderAuthFlowStatus,
     error?: string,
   ): ProviderAuthFlowSnapshot | undefined {
-    return this.update(flowId, (record) => {
-      if (isTerminalProviderAuthStatus(record.snapshot.status)) {
-        return;
-      }
+    const record = this.get(flowId);
+    if (!record) return undefined;
 
-      this.rejectWaiters(record, error ?? "Flow terminated");
+    this.settleTerminal(record, status, error);
+    return cloneSnapshot(record.snapshot);
+  }
 
-      if (status === "cancelled" || status === "expired" || status === "failed") {
-        record.abortController.abort();
-      }
+  /**
+   * Moves a live record to a terminal status without re-entering get() or prune().
+   * The status is set before waiters reject and the abort signal fires, because
+   * abort listeners call back into the store synchronously and must see a
+   * terminal record.
+   */
+  private settleTerminal(
+    record: ProviderAuthFlowRecord,
+    status: ProviderAuthFlowStatus,
+    error?: string,
+  ): void {
+    if (isTerminalProviderAuthStatus(record.snapshot.status)) return;
 
-      record.snapshot.status = status;
-      record.snapshot.error = error;
-      record.snapshot.prompt = undefined;
-      record.snapshot.lastProgress = undefined;
-    });
+    record.snapshot.status = status;
+    record.snapshot.error = error;
+    record.snapshot.prompt = undefined;
+    record.snapshot.lastProgress = undefined;
+    record.snapshot.updatedAt = this.now();
+
+    this.rejectWaiters(record, error ?? "Flow terminated");
+    if (status !== "completed") {
+      record.abortController.abort();
+    }
   }
 
   private rejectWaiters(record: ProviderAuthFlowRecord, message: string): void {

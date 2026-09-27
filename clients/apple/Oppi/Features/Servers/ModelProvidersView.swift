@@ -192,8 +192,11 @@ struct ModelProvidersScopedDestinationView: View {
 
     var body: some View {
         if let server {
+            // Keyed by the navigation target, not the visible host: a host-pill
+            // switch must not destroy the view and drop a live provider sign-in.
+            // ServerDetailView resets host-local state when the host changes.
             ModelProvidersView(server: server)
-                .id(server.id)
+                .id(target.serverId)
         } else {
             ContentUnavailableView(
                 "Server Unavailable",

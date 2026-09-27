@@ -99,6 +99,219 @@ struct ServerModelProvidersNavigationRow: View {
     }
 }
 
+/// Provider sign-in calls for one flow. `APIClient` conforms; tests use a fake.
+protocol ProviderAuthFlowClient: Sendable {
+    func getProviderAuthFlow(flowId: String) async throws -> ProviderAuthFlowSnapshot
+    func submitProviderAuthPromptResponse(flowId: String, value: String) async throws -> ProviderAuthFlowSnapshot
+    func submitProviderAuthManualCode(flowId: String, input: String) async throws -> ProviderAuthFlowSnapshot
+    func cancelProviderAuthFlow(flowId: String, reason: String?) async throws -> ProviderAuthFlowSnapshot
+}
+
+extension APIClient: ProviderAuthFlowClient {}
+
+enum ProviderAuthFlowPresentation {
+    static func statusText(_ status: ProviderAuthFlowSnapshot.Status) -> String {
+        switch status {
+        case .pending: "Starting…"
+        case .awaitingExternal: "Waiting for sign-in to finish"
+        case .awaitingPrompt: "Needs your answer"
+        case .awaitingManualCode: "Waiting for the authorization code"
+        case .completed: "Signed in"
+        case .failed: "Sign-in failed"
+        case .cancelled: "Cancelled"
+        case .expired: "Expired"
+        }
+    }
+
+    /// Only https, or http on loopback, may be opened. Mirrors the server check.
+    static func signInURL(_ value: String) -> URL? {
+        guard let url = URL(string: value), let scheme = url.scheme?.lowercased() else { return nil }
+        if scheme == "https" { return url.host?.isEmpty == false ? url : nil }
+        guard scheme == "http", let host = url.host?.lowercased() else { return nil }
+        return ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host) ? url : nil
+    }
+}
+
+/// One provider sign-in attempt, bound to the server client that started it.
+///
+/// Every follow-up call (poll, prompt, manual code, cancel) uses `client`, so a
+/// later active-server change cannot send a pasted code to a different server.
+/// Dismissing the sheet only stops showing the attempt; only `cancel` ends it.
+@MainActor @Observable
+final class ProviderAuthFlowAttempt {
+    typealias Sleep = @Sendable (Duration) async throws -> Void
+
+    static let pollInterval: Duration = .milliseconds(1200)
+    static let maxRetryDelay: Duration = .seconds(15)
+
+    let serverId: String
+    let serverName: String
+    let providerName: String
+    private let client: any ProviderAuthFlowClient
+    private let sleep: Sleep
+
+    private(set) var flow: ProviderAuthFlowSnapshot
+    /// The server no longer knows this flow (404); nothing is left to poll or cancel.
+    private(set) var isGone = false
+    private(set) var isCancelling = false
+    private(set) var isSubmitting = false
+    /// Last failed poll. Polling keeps retrying; cleared by the next good read.
+    private(set) var refreshError: String?
+    var input = ""
+    var actionError: String?
+
+    private var pollTask: Task<Void, Never>?
+    private var pollGeneration = 0
+
+    init(
+        flow: ProviderAuthFlowSnapshot,
+        client: any ProviderAuthFlowClient,
+        serverId: String,
+        serverName: String,
+        providerName: String,
+        sleep: @escaping Sleep = { try await Task.sleep(for: $0) }
+    ) {
+        self.flow = flow
+        self.client = client
+        self.serverId = serverId
+        self.serverName = serverName
+        self.providerName = providerName
+        self.sleep = sleep
+    }
+
+    /// Terminal on the server, or gone from it.
+    var isSettled: Bool { isGone || flow.status.isTerminal }
+    var isPolling: Bool { pollTask != nil }
+
+    static func retryDelay(afterFailures failures: Int) -> Duration {
+        let scaled = pollInterval * (1 << min(max(failures, 0), 6))
+        return min(scaled, maxRetryDelay)
+    }
+
+    /// Starts or restarts polling. Any earlier poll's late result is ignored.
+    func startPolling() {
+        stopPolling()
+        guard !isSettled else { return }
+
+        let generation = pollGeneration
+        let flowId = flow.flowId
+        let client = client
+        let sleep = sleep
+        pollTask = Task {
+            var failures = 0
+            while !Task.isCancelled {
+                do {
+                    let snapshot = try await client.getProviderAuthFlow(flowId: flowId)
+                    guard generation == self.pollGeneration else { return }
+                    failures = 0
+                    self.refreshError = nil
+                    self.apply(snapshot)
+                } catch {
+                    guard generation == self.pollGeneration else { return }
+                    if Self.isNotFound(error) {
+                        self.isGone = true
+                    } else {
+                        failures += 1
+                        self.refreshError = "Could not refresh sign-in status: \(error.localizedDescription). Retrying…"
+                    }
+                }
+                if self.isSettled { break }
+                try? await sleep(failures == 0 ? Self.pollInterval : Self.retryDelay(afterFailures: failures))
+            }
+            // A newer poll may already own the handle; only clear our own.
+            if generation == self.pollGeneration {
+                self.pollTask = nil
+            }
+        }
+    }
+
+    func stopPolling() {
+        pollGeneration += 1
+        pollTask?.cancel()
+        pollTask = nil
+    }
+
+    /// The sheet closed without Cancel Login. Never cancels the server flow.
+    /// Returns whether to keep the attempt reachable: true while it is still live.
+    func sheetDismissed() -> Bool {
+        guard isSettled else { return true }
+        stopPolling()
+        return false
+    }
+
+    func submitPromptResponse(_ value: String) async {
+        guard flow.status == .awaitingPrompt, !isSubmitting, !isCancelling else { return }
+        isSubmitting = true
+        defer { isSubmitting = false }
+        do {
+            let snapshot = try await client.submitProviderAuthPromptResponse(flowId: flow.flowId, value: value)
+            apply(snapshot)
+            input = ""
+            actionError = nil
+        } catch {
+            actionError = "Failed to submit response: \(error.localizedDescription)"
+        }
+    }
+
+    func submitManualCode() async {
+        let code = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard flow.status == .awaitingManualCode, !code.isEmpty, !isSubmitting, !isCancelling else { return }
+        isSubmitting = true
+        defer { isSubmitting = false }
+        do {
+            let snapshot = try await client.submitProviderAuthManualCode(flowId: flow.flowId, input: code)
+            apply(snapshot)
+            input = ""
+            actionError = nil
+        } catch {
+            actionError = "Failed to submit code: \(error.localizedDescription)"
+        }
+    }
+
+    /// Returns true once the server acknowledged the cancel, or no longer has the flow.
+    /// On failure the attempt stays live and `actionError` explains why.
+    func cancel(reason: String) async -> Bool {
+        guard !isSettled else { return true }
+        guard !isCancelling else { return false }
+        isCancelling = true
+        actionError = nil
+        defer { isCancelling = false }
+        do {
+            let snapshot = try await client.cancelProviderAuthFlow(flowId: flow.flowId, reason: reason)
+            stopPolling()
+            // The cancel reply is the server's latest word (it may say `completed`).
+            if snapshot.flowId == flow.flowId { flow = snapshot }
+            return true
+        } catch {
+            if Self.isNotFound(error) {
+                stopPolling()
+                isGone = true
+                return true
+            }
+            actionError = "Failed to cancel login: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Applies a server snapshot for this flow unless it is older than what is shown
+    /// or the flow already settled.
+    private func apply(_ snapshot: ProviderAuthFlowSnapshot) {
+        guard snapshot.flowId == flow.flowId,
+              !flow.status.isTerminal,
+              snapshot.updatedAt >= flow.updatedAt else { return }
+        flow = snapshot
+    }
+
+    private static func isNotFound(_ error: Error) -> Bool {
+        switch error as? APIError {
+        case .server(let status, _), .codedServer(let status, _, _):
+            status == 404
+        default:
+            false
+        }
+    }
+}
+
 struct ServerDetailView: View {
     let server: PairedServer
     var presentation: ServerDetailPresentation = .details
@@ -107,6 +320,7 @@ struct ServerDetailView: View {
     @Environment(AppNavigation.self) private var navigation
     @Environment(ServerStore.self) private var serverStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var info: ServerInfo?
     @State private var isLoading = true
@@ -124,12 +338,10 @@ struct ServerDetailView: View {
     @State private var providerError: String?
     @State private var providerActionInFlightId: String?
 
-    @State private var activeFlow: ProviderAuthFlowSnapshot?
+    /// Retained after the sheet is dismissed so a live login stays reachable.
+    @State private var flowAttempt: ProviderAuthFlowAttempt?
     @State private var isFlowSheetPresented = false
-    @State private var flowInput = ""
-    @State private var flowError: String?
-    @State private var flowPollTask: Task<Void, Never>?
-    @State private var isCancellingFlow = false
+    @State private var signInChoiceProvider: ProviderAuthProviderStatus?
 
     @State private var apiKeyEditorProvider: ProviderAuthProviderStatus?
     @State private var apiKeyDraft = ""
@@ -185,9 +397,15 @@ struct ServerDetailView: View {
         }
         .task(id: pairedServer.id) {
             if presentation == .modelProviders {
+                // Host-local state resets on a host switch. A live `flowAttempt`
+                // stays: it is bound to its own server's client and keeps polling.
                 providerStatuses = []
                 providerSetupState = .unknown
                 providerQuotas = nil
+                providerError = nil
+                apiKeyEditorProvider = nil
+                apiKeyDraft = ""
+                signInChoiceProvider = nil
                 await loadProviderConfiguration()
             } else {
                 info = nil
@@ -201,9 +419,21 @@ struct ServerDetailView: View {
         .sheet(isPresented: $showAddServer) {
             OnboardingView(mode: .addServer)
         }
+        .onAppear {
+            resumeFlowPollingIfLive()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                resumeFlowPollingIfLive()
+            }
+        }
+        .onChange(of: flowAttempt?.isSettled) { _, settled in
+            if settled == true {
+                reloadProvidersAfterSignIn()
+            }
+        }
         .onDisappear {
-            flowPollTask?.cancel()
-            flowPollTask = nil
+            flowAttempt?.stopPolling()
             updatePollTask?.cancel()
             updatePollTask = nil
         }
@@ -231,6 +461,26 @@ struct ServerDetailView: View {
         } message: {
             Text(ServerUpdatePresentation.confirmationMessage)
         }
+        .confirmationDialog(
+            signInChoiceTitle,
+            isPresented: Binding(
+                get: { signInChoiceProvider != nil },
+                set: { if !$0 { signInChoiceProvider = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: signInChoiceProvider
+        ) { provider in
+            Button("On this iPhone") {
+                startProviderFlow(provider: provider, launchMode: .phoneBrowser)
+            }
+            .keyboardShortcut(.defaultAction)
+            Button("On server") {
+                startProviderFlow(provider: provider, launchMode: .serverBrowser)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Choose where the sign-in page opens. On server opens a browser on the server's own desktop.")
+        }
         .sheet(isPresented: $isFlowSheetPresented, onDismiss: handleFlowSheetDismissed) {
             providerFlowSheet
         }
@@ -241,6 +491,32 @@ struct ServerDetailView: View {
 
     @ViewBuilder
     private var providerManagementSections: some View {
+        if let attempt = flowAttempt, !isFlowSheetPresented {
+            Section {
+                Button {
+                    isFlowSheetPresented = true
+                } label: {
+                    HStack(spacing: 12) {
+                        ProviderIcon(provider: attempt.flow.providerId, size: 16)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Sign in to \(attempt.providerName)")
+                                .foregroundStyle(.themeFg)
+                            Text(flowAttemptSummary(attempt))
+                                .font(.caption)
+                                .foregroundStyle(.themeComment)
+                        }
+                        Spacer(minLength: 8)
+                        Text(attempt.isSettled ? "View" : "Return")
+                            .font(.subheadline)
+                            .foregroundStyle(.tint)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("server.modelProviders.signInAttempt")
+            }
+        }
+
         if providerPresentation.showsLoading {
             Section {
                 HStack {
@@ -678,11 +954,12 @@ struct ServerDetailView: View {
     private func providerConnectButtons(
         _ provider: ProviderAuthProviderStatus
     ) -> some View {
-        if let oauth = provider.oauth, provider.supportsApiKey {
+        if provider.oauth != nil, provider.supportsApiKey {
             Menu {
                 Button(provider.authenticated ? "Reauthenticate" : "Sign In") {
-                    startProviderOAuthAction(provider: provider, oauth: oauth)
+                    startProviderOAuthAction(provider: provider)
                 }
+                .disabled(hasLiveSignIn)
 
                 Button(apiKeyButtonTitle(provider)) {
                     startProviderAPIKeyAction(provider: provider)
@@ -698,14 +975,14 @@ struct ServerDetailView: View {
             .controlSize(.small)
             .font(.subheadline)
             .disabled(providerActionInFlightId != nil)
-        } else if let oauth = provider.oauth {
+        } else if provider.oauth != nil {
             Button(provider.authenticated ? "Reauthenticate" : "Sign In") {
-                startProviderOAuthAction(provider: provider, oauth: oauth)
+                startProviderOAuthAction(provider: provider)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
             .font(.subheadline)
-            .disabled(providerActionInFlightId != nil)
+            .disabled(providerActionInFlightId != nil || hasLiveSignIn)
         } else if provider.supportsApiKey {
             Button(apiKeyButtonTitle(provider)) {
                 startProviderAPIKeyAction(provider: provider)
@@ -717,13 +994,27 @@ struct ServerDetailView: View {
         }
     }
 
-    private func startProviderOAuthAction(
-        provider: ProviderAuthProviderStatus,
-        oauth: ProviderAuthOAuthCapabilities
-    ) {
+    /// Asks where the sign-in page should open before any flow starts.
+    private func startProviderOAuthAction(provider: ProviderAuthProviderStatus) {
         DispatchQueue.main.async {
-            startProviderFlow(provider: provider, oauth: oauth)
+            signInChoiceProvider = provider
         }
+    }
+
+    /// One sign-in at a time, so a live attempt is never replaced out of sight.
+    private var hasLiveSignIn: Bool {
+        flowAttempt.map { !$0.isSettled } ?? false
+    }
+
+    private var signInChoiceTitle: String {
+        signInChoiceProvider.map { "Sign in to \($0.name)" } ?? "Sign In"
+    }
+
+    private func flowAttemptSummary(_ attempt: ProviderAuthFlowAttempt) -> String {
+        let status = attempt.isGone
+            ? "No longer on the server"
+            : ProviderAuthFlowPresentation.statusText(attempt.flow.status)
+        return attempt.serverId == pairedServer.id ? status : "\(status) \u{00B7} \(attempt.serverName)"
     }
 
     private func startProviderAPIKeyAction(
@@ -737,12 +1028,11 @@ struct ServerDetailView: View {
     @ViewBuilder
     private func providerManageMenu(_ provider: ProviderAuthProviderStatus) -> some View {
         Menu {
-            if let oauth = provider.oauth {
+            if provider.oauth != nil {
                 Button("Reauthenticate") {
-                    DispatchQueue.main.async {
-                        startProviderFlow(provider: provider, oauth: oauth)
-                    }
+                    startProviderOAuthAction(provider: provider)
                 }
+                .disabled(hasLiveSignIn)
             }
 
             if provider.supportsApiKey {
@@ -767,21 +1057,32 @@ struct ServerDetailView: View {
     private var providerFlowSheet: some View {
         NavigationStack {
             List {
-                if let flow = activeFlow {
+                if let attempt = flowAttempt {
+                    let flow = attempt.flow
+                    let isBusy = attempt.isCancelling || attempt.isSubmitting
                     Section("Provider") {
-                        LabeledContent("ID", value: flow.providerId)
-                        LabeledContent("Status", value: flow.status.rawValue)
+                        LabeledContent("Provider", value: attempt.providerName)
+                        LabeledContent(
+                            "Status",
+                            value: attempt.isGone
+                                ? "No longer on the server"
+                                : ProviderAuthFlowPresentation.statusText(flow.status)
+                        )
+                        if attempt.serverId != pairedServer.id {
+                            LabeledContent("Server", value: attempt.serverName)
+                        }
                     }
 
                     if let auth = flow.auth {
                         Section("Sign In") {
-                            if let url = URL(string: auth.url) {
+                            if let url = ProviderAuthFlowPresentation.signInURL(auth.url) {
                                 Link(destination: url) {
                                     Label("Open sign-in page on iPhone", systemImage: "safari")
                                 }
                             } else {
-                                Text(auth.url)
+                                Text("This sign-in link cannot be opened on iPhone.")
                                     .font(.footnote)
+                                    .foregroundStyle(.themeComment)
                             }
 
                             if let instructions = auth.instructions, !instructions.isEmpty {
@@ -796,38 +1097,38 @@ struct ServerDetailView: View {
                             if let options = prompt.options, !options.isEmpty {
                                 ForEach(options) { option in
                                     Button(option.label) {
-                                        flowInput = option.id
-                                        submitPromptResponse()
+                                        Task { await attempt.submitPromptResponse(option.id) }
                                     }
-                                    .disabled(isCancellingFlow)
+                                    .disabled(isBusy)
                                 }
                             } else {
-                                TextField(prompt.placeholder ?? "Enter response", text: $flowInput)
+                                TextField(prompt.placeholder ?? "Enter response", text: Bindable(attempt).input)
                                     .textInputAutocapitalization(.never)
                                     .autocorrectionDisabled()
-                                    .disabled(isCancellingFlow)
+                                    .disabled(isBusy)
 
                                 Button("Submit") {
-                                    submitPromptResponse()
+                                    let value = attempt.input
+                                    Task { await attempt.submitPromptResponse(value) }
                                 }
-                                .disabled(isCancellingFlow || (flowInput.isEmpty && prompt.allowEmpty != true))
+                                .disabled(isBusy || (attempt.input.isEmpty && prompt.allowEmpty != true))
                             }
                         }
                     }
 
                     if flow.status == .awaitingManualCode {
                         Section("Manual Code Input") {
-                            TextField("Paste authorization code or redirect URL", text: $flowInput)
+                            TextField("Paste authorization code or redirect URL", text: Bindable(attempt).input)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
-                                .disabled(isCancellingFlow)
+                                .disabled(isBusy)
 
                             Button("Submit") {
-                                submitManualCode()
+                                Task { await attempt.submitManualCode() }
                             }
                             .disabled(
-                                isCancellingFlow ||
-                                    flowInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                isBusy ||
+                                    attempt.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             )
                         }
                     }
@@ -848,23 +1149,38 @@ struct ServerDetailView: View {
                         }
                     }
 
-                    if let flowError, !flowError.isEmpty {
+                    if attempt.isGone {
                         Section {
-                            Text(flowError)
+                            Text("The server no longer has this sign-in attempt. It may have expired or the server restarted.")
+                                .font(.footnote)
+                        }
+                    }
+
+                    if let refreshError = attempt.refreshError, !attempt.isSettled {
+                        Section {
+                            Text(refreshError)
+                                .font(.footnote)
+                                .foregroundStyle(.themeOrange)
+                        }
+                    }
+
+                    if let actionError = attempt.actionError, !actionError.isEmpty {
+                        Section {
+                            Text(actionError)
                                 .foregroundStyle(.themeRed)
                         }
                     }
 
                     Section {
-                        if flow.status.isTerminal {
+                        if attempt.isSettled {
                             Button("Done") {
                                 closeFlowSheet()
                             }
                         } else {
                             Button(role: .destructive) {
-                                cancelActiveFlow(reason: "Cancelled by user")
+                                cancelFlowAttempt(attempt)
                             } label: {
-                                if isCancellingFlow {
+                                if attempt.isCancelling {
                                     HStack(spacing: 8) {
                                         ProgressView()
                                             .controlSize(.small)
@@ -874,25 +1190,17 @@ struct ServerDetailView: View {
                                     Text("Cancel Login")
                                 }
                             }
-                            .disabled(isCancellingFlow)
-                        }
-                    }
-                } else {
-                    Section {
-                        HStack {
-                            Spacer()
-                            ProgressView("Loading flow…")
-                            Spacer()
+                            .disabled(attempt.isCancelling)
                         }
                     }
                 }
             }
             .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
             .themedListSurface()
-            .navigationTitle("Provider Sign In")
+            .navigationTitle(flowAttempt.map { "Sign in to \($0.providerName)" } ?? "Provider Sign In")
             .navigationBarTitleDisplayMode(.inline)
         }
-        .interactiveDismissDisabled(isCancellingFlow)
+        .interactiveDismissDisabled(flowAttempt?.isCancelling ?? false)
     }
 
     @ViewBuilder
@@ -1224,23 +1532,13 @@ struct ServerDetailView: View {
 
     private func startProviderFlow(
         provider: ProviderAuthProviderStatus,
-        oauth: ProviderAuthOAuthCapabilities
+        launchMode: ProviderAuthFlowSnapshot.LaunchMode
     ) {
+        guard !hasLiveSignIn else { return }
+        let server = pairedServer
         guard let api = makeAPIClient() else {
             providerError = "Invalid server address"
             return
-        }
-
-        let launchMode: ProviderAuthFlowSnapshot.LaunchMode = if oauth.flowType == .deviceCode, oauth.supportsPhoneBrowserLaunch {
-            // Device-code flows are naturally cross-device. Prefer phone browser.
-            .phoneBrowser
-        } else if oauth.supportsServerBrowserLaunch {
-            // Callback-server providers work best when auth runs on server machine browser.
-            .serverBrowser
-        } else if oauth.supportsPhoneBrowserLaunch {
-            .phoneBrowser
-        } else {
-            .none
         }
 
         providerActionInFlightId = provider.id
@@ -1250,13 +1548,18 @@ struct ServerDetailView: View {
                     providerId: provider.id,
                     launchMode: launchMode
                 )
-                activeFlow = flow
-                flowInput = ""
-                flowError = nil
-                isCancellingFlow = false
+                flowAttempt?.stopPolling()
+                let attempt = ProviderAuthFlowAttempt(
+                    flow: flow,
+                    client: api,
+                    serverId: server.id,
+                    serverName: server.name,
+                    providerName: provider.name
+                )
+                flowAttempt = attempt
                 providerError = nil
                 isFlowSheetPresented = true
-                startFlowPolling(flowId: flow.flowId, api: api)
+                attempt.startPolling()
             } catch {
                 providerError = "Failed to start login: \(error.localizedDescription)"
             }
@@ -1264,154 +1567,46 @@ struct ServerDetailView: View {
         }
     }
 
-    private func startFlowPolling(flowId: String, api: APIClient) {
-        flowPollTask?.cancel()
-
-        flowPollTask = Task {
-            while !Task.isCancelled {
-                do {
-                    let flow = try await api.getProviderAuthFlow(flowId: flowId)
-                    activeFlow = flow
-
-                    if flow.status.isTerminal {
-                        await loadProviderConfiguration(api: api)
-                        break
-                    }
-                } catch {
-                    flowError = "Failed to refresh flow: \(error.localizedDescription)"
-                    break
-                }
-
-                try? await Task.sleep(for: .seconds(1.2))
-            }
-
-            flowPollTask = nil
-        }
+    private func resumeFlowPollingIfLive() {
+        guard let attempt = flowAttempt, !attempt.isSettled else { return }
+        attempt.startPolling()
     }
 
-    private func submitPromptResponse() {
-        guard let flow = activeFlow, flow.status == .awaitingPrompt else { return }
-        guard let api = makeAPIClient() else {
-            flowError = "Invalid server address"
-            return
-        }
+    /// Provider rows reflect the visible server, so only reload when the attempt ran there.
+    private func reloadProvidersAfterSignIn() {
+        guard let attempt = flowAttempt else { return }
+        reloadProviders(ifServerId: attempt.serverId)
+    }
 
-        let value = flowInput
+    private func reloadProviders(ifServerId serverId: String) {
+        guard presentation == .modelProviders, serverId == pairedServer.id else { return }
+        Task { await loadProviderConfiguration() }
+    }
+
+    /// Cancel Login is the only way to end a live attempt. The sheet closes only after
+    /// the server acknowledges; on failure it stays open with the error.
+    private func cancelFlowAttempt(_ attempt: ProviderAuthFlowAttempt) {
         Task {
-            do {
-                activeFlow = try await api.submitProviderAuthPromptResponse(flowId: flow.flowId, value: value)
-                flowInput = ""
-                flowError = nil
-            } catch {
-                flowError = "Failed to submit response: \(error.localizedDescription)"
+            guard await attempt.cancel(reason: "Cancelled by user") else { return }
+            // A login can commit just before the cancel lands; show the real state.
+            reloadProviders(ifServerId: attempt.serverId)
+            if flowAttempt === attempt {
+                closeFlowSheet()
             }
         }
-    }
-
-    private func submitManualCode() {
-        guard let flow = activeFlow, flow.status == .awaitingManualCode else { return }
-        guard let api = makeAPIClient() else {
-            flowError = "Invalid server address"
-            return
-        }
-
-        let input = flowInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !input.isEmpty else {
-            flowError = "Code input cannot be empty"
-            return
-        }
-
-        Task {
-            do {
-                activeFlow = try await api.submitProviderAuthManualCode(flowId: flow.flowId, input: input)
-                flowInput = ""
-                flowError = nil
-            } catch {
-                flowError = "Failed to submit code: \(error.localizedDescription)"
-            }
-        }
-    }
-
-    private func cancelActiveFlow(reason: String) {
-        guard let flow = activeFlow else {
-            closeFlowSheet()
-            return
-        }
-        guard let api = makeAPIClient() else {
-            flowError = "Failed to cancel login: Invalid server address"
-            return
-        }
-
-        isCancellingFlow = true
-        flowError = nil
-
-        Task {
-            do {
-                _ = try await api.cancelProviderAuthFlow(flowId: flow.flowId, reason: reason)
-                await MainActor.run {
-                    closeFlowSheet()
-                }
-            } catch {
-                await MainActor.run {
-                    isCancellingFlow = false
-                    flowError = "Failed to cancel login: \(error.localizedDescription)"
-                }
-            }
-        }
-    }
-
-    private func resetFlowState() {
-        flowPollTask?.cancel()
-        flowPollTask = nil
-        activeFlow = nil
-        flowInput = ""
-        flowError = nil
-        isCancellingFlow = false
     }
 
     private func closeFlowSheet() {
-        resetFlowState()
+        flowAttempt?.stopPolling()
+        flowAttempt = nil
         isFlowSheetPresented = false
     }
 
+    /// Dismissing never cancels. A live attempt keeps polling and stays reachable
+    /// from the provider list; a settled one is cleared.
     private func handleFlowSheetDismissed() {
-        flowPollTask?.cancel()
-        flowPollTask = nil
-
-        guard let flow = activeFlow else { return }
-
-        guard !flow.status.isTerminal else {
-            resetFlowState()
-            return
-        }
-
-        guard let api = makeAPIClient() else {
-            flowError = "Failed to cancel login: Invalid server address"
-            isFlowSheetPresented = true
-            return
-        }
-
-        isCancellingFlow = true
-        flowError = nil
-
-        Task {
-            do {
-                _ = try await api.cancelProviderAuthFlow(
-                    flowId: flow.flowId,
-                    reason: "Dismissed from iPhone"
-                )
-                await MainActor.run {
-                    resetFlowState()
-                }
-            } catch {
-                await MainActor.run {
-                    isCancellingFlow = false
-                    flowError = "Failed to cancel login: \(error.localizedDescription)"
-                    isFlowSheetPresented = true
-                    startFlowPolling(flowId: flow.flowId, api: api)
-                }
-            }
-        }
+        guard let attempt = flowAttempt, !attempt.sheetDismissed() else { return }
+        flowAttempt = nil
     }
 }
 

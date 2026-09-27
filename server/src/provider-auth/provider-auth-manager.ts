@@ -1,5 +1,5 @@
 import type { AuthEvent, AuthInteraction, AuthPrompt, Provider } from "@earendil-works/pi-ai";
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { CredentialSynchronizationError, type ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
@@ -64,6 +64,23 @@ function redactSensitiveError(message: string): string {
   return message
     .replace(/(code|token|access_token|refresh_token)=([^&\s]+)/gi, "$1=<redacted>")
     .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, "Bearer <redacted>");
+}
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * Authorization URLs are opened in a browser on the server or the phone.
+ * Allow https anywhere and http only on loopback (local OAuth callback servers).
+ */
+function isSafeAuthorizationUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol === "https:") return true;
+  return url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname);
 }
 
 function flowTypeForProvider(_provider: Provider): ProviderAuthFlowType {
@@ -294,13 +311,22 @@ export class ProviderAuthManager {
 
     try {
       await this.modelRuntime.login(providerId, "oauth", interaction);
-
-      const current = this.flowStore.get(flowId);
-      if (!current || isTerminalProviderAuthStatus(current.snapshot.status)) return;
-
-      this.flowStore.markCompleted(flowId);
+      this.completeCommittedLogin(flowId);
       await this.refreshAfterCredentialChange();
     } catch (error) {
+      // The credential is saved; only Pi's local snapshot sync failed. The
+      // login succeeded, so report it as completed and refresh from storage.
+      if (error instanceof CredentialSynchronizationError && error.operation === "login") {
+        log.warn("provider_auth.login.sync_failed", {
+          flowId,
+          providerId,
+          error: redactSensitiveError(safeErrorMessage(error)),
+        });
+        this.completeCommittedLogin(flowId);
+        await this.refreshAfterCredentialChange();
+        return;
+      }
+
       const current = this.flowStore.get(flowId);
       if (!current || isTerminalProviderAuthStatus(current.snapshot.status)) return;
 
@@ -319,7 +345,26 @@ export class ProviderAuthManager {
     }
   }
 
+  /** A committed credential completes the flow unless it already settled (e.g. cancelled). */
+  private completeCommittedLogin(flowId: string): void {
+    const current = this.flowStore.get(flowId);
+    if (!current || isTerminalProviderAuthStatus(current.snapshot.status)) return;
+    this.flowStore.markCompleted(flowId);
+  }
+
   private handleAuthEvent(flowId: string, providerId: string, event: AuthEvent): void {
+    if (event.type === "auth_url" || event.type === "device_code") {
+      const record = this.flowStore.get(flowId);
+      if (!record || isTerminalProviderAuthStatus(record.snapshot.status)) return;
+
+      const url = event.type === "auth_url" ? event.url : event.verificationUri;
+      if (!isSafeAuthorizationUrl(url)) {
+        log.warn("provider_auth.unsafe_auth_url", { flowId, providerId, eventType: event.type });
+        this.flowStore.markFailed(flowId, "Provider returned an unsafe sign-in URL");
+        return;
+      }
+    }
+
     if (event.type === "auth_url") {
       const snapshot = this.flowStore.setAuthInfo(flowId, {
         url: event.url,
@@ -328,11 +373,22 @@ export class ProviderAuthManager {
       if (!snapshot) return;
 
       const record = this.flowStore.get(flowId);
-      if (record?.launchMode === "server_browser" && !record.browserOpened) {
-        record.browserOpened = true;
+      if (record?.launchMode === "server_browser" && record.browserLaunch === "none") {
+        // "launching" blocks a duplicate launch; only a resolved launch counts as
+        // opened, so a failed one lets a later auth_url try again.
+        record.browserLaunch = "launching";
         void Promise.resolve()
-          .then(() => this.openBrowser(event.url))
+          .then(async () => {
+            const current = this.flowStore.get(flowId);
+            if (!current || isTerminalProviderAuthStatus(current.snapshot.status)) {
+              record.browserLaunch = "none";
+              return;
+            }
+            await this.openBrowser(event.url);
+            record.browserLaunch = "opened";
+          })
           .catch((error: unknown) => {
+            record.browserLaunch = "none";
             log.warn("provider_auth.open_browser.failed", {
               flowId,
               providerId,
