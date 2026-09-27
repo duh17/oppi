@@ -156,6 +156,57 @@ struct ComposerDraftStoreTests {
         #expect(reloaded.record(for: key) == nil)
     }
 
+    @Test func fileBackedVideoSidecarRoundTripsWithoutLoadingClipBytes() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let key = try fixture.key()
+        let videoURL = FileManager.default.temporaryDirectory.appending(
+            path: "\(UUID().uuidString).mp4",
+            directoryHint: .notDirectory
+        )
+        let videoBytes = Data(repeating: 0x5A, count: 2048)
+        try videoBytes.write(to: videoURL)
+        defer { try? FileManager.default.removeItem(at: videoURL) }
+
+        let payload = ComposerDraftPayload(
+            text: "watch this",
+            repoPointers: [],
+            attachments: [
+                .init(
+                    id: "video-1",
+                    displayName: "clip.mp4",
+                    mimeType: "video/mp4",
+                    source: .localFile,
+                    relativePath: nil,
+                    sizeBytes: videoBytes.count
+                ),
+            ]
+        )
+        let store = fixture.makeStore()
+        await store.load()
+        let record = try #require(store.setDraft(
+            payload,
+            attachmentFiles: ["video-1": videoURL],
+            for: key
+        ))
+        await store.flush()
+
+        let json = try Data(contentsOf: fixture.fileURL)
+        let jsonText = String(decoding: json, as: UTF8.self)
+        #expect(jsonText.contains("clip.mp4"))
+        #expect(!jsonText.contains(videoBytes.base64EncodedString()))
+        #expect(store.attachmentData(for: key, attachmentID: "video-1") == nil)
+        let sidecarURL = try #require(store.attachmentFileURL(for: key, attachmentID: "video-1"))
+        #expect(try Data(contentsOf: sidecarURL) == videoBytes)
+        #expect(record.payload.attachments.first?.sizeBytes == videoBytes.count)
+
+        let reloaded = fixture.makeStore()
+        await reloaded.load()
+        #expect(reloaded.attachmentData(for: key, attachmentID: "video-1") == nil)
+        let reloadedURL = try #require(reloaded.attachmentFileURL(for: key, attachmentID: "video-1"))
+        #expect(try Data(contentsOf: reloadedURL) == videoBytes)
+    }
+
     @Test func ephemeralFallbackDoesNotCreateSidecars() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }

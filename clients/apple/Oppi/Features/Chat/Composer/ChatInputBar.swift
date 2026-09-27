@@ -1,5 +1,4 @@
 import Foundation
-import PhotosUI
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -85,7 +84,6 @@ struct ChatInputBar<ActionRow: View>: View {
     var showsAccessoryRow: Bool = true
     @ViewBuilder let actionRow: () -> ActionRow
 
-    @State private var photoSelection: [PhotosPickerItem] = []
     @State private var showPhotoPicker = false
     @State private var showCamera = false
     @State private var showFileImporter = false
@@ -109,6 +107,8 @@ struct ChatInputBar<ActionRow: View>: View {
 
     /// Prevents double-submit while final dictation text is being committed.
     @State private var isFinishingVoiceBeforeSend = false
+    @State private var attachmentImportError: String?
+    @State private var localMediaImportEpoch: UInt64 = 0
 
     /// BCP 47 language of the active keyboard (e.g. "zh-Hans", "en-US").
     /// Updated by PastableTextView when the keyboard input mode changes.
@@ -386,14 +386,21 @@ struct ChatInputBar<ActionRow: View>: View {
         } message: {
             Text(voiceInputStartError ?? "Please try again.")
         }
+        .alert("Couldn't Attach From Photo Library", isPresented: Binding(
+            get: { attachmentImportError != nil },
+            set: { if !$0 { attachmentImportError = nil } }
+        )) {
+            Button("OK", role: .cancel) { attachmentImportError = nil }
+        } message: {
+            Text(attachmentImportError ?? "Please try again.")
+        }
         // Opening Photos resigns text focus, which can remove the inline action row.
         // Keep its presenter on the stable composer root instead of the attach button.
-        .photosPicker(
+        .composerPhotoLibraryCover(
             isPresented: $showPhotoPicker,
-            selection: $photoSelection,
-            maxSelectionCount: ComposerShared.maxPhotoSelectionCount,
-            matching: .images,
-            preferredItemEncoding: .current
+            pendingAttachments: $pendingAttachments,
+            importError: $attachmentImportError,
+            localImportEpoch: $localMediaImportEpoch
         )
         .onChange(of: text) { _, newValue in
             if newValue.isEmpty {
@@ -414,9 +421,10 @@ struct ChatInputBar<ActionRow: View>: View {
         .onChange(of: askClearing.draftAnswers) { _, _ in
             syncComposerTextWithActiveAskQuestion()
         }
-        .onChange(of: photoSelection) { _, items in
-            ComposerShared.loadSelectedPhotos(items, into: $pendingAttachments)
-            photoSelection = []
+        .onChange(of: isSending) { _, sending in
+            if sending {
+                localMediaImportEpoch &+= 1
+            }
         }
         .onChange(of: externalFocusRequestID) { _, _ in
             suppressKeyboard = false

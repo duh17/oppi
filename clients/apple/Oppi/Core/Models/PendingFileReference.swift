@@ -18,6 +18,9 @@ struct PendingAttachment: Identifiable, Sendable {
     let thumbnail: UIImage?
     let imageAttachment: ImageAttachment?
     let localFileData: Data?
+    let localFileURL: URL?
+    let localFileSizeBytes: Int?
+    let ownsLocalFile: Bool
     let localMimeType: String?
     let uploadedReference: ChatAttachmentRef?
 
@@ -29,7 +32,10 @@ struct PendingAttachment: Identifiable, Sendable {
         imageAttachment: ImageAttachment?,
         localFileData: Data?,
         localMimeType: String?,
-        uploadedReference: ChatAttachmentRef? = nil
+        uploadedReference: ChatAttachmentRef? = nil,
+        localFileURL: URL? = nil,
+        localFileSizeBytes: Int? = nil,
+        ownsLocalFile: Bool = false
     ) {
         self.id = id
         self.source = source
@@ -37,6 +43,9 @@ struct PendingAttachment: Identifiable, Sendable {
         self.thumbnail = thumbnail
         self.imageAttachment = imageAttachment
         self.localFileData = localFileData
+        self.localFileURL = localFileURL
+        self.localFileSizeBytes = localFileSizeBytes
+        self.ownsLocalFile = ownsLocalFile
         self.localMimeType = localMimeType
         if let uploadedReference {
             self.uploadedReference = uploadedReference
@@ -74,7 +83,35 @@ struct PendingAttachment: Identifiable, Sendable {
             imageAttachment: nil,
             localFileData: data,
             localMimeType: mimeType,
-            uploadedReference: nil
+            uploadedReference: nil,
+            localFileSizeBytes: data.count
+        )
+    }
+
+    static func localFile(
+        name: String,
+        fileURL: URL,
+        mimeType: String,
+        sizeBytes: Int? = nil,
+        thumbnail: UIImage? = nil,
+        ownsFile: Bool = true,
+        id: String? = nil
+    ) -> PendingAttachment {
+        let resolvedSize = sizeBytes
+            ?? (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+            ?? 0
+        return PendingAttachment(
+            id: id ?? "local:\(UUID().uuidString)",
+            source: .localFile,
+            displayName: name,
+            thumbnail: thumbnail,
+            imageAttachment: nil,
+            localFileData: nil,
+            localMimeType: mimeType,
+            uploadedReference: nil,
+            localFileURL: fileURL,
+            localFileSizeBytes: resolvedSize,
+            ownsLocalFile: ownsFile
         )
     }
 
@@ -106,8 +143,15 @@ extension PendingAttachment {
         } else if let imageAttachment,
                   let data = Data(base64Encoded: imageAttachment.data, options: .ignoreUnknownCharacters) {
             sizeBytes = data.count
+        } else if let localFileData {
+            sizeBytes = localFileData.count
+        } else if let localFileSizeBytes {
+            sizeBytes = localFileSizeBytes
+        } else if let localFileURL,
+                  let fileSize = try? localFileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+            sizeBytes = fileSize
         } else {
-            sizeBytes = localFileData?.count ?? 0
+            sizeBytes = 0
         }
         return ComposerDraftAttachment(
             id: id,
@@ -132,7 +176,36 @@ extension PendingAttachment {
         }
     }
 
-    init?(composerDraftAttachment: ComposerDraftAttachment, data: Data?) {
+    /// File-backed local attachments persist by copying this URL, not by loading Data.
+    var composerDraftFileURL: URL? {
+        guard source == .localFile, localFileData == nil else { return nil }
+        return localFileURL
+    }
+
+    var ownedLocalFileURL: URL? {
+        guard ownsLocalFile, let localFileURL else { return nil }
+        return localFileURL
+    }
+
+    static func releaseOwnedFiles(_ attachments: [PendingAttachment]) {
+        for attachment in attachments {
+            if let url = attachment.ownedLocalFileURL {
+                PendingComposerFileStore.remove(url)
+            }
+        }
+    }
+
+    static func releaseOwnedFiles(in previous: [PendingAttachment], notIn next: [PendingAttachment]) {
+        let retained = Set(next.compactMap { $0.ownedLocalFileURL?.standardizedFileURL.path })
+        for attachment in previous {
+            guard let url = attachment.ownedLocalFileURL else { continue }
+            if !retained.contains(url.standardizedFileURL.path) {
+                PendingComposerFileStore.remove(url)
+            }
+        }
+    }
+
+    init?(composerDraftAttachment: ComposerDraftAttachment, data: Data?, fileURL: URL? = nil) {
         switch composerDraftAttachment.source {
         case .uploaded:
             guard let reference = composerDraftAttachment.uploadedReference else { return nil }
@@ -152,15 +225,41 @@ extension PendingAttachment {
                 localMimeType: nil
             )
         case .localFile:
-            guard let data else { return nil }
-            self.init(
-                id: composerDraftAttachment.id,
-                source: .localFile,
-                displayName: composerDraftAttachment.displayName,
-                thumbnail: composerDraftAttachment.mimeType.hasPrefix("image/") ? UIImage(data: data) : nil,
-                imageAttachment: nil,
-                localFileData: data,
-                localMimeType: composerDraftAttachment.mimeType
+            if let data {
+                self.init(
+                    id: composerDraftAttachment.id,
+                    source: .localFile,
+                    displayName: composerDraftAttachment.displayName,
+                    thumbnail: composerDraftAttachment.mimeType.hasPrefix("image/") ? UIImage(data: data) : nil,
+                    imageAttachment: nil,
+                    localFileData: data,
+                    localMimeType: composerDraftAttachment.mimeType,
+                    localFileSizeBytes: data.count
+                )
+                return
+            }
+            guard let fileURL else { return nil }
+            let ownedURL: URL
+            let ownsFile: Bool
+            if PendingComposerFileStore.isOwned(fileURL) {
+                ownedURL = fileURL
+                ownsFile = true
+            } else if let copied = try? PendingComposerFileStore.copyFile(
+                from: fileURL,
+                displayName: composerDraftAttachment.displayName
+            ) {
+                ownedURL = copied
+                ownsFile = true
+            } else {
+                return nil
+            }
+            self = .localFile(
+                name: composerDraftAttachment.displayName,
+                fileURL: ownedURL,
+                mimeType: composerDraftAttachment.mimeType,
+                sizeBytes: composerDraftAttachment.sizeBytes,
+                ownsFile: ownsFile,
+                id: composerDraftAttachment.id
             )
         }
     }

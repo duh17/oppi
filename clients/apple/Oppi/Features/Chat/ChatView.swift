@@ -499,6 +499,7 @@ struct ChatView: View {
             .environment(sessionManager.reducer)
             .environment(sessionManager.reducer.toolOutputStore)
             .environment(sessionManager.reducer.toolArgsStore)
+            .environment(\.composerMediaImportGate, composerDraftController.mediaImportGate)
     }
 
     private var chatTimeline: some View {

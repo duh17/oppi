@@ -795,7 +795,8 @@ struct QuickSessionSheet: View {
             pendingAttachments = payload.attachments.compactMap { attachment in
                 PendingAttachment(
                     composerDraftAttachment: attachment,
-                    data: attachmentData[attachment.id]
+                    data: attachmentData[attachment.id],
+                    fileURL: composerDraftStore.quickSessionDraftAttachmentFileURL(attachmentID: attachment.id)
                 )
             }
         }
@@ -912,7 +913,11 @@ struct QuickSessionSheet: View {
             guard let data = attachment.composerDraftData else { return nil }
             return (attachment.id, data)
         })
-        return composerDraftStore?.setQuickSessionDraft(payload, attachmentData: data)
+        let files: [String: URL] = Dictionary(uniqueKeysWithValues: pendingAttachments.compactMap { attachment -> (String, URL)? in
+            guard let url = attachment.composerDraftFileURL else { return nil }
+            return (attachment.id, url)
+        })
+        return composerDraftStore?.setQuickSessionDraft(payload, attachmentData: data, attachmentFiles: files)
     }
 
     private func appendInitialText(_ value: String?) {

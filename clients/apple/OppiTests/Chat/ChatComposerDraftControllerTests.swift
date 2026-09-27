@@ -571,6 +571,106 @@ struct ChatComposerDraftControllerTests {
         #expect(reloadedController.pendingAttachments.map(\.source) == [.image, .localFile])
     }
 
+    @Test func restoresFileBackedVideoWithoutLoadingTheClipIntoMemory() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let source = FileManager.default.temporaryDirectory.appending(
+            path: "\(UUID().uuidString).mp4",
+            directoryHint: .notDirectory
+        )
+        let videoBytes = Data(repeating: 0x22, count: 1024)
+        try videoBytes.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let owned = try PendingComposerFileStore.copyFile(from: source, displayName: "clip.mp4")
+        let video = PendingAttachment.localFile(
+            name: "clip.mp4",
+            fileURL: owned,
+            mimeType: "video/mp4",
+            sizeBytes: videoBytes.count,
+            ownsFile: true
+        )
+        let controller = ChatComposerDraftController()
+        controller.attach(store: store, key: key, isEphemeral: false)
+        #expect(controller.setPendingAttachments([video]))
+        controller.text = "See clip"
+        await store.flush()
+
+        #expect(store.attachmentData(for: key, attachmentID: video.id) == nil)
+        #expect(store.attachmentFileURL(for: key, attachmentID: video.id) != nil)
+
+        let reloadedStore = fixture.makeStore()
+        await reloadedStore.load()
+        let reloaded = ChatComposerDraftController()
+        reloaded.attach(store: reloadedStore, key: key, isEphemeral: false)
+        defer {
+            PendingAttachment.releaseOwnedFiles(controller.pendingAttachments)
+            PendingAttachment.releaseOwnedFiles(reloaded.pendingAttachments)
+        }
+
+        #expect(reloaded.text == "See clip")
+        let restored = try #require(reloaded.pendingAttachments.first)
+        #expect(restored.source == .localFile)
+        #expect(restored.displayName == "clip.mp4")
+        #expect(restored.localFileData == nil)
+        #expect(restored.composerDraftData == nil)
+        let restoredURL = try #require(restored.localFileURL)
+        #expect(try Data(contentsOf: restoredURL) == videoBytes)
+        #expect(reloadedStore.attachmentData(for: key, attachmentID: restored.id) == nil)
+    }
+
+    @Test func failedImmediateSendKeepsOwnedVideoForRetryAfterSidecarClearance() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let source = FileManager.default.temporaryDirectory.appending(
+            path: "\(UUID().uuidString).mp4",
+            directoryHint: .notDirectory
+        )
+        let videoBytes = Data(repeating: 0x33, count: 512)
+        try videoBytes.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let owned = try PendingComposerFileStore.copyFile(from: source, displayName: "retry.mp4")
+        let video = PendingAttachment.localFile(
+            name: "retry.mp4",
+            fileURL: owned,
+            mimeType: "video/mp4",
+            sizeBytes: videoBytes.count,
+            ownsFile: true
+        )
+        let controller = ChatComposerDraftController(
+            initialText: "retry clip",
+            initialPendingAttachments: [video]
+        )
+        controller.attach(store: store, key: key, isEphemeral: false)
+        let ownedURL = try #require(controller.pendingAttachments.first?.localFileURL)
+
+        let submission = try #require(controller.beginSubmission(draftClearance: .immediately))
+        #expect(store.record(for: key) == nil)
+        #expect(store.attachmentFileURL(for: key, attachmentID: video.id) == nil)
+        #expect(FileManager.default.fileExists(atPath: ownedURL.path))
+        #expect(submission.pendingAttachments.first?.localFileData == nil)
+        #expect(submission.pendingAttachments.first?.localFileURL == ownedURL)
+
+        controller.failSubmission(submission)
+        defer { PendingAttachment.releaseOwnedFiles(controller.pendingAttachments) }
+
+        #expect(controller.text == "retry clip")
+        #expect(controller.pendingAttachments.map(\.id) == [video.id])
+        let restoredURL = try #require(controller.pendingAttachments.first?.localFileURL)
+        #expect(restoredURL == ownedURL)
+        #expect(controller.pendingAttachments.first?.localFileData == nil)
+        #expect(FileManager.default.fileExists(atPath: restoredURL.path))
+        #expect(try Data(contentsOf: restoredURL) == videoBytes)
+        #expect(store.record(for: key)?.payload.attachments.map(\.id) == [video.id])
+        let sidecarURL = try #require(store.attachmentFileURL(for: key, attachmentID: video.id))
+        #expect(try Data(contentsOf: sidecarURL) == videoBytes)
+    }
+
     @Test func ephemeralSessionDraftRemainsMemoryOnly() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }

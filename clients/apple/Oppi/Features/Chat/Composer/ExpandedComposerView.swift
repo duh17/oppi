@@ -1,4 +1,3 @@
-import PhotosUI
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -70,7 +69,6 @@ struct ExpandedComposerView: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var photoSelection: [PhotosPickerItem] = []
     @State private var showPhotoPicker = false
     @State private var showCamera = false
     @State private var showFileImporter = false
@@ -91,6 +89,8 @@ struct ExpandedComposerView: View {
 
     /// Prevents double-submit/cancel while final dictation text is being committed.
     @State private var isHandlingVoiceLifecycle = false
+    @State private var attachmentImportError: String?
+    @State private var localMediaImportEpoch: UInt64 = 0
 
     private var composerDisplayText: String {
         ComposerShared.currentComposerText(
@@ -285,13 +285,20 @@ struct ExpandedComposerView: View {
         .preferredColorScheme(ThemeRuntimeState.currentThemeID().preferredColorScheme)
         // Match the inline composer: presentation belongs to the stable composer root,
         // not to attachment controls whose lifetime can change with surrounding UI.
-        .photosPicker(
+        .composerPhotoLibraryCover(
             isPresented: $showPhotoPicker,
-            selection: $photoSelection,
-            maxSelectionCount: ComposerShared.maxPhotoSelectionCount,
-            matching: .images,
-            preferredItemEncoding: .current
+            pendingAttachments: $pendingAttachments,
+            importError: $attachmentImportError,
+            localImportEpoch: $localMediaImportEpoch
         )
+        .alert("Couldn't Attach From Photo Library", isPresented: Binding(
+            get: { attachmentImportError != nil },
+            set: { if !$0 { attachmentImportError = nil } }
+        )) {
+            Button("OK", role: .cancel) { attachmentImportError = nil }
+        } message: {
+            Text(attachmentImportError ?? "Please try again.")
+        }
         .onAppear {
             guard ComposerShared.shouldSuppressKeyboardForActiveVoiceInput(
                 voiceInputManager,
@@ -307,9 +314,10 @@ struct ExpandedComposerView: View {
                 onFileSuggestionQuery: onFileSuggestionQuery
             )
         }
-        .onChange(of: photoSelection) { _, items in
-            ComposerShared.loadSelectedPhotos(items, into: $pendingAttachments)
-            photoSelection = []
+        .onChange(of: isSubmitInFlight) { _, sending in
+            if sending {
+                localMediaImportEpoch &+= 1
+            }
         }
         .onChange(of: voiceInputManager?.currentComposerCaptureFailure, initial: true) { _, _ in
             ComposerShared.discardFailedTake(

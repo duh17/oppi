@@ -1,5 +1,4 @@
 import Foundation
-import PhotosUI
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -278,21 +277,21 @@ enum ComposerShared {
         return raw.map(PaperMarkupCanvasSession.copiedImage(from:))
     }
 
-    static func loadSelectedPhotos(
-        _ items: [PhotosPickerItem],
-        into pendingAttachments: Binding<[PendingAttachment]>
+    static func importPhotoLibraryProviders(
+        _ providers: [NSItemProvider],
+        into pendingAttachments: Binding<[PendingAttachment]>,
+        shouldAccept: @escaping @MainActor () -> Bool,
+        onFailure: @escaping @MainActor (String) -> Void
     ) {
-        for item in items {
-            Task {
-                guard let data = try? await item.loadTransferable(type: Data.self) else { return }
-                guard let uiImage = UIImage(data: data) else { return }
-                let mimeType = item.supportedContentTypes
-                    .compactMap(\.preferredMIMEType)
-                    .first
-                let pending = PendingImage.from(data: data, mimeType: mimeType, image: uiImage)
-                await MainActor.run {
-                    pendingAttachments.wrappedValue.append(pending.pendingAttachment)
-                }
+        Task { @MainActor in
+            let result = await PhotoLibraryMediaImporter.importProviders(providers)
+            guard shouldAccept() else {
+                PendingAttachment.releaseOwnedFiles(result.attachments)
+                return
+            }
+            pendingAttachments.wrappedValue.append(contentsOf: result.attachments)
+            if let message = result.failureMessage {
+                onFailure(message)
             }
         }
     }
@@ -313,7 +312,9 @@ enum ComposerShared {
         _ id: String,
         from pendingAttachments: Binding<[PendingAttachment]>
     ) {
+        let removed = pendingAttachments.wrappedValue.filter { $0.id == id }
         pendingAttachments.wrappedValue.removeAll { $0.id == id }
+        PendingAttachment.releaseOwnedFiles(removed)
     }
 
     static func handlePastedImages(
@@ -1009,6 +1010,24 @@ extension View {
         }
     }
 
+    /// Photo Library full-screen cover shared by inline and expanded composers.
+    /// Presentation belongs on the stable composer root, not the attach button.
+    func composerPhotoLibraryCover(
+        isPresented: Binding<Bool>,
+        pendingAttachments: Binding<[PendingAttachment]>,
+        importError: Binding<String?>,
+        localImportEpoch: Binding<UInt64>
+    ) -> some View {
+        modifier(
+            ComposerPhotoLibraryCoverModifier(
+                isPresented: isPresented,
+                pendingAttachments: pendingAttachments,
+                importError: importError,
+                localImportEpoch: localImportEpoch
+            )
+        )
+    }
+
     /// Camera full-screen cover shared by inline and expanded composers.
     func composerCameraCover(
         isPresented: Binding<Bool>,
@@ -1026,5 +1045,40 @@ extension View {
             )
             .ignoresSafeArea()
         }
+    }
+}
+
+private struct ComposerPhotoLibraryCoverModifier: ViewModifier {
+    @Environment(\.composerMediaImportGate) private var mediaImportGate
+    @Binding var isPresented: Bool
+    @Binding var pendingAttachments: [PendingAttachment]
+    @Binding var importError: String?
+    @Binding var localImportEpoch: UInt64
+
+    func body(content: Content) -> some View {
+        content
+            .fullScreenCover(isPresented: $isPresented) {
+                PhotoLibraryPicker(
+                    selectionLimit: ComposerShared.maxPhotoSelectionCount,
+                    onPick: { providers in
+                        isPresented = false
+                        let capturedGate = mediaImportGate?.epoch ?? 0
+                        let capturedLocal = localImportEpoch
+                        ComposerShared.importPhotoLibraryProviders(
+                            providers,
+                            into: $pendingAttachments,
+                            shouldAccept: {
+                                (mediaImportGate?.isCurrent(capturedGate) ?? true)
+                                    && capturedLocal == localImportEpoch
+                            },
+                            onFailure: { importError = $0 }
+                        )
+                    },
+                    onCancel: {
+                        isPresented = false
+                    }
+                )
+                .ignoresSafeArea()
+            }
     }
 }

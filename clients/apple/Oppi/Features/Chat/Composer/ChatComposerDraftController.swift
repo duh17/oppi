@@ -46,6 +46,9 @@ final class ChatComposerDraftController {
 
     var pendingAttachments: [PendingAttachment] {
         didSet {
+            if !isSubmissionInFlight {
+                PendingAttachment.releaseOwnedFiles(in: oldValue, notIn: pendingAttachments)
+            }
             guard !isApplyingVisiblePayload, mode == .message else { return }
             messagePayload.attachments = pendingAttachments.map(\.composerDraftMetadata)
             persistMessagePayload()
@@ -53,6 +56,7 @@ final class ChatComposerDraftController {
     }
 
     private(set) var mode: Mode = .message
+    let mediaImportGate = ComposerMediaImportGate()
 
     @ObservationIgnored private weak var store: ComposerDraftStore?
     @ObservationIgnored private var key: ComposerDraftKey?
@@ -88,6 +92,9 @@ final class ChatComposerDraftController {
         isEphemeral: Bool
     ) {
         let isSameScope = self.store === store && self.key == key
+        if !isSameScope {
+            mediaImportGate.invalidate()
+        }
         if isSameScope {
             guard self.isEphemeral != isEphemeral else { return }
             self.isEphemeral = isEphemeral
@@ -132,7 +139,8 @@ final class ChatComposerDraftController {
             restoredAttachments = restoredPayload.attachments.compactMap { attachment in
                 PendingAttachment(
                     composerDraftAttachment: attachment,
-                    data: store.attachmentData(for: key, attachmentID: attachment.id)
+                    data: store.attachmentData(for: key, attachmentID: attachment.id),
+                    fileURL: store.attachmentFileURL(for: key, attachmentID: attachment.id)
                 )
             }
         } else {
@@ -140,10 +148,8 @@ final class ChatComposerDraftController {
             if !restoredPayload.isEmpty {
                 let normalized = store.setDraft(
                     restoredPayload,
-                    attachmentData: Dictionary(uniqueKeysWithValues: restoredAttachments.compactMap {
-                        guard let data = $0.composerDraftData else { return nil }
-                        return ($0.id, data)
-                    }),
+                    attachmentData: Self.attachmentData(from: restoredAttachments),
+                    attachmentFiles: Self.attachmentFiles(from: restoredAttachments),
                     for: key
                 )
                 messagePayload = normalized?.payload ?? restoredPayload
@@ -157,6 +163,7 @@ final class ChatComposerDraftController {
     }
 
     func detachForSessionChange() {
+        mediaImportGate.invalidate()
         store = nil
         key = nil
         isEphemeral = true
@@ -279,6 +286,7 @@ final class ChatComposerDraftController {
         )
         activeSubmissionID = submissionID
         isSubmissionInFlight = true
+        mediaImportGate.invalidate()
 
         if draftClearance == .immediately {
             messagePayload = .empty
@@ -327,6 +335,7 @@ final class ChatComposerDraftController {
            let revision = snapshot.revision {
             snapshot.store?.clearDraft(for: snapshotKey, ifRevision: revision)
         }
+        PendingAttachment.releaseOwnedFiles(in: snapshot.pendingAttachments, notIn: pendingAttachments)
         return didClearSubmittedDraft
     }
 
@@ -338,7 +347,7 @@ final class ChatComposerDraftController {
         if snapshot.draftClearance == .afterSuccess {
             if messagePayload.isEmpty {
                 messagePayload = snapshot.payload
-                pendingAttachments = restoredAttachments(for: snapshot.payload)
+                pendingAttachments = snapshot.pendingAttachments
             }
             if !isEphemeral,
                let key,
@@ -376,16 +385,6 @@ final class ChatComposerDraftController {
         }
     }
 
-    private func restoredAttachments(for payload: ComposerDraftPayload) -> [PendingAttachment] {
-        payload.attachments.compactMap { attachment in
-            guard let key else { return nil }
-            return PendingAttachment(
-                composerDraftAttachment: attachment,
-                data: store?.attachmentData(for: key, attachmentID: attachment.id)
-            )
-        }
-    }
-
     private func shouldIgnoreDiscardedAskSubmission(_ newText: String, for newMode: Mode) -> Bool {
         guard newMode == .message,
               let discarded = discardedAskSubmissionText,
@@ -402,16 +401,28 @@ final class ChatComposerDraftController {
         } else {
             let record = store.setDraft(
                 messagePayload,
-                attachmentData: Dictionary(uniqueKeysWithValues: pendingAttachments.compactMap { attachment -> (String, Data)? in
-                    guard let data = attachment.composerDraftData else { return nil }
-                    return (attachment.id, data)
-                }),
+                attachmentData: Self.attachmentData(from: pendingAttachments),
+                attachmentFiles: Self.attachmentFiles(from: pendingAttachments),
                 for: key
             )
             if let record {
                 messagePayload = record.payload
             }
         }
+    }
+
+    private static func attachmentData(from attachments: [PendingAttachment]) -> [String: Data] {
+        Dictionary(uniqueKeysWithValues: attachments.compactMap { attachment in
+            guard let data = attachment.composerDraftData else { return nil }
+            return (attachment.id, data)
+        })
+    }
+
+    private static func attachmentFiles(from attachments: [PendingAttachment]) -> [String: URL] {
+        Dictionary(uniqueKeysWithValues: attachments.compactMap { attachment in
+            guard let url = attachment.composerDraftFileURL else { return nil }
+            return (attachment.id, url)
+        })
     }
 
     private func applyVisiblePayload(_ payload: ComposerDraftPayload) {

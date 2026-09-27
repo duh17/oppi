@@ -103,13 +103,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Oppi accesses your photo library to attach images to agent conversations."
+            "value": "Oppi accesses your photo library to attach photos and videos to agent conversations."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Oppi 访问你的相册以将图片附加到智能体对话中。"
+            "value": "Oppi 访问你的相册以将照片和视频附加到智能体对话中。"
           }
         }
       }

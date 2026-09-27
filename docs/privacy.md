@@ -33,7 +33,7 @@ Oppi can process the following when you use the corresponding feature:
 
 - Prompts, replies, tool calls, tool output, approval responses, and session metadata.
 - Files selected through the Files picker and files referenced from a paired workspace.
-- Photos selected from the photo library, images captured with the camera, and images shared through the Share extension.
+- Photos and videos selected from the photo library, images captured with the camera, and images or files shared through the Share extension.
 - Microphone audio while dictation is active.
 - Model-provider credentials that you enter or authorize through the paired server's provider setup.
 - Optional voice-reply text and audio produced by a server-side voice extension.
@@ -89,7 +89,7 @@ These are implementation boundaries, not promises that every copy disappears at 
 
 A prompt is sent over the authenticated connection to the server you paired. The server can store it in session history and pass it to Pi and the selected model provider.
 
-When you select a photo or local file, the app holds the selected bytes while preparing the turn. Before the turn is sent, it creates an upload on the paired server. The server validates the upload, stores it in the upload store, and copies it into the session's workspace attachment directory when Pi materializes the turn. Images can also be passed to the selected model as image input. A photo or file that you cancel before sending is not uploaded by the composer path.
+When you select a photo, video, or local file, the app holds it while preparing the turn. Photos stay as image attachments. Videos stay as local files and are not loaded as whole-clip image input. Before the turn is sent, it creates an upload on the paired server. The server validates the upload, stores it in the upload store, and copies it into the session's workspace attachment directory when Pi materializes the turn. Images can also be passed to the selected model as image input; videos are attached as workspace files. A photo, video, or file that you cancel before sending is not uploaded by the composer path.
 
 The Share extension temporarily stages shared files in the app's shared container until the quick-session handoff succeeds or is cancelled. Staged files are removed by the success and cancellation paths. The source app controls any copy it retains.
 

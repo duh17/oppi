@@ -45,7 +45,7 @@ The iOS share extension accepts text, URLs, images, and files. Choose a paired-s
 
 ## Files and photos
 
-Attach files from the Files picker, photos from the library, or a camera capture. A selected photo or file uploads with the session turn; canceling before send does not upload. The Share extension stages shared files until the Quick Session handoff succeeds or is cancelled.
+Attach files from the Files picker, photos and videos from the library, or a camera capture. A selected photo, video, or file uploads with the session turn; canceling before send does not upload. Videos are uploaded as files, not as model image input. The Share extension stages shared files until the Quick Session handoff succeeds or is cancelled.
 
 Assistant output can open markdown, code, diffs, and other documents in full-screen viewers. See [Document viewers](document-viewers.md).
 

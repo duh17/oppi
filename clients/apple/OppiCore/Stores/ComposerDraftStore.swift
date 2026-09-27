@@ -74,6 +74,10 @@ private let composerDraftSidecarIOQueue = DispatchQueue(
     qos: .utility
 )
 
+private func composerDraftAttachmentKeepsFileSidecar(_ attachment: ComposerDraftAttachment) -> Bool {
+    attachment.source == .localFile && attachment.mimeType.lowercased().hasPrefix("video/")
+}
+
 private func composerDraftSidecarDirectoryURL(for fileURL: URL) -> URL {
     fileURL.deletingLastPathComponent()
         .appending(path: composerDraftSidecarDirectoryName, directoryHint: .isDirectory)
@@ -132,10 +136,41 @@ private func writeProtectedComposerDraftData(_ data: Data, to destinationURL: UR
     }
 }
 
+private func copyProtectedComposerDraftFile(from sourceURL: URL, to destinationURL: URL) throws {
+    let fileManager = FileManager.default
+    let directoryURL = destinationURL.deletingLastPathComponent()
+    try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+    try configureComposerDraftStorageURL(directoryURL)
+
+    let temporaryURL = directoryURL.appending(
+        path: ".\(destinationURL.lastPathComponent).\(UUID().uuidString).tmp",
+        directoryHint: .notDirectory
+    )
+    defer { try? fileManager.removeItem(at: temporaryURL) }
+
+    if fileManager.fileExists(atPath: temporaryURL.path) {
+        try fileManager.removeItem(at: temporaryURL)
+    }
+    try fileManager.copyItem(at: sourceURL, to: temporaryURL)
+    try configureComposerDraftStorageURL(temporaryURL)
+
+    if fileManager.fileExists(atPath: destinationURL.path) {
+        _ = try fileManager.replaceItemAt(
+            destinationURL,
+            withItemAt: temporaryURL,
+            backupItemName: nil,
+            options: []
+        )
+    } else {
+        try fileManager.moveItem(at: temporaryURL, to: destinationURL)
+    }
+}
+
 private func writeAttachmentSidecars(
     oldPayload: ComposerDraftPayload?,
     newPayload: ComposerDraftPayload,
     blobs: [String: Data],
+    files: [String: URL] = [:],
     fileURL: URL
 ) throws {
     let oldPaths = Set(oldPayload?.attachments.compactMap(\.relativePath) ?? [])
@@ -151,10 +186,21 @@ private func writeAttachmentSidecars(
            fileManager.fileExists(atPath: url.path) {
             continue
         }
-        guard let data = blobs[attachment.id] else {
-            throw ComposerDraftPersistenceError.missingAttachmentData
+        if let sourceURL = files[attachment.id] {
+            if sourceURL.standardizedFileURL == url.standardizedFileURL {
+                continue
+            }
+            try copyProtectedComposerDraftFile(from: sourceURL, to: url)
+            continue
         }
-        try writeProtectedComposerDraftData(data, to: url)
+        if let data = blobs[attachment.id] {
+            try writeProtectedComposerDraftData(data, to: url)
+            continue
+        }
+        if fileManager.fileExists(atPath: url.path) {
+            continue
+        }
+        throw ComposerDraftPersistenceError.missingAttachmentData
     }
 
     for relativePath in oldPaths.subtracting(newPaths) {
@@ -224,6 +270,9 @@ private actor ComposerDraftPersistence {
         for record in records {
             var blobs: [String: Data] = [:]
             for attachment in record.payload.attachments where attachment.source == .image || attachment.source == .localFile {
+                if composerDraftAttachmentKeepsFileSidecar(attachment) {
+                    continue
+                }
                 guard let relativePath = attachment.relativePath,
                       let url = composerDraftSidecarURL(fileURL: fileURL, relativePath: relativePath),
                       let data = try? Data(contentsOf: url) else {
@@ -395,10 +444,16 @@ final class ComposerDraftStore {
     @discardableResult
     func setQuickSessionDraft(
         _ payload: ComposerDraftPayload,
-        attachmentData: [String: Data] = [:]
+        attachmentData: [String: Data] = [:],
+        attachmentFiles: [String: URL] = [:]
     ) -> ComposerDraftRecord? {
         guard let key = Self.quickSessionDraftKey else { return nil }
-        return setDraft(payload, attachmentData: attachmentData, for: key)
+        return setDraft(
+            payload,
+            attachmentData: attachmentData,
+            attachmentFiles: attachmentFiles,
+            for: key
+        )
     }
 
     func saveQuickSessionLifecycleFallback() {
@@ -416,6 +471,7 @@ final class ComposerDraftStore {
     func setDraft(
         _ payload: ComposerDraftPayload,
         attachmentData: [String: Data] = [:],
+        attachmentFiles: [String: URL] = [:],
         for key: ComposerDraftKey
     ) -> ComposerDraftRecord? {
         guard !payload.isEmpty else {
@@ -443,6 +499,9 @@ final class ComposerDraftStore {
                 blobs[attachment.id] = data
             }
         }
+        for fileID in attachmentFiles.keys {
+            blobs.removeValue(forKey: fileID)
+        }
         let retainedIDs = Set(normalizedPayload.attachments.map(\.id))
         blobs = blobs.filter { retainedIDs.contains($0.key) }
         do {
@@ -453,6 +512,7 @@ final class ComposerDraftStore {
                     oldPayload: oldPayload,
                     newPayload: normalizedPayload,
                     blobs: blobs,
+                    files: attachmentFiles,
                     fileURL: persistenceFileURL
                 )
             }
@@ -478,6 +538,27 @@ final class ComposerDraftStore {
 
     func attachmentData(for key: ComposerDraftKey, attachmentID: String) -> Data? {
         attachmentDataByKey[key]?[attachmentID]
+    }
+
+    func attachmentFileURL(for key: ComposerDraftKey, attachmentID: String) -> URL? {
+        guard let attachment = records[key]?.payload.attachments.first(where: { $0.id == attachmentID }),
+              let relativePath = attachment.relativePath,
+              let url = composerDraftSidecarURL(fileURL: persistenceFileURL, relativePath: relativePath),
+              FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        if composerDraftAttachmentKeepsFileSidecar(attachment) {
+            return url
+        }
+        if attachmentDataByKey[key]?[attachmentID] == nil, attachment.source == .localFile {
+            return url
+        }
+        return nil
+    }
+
+    func quickSessionDraftAttachmentFileURL(attachmentID: String) -> URL? {
+        guard let key = Self.quickSessionDraftKey else { return nil }
+        return attachmentFileURL(for: key, attachmentID: attachmentID)
     }
 
     @discardableResult

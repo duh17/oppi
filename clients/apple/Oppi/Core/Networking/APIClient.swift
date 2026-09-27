@@ -1696,6 +1696,36 @@ actor APIClient: ClientLogUploading {
         )
     }
 
+    func uploadSessionAttachmentContent(
+        workspaceId: String,
+        sessionId: String,
+        attachmentId: String,
+        fileURL: URL,
+        contentType: String = "application/octet-stream"
+    ) async throws -> ChatAttachmentRef {
+        try await uploadSessionAttachmentContent(
+            scope: .workspace(workspaceId),
+            sessionId: sessionId,
+            attachmentId: attachmentId,
+            fileURL: fileURL,
+            contentType: contentType
+        )
+    }
+
+    func uploadSessionAttachmentContent(
+        scope: SessionRouteScope,
+        sessionId: String,
+        attachmentId: String,
+        fileURL: URL,
+        contentType: String = "application/octet-stream"
+    ) async throws -> ChatAttachmentRef {
+        try await putAttachmentContent(
+            path: "\(focusedSessionPath(scope: scope, sessionId: sessionId))/attachments/\(attachmentId)/content",
+            fileURL: fileURL,
+            contentType: contentType
+        )
+    }
+
     private func putAttachmentContent(
         path: String,
         data body: Data,
@@ -1707,6 +1737,17 @@ actor APIClient: ClientLogUploading {
             body: body,
             contentType: contentType
         )
+        try checkStatus(response, data: data)
+        let parsed = try JSONDecoder().decode(UploadContentResponse.self, from: data)
+        return parsed.attachment
+    }
+
+    private func putAttachmentContent(
+        path: String,
+        fileURL: URL,
+        contentType: String
+    ) async throws -> ChatAttachmentRef {
+        let (data, response) = try await performAuthorizedFileUpload(path: path, fileURL: fileURL, contentType: contentType)
         try checkStatus(response, data: data)
         let parsed = try JSONDecoder().decode(UploadContentResponse.self, from: data)
         return parsed.attachment
@@ -2646,6 +2687,43 @@ actor APIClient: ClientLogUploading {
             (data, response) = try await performData(for: retry)
         }
         return (data, response)
+    }
+
+    /// Streams attachment bytes from disk through the same auth-refresh, TLS,
+    /// and error-reporting path as `performAuthorized` without loading the file.
+    private func performAuthorizedFileUpload(
+        path: String,
+        fileURL: URL,
+        contentType: String
+    ) async throws -> (Data, URLResponse) {
+        func makeRequest() throws -> URLRequest {
+            var req = try URLRequest(url: self.makeURL(path: path))
+            req.httpMethod = "PUT"
+            req.setValue(contentType, forHTTPHeaderField: "Content-Type")
+            logger.debug("PUT \(path) [file]")
+            return req
+        }
+
+        var request = try makeRequest()
+        var current = try await authorizedToken()
+        ServerAuthorization.apply(token: current, to: &request)
+        var (data, response) = try await performUpload(for: request, fromFile: fileURL)
+        if authSessionBox.get() != nil, (response as? HTTPURLResponse)?.statusCode == 401 {
+            current = try await authorizedToken(forceRefresh: true, replacing: current)
+            var retry = try makeRequest()
+            ServerAuthorization.apply(token: current, to: &retry)
+            (data, response) = try await performUpload(for: retry, fromFile: fileURL)
+        }
+        return (data, response)
+    }
+
+    private func performUpload(for request: URLRequest, fromFile fileURL: URL) async throws -> (Data, URLResponse) {
+        do {
+            return try await session.upload(for: request, fromFile: fileURL)
+        } catch {
+            reportAvailabilityFailure(for: error)
+            throw error
+        }
     }
 
     private func requestNoAuth<T: Encodable>(_ method: String, path: String, body: T) async throws -> (Data, URLResponse) {

@@ -55,7 +55,7 @@
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Oppi saves images from agent conversations to your photo library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Oppi accesses your photo library to attach images to agent conversations.</string>
+	<string>Oppi accesses your photo library to attach photos and videos to agent conversations.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Oppi uses on-device speech recognition to convert your voice into text.</string>
 	<key>NSSupportsLiveActivities</key>

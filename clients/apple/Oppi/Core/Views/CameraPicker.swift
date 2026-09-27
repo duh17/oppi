@@ -3,9 +3,9 @@ import UIKit
 
 /// UIKit camera picker wrapped for SwiftUI.
 ///
-/// `PhotosPicker` handles the photo library natively, but camera capture
-/// still requires `UIImagePickerController` on iOS 26. The SwiftUI presenter
-/// owns dismissal through its presentation binding.
+/// Photo Library uses `PhotoLibraryPicker` (`PHPickerViewController`). Camera
+/// capture still requires `UIImagePickerController` on iOS 26. The SwiftUI
+/// presenter owns dismissal through its presentation binding.
 struct CameraPicker: UIViewControllerRepresentable {
     let onCapture: (UIImage) -> Void
     let onCancel: () -> Void

@@ -653,6 +653,42 @@ struct APIClientTests {
         #expect(attachment.source == .upload)
     }
 
+    @Test func sessionScopedAttachmentUploadFromFileUsesSessionRoutes() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        let fileURL = FileManager.default.temporaryDirectory.appending(
+            path: "\(UUID().uuidString).mp4",
+            directoryHint: .notDirectory
+        )
+        let fileBytes = Data("video-bytes".utf8)
+        try fileBytes.write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        MockURLProtocol.handler = { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("PUT", "/workspaces/w1/sessions/s1/attachments/upl_video/content"):
+                #expect(request.value(forHTTPHeaderField: "Content-Type") == "video/mp4")
+                return self.mockResponse(json: """
+                {"attachment":{"type":"attachment","id":"upl_video","source":"upload","name":"clip.mp4","mimeType":"video/mp4","sizeBytes":11,"kind":"video"}}
+                """)
+            default:
+                Issue.record("Unexpected request: \(request.httpMethod ?? "nil") \(request.url?.path ?? "nil")")
+                return self.mockResponse(status: 404, json: "{\"error\":\"not found\"}")
+            }
+        }
+
+        let attachment = try await client.uploadSessionAttachmentContent(
+            workspaceId: "w1",
+            sessionId: "s1",
+            attachmentId: "upl_video",
+            fileURL: fileURL,
+            contentType: "video/mp4"
+        )
+        #expect(attachment.id == "upl_video")
+        #expect(attachment.mimeType == "video/mp4")
+        #expect(attachment.source == .upload)
+    }
+
     @Test func createWorkspaceSessionIncognitoEncodesEphemeral() async throws {
         let client = makeClient()
         defer { cleanup() }

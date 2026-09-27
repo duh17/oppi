@@ -780,10 +780,19 @@ struct ChatInputBarTests {
             in: expandedSource
         )
 
-        #expect(inlineRoot.contains(".photosPicker("))
-        #expect(!inlineAttachButton.contains(".photosPicker("))
-        #expect(expandedRoot.contains(".photosPicker("))
-        #expect(!expandedAttachMenu.contains(".photosPicker("))
+        #expect(inlineRoot.contains(".composerPhotoLibraryCover("))
+        #expect(!inlineAttachButton.contains(".composerPhotoLibraryCover("))
+        #expect(!inlineAttachButton.contains("PhotoLibraryPicker"))
+        #expect(expandedRoot.contains(".composerPhotoLibraryCover("))
+        #expect(!expandedAttachMenu.contains(".composerPhotoLibraryCover("))
+        #expect(!expandedAttachMenu.contains("PhotoLibraryPicker"))
+        #expect(!inlineRoot.contains(".photosPicker("))
+        #expect(!expandedRoot.contains(".photosPicker("))
+
+        let pickerSource = try photoLibraryPickerSource()
+        #expect(pickerSource.contains(".any(of: [.images, .videos])"))
+        #expect(pickerSource.contains("preferredAssetRepresentationMode = .current"))
+        #expect(pickerSource.contains("selectionLimit"))
     }
 
     @Test("Active asks can disable expanded composer routing")
@@ -1512,6 +1521,15 @@ private func chatInputBarSource() throws -> String {
 
 private func expandedComposerSource() throws -> String {
     try composerSource(named: "ExpandedComposerView.swift")
+}
+
+private func photoLibraryPickerSource() throws -> String {
+    let sourceURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appending(path: "Oppi/Core/Views/PhotoLibraryPicker.swift")
+    return try String(contentsOf: sourceURL, encoding: .utf8)
 }
 
 private func composerSource(named fileName: String) throws -> String {

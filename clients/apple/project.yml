@@ -159,7 +159,7 @@ targets:
         NSSupportsLiveActivities: true
         NSCameraUsageDescription: "Oppi uses the camera to scan pairing QR codes and take photos for agent conversations."
         NSPhotoLibraryAddUsageDescription: "Oppi saves images from agent conversations to your photo library."
-        NSPhotoLibraryUsageDescription: "Oppi accesses your photo library to attach images to agent conversations."
+        NSPhotoLibraryUsageDescription: "Oppi accesses your photo library to attach photos and videos to agent conversations."
         NSLocalNetworkUsageDescription: "Oppi needs local network access to connect to your paired self-hosted server."
         NSBonjourServices:
           - "_oppi._tcp"
