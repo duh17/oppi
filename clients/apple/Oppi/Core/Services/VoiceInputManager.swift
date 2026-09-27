@@ -91,6 +91,14 @@ final class VoiceInputManager {
         case recording
         case processing
         case error(String)
+
+        /// Same window that owns the capture audio session.
+        var ownsCaptureAudioSession: Bool {
+            switch self {
+            case .preparingModel, .recording, .processing: true
+            case .idle, .error: false
+            }
+        }
     }
 
     enum TranscriptionEngine: String, Equatable, Sendable {
@@ -463,7 +471,13 @@ final class VoiceInputManager {
 
     // MARK: - Published State
 
-    private(set) var state: State = .idle
+    private(set) var state: State = .idle {
+        didSet {
+            guard oldValue.ownsCaptureAudioSession != state.ownsCaptureAudioSession else { return }
+            // ScreenAwakeController is the only writer of the idle timer.
+            screenAwakeController?.setVoiceInputActive(state.ownsCaptureAudioSession)
+        }
+    }
     private(set) var captureFailure: VoiceCaptureFailure?
     var currentComposerCaptureFailure: VoiceCaptureFailure? {
         guard captureFailure?.take.composerGeneration == composerGeneration else { return nil }
@@ -676,18 +690,23 @@ final class VoiceInputManager {
     /// sessions; Chat and Quick Session never dictate at once, so they share this
     /// manager. Each take still builds a fresh analyzer — a transcriber is invalid
     /// after finalize.
-    static let shared = VoiceInputManager()
+    static let shared = VoiceInputManager(screenAwakeController: ScreenAwakeController.shared)
+
+    /// Extra instances (tests, previews) stay silent unless a controller is injected.
+    @ObservationIgnored private let screenAwakeController: ScreenAwakeController?
 
     init(
         providerRegistry: VoiceProviderRegistry = .makeDefault(),
         routeResolver: VoiceInputRouteResolver = VoiceInputRouteResolver(),
         sessionMonitor: VoiceInputSessionMonitor = VoiceInputSessionMonitor(),
-        systemAccess: any VoiceInputSystemAccessing = VoiceInputSystemAccess.live
+        systemAccess: any VoiceInputSystemAccessing = VoiceInputSystemAccess.live,
+        screenAwakeController: ScreenAwakeController? = nil
     ) {
         self.providerRegistry = providerRegistry
         self.routeResolver = routeResolver
         self.sessionMonitor = sessionMonitor
         self.systemAccess = systemAccess
+        self.screenAwakeController = screenAwakeController
         loadPreferences()
         #if os(iOS)
         observeAudioRouteChanges()
@@ -1533,12 +1552,7 @@ final class VoiceInputManager {
 
     /// Media preparation must consult the capture owner, not infer ownership
     /// from AVAudioSession.category (which persists after deactivation).
-    var ownsCaptureAudioSession: Bool {
-        switch state {
-        case .preparingModel, .recording, .processing: true
-        case .idle, .error: false
-        }
-    }
+    var ownsCaptureAudioSession: Bool { state.ownsCaptureAudioSession }
 
     private func setupAudioSession() throws {
         try systemAccess.activateAudioSession(

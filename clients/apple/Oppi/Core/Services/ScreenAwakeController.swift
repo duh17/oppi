@@ -3,11 +3,15 @@ import UIKit
 
 /// Controls `UIApplication.isIdleTimerDisabled` for chat activity.
 ///
+/// Sole iOS writer of the idle timer. Reasons are voice capture (not a session
+/// id) and `session::<id>` for running agents.
+///
 /// Behavior:
-/// - While any tracked session is active (voice input or busy agent), screen
+/// - While voice capture is active or any tracked session is running, screen
 ///   sleep is prevented immediately.
-/// - After activity stops, prevention remains enabled for the configured
-///   timeout (`AppPreferences.ScreenAwake`) before releasing.
+/// - After every reason clears, prevention remains enabled for the configured
+///   timeout (`AppPreferences.ScreenAwake`) before releasing. Off (`nil`)
+///   releases immediately.
 @MainActor
 final class ScreenAwakeController {
     static let shared = ScreenAwakeController()
@@ -16,11 +20,13 @@ final class ScreenAwakeController {
     typealias IdleTimerSetter = @MainActor (Bool) -> Void
     typealias SleepFunction = @Sendable (Duration) async throws -> Void
 
+    private static let voiceInputReason = "voice-input"
+
     private let timeoutProvider: TimeoutProvider
     private let idleTimerSetter: IdleTimerSetter
     private let sleepFunction: SleepFunction
 
-    private var activeSessionReasons: Set<String> = []
+    private var activeReasons: Set<String> = []
     private var releaseTask: Task<Void, Never>?
 
     private(set) var isPreventingSleep = false
@@ -37,24 +43,29 @@ final class ScreenAwakeController {
         self.sleepFunction = sleepFunction
     }
 
+    func setVoiceInputActive(_ isActive: Bool) {
+        setReason(Self.voiceInputReason, isActive: isActive)
+    }
+
     func setSessionActivity(_ isActive: Bool, sessionId: String) {
-        let reason = sessionReason(for: sessionId)
-
-        if isActive {
-            activeSessionReasons.insert(reason)
-        } else {
-            activeSessionReasons.remove(reason)
-        }
-
-        reevaluateLockState()
+        setReason(sessionReason(for: sessionId), isActive: isActive)
     }
 
     func clearSessionActivity(sessionId: String) {
-        activeSessionReasons.remove(sessionReason(for: sessionId))
+        activeReasons.remove(sessionReason(for: sessionId))
         reevaluateLockState()
     }
 
     func refreshFromPreferences() {
+        reevaluateLockState()
+    }
+
+    private func setReason(_ reason: String, isActive: Bool) {
+        if isActive {
+            activeReasons.insert(reason)
+        } else {
+            activeReasons.remove(reason)
+        }
         reevaluateLockState()
     }
 
@@ -66,7 +77,7 @@ final class ScreenAwakeController {
         releaseTask?.cancel()
         releaseTask = nil
 
-        if !activeSessionReasons.isEmpty {
+        if !activeReasons.isEmpty {
             applyIdleTimerDisabled(true)
             return
         }
@@ -89,7 +100,7 @@ final class ScreenAwakeController {
     }
 
     private func handleReleaseTimerFired() {
-        guard activeSessionReasons.isEmpty else { return }
+        guard activeReasons.isEmpty else { return }
         applyIdleTimerDisabled(false)
         releaseTask = nil
     }

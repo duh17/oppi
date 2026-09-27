@@ -303,4 +303,32 @@ struct ScreenAwakeIntegrationTests {
         #expect(!ctrl.isPreventingSleep)
         #expect(updates().last == false)
     }
+
+    // MARK: - Voice capture overlap
+
+    @Test("voice capture overlapping a busy session holds until both clear")
+    func voiceCaptureOverlapsBusySession() {
+        let (ctrl, updates) = makeImmediateReleaseController()
+        let manager = VoiceInputManager(screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        conn.sessionStore.upsert(makeTestSession(id: "s1", status: .ready))
+
+        for captureState: VoiceInputManager.State in [.preparingModel, .recording, .processing] {
+            manager._testState = captureState
+            #expect(ctrl.isPreventingSleep, "\(captureState) should hold the idle timer")
+        }
+
+        pipe.handle(.agentStart, sessionId: "s1")
+        manager._testState = .idle
+        #expect(ctrl.isPreventingSleep, "busy session still holds after capture ends")
+
+        manager._testState = .recording
+        pipe.handle(.agentEnd, sessionId: "s1")
+        pipe.handle(.agentSettled, sessionId: "s1")
+        #expect(ctrl.isPreventingSleep, "voice capture still holds after the session settles")
+
+        manager._testState = .error("done")
+        #expect(!ctrl.isPreventingSleep)
+        #expect(updates().last == false)
+    }
 }
