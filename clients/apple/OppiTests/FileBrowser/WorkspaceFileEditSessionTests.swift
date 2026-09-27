@@ -746,6 +746,156 @@ struct WorkspaceFileEditorSurfaceTests {
     }
 }
 
+// MARK: - Markdown list continuation
+
+@Suite("Markdown list continuation")
+struct MarkdownListContinuationTests {
+    /// `|` marks the caret before and after Return.
+    struct Case: CustomTestStringConvertible, Sendable {
+        let name: String
+        let before: String
+        let after: String?
+
+        var testDescription: String { name }
+    }
+
+    static let cases: [Case] = [
+        Case(name: "dash bullet", before: "- item|", after: "- item\n- |"),
+        Case(name: "star bullet keeps indent", before: "  * item|", after: "  * item\n  * |"),
+        Case(name: "plus bullet keeps spacing", before: "+   item|", after: "+   item\n+   |"),
+        Case(name: "ordered dot increments", before: "3. item|", after: "3. item\n4. |"),
+        Case(name: "ordered paren increments", before: "9) item|", after: "9) item\n10) |"),
+        Case(name: "unchecked task", before: "- [ ] task|", after: "- [ ] task\n- [ ] |"),
+        Case(name: "checked task continues unchecked", before: "- [x] done|", after: "- [x] done\n- [ ] |"),
+        Case(name: "ordered task", before: "1. [ ] task|", after: "1. [ ] task\n2. [ ] |"),
+        Case(name: "caret mid-item splits it", before: "- fo|o", after: "- fo\n- |o"),
+        Case(name: "empty bullet exits", before: "a\n- item\n- |", after: "a\n- item\n|"),
+        Case(name: "empty nested bullet exits", before: "- item\n  - |", after: "- item\n|"),
+        Case(name: "empty task exits", before: "- [ ] |", after: "|"),
+        Case(name: "empty ordered exits", before: "1. one\n2. |\nnext", after: "1. one\n|\nnext"),
+        Case(name: "CRLF line ending", before: "# T\r\n- item|\r\nnext", after: "# T\r\n- item\r\n- |\r\nnext"),
+        Case(name: "CRLF from previous line", before: "# T\r\n- item|", after: "# T\r\n- item\r\n- |"),
+        Case(name: "LF stays LF", before: "# T\n- item|\nnext", after: "# T\n- item\n- |\nnext"),
+        Case(name: "plain line", before: "plain|", after: nil),
+        Case(name: "caret before marker", before: "|- item", after: nil),
+        Case(name: "caret inside marker", before: "-| item", after: nil),
+        Case(name: "marker without space", before: "-item|", after: nil),
+        Case(name: "inside fenced code", before: "```\n- item|", after: nil),
+        Case(name: "after closed fence", before: "~~~\ncode\n~~~\n- item|", after: "~~~\ncode\n~~~\n- item\n- |"),
+    ]
+
+    @Test(arguments: cases)
+    func returnContinuesMarkdownLists(_ testCase: Case) throws {
+        let caret = (testCase.before as NSString).range(of: "|").location
+        let text = testCase.before.replacingOccurrences(of: "|", with: "") as NSString
+        let edit = MarkdownListContinuation.edit(in: text, caret: caret)
+        guard let expected = testCase.after else {
+            #expect(edit == nil)
+            return
+        }
+        let applied = try #require(edit)
+        let result = text.replacingCharacters(in: applied.range, with: applied.replacement)
+        let resultCaret = applied.range.location + (applied.replacement as NSString).length
+        let rendered = (result as NSString).replacingCharacters(
+            in: NSRange(location: resultCaret, length: 0),
+            with: "|"
+        )
+        #expect(rendered == expected)
+    }
+}
+
+@Suite("Markdown list continuation in the editor")
+@MainActor
+struct WorkspaceFileEditorListContinuationTests {
+    private func makeController(
+        path: String,
+        text: String,
+        store: WorkspaceFileDraftStore,
+        transport: WorkspaceFileEditTransport
+    ) -> (WorkspaceFileEditorViewController, UIWindow) {
+        let session = WorkspaceFileEditSession(
+            identity: WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: nil, path: path),
+            disk: WorkspaceFileDiskSnapshot(bytes: Data(text.utf8), etag: tag("a")),
+            maxBytes: 1_024,
+            transport: transport,
+            draftStore: store,
+            idleDelay: .seconds(60)
+        )!
+        let controller = WorkspaceFileEditorViewController(session: session, themeID: .dark) { _ in UIViewController() }
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.loadViewIfNeeded()
+        return (controller, window)
+    }
+
+    @Test func returnContinuesAsOneUndoableEditAndReachesTheSession() throws {
+        let harness = Harness()
+        let (controller, window) = makeController(
+            path: "notes.md",
+            text: "# T\r\n- item",
+            store: harness.store,
+            transport: harness.scripted.transport
+        )
+        defer { window.isHidden = true }
+        let textView = controller.textView
+        #expect(textView.becomeFirstResponder())
+        textView.selectedRange = NSRange(location: (textView.text as NSString).length, length: 0)
+        let generation = controller.session.editGeneration
+
+        returnKey(in: textView, delegate: controller)
+
+        #expect(textView.text == "# T\r\n- item\r\n- ")
+        #expect(textView.selectedRange == NSRange(location: (textView.text as NSString).length, length: 0))
+        #expect(controller.session.editGeneration > generation, "continuation must reach the save machine")
+        #expect(controller.session.status == .pending)
+
+        let undoManager = try #require(textView.undoManager)
+        #expect(undoManager.canUndo)
+        undoManager.undo()
+        #expect(textView.text == "# T\r\n- item", "one undo reverts the whole continuation")
+    }
+
+    @Test func markedTextAndNonMarkdownKeepThePlainNewline() {
+        let harness = Harness()
+        let (markdown, markdownWindow) = makeController(
+            path: "notes.md",
+            text: "- item",
+            store: harness.store,
+            transport: harness.scripted.transport
+        )
+        defer { markdownWindow.isHidden = true }
+        let textView = markdown.textView
+        textView.becomeFirstResponder()
+        textView.selectedRange = NSRange(location: 6, length: 0)
+        textView.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        #expect(textView.markedTextRange != nil)
+        let caret = textView.selectedRange.location
+        #expect(markdown.textView(textView, shouldChangeTextIn: NSRange(location: caret, length: 0), replacementText: "\n"))
+        textView.unmarkText()
+
+        let (plain, plainWindow) = makeController(
+            path: "notes.txt",
+            text: "- item",
+            store: harness.store,
+            transport: harness.scripted.transport
+        )
+        defer { plainWindow.isHidden = true }
+        plain.textView.becomeFirstResponder()
+        plain.textView.selectedRange = NSRange(location: 6, length: 0)
+        returnKey(in: plain.textView, delegate: plain)
+        #expect(plain.textView.text == "- item\n")
+    }
+
+    /// The keyboard's Return: ask the delegate, then insert only if allowed.
+    private func returnKey(in textView: UITextView, delegate: UITextViewDelegate) {
+        let range = textView.selectedRange
+        if delegate.textView?(textView, shouldChangeTextIn: range, replacementText: "\n") ?? true {
+            textView.insertText("\n")
+        }
+    }
+}
+
 // MARK: - Tree-pane Edit entry
 
 /// Serves `/server/info` with editing capability and one tagged workspace read.

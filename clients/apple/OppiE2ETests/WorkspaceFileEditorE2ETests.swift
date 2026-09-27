@@ -73,6 +73,25 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
         )
     }
 
+    /// The keyboard's Return reaches the Markdown list hook and the save.
+    func testMarkdownReturnContinuesListOnDisk() throws {
+        try openFileInEditor()
+        let textView = editorTextView
+        // The fixture is short; a tap below it puts the caret at the end.
+        textView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8)).tap()
+        textView.typeText("\n- one\ntwo")
+        XCTAssertTrue(
+            waitForDisk(timeout: 15) { $0.contains("two") },
+            "idle autosave did not reach disk"
+        )
+        XCTAssertTrue(waitForStatus("Saved", timeout: 10), "status did not settle on Saved")
+        XCTAssertEqual(
+            try diskString(),
+            Self.original + "\n- one\n- two",
+            "Return in a list item did not continue the list"
+        )
+    }
+
     func testExternalWriteStopsAutosaveAndReplaceUsesReviewedVersion() throws {
         try openFileInEditor()
         let external = "# Notes\r\nagent wrote this\r\n"
