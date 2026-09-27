@@ -50,8 +50,115 @@ struct MarkdownStressCrashRegressionTests {
         defer { window.isHidden = true }
 
         video.setPlaybackVisible(true)
-        #expect(video.debugHasPlayerForTesting)
+        #expect(await waitUntil { video.debugHasPlayerForTesting })
         try expectPlayerScrollsWithHost(video, screenParent: parent)
+    }
+
+    enum LinkedFileSourceTiming: String, CaseIterable, Sendable {
+        /// Source resolves as soon as render-ahead asks, before the reader is revealed.
+        case beforeReveal
+        /// Source resolves while the navigation push animation is running.
+        case duringPush
+    }
+
+    @Test(
+        "animated linked-file push mounts the inline video player after the reader appears",
+        arguments: LinkedFileSourceTiming.allCases
+    )
+    func linkedFilePushMountsVideoAfterAppearance(timing: LinkedFileSourceTiming) async throws {
+        let gate = VideoSourceGate()
+        let reader = try makeLinkedFileReader(gate: gate)
+        let root = UIViewController()
+        let navigation = UINavigationController(rootViewController: root)
+        let window = try makeSceneWindow(root: navigation)
+        defer { window.isHidden = true }
+        await settleRunLoop()
+
+        if timing == .beforeReveal {
+            gate.resolveImmediately = true
+        }
+        navigation.pushViewController(reader, animated: true)
+        if timing == .duringPush {
+            #expect(await waitUntil { gate.pendingCount > 0 }, "reader never asked for the video source")
+            #expect(navigation.transitionCoordinator != nil, "source must resolve while the push is in flight")
+            gate.resolveAll()
+        }
+
+        #expect(await waitUntil {
+            navigation.transitionCoordinator == nil && reader.view.window != nil
+        }, "push did not finish")
+        #expect(await waitUntil { visibleVideo(in: reader)?.debugHasPlayerForTesting == true },
+                "visible reader video never mounted its player after appearance")
+        let video = try #require(visibleVideo(in: reader))
+        try expectPlayerContained(in: video, reader: reader)
+    }
+
+    @Test("a reader popped before its video source resolves never mounts a late player")
+    func poppedLinkedFileReaderDoesNotMountLatePlayer() async throws {
+        let gate = VideoSourceGate()
+        let reader = try makeLinkedFileReader(gate: gate)
+        let root = UIViewController()
+        let navigation = UINavigationController(rootViewController: root)
+        let window = try makeSceneWindow(root: navigation)
+        defer { window.isHidden = true }
+        await settleRunLoop()
+
+        navigation.pushViewController(reader, animated: true)
+        #expect(await waitUntil { gate.pendingCount > 0 }, "reader never asked for the video source")
+        #expect(await waitUntil {
+            navigation.transitionCoordinator == nil && reader.view.window != nil
+        }, "push did not finish")
+        let videos = allVideos(in: reader)
+        #expect(!videos.isEmpty)
+
+        navigation.popViewController(animated: true)
+        #expect(await waitUntil {
+            navigation.transitionCoordinator == nil && reader.view.window == nil
+        }, "pop did not finish")
+        gate.resolveAll()
+        await settleRunLoop()
+
+        for video in videos {
+            #expect(!video.debugHasPlayerForTesting, "removed reader mounted a late player")
+            #expect(video.debugPlayerSlotForTesting?.parent == nil)
+        }
+    }
+
+    @Test("prepareForRemoval before a scheduled first mount leaves no player")
+    func prepareForRemovalCancelsScheduledFirstMount() async throws {
+        let embed = try makeEmbed("![[movie.mp4]]")
+        let parent = UIViewController()
+        let video = NativeMarkdownVideoView()
+        parent.view.addSubview(video)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        var resume: CheckedContinuation<AuthenticatedMediaSource, Error>?
+        video.apply(
+            embed: embed,
+            sourceProvider: { _ in
+                try await withCheckedThrowingContinuation { resume = $0 }
+            },
+            renderingMode: .live,
+            preferredDisplayWidth: 320
+        )
+        for _ in 0..<40 where resume == nil {
+            await Task.yield()
+        }
+        try #require(resume).resume(returning: dummyMediaSource())
+        // Resolve lands on the next main-actor turn; remove right after it,
+        // before the reveal/window-arrival mount attempt has run.
+        for _ in 0..<40 where !video.debugHasCurrentSourceForTesting {
+            await Task.yield()
+        }
+        #expect(video.debugHasCurrentSourceForTesting)
+        video.prepareForRemoval()
+        await settleRunLoop()
+
+        #expect(!video.debugHasPlayerForTesting)
+        #expect(parent.children.isEmpty, "a cancelled first mount must not adopt a slot controller")
     }
 
     @Test("prepareForRemoval cancels a pending resolve so it cannot install a host")
@@ -239,6 +346,85 @@ struct MarkdownStressCrashRegressionTests {
         )
     }
 
+    private func makeLinkedFileReader(gate: VideoSourceGate) throws -> FullScreenCodeViewController {
+        let context = FullScreenCodeContent.WorkspaceContext(
+            workspaceID: "workspace-a",
+            serverID: "server-a",
+            serverBaseURL: try #require(URL(string: "https://server.example.com")),
+            fetchWorkspaceFile: { _, _ in Data() },
+            sessionID: "session-a",
+            makeMarkdownVideoSource: { _ in try await gate.source() }
+        )
+        return FullScreenCodeViewController(
+            content: .markdown(
+                content: "# Corpus\n\nIntro paragraph.\n\n![[clip.mp4]]\n\nAfter the clip.",
+                filePath: ".internal/qa/markdown-viewer-corpus.md",
+                workspaceContext: context
+            ),
+            presentationMode: .embedded(onDismiss: {})
+        )
+    }
+
+    /// Navigation transitions only animate and complete in a scene-backed window.
+    private func makeSceneWindow(root: UIViewController) throws -> UIWindow {
+        let scene = try #require(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "animated push needs the test host's window scene"
+        )
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 844)
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        return window
+    }
+
+    private func allVideos(in reader: UIViewController) -> [NativeMarkdownVideoView] {
+        timelineAllViews(in: reader.view).compactMap { $0 as? NativeMarkdownVideoView }
+    }
+
+    /// The video actually shown in a collection cell, not a parked render-ahead copy.
+    private func visibleVideo(in reader: UIViewController) -> NativeMarkdownVideoView? {
+        allVideos(in: reader).first { $0.window != nil && timelineViewIsVisible($0) }
+    }
+
+    /// UIKit containment: the slot hangs off a view controller whose view
+    /// encloses the video, and AVKit's view lives inside the video host.
+    private func expectPlayerContained(
+        in video: NativeMarkdownVideoView,
+        reader: UIViewController
+    ) throws {
+        let player = try #require(video.debugPlayerControllerForTesting)
+        let slot = try #require(video.debugPlayerSlotForTesting)
+        let slotParent = try #require(slot.parent)
+        #expect(player.parent === slot)
+        #expect(player.view.isDescendant(of: video))
+        #expect(slot.view.superview === video)
+        #expect(video.isDescendant(of: slotParent.view))
+        var ancestor: UIViewController? = slotParent
+        while let node = ancestor, node !== reader { ancestor = node.parent }
+        #expect(ancestor === reader, "slot must be contained inside the reader's controller tree")
+    }
+
+    private func waitUntil(
+        timeout: Duration = .seconds(5),
+        _ condition: @MainActor () -> Bool
+    ) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+
+    /// Lets queued main-queue work, CATransaction completions, and any
+    /// deferred mount attempt run before asserting absence.
+    private func settleRunLoop() async {
+        for _ in 0..<10 {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
     private func makeEmbed(_ markdown: String) throws -> MarkdownVideoEmbed {
         let baseURL = try #require(URL(string: "https://server.example.com"))
         return try #require(makeSegments(markdown, baseURL: baseURL).compactMap { segment -> MarkdownVideoEmbed? in
@@ -308,3 +494,35 @@ struct MarkdownStressCrashRegressionTests {
 
 @MainActor
 private final class StreamingApplyTextViewDelegate: NSObject, UITextViewDelegate {}
+
+/// Controlled media-source resolution for the reader's video provider.
+@MainActor
+private final class VideoSourceGate {
+    var resolveImmediately = false
+    private var pending: [CheckedContinuation<AuthenticatedMediaSource, Error>] = []
+
+    var pendingCount: Int { pending.count }
+
+    func source() async throws -> AuthenticatedMediaSource {
+        if resolveImmediately {
+            return Self.source
+        }
+        return try await withCheckedThrowingContinuation { pending.append($0) }
+    }
+
+    /// Resolves every waiter and answers later requests immediately.
+    func resolveAll() {
+        resolveImmediately = true
+        let waiting = pending
+        pending.removeAll()
+        waiting.forEach { $0.resume(returning: Self.source) }
+    }
+
+    private static let source = AuthenticatedMediaSource(
+        url: URL(fileURLWithPath: "/tmp/oppi-missing-inline-video.mp4"),
+        authorizationHeaderValue: "Bearer test",
+        tlsCertFingerprint: nil,
+        contentTypeHint: "video/mp4",
+        sourceFileExtension: "mp4"
+    )
+}

@@ -48,6 +48,9 @@ final class NativeMarkdownVideoView: UIView {
     private var currentEmbed: MarkdownVideoEmbed?
     private var currentIdentity: String?
     private var hasCommittedRevealGeometry = false
+    /// Bumped on identity change and removal so a queued first mount cannot land late.
+    private var firstMountGeneration = 0
+    private var isFirstMountQueued = false
     private var renderingMode: ContentRenderingMode = .live
     private var sourceProvider: MarkdownVideoMediaSourceProvider?
     private var sidecarProvider: TimedTextSidecarProvider?
@@ -76,6 +79,7 @@ final class NativeMarkdownVideoView: UIView {
     /// Recycle / identity-change teardown. Do not call from `willMove(toSuperview:)`;
     /// AVKit detaches this view during fullscreen, PiP, and dismiss.
     func prepareForRemoval() {
+        invalidateFirstMount()
         resolutionTask?.cancel()
         resolutionTask = nil
         sidecarTask?.cancel()
@@ -107,6 +111,7 @@ final class NativeMarkdownVideoView: UIView {
         }
 
         currentIdentity = identity
+        invalidateFirstMount()
         currentEmbed = embed
         self.renderingMode = renderingMode
         self.sourceProvider = sourceProvider
@@ -144,13 +149,9 @@ final class NativeMarkdownVideoView: UIView {
                 let source = try await sourceProvider(embed)
                 guard let self, !Task.isCancelled, self.currentIdentity == identity else { return }
                 // Probes and parked cells may still be in a window. Store the
-                // resolved source only; setPlaybackVisible(true) owns host mount.
+                // resolved source; the first-mount attempt rechecks visibility.
                 self.currentSource = source
-                guard !Task.isCancelled,
-                      self.currentIdentity == identity,
-                      self.isPlaybackVisible,
-                      self.window != nil else { return }
-                self.installPlayer(source: source, embed: embed)
+                self.scheduleFirstMount()
             } catch {
                 guard let self, !Task.isCancelled, self.currentIdentity == identity else { return }
                 self.showFallback(
@@ -173,7 +174,10 @@ final class NativeMarkdownVideoView: UIView {
         if window != nil {
             hasCommittedRevealGeometry = true
             if playerController != nil {
+                // Mounted player returning from AVKit fullscreen/PiP: reattach now.
                 attachPlayerHost()
+            } else {
+                scheduleFirstMount()
             }
         }
     }
@@ -334,12 +338,12 @@ final class NativeMarkdownVideoView: UIView {
             return
         }
 
-        // Visibility reveal is the only deferred mount point. An already-true
-        // flag still has to install if a probe/async resolve stored a source.
-        if let source = currentSource, let embed = currentEmbed,
-           playerController == nil, window != nil {
+        // An already-true flag still has to mount if a probe/async resolve
+        // stored a source. Reveal can arrive from cellForItemAt mid-push, so
+        // only request the deferred first mount here.
+        if currentSource != nil, playerController == nil {
             isPlaybackVisible = true
-            installPlayer(source: source, embed: embed)
+            scheduleFirstMount()
             return
         }
 
@@ -355,6 +359,68 @@ final class NativeMarkdownVideoView: UIView {
             telemetrySessionId: currentEmbed?.reference.sourceSessionID,
             onPresentationSize: nil
         )
+    }
+
+    /// Source-ready, reveal, and window-arrival all funnel here. Installing
+    /// AVKit containment synchronously from a collection-view data-source or
+    /// layout pass during a navigation transition aborts in UIKit, so the whole
+    /// first install runs later, once, after enclosing transitions settle.
+    /// Mounted-player reattachment (fullscreen/PiP return) never comes here.
+    private func scheduleFirstMount() {
+        guard playerController == nil, currentSource != nil, !isFirstMountQueued else { return }
+        isFirstMountQueued = true
+        let generation = firstMountGeneration
+        DispatchQueue.main.async { [weak self] in
+            self?.attemptFirstMount(generation: generation)
+        }
+    }
+
+    private func invalidateFirstMount() {
+        firstMountGeneration &+= 1
+        isFirstMountQueued = false
+    }
+
+    private func attemptFirstMount(generation: Int) {
+        guard generation == firstMountGeneration else { return }
+        isFirstMountQueued = false
+        // Everything is re-read now; nothing captured at schedule time is trusted.
+        // A later reveal or window arrival schedules again if any check fails.
+        guard playerController == nil,
+              isPlaybackVisible,
+              let source = currentSource,
+              let embed = currentEmbed,
+              let window,
+              let parent = nearestViewController(),
+              parent.viewIfLoaded?.window === window else { return }
+        if let coordinator = activeTransitionCoordinator(from: parent) {
+            isFirstMountQueued = true
+            let queued = coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+                // Completed or cancelled: re-evaluate attachment from scratch.
+                guard let self, generation == self.firstMountGeneration else { return }
+                self.isFirstMountQueued = false
+                self.scheduleFirstMount()
+            }
+            if !queued {
+                // Coordinator is already finishing; retry on a later turn.
+                isFirstMountQueued = false
+                scheduleFirstMount()
+            }
+            return
+        }
+        installPlayer(source: source, embed: embed)
+    }
+
+    private func activeTransitionCoordinator(
+        from controller: UIViewController
+    ) -> (any UIViewControllerTransitionCoordinator)? {
+        var node: UIViewController? = controller
+        while let current = node {
+            if let coordinator = current.transitionCoordinator {
+                return coordinator
+            }
+            node = current.parent ?? current.presentingViewController
+        }
+        return nil
     }
 
     private func refreshPlaybackState() {
@@ -465,26 +531,15 @@ final class NativeMarkdownVideoView: UIView {
         openButton.titleLabel?.adjustsFontForContentSizeCategory = true
     }
 
+    /// UIKit requires the slot's parent to be the controller that owns the
+    /// nearest ancestor view. Skipping up to an outer container (e.g. the
+    /// reader's `FullScreenCodeViewController` above its content controller)
+    /// throws `UIViewControllerHierarchyInconsistency` when the slot view
+    /// enters the window.
     private func nearestViewController() -> UIViewController? {
-        if var active = window?.rootViewController {
-            while let presented = active.presentedViewController {
-                active = presented
-            }
-            if active is FullScreenCodeViewController {
-                return active
-            }
-        }
-
-        var responder: UIResponder? = self
+        var responder: UIResponder? = next
         while let current = responder {
             if let viewController = current as? UIViewController {
-                var ancestor: UIViewController? = viewController
-                while let node = ancestor {
-                    if node is FullScreenCodeViewController {
-                        return node
-                    }
-                    ancestor = node.parent
-                }
                 return viewController
             }
             responder = current.next
