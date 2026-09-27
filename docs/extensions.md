@@ -125,7 +125,7 @@ This split keeps consent clear: installing Oppi does not install a pi extension 
 
 `subagents` registers `subagent`. A launch returns immediately and one async `oppi session wait` per parent, not a session-list scan, updates the widget: Done when the child is idle, Needs attention when a dialog is pending. Supervised launches also start a visible parent turn on settle or attention, and otherwise send one parent check-in about every 4 minutes so the prompt cache stays warm. Detached tool launches and a bash `oppi session create` from this parent get the widget wait only. A row uses the existing `oppi://session/<id>` link. It does not add a screen or a children-list API.
 
-`background-jobs` registers `background_job`. A shell command that is still running after 15 seconds, or one that ends in `&`, becomes a job. The composer pill shows it, and the output is injected as a follow-up. Polling a running job is blocked.
+`background-jobs` registers `background_job`. A shell command that is still running after 15 seconds, or one that ends in `&`, becomes a job. The composer pill shows it, and the output is injected as a follow-up. Polling a running job is blocked. While jobs run, it keeps the final turn open unless `oppi session get` confirms the session does not auto-stop; it asks once, the first time a turn would end with a job running. Plain Pi, a missing CLI, or a failed lookup keeps the turn open.
 
 ## Ask extension example
 

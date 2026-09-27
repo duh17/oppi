@@ -3,9 +3,10 @@
  *
  * Bash waits 15 seconds. If the command is still running, it becomes a
  * background job and the composer pill shows it. Finished results are batched
- * at a safe model boundary, or sent once when the session is idle. A final
- * turn stays busy while jobs run; Stop and queued input interrupt that wait.
- * A trailing `&` backgrounds immediately. Polling a running job is blocked.
+ * at a safe model boundary, or sent once when the session is idle. In an Oppi
+ * auto-stop session (or when that cannot be confirmed), a final turn stays
+ * busy while jobs run; Stop and queued input interrupt that wait. A trailing
+ * `&` backgrounds immediately. Polling a running job is blocked.
  */
 
 import type {
@@ -19,6 +20,7 @@ import type {
 import { createLocalBashOperations } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "@sinclair/typebox";
+import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +41,35 @@ import {
 } from "./jobs.ts";
 
 const PILL_KEY = "background-jobs";
+const AUTO_STOP_LOOKUP_TIMEOUT_MS = 5_000;
+
+/**
+ * Ask Oppi once whether this session auto-stops. Pi's session id is Oppi's
+ * session id. Resolves undefined when that cannot be confirmed: plain Pi, no
+ * `oppi` CLI, an unknown session, or any error.
+ */
+function lookupOppiAutoStop(sessionId: string): Promise<boolean | undefined> {
+	return new Promise((resolve) => {
+		execFile(
+			"oppi",
+			["session", "get", sessionId, "--json"],
+			{ timeout: AUTO_STOP_LOOKUP_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
+			(error, stdout) => {
+				if (error) return resolve(undefined);
+				try {
+					const parsed = JSON.parse(String(stdout)) as {
+						ok?: unknown;
+						data?: { session?: { launch?: { autoStop?: unknown } } };
+					};
+					const session = parsed.ok === true ? parsed.data?.session : undefined;
+					resolve(session ? session.launch?.autoStop === true : undefined);
+				} catch {
+					resolve(undefined);
+				}
+			},
+		);
+	});
+}
 
 const ActionSchema = StringEnum(["start", "cancel"] as const, {
 	description: "start runs a command in the background. cancel stops a job. Neither is a status poll.",
@@ -85,6 +116,13 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 	let flushStartedAt: number | undefined;
 	let latestUi: ExtensionUIContext | undefined;
 	let wakeTurnWait: (() => void) | undefined;
+	// Holding the final turn exists only so Oppi auto-stop cannot end the session
+	// before job results arrive. Pi cannot tell this wait about custom messages
+	// other extensions queue (hasPendingMessages counts user input only), so a
+	// hold starves them. Hold unless Oppi confirms the session will not
+	// auto-stop; its idle timeout ignores open runs, so holding there protects
+	// nothing. Asked lazily, at most once per session, only when a hold would start.
+	let autoStopLookup: Promise<boolean | undefined> | undefined;
 	const buffer = createResultBuffer();
 	const cancelFlush = () => {
 		if (flushTimer) clearTimeout(flushTimer);
@@ -344,6 +382,7 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		generation += 1;
+		autoStopLookup = undefined;
 		cancelFlush();
 		buffer.clear();
 		closed = false;
@@ -364,26 +403,31 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 		// Wait only when the model would otherwise finish. Tool results, buffered
 		// job results, and already-queued continuations must keep moving normally.
 		// turn_end still has Pi's live abort signal; agent_before_settle does not.
-		if (
-			!closed && signal && !signal.aborted && event.outcome === "completed" &&
+		const wouldFinishWithJobsRunning = () =>
+			!closed && !signal?.aborted && event.outcome === "completed" &&
 			!event.continue && !event.context.canContinue && !ctx.hasPendingMessages() &&
-			buffer.pendingCount() === 0 && manager.visibleRunning().length > 0
-		) {
-			await new Promise<void>((resolve) => {
-				const finish = () => {
-					clearInterval(inputCheck);
-					signal.removeEventListener("abort", finish);
-					wakeTurnWait = undefined;
-					resolve();
-				};
-				// Pi exposes no queue-change event to extensions. Check only its
-				// in-memory input queue, never shell/process state or the provider.
-				const inputCheck = setInterval(() => {
-					if (ctx.hasPendingMessages()) finish();
-				}, 100);
-				wakeTurnWait = finish;
-				signal.addEventListener("abort", finish, { once: true });
-			});
+			buffer.pendingCount() === 0 && manager.visibleRunning().length > 0;
+		if (signal && wouldFinishWithJobsRunning()) {
+			autoStopLookup ??= lookupOppiAutoStop(ctx.sessionManager.getSessionId());
+			const autoStop = await autoStopLookup;
+			// A result, Stop, or input can arrive during the one-time lookup.
+			if (autoStop !== false && wouldFinishWithJobsRunning()) {
+				await new Promise<void>((resolve) => {
+					const finish = () => {
+						clearInterval(inputCheck);
+						signal.removeEventListener("abort", finish);
+						wakeTurnWait = undefined;
+						resolve();
+					};
+					// Pi exposes no queue-change event to extensions. Check only its
+					// in-memory input queue, never shell/process state or the provider.
+					const inputCheck = setInterval(() => {
+						if (ctx.hasPendingMessages()) finish();
+					}, 100);
+					wakeTurnWait = finish;
+					signal.addEventListener("abort", finish, { once: true });
+				});
+			}
 		}
 		if (closed) return undefined;
 		// A result and Stop can arrive together. Retain the result without

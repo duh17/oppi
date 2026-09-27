@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,9 +28,26 @@ function deferred<T>() {
 
 const nextTick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-async function fixture(jobCount = 1, tool: "background_job" | "bash" = "background_job") {
+async function fixture(
+	jobCount = 1,
+	tool: "background_job" | "bash" = "background_job",
+	launch?: { autoStop: boolean },
+) {
 	const dir = await mkdtemp(join(tmpdir(), "background-busy-"));
 	cleanups.push(() => rm(dir, { recursive: true, force: true }));
+	// A fake `oppi` CLI answers the auto-stop lookup. Without launch it fails, as
+	// in plain Pi or for a session Oppi does not know.
+	const bin = join(dir, "bin");
+	const lookups = join(dir, "oppi-lookups");
+	await mkdir(bin);
+	const reply = JSON.stringify({ ok: true, data: { session: { id: "fixture", launch } } });
+	await writeFile(join(bin, "oppi"), launch
+		? `#!/bin/sh\necho "$*" >> '${lookups}'\nprintf '%s\\n' '${reply}'\n`
+		: `#!/bin/sh\necho "$*" >> '${lookups}'\nexit 1\n`);
+	await chmod(join(bin, "oppi"), 0o755);
+	const path = process.env.PATH;
+	process.env.PATH = `${bin}:${path ?? ""}`;
+	cleanups.push(async () => { process.env.PATH = path; });
 	const sockets = new Set<Socket>();
 	const connections = Array.from({ length: jobCount }, () => deferred<Socket>());
 	let connected = 0;
@@ -129,6 +146,7 @@ async function fixture(jobCount = 1, tool: "background_job" | "bash" = "backgrou
 	return {
 		session, waiting: waiting.promise, afterResult: afterResult.promise, connections,
 		errors, observed, requests: () => requests,
+		lookups: async () => (await readFile(lookups, "utf8").catch(() => "")).split("\n").filter(Boolean),
 		results: () => session.messages.filter((message) =>
 			message.role === "custom" && message.customType === "background-job"),
 	};
@@ -217,12 +235,66 @@ describe("background jobs keep Pi busy", () => {
 		expect(f.errors).toEqual([]);
 	}, 10_000);
 
+	test("a session Oppi will not auto-stop settles while jobs run, so other extensions' follow-ups start a turn", async () => {
+		const f = await fixture(1, "background_job", { autoStop: false });
+		await f.session.prompt("Start a build");
+		const socket = await f.connections[0]!.promise;
+		expect(f.session.isIdle).toBe(true);
+		expect(f.observed.filter((event) => event === "agent_settled")).toHaveLength(1);
+		expect(f.requests()).toBe(2);
+
+		// A supervised-subagent style wake from another extension runs now, not after the job.
+		await f.session.sendCustomMessage(
+			{ customType: "subagent-settled", content: "child finished", display: true },
+			{ deliverAs: "followUp", triggerTurn: true },
+		);
+		expect(f.requests()).toBe(3);
+		expect(f.session.messages.some((message) =>
+			message.role === "custom" && message.customType === "subagent-settled")).toBe(true);
+
+		// The job result still arrives through the idle wake and starts its own turn.
+		const resultTurn = deferred<void>();
+		f.session.subscribe((event) => {
+			if (event.type === "agent_settled" && f.requests() === 4) resultTurn.resolve();
+		});
+		socket.end("build done\n");
+		await resultTurn.promise;
+		expect(f.results()).toHaveLength(1);
+		expect(f.results()[0]!.content).toContain("build done");
+		expect(await f.lookups()).toEqual([`session get ${f.session.sessionId} --json`]);
+		expect(f.errors).toEqual([]);
+	}, 10_000);
+
+	test("an Oppi auto-stop session holds every final turn while jobs run and asks Oppi only once", async () => {
+		const f = await fixture(2, "background_job", { autoStop: true });
+		const run = f.session.prompt("Start the builds");
+		const sockets = await Promise.all(f.connections.map((connection) => connection.promise));
+		await f.waiting;
+		await nextTick();
+		expect(f.session.isStreaming).toBe(true);
+		expect(f.observed).not.toContain("agent_settled");
+
+		sockets[0]!.end("first build passed\n");
+		await f.afterResult;
+		await nextTick();
+		expect(f.session.isStreaming).toBe(true);
+		expect(f.observed).not.toContain("agent_settled");
+
+		sockets[1]!.end("second build passed\n");
+		await run;
+		expect(f.results()).toHaveLength(2);
+		expect(f.observed.filter((event) => event === "agent_settled")).toHaveLength(1);
+		expect(await f.lookups()).toHaveLength(1);
+		expect(f.errors).toEqual([]);
+	}, 10_000);
+
 	test("a session with no jobs settles normally", async () => {
 		const f = await fixture(0);
 		await f.session.prompt("Nothing to run");
 		expect(f.session.isIdle).toBe(true);
 		expect(f.requests()).toBe(1);
 		expect(f.observed.filter((event) => event === "agent_settled")).toHaveLength(1);
+		expect(await f.lookups()).toEqual([]);
 		expect(f.errors).toEqual([]);
 	}, 10_000);
 });
