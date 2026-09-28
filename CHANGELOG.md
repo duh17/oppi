@@ -60,6 +60,7 @@ Example:
 - **Server:** The Node.js requirement is 22.19.0 or newer, matching Pi. Sandbox workspaces still need Node.js 23.6+.
 - **Mirror:** Mirrored Pi `turn_end` frames omit duplicate message bodies and tool results.
 - **Client:** Everything the iOS app and Share extension store on disk now uses iOS Data Protection class *Complete unless open*: timeline cache, message drafts, file-browser cache, HTTP cache, and shared-file inbox. That data cannot be read while the device is locked; before, it was readable from the first unlock after a reboot. Background work can still write new files after lock. The first launch after updating upgrades files that are already stored.
+- **Client/Server:** The iOS app and Share extension drop the App Transport Security exception for `ts.net`, which allowed plain HTTP and a self-signed certificate on Tailscale names. A `*.ts.net` pairing host now requires `tls.mode=tailscale`: `oppi pair` refuses one in `self-signed` or `manual` mode, auto-detection uses the Tailscale IP there, and the app rejects a pinned Tailscale-name invite with the fix. **Breaking:** an existing self-signed pairing on a `*.ts.net` name stops connecting after the app update. Run `oppi config set tls.mode tailscale`, restart, and pair again.
 
 ### Fixed
 

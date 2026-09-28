@@ -104,8 +104,9 @@ function resolveInviteHost(config: ServerConfig, hostOverride?: string): string 
     return getTailscaleHostname();
   }
 
-  // Prefer local network; fall back to Tailscale if no LAN host found.
-  return getLocalHostname() || getLocalIp() || getTailscaleHostname() || getTailscaleIp();
+  // Prefer local network; fall back to the Tailscale IP. Outside tailscale TLS
+  // mode a *.ts.net name cannot carry the leaf pin (see generateInvite).
+  return getLocalHostname() || getLocalIp() || getTailscaleIp();
 }
 
 function shortHostLabel(host: string): string {

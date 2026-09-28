@@ -61,7 +61,7 @@ function makeIdentity() {
 function makeStorage(config: {
   port: number;
   host: string;
-  tls?: { mode?: "disabled" | "self-signed" | "tailscale" };
+  tls?: { mode?: "disabled" | "self-signed" | "tailscale" | "manual" };
   publicUrl?: string;
 }) {
   return {
@@ -95,7 +95,7 @@ describe("generateInvite", () => {
     vi.clearAllMocks();
     mockIdentityConfigForDataDir.mockReturnValue({ keyId: "srv-default" });
     mockPrepareTlsForServer.mockReturnValue({ enabled: false, mode: "disabled" });
-    mockIsTailscaleHostname.mockReturnValue(true);
+    mockIsTailscaleHostname.mockImplementation((host: string) => host.endsWith(".ts.net"));
     mockReadCertificateFingerprint.mockReturnValue("sha256:cert-fingerprint");
     mockReadValidTailnetDnsName.mockReturnValue("cert-host.tail00000.ts.net");
     mockResolveTlsConfig.mockReturnValue({
@@ -192,6 +192,23 @@ describe("generateInvite", () => {
     );
     expect(mockPrepareTlsForServer).not.toHaveBeenCalled();
   });
+
+  it.each(["self-signed", "manual"] as const)(
+    "rejects a *.ts.net host in %s TLS mode, where iOS ATS would refuse the pinned leaf",
+    (mode) => {
+      const storage = makeStorage({ port: 7777, host: "0.0.0.0", tls: { mode } });
+
+      expect(() =>
+        generateInvite(
+          storage as Storage,
+          () => "my-server.tail00000.ts.net",
+          () => "unused",
+        ),
+      ).toThrowError(/requires tls\.mode=tailscale.*oppi config set tls\.mode tailscale/);
+      expect(mockPrepareTlsForServer).not.toHaveBeenCalled();
+      expect((storage as Storage).issuePairingToken).not.toHaveBeenCalled();
+    },
+  );
 
   it("generates a signed https invite with trimmed requested name and cert pin", () => {
     const storage = makeStorage({

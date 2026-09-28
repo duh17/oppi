@@ -38,11 +38,14 @@ For remote pairing, include the host in the invite:
 oppi pair --host <hostname-or-ip>
 ```
 
-`--host` accepts a host or IP only: no scheme and no port. To include a Tailscale host in the first QR code from `serve`:
+`--host` accepts a host or IP only: no scheme and no port. A `*.ts.net` host requires Tailscale TLS, because iOS does not accept a self-signed certificate on a Tailscale name. Enable HTTPS certificates for your tailnet, then include the Tailscale host in the first QR code from `serve`:
 
 ```bash
+oppi config set tls.mode tailscale
 oppi serve --host <your-host>.ts.net
 ```
+
+With `self-signed` or `manual` TLS, pair through a LAN host or the server's Tailscale IP instead. `oppi pair` refuses a `*.ts.net` host in those modes.
 
 Before pairing, the app probes HTTPS health and then sends exactly one pair request. If a connection error occurs after pairing starts, pairing might have succeeded; request a fresh invite instead of retrying the old one.
 

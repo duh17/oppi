@@ -28,6 +28,14 @@ enum ServerTLSTrustPolicy {
         return isTailscaleHostname(host) || isPublicDNSHostname(host)
     }
 
+    /// App Transport Security enforces default CA trust on DNS names outside
+    /// local networking, and the app has no ATS exceptions, so a pinned
+    /// self-signed leaf can only pass on IP, `.local`, or unqualified hosts.
+    /// Tailnet names use Tailscale-issued certificates without a pin.
+    static func allowsPinnedLeaf(forHost host: String) -> Bool {
+        !isTailscaleHostname(host)
+    }
+
     /// Bonjour/LAN shortcut for no-pin pairs. Public-domain hosts stay on the paired endpoint.
     static func allowsUnpinnedLANShortcut(forHost host: String) -> Bool {
         isTailscaleHostname(host)

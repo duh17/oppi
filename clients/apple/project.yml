@@ -181,10 +181,6 @@ targets:
         OPPITelemetryMode: "$(OPPI_TELEMETRY_MODE)"
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
-          NSExceptionDomains:
-            ts.net:
-              NSIncludesSubdomains: true
-              NSExceptionAllowsInsecureHTTPLoads: true
     preBuildScripts:
       - script: |
           mkdir -p "$DERIVED_FILE_DIR"
@@ -415,10 +411,6 @@ targets:
         NSLocalNetworkUsageDescription: "Oppi needs local network access to start a shared Quick Session on your paired server."
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
-          NSExceptionDomains:
-            ts.net:
-              NSIncludesSubdomains: true
-              NSExceptionAllowsInsecureHTTPLoads: true
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController

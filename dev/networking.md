@@ -17,6 +17,8 @@ Older persisted connections without an HTTPS endpoint are unsupported and must b
 
 ## Pairing and recovery
 
+The iOS app and Share extension have no ATS domain exceptions, only `NSAllowsLocalNetworking`. A leaf pin (self-signed or manual TLS) therefore works only on IP, `.local`, or unqualified hosts; ATS applies default CA trust to every other DNS name and cannot be loosened by the trust delegate. `*.ts.net` invites require `tls.mode=tailscale` (Tailscale-issued, no pin). The server refuses other modes in `generateInvite`, and the app rejects a pinned tailnet invite before the trust prompt.
+
 Pairing probes HTTPS before the one-time `/pair` mutation. A route change never replays a mutation. TLS identity failures and unknown/revoked credentials fail closed. Availability failures may retry another supported HTTPS candidate during the current selection pass.
 
 Pairing, LAN vs Tailscale, reverse proxy, expired invites, and `oppi status` / `oppi doctor` live in [Onboarding](../docs/onboarding.md) and [Reverse proxy](../docs/reverse-proxy.md). This page keeps leftover transport notes for contributors.

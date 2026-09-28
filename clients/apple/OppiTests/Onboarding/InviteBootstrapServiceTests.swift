@@ -83,6 +83,33 @@ struct InviteBootstrapServiceTests {
         #expect(await log.snapshot().isEmpty)
     }
 
+    @Test func pinnedTailnetInviteFailsBeforeTrustOrNetwork() async throws {
+        var trustPrompted = false
+        var factoryCalled = false
+        let tailnetHost = "my-server.tail00000.ts.net"
+
+        await #expect(throws: InviteBootstrapError.message(
+            "\(tailnetHost) uses a self-signed certificate, which iOS does not allow on Tailscale names. "
+                + "On the server, run `oppi config set tls.mode tailscale`, restart, and create a new invite."
+        )) {
+            _ = try await InviteBootstrapService.validateAndBootstrap(
+                credentials: credentials(host: tailnetHost, tlsCertFingerprint: "sha256:leafpin"),
+                existingCredentials: nil,
+                confirmTrust: { _ in
+                    trustPrompted = true
+                    return true
+                },
+                apiFactory: { _, _, _ in
+                    factoryCalled = true
+                    return RecordingInviteBootstrapAPI(log: InviteBootstrapCallLog())
+                }
+            )
+        }
+
+        #expect(!trustPrompted)
+        #expect(!factoryCalled)
+    }
+
     @Test func lostHTTPSPairingResponseIsNotReplayed() async throws {
         let log = InviteBootstrapCallLog()
         let failing = FailingInviteBootstrapAPI(log: log, error: URLError(.networkConnectionLost))
@@ -125,15 +152,16 @@ struct InviteBootstrapServiceTests {
         #expect(decoded?.token == "invite-token")
     }
 
-    private func credentials() -> ServerCredentials {
+    private func credentials(host: String? = nil, tlsCertFingerprint: String? = nil) -> ServerCredentials {
         ServerCredentials(
-            host: host,
+            host: host ?? self.host,
             port: 443,
             token: "",
             name: "Pairing Server",
             scheme: .https,
             pairingToken: "one-time-token",
-            serverFingerprint: "sha256:abcdef1234567890"
+            serverFingerprint: "sha256:abcdef1234567890",
+            tlsCertFingerprint: tlsCertFingerprint
         )
     }
 }

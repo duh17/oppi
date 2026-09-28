@@ -354,6 +354,13 @@ enum InviteBootstrapService {
         guard credentials.resolvedScheme == .https, let baseURL = credentials.baseURL else {
             throw InviteBootstrapError.message("HTTPS is required. Ask the server owner for an HTTPS/Tailscale invite.")
         }
+        if credentials.normalizedTLSCertFingerprint != nil,
+           !ServerTLSTrustPolicy.allowsPinnedLeaf(forHost: credentials.host) {
+            throw InviteBootstrapError.message(
+                "\(credentials.host) uses a self-signed certificate, which iOS does not allow on Tailscale names. "
+                    + "On the server, run `oppi config set tls.mode tailscale`, restart, and create a new invite."
+            )
+        }
         let existingFingerprint = existingCredentials?.normalizedServerFingerprint
         let inviteFingerprint = credentials.normalizedServerFingerprint
         if (existingFingerprint != nil && inviteFingerprint != nil && existingFingerprint != inviteFingerprint)

@@ -104,6 +104,17 @@ export function generateInvite(
         "Use --host <machine>.<tailnet>.ts.net or disable tls.mode=tailscale",
     );
   }
+  // iOS App Transport Security applies default CA trust to *.ts.net names and
+  // the app has no exception for them, so a pinned self-signed or manual leaf
+  // cannot connect there. Tailnet names use Tailscale-issued certificates; the
+  // other modes reach a tailnet peer by IP, which ATS treats as local.
+  if (config.tls?.mode !== "tailscale" && isTailscaleHostname(inviteHost)) {
+    throw new Error(
+      `A *.ts.net pairing host requires tls.mode=tailscale (current: ${config.tls?.mode ?? "disabled"}). ` +
+        "Enable HTTPS certificates for the tailnet, run `oppi config set tls.mode tailscale`, and restart, " +
+        "or pass --host <lan-host-or-tailscale-ip>.",
+    );
+  }
 
   const tls = prepareTlsForServer(config, storage.getDataDir(), {
     additionalHosts: [inviteHost, config.host],
