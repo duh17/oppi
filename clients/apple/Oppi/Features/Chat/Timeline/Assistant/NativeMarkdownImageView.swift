@@ -241,6 +241,9 @@ final class NativeMarkdownImageView: UIView {
         super.didMoveToWindow()
         if window == nil {
             svgHTMLTracker.markNotReady()
+            // Detach can drop the WKWebView bitmap without a process-termination
+            // callback. Force the same reload that callback uses when we return.
+            svgHTMLTracker.markProcessTerminated()
             animatedRasterPlayback.stop()
             return
         }
@@ -1004,8 +1007,6 @@ final class NativeMarkdownImageView: UIView {
         guard let data = svgPreviewData,
               let mimeType = svgPreviewMimeType else { return }
         let webView = ensureSVGWebView()
-        webView.isHidden = true
-        ensureSVGTapOverlay().isHidden = true
         queueSVGHTML(makeSVGHTML(data: data, mimeType: mimeType), in: webView)
         flushSVGIfReady()
     }
@@ -1056,7 +1057,7 @@ final class NativeMarkdownImageView: UIView {
             return
         }
         if let html = svgHTMLTracker.markReady() {
-            webView.loadHTMLString(html, baseURL: nil)
+            beginSVGHTMLLoad(html, in: webView)
         }
     }
 
@@ -1066,12 +1067,22 @@ final class NativeMarkdownImageView: UIView {
             svgHTMLTracker.markNotReady()
         }
         if let html = svgHTMLTracker.setContent(html) {
-            webView.loadHTMLString(html, baseURL: nil)
+            beginSVGHTMLLoad(html, in: webView)
             return
         }
         if canLoad, let html = svgHTMLTracker.markReady() {
-            webView.loadHTMLString(html, baseURL: nil)
+            beginSVGHTMLLoad(html, in: webView)
         }
+    }
+
+    private func beginSVGHTMLLoad(_ html: String, in webView: ReviewCommentWKWebView) {
+        // A reload of an already painted view must not cover it. Hiding here
+        // used to stick when the tracker suppressed the reload, and a hidden
+        // reload after window return can also fail to finish.
+        if webView.isHidden {
+            ensureSVGTapOverlay().isHidden = true
+        }
+        webView.loadHTMLString(html, baseURL: nil)
     }
 
     private func canLoadSVGHTML(in webView: ReviewCommentWKWebView) -> Bool {
