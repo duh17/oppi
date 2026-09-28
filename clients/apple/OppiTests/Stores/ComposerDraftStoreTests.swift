@@ -249,6 +249,43 @@ struct ComposerDraftStoreTests {
         #expect(try Data(contentsOf: sidecarURL) == videoBytes)
     }
 
+    @Test func failedAsyncVideoSidecarWriteDoesNotPersistTheRecord() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let key = try fixture.key()
+        let missingURL = FileManager.default.temporaryDirectory.appending(
+            path: "\(UUID().uuidString).mp4",
+            directoryHint: .notDirectory
+        )
+        let payload = ComposerDraftPayload(
+            text: "watch this",
+            repoPointers: [],
+            attachments: [
+                .init(
+                    id: "video-missing",
+                    displayName: "clip.mp4",
+                    mimeType: "video/mp4",
+                    source: .localFile,
+                    relativePath: nil,
+                    sizeBytes: 2048
+                ),
+            ]
+        )
+        let store = fixture.makeStore()
+        await store.load()
+        #expect(store.setDraft(
+            payload,
+            attachmentFiles: ["video-missing": missingURL],
+            for: key
+        ) != nil)
+
+        await store.flush()
+
+        #expect(store.record(for: key) == nil)
+        #expect(store.attachmentFileURL(for: key, attachmentID: "video-missing") == nil)
+        #expect(!FileManager.default.fileExists(atPath: fixture.fileURL.path))
+    }
+
     @Test func ephemeralFallbackDoesNotCreateSidecars() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }

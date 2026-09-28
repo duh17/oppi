@@ -67,7 +67,15 @@ enum PhotoLibraryMediaImporter {
             }
             return provider.registeredTypeIdentifiers.first ?? UTType.image.identifier
         case .video:
-            let preferred: [UTType] = [.movie, .video, .mpeg4Movie, .quickTimeMovie, .audiovisualContent]
+            for identifier in provider.registeredTypeIdentifiers {
+                guard let type = UTType(identifier),
+                      let mime = type.preferredMIMEType?.lowercased(),
+                      mime.hasPrefix("video/") else {
+                    continue
+                }
+                return identifier
+            }
+            let preferred: [UTType] = [.mpeg4Movie, .quickTimeMovie, .video, .movie, .audiovisualContent]
             for type in preferred where provider.hasItemConformingToTypeIdentifier(type.identifier) {
                 return type.identifier
             }
@@ -80,24 +88,28 @@ enum PhotoLibraryMediaImporter {
         fallbackURL: URL,
         typeIdentifier: String
     ) -> String {
-        if let suggested = provider.suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !suggested.isEmpty {
-            if suggested.contains(".") {
-                return suggested
-            }
-            if let ext = UTType(typeIdentifier)?.preferredFilenameExtension, !ext.isEmpty {
-                return "\(suggested).\(ext)"
-            }
-            return suggested
-        }
-        return fallbackURL.lastPathComponent
+        displayName(
+            forSuggestedName: provider.suggestedName,
+            fallbackURL: fallbackURL,
+            typeIdentifier: typeIdentifier
+        )
     }
 
     static func mimeType(for url: URL, typeIdentifier: String) -> String {
-        if let mime = UTType(typeIdentifier)?.preferredMIMEType {
+        if let mime = UTType(typeIdentifier)?.preferredMIMEType, !mime.isEmpty {
             return mime
         }
-        return PendingAttachment.mimeType(for: url, contentType: UTType(filenameExtension: url.pathExtension))
+        let inferred = PendingAttachment.mimeType(
+            for: url,
+            contentType: UTType(filenameExtension: url.pathExtension)
+        )
+        if inferred != "application/octet-stream" {
+            return inferred
+        }
+        if let type = UTType(typeIdentifier), type.conforms(to: .audiovisualContent) {
+            return "video/mp4"
+        }
+        return inferred
     }
 
     /// Build a pending attachment from an already-owned copy of a picker file.
@@ -190,9 +202,11 @@ enum PhotoLibraryMediaImporter {
                     continuation.resume(throwing: ImportError.missingFile)
                     return
                 }
-                let displayName = suggestedName.map { name in
-                    name.contains(".") ? name : name + defaultExtension(for: typeIdentifier)
-                } ?? temporaryURL.lastPathComponent
+                let displayName = Self.displayName(
+                    forSuggestedName: suggestedName,
+                    fallbackURL: temporaryURL,
+                    typeIdentifier: typeIdentifier
+                )
                 do {
                     let owned = try PendingComposerFileStore.copyFile(
                         from: temporaryURL,
@@ -206,10 +220,32 @@ enum PhotoLibraryMediaImporter {
         }
     }
 
-    private static func defaultExtension(for typeIdentifier: String) -> String {
-        guard let preferred = UTType(typeIdentifier)?.preferredFilenameExtension, !preferred.isEmpty else {
-            return ""
+    static func displayName(
+        forSuggestedName suggestedName: String?,
+        fallbackURL: URL,
+        typeIdentifier: String
+    ) -> String {
+        let trimmed = suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw: String
+        if let trimmed, !trimmed.isEmpty {
+            raw = trimmed
+        } else {
+            raw = fallbackURL.lastPathComponent
         }
-        return ".\(preferred)"
+        if raw.contains(".") {
+            return raw
+        }
+        let ext = filenameExtension(for: typeIdentifier)
+        return ext.isEmpty ? raw : "\(raw).\(ext)"
+    }
+
+    private static func filenameExtension(for typeIdentifier: String) -> String {
+        if let preferred = UTType(typeIdentifier)?.preferredFilenameExtension, !preferred.isEmpty {
+            return preferred
+        }
+        if let type = UTType(typeIdentifier), type.conforms(to: .audiovisualContent) {
+            return "mp4"
+        }
+        return ""
     }
 }

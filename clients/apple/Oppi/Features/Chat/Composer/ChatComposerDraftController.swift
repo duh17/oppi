@@ -46,7 +46,7 @@ final class ChatComposerDraftController {
 
     var pendingAttachments: [PendingAttachment] {
         didSet {
-            if !isSubmissionInFlight {
+            if !isSubmissionInFlight, !deferOwnedFileRelease {
                 PendingAttachment.releaseOwnedFiles(in: oldValue, notIn: pendingAttachments)
             }
             guard !isApplyingVisiblePayload, mode == .message else { return }
@@ -68,6 +68,7 @@ final class ChatComposerDraftController {
     @ObservationIgnored private var discardedAskSubmissionText: String?
     private(set) var isSubmissionInFlight = false
     @ObservationIgnored private var activeSubmissionID: UUID?
+    @ObservationIgnored private var deferOwnedFileRelease = false
 
     init(
         initialText: String = "",
@@ -164,11 +165,34 @@ final class ChatComposerDraftController {
 
     isolated deinit {
         guard !isSubmissionInFlight else { return }
-        PendingAttachment.releaseOwnedFiles(pendingAttachments)
+        let attachmentsToRelease = pendingAttachments
+        let draftStore = store
+        let draftKey = key
+        if Self.hasDurableSidecarCopy(attachmentsToRelease, store: draftStore, key: draftKey) {
+            PendingAttachment.releaseOwnedFiles(attachmentsToRelease)
+            return
+        }
+        Task { @MainActor in
+            await Self.releaseOwnedFilesAfterSidecarWrite(
+                attachmentsToRelease,
+                store: draftStore,
+                retained: []
+            )
+        }
     }
 
     func detachForSessionChange() {
         mediaImportGate.invalidate()
+        let attachmentsToRelease = pendingAttachments
+        let draftStore = store
+        let draftKey = key
+        let submissionInFlight = isSubmissionInFlight
+        let sidecarReady = Self.hasDurableSidecarCopy(
+            attachmentsToRelease,
+            store: draftStore,
+            key: draftKey
+        )
+        deferOwnedFileRelease = !submissionInFlight && !sidecarReady
         store = nil
         key = nil
         isEphemeral = true
@@ -180,7 +204,17 @@ final class ChatComposerDraftController {
         isSubmissionInFlight = false
         activeSubmissionID = nil
         mode = .message
+        deferOwnedFileRelease = false
         applyVisiblePayload(.empty)
+        if !submissionInFlight, !sidecarReady {
+            Task { @MainActor in
+                await Self.releaseOwnedFilesAfterSidecarWrite(
+                    attachmentsToRelease,
+                    store: draftStore,
+                    retained: pendingAttachments
+                )
+            }
+        }
     }
 
     func setMode(
@@ -276,6 +310,11 @@ final class ChatComposerDraftController {
         draftClearance: SubmissionDraftClearance
     ) -> SubmissionSnapshot? {
         guard activeSubmissionID == nil else { return nil }
+
+        let ownedAttachments = Self.ensuringOwnedLocalFiles(pendingAttachments)
+        if ownedAttachments.map(\.localFileURL) != pendingAttachments.map(\.localFileURL) {
+            pendingAttachments = ownedAttachments
+        }
 
         let submissionID = UUID()
         let revision = key.flatMap { store?.record(for: $0)?.revision }
@@ -428,6 +467,61 @@ final class ChatComposerDraftController {
             guard let url = attachment.composerDraftFileURL else { return nil }
             return (attachment.id, url)
         })
+    }
+
+    private static func ensuringOwnedLocalFiles(_ attachments: [PendingAttachment]) -> [PendingAttachment] {
+        attachments.map { attachment in
+            guard attachment.source == .localFile,
+                  let url = attachment.localFileURL,
+                  !attachment.ownsLocalFile else {
+                return attachment
+            }
+            guard let copied = try? PendingComposerFileStore.copyFile(
+                from: url,
+                displayName: attachment.displayName
+            ) else {
+                return attachment
+            }
+            return .localFile(
+                name: attachment.displayName,
+                fileURL: copied,
+                mimeType: attachment.localMimeType ?? "application/octet-stream",
+                sizeBytes: attachment.localFileSizeBytes,
+                thumbnail: attachment.thumbnail,
+                ownsFile: true,
+                id: attachment.id
+            )
+        }
+    }
+
+    private static func hasDurableSidecarCopy(
+        _ attachments: [PendingAttachment],
+        store: ComposerDraftStore?,
+        key: ComposerDraftKey?
+    ) -> Bool {
+        let owned = attachments.filter { $0.ownedLocalFileURL != nil }
+        guard !owned.isEmpty else { return true }
+        guard let store, let key else { return true }
+        for attachment in owned {
+            guard let ownedURL = attachment.ownedLocalFileURL else { continue }
+            guard let durable = store.attachmentFileURL(for: key, attachmentID: attachment.id),
+                  FileManager.default.fileExists(atPath: durable.path),
+                  durable.standardizedFileURL != ownedURL.standardizedFileURL else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func releaseOwnedFilesAfterSidecarWrite(
+        _ attachments: [PendingAttachment],
+        store: ComposerDraftStore?,
+        retained: [PendingAttachment]
+    ) async {
+        if attachments.contains(where: { $0.ownedLocalFileURL != nil }) {
+            await store?.flush()
+        }
+        PendingAttachment.releaseOwnedFiles(in: attachments, notIn: retained)
     }
 
     private func applyVisiblePayload(_ payload: ComposerDraftPayload) {

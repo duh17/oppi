@@ -38,6 +38,53 @@ struct PhotoLibraryMediaImporterTests {
         #expect(PhotoLibraryMediaImporter.kind(for: provider) == .video)
     }
 
+    @Test func mpeg4ProvidersUseMpeg4TypeIdentifierNotGenericMovie() {
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.mpeg4Movie.identifier, visibility: .all) { completion in
+            completion(Data(), nil)
+            return nil
+        }
+
+        #expect(PhotoLibraryMediaImporter.kind(for: provider) == .video)
+        #expect(
+            PhotoLibraryMediaImporter.typeIdentifier(for: .video, provider: provider)
+                == UTType.mpeg4Movie.identifier
+        )
+        #expect(UTType.mpeg4Movie.identifier != UTType.movie.identifier)
+    }
+
+    @Test func genericMovieTypeGetsVideoMimeAndFilenameExtension() {
+        let url = FileManager.default.temporaryDirectory.appending(
+            path: UUID().uuidString,
+            directoryHint: .notDirectory
+        )
+        let provider = NSItemProvider()
+        provider.suggestedName = "Vacation"
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.movie.identifier, visibility: .all) { completion in
+            completion(Data(), nil)
+            return nil
+        }
+
+        let typeIdentifier = PhotoLibraryMediaImporter.typeIdentifier(for: .video, provider: provider)
+        let mime = PhotoLibraryMediaImporter.mimeType(for: url, typeIdentifier: typeIdentifier)
+        #expect(mime.hasPrefix("video/"))
+        #expect(mime != "application/octet-stream")
+        #expect(
+            PhotoLibraryMediaImporter.displayName(
+                for: provider,
+                fallbackURL: url,
+                typeIdentifier: typeIdentifier
+            ) == "Vacation.mp4"
+        )
+        #expect(
+            PhotoLibraryMediaImporter.displayName(
+                forSuggestedName: nil,
+                fallbackURL: url,
+                typeIdentifier: typeIdentifier
+            ) == "\(url.lastPathComponent).mp4"
+        )
+    }
+
     @Test func mixedSelectionCreatesAnnotatablePhotoAndFileBackedVideo() throws {
         let photoURL = try makePNG()
         let videoURL = try makeVideoFile()

@@ -238,24 +238,16 @@ extension PendingAttachment {
                 )
                 return
             }
-            guard let fileURL else { return nil }
-            let ownedURL: URL
-            let ownsFile: Bool
-            if PendingComposerFileStore.isOwned(fileURL) {
-                ownedURL = fileURL
-                ownsFile = true
-            } else if let copied = try? PendingComposerFileStore.copyFile(
-                from: fileURL,
-                displayName: composerDraftAttachment.displayName
-            ) {
-                ownedURL = copied
-                ownsFile = true
-            } else {
+            guard let fileURL,
+                  FileManager.default.fileExists(atPath: fileURL.path) else {
                 return nil
             }
+            // Restore from the sidecar or in-flight source without a blocking
+            // full-clip copy. Send copies into owned storage if needed.
+            let ownsFile = PendingComposerFileStore.isOwned(fileURL)
             self = .localFile(
                 name: composerDraftAttachment.displayName,
-                fileURL: ownedURL,
+                fileURL: fileURL,
                 mimeType: composerDraftAttachment.mimeType,
                 sizeBytes: composerDraftAttachment.sizeBytes,
                 ownsFile: ownsFile,
