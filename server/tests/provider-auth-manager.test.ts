@@ -299,6 +299,78 @@ describe("ProviderAuthManager", () => {
     manager.cancelFlow(started.flowId, "done");
   });
 
+  it("aborts an idle login at its TTL without a store read and does not revive it on late completion", async () => {
+    vi.useFakeTimers();
+    try {
+      const providers = [makeProvider("openai-codex", "ChatGPT (Codex)")];
+      const commit = createCommitGate();
+      let signal: AbortSignal | undefined;
+      const runtime = new FakeModelRuntime(providers, {
+        "openai-codex": async (_type, interaction) => {
+          signal = interaction.signal;
+          await commit.promise;
+          return oauthCredential();
+        },
+      });
+      let refreshCount = 0;
+      const manager = new ProviderAuthManager({
+        modelRuntime: runtime,
+        flowTtlMs: 1_000,
+        onCredentialsChanged: () => {
+          refreshCount += 1;
+        },
+      });
+
+      const started = manager.startFlow("openai-codex", "none");
+      expect(signal?.aborted).toBe(false);
+      // No manager/store call may trigger prune between start and this assertion.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(signal?.aborted).toBe(true);
+
+      // A provider that ignores abort can still finish; the expired flow must not revive.
+      commit.resolve();
+      await waitFor(() => refreshCount === 1);
+      expect(manager.getFlow(started.flowId)).toMatchObject({
+        status: "expired",
+        error: "Flow expired",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("prevents an abort-aware login from saving credentials after idle expiry", async () => {
+    vi.useFakeTimers();
+    try {
+      const providers = [makeProvider("openai-codex", "ChatGPT (Codex)")];
+      const commit = createCommitGate();
+      let signal: AbortSignal | undefined;
+      const runtime = new FakeModelRuntime(providers, {
+        "openai-codex": async (_type, interaction) => {
+          signal = interaction.signal;
+          await commit.promise;
+          if (interaction.signal?.aborted) throw new Error("Login aborted");
+          return oauthCredential();
+        },
+      });
+      const manager = new ProviderAuthManager({ modelRuntime: runtime, flowTtlMs: 1_000 });
+
+      const started = manager.startFlow("openai-codex", "none");
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(signal?.aborted).toBe(true);
+      commit.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(manager.getFlow(started.flowId).status).toBe("expired");
+      expect(
+        (await manager.getStatus()).find((provider) => provider.id === "openai-codex"),
+      ).toMatchObject({ authenticated: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("expires a stale flow on read without breaking later provider-auth calls", async () => {
     let now = 1_000_000;
     const providers = [makeProvider("openai-codex", "ChatGPT (Codex)")];

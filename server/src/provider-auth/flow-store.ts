@@ -59,6 +59,7 @@ export interface ProviderAuthFlowRecord {
   browserLaunch: "none" | "launching" | "opened";
   promptWaiter?: Deferred<string>;
   manualCodeWaiter?: Deferred<string>;
+  expiryTimer?: NodeJS.Timeout;
   snapshot: ProviderAuthFlowSnapshot;
 }
 
@@ -123,6 +124,10 @@ export class ProviderAuthFlowStore {
     };
 
     this.flows.set(flowId, record);
+    record.expiryTimer = setTimeout(() => {
+      this.settleTerminal(record, "expired", "Flow expired");
+    }, this.ttlMs);
+    record.expiryTimer.unref();
     return record;
   }
 
@@ -279,6 +284,8 @@ export class ProviderAuthFlowStore {
   ): void {
     if (isTerminalProviderAuthStatus(record.snapshot.status)) return;
 
+    clearTimeout(record.expiryTimer);
+    record.expiryTimer = undefined;
     record.snapshot.status = status;
     record.snapshot.error = error;
     record.snapshot.prompt = undefined;
