@@ -482,11 +482,9 @@ struct FileBrowserContentView: View {
     @ToolbarContentBuilder
     private func editingToolbar(session: WorkspaceFileEditSession) -> some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
-            Text(WorkspaceFileEditStatusPresentation.label(for: session.status))
-                .font(.footnote)
-                .foregroundStyle(.themeComment)
-                .accessibilityIdentifier("workspace-file-editor.status")
+            WorkspaceFileEditStatusIndicator(status: session.status)
         }
+        ToolbarSpacer(.fixed, placement: .topBarTrailing)
         ToolbarItem(placement: .topBarTrailing) {
             Button(isShowingEditPreview ? String(localized: "Source") : String(localized: "Preview")) {
                 isShowingEditPreview.toggle()

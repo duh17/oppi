@@ -1,7 +1,14 @@
 import SwiftUI
+import UIKit
 
-/// Short save-state label for the editor toolbar.
+/// Spoken save-state words and toolbar glyphs for the editor.
 enum WorkspaceFileEditStatusPresentation {
+    /// Shape-only mapping. Warning is the triangle, not a tint.
+    enum Indicator: Equatable, Sendable {
+        case symbol(String)
+        case progress
+    }
+
     static func label(for status: WorkspaceFileEditSession.Status) -> String {
         switch status {
         case .saved: String(localized: "Saved")
@@ -13,6 +20,16 @@ enum WorkspaceFileEditStatusPresentation {
         case .deleted: String(localized: "Deleted")
         case .tooLarge: String(localized: "Too Large")
         case .failed: String(localized: "Not Saved")
+        }
+    }
+
+    static func indicator(for status: WorkspaceFileEditSession.Status) -> Indicator {
+        switch status {
+        case .saved: .symbol("checkmark.circle")
+        case .pending: .symbol("pencil.circle")
+        case .saving, .verifying: .progress
+        case .offline: .symbol("wifi.slash")
+        case .conflict, .deleted, .tooLarge, .failed: .symbol("exclamationmark.triangle")
         }
     }
 
@@ -58,6 +75,115 @@ enum WorkspaceFileEditStatusPresentation {
         switch status {
         case .conflict, .deleted, .failed: true
         default: false
+        }
+    }
+}
+
+/// Passive toolbar glyph. VoiceOver still speaks `label(for:)`.
+struct WorkspaceFileEditStatusIndicator: View {
+    let status: WorkspaceFileEditSession.Status
+
+    var body: some View {
+        glyph
+            .frame(width: Self.slot, height: Self.slot, alignment: .center)
+    }
+
+    @ViewBuilder
+    private var glyph: some View {
+        let label = WorkspaceFileEditStatusPresentation.label(for: status)
+        switch WorkspaceFileEditStatusPresentation.indicator(for: status) {
+        case .progress:
+            ProgressView()
+                .progressViewStyle(.circular)
+                .controlSize(.small)
+                .labelsHidden()
+                .tint(.themeComment)
+                .accessibilityElement(children: .ignore)
+                .accessibilityIdentifier("workspace-file-editor.status")
+                .accessibilityLabel(label)
+        case .symbol(let name):
+            WorkspaceFileEditStatusSymbolImage(systemName: name, label: label)
+        }
+    }
+
+    /// Keeps Saving/Checking from resizing Preview and Done.
+    private static let slot: CGFloat = 22
+}
+
+/// Draws the locked SF Symbol as pixels. A live `Image(systemName:)` or
+/// `UIImageView` inside ToolbarItem keeps checkmark.circle's Select trait.
+private struct WorkspaceFileEditStatusSymbolImage: UIViewRepresentable {
+    let systemName: String
+    let label: String
+
+    func makeUIView(context: Context) -> WorkspaceFileEditStatusSymbolCanvas {
+        WorkspaceFileEditStatusSymbolCanvas()
+    }
+
+    func updateUIView(_ view: WorkspaceFileEditStatusSymbolCanvas, context: Context) {
+        view.systemName = systemName
+        view.accessibilityLabel = label
+    }
+}
+
+private final class WorkspaceFileEditStatusSymbolCanvas: UIView {
+    var systemName = "" {
+        didSet {
+            if oldValue != systemName { redrawSymbol() }
+        }
+    }
+
+    private var symbolImage: UIImage?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isOpaque = false
+        backgroundColor = .clear
+        isUserInteractionEnabled = false
+        isAccessibilityElement = true
+        accessibilityIdentifier = "workspace-file-editor.status"
+        accessibilityTraits = []
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(themeDidChange),
+            name: .oppiThemeDidChange,
+            object: nil
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override var intrinsicContentSize: CGSize { CGSize(width: 22, height: 22) }
+
+    override func draw(_ rect: CGRect) {
+        symbolImage?.draw(in: rect)
+    }
+
+    /// `Color.themeComment` is a snapshot. UIKit toolbar glyphs are not
+    /// recreated when the palette changes, so redraw from the live palette.
+    @objc private func themeDidChange() {
+        redrawSymbol()
+    }
+
+    private func redrawSymbol() {
+        symbolImage = Self.drawnSymbol(systemName)
+        setNeedsDisplay()
+    }
+
+    private static func drawnSymbol(_ name: String) -> UIImage? {
+        guard !name.isEmpty else { return nil }
+        let config = UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)
+        guard let symbol = UIImage(systemName: name, withConfiguration: config) else { return nil }
+        let tinted = symbol.withTintColor(UIColor(Color.themeComment), renderingMode: .alwaysOriginal)
+        let format = UIGraphicsImageRendererFormat.preferred()
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: tinted.size, format: format).image { _ in
+            tinted.draw(at: .zero)
         }
     }
 }

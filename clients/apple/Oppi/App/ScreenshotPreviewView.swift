@@ -59,6 +59,8 @@ struct ScreenshotPreviewView: View {
             ChatFileBrowserPanelPreview()
         case "file-browser-motion":
             FileBrowserMotionPreview()
+        case "file-editor-save-status":
+            FileEditorSaveStatusScreenshotPreview()
         case "review-file-motion":
             ReviewFileMotionPreview()
         case "extension-widget":
@@ -195,6 +197,32 @@ struct ScreenshotPreviewView: View {
     }
 }
 
+
+/// Isolated editor chrome: production save-state glyph, fixed spacer, Preview, Done.
+private struct FileEditorSaveStatusScreenshotPreview: View {
+    var body: some View {
+        NavigationStack {
+            Color.themeBg
+                .ignoresSafeArea()
+                .navigationTitle("AGENTS.md — workspace deltas and a long filename")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        WorkspaceFileEditStatusIndicator(status: .saved)
+                    }
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(String(localized: "Preview")) {}
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(String(localized: "Done")) {}
+                            .fontWeight(.semibold)
+                    }
+                }
+        }
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
 
 private struct AudioFilePlayerScreenshotPreview: View {
     @State private var audioPlayer = AudioPlayerService()

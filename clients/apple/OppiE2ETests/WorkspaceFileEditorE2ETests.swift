@@ -232,7 +232,7 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
     }
 
     private func waitForStatus(_ label: String, timeout: TimeInterval) -> Bool {
-        let status = app.staticTexts["workspace-file-editor.status"]
+        let status = app.descendants(matching: .any)["workspace-file-editor.status"]
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if status.exists, status.label == label { return true }

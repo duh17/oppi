@@ -730,6 +730,37 @@ struct WorkspaceFileEditorSurfaceTests {
         #expect(textView.undoManager?.canUndo == true)
     }
 
+    @Test func saveStateIndicatorMapsEveryStatusToLockedGlyphAndSpokenWord() {
+        let statuses: [WorkspaceFileEditSession.Status] = [
+            .saved, .pending, .saving, .offline, .verifying,
+            .conflict, .deleted, .tooLarge, .failed("disk full"),
+        ]
+        for status in statuses {
+            let (label, indicator) = Self.lockedSaveState(status)
+            #expect(WorkspaceFileEditStatusPresentation.label(for: status) == label)
+            #expect(WorkspaceFileEditStatusPresentation.indicator(for: status) == indicator)
+        }
+        #expect(WorkspaceFileEditStatusPresentation.label(for: .pending) != "Saved")
+        #expect(WorkspaceFileEditStatusPresentation.label(for: .verifying) != "Saved")
+    }
+
+    /// Astra lock: spoken words stay; the glyph is shape-only.
+    private static func lockedSaveState(
+        _ status: WorkspaceFileEditSession.Status
+    ) -> (String, WorkspaceFileEditStatusPresentation.Indicator) {
+        switch status {
+        case .saved: ("Saved", .symbol("checkmark.circle"))
+        case .pending: ("Edited", .symbol("pencil.circle"))
+        case .saving: ("Saving…", .progress)
+        case .offline: ("Offline", .symbol("wifi.slash"))
+        case .verifying: ("Checking…", .progress)
+        case .conflict: ("Conflict", .symbol("exclamationmark.triangle"))
+        case .deleted: ("Deleted", .symbol("exclamationmark.triangle"))
+        case .tooLarge: ("Too Large", .symbol("exclamationmark.triangle"))
+        case .failed: ("Not Saved", .symbol("exclamationmark.triangle"))
+        }
+    }
+
     @Test func finishEditingDetachesAndFlushesWithoutWaiting() async {
         let harness = Harness()
         let (controller, window) = makeController(harness)
