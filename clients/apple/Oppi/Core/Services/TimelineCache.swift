@@ -698,10 +698,13 @@ actor TimelineCache {
         Self.applyFileProtection(fileManager: fileManager, to: url)
     }
 
+    /// Class B, like the app-wide default: session content is unreadable while
+    /// the device is locked, but live events received in the background after
+    /// lock can still be written as new files.
     private static func applyFileProtection(fileManager: FileManager, to url: URL) {
         #if os(iOS)
         try? fileManager.setAttributes(
-            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            [.protectionKey: FileProtectionType.completeUnlessOpen],
             ofItemAtPath: url.path
         )
         #endif

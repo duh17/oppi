@@ -94,9 +94,10 @@ private func configureComposerDraftStorageURL(_ url: URL) throws {
     values.isExcludedFromBackup = true
     try mutableURL.setResourceValues(values)
 
+    // Class B: drafts cannot be read while the device is locked.
     #if os(iOS)
     try FileManager.default.setAttributes(
-        [FileAttributeKey.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+        [FileAttributeKey.protectionKey: FileProtectionType.completeUnlessOpen],
         ofItemAtPath: url.path
     )
     #endif

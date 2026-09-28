@@ -49,7 +49,11 @@ final class ShareViewController: UIViewController {
         let destinationDirectory = ShareQuickSessionPayload.payloadDirectoryURL(id: payloadId)
         do {
             if let destinationDirectory {
-                try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(
+                    at: destinationDirectory,
+                    withIntermediateDirectories: true,
+                    attributes: [.protectionKey: FileProtectionType.completeUnlessOpen]
+                )
             }
         } catch {
             finish(cancelled: true)
@@ -121,6 +125,11 @@ final class ShareViewController: UIViewController {
                         try FileManager.default.removeItem(at: destinationURL)
                     }
                     try FileManager.default.copyItem(at: temporaryURL, to: destinationURL)
+                    // A copy can keep the provider file's class; set the app's class explicitly.
+                    try FileManager.default.setAttributes(
+                        [.protectionKey: FileProtectionType.completeUnlessOpen],
+                        ofItemAtPath: destinationURL.path
+                    )
                     let mimeType = UTType(typeIdentifier)?.preferredMIMEType ?? "application/octet-stream"
                     let relativePath = "\(payloadId)/\(uniqueName)"
                     let file = ShareQuickSessionPayload.SharedFile(

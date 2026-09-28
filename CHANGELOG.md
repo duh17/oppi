@@ -59,6 +59,7 @@ Example:
 - **Server:** Bundled Pi runtime moves to `0.87.1`.
 - **Server:** The Node.js requirement is 22.19.0 or newer, matching Pi. Sandbox workspaces still need Node.js 23.6+.
 - **Mirror:** Mirrored Pi `turn_end` frames omit duplicate message bodies and tool results.
+- **Client:** Everything the iOS app and Share extension store on disk now uses iOS Data Protection class *Complete unless open*: timeline cache, message drafts, file-browser cache, HTTP cache, and shared-file inbox. That data cannot be read while the device is locked; before, it was readable from the first unlock after a reboot. Background work can still write new files after lock. The first launch after updating upgrades files that are already stored.
 
 ### Fixed
 

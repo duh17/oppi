@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: 2026-09-09_
+_Last updated: 2026-09-27_
 
 This policy describes the current Oppi Apple client and the Oppi server that you run yourself. Oppi is a native client for a paired, self-hosted Oppi server. That server runs Pi through its SDK; Pi does not ship a server mode. Oppi does not provide a hosted Oppi account service, a central session store, or an Oppi-operated external analytics service. Pi may collect its own install or update telemetry outside this policy; see Pi's documentation for that behavior.
 
@@ -52,7 +52,11 @@ The app keeps a small server-ID index in shared and standard `UserDefaults` so t
 
 Settings such as appearance, text size, voice mode, auto-title mode, haptics, diagnostics consent, quick-session choices, and the last keyboard language are device-local preferences. A bounded diagnostic context can also keep coarse values such as a session, workspace, or server identifier, screen, lifecycle state, and resource measurements for a later diagnostic payload.
 
-The app caches server responses under `Library/Caches/`. The timeline cache contains plaintext JSON copies of session traces, session lists, workspaces, Skills, and Skill details. It is sandbox-private, excluded from backup, protected by iOS file protection, and intentionally disposable. The current timeline-cache defaults are a 256 MB disk budget and a 30-day trace age; iOS can evict cache data sooner. The file-browser index is a separate cache that iOS can also evict.
+The app caches server responses under `Library/Caches/`. The timeline cache contains JSON copies of session traces, session lists, workspaces, Skills, and Skill details. It is sandbox-private, excluded from backup, and intentionally disposable. The current timeline-cache defaults are a 256 MB disk budget and a 30-day trace age; iOS can evict cache data sooner. The file-browser index is a separate cache that iOS can also evict.
+
+### Encryption at rest
+
+Files the app and the Share extension store use iOS Data Protection class *Complete unless open* (`NSFileProtectionCompleteUnlessOpen`). This covers caches, message and file-edit drafts, the HTTP cache, and the shared-file inbox. iOS encrypts each file with its own key. The key for this class is unavailable while the device is locked, so these files cannot be read until the device is unlocked again. The app can still write new files in the background after the device locks. The first launch after updating from an older build upgrades files that build left at the iOS default, which stays readable from the first unlock until reboot. Preferences stay in iOS `UserDefaults`, which holds settings and identifiers, not session content.
 
 **Settings → Storage → Clear Local Cache** clears the timeline cache. It does not delete the paired server, server workspaces, Pi session files, provider data, or backups. Removing the app is a device-level control and does not delete server-side data.
 

@@ -615,6 +615,7 @@ struct OppiApp: App {
         DeviceResourceSampler.shared.configure()
         configureWatchdogHooks()
         mainThreadLagWatchdog.start()
+        LocalDataProtection.upgradeStoredFilesIfNeeded()
         await composerDraftStore.load()
         coordinator.startLANDiscovery()
         coordinator.startNetworkPathMonitor()

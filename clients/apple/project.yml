@@ -126,6 +126,11 @@ targets:
       properties:
         com.apple.security.application-groups:
           - $(APP_GROUP_IDENTIFIER)
+        # Data Protection Class B for every file the app creates: unreadable
+        # while the device is locked, yet background work (audio, agent
+        # keep-alive) can still write new files after lock. Stores that set a
+        # class explicitly use the same one. See LocalDataProtection.swift.
+        com.apple.developer.default-data-protection: NSFileProtectionCompleteUnlessOpen
     info:
       path: Oppi/Resources/Info.plist
       properties:
@@ -399,6 +404,8 @@ targets:
       properties:
         com.apple.security.application-groups:
           - $(APP_GROUP_IDENTIFIER)
+        # Same at-rest class as the app; shared files land in the app-group inbox.
+        com.apple.developer.default-data-protection: NSFileProtectionCompleteUnlessOpen
     info:
       path: OppiShareExtension/Info.plist
       properties:
