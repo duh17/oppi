@@ -20,36 +20,8 @@ Oppi brings [Pi](https://github.com/badlogic/pi-mono) coding sessions to iPhone,
 - Keep unrelated changes from other sessions. If overlapping edits cannot be separated safely, stop and ask.
 - Commit and push only with authority. Stage only this session's paths or hunks unless asked for more; never `git add .` or `git add -A`.
 
-### TypeScript
-
-- Use `any` only when no reasonable typed alternative exists.
-- Check installed type definitions before guessing external API shapes.
-- Validate external input at the system boundary. Log failures clearly and return predictable errors.
-
-### Swift
-
-- Swift 6 strict concurrency is on. All `@Observable` classes must use `@MainActor`.
-- Prefer `if let x` over `if let x = x`. Handle optionals safely in production code; never force-unwrap them.
-
 ## Build and Test Rules
 
 - `Oppi.xcodeproj` is generated. Edit `project.yml`, put plist keys under `info.properties`, and run `xcodegen generate`.
 - Use `dev/testing/README.md` for commands, schemes, and Swift Testing filters. Run the smallest documented check that proves the change; record video only for UI appearance, animation, or interaction.
 - Simulator builds use `clients/apple/scripts/sim-pool.sh`; bare `xcodebuild` needs a unique `-derivedDataPath`. Preserve the runner's summary and log paths. On failure or a stall, inspect the log and active build processes before retrying.
-
-## Cursor Cloud specific instructions
-
-Cloud Agent VM is Linux: only `server/` runs here; Apple clients need macOS and Xcode. Server requires Node 22.19+ (`engines.node >=22.19.0`); sandbox workspaces need Node 23.6+. `node`, `npm`, `npx`, and `bun` already resolve correctly in every shell (Node 24 shadows the platform Node 22 shim), so plain `node`/`npm` and built `oppi` CLI need no source step.
-
-Two injected settings break the suite unless cleared per invocation:
-
-- `NO_COLOR=1` / `TERM=dumb` disable ANSI, so CLI tests that assert on color escapes fail.
-- Managed git `commit.gpgsign=true` with an SSH signer can stall 20+ seconds, so git-heavy tests (worktrees, workspace git diff) miss the 10s timeout.
-
-Run checks and tests like this (leaves the managed git config untouched for your signed commits):
-
-```bash
-cd server
-env -u NO_COLOR -u FORCE_COLOR GIT_CONFIG_GLOBAL=/dev/null npm run check
-env -u NO_COLOR -u FORCE_COLOR GIT_CONFIG_GLOBAL=/dev/null npm test
-```
