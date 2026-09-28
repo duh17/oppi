@@ -600,23 +600,23 @@ struct HostSwitcherMenu: View {
 
             Section("Connection") {
                 let state = badgeState(for: current)
-                Label(
-                    ServerConnectionLanePresentation.title(
-                        server: current,
-                        connection: coordinator.connection(for: current.id),
-                        state: state,
-                        isPreparing: coordinator.preparingServerIds.contains(current.id)
-                    ),
-                    systemImage: state.systemImage
+                let title = ServerConnectionLanePresentation.title(
+                    server: current,
+                    connection: coordinator.connection(for: current.id),
+                    state: state,
+                    isPreparing: coordinator.preparingServerIds.contains(current.id)
                 )
-
-                if state != .connected {
-                    Button {
+                // Menu Labels render disabled. A Button keeps the healthy
+                // checkmark on the same visual footing as the selected server.
+                Button {
+                    if state != .connected {
                         Task { await coordinator.retryServerConnection(current.id) }
-                    } label: {
-                        Label("Retry Connection", systemImage: "arrow.clockwise")
                     }
+                } label: {
+                    Label(title, systemImage: state.systemImage)
                 }
+                .accessibilityLabel("Connection")
+                .accessibilityValue(title)
             }
 
             Divider()
