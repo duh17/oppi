@@ -162,6 +162,11 @@ final class ChatComposerDraftController {
         }
     }
 
+    isolated deinit {
+        guard !isSubmissionInFlight else { return }
+        PendingAttachment.releaseOwnedFiles(pendingAttachments)
+    }
+
     func detachForSessionChange() {
         mediaImportGate.invalidate()
         store = nil

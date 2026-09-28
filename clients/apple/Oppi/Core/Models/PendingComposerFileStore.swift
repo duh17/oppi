@@ -60,9 +60,10 @@ enum PendingComposerFileStore: Sendable {
         values.isExcludedFromBackup = true
         try mutableURL.setResourceValues(values)
 
+        // Class B, matching LocalDataProtection and docs/privacy.md.
         #if os(iOS)
         try fileManager.setAttributes(
-            [FileAttributeKey.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            [FileAttributeKey.protectionKey: LocalDataProtection.fileProtection],
             ofItemAtPath: url.path
         )
         #endif

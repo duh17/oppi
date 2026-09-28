@@ -207,6 +207,48 @@ struct ComposerDraftStoreTests {
         #expect(try Data(contentsOf: reloadedURL) == videoBytes)
     }
 
+    @Test func fileBackedVideoSetDraftKeepsInMemoryRecordWithoutWaitingForFlush() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let key = try fixture.key()
+        let videoURL = FileManager.default.temporaryDirectory.appending(
+            path: "\(UUID().uuidString).mp4",
+            directoryHint: .notDirectory
+        )
+        let videoBytes = Data(repeating: 0x5B, count: 4096)
+        try videoBytes.write(to: videoURL)
+        defer { try? FileManager.default.removeItem(at: videoURL) }
+
+        let payload = ComposerDraftPayload(
+            text: "watch this",
+            repoPointers: [],
+            attachments: [
+                .init(
+                    id: "video-chip",
+                    displayName: "clip.mp4",
+                    mimeType: "video/mp4",
+                    source: .localFile,
+                    relativePath: nil,
+                    sizeBytes: videoBytes.count
+                ),
+            ]
+        )
+        let store = fixture.makeStore()
+        await store.load()
+        let record = try #require(store.setDraft(
+            payload,
+            attachmentFiles: ["video-chip": videoURL],
+            for: key
+        ))
+
+        #expect(record.payload.attachments.first?.displayName == "clip.mp4")
+        #expect(store.record(for: key)?.payload.attachments.map(\.id) == ["video-chip"])
+
+        await store.flush()
+        let sidecarURL = try #require(store.attachmentFileURL(for: key, attachmentID: "video-chip"))
+        #expect(try Data(contentsOf: sidecarURL) == videoBytes)
+    }
+
     @Test func ephemeralFallbackDoesNotCreateSidecars() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }

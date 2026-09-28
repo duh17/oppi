@@ -166,6 +166,31 @@ private func copyProtectedComposerDraftFile(from sourceURL: URL, to destinationU
     }
 }
 
+private func composerDraftSidecarWriteNeedsFullFileCopy(
+    oldPayload: ComposerDraftPayload?,
+    newPayload: ComposerDraftPayload,
+    files: [String: URL],
+    fileURL: URL
+) -> Bool {
+    let fileManager = FileManager.default
+    for attachment in newPayload.attachments where attachment.source == .image || attachment.source == .localFile {
+        guard let sourceURL = files[attachment.id] else { continue }
+        guard let relativePath = attachment.relativePath,
+              let url = composerDraftSidecarURL(fileURL: fileURL, relativePath: relativePath) else {
+            continue
+        }
+        if oldPayload?.attachments.first(where: { $0.id == attachment.id })?.relativePath == relativePath,
+           fileManager.fileExists(atPath: url.path) {
+            continue
+        }
+        if sourceURL.standardizedFileURL == url.standardizedFileURL {
+            continue
+        }
+        return true
+    }
+    return false
+}
+
 private func writeAttachmentSidecars(
     oldPayload: ComposerDraftPayload?,
     newPayload: ComposerDraftPayload,
@@ -504,9 +529,53 @@ final class ComposerDraftStore {
         }
         let retainedIDs = Set(normalizedPayload.attachments.map(\.id))
         blobs = blobs.filter { retainedIDs.contains($0.key) }
+
+        let revision = (latestRevisionByKey[key] ?? records[key]?.revision ?? 0) &+ 1
+        let record = ComposerDraftRecord(
+            key: key,
+            payload: normalizedPayload,
+            revision: revision,
+            updatedAt: Date()
+        )
+        let persistenceFileURL = persistenceFileURL
+        let needsFullFileCopy = composerDraftSidecarWriteNeedsFullFileCopy(
+            oldPayload: oldPayload,
+            newPayload: normalizedPayload,
+            files: attachmentFiles,
+            fileURL: persistenceFileURL
+        )
+
+        if needsFullFileCopy {
+            // Keep the in-memory draft (and composer chip) without blocking the
+            // main actor on a full-clip copy. JSON save waits until the sidecar exists.
+            latestRevisionByKey[key] = revision
+            records[key] = record
+            attachmentDataByKey[key] = blobs
+            composerDraftSidecarIOQueue.async { [weak self] in
+                do {
+                    try writeAttachmentSidecars(
+                        oldPayload: oldPayload,
+                        newPayload: normalizedPayload,
+                        blobs: blobs,
+                        files: attachmentFiles,
+                        fileURL: persistenceFileURL
+                    )
+                    Task { @MainActor in
+                        self?.scheduleSave()
+                    }
+                } catch {
+                    Task { @MainActor in
+                        self?.lastError = "Failed to save local message draft attachments."
+                        composerDraftLogger.error(
+                            "Draft attachment write failed: \(error.localizedDescription, privacy: .public)"
+                        )
+                    }
+                }
+            }
+            return record
+        }
+
         do {
-            // Keep the synchronous revision/rollback contract while moving file I/O
-            // off the main actor. Debounced JSON persistence remains actor-owned.
             try composerDraftSidecarIOQueue.sync {
                 try writeAttachmentSidecars(
                     oldPayload: oldPayload,
@@ -522,13 +591,6 @@ final class ComposerDraftStore {
             return nil
         }
 
-        let revision = (latestRevisionByKey[key] ?? records[key]?.revision ?? 0) &+ 1
-        let record = ComposerDraftRecord(
-            key: key,
-            payload: normalizedPayload,
-            revision: revision,
-            updatedAt: Date()
-        )
         latestRevisionByKey[key] = revision
         records[key] = record
         attachmentDataByKey[key] = blobs
@@ -654,6 +716,11 @@ final class ComposerDraftStore {
     func flush() async {
         saveTask?.cancel()
         saveTask = nil
+        await withCheckedContinuation { continuation in
+            composerDraftSidecarIOQueue.async {
+                continuation.resume()
+            }
+        }
         await persistCurrentRecords()
     }
 

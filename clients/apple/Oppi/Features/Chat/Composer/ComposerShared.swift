@@ -277,6 +277,21 @@ enum ComposerShared {
         return raw.map(PaperMarkupCanvasSession.copiedImage(from:))
     }
 
+    static let photoLibraryImportRefusedMessage = "Photos and videos can only be attached to a message."
+
+    /// Append imported attachments. Returns any items the binding dropped so the
+    /// caller can surface an error after owned files are deleted.
+    static func commitImportedAttachments(
+        _ attachments: [PendingAttachment],
+        into pendingAttachments: Binding<[PendingAttachment]>
+    ) -> [PendingAttachment] {
+        pendingAttachments.wrappedValue.append(contentsOf: attachments)
+        let acceptedIDs = Set(pendingAttachments.wrappedValue.map(\.id))
+        let rejected = attachments.filter { !acceptedIDs.contains($0.id) }
+        PendingAttachment.releaseOwnedFiles(rejected)
+        return rejected
+    }
+
     static func importPhotoLibraryProviders(
         _ providers: [NSItemProvider],
         into pendingAttachments: Binding<[PendingAttachment]>,
@@ -289,8 +304,10 @@ enum ComposerShared {
                 PendingAttachment.releaseOwnedFiles(result.attachments)
                 return
             }
-            pendingAttachments.wrappedValue.append(contentsOf: result.attachments)
-            if let message = result.failureMessage {
+            let rejected = commitImportedAttachments(result.attachments, into: pendingAttachments)
+            if !rejected.isEmpty {
+                onFailure(photoLibraryImportRefusedMessage)
+            } else if let message = result.failureMessage {
                 onFailure(message)
             }
         }

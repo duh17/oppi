@@ -313,6 +313,21 @@ struct ChatView: View {
         return .message
     }
 
+    /// Apply a composer attachment-bar update. Message mode stores it; a refused
+    /// non-message update must drop any owned files from the rejected array.
+    @discardableResult
+    static func applyPendingAttachments(
+        _ newAttachments: [PendingAttachment],
+        draftController: ChatComposerDraftController,
+        current: [PendingAttachment]
+    ) -> [PendingAttachment]? {
+        guard draftController.setPendingAttachments(newAttachments) else {
+            PendingAttachment.releaseOwnedFiles(in: newAttachments, notIn: current)
+            return nil
+        }
+        return newAttachments
+    }
+
     /// Shared by the viewer destination and composer callback.
     /// Accept only if the message-mode draft actually stored the attachment.
     @discardableResult
@@ -384,8 +399,12 @@ struct ChatView: View {
         Binding(
             get: { pendingAttachments },
             set: { newAttachments in
-                guard composerDraftController.setPendingAttachments(newAttachments) else { return }
-                pendingAttachments = newAttachments
+                guard let accepted = Self.applyPendingAttachments(
+                    newAttachments,
+                    draftController: composerDraftController,
+                    current: pendingAttachments
+                ) else { return }
+                pendingAttachments = accepted
             }
         )
     }

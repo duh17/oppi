@@ -142,6 +142,64 @@ struct PhotoLibraryMediaImporterTests {
         #expect(!FileManager.default.fileExists(atPath: ownedURL.path))
     }
 
+    @Test func ownedComposerFilesUseCompleteUnlessOpenProtection() throws {
+        let source = try makeVideoFile()
+        defer { try? FileManager.default.removeItem(at: source) }
+        let owned = try PendingComposerFileStore.copyFile(from: source, displayName: "clip.mp4")
+        defer { PendingComposerFileStore.remove(owned) }
+
+        #expect(try owned.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
+        let directory = try PendingComposerFileStore.directoryURL()
+        #expect(try directory.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
+
+#if !targetEnvironment(simulator)
+        // The simulator does not report data-protection classes; devices do.
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: owned.path)
+        #expect(fileAttributes[.protectionKey] as? FileProtectionType == .completeUnlessOpen)
+        let directoryAttributes = try FileManager.default.attributesOfItem(atPath: directory.path)
+        #expect(directoryAttributes[.protectionKey] as? FileProtectionType == .completeUnlessOpen)
+#endif
+    }
+
+    @Test func refusedComposerImportDeletesOwnedVideoAndSurfacesError() throws {
+        let source = try makeVideoFile()
+        defer { try? FileManager.default.removeItem(at: source) }
+        let owned = try PendingComposerFileStore.copyFile(from: source, displayName: "clip.mp4")
+        let attachment = try PhotoLibraryMediaImporter.makePendingAttachment(
+            fromCopiedFile: owned,
+            kind: .video,
+            displayName: "clip.mp4",
+            mimeType: "video/mp4"
+        )
+        let ownedURL = try #require(attachment.localFileURL)
+        let controller = ChatComposerDraftController()
+        controller.setMode(.ask)
+        var pending: [PendingAttachment] = []
+        var importError: String?
+        let binding = Binding(
+            get: { pending },
+            set: { newValue in
+                guard let accepted = ChatView.applyPendingAttachments(
+                    newValue,
+                    draftController: controller,
+                    current: pending
+                ) else { return }
+                pending = accepted
+            }
+        )
+
+        let rejected = ComposerShared.commitImportedAttachments([attachment], into: binding)
+        if !rejected.isEmpty {
+            importError = ComposerShared.photoLibraryImportRefusedMessage
+        }
+
+        #expect(pending.isEmpty)
+        #expect(controller.pendingAttachments.isEmpty)
+        #expect(rejected.map(\.id) == [attachment.id])
+        #expect(!FileManager.default.fileExists(atPath: ownedURL.path))
+        #expect(importError == ComposerShared.photoLibraryImportRefusedMessage)
+    }
+
     @Test func invalidImageSurfacesAnImportFailure() throws {
         let junk = FileManager.default.temporaryDirectory.appending(
             path: "\(UUID().uuidString).png",
