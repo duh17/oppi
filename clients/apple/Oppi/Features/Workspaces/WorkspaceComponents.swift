@@ -272,10 +272,16 @@ enum ServerConnectionLanePresentation {
         state: ServerBadgeConnectionState,
         isPreparing: Bool
     ) -> String {
-        if isPreparing { return "Connecting over HTTPS/WSS" }
+        if isPreparing {
+            return ServerTLSTrustPolicy.isTailscaleHostname(server.host)
+                ? "Connecting over Tailscale"
+                : "Connecting over HTTPS/WSS"
+        }
 
-        guard let connection, let credentials = connection.credentials else {
-            return "HTTPS/WSS server unavailable"
+        guard let connection, connection.credentials != nil else {
+            return ServerTLSTrustPolicy.isTailscaleHostname(server.host)
+                ? "Tailscale unavailable"
+                : "HTTPS/WSS server unavailable"
         }
 
         // Mid Wi‑Fi→cell demotion keeps a stale transportPath (.lan) while
@@ -293,7 +299,7 @@ enum ServerConnectionLanePresentation {
             }
         }
 
-        let lane = connection.transportPath == .lan ? "local network HTTPS" : "paired HTTPS"
+        let lane = laneDescription(server: server, connection: connection)
         return switch state {
         case .connected: "Connected via \(lane)"
         case .connecting: "Connecting via \(lane)"
@@ -301,6 +307,19 @@ enum ServerConnectionLanePresentation {
         case .disconnected: "\(lane) unavailable"
         case .syncFailed: "Update failed via \(lane)"
         }
+    }
+
+    /// User-facing path. `in-app Tailscale` only when the embedded SOCKS proxy is
+    /// published; MagicDNS without it is still Tailscale (system VPN or resolver).
+    private static func laneDescription(server: PairedServer, connection: ServerConnection) -> String {
+        if connection.transportPath == .lan {
+            return "local network"
+        }
+        let host = connection.credentials?.host ?? server.host
+        guard ServerTLSTrustPolicy.isTailscaleHostname(host) else {
+            return "paired HTTPS"
+        }
+        return TailnetTransportRoute.proxy != nil ? "in-app Tailscale" : "Tailscale"
     }
 }
 

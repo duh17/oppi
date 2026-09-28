@@ -356,7 +356,9 @@ struct ServerBadgeConnectionStateTests {
             hasCachedCatalog: true
         )
 
-        #expect(ServerBadgeConnectionState(presentation) == .connected)
+        let state = ServerBadgeConnectionState(presentation)
+        #expect(state == .connected)
+        #expect(state.systemImage == "checkmark.circle.fill")
     }
 
     @Test func syncingPresentationMapsToConnectingBadge() {
@@ -453,44 +455,82 @@ struct ServerBadgeConnectionStateTests {
         #expect(ServerBadgeConnectionState(presentation, hasSyncFailure: false) == .connected)
     }
 
-    @Test func pairedHTTPSStatusUsesAuthoritativeTransportScheme() throws {
-        let credentials = ServerCredentials(
-            host: "paired.test",
-            port: 7749,
-            token: "dt_paired_https_badge",
-            name: "Paired HTTPS",
-            scheme: .https,
-            serverFingerprint: "sha256:PAIREDHTTPSBADGE"
-        )
-        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
-        let connection = ServerConnection()
-        #expect(connection.configure(credentials: credentials))
-
-        #expect(ServerConnectionLanePresentation.title(
-            server: server,
-            connection: connection,
-            state: .connected,
-            isPreparing: false
-        ) == "Connected via paired HTTPS")
+    @Test func preparingAndUnavailableStatusNamesPairedHostLane() throws {
+        let cases = [
+            ("studio.tailnet.ts.net", "Connecting over Tailscale", "Tailscale unavailable"),
+            ("paired.test", "Connecting over HTTPS/WSS", "HTTPS/WSS server unavailable")
+        ]
+        for (host, preparingTitle, unavailableTitle) in cases {
+            let server = try #require(PairedServer(from: laneCredentials(host: host), sortOrder: 0))
+            // A not-yet-configured connection must read the saved host just like nil.
+            let connections: [ServerConnection?] = [nil, ServerConnection()]
+            for connection in connections {
+                #expect(ServerConnectionLanePresentation.title(
+                    server: server,
+                    connection: connection,
+                    state: .connecting,
+                    isPreparing: true
+                ) == preparingTitle)
+                #expect(ServerConnectionLanePresentation.title(
+                    server: server,
+                    connection: connection,
+                    state: .disconnected,
+                    isPreparing: false
+                ) == unavailableTitle)
+            }
+        }
     }
 
-    @Test func preparingPairedServerShowsConnecting() throws {
-        let credentials = ServerCredentials(
-            host: "studio.tailnet.ts.net",
+    @Test func connectedStatusUsesActiveLaneBeforePairedHostAndProxy() throws {
+        let originalProxy = TailnetTransportRoute.proxy
+        let originalGeneration = TailnetTransportRoute.generation
+        defer { TailnetTransportRoute.publish(originalProxy, generation: originalGeneration) }
+
+        // Synchronous MainActor scope keeps the temporary global route from
+        // interleaving with other connection tests or the node controller.
+        let proxy = TailnetSOCKSProxy(host: "127.0.0.1", port: 1080, credential: "test")
+        let cases = [
+            ("studio.tailnet.ts.net", false, false, "Connected via Tailscale"),
+            ("studio.tailnet.ts.net", true, false, "Connected via in-app Tailscale"),
+            ("studio.tailnet.ts.net", false, true, "Connected via local network"),
+            ("studio.tailnet.ts.net", true, true, "Connected via local network"),
+            ("paired.test", false, false, "Connected via paired HTTPS"),
+            ("paired.test", true, false, "Connected via paired HTTPS")
+        ]
+        for (host, hasProxy, usesLAN, expectedTitle) in cases {
+            TailnetTransportRoute.publish(hasProxy ? proxy : nil)
+            let credentials = laneCredentials(host: host)
+            let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+            let connection = ServerConnection()
+            try #require(connection.configure(credentials: credentials))
+            if usesLAN {
+                connection._adoptVerifiedLANEndpointForTesting(LANDiscoveredEndpoint(
+                    host: "192.168.1.42",
+                    port: 7749,
+                    serverFingerprintPrefix: "LANESERVER",
+                    tlsCertFingerprintPrefix: "LANETLS"
+                ))
+                try #require(connection.transportPath == .lan)
+            }
+            #expect(ServerConnectionLanePresentation.title(
+                server: server,
+                connection: connection,
+                state: .connected,
+                isPreparing: false
+            ) == expectedTitle)
+        }
+    }
+
+    private func laneCredentials(host: String) -> ServerCredentials {
+        ServerCredentials(
+            host: host,
             port: 7749,
-            token: "dt_badge_lane",
+            token: "dt_connection_lane",
             name: "Studio",
             scheme: .https,
-            serverFingerprint: "sha256:BADGELANESERVER"
+            serverFingerprint: "sha256:LANESERVER",
+            tlsCertFingerprint: "sha256:LANETLS"
         )
-        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
-
-        #expect(ServerConnectionLanePresentation.title(
-            server: server,
-            connection: nil,
-            state: .connecting,
-            isPreparing: true
-        ) == "Connecting over HTTPS/WSS")
     }
 }
 
