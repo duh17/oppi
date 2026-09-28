@@ -314,6 +314,9 @@ final class ChatComposerDraftController {
     @discardableResult
     func completeSubmission(_ snapshot: SubmissionSnapshot) -> Bool {
         let ownsActiveSubmission = activeSubmissionID == snapshot.id
+        let submittedAttachmentIDs = Set(
+            snapshot.payload.attachments.map(\.id) + snapshot.pendingAttachments.map(\.id)
+        )
         let didClearSubmittedDraft: Bool
 
         if ownsActiveSubmission {
@@ -327,10 +330,12 @@ final class ChatComposerDraftController {
                     if mode == .message {
                         applyVisiblePayload(.empty)
                     }
-                    didClearSubmittedDraft = true
                 } else {
-                    didClearSubmittedDraft = false
+                    pendingAttachments.removeAll { submittedAttachmentIDs.contains($0.id) }
+                    messagePayload.attachments.removeAll { submittedAttachmentIDs.contains($0.id) }
                 }
+                persistMessagePayload()
+                didClearSubmittedDraft = true
             } else {
                 didClearSubmittedDraft = true
             }
@@ -338,14 +343,47 @@ final class ChatComposerDraftController {
             didClearSubmittedDraft = false
         }
 
-        // A successful acknowledgement must tombstone the scope captured at
-        // dispatch even if navigation detached this controller in the meantime.
+        // A successful acknowledgement must drop the in-flight attachments even
+        // if newer typing changed the payload or revision, and even if
+        // navigation detached this controller in the meantime.
         if !snapshot.wasEphemeral,
            let snapshotKey = snapshot.key,
-           let revision = snapshot.revision {
-            snapshot.store?.clearDraft(for: snapshotKey, ifRevision: revision)
+           let store = snapshot.store {
+            if snapshot.draftClearance == .afterSuccess {
+                Self.removeSubmittedAttachments(
+                    submittedAttachmentIDs,
+                    matching: snapshot,
+                    from: store,
+                    key: snapshotKey
+                )
+            } else if let revision = snapshot.revision {
+                store.clearDraft(for: snapshotKey, ifRevision: revision)
+            }
         }
         return didClearSubmittedDraft
+    }
+
+    private static func removeSubmittedAttachments(
+        _ submittedAttachmentIDs: Set<String>,
+        matching snapshot: SubmissionSnapshot,
+        from store: ComposerDraftStore,
+        key: ComposerDraftKey
+    ) {
+        guard let current = store.record(for: key) else { return }
+        if current.payload == snapshot.payload || current.revision == snapshot.revision {
+            store.clearDraft(for: key)
+            return
+        }
+        guard current.payload.attachments.contains(where: { submittedAttachmentIDs.contains($0.id) }) else {
+            return
+        }
+        var remaining = current.payload
+        remaining.attachments.removeAll { submittedAttachmentIDs.contains($0.id) }
+        if remaining.isEmpty {
+            store.clearDraft(for: key)
+        } else {
+            _ = store.setDraft(remaining, for: key)
+        }
     }
 
     func failSubmission(_ snapshot: SubmissionSnapshot) {

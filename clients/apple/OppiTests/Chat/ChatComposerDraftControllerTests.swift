@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import Oppi
 
@@ -741,6 +742,164 @@ struct ChatComposerDraftControllerTests {
         #expect(retryURL.standardizedFileURL == draftURL.standardizedFileURL)
         #expect(try Data(contentsOf: retryURL) == videoBytes)
         #expect(store.record(for: key)?.payload.attachments.map(\.id) == [video.id])
+    }
+
+    @Test func filesPickedVideoAdmitsIntoCanonicalDraftAndKeepsTextEdits() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let source = FileManager.default.temporaryDirectory.appending(
+            path: "\(UUID().uuidString).mp4",
+            directoryHint: .notDirectory
+        )
+        let videoBytes = Data(repeating: 0x71, count: 512)
+        try videoBytes.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        var pending: [PendingAttachment] = []
+        var importError: String?
+        let binding = Binding(get: { pending }, set: { pending = $0 })
+        await ComposerShared.importSelectedFiles(
+            .success([source]),
+            into: binding,
+            store: store,
+            shouldAccept: { true },
+            onFailure: { importError = $0 }
+        )
+
+        #expect(importError == nil)
+        let imported = try #require(pending.first)
+        let draftURL = try #require(imported.localFileURL)
+        #expect(imported.localFileData == nil)
+        #expect(imported.composerDraftData == nil)
+        #expect(store.isImportedAttachmentFile(draftURL))
+        #expect(try Data(contentsOf: draftURL) == videoBytes)
+        #expect(try Data(contentsOf: source) == videoBytes)
+
+        let controller = ChatComposerDraftController()
+        controller.attach(store: store, key: key, isEphemeral: false)
+        #expect(controller.setPendingAttachments([imported]))
+        controller.text = "caption after files pick"
+        await store.flush()
+
+        #expect(store.record(for: key)?.payload.text == "caption after files pick")
+        #expect(store.attachmentFileURL(for: key, attachmentID: imported.id)?.standardizedFileURL == draftURL.standardizedFileURL)
+        #expect(store.attachmentData(for: key, attachmentID: imported.id) == nil)
+
+        let reloaded = ChatComposerDraftController()
+        reloaded.attach(store: store, key: key, isEphemeral: false)
+        #expect(reloaded.text == "caption after files pick")
+        #expect(reloaded.pendingAttachments.first?.localFileData == nil)
+        #expect(reloaded.pendingAttachments.first?.localFileURL?.standardizedFileURL == draftURL.standardizedFileURL)
+        #expect(try Data(contentsOf: draftURL) == videoBytes)
+    }
+
+    @Test func filesPickedTextFileStillLoadsAsInMemoryAttachment() async throws {
+        let source = FileManager.default.temporaryDirectory.appending(
+            path: "\(UUID().uuidString).txt",
+            directoryHint: .notDirectory
+        )
+        let bytes = Data("notes from files".utf8)
+        try bytes.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        var pending: [PendingAttachment] = []
+        var importError: String?
+        let binding = Binding(get: { pending }, set: { pending = $0 })
+        await ComposerShared.importSelectedFiles(
+            .success([source]),
+            into: binding,
+            store: nil,
+            shouldAccept: { true },
+            onFailure: { importError = $0 }
+        )
+
+        #expect(importError == nil)
+        let imported = try #require(pending.first)
+        #expect(imported.localFileData == bytes)
+        #expect(imported.localFileURL == nil)
+        #expect(imported.localMimeType == "text/plain")
+    }
+
+    @Test func filesPickedVideoRefusedImportDeletesDraftFile() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        let source = FileManager.default.temporaryDirectory.appending(
+            path: "\(UUID().uuidString).mp4",
+            directoryHint: .notDirectory
+        )
+        try Data(repeating: 0x74, count: 128).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        let imported = await ComposerShared.importSelectedFileURLs([source], store: store)
+        let draftURL = try #require(imported.attachments.first?.localFileURL)
+        #expect(FileManager.default.fileExists(atPath: draftURL.path))
+
+        var pending: [PendingAttachment] = []
+        var importError: String?
+        let binding = Binding(get: { pending }, set: { pending = $0 })
+        ComposerShared.finishPhotoLibraryImport(
+            imported,
+            into: binding,
+            store: store,
+            shouldAccept: { false },
+            onFailure: { importError = $0 }
+        )
+
+        #expect(pending.isEmpty)
+        #expect(importError == ComposerShared.photoLibraryImportRefusedMessage)
+        #expect(!FileManager.default.fileExists(atPath: draftURL.path))
+    }
+
+    @Test func filesPickedVideoWithoutDraftStoreDoesNotCreateAChip() async throws {
+        let source = FileManager.default.temporaryDirectory.appending(
+            path: "\(UUID().uuidString).mp4",
+            directoryHint: .notDirectory
+        )
+        try Data(repeating: 0x72, count: 64).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        var pending: [PendingAttachment] = []
+        var importError: String?
+        let binding = Binding(get: { pending }, set: { pending = $0 })
+        await ComposerShared.importSelectedFiles(
+            .success([source]),
+            into: binding,
+            store: nil,
+            shouldAccept: { true },
+            onFailure: { importError = $0 }
+        )
+
+        #expect(pending.isEmpty)
+        #expect(importError == "Couldn't attach \(source.lastPathComponent).")
+    }
+
+    @Test func acknowledgedSubmissionRemovesInFlightVideoWhenTextChanges() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let (video, _, draftURL) = try fixture.makeImportedVideo(store: store, named: "clip.mp4", byte: 0x73)
+        let controller = ChatComposerDraftController(
+            initialText: "send this",
+            initialPendingAttachments: [video]
+        )
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        controller.text = "next message"
+        let didClearSubmittedDraft = controller.completeSubmission(submission)
+
+        #expect(didClearSubmittedDraft)
+        #expect(controller.text == "next message")
+        #expect(controller.pendingAttachments.isEmpty)
+        #expect(store.record(for: key)?.payload.text == "next message")
+        #expect(store.record(for: key)?.payload.attachments.isEmpty == true)
+        #expect(!FileManager.default.fileExists(atPath: draftURL.path))
     }
 
     @Test func ephemeralSessionDraftRemainsMemoryOnly() async throws {

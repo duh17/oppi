@@ -365,38 +365,111 @@ enum ComposerShared {
 
     static func loadSelectedFiles(
         _ result: Result<[URL], Error>,
-        into pendingAttachments: Binding<[PendingAttachment]>
+        into pendingAttachments: Binding<[PendingAttachment]>,
+        store: ComposerDraftStore?,
+        shouldAccept: @escaping @MainActor () -> Bool,
+        onFailure: @escaping @MainActor (String) -> Void
     ) {
-        guard case .success(let urls) = result else { return }
-        for url in urls {
-            Task {
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer {
-                    if scoped {
-                        url.stopAccessingSecurityScopedResource()
-                    }
-                }
+        Task { @MainActor in
+            await importSelectedFiles(
+                result,
+                into: pendingAttachments,
+                store: store,
+                shouldAccept: shouldAccept,
+                onFailure: onFailure
+            )
+        }
+    }
 
-                guard let data = try? Data(contentsOf: url) else { return }
-                let values = try? url.resourceValues(forKeys: [.contentTypeKey, .nameKey])
-                let mimeType = PendingAttachment.mimeType(for: url, contentType: values?.contentType)
-                let displayName = values?.name ?? url.lastPathComponent
-                let thumbnail: UIImage? = if mimeType.hasPrefix("image/") {
-                    UIImage(data: data)
+    /// Copy Files-picked videos into the Class B draft URL off-main before the
+    /// chip. Non-video files still load as in-memory attachments.
+    static func importSelectedFiles(
+        _ result: Result<[URL], Error>,
+        into pendingAttachments: Binding<[PendingAttachment]>,
+        store: ComposerDraftStore?,
+        shouldAccept: @escaping @MainActor () -> Bool,
+        onFailure: @escaping @MainActor (String) -> Void
+    ) async {
+        guard case .success(let urls) = result else { return }
+        let imported = await importSelectedFileURLs(urls, store: store)
+        finishPhotoLibraryImport(
+            imported,
+            into: pendingAttachments,
+            store: store,
+            shouldAccept: shouldAccept,
+            onFailure: onFailure
+        )
+    }
+
+    static func importSelectedFileURLs(
+        _ urls: [URL],
+        store: ComposerDraftStore?
+    ) async -> PhotoLibraryMediaImporter.ImportResult {
+        var attachments: [PendingAttachment] = []
+        var failures: [String] = []
+        for url in urls {
+            do {
+                attachments.append(try await importSelectedFile(url, store: store))
+            } catch {
+                let name = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+                if name.isEmpty {
+                    failures.append(error.localizedDescription)
                 } else {
-                    nil
-                }
-                let attachment = PendingAttachment.localFile(
-                    name: displayName,
-                    data: data,
-                    mimeType: mimeType,
-                    thumbnail: thumbnail
-                )
-                await MainActor.run {
-                    pendingAttachments.wrappedValue.append(attachment)
+                    failures.append("Couldn't attach \(name).")
                 }
             }
         }
+        return PhotoLibraryMediaImporter.ImportResult(attachments: attachments, failures: failures)
+    }
+
+    static func importSelectedFile(
+        _ url: URL,
+        store: ComposerDraftStore?
+    ) async throws -> PendingAttachment {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer {
+            if scoped {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let values = try? url.resourceValues(forKeys: [.contentTypeKey, .nameKey])
+        let mimeType = PendingAttachment.mimeType(for: url, contentType: values?.contentType)
+        let displayName = values?.name ?? url.lastPathComponent
+
+        if mimeType.lowercased().hasPrefix("video/") {
+            guard let store else {
+                throw PhotoLibraryMediaImporter.ImportError.missingDraftStore
+            }
+            let destination = try store.importAttachmentFile(from: url)
+            do {
+                return try PhotoLibraryMediaImporter.makePendingAttachment(
+                    fromCopiedFile: destination,
+                    kind: .video,
+                    displayName: displayName,
+                    mimeType: mimeType,
+                    store: store
+                )
+            } catch {
+                store.deleteImportedAttachmentFile(destination)
+                throw error
+            }
+        }
+
+        let data = try await Task.detached {
+            try Data(contentsOf: url)
+        }.value
+        let thumbnail: UIImage? = if mimeType.hasPrefix("image/") {
+            UIImage(data: data)
+        } else {
+            nil
+        }
+        return PendingAttachment.localFile(
+            name: displayName,
+            data: data,
+            mimeType: mimeType,
+            thumbnail: thumbnail
+        )
     }
 
     // MARK: - Shared Attachment Views
@@ -1073,6 +1146,23 @@ extension View {
         )
     }
 
+    /// Files picker shared by inline and expanded composers.
+    func composerFileImporter(
+        isPresented: Binding<Bool>,
+        pendingAttachments: Binding<[PendingAttachment]>,
+        importError: Binding<String?>,
+        localImportEpoch: Binding<UInt64>
+    ) -> some View {
+        modifier(
+            ComposerFileImporterModifier(
+                isPresented: isPresented,
+                pendingAttachments: pendingAttachments,
+                importError: importError,
+                localImportEpoch: localImportEpoch
+            )
+        )
+    }
+
     /// Camera full-screen cover shared by inline and expanded composers.
     func composerCameraCover(
         isPresented: Binding<Bool>,
@@ -1089,6 +1179,36 @@ extension View {
                 }
             )
             .ignoresSafeArea()
+        }
+    }
+}
+
+private struct ComposerFileImporterModifier: ViewModifier {
+    @Environment(\.composerMediaImportGate) private var mediaImportGate
+    @Environment(\.composerDraftStore) private var composerDraftStore
+    @Binding var isPresented: Bool
+    @Binding var pendingAttachments: [PendingAttachment]
+    @Binding var importError: String?
+    @Binding var localImportEpoch: UInt64
+
+    func body(content: Content) -> some View {
+        content.fileImporter(
+            isPresented: $isPresented,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            let capturedGate = mediaImportGate?.epoch ?? 0
+            let capturedLocal = localImportEpoch
+            ComposerShared.loadSelectedFiles(
+                result,
+                into: $pendingAttachments,
+                store: composerDraftStore,
+                shouldAccept: {
+                    (mediaImportGate?.isCurrent(capturedGate) ?? true)
+                        && capturedLocal == localImportEpoch
+                },
+                onFailure: { importError = $0 }
+            )
         }
     }
 }

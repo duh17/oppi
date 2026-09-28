@@ -386,7 +386,7 @@ struct ChatInputBar<ActionRow: View>: View {
         } message: {
             Text(voiceInputStartError ?? "Please try again.")
         }
-        .alert("Couldn't Attach From Photo Library", isPresented: Binding(
+        .alert("Couldn't Attach", isPresented: Binding(
             get: { attachmentImportError != nil },
             set: { if !$0 { attachmentImportError = nil } }
         )) {
@@ -476,13 +476,12 @@ struct ChatInputBar<ActionRow: View>: View {
                 canvasReplacingAttachmentID = nil
             }
         }
-        .fileImporter(
+        .composerFileImporter(
             isPresented: $showFileImporter,
-            allowedContentTypes: [.item],
-            allowsMultipleSelection: true
-        ) { result in
-            ComposerShared.loadSelectedFiles(result, into: $pendingAttachments)
-        }
+            pendingAttachments: $pendingAttachments,
+            importError: $attachmentImportError,
+            localImportEpoch: $localMediaImportEpoch
+        )
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()

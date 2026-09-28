@@ -129,6 +129,50 @@ struct ChatViewComposerPromptSendTests {
         #expect(!FileManager.default.fileExists(atPath: draftURL.path))
     }
 
+    @Test func sendPromptClearsInFlightVideoWhenTextChangesDuringUpload() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let (video, _, draftURL) = try fixture.makeImportedVideo(store: store)
+        let controller = ChatComposerDraftController(
+            initialText: "watch this",
+            initialPendingAttachments: [video]
+        )
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        let (outcome, _) = await ChatView.sendPrompt(
+            draftController: controller,
+            state: ChatView.ComposerPromptSendState(
+                pendingAttachments: controller.pendingAttachments,
+                isPreparingAttachments: false
+            ),
+            draftClearance: .afterSuccess,
+            actionIsSending: false,
+            upload: { attachments in
+                #expect(attachments.first?.localFileURL?.standardizedFileURL == draftURL.standardizedFileURL)
+                controller.text = "edited during upload"
+                return [Self.uploadedVideoRef]
+            }
+        )
+        guard case .uploaded(let submission, _, _) = outcome else {
+            Issue.record("expected upload success, got \(String(describing: outcome))")
+            return
+        }
+        #expect(controller.text == "edited during upload")
+        #expect(controller.pendingAttachments.first?.localFileURL?.standardizedFileURL == draftURL.standardizedFileURL)
+        #expect(FileManager.default.fileExists(atPath: draftURL.path))
+
+        let didClear = controller.completeSubmission(submission)
+        #expect(didClear)
+        #expect(controller.text == "edited during upload")
+        #expect(controller.pendingAttachments.isEmpty)
+        #expect(store.record(for: key)?.payload.text == "edited during upload")
+        #expect(store.record(for: key)?.payload.attachments.isEmpty == true)
+        #expect(!FileManager.default.fileExists(atPath: draftURL.path))
+    }
+
     @Test func refusedImportCleansDestinationAndReportsError() throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
