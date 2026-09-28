@@ -134,15 +134,15 @@ final class SessionStreamCoordinator {
         }
 
         let streamOpenMs = Int((ContinuousClock.now - streamOpenStart) / .milliseconds(1))
+        var waitTags = NetworkPathTelemetry.tags(selection: connection.endpointSelection)
+        waitTags["transport"] = transport
+        waitTags["status_before"] = statusBeforeWait
+        waitTags["outcome"] = waitOutcome
         recordMetric(
             .wsWaitForConnectedMs,
             value: streamOpenMs,
             sessionId: sessionId,
-            tags: [
-                "transport": transport,
-                "status_before": statusBeforeWait,
-                "outcome": waitOutcome,
-            ]
+            tags: waitTags
         )
 
         guard waitOutcome != "timeout", !Task.isCancelled else {

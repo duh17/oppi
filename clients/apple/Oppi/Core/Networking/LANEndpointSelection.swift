@@ -193,14 +193,16 @@ enum ServerTransportPlanResolver {
         guard let paired = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: nil) else {
             throw APIError.server(status: 400, message: "Unsupported HTTPS server endpoint")
         }
+        // One mode: paired/Tailscale first (embed SOCKS if published, else
+        // system VPN/resolver). Verified LAN HTTPS is fallback only.
         var result: [EndpointSelection] = []
+        if !excluding.contains(.paired) { result.append(paired) }
         if let discoveredLANEndpoint,
            !excluding.contains(.lan),
            let lan = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: discoveredLANEndpoint),
            lan.transportPath == .lan {
             result.append(lan)
         }
-        if !excluding.contains(.paired) { result.append(paired) }
         return result
     }
 }

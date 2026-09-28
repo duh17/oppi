@@ -555,6 +555,7 @@ final class ConnectionCoordinator {
     }
 
     private func handleNetworkPathUpdate(_ path: NWPath) {
+        NetworkPathTelemetry.note(path: path)
         handleNetworkPathState(
             signature: Self.interfaceSignature(path),
             isSatisfied: path.status == .satisfied

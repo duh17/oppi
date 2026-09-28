@@ -23,14 +23,18 @@ enum TailnetTransportRoute {
     /// accepts the same public-CA names.
     static let matchDomains = ["ts.net", "beta.tailscale.net"]
 
-    private static let published = Mutex<TailnetSOCKSProxy?>(nil)
+    private static let published = Mutex<(proxy: TailnetSOCKSProxy?, generation: UInt64)>((nil, 0))
 
     static var proxy: TailnetSOCKSProxy? {
-        published.withLock { $0 }
+        published.withLock { $0.proxy }
     }
 
-    static func publish(_ proxy: TailnetSOCKSProxy?) {
-        published.withLock { $0 = proxy }
+    static var generation: UInt64 {
+        published.withLock { $0.generation }
+    }
+
+    static func publish(_ proxy: TailnetSOCKSProxy?, generation: UInt64 = 0) {
+        published.withLock { $0 = (proxy, proxy == nil ? 0 : generation) }
     }
 
     /// Routes `configuration` through the currently published node proxy, if any.

@@ -455,6 +455,7 @@
 		3E39A9A43D2A9509AAA51887 /* ChatScrollController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D1C1CD6E2F8B86E6C8CAD9D /* ChatScrollController.swift */; };
 		3E3CDA4C213AC75B0F0F05F1 /* ChatTimelineCollectionView+Keybinding.swift in Sources */ = {isa = PBXBuildFile; fileRef = A07551E96DF56608E48380DE /* ChatTimelineCollectionView+Keybinding.swift */; };
 		3E40E8E4A5BD17F1B4BF14E0 /* BiometricServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8F55D5B231319462EC8F1B8 /* BiometricServiceTests.swift */; };
+		3E48E6406890AA40F04DD048 /* NetworkPathTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B01425F686C0A0C54AE7DD6 /* NetworkPathTelemetry.swift */; };
 		3E856A7B4B5512AC67DF8AF3 /* StreamingApplyPerfBench.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF0CEFBB1251B28049C48C05 /* StreamingApplyPerfBench.swift */; };
 		3EA96818E6F92034FF8EAEB9 /* OppiDictationProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54C0DCA21DB0E138E4989245 /* OppiDictationProviderTests.swift */; };
 		3EB0F69EEB71D27E22D6B0B4 /* ThinkingLevelMenuSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEAF4733EB54BD5B0F364849 /* ThinkingLevelMenuSourceTests.swift */; };
@@ -2748,6 +2749,7 @@
 		8A935A4629E567CE0831DCF1 /* DocumentRenderPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentRenderPipeline.swift; sourceTree = "<group>"; };
 		8AAA171971789277768C06B0 /* MermaidPieRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidPieRenderer.swift; sourceTree = "<group>"; };
 		8AE56D70F5102172ED38217E /* StreamingFastPathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingFastPathTests.swift; sourceTree = "<group>"; };
+		8B01425F686C0A0C54AE7DD6 /* NetworkPathTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkPathTelemetry.swift; sourceTree = "<group>"; };
 		8B0DC81040E48C8C1573DE42 /* APIClientWorkspaceFileEditingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientWorkspaceFileEditingTests.swift; sourceTree = "<group>"; };
 		8BA9D13A5741D501CD91EE04 /* AuthenticatedMediaPlayback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticatedMediaPlayback.swift; sourceTree = "<group>"; };
 		8BC9A9B9229497D47A8A4919 /* ClientLogBuffer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientLogBuffer.swift; sourceTree = "<group>"; };
@@ -4784,6 +4786,7 @@
 				4E10D0BC63408DE0048DCA84 /* IOSChatSessionRuntimeAdapter.swift */,
 				B31A172424752AE059AF0DEF /* LANEndpointSelection.swift */,
 				798A4FA283A530A34D954D31 /* MessageSender.swift */,
+				8B01425F686C0A0C54AE7DD6 /* NetworkPathTelemetry.swift */,
 				A86DA7C2BCB9EFEF702C2CE4 /* ServerConnection.swift */,
 				DE0698969FEFDBEE2E8A488D /* ServerConnection+AppEvents.swift */,
 				84AC265301A63F70D40E015E /* ServerConnection+Ask.swift */,
@@ -8118,6 +8121,7 @@
 				DDC28C83BC678D13CEEFE967 /* NavigationChromeProfileHarnessView.swift in Sources */,
 				FFF3F6F069D62BCD8C123213 /* NearbyPairingConstants.swift in Sources */,
 				453E6FF23A3284F4628F2F4A /* NearbyPairingInviteMessage.swift in Sources */,
+				3E48E6406890AA40F04DD048 /* NetworkPathTelemetry.swift in Sources */,
 				250244A2726D540CB8B88374 /* NotificationNames.swift in Sources */,
 				013EAD264D2E7732EBF7E119 /* OnboardingView.swift in Sources */,
 				3A206E5ED7ED9486258281A8 /* OppiApp.swift in Sources */,

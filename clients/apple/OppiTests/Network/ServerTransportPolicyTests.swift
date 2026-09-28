@@ -14,7 +14,7 @@ struct ServerTransportPolicyTests {
         #expect(candidates[0].baseURL.scheme == "https")
     }
 
-    @Test func discoveredLANHTTPSPrecedesPairedHTTPS() throws {
+    @Test func pairedHTTPSPrecedesDiscoveredLANHTTPS() throws {
         let discovered = LANDiscoveredEndpoint(
             host: "192.168.1.42",
             port: 443,
@@ -26,7 +26,7 @@ struct ServerTransportPolicyTests {
             discoveredLANEndpoint: discovered
         )
 
-        #expect(candidates.map(\.transportPath) == [.lan, .paired])
+        #expect(candidates.map(\.transportPath) == [.paired, .lan])
         #expect(candidates.allSatisfy { $0.baseURL.scheme == "https" })
     }
 
@@ -45,6 +45,44 @@ struct ServerTransportPolicyTests {
                 discoveredLANEndpoint: nil
             )
         }
+    }
+
+    @Test func networkPathRouteKindDistinguishesSocksFromSystemVpn() {
+        #expect(
+            NetworkPathTelemetry.routeKind(
+                transportPath: .lan,
+                host: "mac-studio.tail00000.ts.net",
+                socksPublished: true
+            ) == .lan
+        )
+        #expect(
+            NetworkPathTelemetry.routeKind(
+                transportPath: .paired,
+                host: "mac-studio.tail00000.ts.net",
+                socksPublished: true
+            ) == .socks
+        )
+        #expect(
+            NetworkPathTelemetry.routeKind(
+                transportPath: .paired,
+                host: "mac-studio.tail00000.ts.net",
+                socksPublished: false
+            ) == .systemVpn
+        )
+        #expect(
+            NetworkPathTelemetry.routeKind(
+                transportPath: .paired,
+                host: "192.168.1.9",
+                socksPublished: true
+            ) == .paired
+        )
+    }
+
+    @Test func networkPathHostKindClassifiesTailscaleAndLAN() {
+        #expect(NetworkPathTelemetry.hostKind(for: "mac-mini.tail00000.ts.net") == .tailscale)
+        #expect(NetworkPathTelemetry.hostKind(for: "Mac-Studio.local") == .local)
+        #expect(NetworkPathTelemetry.hostKind(for: "192.168.68.66") == .ip)
+        #expect(NetworkPathTelemetry.hostKind(for: "example.com") == .dns)
     }
 
     private func makeCredentials() -> ServerCredentials {

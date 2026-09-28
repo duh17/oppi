@@ -331,7 +331,7 @@ final class TailnetNodeController {
             }
             let proxy = TailnetSOCKSProxy(host: host, port: port, credential: loopback.proxyCredential)
             guard TailnetTransportRoute.proxy != proxy else { return }
-            TailnetTransportRoute.publish(proxy)
+            TailnetTransportRoute.publish(proxy, generation: generation)
             ClientLog.info("Tailnet", "Published tailnet transport route")
             onRouteChange?()
         } catch {

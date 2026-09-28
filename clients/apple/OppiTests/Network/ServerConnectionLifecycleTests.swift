@@ -110,12 +110,12 @@ struct ServerConnectionLifecycleTests {
         ))
         await transition?.value
 
-        #expect(lanBootstraps == 1)
+        #expect(lanBootstraps == 0)
         #expect(conn.transportPath == .paired)
         #expect(await conn.apiClient?.baseURL.host == "my-server.tail00000.ts.net")
     }
 
-    @Test func dnsMissOnLANAdvancesToPairedCandidate() async {
+    @Test func dnsMissOnPairedAdvancesToLANCandidate() async {
         let conn = ServerConnection()
         let credentials = makeHTTPOnlyCredentials()
         conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
@@ -126,17 +126,35 @@ struct ServerConnectionLifecycleTests {
             serverInfoBootstrap: { client, _ in
                 if await client.baseURL.host == "192.168.1.42" {
                     lanBootstraps += 1
-                    throw URLError(.cannotFindHost)
+                    return successfulServerInfo()
                 }
                 pairedBootstraps += 1
-                return successfulServerInfo()
+                throw URLError(.cannotFindHost)
             }
         ))
         #expect(lanBootstraps == 1)
         #expect(pairedBootstraps == 1)
-        #expect(conn.transportPath == .paired)
+        #expect(conn.transportPath == .lan)
         #expect(conn.canAutomaticallyRetryInitialTransport)
-        #expect(await conn.apiClient?.baseURL.host == "my-server.tail00000.ts.net")
+        #expect(await conn.apiClient?.baseURL.host == "192.168.1.42")
+    }
+
+    @Test func tlsOnPairedFallsBackToLANCandidate() async {
+        let conn = ServerConnection()
+        let credentials = makeHTTPOnlyCredentials()
+        conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "192.168.1.42" {
+                    return successfulServerInfo()
+                }
+                throw URLError(.serverCertificateUntrusted)
+            }
+        ))
+        #expect(conn.transportPath == .lan)
+        #expect(conn.canAutomaticallyRetryInitialTransport)
+        #expect(await conn.apiClient?.baseURL.host == "192.168.1.42")
     }
 
     @Test func pairedOnlyDNSMissStaysRetryableAndRecoversOnNextBootstrap() async {
@@ -174,12 +192,13 @@ struct ServerConnectionLifecycleTests {
             reachableHost: "192.168.1.43",
             firstProbeResult: true
         )
+        #expect(conn.configure(credentials: credentials) == true)
         #expect(await conn.configureForUse(
             credentials: credentials,
             serverInfoBootstrap: { client, _ in
                 let url = await client.baseURL
                 guard url.host?.hasPrefix("192.168.1.") == true else {
-                    return successfulServerInfo()
+                    throw URLError(.cannotConnectToHost)
                 }
                 let selection = EndpointSelection(baseURL: url, transportPath: .lan)
                 guard await gate.probe(selection) else {
@@ -187,7 +206,7 @@ struct ServerConnectionLifecycleTests {
                 }
                 return successfulServerInfo()
             }
-        ))
+        ) == false)
 
         let staleTransition = conn.setDiscoveredLANEndpoint(
             makeLANCandidate(host: "192.168.1.42")
@@ -209,17 +228,18 @@ struct ServerConnectionLifecycleTests {
         let conn = ServerConnection()
         let credentials = makeHTTPOnlyCredentials()
         let counter = LANProbeCounter()
+        let candidate = makeLANCandidate(host: "192.168.1.42")
+        conn.setDiscoveredLANEndpoint(candidate)
         #expect(await conn.configureForUse(
             credentials: credentials,
             serverInfoBootstrap: { client, _ in
                 if await client.baseURL.host == "192.168.1.42" {
                     await counter.increment()
+                    return successfulServerInfo()
                 }
-                return successfulServerInfo()
+                throw URLError(.cannotConnectToHost)
             }
         ))
-        let candidate = makeLANCandidate(host: "192.168.1.42")
-
         let transition = conn.setDiscoveredLANEndpoint(candidate)
         conn.setDiscoveredLANEndpoint(candidate)
         await transition?.value
@@ -239,15 +259,15 @@ struct ServerConnectionLifecycleTests {
             serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
             tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF"
         )
-        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            serverInfoBootstrap: successfulServerInfoBootstrap
+        ))
+        conn._adoptVerifiedLANEndpointForTesting(LANDiscoveredEndpoint(
             host: "192.168.1.42",
             port: 7749,
             serverFingerprintPrefix: "SERVERFINGERPRINT",
             tlsCertFingerprintPrefix: "TLSFINGERPRINT"
-        ))
-        #expect(await conn.configureForUse(
-            credentials: credentials,
-            serverInfoBootstrap: successfulServerInfoBootstrap
         ))
         #expect(conn.transportPath == .lan)
         conn._setActiveSessionIdForTesting("session-1")

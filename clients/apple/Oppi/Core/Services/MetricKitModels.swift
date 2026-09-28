@@ -64,6 +64,8 @@ enum ChatMetricName: String, Codable, Sendable {
     case commandSendMs = "chat.command_send_ms"
     case commandRoundtripMs = "chat.command_roundtrip_ms"
     case commandResolveLagMs = "chat.command_resolve_lag_ms"
+    case networkHandshakeMs = "network.handshake_ms"
+    case networkWsPingRttMs = "network.ws_ping_rtt_ms"
     case sessionLoadMs = "chat.session_load_ms"
     case jankPct = "chat.jank_pct"
     case queueSyncMs = "chat.queue_sync_ms"

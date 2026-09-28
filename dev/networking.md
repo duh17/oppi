@@ -1,6 +1,6 @@
 # Networking and connection routing
 
-Oppi's supported remote transport is authenticated HTTPS/WSS. Automatic Apple routing evaluates verified LAN HTTPS and paired HTTPS only. Tailscale HTTPS is supported. The local CLI uses an owner-only Unix socket.
+Oppi's supported remote transport is authenticated HTTPS/WSS. Automatic Apple routing uses one mode: paired/Tailscale HTTPS first (embed SOCKS when the in-app node has published its proxy, otherwise the system resolver including an official Tailscale VPN), then verified LAN HTTPS as fallback. There is no user-facing route picker. The local CLI uses an owner-only Unix socket.
 
 ## Supported routes
 
@@ -19,7 +19,7 @@ Older persisted connections without an HTTPS endpoint are unsupported and must b
 
 The iOS app and Share extension have no ATS domain exceptions, only `NSAllowsLocalNetworking`. A leaf pin (self-signed or manual TLS) therefore works only on IP, `.local`, or unqualified hosts; ATS applies default CA trust to every other DNS name and cannot be loosened by the trust delegate. `*.ts.net` invites require `tls.mode=tailscale` (Tailscale-issued, no pin). The server refuses other modes in `generateInvite`, and the app rejects a pinned tailnet invite before the trust prompt.
 
-Pairing probes HTTPS before the one-time `/pair` mutation. A route change never replays a mutation. TLS identity failures and unknown/revoked credentials fail closed. Availability failures may retry another supported HTTPS candidate during the current selection pass.
+Pairing probes HTTPS before the one-time `/pair` mutation. A route change never replays a mutation. During one selection pass, a candidate TLS or availability failure may advance to the next supported HTTPS candidate. TLS identity failures and unknown/revoked credentials fail closed when they are the last remaining error. Availability exhaustion stays retryable.
 
 Pairing, LAN vs Tailscale, reverse proxy, expired invites, and `oppi status` / `oppi doctor` live in [Onboarding](../docs/onboarding.md) and [Reverse proxy](../docs/reverse-proxy.md). This page keeps leftover transport notes for contributors.
 

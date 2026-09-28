@@ -320,7 +320,7 @@ final class ServerConnection {
     }
 
     private var discoveredLANEndpoint: LANDiscoveredEndpoint?
-    private var endpointSelection: EndpointSelection?
+    private(set) var endpointSelection: EndpointSelection?
 
     // periphery:ignore - used by ServerConnectionTests via @testable import
     /// Derived focused-session stream state. Server badges should use `serverHealth(forServer:)`.
@@ -733,6 +733,7 @@ final class ServerConnection {
                 discoveredLANEndpoint: discoveredLANEndpoint,
                 excluding: excluding
             )
+            var lastError: Error?
             for candidate in candidates {
                 guard transportConfigurationGeneration == configurationGeneration else { return false }
                 let prepared = makeCandidateAPIClient(
@@ -742,8 +743,15 @@ final class ServerConnection {
                     configurationGeneration: configurationGeneration,
                     apiClientFactory: apiClientFactory
                 )
+                let handshakeStarted = ContinuousClock.now
                 do {
                     let info = try await serverInfoBootstrap(prepared.client, httpBootstrapDeadline())
+                    let handshakeMs = Double((ContinuousClock.now - handshakeStarted) / .milliseconds(1))
+                    NetworkPathTelemetry.recordHandshake(
+                        selection: candidate,
+                        durationMs: handshakeMs,
+                        success: true
+                    )
                     guard transportConfigurationGeneration == configurationGeneration else { return false }
                     await commitCandidate(
                         credentials: credentials,
@@ -754,9 +762,26 @@ final class ServerConnection {
                         configurationGeneration: configurationGeneration
                     )
                     return true
-                } catch where isRouteAvailabilityFailure(error) {
+                } catch is CancellationError {
+                    return false
+                } catch {
+                    let handshakeMs = Double((ContinuousClock.now - handshakeStarted) / .milliseconds(1))
+                    NetworkPathTelemetry.recordHandshake(
+                        selection: candidate,
+                        durationMs: handshakeMs,
+                        success: false,
+                        error: error
+                    )
+                    lastError = error
                     continue
                 }
+            }
+            if let lastError, !isRouteAvailabilityFailure(lastError) {
+                guard transportConfigurationGeneration == configurationGeneration else { return false }
+                transportFailureDisposition = .failClosed
+                invalidateTransportAfterTerminalFailure(lastError)
+                logger.error("HTTPS setup failed closed: \(lastError.localizedDescription, privacy: .public)")
+                return false
             }
             transportFailureDisposition = .retryable
             logger.warning("HTTPS candidate pass exhausted")

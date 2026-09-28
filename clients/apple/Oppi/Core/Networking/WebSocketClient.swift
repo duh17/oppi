@@ -861,6 +861,7 @@ final class WebSocketClient {
                       let self,
                       self.webSocket?.identity == ws.identity else { break }
 
+                let pingStarted = ContinuousClock.now
                 let result = await WebSocketPingDeadline.wait(timeout: self.pingTimeout) { callback in
                     ws.sendPing(callback)
                 }
@@ -869,6 +870,8 @@ final class WebSocketClient {
                 switch result {
                 case .succeeded:
                     consecutiveFailures = 0
+                    let rttMs = Double((ContinuousClock.now - pingStarted) / .milliseconds(1))
+                    NetworkPathTelemetry.recordPingRttMs(rttMs, selection: self.preferredEndpoint)
                     continue
 
                 case .failed:
