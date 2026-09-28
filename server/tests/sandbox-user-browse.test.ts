@@ -221,39 +221,51 @@ describe("sandbox user browse of host-mount artifacts", () => {
         name,
         hostMount: undefined,
       });
-      const backing = resolveSdkSessionCwd(workspace);
-      tempDirs.push(backing);
-      writeFileSync(join(backing, "demo-tool-rendering-prompt.md"), "sandbox note\n");
+      const home = tempDir("oppi-sandbox-browse-home-");
+      const previousHome = process.env.HOME;
+      try {
+        process.env.HOME = home;
+        writeFileSync(join(home, "owner-only.txt"), "owner home\n");
+        const backing = resolveSdkSessionCwd(workspace);
+        writeFileSync(join(backing, "demo-tool-rendering-prompt.md"), "sandbox note\n");
 
-      const listing = await dispatchWorkspace(
-        workspace,
-        "GET",
-        `/workspaces/${workspace.id}/contents/`,
-        "?worktreeId=main",
-      );
-      expect(listing.handled).toBe(true);
-      expect(listing.res.statusCode).toBe(200);
-      const body = JSON.parse(listing.res.body) as { entries: Array<{ name: string }> };
-      expect(body.entries.map((entry) => entry.name)).toContain("demo-tool-rendering-prompt.md");
+        const listing = await dispatchWorkspace(
+          workspace,
+          "GET",
+          `/workspaces/${workspace.id}/contents/`,
+          "?worktreeId=main",
+        );
+        expect(listing.handled).toBe(true);
+        expect(listing.res.statusCode).toBe(200);
+        const body = JSON.parse(listing.res.body) as { entries: Array<{ name: string }> };
+        expect(body.entries.map((entry) => entry.name)).toContain("demo-tool-rendering-prompt.md");
 
-      const file = await dispatchWorkspace(
-        workspace,
-        "HEAD",
-        `/workspaces/${workspace.id}/raw/demo-tool-rendering-prompt.md`,
-        "?worktreeId=main",
-      );
-      expect(file.handled).toBe(true);
-      expect(file.res.statusCode).toBe(200);
-      expect(file.res.headers["Content-Length"]).toBe("13");
+        const file = await dispatchWorkspace(
+          workspace,
+          "HEAD",
+          `/workspaces/${workspace.id}/raw/demo-tool-rendering-prompt.md`,
+          "?worktreeId=main",
+        );
+        expect(file.handled).toBe(true);
+        expect(file.res.statusCode).toBe(200);
+        expect(file.res.headers["Content-Length"]).toBe("13");
 
-      const missing = await dispatchWorkspace(
-        workspace,
-        "GET",
-        `/workspaces/${workspace.id}/contents/`,
-        "?worktreeId=not-a-worktree",
-      );
-      expect(missing.res.statusCode).toBe(404);
-      expect(JSON.parse(missing.res.body)).toEqual({ error: "Worktree not found" });
+        const otherId = await dispatchWorkspace(
+          workspace,
+          "GET",
+          `/workspaces/${workspace.id}/contents/`,
+          "?worktreeId=not-a-worktree",
+        );
+        expect(otherId.handled).toBe(true);
+        expect(otherId.res.statusCode).toBe(200);
+        const otherNames = (JSON.parse(otherId.res.body) as { entries: Array<{ name: string }> })
+          .entries.map((entry) => entry.name);
+        expect(otherNames).toContain("demo-tool-rendering-prompt.md");
+        expect(otherNames).not.toContain("owner-only.txt");
+      } finally {
+        if (previousHome === undefined) delete process.env.HOME;
+        else process.env.HOME = previousHome;
+      }
     });
 
     it("keeps a mounted sandbox main id on the host mount", async () => {

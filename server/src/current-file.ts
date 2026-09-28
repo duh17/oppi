@@ -92,7 +92,7 @@ function sendJsonError(res: ServerResponse, status: number, message: string): nu
  * the final component is opened with O_NOFOLLOW and the path must still
  * resolve to itself with the handle's dev/inode after the open.
  */
-async function openVerifiedFile(
+export async function openVerifiedFile(
   filePath: string,
 ): Promise<{ kind: "ok"; handle: FileHandle; size: number } | { kind: "error"; status: number }> {
   let handle: FileHandle;
@@ -234,16 +234,10 @@ export function resolvedPathHeaders(file: ResolvedCurrentFile): Record<string, s
     : { "X-Oppi-Resolved-Path": encodeHostResolvedPathHeader(file.realPath) };
 }
 
-function isMountlessSandboxMain(workspace: Workspace, worktreeId: string): boolean {
-  return worktreeId === "main" && workspace.runtime === "sandbox" && !workspace.hostMount?.trim();
-}
-
 /**
- * Root for a workspace browse/read request. A missing worktree id is the
- * workspace cwd. Mountless sandbox sessions still store worktreeId "main";
- * there is no git worktree list, so that id is the sandbox host mount. A real
- * unknown worktree, including main on a mountless host workspace, is null and
- * must not fall through to the user home.
+ * Root for a workspace browse/read request. Sandbox requests always use the
+ * SDK mount, regardless of a client-supplied worktree id. Host workspaces
+ * resolve requested worktrees; an unknown id must not fall through to home.
  */
 export function resolveWorkspaceFileRoot(
   workspace: Workspace,
@@ -251,7 +245,7 @@ export function resolveWorkspaceFileRoot(
   dataDir: string,
 ): string | null {
   const requested = worktreeId?.trim();
-  if (!requested || isMountlessSandboxMain(workspace, requested)) {
+  if (workspace.runtime === "sandbox" || !requested) {
     return resolveSdkSessionCwd(workspace);
   }
   return resolveWorkspaceWorktree(workspace, requested, { dataDir })?.path ?? null;

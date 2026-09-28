@@ -433,6 +433,55 @@ describe("SessionTraceService", () => {
     expect(result.kind === "ok" ? result.diff.hunks.length : 0).toBeGreaterThan(0);
   });
 
+  it("does not read home files for a mountless sandbox overall diff", async () => {
+    const dataDir = tempDir("oppi-session-sandbox-diff-data-");
+    const home = tempDir("oppi-session-sandbox-diff-home-");
+    const tracePath = join(dataDir, "trace.jsonl");
+    const workspace = makeWorkspace({ name: "Sandbox Diff", runtime: "sandbox" });
+    const session = makeSession({ piSessionFile: tracePath, worktreeId: "main" });
+    writeFileSync(join(home, "parent-only.txt"), "home bytes", "utf8");
+    const mount = join(home, "sandbox", "sandbox-diff");
+    mkdirSync(mount, { recursive: true });
+    writeFileSync(join(mount, "inside.txt"), "mount bytes", "utf8");
+    writeJsonl(tracePath, [
+      { type: "session", id: "pi-1", cwd: "/workspace/sandbox-diff" },
+      {
+        type: "message",
+        id: "assistant-1",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "tc-edit",
+              name: "edit",
+              arguments: { path: "parent-only.txt", oldText: "old", newText: "home bytes" },
+            },
+            {
+              type: "toolCall",
+              id: "tc-inside",
+              name: "edit",
+              arguments: { path: "inside.txt", oldText: "old", newText: "mount bytes" },
+            },
+          ],
+        },
+      },
+    ]);
+    const { service } = makeService({ dataDir, workspace });
+    const previousHome = process.env.HOME;
+    try {
+      process.env.HOME = home;
+      const result = await service.getSessionOverallDiff({ session, path: "parent-only.txt" });
+      expect(result).toEqual({ kind: "current-file-not-found" });
+      expect(JSON.stringify(result)).not.toContain("home bytes");
+      const inside = await service.getSessionOverallDiff({ session, path: "inside.txt" });
+      expect(inside).toMatchObject({ kind: "ok", diff: { currentText: "mount bytes" } });
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
+  });
+
   it("reports typed overall-diff misses for current files outside the workspace", async () => {
     const dataDir = tempDir("oppi-session-overall-diff-outside-");
     const workspaceRoot = tempDir("oppi-session-overall-diff-outside-workspace-");

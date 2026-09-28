@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { access, readFile, realpath, stat } from "node:fs/promises";
 
-import { resolveCurrentFilePath, statServableFile } from "./current-file.js";
+import { openVerifiedFile, resolveCurrentFilePath, statServableFile } from "./current-file.js";
 import { isPathWithinRoot } from "./git-utils.js";
 import {
   collectFileMutations,
@@ -457,49 +457,57 @@ export class SessionTraceService {
     const workRoot = await this.resolveWorkRoot(session);
     if (!workRoot) return { kind: "workspace-root-not-found" };
 
-    let realWorkRoot: string;
-    try {
-      realWorkRoot = await realpath(workRoot);
-    } catch {
-      return { kind: "workspace-root-not-found" };
+    const workspace = session.workspaceId
+      ? this.deps.storage.getWorkspace(session.workspaceId)
+      : undefined;
+    let resolved: string;
+    if (workspace?.runtime === "sandbox") {
+      const file = await resolveCurrentFilePath(
+        { kind: "workspace", workspace, root: workRoot, dataDir: this.deps.storage.getDataDir() },
+        reqPath,
+      );
+      if (file.kind === "root-not-found") return { kind: "workspace-root-not-found" };
+      if (file.kind === "outside-sandbox") return { kind: "current-file-outside-workspace" };
+      if (file.kind === "not-found") return { kind: "current-file-not-found" };
+      resolved = file.file.realPath;
+    } else {
+      let realWorkRoot: string;
+      try {
+        realWorkRoot = await realpath(workRoot);
+      } catch {
+        return { kind: "workspace-root-not-found" };
+      }
+      try {
+        resolved = await realpath(resolve(workRoot, reqPath));
+      } catch (error: unknown) {
+        return isPathMissingError(error)
+          ? { kind: "current-file-not-found" }
+          : { kind: "current-file-unreadable" };
+      }
+      if (!isPathWithinRoot(resolved, realWorkRoot)) {
+        return { kind: "current-file-outside-workspace" };
+      }
     }
 
-    const target = resolve(workRoot, reqPath);
-    let resolved: string;
-    try {
-      resolved = await realpath(target);
-    } catch (error: unknown) {
-      return isPathMissingError(error)
+    const opened = await openVerifiedFile(resolved);
+    if (opened.kind === "error") {
+      return opened.status === 404
         ? { kind: "current-file-not-found" }
         : { kind: "current-file-unreadable" };
     }
-
-    if (!isPathWithinRoot(resolved, realWorkRoot)) {
-      return { kind: "current-file-outside-workspace" };
-    }
-
-    let fileStat: Awaited<ReturnType<typeof stat>>;
     try {
-      fileStat = await stat(resolved);
+      if (!(await opened.handle.stat()).isFile()) return { kind: "current-file-not-file" };
+      if (opened.size > MAX_SESSION_FILE_BYTES) {
+        return {
+          kind: "current-file-too-large",
+          maxSizeMegabytes: Math.round(MAX_SESSION_FILE_BYTES / (1024 * 1024)),
+        };
+      }
+      return { kind: "ok", text: await opened.handle.readFile({ encoding: "utf8" }) };
     } catch {
       return { kind: "current-file-unreadable" };
-    }
-
-    if (!fileStat.isFile()) {
-      return { kind: "current-file-not-file" };
-    }
-
-    if (fileStat.size > MAX_SESSION_FILE_BYTES) {
-      return {
-        kind: "current-file-too-large",
-        maxSizeMegabytes: Math.round(MAX_SESSION_FILE_BYTES / (1024 * 1024)),
-      };
-    }
-
-    try {
-      return { kind: "ok", text: await readFile(resolved, "utf8") };
-    } catch {
-      return { kind: "current-file-unreadable" };
+    } finally {
+      await opened.handle.close().catch(() => {});
     }
   }
 
@@ -508,7 +516,7 @@ export class SessionTraceService {
       ? this.deps.storage.getWorkspace(session.workspaceId)
       : undefined;
 
-    if (workspace?.hostMount) {
+    if (workspace?.runtime === "sandbox" || workspace?.hostMount) {
       const resolved = this.resolveSdkCwdOrNull(workspace, session);
       return resolved && (await pathExists(resolved)) ? resolved : null;
     }

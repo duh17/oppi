@@ -403,6 +403,48 @@ describe("workspace file editor GET/HEAD ETag", () => {
     expect(dotted.headers.ETag).toBeUndefined();
   });
 
+  it("keeps sandbox main reads and edits inside a subdirectory mount of a git repo", async () => {
+    const fixture = seed();
+    const repo = tempRoot("oppi-edit-sandbox-repo-");
+    const mount = join(repo, "mount");
+    mkdirSync(mount);
+    fixture.workspaces[1].hostMount = mount;
+    writeFileSync(join(repo, "parent-only.md"), "parent bytes\n");
+    writeFileSync(join(mount, "inside.md"), "mount bytes\n");
+    execSync("git init -b main", { cwd: repo, stdio: "ignore" });
+    const parentPath = {
+      origin: "workspace",
+      workspaceId: "ws-sandbox",
+      worktreeId: "main",
+      path: "parent-only.md",
+    };
+
+    const outside = await currentFile(fixture, "GET", `/files/current?${query(parentPath)}`);
+    expect(outside.statusCode).toBe(404);
+    const refused = await putCurrent(fixture, parentPath, Buffer.from("replaced\n"), {
+      "if-match": etagFor(Buffer.from("parent bytes\n")),
+    });
+    expect(refused.statusCode).toBe(404);
+    expect(readFileSync(join(repo, "parent-only.md"), "utf8")).toBe("parent bytes\n");
+
+    const insidePath = { ...parentPath, path: "inside.md" };
+    const inside = await currentFile(fixture, "GET", `/files/current?${query(insidePath)}`);
+    expect(inside.statusCode).toBe(200);
+    expect(inside.body.toString("utf8")).toBe("mount bytes\n");
+    const saved = await putCurrent(fixture, insidePath, Buffer.from("saved in mount\n"), {
+      "if-match": inside.headers.ETag,
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(readFileSync(join(mount, "inside.md"), "utf8")).toBe("saved in mount\n");
+    const otherId = await currentFile(
+      fixture,
+      "GET",
+      `/files/current?${query({ ...insidePath, worktreeId: "not-a-worktree" })}`,
+    );
+    expect(otherId.statusCode).toBe(200);
+    expect(otherId.body.toString("utf8")).toBe("saved in mount\n");
+  });
+
   it("advertises ETag for a sandbox guest path that stays in the selected root", async () => {
     const fixture = seed();
     const bytes = Buffer.from("sandbox bytes\n");
