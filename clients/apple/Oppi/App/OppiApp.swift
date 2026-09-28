@@ -619,6 +619,12 @@ struct OppiApp: App {
         await composerDraftStore.load()
         coordinator.startLANDiscovery()
         coordinator.startNetworkPathMonitor()
+        TailnetNodeController.shared.onRouteChange = { [coordinator] in
+            Task { await coordinator.handleTailnetRouteChange() }
+        }
+        TailnetNodeController.shared.startAtLaunchIfNeeded(
+            pairedHosts: coordinator.serverStore.servers.map(\.host)
+        )
         await setupNotifications()
 #if DEBUG
         scheduleE2EInAppBrowserIfRequested()

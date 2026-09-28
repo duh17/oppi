@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createIdentityRoutes } from "../src/routes/identity.js";
 import type { RouteContext } from "../src/routes/types.js";
+import { markLocalRequest } from "../src/request-trust.js";
 import { Storage } from "../src/storage.js";
 import { makeRawRequest, makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
@@ -89,6 +90,57 @@ describe("identity module", () => {
     expect(handled).toBe(true);
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toEqual(status);
+  });
+
+  it("returns 404 for POST /pair/tailscale on the unix socket", async () => {
+    const issuePairingToken = vi.fn(() => "pt_should_not_issue");
+    const ctx = {
+      storage: {
+        getToken: vi.fn(() => "sk_owner"),
+        getConfig: vi.fn(() => ({ tls: { mode: "self-signed" } })),
+        issuePairingToken,
+      },
+    } as unknown as RouteContext;
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+    const req = makeRequest();
+    markLocalRequest(req);
+    const res = makeResponse();
+    const handled = await dispatch({
+      method: "POST",
+      path: "/pair/tailscale",
+      url: new URL("http://localhost/pair/tailscale"),
+      req: req as never,
+      res: res as never,
+    });
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body)).toEqual({ error: "Not found" });
+    expect(issuePairingToken).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 for POST /pair/tailscale with an owner sk_ bearer", async () => {
+    const issuePairingToken = vi.fn(() => "pt_should_not_issue");
+    const ctx = {
+      storage: {
+        getToken: vi.fn(() => "sk_owner"),
+        getConfig: vi.fn(() => ({ tls: { mode: "self-signed" } })),
+        issuePairingToken,
+      },
+    } as unknown as RouteContext;
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+    const req = makeRequest();
+    req.headers = { authorization: "Bearer sk_owner" };
+    const res = makeResponse();
+    const handled = await dispatch({
+      method: "POST",
+      path: "/pair/tailscale",
+      url: new URL("https://paired.example/pair/tailscale"),
+      req: req as never,
+      res: res as never,
+    });
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(404);
+    expect(issuePairingToken).not.toHaveBeenCalled();
   });
 
   it("validates POST /pair body", async () => {

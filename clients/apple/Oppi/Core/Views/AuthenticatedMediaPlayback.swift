@@ -328,6 +328,7 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
         configuration.httpShouldSetCookies = false
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 60 * 60
+        TailnetTransportRoute.apply(to: configuration)
         return URLSession(
             configuration: configuration,
             delegate: self,

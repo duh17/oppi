@@ -62,6 +62,13 @@ packages:
   tree-sitter-toml:
     url: https://github.com/tree-sitter-grammars/tree-sitter-toml
     exactVersion: "0.7.0"
+  # SSH client for the iOS Mac setup check (password + exec over a tailnet socket).
+  swift-nio:
+    url: https://github.com/apple/swift-nio
+    from: "2.81.0"
+  swift-nio-ssh:
+    url: https://github.com/apple/swift-nio-ssh
+    from: "0.15.0"
 
 options:
   bundleIdPrefix: dev.chenda
@@ -182,6 +189,12 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
     preBuildScripts:
+      - script: |
+          "$SRCROOT/scripts/build-tailscalekit.sh"
+        name: TailscaleKit
+        basedOnDependencyAnalysis: false
+        shell: /bin/bash
+        showEnvVars: false
       - script: |
           mkdir -p "$DERIVED_FILE_DIR"
           STAMP_FILE="$DERIVED_FILE_DIR/swiftlint.stamp"
@@ -313,6 +326,17 @@ targets:
         product: TreeSitterYAML
       - package: tree-sitter-toml
         product: TreeSitterTOML
+      # Official userspace TailscaleKit (libtailscale swift/). Built unsigned by
+      # scripts/build-tailscalekit.sh; Xcode signs it when embedding.
+      - framework: Vendor/TailscaleKit/TailscaleKit.xcframework
+        embed: true
+        codeSign: true
+      - package: swift-nio
+        product: NIOCore
+      - package: swift-nio
+        product: NIOPosix
+      - package: swift-nio-ssh
+        product: NIOSSH
       - target: OppiActivityExtension
         embed: true
       - target: OppiControlWidget

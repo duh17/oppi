@@ -6,6 +6,17 @@ struct PairDeviceRequest: Encodable {
     let devicePublicKey: DevicePublicKey
 }
 
+struct TailscalePairingInvite: Decodable, Equatable, Sendable {
+    let name: String
+    let pairingToken: String
+    let fingerprint: String
+    let tlsCertFingerprint: String?
+    let host: String
+    let port: Int
+    let scheme: String
+    let inviteURL: String
+}
+
 struct PairDeviceResponse: Decodable {
     let deviceId: String
     let accessToken: String

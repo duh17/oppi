@@ -1456,6 +1456,25 @@ struct ConnectionCoordinatorTests {
         #expect(order.contains("sha256:order-b"))
     }
 
+    // MARK: - Tailnet route
+
+    @Test func tailnetRouteChangeRebuildsOnlyPairedTailnetServers() async {
+        let (coordinator, _) = makeCoordinator()
+        let tailnet = makeServer(id: "sha256:tailnet-route", name: "Tailnet", host: "studio.tail1234.ts.net")
+        let publicHost = makeServer(id: "sha256:public-route", name: "Public", host: "oppi.example.com")
+        coordinator.serverStore.addOrUpdate(tailnet)
+        coordinator.serverStore.addOrUpdate(publicHost)
+        var builtHosts: [String] = []
+        coordinator._apiClientFactoryForTesting = { environment, observer in
+            builtHosts.append(environment.baseURL.host() ?? "")
+            return APIClient(environment: environment, availabilityObserver: observer)
+        }
+
+        await coordinator.handleTailnetRouteChange()
+
+        #expect(builtHosts == ["studio.tail1234.ts.net"])
+    }
+
     // MARK: - Helpers
 
     private func makeCoordinator() -> (ConnectionCoordinator, ServerStore) {

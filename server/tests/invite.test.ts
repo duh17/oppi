@@ -10,6 +10,7 @@ const {
   mockReadCertificateFingerprint,
   mockReadValidTailnetDnsName,
   mockResolveTlsConfig,
+  mockValidateTailscaleMaterial,
 } = vi.hoisted(() => ({
   mockEnsureIdentityMaterial: vi.fn(),
   mockIdentityConfigForDataDir: vi.fn(),
@@ -18,6 +19,7 @@ const {
   mockReadCertificateFingerprint: vi.fn(),
   mockReadValidTailnetDnsName: vi.fn(),
   mockResolveTlsConfig: vi.fn(),
+  mockValidateTailscaleMaterial: vi.fn(),
 }));
 
 vi.mock("../src/security.js", () => ({
@@ -31,6 +33,7 @@ vi.mock("../src/tls.js", () => ({
   readCertificateFingerprint: (...args: unknown[]) => mockReadCertificateFingerprint(...args),
   readValidTailnetDnsName: (...args: unknown[]) => mockReadValidTailnetDnsName(...args),
   resolveTlsConfig: (...args: unknown[]) => mockResolveTlsConfig(...args),
+  validateTailscaleMaterial: (...args: unknown[]) => mockValidateTailscaleMaterial(...args),
 }));
 
 import { generateInvite } from "../src/invite.js";
@@ -104,6 +107,7 @@ describe("generateInvite", () => {
       certPath: "/tmp/oppi-test/tls/tailscale/server.crt",
       keyPath: "/tmp/oppi-test/tls/tailscale/server.key",
     });
+    mockValidateTailscaleMaterial.mockReturnValue("cert-host.tail00000.ts.net");
     mockEnsureIdentityMaterial.mockReturnValue(makeIdentity());
   });
 
@@ -368,5 +372,98 @@ describe("generateInvite", () => {
       ),
     ).toThrow(/conflicts with publicUrl/);
     expect(mockPrepareTlsForServer).not.toHaveBeenCalled();
+  });
+
+  it("can ignore publicUrl so same-user Tailscale invites advertise the MagicDNS host",
+    () => {
+      const storage = makeStorage({
+        port: 7749,
+        host: "127.0.0.1",
+        tls: { mode: "tailscale" },
+        publicUrl: "https://oppi.example.com",
+      });
+      mockPrepareTlsForServer.mockReturnValue({
+        enabled: true,
+        mode: "tailscale",
+        certPath: "/tmp/tailscale.crt",
+      });
+      mockIsTailscaleHostname.mockReturnValue(true);
+
+      const invite = generateInvite(
+        storage as Storage,
+        (override) => override ?? null,
+        (host) => host,
+        {
+          hostOverride: "mac-studio.tail1234.ts.net",
+          ignorePublicUrl: true,
+          pairingTokenTtlMs: 90_000,
+        },
+      );
+
+      expect(invite.host).toBe("mac-studio.tail1234.ts.net");
+      expect(invite.port).toBe(7749);
+      expect(invite.scheme).toBe("https");
+      expect(invite.tlsCertFingerprint).toBeUndefined();
+      expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(90_000);
+    },
+  );
+
+  it("skipRenewal validates existing tailscale material without prepareTlsForServer", () => {
+    const storage = makeStorage({
+      port: 7749,
+      host: "127.0.0.1",
+      tls: { mode: "tailscale" },
+    });
+
+    const invite = generateInvite(
+      storage as Storage,
+      (override) => override ?? null,
+      (host) => host,
+      {
+        hostOverride: "mac-studio.tail1234.ts.net",
+        skipRenewal: true,
+        pairingTokenTtlMs: 90_000,
+      },
+    );
+
+    expect(invite).toMatchObject({
+      host: "mac-studio.tail1234.ts.net",
+      port: 7749,
+      scheme: "https",
+      pairingToken: "pair-90000",
+    });
+    expect(invite.tlsCertFingerprint).toBeUndefined();
+    expect(mockPrepareTlsForServer).not.toHaveBeenCalled();
+    expect(mockValidateTailscaleMaterial).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "tailscale",
+        certPath: "/tmp/oppi-test/tls/tailscale/server.crt",
+        keyPath: "/tmp/oppi-test/tls/tailscale/server.key",
+      }),
+      "mac-studio.tail1234.ts.net",
+    );
+    expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(90_000);
+  });
+
+  it("skipRenewal throws when existing tailscale material is missing or invalid", () => {
+    mockValidateTailscaleMaterial.mockImplementation(() => {
+      throw new Error("Tailscale TLS certificate not found: /tmp/missing.crt");
+    });
+    const storage = makeStorage({
+      port: 7749,
+      host: "127.0.0.1",
+      tls: { mode: "tailscale" },
+    });
+
+    expect(() =>
+      generateInvite(
+        storage as Storage,
+        () => "mac-studio.tail1234.ts.net",
+        () => "unused",
+        { skipRenewal: true },
+      ),
+    ).toThrow(/certificate not found/);
+    expect(mockPrepareTlsForServer).not.toHaveBeenCalled();
+    expect((storage as Storage).issuePairingToken).not.toHaveBeenCalled();
   });
 });

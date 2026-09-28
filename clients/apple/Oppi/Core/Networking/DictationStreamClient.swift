@@ -100,7 +100,7 @@ final class DictationStreamClient: DictationTransport {
         self.currentTokenProvider = currentTokenProvider
         self.refreshTokenProvider = refreshTokenProvider
 
-        let config = URLSessionConfiguration.default
+        let config = TailnetTransportRoute.defaultSessionConfiguration()
         config.timeoutIntervalForRequest = 60
         self.urlSession = URLSession(
             configuration: config,

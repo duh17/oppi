@@ -31,6 +31,7 @@ const initialSchemaOperationIds = [
 const sessionOperationIds = [
   "getHealth",
   "pairDevice",
+  "issueTailscalePairingInvite",
   "getCurrentUser",
   "getServerInfo",
   "listModels",

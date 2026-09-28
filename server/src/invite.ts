@@ -10,6 +10,7 @@ import {
   readCertificateFingerprint,
   readValidTailnetDnsName,
   resolveTlsConfig,
+  validateTailscaleMaterial,
 } from "./tls.js";
 
 export interface GeneratedInvite {
@@ -28,6 +29,13 @@ export interface GenerateInviteOptions {
   requestedName?: string;
   /** Pairing token TTL in ms. Defaults to 90 000 (90 seconds). */
   pairingTokenTtlMs?: number;
+  /** Advertise hostOverride even when publicUrl is configured. */
+  ignorePublicUrl?: boolean;
+  /**
+   * When true and tls.mode=tailscale, validate on-disk certs only.
+   * Skips prepareTlsForServer (no renewal lock, no `tailscale cert` / status).
+   */
+  skipRenewal?: boolean;
 }
 
 export interface InviteStorage {
@@ -55,16 +63,15 @@ export function generateInvite(
     throw new Error(`Invalid publicUrl: ${publicOrigin.error}`);
   }
   const publicUrl = publicOrigin?.ok ? publicOrigin.value : undefined;
-  if (publicUrl && opts.hostOverride?.trim()) {
-    const override = opts.hostOverride.trim();
-    if (override.toLowerCase() !== publicUrl.host.toLowerCase()) {
-      throw new Error(
-        `--host ${override} conflicts with publicUrl ${publicUrl.href}. Omit --host to advertise the public origin, or change publicUrl.`,
-      );
+  if (publicUrl && !opts.ignorePublicUrl) {
+    if (opts.hostOverride?.trim()) {
+      const override = opts.hostOverride.trim();
+      if (override.toLowerCase() !== publicUrl.host.toLowerCase()) {
+        throw new Error(
+          `--host ${override} conflicts with publicUrl ${publicUrl.href}. Omit --host to advertise the public origin, or change publicUrl.`,
+        );
+      }
     }
-  }
-
-  if (publicUrl) {
     return signInvite(storage, {
       host: publicUrl.host,
       port: publicUrl.port,
@@ -116,7 +123,21 @@ export function generateInvite(
     );
   }
 
-  const tls = prepareTlsForServer(config, storage.getDataDir(), {
+  const dataDir = storage.getDataDir();
+  if (opts.skipRenewal && config.tls?.mode === "tailscale") {
+    const resolved = resolveTlsConfig(config, dataDir);
+    validateTailscaleMaterial(resolved, inviteHost);
+    const name = opts.requestedName?.trim() || shortHostLabel(inviteHost);
+    return signInvite(storage, {
+      host: inviteHost,
+      port: config.port,
+      scheme: "https",
+      name,
+      pairingTokenTtlMs: opts.pairingTokenTtlMs,
+    });
+  }
+
+  const tls = prepareTlsForServer(config, dataDir, {
     additionalHosts: [inviteHost, config.host],
     ensureSelfSigned: true,
   });

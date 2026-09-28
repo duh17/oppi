@@ -536,6 +536,23 @@ enum AppPreferences {
         }
     }
 
+    // MARK: - Tailnet
+
+    /// Whether Oppi runs its embedded Tailscale node. Default is OFF; the
+    /// user turns it on from Settings. Launch restarts it only when a paired
+    /// Tailscale hostname needs it; otherwise it starts lazily.
+    enum Tailnet {
+        private static let enabledKey = "\(AppIdentifiers.subsystem).tailnet.enabled"
+
+        static var isEnabled: Bool {
+            UserDefaults.standard.bool(forKey: enabledKey)
+        }
+
+        static func setEnabled(_ enabled: Bool) {
+            UserDefaults.standard.set(enabled, forKey: enabledKey)
+        }
+    }
+
     // MARK: - Biometric
 
     /// Whether biometric gating is enabled for sensitive local actions.

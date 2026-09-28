@@ -75,6 +75,17 @@ npm run test:e2e # Docker Compose mode when that environment is explicitly neede
 
 From `clients/apple/`:
 
+### Build TailscaleKit
+
+The iOS app embeds the official TailscaleKit framework, which is built locally and not tracked. Run once per checkout, and again after the pinned libtailscale commit changes. It needs Go (cgo) and Xcode, and keeps Go caches under `clients/apple/.build/tailscalekit`. A second checkout reuses `~/Library/Caches/oppi-tailscalekit/<commit>/` without Go or Xcode:
+
+```bash
+cd clients/apple
+./scripts/build-tailscalekit.sh
+```
+
+Without it, the Oppi target fails with a missing `Vendor/TailscaleKit/TailscaleKit.xcframework`.
+
 ### Regenerate project
 
 `Oppi.xcodeproj` is generated. Change `project.yml`, then run:

@@ -78,6 +78,7 @@ struct AuthenticatedMediaSource: Sendable {
             pinnedLeafFingerprint: tlsCertFingerprint,
             expectedServerName: tlsServerName
         )
+        TailnetTransportRoute.apply(to: configuration)
         let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
 

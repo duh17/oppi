@@ -343,6 +343,30 @@ struct SettingsView: View {
                 }
             }
 
+            Section {
+                NavigationLink {
+                    TailnetSettingsView()
+                } label: {
+                    Label {
+                        LabeledContent("Tailscale") {
+                            Text(TailnetSettingsView.statusLabel(TailnetNodeController.shared.state))
+                                .foregroundStyle(.themeComment)
+                        }
+                    } icon: {
+                        Image("tailscale")
+                            .renderingMode(.template)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 22, height: 22)
+                    }
+                }
+                .accessibilityIdentifier("settings.tailscale")
+            } header: {
+                Text("Network")
+            } footer: {
+                Text("Reach *.ts.net servers from Oppi without the Tailscale VPN app.")
+            }
+
             privacySecuritySection
 
             documentationSection

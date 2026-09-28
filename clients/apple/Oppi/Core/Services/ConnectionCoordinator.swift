@@ -323,6 +323,9 @@ final class ConnectionCoordinator {
         forceReconfigure: Bool = false,
         preparationID: UUID
     ) async -> ServerConnection? {
+        if ServerTLSTrustPolicy.isTailscaleHostname(server.host) {
+            TailnetNodeController.shared.startIfEnabled()
+        }
         let serverId = server.id
         let initialLANEndpoint = await initialLANEndpoint(for: server)
         guard isCurrentPreparation(preparationID, serverId: serverId) else { return nil }
@@ -629,6 +632,21 @@ final class ConnectionCoordinator {
         //    start() begins a fresh Bonjour search on the current interface.
         lanDiscovery.stop()
         lanDiscovery.start()
+    }
+
+    /// The embedded Tailscale node's SOCKS route appeared, moved, or went away.
+    /// Transports read `TailnetTransportRoute` only when they build their
+    /// URLSession, so rebuild every paired `*.ts.net` server that is not on LAN.
+    func handleTailnetRouteChange() async {
+        let serverIds = serverStore.servers
+            .filter { ServerTLSTrustPolicy.isTailscaleHostname($0.host) }
+            .filter { connections[$0.id]?.transportPath != .lan }
+            .map(\.id)
+        // Rebuild concurrently; one slow server must not delay the others.
+        let retries = serverIds.map { serverId in
+            Task { await retryServerConnection(serverId) }
+        }
+        for retry in retries { await retry.value }
     }
 
     /// Build a signature from non-loopback interface types + names.

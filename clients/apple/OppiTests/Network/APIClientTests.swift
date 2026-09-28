@@ -355,6 +355,25 @@ struct APIClientTests {
         #expect(response.accessToken == "at_1")
     }
 
+    @Test func issueTailscalePairingInvitePostsBootstrapRoute() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/pair/tailscale")
+            #expect(request.httpMethod == "POST")
+            #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+            return self.mockResponse(
+                json: #"{"name":"mac","pairingToken":"pt_1","fingerprint":"sha256:fp","host":"100.101.102.1","port":7749,"scheme":"https","inviteURL":"oppi://connect?v=3&invite=abc"}"#
+            )
+        }
+
+        let invite = try await client.issueTailscalePairingInvite()
+        #expect(invite.pairingToken == "pt_1")
+        #expect(invite.host == "100.101.102.1")
+        #expect(invite.tlsCertFingerprint == nil)
+    }
+
     // MARK: - me
 
     @Test func meDecodesUser() async throws {

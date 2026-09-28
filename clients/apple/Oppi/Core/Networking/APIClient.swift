@@ -294,6 +294,8 @@ actor APIClient: ClientLogUploading {
         let outline: SessionOutlineSnapshot
     }
 
+    private struct EmptyJSONObject: Encodable {}
+
     let baseURL: URL
     let token: String
     let environment: OppiClientEnvironment
@@ -327,7 +329,7 @@ actor APIClient: ClientLogUploading {
             expectedServerName: environment.tlsServerName
         )
 
-        let config = URLSessionConfiguration.default
+        let config = TailnetTransportRoute.defaultSessionConfiguration()
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 30
         session = URLSession(
@@ -358,7 +360,7 @@ actor APIClient: ClientLogUploading {
             expectedServerName: environment.tlsServerName
         )
 
-        let config = URLSessionConfiguration.default
+        let config = TailnetTransportRoute.defaultSessionConfiguration()
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 30
         session = URLSession(
@@ -459,6 +461,18 @@ actor APIClient: ClientLogUploading {
         let (data, response) = try await requestNoAuth("POST", path: "/pair", body: body)
         try checkStatus(response, data: data)
         return try JSONDecoder().decode(PairDeviceResponse.self, from: data)
+    }
+
+    /// Mint a same-Tailscale-user pairing invite. Auth is the TCP whois check
+    /// on the server; do not send owner `sk_`.
+    func issueTailscalePairingInvite() async throws -> TailscalePairingInvite {
+        let (data, response) = try await requestNoAuth(
+            "POST",
+            path: "/pair/tailscale",
+            body: EmptyJSONObject()
+        )
+        try checkStatus(response, data: data)
+        return try JSONDecoder().decode(TailscalePairingInvite.self, from: data)
     }
 
     /// Get authenticated user info.

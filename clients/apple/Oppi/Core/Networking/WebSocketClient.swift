@@ -162,7 +162,7 @@ final class WebSocketClient {
             pinnedLeafFingerprint: pinnedFingerprint,
             expectedServerName: tlsServerName
         )
-        let config = URLSessionConfiguration.default
+        let config = TailnetTransportRoute.defaultSessionConfiguration()
         // No timeout for WebSocket — we handle keepalive ourselves
         config.timeoutIntervalForRequest = 60
         let urlSession = URLSession(

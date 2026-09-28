@@ -36,6 +36,7 @@ const errorResponse = schemaRef("ErrorResponse");
 const sessionOperationIds = new Set<string>([
   "getHealth",
   "pairDevice",
+  "issueTailscalePairingInvite",
   "getCurrentUser",
   "getServerInfo",
   "listModels",
@@ -189,6 +190,13 @@ const rawApiRouteSpecs = [
     schemas: { response: schemaRef("HealthResponse"), error: errorResponse },
   },
   { method: "POST", path: "/pair", operationId: "pairDevice", surface: "admin", auth: "none" },
+  {
+    method: "POST",
+    path: "/pair/tailscale",
+    operationId: "issueTailscalePairingInvite",
+    surface: "admin",
+    auth: "none",
+  },
   {
     method: "GET",
     path: "/me",

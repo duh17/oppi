@@ -130,7 +130,7 @@ final class AppEventStreamClient {
             pinnedLeafFingerprint: tlsCertFingerprint,
             expectedServerName: tlsServerName
         )
-        let config = URLSessionConfiguration.default
+        let config = TailnetTransportRoute.defaultSessionConfiguration()
         config.timeoutIntervalForRequest = 60
         let urlSession = URLSession(configuration: config, delegate: trustDelegate, delegateQueue: nil)
         self.urlSession = urlSession

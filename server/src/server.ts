@@ -1330,6 +1330,15 @@ export class Server {
 
   // ─── Auth ───
 
+  private isOwnerBearer(req: IncomingMessage): boolean {
+    const auth = req.headers.authorization;
+    if (typeof auth !== "string" || !auth.startsWith("Bearer ")) return false;
+    const candidate = auth.slice(7);
+    if (!candidate) return false;
+    const owner = this.storage.getToken();
+    return !!(owner && secureTokenEquals(owner, candidate));
+  }
+
   private authenticate(
     req: IncomingMessage,
   ): { ok: true; principal: SocketPrincipal } | { ok: false; reason: string; deviceId?: string } {
@@ -1411,8 +1420,14 @@ export class Server {
     // Pairing and device-auth bootstrap are supported only on the remote TLS
     // listener. Plain HTTP cannot enroll, challenge, or refresh
     // HTTPS/WSS device credentials.
+    const isTailscalePairInvite = path === "/pair/tailscale" && method === "POST";
+    if (isTailscalePairInvite && (isLocalRequest(req) || this.isOwnerBearer(req))) {
+      this.error(res, 404, "Not found");
+      return;
+    }
     const isDeviceAuthBootstrap =
       (path === "/pair" && method === "POST") ||
+      isTailscalePairInvite ||
       (path === "/auth/challenge" && method === "POST") ||
       (path === "/auth/refresh" && method === "POST");
     if (

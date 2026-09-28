@@ -1,10 +1,16 @@
+import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { hostname } from "node:os";
 
+import { generateInvite } from "../invite.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js";
 import { createLogger } from "../logger.js";
-import { trustConfigFromServerConfig } from "../proxy-config.js";
+import { normalizeIp, trustConfigFromServerConfig } from "../proxy-config.js";
 import { isLocalRequest, resolveRequestProvenance } from "../request-trust.js";
+import {
+  inviteHostForTlsMode,
+  proveSameTailscaleUser,
+} from "../tailscale-whois.js";
 import { SourceRateLimiter } from "../source-rate-limit.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
 import { isDictationStreamEnabled } from "../dictation-types.js";
@@ -26,6 +32,8 @@ const PAIRING_COOLDOWN_MS = 120_000;
 const AUTH_BOOTSTRAP_MAX_BYTES = 16 * 1024;
 const CHALLENGE_WINDOW_MS = 60_000;
 const CHALLENGE_MAX_PER_WINDOW = 8;
+/** Concurrent `tailscale` proofs; taken before spawn so 503/hangs cannot flood. */
+const TAILSCALE_PROOF_MAX_CONCURRENT = 2;
 
 const log = createLogger({ base: { component: "route_identity" } });
 
@@ -33,6 +41,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
   const pairingFailuresBySource = new Map<string, number[]>();
   const pairingBlockedUntilBySource = new Map<string, number>();
   const challengeLimiter = new SourceRateLimiter(CHALLENGE_WINDOW_MS, CHALLENGE_MAX_PER_WINDOW);
+  let tailscaleProofInFlight = 0;
   function pairingSourceKey(req: IncomingMessage): string {
     const config = typeof ctx.storage.getConfig === "function" ? ctx.storage.getConfig() : {};
     return resolveRequestProvenance(req, trustConfigFromServerConfig(config)).clientIdentity;
@@ -140,6 +149,100 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
 
     clearPairingFailures(source);
     helpers.json(res, pairing);
+  }
+
+  async function handleTailscalePairInvite(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (isLocalRequest(req) || isOwnerBearer(req, ctx.storage.getToken?.())) {
+      helpers.error(res, 404, "Not found");
+      return;
+    }
+
+    const config = ctx.storage.getConfig();
+    const provenance = resolveRequestProvenance(req, trustConfigFromServerConfig(config));
+    const source = provenance.clientIdentity;
+    const now = Date.now();
+    prunePairingLimiters(now);
+    if (isPairingRateLimited(source, now)) {
+      helpers.error(res, 429, "Too many invalid pairing attempts. Try again later.");
+      return;
+    }
+
+    // Socket-peer whois would mint for every caller behind a same-owner proxy.
+    if (provenance.trustedPeer) {
+      recordPairingFailure(source, now);
+      helpers.error(res, 403, "Tailscale pairing is not available through a reverse proxy");
+      return;
+    }
+
+    const peerIp = provenance.socketPeer ?? normalizeIp(req.socket?.remoteAddress);
+    if (!peerIp) {
+      recordPairingFailure(source, now);
+      helpers.error(res, 403, "Different Tailscale user");
+      return;
+    }
+
+    if (tailscaleProofInFlight >= TAILSCALE_PROOF_MAX_CONCURRENT) {
+      helpers.error(res, 429, "Too many Tailscale identity checks");
+      return;
+    }
+    tailscaleProofInFlight += 1;
+    try {
+      const proof = await proveSameTailscaleUser(peerIp);
+      if (!proof.ok) {
+        if (proof.status === 403 || proof.status === 503) {
+          recordPairingFailure(source, now);
+        }
+        helpers.error(res, proof.status, proof.reason);
+        return;
+      }
+
+      const tlsMode = config.tls?.mode;
+      if (!tlsMode || tlsMode === "disabled") {
+        recordPairingFailure(source, now);
+        helpers.error(res, 503, "HTTPS pairing requires TLS");
+        return;
+      }
+
+      const inviteHost = inviteHostForTlsMode(tlsMode, proof);
+      if (!inviteHost) {
+        recordPairingFailure(source, now);
+        helpers.error(
+          res,
+          503,
+          tlsMode === "tailscale"
+            ? "Tailscale hostname is unavailable"
+            : "Same-user Tailscale pairing requires tls.mode=tailscale",
+        );
+        return;
+      }
+
+      try {
+        const invite = generateInvite(
+          ctx.storage,
+          (override) => override?.trim() || inviteHost,
+          shortInviteHostLabel,
+          {
+            hostOverride: inviteHost,
+            pairingTokenTtlMs: 90_000,
+            ignorePublicUrl: true,
+            skipRenewal: true,
+          },
+        );
+        if (invite.scheme !== "https") {
+          recordPairingFailure(source, now);
+          helpers.error(res, 503, "HTTPS pairing requires TLS");
+          return;
+        }
+        clearPairingFailures(source);
+        helpers.json(res, invite);
+      } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : String(error);
+        recordPairingFailure(source, now);
+        helpers.error(res, 503, shortInviteFailureReason(detail));
+      }
+    } finally {
+      if (tailscaleProofInFlight > 0) tailscaleProofInFlight -= 1;
+    }
   }
 
   function handleGetMe(res: ServerResponse): void {
@@ -415,6 +518,10 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
   }
 
   return async ({ method, path, url, req, res }) => {
+    if (path === "/pair/tailscale" && method === "POST") {
+      await handleTailscalePairInvite(req, res);
+      return true;
+    }
     if (path === "/pair" && method === "POST") {
       await handlePair(req, res);
       return true;
@@ -493,4 +600,28 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
     return false;
   };
+}
+
+function shortInviteHostLabel(host: string): string {
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(":")) return host;
+  return host.split(".")[0] || host;
+}
+
+function shortInviteFailureReason(detail: string): string {
+  const trimmed = detail.trim();
+  if (/certificate|cert/i.test(trimmed)) return "Tailscale certificate is unavailable";
+  if (/pairing host|ts\.net/i.test(trimmed)) return trimmed.slice(0, 160);
+  if (trimmed) return trimmed.slice(0, 160);
+  return "Could not issue a pairing invite";
+}
+
+function isOwnerBearer(req: IncomingMessage, ownerToken: string | undefined): boolean {
+  if (!ownerToken) return false;
+  const auth = req.headers?.authorization;
+  if (typeof auth !== "string" || !auth.startsWith("Bearer ")) return false;
+  const candidate = auth.slice(7);
+  if (!candidate) return false;
+  const expected = Buffer.from(ownerToken, "utf8");
+  const actual = Buffer.from(candidate, "utf8");
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
