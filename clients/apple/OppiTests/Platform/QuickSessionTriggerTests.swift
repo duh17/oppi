@@ -241,13 +241,27 @@ struct ThinkingLevelEnumTests {
 struct WorkspaceEntityTests {
 
     @Test func construction() {
-        let entity = WorkspaceEntity(id: "ws-123", name: "My Workspace")
-        #expect(entity.id == "ws-123")
+        let entity = WorkspaceEntity(
+            serverId: "server-a",
+            workspaceId: "ws-123",
+            name: "My Workspace",
+            serverName: "Studio",
+            showsServerSubtitle: false
+        )
+        #expect(entity.serverId == "server-a")
+        #expect(entity.workspaceId == "ws-123")
         #expect(entity.name == "My Workspace")
+        #expect(entity.id == WorkspaceEntityID.encode(serverId: "server-a", workspaceId: "ws-123"))
     }
 
     @Test func displayRepresentationShowsName() {
-        let entity = WorkspaceEntity(id: "ws-1", name: "Project Alpha")
+        let entity = WorkspaceEntity(
+            serverId: "server-a",
+            workspaceId: "ws-1",
+            name: "Project Alpha",
+            serverName: "Studio",
+            showsServerSubtitle: false
+        )
         let repr = entity.displayRepresentation
         // DisplayRepresentation title is a LocalizedStringResource;
         // verify it was constructed (non-nil)
@@ -255,13 +269,25 @@ struct WorkspaceEntityTests {
     }
 
     @Test func emptyName() {
-        let entity = WorkspaceEntity(id: "ws-empty", name: "")
+        let entity = WorkspaceEntity(
+            serverId: "server-a",
+            workspaceId: "ws-empty",
+            name: "",
+            serverName: "Studio",
+            showsServerSubtitle: false
+        )
         #expect(entity.name == "")
-        #expect(entity.id == "ws-empty")
+        #expect(entity.workspaceId == "ws-empty")
     }
 
     @Test func unicodeName() {
-        let entity = WorkspaceEntity(id: "ws-jp", name: "プロジェクト")
+        let entity = WorkspaceEntity(
+            serverId: "server-a",
+            workspaceId: "ws-jp",
+            name: "プロジェクト",
+            serverName: "Studio",
+            showsServerSubtitle: false
+        )
         #expect(entity.name == "プロジェクト")
     }
 }

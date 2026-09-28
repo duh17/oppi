@@ -3,6 +3,11 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "APIClient")
 
+struct CreateWorkspaceSessionConflict: Error, Sendable {
+    let sessionId: String
+    let message: String
+}
+
 struct DesktopCurrentStill: Sendable, Equatable {
     let captureID: UUID
     let surfaceWindowID: UInt32
@@ -1527,7 +1532,8 @@ actor APIClient: ClientLogUploading {
         thinking: String? = nil,
         ephemeral: Bool? = nil,
         worktreeId: String? = nil,
-        attachments: [ChatAttachmentRef]? = nil
+        attachments: [ChatAttachmentRef]? = nil,
+        launchIdempotencyKey: String? = nil
     ) async throws -> CreateSessionResponse {
         struct Body: Encodable {
             let name: String?
@@ -1537,9 +1543,11 @@ actor APIClient: ClientLogUploading {
             let ephemeral: Bool?
             let worktreeId: String?
             let attachments: [ChatAttachmentRef]?
+            let launchIdempotencyKey: String?
         }
-        let data = try await post(
-            "/workspaces/\(workspaceId)/sessions",
+        let (data, response) = try await request(
+            "POST",
+            path: "/workspaces/\(workspaceId)/sessions",
             body: Body(
                 name: name,
                 model: model,
@@ -1547,9 +1555,25 @@ actor APIClient: ClientLogUploading {
                 thinking: thinking,
                 ephemeral: ephemeral,
                 worktreeId: worktreeId,
-                attachments: attachments
+                attachments: attachments,
+                launchIdempotencyKey: launchIdempotencyKey
             )
         )
+        if let http = response as? HTTPURLResponse, http.statusCode == 409 {
+            struct ConflictBody: Decodable {
+                let error: String?
+                let sessionId: String?
+            }
+            if let conflict = try? JSONDecoder().decode(ConflictBody.self, from: data),
+               let sessionId = conflict.sessionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !sessionId.isEmpty {
+                throw CreateWorkspaceSessionConflict(
+                    sessionId: sessionId,
+                    message: conflict.error ?? "Conflict"
+                )
+            }
+        }
+        try checkStatus(response, data: data)
         return try JSONDecoder().decode(CreateSessionResponse.self, from: data)
     }
 

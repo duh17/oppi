@@ -35,9 +35,11 @@ Toggle **Steering** / **Follow-up** on the composer. If an Ask card is visible, 
 
 When the composer is empty during a busy turn, the primary action is **Stop**.
 
-## Quick Session and the share sheet
+## Siri, Quick Session, and the share sheet
 
-**Quick Session** starts a session without opening a workspace first. Launch it from Oppi, Control Center, the Action Button, Spotlight, Siri, or Shortcuts. The Shortcuts **New Session** action can add optional text and one image to the composer.
+**Siri** starts a session with a prompt and opens that live chat. Say "Start session in Oppi", "Open session in Oppi", or "New session in Oppi", and optionally "in <workspace>". If you don't give a prompt, Siri asks "What should Pi do?".
+
+**Quick Session** opens the composer without creating a session yet. Launch it from Oppi, Control Center, the Action Button, or the Shortcuts **New Session** action. That action can add optional text and one image to the composer.
 
 The iOS share extension accepts text, URLs, images, and files. Choose a paired-server workspace in its Quick Session composer, then start the session from the share sheet.
 

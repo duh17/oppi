@@ -45,7 +45,7 @@ struct AskOppiIntent: AppIntent {
         let targetWorkspaceId: String
         let workspaceSelectionSource: String
         if let workspace {
-            targetWorkspaceId = workspace.id
+            targetWorkspaceId = workspace.workspaceId
             workspaceSelectionSource = "explicit"
         } else {
             do {
@@ -136,8 +136,12 @@ struct AskOppiIntent: AppIntent {
         }
     }
 
-    /// Load the first paired server from Keychain (shared access group).
+    /// Load the workspace's server when one is selected; otherwise the first paired server.
     private func loadPairedServer() -> PairedServer? {
-        KeychainService.loadServers().first
+        let servers = KeychainService.loadServers()
+        if let workspace {
+            return servers.first(where: { $0.id == workspace.serverId })
+        }
+        return servers.first
     }
 }

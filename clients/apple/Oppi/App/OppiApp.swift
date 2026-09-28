@@ -1,3 +1,4 @@
+import AppIntents
 import os.log
 import SwiftUI
 import UIKit
@@ -208,10 +209,14 @@ enum SessionNotificationOpen {
         serverId: String,
         connection: ServerConnection,
         navigation: AppNavigation,
-        source: SessionNavigationSource
+        source: SessionNavigationSource,
+        workspaceIdHint: String? = nil
     ) async {
         await connection.prepareExternalSessionOpen(sessionId: sessionId)
-        let workspaceId = connection.sessionReentryWorkspaceId(for: sessionId)
+        let workspaceId = connection.sessionReentryWorkspaceId(
+            for: sessionId,
+            workspaceIdHint: workspaceIdHint
+        )
         navigation.selectedTab = .workspaces
         navigation.openSession(
             WorkspaceSessionNavTarget(
@@ -401,6 +406,7 @@ struct OppiApp: App {
 
     @State private var inviteBootstrapInFlight = false
     @State private var appStartupComplete = false
+    @State private var intentSessionOpenTrigger = IntentSessionOpenTrigger.shared
     @State private var pendingSessionDeepLinkId: String?
     @State private var pendingResourceReferenceChoice: PendingResourceReferenceChoice?
     @State private var resourceReferenceRequestCoordinator = ResourceReferenceRequestCoordinator()
@@ -594,9 +600,16 @@ struct OppiApp: App {
                 }
             }
             .onOpenURL { url in Task { @MainActor in await handleIncomingURL(url) } }
+            .onChange(of: intentSessionOpenTrigger.requestID) { _, _ in
+                Task { @MainActor in
+                    await consumeIntentSessionOpenIfNeeded()
+                }
+            }
             .task {
                 await startApp()
+                OppiShortcutsProvider.updateAppShortcutParameters()
                 await consumePendingSessionDeepLinkIfNeeded()
+                await consumeIntentSessionOpenIfNeeded()
             }
     }
 
@@ -1306,6 +1319,42 @@ struct OppiApp: App {
             sessionId,
             source: .externalURL,
             parkingAllowed: false
+        )
+    }
+
+    @MainActor
+    private func consumeIntentSessionOpenIfNeeded() async {
+        guard let receipt = intentSessionOpenTrigger.consume(startupComplete: appStartupComplete) else {
+            return
+        }
+        guard await coordinator.switchToServerReady(receipt.serverId),
+              let connection = coordinator.connection(for: receipt.serverId) else {
+            intentSessionOpenTrigger.enqueue(receipt)
+            return
+        }
+        if let session = receipt.session {
+            connection.sessionStore.upsert(session)
+        }
+        if let prompt = receipt.unsentPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !prompt.isEmpty,
+           let workspaceId = receipt.workspaceId,
+           let key = ComposerDraftKey(
+               serverID: receipt.serverId,
+               workspaceID: workspaceId,
+               sessionID: receipt.sessionId
+           ) {
+            composerDraftStore.setDraft(
+                ComposerDraftPayload(text: prompt, repoPointers: [], attachments: []),
+                for: key
+            )
+        }
+        await SessionNotificationOpen.openResolved(
+            sessionId: receipt.sessionId,
+            serverId: receipt.serverId,
+            connection: connection,
+            navigation: navigation,
+            source: .externalURL,
+            workspaceIdHint: receipt.workspaceId
         )
     }
 
