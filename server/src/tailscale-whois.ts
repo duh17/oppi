@@ -5,6 +5,7 @@
  * node's own Tailscale login (status Self/User, or whois of a Self Tailscale
  * IP). Whois JSON uses `UserProfile.LoginName` (not `User.LoginName`). Tagged
  * nodes and the synthetic `tagged-devices` profile are never a human login.
+ * The socket peer must also differ from status Self by node ID and Tailscale IP.
  * CGNAT ranges are never treated as proof.
  *
  * `tailscale` runs off the request thread. Callers must take admission before
@@ -15,6 +16,7 @@
 import { execFile } from "node:child_process";
 import { isIP } from "node:net";
 
+import { ipMatchesCidrs, normalizeIp } from "./proxy-config.js";
 import { isTailscaleHostname } from "./tls.js";
 import type { TlsMode } from "./types.js";
 
@@ -37,11 +39,13 @@ export type TailscaleSelfIdentity = {
   login: string | null;
   dnsName: string | null;
   tailscaleIPv4: string | null;
+  stableNodeId: string | null;
+  tailscaleIPs: string[];
   tagged: boolean;
 };
 
 export type WhoisIdentityParse =
-  | { ok: true; login: string }
+  | { ok: true; login: string; stableNodeId: string | null }
   | { ok: false; reason: "invalid" | "tagged" };
 
 export function parseWhoisIdentity(json: string): WhoisIdentityParse {
@@ -65,7 +69,8 @@ export function parseWhoisIdentity(json: string): WhoisIdentityParse {
   if (loginIsTagged(login)) {
     return { ok: false, reason: "tagged" };
   }
-  return { ok: true, login };
+  const node = root.Node as { StableID?: unknown } | undefined;
+  return { ok: true, login, stableNodeId: stableNodeId(node?.StableID) };
 }
 
 /** Login from authentic whois JSON, or null when missing/tagged/invalid. */
@@ -79,6 +84,8 @@ export function parseStatusSelf(json: string): TailscaleSelfIdentity {
     login: null,
     dnsName: null,
     tailscaleIPv4: null,
+    stableNodeId: null,
+    tailscaleIPs: [],
     tagged: false,
   };
   let parsed: unknown;
@@ -91,6 +98,7 @@ export function parseStatusSelf(json: string): TailscaleSelfIdentity {
   const root = parsed as {
     Self?: {
       DNSName?: unknown;
+      ID?: unknown;
       UserID?: unknown;
       TailscaleIPs?: unknown;
       Tags?: unknown;
@@ -99,17 +107,24 @@ export function parseStatusSelf(json: string): TailscaleSelfIdentity {
     TailscaleIPs?: unknown;
   };
   const dnsName = normalizeDnsName(root.Self?.DNSName);
+  const tailscaleIPs = Array.isArray(root.Self?.TailscaleIPs)
+    ? root.Self.TailscaleIPs.flatMap((ip) => {
+        const normalized = typeof ip === "string" ? normalizeIp(ip) : null;
+        return normalized ? [normalized] : [];
+      })
+    : [];
   const tailscaleIPv4 =
     firstIPv4(root.Self?.TailscaleIPs) ?? firstIPv4(root.TailscaleIPs);
+  const selfStableId = stableNodeId(root.Self?.ID);
   if (nodeIsTagged(root.Self)) {
-    return { login: null, dnsName, tailscaleIPv4, tagged: true };
+    return { login: null, dnsName, tailscaleIPv4, stableNodeId: selfStableId, tailscaleIPs, tagged: true };
   }
   const userId = root.Self?.UserID;
   const login = loginFromStatusUsers(root.User, userId);
   if (login && loginIsTagged(login)) {
-    return { login: null, dnsName, tailscaleIPv4, tagged: true };
+    return { login: null, dnsName, tailscaleIPv4, stableNodeId: selfStableId, tailscaleIPs, tagged: true };
   }
-  return { login, dnsName, tailscaleIPv4, tagged: false };
+  return { login, dnsName, tailscaleIPv4, stableNodeId: selfStableId, tailscaleIPs, tagged: false };
 }
 
 export function loginsMatch(left: string, right: string): boolean {
@@ -139,6 +154,9 @@ export async function proveSameTailscaleUser(peerIp: string): Promise<TailscaleW
   const self = parseStatusSelf(status.stdout);
   if (self.tagged) {
     return { ok: false, status: 403, reason: "Tagged Tailscale identity" };
+  }
+  if (ipMatchesCidrs(peerIp, self.tailscaleIPs)) {
+    return { ok: false, status: 403, reason: "Server Tailscale node is not a peer" };
   }
   let selfLogin = self.login;
   if (!selfLogin && self.tailscaleIPv4) {
@@ -171,6 +189,12 @@ export async function proveSameTailscaleUser(peerIp: string): Promise<TailscaleW
       status: 403,
       reason: peer.reason === "tagged" ? "Tagged Tailscale identity" : "Tailscale whois failed",
     };
+  }
+  if (!self.stableNodeId || !peer.stableNodeId) {
+    return { ok: false, status: 403, reason: "Tailscale node identity is unavailable" };
+  }
+  if (peer.stableNodeId === self.stableNodeId) {
+    return { ok: false, status: 403, reason: "Server Tailscale node is not a peer" };
   }
   if (!loginsMatch(selfLogin, peer.login)) {
     return { ok: false, status: 403, reason: "Different Tailscale user" };
@@ -248,6 +272,12 @@ function loginFromStatusUsers(users: unknown, userId: unknown): string | null {
   const login = direct?.LoginName;
   if (typeof login === "string" && login.trim()) return login.trim();
   return null;
+}
+
+function stableNodeId(id: unknown): string | null {
+  if (typeof id !== "string") return null;
+  const trimmed = id.trim();
+  return trimmed || null;
 }
 
 function nodeIsTagged(node: unknown): boolean {

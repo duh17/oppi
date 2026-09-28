@@ -36,11 +36,12 @@ if [ "$1" = "status" ]; then
   dns="\${OPPI_TEST_SELF_DNS:-mac.tail1234.ts.net}"
   ip="\${OPPI_TEST_SELF_IP:-100.101.102.1}"
   login="\${OPPI_TEST_SELF_LOGIN:-chen@example.com}"
+  stable_id="\${OPPI_TEST_SELF_STABLE_ID:-nSelf1CNTRL}"
   if [ "\${OPPI_TEST_SELF_TAGGED:-}" = "1" ]; then
     printf '{"Self":{"DNSName":"%s.","UserID":1,"Tags":["tag:server"],"TailscaleIPs":["%s"]},"User":{"1":{"ID":1,"LoginName":"tagged-devices","DisplayName":"tagged-devices"}}}\\n' "$dns" "$ip"
     exit 0
   fi
-  printf '{"Self":{"DNSName":"%s.","UserID":1,"TailscaleIPs":["%s"]},"User":{"1":{"ID":1,"LoginName":"%s"}}}\\n' "$dns" "$ip" "$login"
+  printf '{"Self":{"ID":"%s","DNSName":"%s.","UserID":1,"TailscaleIPs":["%s"]},"User":{"1":{"ID":1,"LoginName":"%s"}}}\\n' "$stable_id" "$dns" "$ip" "$login"
   exit 0
 fi
 if [ "$1" = "cert" ]; then
@@ -79,7 +80,8 @@ if [ "$1" = "whois" ]; then
     printf '{"Node":{"ID":2,"StableID":"nCi1CNTRL","Name":"ci.tail1234.ts.net.","User":1,"Tags":["tag:ci"],"Addresses":["%s/32"],"Hostinfo":{"OS":"linux","Hostname":"ci"}},"UserProfile":{"ID":1,"LoginName":"tagged-devices","DisplayName":"tagged-devices"},"CapMap":{}}\\n' "$ip"
     exit 0
   fi
-  printf '{"Node":{"ID":1,"StableID":"nPeer1CNTRL","Name":"iphone.tail1234.ts.net.","User":1,"Addresses":["%s/32"],"Hostinfo":{"OS":"iOS","Hostname":"iPhone"}},"UserProfile":{"ID":1,"LoginName":"%s","DisplayName":"Chen"},"CapMap":{}}\\n' "$ip" "$login"
+  stable_id="\${OPPI_TEST_PEER_STABLE_ID:-nPeer1CNTRL}"
+  printf '{"Node":{"ID":2,"StableID":"%s","Name":"iphone.tail1234.ts.net.","User":1,"Addresses":["%s/32"],"Hostinfo":{"OS":"iOS","Hostname":"iPhone"}},"UserProfile":{"ID":1,"LoginName":"%s","DisplayName":"Chen"},"CapMap":{}}\\n' "$stable_id" "$ip" "$login"
   exit 0
 fi
 exit 1
@@ -170,6 +172,9 @@ describe("POST /pair/tailscale", () => {
     delete process.env.OPPI_TEST_WHOIS_USER_FIELD;
     delete process.env.OPPI_TEST_PEER_TAGGED;
     delete process.env.OPPI_TEST_SELF_TAGGED;
+    delete process.env.OPPI_TEST_SELF_IP;
+    delete process.env.OPPI_TEST_SELF_STABLE_ID;
+    delete process.env.OPPI_TEST_PEER_STABLE_ID;
     delete process.env.OPPI_TEST_CERT_LOG;
     if (server) {
       await server.stop().catch(() => {});
@@ -242,6 +247,75 @@ describe("POST /pair/tailscale", () => {
         expect(body.host).toBe("mac.tail1234.ts.net");
         expect(storage.getConfig().pairingToken).toBe(body.pairingToken);
         expect(certLogContents(certLog)).toBe(certBefore);
+      });
+
+      it("rejects the server's own Tailscale IP even when its login matches", async () => {
+        process.env.OPPI_TEST_SELF_IP = "127.0.0.1";
+        const storage = await startServer("tailscale");
+        const res = await httpsJSON(`https://127.0.0.1:${server!.port}/pair/tailscale`, {
+          method: "POST",
+          body: {},
+        });
+        expect(res.status).toBe(403);
+        expect(JSON.parse(res.body)).toEqual({ error: "Server Tailscale node is not a peer" });
+        expect(storage.getConfig().pairingToken).toBeUndefined();
+      });
+
+      it("rejects the server's stable node ID from whois even at a different IP", async () => {
+        process.env.OPPI_TEST_PEER_STABLE_ID = "nSelf1CNTRL";
+        const storage = await startServer("tailscale");
+        const res = await httpsJSON(`https://127.0.0.1:${server!.port}/pair/tailscale`, {
+          method: "POST",
+          body: {},
+        });
+        expect(res.status).toBe(403);
+        expect(JSON.parse(res.body)).toEqual({ error: "Server Tailscale node is not a peer" });
+        expect(storage.getConfig().pairingToken).toBeUndefined();
+      });
+
+      it.each(["self", "peer"])("rejects when the %s stable ID is absent", async (missing) => {
+        if (missing === "self") process.env.OPPI_TEST_SELF_STABLE_ID = " ";
+        else process.env.OPPI_TEST_PEER_STABLE_ID = " ";
+        const storage = await startServer("tailscale");
+        const res = await httpsJSON(`https://127.0.0.1:${server!.port}/pair/tailscale`, {
+          method: "POST",
+          body: {},
+        });
+        expect(res.status).toBe(403);
+        expect(JSON.parse(res.body)).toEqual({ error: "Tailscale node identity is unavailable" });
+        expect(storage.getConfig().pairingToken).toBeUndefined();
+      });
+
+      it("returns 404 with publicUrl even when the socket is not a trusted proxy", async () => {
+        process.env.OPPI_TEST_STATUS_FAIL = "1";
+        const storage = await startServer("tailscale", { publicUrl: "https://oppi.example.com" });
+        const res = await httpsJSON(`https://127.0.0.1:${server!.port}/pair/tailscale`, {
+          method: "POST",
+          body: {},
+        });
+        expect(res.status).toBe(404);
+        expect(JSON.parse(res.body)).toEqual({ error: "Not found" });
+        expect(storage.getConfig().pairingToken).toBeUndefined();
+      });
+
+      it.each([
+        ["Forwarded", "for=203.0.113.99;proto=https"],
+        ["X-Forwarded-For", "203.0.113.99"],
+        ["X-Forwarded-Proto", "https"],
+        ["X-Real-IP", "203.0.113.99"],
+        ["Via", "1.1 proxy"],
+      ])("rejects %s even from an untrusted direct socket peer", async (header, value) => {
+        const storage = await startServer("tailscale");
+        const res = await httpsJSON(`https://127.0.0.1:${server!.port}/pair/tailscale`, {
+          method: "POST",
+          body: {},
+          headers: { [header]: value },
+        });
+        expect(res.status).toBe(403);
+        expect(JSON.parse(res.body)).toEqual({
+          error: "Tailscale pairing is not available through a reverse proxy",
+        });
+        expect(storage.getConfig().pairingToken).toBeUndefined();
       });
 
       it("returns 503 when whois logins match but tls.mode is not tailscale", async () => {
@@ -384,10 +458,8 @@ describe("POST /pair/tailscale", () => {
             "X-Forwarded-For": "203.0.113.99",
           },
         });
-        expect(res.status).toBe(403);
-        expect(JSON.parse(res.body)).toEqual({
-          error: "Tailscale pairing is not available through a reverse proxy",
-        });
+        expect(res.status).toBe(404);
+        expect(JSON.parse(res.body)).toEqual({ error: "Not found" });
         expect(storage.getConfig().pairingToken).toBeUndefined();
       });
 

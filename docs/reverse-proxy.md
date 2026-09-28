@@ -34,7 +34,7 @@ Rules:
 - `tls.mode=cloudflare` is not a supported mode. Terminate TLS at the proxy and use `publicUrl` + `proxy.trustedPeers`.
 - Do not disable upstream certificate verification (`noTLSVerify`, `tls_insecure_skip_verify`, or nginx `proxy_ssl_verify off`).
 
-Direct self-signed LAN and Tailscale pairing stay unchanged when `publicUrl` is unset. Contributor notes: [Networking](../dev/networking.md).
+Direct self-signed LAN pairing stays available when `publicUrl` is unset. Same-user `/pair/tailscale` is unavailable whenever `publicUrl` is set; without it, the endpoint rejects forwarding headers and the server's own Tailscale node. A same-login, untagged node that forwards raw TCP without forwarding headers and is not the server's node can still mint an invite: these checks do not authenticate the ultimate caller behind that relay. Contributor notes: [Networking](../dev/networking.md).
 
 ## Caddy
 

@@ -158,6 +158,17 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
 
     const config = ctx.storage.getConfig();
+    if (config.publicUrl) {
+      helpers.error(res, 404, "Not found");
+      return;
+    }
+    // Forwarding metadata means the socket peer may be a relay, not the caller.
+    if (["forwarded", "x-forwarded-for", "x-forwarded-proto", "x-real-ip", "via"].some(
+      (header) => header in req.headers,
+    )) {
+      helpers.error(res, 403, "Tailscale pairing is not available through a reverse proxy");
+      return;
+    }
     const provenance = resolveRequestProvenance(req, trustConfigFromServerConfig(config));
     const source = provenance.clientIdentity;
     const now = Date.now();

@@ -52,7 +52,7 @@ const taggedWhois = `{
 
 describe("tailscale whois proof helpers", () => {
   it("reads LoginName from UserProfile, not User", () => {
-    expect(parseWhoisIdentity(humanWhois)).toEqual({ ok: true, login: "chen@example.com" });
+    expect(parseWhoisIdentity(humanWhois)).toEqual({ ok: true, login: "chen@example.com", stableNodeId: "nPhone1CNTRL" });
     expect(parseWhoisLogin(humanWhois)).toBe("chen@example.com");
     expect(parseWhoisIdentity(`{"User":{"ID":1,"LoginName":"chen@example.com","DisplayName":"Chen"}}`)).toEqual(
       { ok: false, reason: "invalid" },
@@ -77,6 +77,7 @@ describe("tailscale whois proof helpers", () => {
     const self = parseStatusSelf(`{
       "Self": {
         "DNSName": "mac-studio.tail1234.ts.net.",
+        "ID": "nSelf1CNTRL",
         "UserID": 123,
         "TailscaleIPs": ["100.101.102.103", "fd7a:115c:a1e0::1"]
       },
@@ -86,6 +87,8 @@ describe("tailscale whois proof helpers", () => {
       login: "chen@example.com",
       dnsName: "mac-studio.tail1234.ts.net",
       tailscaleIPv4: "100.101.102.103",
+      stableNodeId: "nSelf1CNTRL",
+      tailscaleIPs: ["100.101.102.103", "fd7a:115c:a1e0::1"],
       tagged: false,
     });
   });
@@ -103,6 +106,7 @@ describe("tailscale whois proof helpers", () => {
     expect(self.login).toBeNull();
     expect(self.tagged).toBe(true);
     expect(self.dnsName).toBe("ci.tail1234.ts.net");
+    expect(self.tailscaleIPs).toEqual(["100.64.0.9"]);
   });
 
   it("does not treat a CGNAT address as a Tailscale login", () => {
