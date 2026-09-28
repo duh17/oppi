@@ -6,7 +6,7 @@
 
 <p align="center">
   Use <a href="https://github.com/badlogic/pi-mono">pi</a> from iPhone and iPad.<br />
-  <a href="https://testflight.apple.com/join/yaRP9aed">TestFlight</a> · <a href="docs/demo/toolcalling-demo.mp4">Demo video</a> · <a href="docs/demo/">Screenshots</a>
+  <a href="https://testflight.apple.com/join/yaRP9aed">TestFlight</a> · <a href="docs/demo/#demos">See it</a> · <a href="docs/demo/#screenshots">Screenshots</a>
 </p>
 
 There are many clankers, and this one is mine. Oppi pairs an iPhone and iPad client with a server you run yourself for [Pi](https://github.com/badlogic/pi-mono) coding sessions.

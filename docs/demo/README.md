@@ -1,3 +1,15 @@
+# Demos
+
+Each clip is one completed action. Mirror clips put the terminal on the left and the iPhone on the right.
+
+![Tap the spec link in the reply and the markdown viewer opens.](document.gif)
+
+![Queue a steer on the phone while the terminal is still running.](mirror-queue.gif)
+
+![Answer the terminal's confirm from the phone.](mirror-confirm.gif)
+
+![Ask for three reviews and the session lists them as working.](subagents-extension.gif)
+
 # Screenshots
 
 ## Session with file context and fuzzy search
