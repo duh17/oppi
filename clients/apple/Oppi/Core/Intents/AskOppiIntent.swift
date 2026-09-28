@@ -10,6 +10,7 @@ struct AskOppiIntent: AppIntent {
     static let description: IntentDescription = "Send a message to start a new agent session without opening the app." // periphery:ignore
 
     static let openAppWhenRun = false
+    static var authenticationPolicy: IntentAuthenticationPolicy { .requiresLocalDeviceAuthentication }
 
     @Parameter(title: "Message", inputConnectionBehavior: .connectToPreviousIntentResult)
     var message: String

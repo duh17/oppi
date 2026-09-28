@@ -570,6 +570,10 @@ struct AskOppiIntentTests {
         #expect(AskOppiIntent.openAppWhenRun == false)
     }
 
+    @Test func requiresLocalDeviceAuthentication() {
+        #expect(AskOppiIntent.authenticationPolicy == .requiresLocalDeviceAuthentication)
+    }
+
     @Test func parameterDefaults() {
         let intent = AskOppiIntent()
         // Optional parameters should default to nil

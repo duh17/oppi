@@ -25,6 +25,9 @@ final class IntentSessionOpenTrigger {
         var serverId: String
         var sessionId: String
         var workspaceId: String?
+    }
+
+    private struct LegacyPrompt: Decodable {
         var unsentPrompt: String?
     }
 
@@ -34,29 +37,72 @@ final class IntentSessionOpenTrigger {
     private let issuedRequestIDKey: String
     private let lastAcceptedRequestIDKey: String
     private let pendingKey: String
+    private let promptFileURL: URL
     private var pending: Receipt?
+    /// The protected prompt file existed but could not be read at init (device locked).
+    /// `consume` retries the read and keeps the file until it succeeds.
+    private var pendingPromptUnreadable = false
     private var lastAcceptedRequestID: Int
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        promptFileURL: URL = ComposerDraftStore.intentSessionPromptFileURL()
+    ) {
         self.defaults = defaults
+        self.promptFileURL = promptFileURL
         let prefix = "\(AppIdentifiers.subsystem).intentSessionOpen"
         issuedRequestIDKey = "\(prefix).issuedRequestID"
         lastAcceptedRequestIDKey = "\(prefix).lastAcceptedRequestID"
         pendingKey = "\(prefix).pending"
         lastAcceptedRequestID = defaults.integer(forKey: lastAcceptedRequestIDKey)
-        if let persisted = Self.loadPersisted(from: defaults, key: pendingKey) {
+        if let data = defaults.data(forKey: pendingKey),
+           let persisted = try? JSONDecoder().decode(PersistedReceipt.self, from: data) {
+            let legacy = try? JSONDecoder().decode(LegacyPrompt.self, from: data)
+            var migrated = legacy != nil
+            if let text = legacy?.unsentPrompt {
+                if let workspaceId = persisted.workspaceId,
+                   let key = ComposerDraftKey(
+                       serverID: persisted.serverId,
+                       workspaceID: workspaceId,
+                       sessionID: persisted.sessionId
+                   ) {
+                    do {
+                        try ComposerDraftStore.saveIntentSessionPrompt(
+                            text, requestID: persisted.requestID, for: key, at: promptFileURL
+                        )
+                    } catch {
+                        migrated = false
+                        logger.error("Could not protect legacy start-session prompt: \(error.localizedDescription, privacy: .public)")
+                    }
+                } else {
+                    migrated = false
+                }
+            }
+            var prompt = legacy?.unsentPrompt
+            if prompt == nil {
+                do {
+                    prompt = try Self.loadPrompt(for: persisted, at: promptFileURL)
+                } catch {
+                    pendingPromptUnreadable = true
+                    logger.error("Could not read start-session prompt yet: \(error.localizedDescription, privacy: .public)")
+                }
+            }
             pending = Receipt(
                 requestID: persisted.requestID,
                 serverId: persisted.serverId,
                 sessionId: persisted.sessionId,
                 workspaceId: persisted.workspaceId,
-                unsentPrompt: persisted.unsentPrompt,
+                unsentPrompt: prompt,
                 session: nil
             )
             requestID = persisted.requestID
             lastAcceptedRequestID = max(lastAcceptedRequestID, persisted.requestID)
             if persisted.requestID > defaults.integer(forKey: issuedRequestIDKey) {
                 defaults.set(persisted.requestID, forKey: issuedRequestIDKey)
+            }
+            // Do not discard the only durable prompt copy if the protected write failed.
+            if migrated, let data = try? JSONEncoder().encode(persisted) {
+                defaults.set(data, forKey: pendingKey)
             }
         }
     }
@@ -75,7 +121,21 @@ final class IntentSessionOpenTrigger {
             )
             return
         }
+        if let prompt = receipt.unsentPrompt {
+            guard let key = Self.draftKey(for: receipt) else { return }
+            do {
+                try ComposerDraftStore.saveIntentSessionPrompt(
+                    prompt, requestID: receipt.requestID, for: key, at: promptFileURL
+                )
+            } catch {
+                logger.error("Could not protect start-session prompt: \(error.localizedDescription, privacy: .public)")
+                return
+            }
+        } else {
+            ComposerDraftStore.clearIntentSessionPrompt(at: promptFileURL)
+        }
         pending = receipt
+        pendingPromptUnreadable = false
         requestID = receipt.requestID
         rememberAccepted(receipt.requestID)
         persist(receipt)
@@ -86,10 +146,25 @@ final class IntentSessionOpenTrigger {
 
     func consume(startupComplete: Bool) -> Receipt? {
         guard startupComplete else { return nil }
-        guard let receipt = pending else { return nil }
+        guard var receipt = pending else { return nil }
+        if pendingPromptUnreadable {
+            // Retry now that the app is in the foreground. Never delete the only
+            // copy of the prompt, and keep the handoff pending until it reads.
+            guard let key = Self.draftKey(for: receipt) else { return nil }
+            do {
+                receipt.unsentPrompt = try ComposerDraftStore.intentSessionPrompt(
+                    requestID: receipt.requestID, for: key, at: promptFileURL
+                )
+            } catch {
+                logger.error("Start-session prompt still unreadable: \(error.localizedDescription, privacy: .public)")
+                return nil
+            }
+            pendingPromptUnreadable = false
+        }
         pending = nil
         rememberAccepted(receipt.requestID)
         persist(nil)
+        ComposerDraftStore.clearIntentSessionPrompt(at: promptFileURL)
         logger.notice(
             "Start-session handoff consumed request=\(receipt.requestID, privacy: .public) session=\(receipt.sessionId, privacy: .public)"
         )
@@ -110,16 +185,26 @@ final class IntentSessionOpenTrigger {
             requestID: receipt.requestID,
             serverId: receipt.serverId,
             sessionId: receipt.sessionId,
-            workspaceId: receipt.workspaceId,
-            unsentPrompt: receipt.unsentPrompt
+            workspaceId: receipt.workspaceId
         )
         if let data = try? JSONEncoder().encode(persisted) {
             defaults.set(data, forKey: pendingKey)
         }
     }
 
-    private static func loadPersisted(from defaults: UserDefaults, key: String) -> PersistedReceipt? {
-        guard let data = defaults.data(forKey: key) else { return nil }
-        return try? JSONDecoder().decode(PersistedReceipt.self, from: data)
+    private static func draftKey(for receipt: Receipt) -> ComposerDraftKey? {
+        guard let workspaceId = receipt.workspaceId else { return nil }
+        return ComposerDraftKey(
+            serverID: receipt.serverId, workspaceID: workspaceId, sessionID: receipt.sessionId
+        )
     }
+
+    private static func loadPrompt(for receipt: PersistedReceipt, at url: URL) throws -> String? {
+        guard let workspaceId = receipt.workspaceId,
+              let key = ComposerDraftKey(
+                  serverID: receipt.serverId, workspaceID: workspaceId, sessionID: receipt.sessionId
+              ) else { return nil }
+        return try ComposerDraftStore.intentSessionPrompt(requestID: receipt.requestID, for: key, at: url)
+    }
+
 }

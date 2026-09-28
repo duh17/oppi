@@ -60,12 +60,20 @@ enum LocalDataProtection {
         var result = UpgradeResult()
         for root in roots where fileManager.fileExists(atPath: root.path) {
             upgradeItem(atPath: root.path, fileManager: fileManager, result: &result)
+            var enumerationFailures = 0
             guard let enumerator = fileManager.enumerator(
                 at: root,
                 includingPropertiesForKeys: nil,
                 options: [],
-                errorHandler: { _, _ in true }
-            ) else { continue }
+                errorHandler: { _, error in
+                    enumerationFailures += 1
+                    logger.error("Data protection enumeration failed: \(error.localizedDescription, privacy: .public)")
+                    return true
+                }
+            ) else {
+                result.failed += 1
+                continue
+            }
 
             for case let url as URL in enumerator {
                 let path = url.standardizedFileURL.path
@@ -75,6 +83,7 @@ enum LocalDataProtection {
                 }
                 upgradeItem(atPath: path, fileManager: fileManager, result: &result)
             }
+            result.failed += enumerationFailures
         }
         return result
     }
@@ -86,8 +95,17 @@ enum LocalDataProtection {
     }
 
     private static func upgradeItem(atPath path: String, fileManager: FileManager, result: inout UpgradeResult) {
-        guard let attributes = try? fileManager.attributesOfItem(atPath: path),
-              attributes[.type] as? FileAttributeType != .typeSymbolicLink else { return }
+        let attributes: [FileAttributeKey: Any]
+        do {
+            attributes = try fileManager.attributesOfItem(atPath: path)
+        } catch {
+            if fileManager.fileExists(atPath: path) {
+                result.failed += 1
+                logger.error("Data protection attribute read failed: \(error.localizedDescription, privacy: .public)")
+            }
+            return
+        }
+        guard attributes[.type] as? FileAttributeType != .typeSymbolicLink else { return }
         result.checked += 1
         guard needsUpgrade(attributes[.protectionKey] as? FileProtectionType) else { return }
         do {

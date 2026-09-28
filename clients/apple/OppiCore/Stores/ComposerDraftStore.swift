@@ -98,7 +98,7 @@ private func configureComposerDraftStorageURL(_ url: URL) throws {
     values.isExcludedFromBackup = true
     try mutableURL.setResourceValues(values)
 
-    // Class B: drafts cannot be read while the device is locked.
+    // Class B: closed drafts cannot be opened while locked; open files remain accessible.
     #if os(iOS)
     try FileManager.default.setAttributes(
         [FileAttributeKey.protectionKey: FileProtectionType.completeUnlessOpen],
@@ -366,6 +366,54 @@ final class ComposerDraftStore {
     @ObservationIgnored private var pendingLegacyDraft: PendingLegacyDraft?
     @ObservationIgnored private var fallbackDocument = ComposerDraftFallbackDocument.empty
     @ObservationIgnored private var attachmentDataByKey: [ComposerDraftKey: [String: Data]] = [:]
+
+    /// The Siri-to-app handoff has its own protected draft file, so it cannot
+    /// race the app's in-memory composer store or put prompt text in preferences.
+    static func intentSessionPromptFileURL(fileManager: FileManager = .default) -> URL {
+        fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "ComposerDrafts", directoryHint: .isDirectory)
+            .appending(path: "intent-session-prompt.json", directoryHint: .notDirectory)
+    }
+
+    static func saveIntentSessionPrompt(
+        _ text: String,
+        requestID: Int,
+        for key: ComposerDraftKey,
+        at url: URL
+    ) throws {
+        let record = ComposerDraftRecord(
+            key: key,
+            payload: ComposerDraftPayload(text: text, repoPointers: [], attachments: []),
+            revision: UInt64(requestID),
+            updatedAt: Date()
+        )
+        let data = try JSONEncoder().encode(
+            ComposerDraftDocument(version: ComposerDraftDocument.currentVersion, records: [record])
+        )
+        try writeProtectedComposerDraftData(data, to: url)
+    }
+
+    /// Returns `nil` when the file is absent or holds no prompt for this request.
+    /// Throws when the file exists but cannot be read (for example while the device
+    /// is locked), so callers never mistake an unreadable prompt for no prompt.
+    static func intentSessionPrompt(requestID: Int, for key: ComposerDraftKey, at url: URL) throws -> String? {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return nil
+        }
+        guard let document = try? JSONDecoder().decode(ComposerDraftDocument.self, from: data),
+              document.version == ComposerDraftDocument.currentVersion,
+              let record = document.records.first(where: { $0.key == key && $0.revision == UInt64(requestID) }) else {
+            return nil
+        }
+        return record.payload.text
+    }
+
+    static func clearIntentSessionPrompt(at url: URL) {
+        try? FileManager.default.removeItem(at: url)
+    }
 
     private static let quickSessionDraftKey = ComposerDraftKey(
         serverID: "__oppi_local__",

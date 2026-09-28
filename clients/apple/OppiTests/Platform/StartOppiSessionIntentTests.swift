@@ -342,20 +342,110 @@ struct IntentSessionOpenTriggerTests {
             )
         )
 
+        // The handoff plist may retain identifiers, but never the unsent text.
+        let preferenceValues = fixture.defaults.dictionaryRepresentation().values
+        for value in preferenceValues {
+            if let data = value as? Data {
+                #expect(!String(decoding: data, as: UTF8.self).contains("Ship it"))
+                #expect(!String(decoding: data, as: UTF8.self).contains("unsentPrompt"))
+            }
+            if let string = value as? String {
+                #expect(!string.contains("Ship it"))
+            }
+        }
+
         let second = fixture.makeTrigger()
         let consumed = second.consume(startupComplete: true)
+        #expect(consumed?.serverId == "server-a")
+        #expect(consumed?.workspaceId == "ws-1")
         #expect(consumed?.sessionId == "session-1")
         #expect(consumed?.unsentPrompt == "Ship it")
         #expect(second.consume(startupComplete: true) == nil)
     }
 
+    @Test func legacyPendingPromptMovesOutOfPreferencesBeforeConsume() throws {
+        let fixture = Fixture()
+        defer { fixture.remove() }
+        let oldReceipt: [String: Any] = [
+            "requestID": 7,
+            "serverId": "server-a",
+            "sessionId": "session-1",
+            "workspaceId": "ws-1",
+            "unsentPrompt": "Legacy unsent text",
+        ]
+        let key = "\(AppIdentifiers.subsystem).intentSessionOpen.pending"
+        fixture.defaults.set(try JSONSerialization.data(withJSONObject: oldReceipt), forKey: key)
+
+        let trigger = fixture.makeTrigger()
+        let stored = try #require(fixture.defaults.data(forKey: key))
+        #expect(!String(decoding: stored, as: UTF8.self).contains("Legacy unsent text"))
+        #expect(!String(decoding: stored, as: UTF8.self).contains("unsentPrompt"))
+        let consumed = trigger.consume(startupComplete: true)
+        #expect(consumed?.serverId == "server-a")
+        #expect(consumed?.sessionId == "session-1")
+        #expect(consumed?.unsentPrompt == "Legacy unsent text")
+    }
+
+    @Test func failedLegacyPromptMoveLeavesPreferencesIntact() throws {
+        let fixture = Fixture()
+        defer { fixture.remove() }
+        let key = "\(AppIdentifiers.subsystem).intentSessionOpen.pending"
+        let legacyData = try JSONSerialization.data(withJSONObject: [
+            "requestID": 8,
+            "serverId": "server-a",
+            "sessionId": "session-1",
+            "workspaceId": "ws-1",
+            "unsentPrompt": "Keep on failure",
+        ] as [String: Any])
+        fixture.defaults.set(legacyData, forKey: key)
+        try FileManager.default.createDirectory(at: fixture.directory, withIntermediateDirectories: true)
+        let blocker = fixture.directory.appending(path: "blocker")
+        try Data().write(to: blocker)
+
+        let trigger = IntentSessionOpenTrigger(
+            defaults: fixture.defaults,
+            promptFileURL: blocker.appending(path: "prompt.json")
+        )
+        #expect(fixture.defaults.data(forKey: key) == legacyData)
+        #expect(trigger.consume(startupComplete: false) == nil)
+        // The in-memory receipt still carries the only copy of the prompt.
+        #expect(trigger.consume(startupComplete: true)?.unsentPrompt == "Keep on failure")
+    }
+
+    @Test func unreadablePromptFileIsRetriedAtConsumeAndNeverDeleted() throws {
+        let fixture = Fixture()
+        defer { fixture.remove() }
+        let promptURL = fixture.directory.appending(path: "intent-prompt.json")
+        fixture.makeTrigger().enqueue(
+            fixture.receipt(requestID: 9, sessionId: "session-1", unsentPrompt: "Survive lock")
+        )
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: promptURL.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: promptURL.path) }
+
+        let trigger = fixture.makeTrigger()
+        // Still unreadable: the handoff stays pending and the file is kept.
+        #expect(trigger.consume(startupComplete: true) == nil)
+        #expect(FileManager.default.fileExists(atPath: promptURL.path))
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: promptURL.path)
+        let consumed = trigger.consume(startupComplete: true)
+        #expect(consumed?.sessionId == "session-1")
+        #expect(consumed?.unsentPrompt == "Survive lock")
+        #expect(!FileManager.default.fileExists(atPath: promptURL.path))
+    }
+
     @MainActor
     private struct Fixture {
         let suiteName = "IntentSessionOpenTrigger-\(UUID().uuidString)"
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "IntentSessionOpenTrigger-\(UUID().uuidString)", directoryHint: .isDirectory)
         var defaults: UserDefaults { UserDefaults(suiteName: suiteName)! }
 
         func makeTrigger() -> IntentSessionOpenTrigger {
-            IntentSessionOpenTrigger(defaults: defaults)
+            IntentSessionOpenTrigger(
+                defaults: defaults,
+                promptFileURL: directory.appending(path: "intent-prompt.json")
+            )
         }
 
         func receipt(
@@ -375,6 +465,7 @@ struct IntentSessionOpenTriggerTests {
 
         func remove() {
             defaults.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: directory)
         }
     }
 }
