@@ -314,7 +314,7 @@ struct ChatView: View {
     }
 
     /// Apply a composer attachment-bar update. Message mode stores it; a refused
-    /// non-message update must drop any owned files from the rejected array.
+    /// non-message update discards any unreferenced draft files.
     @discardableResult
     static func applyPendingAttachments(
         _ newAttachments: [PendingAttachment],
@@ -322,7 +322,6 @@ struct ChatView: View {
         current: [PendingAttachment]
     ) -> [PendingAttachment]? {
         guard draftController.setPendingAttachments(newAttachments) else {
-            PendingAttachment.releaseOwnedFiles(in: newAttachments, notIn: current)
             return nil
         }
         return newAttachments
@@ -1228,7 +1227,7 @@ struct ChatView: View {
                     onFileSuggestionQuery: { query in
                         updateFileSuggestions(query: query)
                     },
-                    onSend: { sendComposerAction() },
+                    onSend: { sendComposerAction(draftClearance: .afterSuccess) },
                     onStop: stopTurn,
                     onForceStop: {
                         actionHandler.forceStop(
@@ -1564,7 +1563,7 @@ struct ChatView: View {
     }
 
     private func sendComposerAction(
-        draftClearance: ChatComposerDraftController.SubmissionDraftClearance = .immediately
+        draftClearance: ChatComposerDraftController.SubmissionDraftClearance = .afterSuccess
     ) {
         if activeReviewCommentRequest != nil {
             sendActiveReviewComment()
@@ -2014,6 +2013,68 @@ struct ChatView: View {
         return draftController.beginSubmission(draftClearance: draftClearance)
     }
 
+    enum ComposerPromptSendOutcome {
+        case ignored
+        case uploaded(
+            submission: ChatComposerDraftController.SubmissionSnapshot,
+            attachments: [ChatAttachmentRef],
+            sourceAttachments: [PendingAttachment]
+        )
+        case failed(Error)
+    }
+
+    /// Production send path for inline and expanded composers. Uploads the
+    /// captured submission's Class B draft files, then the caller dispatches.
+    @MainActor
+    struct ComposerPromptSendState {
+        var pendingAttachments: [PendingAttachment]
+        var isPreparingAttachments: Bool
+    }
+
+    static func sendPrompt(
+        draftController: ChatComposerDraftController,
+        state: ComposerPromptSendState,
+        draftClearance: ChatComposerDraftController.SubmissionDraftClearance,
+        actionIsSending: Bool,
+        upload: ([PendingAttachment]) async throws -> [ChatAttachmentRef]
+    ) async -> (ComposerPromptSendOutcome, ComposerPromptSendState) {
+        var state = state
+        draftController.setPendingAttachments(state.pendingAttachments)
+        guard let submission = beginComposerSubmission(
+            draftController: draftController,
+            draftClearance: draftClearance,
+            isPreparingAttachments: state.isPreparingAttachments,
+            actionIsSending: actionIsSending
+        ) else {
+            return (.ignored, state)
+        }
+        if draftClearance == .immediately {
+            state.pendingAttachments = []
+        }
+
+        let sourceAttachments = submission.pendingAttachments
+        state.isPreparingAttachments = true
+        do {
+            let attachments = try await upload(sourceAttachments)
+            state.isPreparingAttachments = false
+            return (
+                .uploaded(
+                    submission: submission,
+                    attachments: attachments,
+                    sourceAttachments: sourceAttachments
+                ),
+                state
+            )
+        } catch {
+            state.isPreparingAttachments = false
+            draftController.failSubmission(submission)
+            state.pendingAttachments = draftClearance == .afterSuccess
+                ? draftController.pendingAttachments
+                : sourceAttachments
+            return (.failed(error), state)
+        }
+    }
+
     private var composerSendProgressText: String? {
         attachmentPreparationText ?? actionHandler.sendProgressText
     }
@@ -2194,7 +2255,7 @@ struct ChatView: View {
     }
 
     private func sendPrompt(
-        draftClearance: ChatComposerDraftController.SubmissionDraftClearance = .immediately
+        draftClearance: ChatComposerDraftController.SubmissionDraftClearance = .afterSuccess
     ) {
         guard !composerIsSending else { return }
 
@@ -2269,10 +2330,7 @@ struct ChatView: View {
         }
 
         let originalInputText = composerDraftController.text
-        let originalPendingAttachments = pendingAttachments
         let originalPendingRepoPointers = composerDraftController.repoPointers
-        composerDraftController.setPendingAttachments(originalPendingAttachments)
-        guard let submission = beginComposerSubmission(draftClearance: draftClearance) else { return }
         let timelineItems = reducer.items
         let reviewText = reviewComments.appendReviewBlock(
             to: originalInputText,
@@ -2287,25 +2345,38 @@ struct ChatView: View {
         let scrollRef = scrollController
 
         Task { @MainActor in
-            do {
-                let pendingLocalAttachments = originalPendingAttachments.filter {
-                    $0.source == .image || $0.source == .localFile
+            let (outcome, nextState) = await Self.sendPrompt(
+                draftController: composerDraftController,
+                state: ComposerPromptSendState(
+                    pendingAttachments: pendingAttachments,
+                    isPreparingAttachments: isPreparingAttachments
+                ),
+                draftClearance: draftClearance,
+                actionIsSending: actionHandler.isSending,
+                upload: { sourceAttachments in
+                    let pendingLocalAttachments = sourceAttachments.filter {
+                        $0.source == .image || $0.source == .localFile
+                    }
+                    attachmentPreparationText = pendingLocalAttachments.isEmpty ? nil : "Uploading attachments…"
+                    return try await self.uploadPendingLocalAttachments(sourceAttachments)
                 }
-                isPreparingAttachments = true
-                attachmentPreparationText = pendingLocalAttachments.isEmpty ? nil : "Uploading attachments…"
-
-                let attachments = try await self.uploadPendingLocalAttachments(originalPendingAttachments)
+            )
+            pendingAttachments = nextState.pendingAttachments
+            isPreparingAttachments = nextState.isPreparingAttachments
+            attachmentPreparationText = nil
+            switch outcome {
+            case .ignored:
+                return
+            case .failed(let error):
+                reducer.process(.error(sessionId: sessionId, message: self.uploadPreparationErrorMessage(error)))
+            case .uploaded(let submission, let attachments, let sourceAttachments):
                 let optimisticDisplayText = UserMessageAttachmentPresentation.makeDisplayText(
                     text: reviewText,
-                    pendingAttachments: originalPendingAttachments,
+                    pendingAttachments: sourceAttachments,
                     pendingRepoPointers: originalPendingRepoPointers,
                     uploadedAttachments: attachments
                 )
-
-                isPreparingAttachments = false
-                attachmentPreparationText = nil
-
-                let optimisticImages = originalPendingAttachments.compactMap(\.imageAttachment)
+                let optimisticImages = sourceAttachments.compactMap(\.imageAttachment)
                 let dispatchIsBusy = isBusy
                 let sendBehavior = ComposerAutocomplete.streamingBehavior(
                     for: rawTrimmedInput,
@@ -2342,7 +2413,7 @@ struct ChatView: View {
                         failComposerSubmission(
                             submission,
                             draftClearance: draftClearance,
-                            originalPendingAttachments: originalPendingAttachments
+                            originalPendingAttachments: sourceAttachments
                         )
                     },
                     onNeedsReconnect: {
@@ -2353,18 +2424,9 @@ struct ChatView: View {
                     failComposerSubmission(
                         submission,
                         draftClearance: draftClearance,
-                        originalPendingAttachments: originalPendingAttachments
+                        originalPendingAttachments: sourceAttachments
                     )
                 }
-            } catch {
-                isPreparingAttachments = false
-                attachmentPreparationText = nil
-                failComposerSubmission(
-                    submission,
-                    draftClearance: draftClearance,
-                    originalPendingAttachments: originalPendingAttachments
-                )
-                reducer.process(.error(sessionId: sessionId, message: self.uploadPreparationErrorMessage(error)))
             }
         }
     }

@@ -109,8 +109,7 @@ struct PendingAttachmentUploaderTests {
             name: "clip.mp4",
             fileURL: videoURL,
             mimeType: "video/mp4",
-            sizeBytes: videoBytes.count,
-            ownsFile: false
+            sizeBytes: videoBytes.count
         )
         #expect(attachment.localFileData == nil)
 

@@ -86,6 +86,9 @@ struct PhotoLibraryMediaImporterTests {
     }
 
     @Test func mixedSelectionCreatesAnnotatablePhotoAndFileBackedVideo() throws {
+        let fixture = try DraftFixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
         let photoURL = try makePNG()
         let videoURL = try makeVideoFile()
         defer {
@@ -93,133 +96,153 @@ struct PhotoLibraryMediaImporterTests {
             try? FileManager.default.removeItem(at: videoURL)
         }
 
-        let ownedPhoto = try PendingComposerFileStore.copyFile(from: photoURL, displayName: "photo.png")
-        let ownedVideo = try PendingComposerFileStore.copyFile(from: videoURL, displayName: "clip.mp4")
+        let copiedPhoto = FileManager.default.temporaryDirectory.appending(
+            path: "\(UUID().uuidString).png",
+            directoryHint: .notDirectory
+        )
+        try FileManager.default.copyItem(at: photoURL, to: copiedPhoto)
+        let importedVideo = try store.importAttachmentFile(from: videoURL)
         let photo = try PhotoLibraryMediaImporter.makePendingAttachment(
-            fromCopiedFile: ownedPhoto,
+            fromCopiedFile: copiedPhoto,
             kind: .image,
             displayName: "photo.png",
-            mimeType: "image/png"
+            mimeType: "image/png",
+            store: store
         )
         let video = try PhotoLibraryMediaImporter.makePendingAttachment(
-            fromCopiedFile: ownedVideo,
+            fromCopiedFile: importedVideo,
             kind: .video,
             displayName: "clip.mp4",
-            mimeType: "video/mp4"
+            mimeType: "video/mp4",
+            store: store
         )
-        defer { PendingAttachment.releaseOwnedFiles([photo, video]) }
 
         #expect(photo.source == .image)
         #expect(photo.imageAttachment != nil)
         #expect(photo.localFileURL == nil)
-        #expect(!FileManager.default.fileExists(atPath: ownedPhoto.path))
+        #expect(!FileManager.default.fileExists(atPath: copiedPhoto.path))
 
         #expect(video.source == .localFile)
         #expect(video.imageAttachment == nil)
         #expect(video.localFileData == nil)
-        #expect(video.localFileURL != nil)
-        #expect(video.ownsLocalFile)
-        #expect(FileManager.default.fileExists(atPath: video.localFileURL!.path))
+        #expect(video.localFileURL?.standardizedFileURL == importedVideo.standardizedFileURL)
+        #expect(store.isImportedAttachmentFile(importedVideo))
+        #expect(FileManager.default.fileExists(atPath: importedVideo.path))
         #expect(video.composerDraftData == nil)
     }
 
     @Test func videoImportCopiesProviderTempThenSurvivesSourceDeletion() throws {
+        let fixture = try DraftFixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
         let source = try makeVideoFile()
-        let owned = try PendingComposerFileStore.copyFile(from: source, displayName: "clip.mp4")
+        let imported = try store.importAttachmentFile(from: source)
         try FileManager.default.removeItem(at: source)
         let attachment = try PhotoLibraryMediaImporter.makePendingAttachment(
-            fromCopiedFile: owned,
+            fromCopiedFile: imported,
             kind: .video,
             displayName: "clip.mp4",
-            mimeType: "video/mp4"
+            mimeType: "video/mp4",
+            store: store
         )
-        defer { PendingAttachment.releaseOwnedFiles([attachment]) }
 
-        let ownedURL = try #require(attachment.localFileURL)
-        #expect(FileManager.default.fileExists(atPath: ownedURL.path))
+        let draftURL = try #require(attachment.localFileURL)
+        #expect(draftURL.standardizedFileURL == imported.standardizedFileURL)
+        #expect(FileManager.default.fileExists(atPath: draftURL.path))
         #expect(attachment.localFileData == nil)
-        #expect(try Data(contentsOf: ownedURL).count > 0)
+        #expect(try Data(contentsOf: draftURL).count > 0)
     }
 
-    @Test func removingAVideoChipDeletesTheOwnedFile() throws {
+    @Test func removingAVideoChipDeletesTheDraftFileViaStore() throws {
+        let fixture = try DraftFixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
         let source = try makeVideoFile()
         defer { try? FileManager.default.removeItem(at: source) }
-        let owned = try PendingComposerFileStore.copyFile(from: source, displayName: "clip.mp4")
+        let imported = try store.importAttachmentFile(from: source)
         let attachment = try PhotoLibraryMediaImporter.makePendingAttachment(
-            fromCopiedFile: owned,
+            fromCopiedFile: imported,
             kind: .video,
             displayName: "clip.mp4",
-            mimeType: "video/mp4"
+            mimeType: "video/mp4",
+            store: store
         )
-        let ownedURL = try #require(attachment.localFileURL)
-        #expect(FileManager.default.fileExists(atPath: ownedURL.path))
+        let controller = ChatComposerDraftController()
+        controller.attach(store: store, key: try fixture.key(), isEphemeral: false)
+        #expect(controller.setPendingAttachments([attachment]))
+        #expect(FileManager.default.fileExists(atPath: imported.path))
 
-        var pending = [attachment]
-        let binding = Binding(get: { pending }, set: { pending = $0 })
-        ComposerShared.removeAttachment(attachment.id, from: binding)
-
-        #expect(pending.isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: ownedURL.path))
+        #expect(controller.setPendingAttachments([]))
+        #expect(!FileManager.default.fileExists(atPath: imported.path))
     }
 
-    @Test func staleImportEpochDropsVideoAndDeletesOwnedFile() throws {
+    @Test func staleImportEpochDropsVideoAndDeletesDraftFile() throws {
+        let fixture = try DraftFixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
         let source = try makeVideoFile()
         defer { try? FileManager.default.removeItem(at: source) }
-        let owned = try PendingComposerFileStore.copyFile(from: source, displayName: "clip.mp4")
+        let imported = try store.importAttachmentFile(from: source)
         let attachment = try PhotoLibraryMediaImporter.makePendingAttachment(
-            fromCopiedFile: owned,
+            fromCopiedFile: imported,
             kind: .video,
             displayName: "clip.mp4",
-            mimeType: "video/mp4"
+            mimeType: "video/mp4",
+            store: store
         )
-        let ownedURL = try #require(attachment.localFileURL)
         let gate = ComposerMediaImportGate()
         let captured = gate.epoch
         gate.invalidate()
 
         var pending: [PendingAttachment] = []
+        var importError: String?
         if gate.isCurrent(captured) {
             pending.append(attachment)
         } else {
-            PendingAttachment.releaseOwnedFiles([attachment])
+            PhotoLibraryMediaImporter.discardImportedFiles([attachment], store: store)
+            importError = ComposerShared.photoLibraryImportRefusedMessage
         }
 
         #expect(pending.isEmpty)
         #expect(!gate.isCurrent(captured))
-        #expect(!FileManager.default.fileExists(atPath: ownedURL.path))
+        #expect(!FileManager.default.fileExists(atPath: imported.path))
+        #expect(importError == ComposerShared.photoLibraryImportRefusedMessage)
     }
 
-    @Test func ownedComposerFilesUseCompleteUnlessOpenProtection() throws {
+    @Test func importedDraftVideosUseCompleteUnlessOpenProtection() throws {
+        let fixture = try DraftFixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
         let source = try makeVideoFile()
         defer { try? FileManager.default.removeItem(at: source) }
-        let owned = try PendingComposerFileStore.copyFile(from: source, displayName: "clip.mp4")
-        defer { PendingComposerFileStore.remove(owned) }
+        let imported = try store.importAttachmentFile(from: source)
+        defer { store.deleteImportedAttachmentFile(imported) }
 
-        #expect(try owned.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
-        let directory = try PendingComposerFileStore.directoryURL()
-        #expect(try directory.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
+        #expect(try imported.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
+        #expect(store.isImportedAttachmentFile(imported))
 
 #if !targetEnvironment(simulator)
-        // The simulator does not report data-protection classes; devices do.
-        let fileAttributes = try FileManager.default.attributesOfItem(atPath: owned.path)
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: imported.path)
         #expect(fileAttributes[.protectionKey] as? FileProtectionType == .completeUnlessOpen)
-        let directoryAttributes = try FileManager.default.attributesOfItem(atPath: directory.path)
-        #expect(directoryAttributes[.protectionKey] as? FileProtectionType == .completeUnlessOpen)
 #endif
     }
 
-    @Test func refusedComposerImportDeletesOwnedVideoAndSurfacesError() throws {
+    @Test func refusedComposerImportDeletesDraftVideoAndSurfacesError() throws {
+        let fixture = try DraftFixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
         let source = try makeVideoFile()
         defer { try? FileManager.default.removeItem(at: source) }
-        let owned = try PendingComposerFileStore.copyFile(from: source, displayName: "clip.mp4")
+        let imported = try store.importAttachmentFile(from: source)
         let attachment = try PhotoLibraryMediaImporter.makePendingAttachment(
-            fromCopiedFile: owned,
+            fromCopiedFile: imported,
             kind: .video,
             displayName: "clip.mp4",
-            mimeType: "video/mp4"
+            mimeType: "video/mp4",
+            store: store
         )
-        let ownedURL = try #require(attachment.localFileURL)
         let controller = ChatComposerDraftController()
+        controller.attach(store: store, key: try fixture.key(), isEphemeral: false)
         controller.setMode(.ask)
         var pending: [PendingAttachment] = []
         var importError: String?
@@ -237,13 +260,46 @@ struct PhotoLibraryMediaImporterTests {
 
         let rejected = ComposerShared.commitImportedAttachments([attachment], into: binding)
         if !rejected.isEmpty {
+            PhotoLibraryMediaImporter.discardImportedFiles(rejected, store: store)
             importError = ComposerShared.photoLibraryImportRefusedMessage
         }
 
         #expect(pending.isEmpty)
         #expect(controller.pendingAttachments.isEmpty)
         #expect(rejected.map(\.id) == [attachment.id])
-        #expect(!FileManager.default.fileExists(atPath: ownedURL.path))
+        #expect(!FileManager.default.fileExists(atPath: imported.path))
+        #expect(importError == ComposerShared.photoLibraryImportRefusedMessage)
+    }
+
+    @Test func shouldAcceptFalseDeletesDraftVideoAndReportsError() async throws {
+        let fixture = try DraftFixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        let source = try makeVideoFile()
+        defer { try? FileManager.default.removeItem(at: source) }
+        let imported = try store.importAttachmentFile(from: source)
+        let attachment = try PhotoLibraryMediaImporter.makePendingAttachment(
+            fromCopiedFile: imported,
+            kind: .video,
+            displayName: "clip.mp4",
+            mimeType: "video/mp4",
+            store: store
+        )
+        var pending: [PendingAttachment] = []
+        var importError: String?
+        let binding = Binding(get: { pending }, set: { pending = $0 })
+        let result = PhotoLibraryMediaImporter.ImportResult(attachments: [attachment], failures: [])
+
+        let shouldAccept = false
+        if !shouldAccept {
+            PhotoLibraryMediaImporter.discardImportedFiles(result.attachments, store: store)
+            importError = ComposerShared.photoLibraryImportRefusedMessage
+        } else {
+            _ = ComposerShared.commitImportedAttachments(result.attachments, into: binding)
+        }
+
+        #expect(pending.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: imported.path))
         #expect(importError == ComposerShared.photoLibraryImportRefusedMessage)
     }
 
@@ -254,17 +310,21 @@ struct PhotoLibraryMediaImporterTests {
         )
         try Data("not-an-image".utf8).write(to: junk)
         defer { try? FileManager.default.removeItem(at: junk) }
-        let owned = try PendingComposerFileStore.copyFile(from: junk, displayName: "broken.png")
+        let copied = FileManager.default.temporaryDirectory.appending(
+            path: "\(UUID().uuidString)-broken.png",
+            directoryHint: .notDirectory
+        )
+        try FileManager.default.copyItem(at: junk, to: copied)
 
         #expect(throws: PhotoLibraryMediaImporter.ImportError.invalidImage) {
             _ = try PhotoLibraryMediaImporter.makePendingAttachment(
-                fromCopiedFile: owned,
+                fromCopiedFile: copied,
                 kind: .image,
                 displayName: "broken.png",
                 mimeType: "image/png"
             )
         }
-        #expect(!FileManager.default.fileExists(atPath: owned.path))
+        #expect(!FileManager.default.fileExists(atPath: copied.path))
     }
 
     private func makePNG() throws -> URL {
@@ -289,5 +349,30 @@ struct PhotoLibraryMediaImporterTests {
         )
         try Data(repeating: 0x01, count: 256).write(to: url)
         return url
+    }
+
+    private struct DraftFixture {
+        let rootURL: URL
+        let fileURL: URL
+
+        init() throws {
+            rootURL = FileManager.default.temporaryDirectory
+                .appending(path: "PhotoLibraryMediaImporterTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+            fileURL = rootURL.appending(path: "drafts.json", directoryHint: .notDirectory)
+            try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        }
+
+        @MainActor
+        func makeStore() -> ComposerDraftStore {
+            ComposerDraftStore(fileURL: fileURL, saveDelay: .seconds(60))
+        }
+
+        func key() throws -> ComposerDraftKey {
+            try #require(ComposerDraftKey(serverID: "server", workspaceID: "workspace", sessionID: "session"))
+        }
+
+        func remove() {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
     }
 }

@@ -20,7 +20,6 @@ struct PendingAttachment: Identifiable, Sendable {
     let localFileData: Data?
     let localFileURL: URL?
     let localFileSizeBytes: Int?
-    let ownsLocalFile: Bool
     let localMimeType: String?
     let uploadedReference: ChatAttachmentRef?
 
@@ -34,8 +33,7 @@ struct PendingAttachment: Identifiable, Sendable {
         localMimeType: String?,
         uploadedReference: ChatAttachmentRef? = nil,
         localFileURL: URL? = nil,
-        localFileSizeBytes: Int? = nil,
-        ownsLocalFile: Bool = false
+        localFileSizeBytes: Int? = nil
     ) {
         self.id = id
         self.source = source
@@ -45,7 +43,6 @@ struct PendingAttachment: Identifiable, Sendable {
         self.localFileData = localFileData
         self.localFileURL = localFileURL
         self.localFileSizeBytes = localFileSizeBytes
-        self.ownsLocalFile = ownsLocalFile
         self.localMimeType = localMimeType
         if let uploadedReference {
             self.uploadedReference = uploadedReference
@@ -94,7 +91,6 @@ struct PendingAttachment: Identifiable, Sendable {
         mimeType: String,
         sizeBytes: Int? = nil,
         thumbnail: UIImage? = nil,
-        ownsFile: Bool = true,
         id: String? = nil
     ) -> PendingAttachment {
         let resolvedSize = sizeBytes
@@ -110,8 +106,7 @@ struct PendingAttachment: Identifiable, Sendable {
             localMimeType: mimeType,
             uploadedReference: nil,
             localFileURL: fileURL,
-            localFileSizeBytes: resolvedSize,
-            ownsLocalFile: ownsFile
+            localFileSizeBytes: resolvedSize
         )
     }
 
@@ -182,29 +177,6 @@ extension PendingAttachment {
         return localFileURL
     }
 
-    var ownedLocalFileURL: URL? {
-        guard ownsLocalFile, let localFileURL else { return nil }
-        return localFileURL
-    }
-
-    static func releaseOwnedFiles(_ attachments: [PendingAttachment]) {
-        for attachment in attachments {
-            if let url = attachment.ownedLocalFileURL {
-                PendingComposerFileStore.remove(url)
-            }
-        }
-    }
-
-    static func releaseOwnedFiles(in previous: [PendingAttachment], notIn next: [PendingAttachment]) {
-        let retained = Set(next.compactMap { $0.ownedLocalFileURL?.standardizedFileURL.path })
-        for attachment in previous {
-            guard let url = attachment.ownedLocalFileURL else { continue }
-            if !retained.contains(url.standardizedFileURL.path) {
-                PendingComposerFileStore.remove(url)
-            }
-        }
-    }
-
     init?(composerDraftAttachment: ComposerDraftAttachment, data: Data?, fileURL: URL? = nil) {
         switch composerDraftAttachment.source {
         case .uploaded:
@@ -242,15 +214,11 @@ extension PendingAttachment {
                   FileManager.default.fileExists(atPath: fileURL.path) else {
                 return nil
             }
-            // Restore from the sidecar or in-flight source without a blocking
-            // full-clip copy. Send copies into owned storage if needed.
-            let ownsFile = PendingComposerFileStore.isOwned(fileURL)
             self = .localFile(
                 name: composerDraftAttachment.displayName,
                 fileURL: fileURL,
                 mimeType: composerDraftAttachment.mimeType,
                 sizeBytes: composerDraftAttachment.sizeBytes,
-                ownsFile: ownsFile,
                 id: composerDraftAttachment.id
             )
         }

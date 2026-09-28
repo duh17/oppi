@@ -429,6 +429,7 @@ struct ExpandedComposerView: View {
         ComposerShared.attachmentStrip(
             pendingAttachments: $pendingAttachments,
             horizontalPadding: 16,
+            allowsMutation: !isSubmitInFlight,
             onAnnotateImage: { attachment in
                 canvasBackgroundImage = ComposerShared.image(forPendingAttachment: attachment)
                 canvasReplacingAttachmentID = attachment.id
@@ -464,6 +465,7 @@ struct ExpandedComposerView: View {
             .frame(width: 32, height: 32)
         }
         .menuOrder(ComposerShared.attachmentMenuOrder)
+        .disabled(isSubmitInFlight)
         .accessibilityIdentifier("expanded.attach")
         .accessibilityLabel("Add attachment")
     }

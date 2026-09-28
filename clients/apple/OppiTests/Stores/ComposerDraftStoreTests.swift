@@ -184,9 +184,10 @@ struct ComposerDraftStoreTests {
         )
         let store = fixture.makeStore()
         await store.load()
+        let importedURL = try store.importAttachmentFile(from: videoURL)
         let record = try #require(store.setDraft(
             payload,
-            attachmentFiles: ["video-1": videoURL],
+            attachmentFiles: ["video-1": importedURL],
             for: key
         ))
         await store.flush()
@@ -235,21 +236,21 @@ struct ComposerDraftStoreTests {
         )
         let store = fixture.makeStore()
         await store.load()
+        let importedURL = try store.importAttachmentFile(from: videoURL)
         let record = try #require(store.setDraft(
             payload,
-            attachmentFiles: ["video-chip": videoURL],
+            attachmentFiles: ["video-chip": importedURL],
             for: key
         ))
 
         #expect(record.payload.attachments.first?.displayName == "clip.mp4")
         #expect(store.record(for: key)?.payload.attachments.map(\.id) == ["video-chip"])
-
-        await store.flush()
         let sidecarURL = try #require(store.attachmentFileURL(for: key, attachmentID: "video-chip"))
+        #expect(sidecarURL.standardizedFileURL == importedURL.standardizedFileURL)
         #expect(try Data(contentsOf: sidecarURL) == videoBytes)
     }
 
-    @Test func failedAsyncVideoSidecarWriteDoesNotPersistTheRecord() async throws {
+    @Test func setDraftRefusesExternalVideoFilesInsteadOfCopyingOnTheJSONQueue() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
         let key = try fixture.key()
@@ -277,9 +278,7 @@ struct ComposerDraftStoreTests {
             payload,
             attachmentFiles: ["video-missing": missingURL],
             for: key
-        ) != nil)
-
-        await store.flush()
+        ) == nil)
 
         #expect(store.record(for: key) == nil)
         #expect(store.attachmentFileURL(for: key, attachmentID: "video-missing") == nil)

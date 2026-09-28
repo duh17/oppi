@@ -687,6 +687,7 @@ struct ChatInputBar<ActionRow: View>: View {
                 .glassEffect(.regular, in: Capsule())
         }
         .menuOrder(ComposerShared.attachmentMenuOrder)
+        .disabled(isSending)
         .accessibilityIdentifier("chat.attach")
         .accessibilityLabel("Add attachment")
     }
@@ -752,6 +753,7 @@ struct ChatInputBar<ActionRow: View>: View {
     private var attachmentStrip: some View {
         ComposerShared.attachmentStrip(
             pendingAttachments: $pendingAttachments,
+            allowsMutation: !isSending,
             onAnnotateImage: { attachment in
                 canvasBackgroundImage = ComposerShared.image(forPendingAttachment: attachment)
                 canvasReplacingAttachmentID = attachment.id

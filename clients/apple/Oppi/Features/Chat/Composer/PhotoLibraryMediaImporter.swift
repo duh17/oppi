@@ -5,9 +5,10 @@ import UIKit
 /// Loads Photo Library picks as composer attachments.
 ///
 /// Photos stay in-memory `PendingImage` values so annotate still works.
-/// Videos stay file-backed: the provider temp file is copied before the
-/// `loadFileRepresentation` callback returns, and the clip is never read
-/// into `Data` for pending/upload/draft.
+/// Videos stay file-backed: the provider temp file is copied once, off-main,
+/// into the ComposerDraftStore Class B URL before the
+/// `loadFileRepresentation` callback returns. The clip is never read into
+/// `Data` for pending/upload/draft.
 @MainActor
 enum PhotoLibraryMediaImporter {
     enum Kind: Equatable, Sendable {
@@ -19,6 +20,7 @@ enum PhotoLibraryMediaImporter {
         case unsupportedType
         case missingFile
         case invalidImage
+        case missingDraftStore
 
         var errorDescription: String? {
             switch self {
@@ -28,6 +30,8 @@ enum PhotoLibraryMediaImporter {
                 return "Photo Library did not provide a file for that item."
             case .invalidImage:
                 return "Couldn't read that photo."
+            case .missingDraftStore:
+                return "Couldn't keep that video for this message."
             }
         }
     }
@@ -112,17 +116,23 @@ enum PhotoLibraryMediaImporter {
         return inferred
     }
 
-    /// Build a pending attachment from an already-owned copy of a picker file.
+    /// Build a pending attachment from an already-copied picker file.
+    /// Images consume the copy into memory. Videos keep the Class B URL.
     static func makePendingAttachment(
         fromCopiedFile url: URL,
         kind: Kind,
         displayName: String,
-        mimeType: String
+        mimeType: String,
+        store: ComposerDraftStore? = nil
     ) throws -> PendingAttachment {
         switch kind {
         case .image:
             let data = try Data(contentsOf: url)
-            PendingComposerFileStore.remove(url)
+            if let store, store.isImportedAttachmentFile(url) {
+                store.deleteImportedAttachmentFile(url)
+            } else {
+                try? FileManager.default.removeItem(at: url)
+            }
             guard let image = UIImage(data: data) else {
                 throw ImportError.invalidImage
             }
@@ -133,18 +143,31 @@ enum PhotoLibraryMediaImporter {
                 name: displayName,
                 fileURL: url,
                 mimeType: mimeType,
-                sizeBytes: sizeBytes,
-                ownsFile: true
+                sizeBytes: sizeBytes
             )
         }
     }
 
-    static func importProviders(_ providers: [NSItemProvider]) async -> ImportResult {
+    static func discardImportedFiles(
+        _ attachments: [PendingAttachment],
+        store: ComposerDraftStore?
+    ) {
+        guard let store else { return }
+        for attachment in attachments {
+            guard let url = attachment.composerDraftFileURL else { continue }
+            store.deleteImportedAttachmentFile(url)
+        }
+    }
+
+    static func importProviders(
+        _ providers: [NSItemProvider],
+        store: ComposerDraftStore?
+    ) async -> ImportResult {
         var attachments: [PendingAttachment] = []
         var failures: [String] = []
         for provider in providers {
             do {
-                attachments.append(try await importProvider(provider))
+                attachments.append(try await importProvider(provider, store: store))
             } catch {
                 let name = provider.suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines)
                 if let name, !name.isEmpty {
@@ -157,42 +180,60 @@ enum PhotoLibraryMediaImporter {
         return ImportResult(attachments: attachments, failures: failures)
     }
 
-    static func importProvider(_ provider: NSItemProvider) async throws -> PendingAttachment {
+    static func importProvider(
+        _ provider: NSItemProvider,
+        store: ComposerDraftStore?
+    ) async throws -> PendingAttachment {
         guard let kind = kind(for: provider) else {
             throw ImportError.unsupportedType
         }
         let typeIdentifier = typeIdentifier(for: kind, provider: provider)
-        let ownedURL = try await copyFileRepresentation(
-            provider: provider,
-            typeIdentifier: typeIdentifier
-        )
-        let displayName = displayName(
-            for: provider,
-            fallbackURL: ownedURL,
-            typeIdentifier: typeIdentifier
-        )
-        let mime = mimeType(for: ownedURL, typeIdentifier: typeIdentifier)
+        let destination: URL
+        switch kind {
+        case .image:
+            destination = uniqueTemporaryURL(displayName: provider.suggestedName)
+        case .video:
+            guard let store else {
+                throw ImportError.missingDraftStore
+            }
+            destination = store.makeImportedAttachmentFileURL()
+        }
         do {
+            let copiedURL = try await copyFileRepresentation(
+                provider: provider,
+                typeIdentifier: typeIdentifier,
+                to: destination
+            )
+            let displayName = displayName(
+                for: provider,
+                fallbackURL: copiedURL,
+                typeIdentifier: typeIdentifier
+            )
+            let mime = mimeType(for: copiedURL, typeIdentifier: typeIdentifier)
             return try makePendingAttachment(
-                fromCopiedFile: ownedURL,
+                fromCopiedFile: copiedURL,
                 kind: kind,
                 displayName: displayName,
-                mimeType: mime
+                mimeType: mime,
+                store: store
             )
         } catch {
-            PendingComposerFileStore.remove(ownedURL)
+            if kind == .video {
+                store?.deleteImportedAttachmentFile(destination)
+            } else {
+                try? FileManager.default.removeItem(at: destination)
+            }
             throw error
         }
     }
 
-    /// Copies the provider temp file before the callback returns. The returned
-    /// URL is in `PendingComposerFileStore` and no longer depends on Photos.
+    /// Copies the provider temp file before the callback returns.
     static func copyFileRepresentation(
         provider: NSItemProvider,
-        typeIdentifier: String
+        typeIdentifier: String,
+        to destination: URL
     ) async throws -> URL {
-        let suggestedName = provider.suggestedName
-        return try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { continuation in
             _ = provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { temporaryURL, error in
                 if let error {
                     continuation.resume(throwing: error)
@@ -202,17 +243,14 @@ enum PhotoLibraryMediaImporter {
                     continuation.resume(throwing: ImportError.missingFile)
                     return
                 }
-                let displayName = Self.displayName(
-                    forSuggestedName: suggestedName,
-                    fallbackURL: temporaryURL,
-                    typeIdentifier: typeIdentifier
-                )
                 do {
-                    let owned = try PendingComposerFileStore.copyFile(
-                        from: temporaryURL,
-                        displayName: displayName
-                    )
-                    continuation.resume(returning: owned)
+                    try copyOffMain {
+                        try ComposerDraftStore.copyImportedAttachmentFile(
+                            from: temporaryURL,
+                            to: destination
+                        )
+                    }
+                    continuation.resume(returning: destination)
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -247,5 +285,22 @@ enum PhotoLibraryMediaImporter {
             return "mp4"
         }
         return ""
+    }
+
+    private static func uniqueTemporaryURL(displayName: String?) -> URL {
+        let name = displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let suffix = (name.isEmpty ? "photo" : name).replacingOccurrences(of: "/", with: "-")
+        return FileManager.default.temporaryDirectory.appending(
+            path: "\(UUID().uuidString)-\(suffix)",
+            directoryHint: .notDirectory
+        )
+    }
+
+    private static func copyOffMain(_ work: () throws -> Void) throws {
+        if Thread.isMainThread {
+            try DispatchQueue.global(qos: .userInitiated).sync(execute: work)
+        } else {
+            try work()
+        }
     }
 }

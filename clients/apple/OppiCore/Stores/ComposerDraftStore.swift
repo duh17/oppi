@@ -166,78 +166,25 @@ private func copyProtectedComposerDraftFile(from sourceURL: URL, to destinationU
     }
 }
 
-private final class ComposerDraftSidecarWriteTracker: @unchecked Sendable {
-    struct Completion: Sendable {
-        let key: ComposerDraftKey
-        let revision: UInt64
-        let succeeded: Bool
+private func composerDraftAttachmentRelativePath(for url: URL, persistenceFileURL: URL) -> String? {
+    let directory = composerDraftSidecarDirectoryURL(for: persistenceFileURL).standardizedFileURL
+    let candidate = url.standardizedFileURL
+    let directoryPath = directory.path
+    let candidatePath = candidate.path
+    let prefix = directoryPath.hasSuffix("/") ? directoryPath : directoryPath + "/"
+    guard candidatePath.hasPrefix(prefix) else { return nil }
+    let name = candidate.lastPathComponent
+    guard !name.isEmpty, !name.contains(".."), name != ".", name != ".." else {
+        return nil
     }
-
-    private let lock = NSLock()
-    private var inFlight: [ComposerDraftKey: UInt64] = [:]
-    private var sourceFiles: [ComposerDraftKey: [String: URL]] = [:]
-    private var completions: [Completion] = []
-
-    func begin(key: ComposerDraftKey, revision: UInt64, files: [String: URL]) {
-        lock.lock()
-        defer { lock.unlock() }
-        inFlight[key] = revision
-        sourceFiles[key] = files
-    }
-
-    func complete(key: ComposerDraftKey, revision: UInt64, succeeded: Bool) {
-        lock.lock()
-        defer { lock.unlock() }
-        completions.append(Completion(key: key, revision: revision, succeeded: succeeded))
-        guard inFlight[key] == revision else { return }
-        inFlight[key] = nil
-        sourceFiles[key] = nil
-    }
-
-    func takeCompletions() -> [Completion] {
-        lock.lock()
-        defer { lock.unlock() }
-        let result = completions
-        completions = []
-        return result
-    }
-
-    func isInFlight(_ key: ComposerDraftKey, revision: UInt64) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return inFlight[key] == revision
-    }
-
-    func sourceURL(for key: ComposerDraftKey, attachmentID: String) -> URL? {
-        lock.lock()
-        defer { lock.unlock() }
-        return sourceFiles[key]?[attachmentID]
-    }
+    return "\(composerDraftSidecarDirectoryName)/\(name)"
 }
 
-private func composerDraftSidecarWriteNeedsFullFileCopy(
-    oldPayload: ComposerDraftPayload?,
-    newPayload: ComposerDraftPayload,
-    files: [String: URL],
-    fileURL: URL
+private func composerDraftAttachmentFileIsImported(
+    _ url: URL,
+    persistenceFileURL: URL
 ) -> Bool {
-    let fileManager = FileManager.default
-    for attachment in newPayload.attachments where attachment.source == .image || attachment.source == .localFile {
-        guard let sourceURL = files[attachment.id] else { continue }
-        guard let relativePath = attachment.relativePath,
-              let url = composerDraftSidecarURL(fileURL: fileURL, relativePath: relativePath) else {
-            continue
-        }
-        if oldPayload?.attachments.first(where: { $0.id == attachment.id })?.relativePath == relativePath,
-           fileManager.fileExists(atPath: url.path) {
-            continue
-        }
-        if sourceURL.standardizedFileURL == url.standardizedFileURL {
-            continue
-        }
-        return true
-    }
-    return false
+    composerDraftAttachmentRelativePath(for: url, persistenceFileURL: persistenceFileURL) != nil
 }
 
 private func writeAttachmentSidecars(
@@ -263,6 +210,11 @@ private func writeAttachmentSidecars(
         if let sourceURL = files[attachment.id] {
             if sourceURL.standardizedFileURL == url.standardizedFileURL {
                 continue
+            }
+            if composerDraftAttachmentKeepsFileSidecar(attachment) {
+                // Video bytes are copied at import time into the final Class B
+                // URL. Never copy them on the JSON sidecar queue.
+                throw ComposerDraftPersistenceError.missingAttachmentData
             }
             try copyProtectedComposerDraftFile(from: sourceURL, to: url)
             continue
@@ -407,21 +359,13 @@ final class ComposerDraftStore {
     @ObservationIgnored private var records: [ComposerDraftKey: ComposerDraftRecord] = [:]
     @ObservationIgnored private var latestRevisionByKey: [ComposerDraftKey: UInt64] = [:]
     @ObservationIgnored private let persistence: ComposerDraftPersistence
-    @ObservationIgnored private let persistenceFileURL: URL
+    nonisolated private let persistenceFileURL: URL
     @ObservationIgnored private let lifecycleFallbackURL: URL
     @ObservationIgnored private let saveDelay: Duration
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var pendingLegacyDraft: PendingLegacyDraft?
     @ObservationIgnored private var fallbackDocument = ComposerDraftFallbackDocument.empty
     @ObservationIgnored private var attachmentDataByKey: [ComposerDraftKey: [String: Data]] = [:]
-    @ObservationIgnored private let sidecarWrites = ComposerDraftSidecarWriteTracker()
-    @ObservationIgnored private var sidecarWriteRollback: [ComposerDraftKey: SidecarWriteRollback] = [:]
-
-    private struct SidecarWriteRollback {
-        let revision: UInt64
-        let previousRecord: ComposerDraftRecord?
-        let previousBlobs: [String: Data]
-    }
 
     private static let quickSessionDraftKey = ComposerDraftKey(
         serverID: "__oppi_local__",
@@ -568,9 +512,18 @@ final class ComposerDraftStore {
                     || normalizedPayload.attachments[index].source == .localFile else {
                 continue
             }
+            let attachmentID = normalizedPayload.attachments[index].id
+            if let fileURL = attachmentFiles[attachmentID],
+               let relativePath = composerDraftAttachmentRelativePath(
+                for: fileURL,
+                persistenceFileURL: persistenceFileURL
+               ) {
+                normalizedPayload.attachments[index].relativePath = relativePath
+                continue
+            }
             if normalizedPayload.attachments[index].relativePath == nil {
                 normalizedPayload.attachments[index].relativePath = oldPayload?.attachments.first {
-                    $0.id == normalizedPayload.attachments[index].id
+                    $0.id == attachmentID
                 }?.relativePath ?? "\(composerDraftSidecarDirectoryName)/\(UUID().uuidString).blob"
             }
         }
@@ -595,53 +548,22 @@ final class ComposerDraftStore {
             updatedAt: Date()
         )
         let persistenceFileURL = persistenceFileURL
-        let needsFullFileCopy = composerDraftSidecarWriteNeedsFullFileCopy(
-            oldPayload: oldPayload,
-            newPayload: normalizedPayload,
-            files: attachmentFiles,
-            fileURL: persistenceFileURL
-        )
-
-        if needsFullFileCopy {
-            // Keep the in-memory draft (and composer chip) without blocking the
-            // main actor on a full-clip copy. JSON save waits until the sidecar exists.
-            let previousRecord = records[key]
-            let previousBlobs = attachmentDataByKey[key] ?? [:]
-            latestRevisionByKey[key] = revision
-            records[key] = record
-            attachmentDataByKey[key] = blobs
-            sidecarWriteRollback[key] = SidecarWriteRollback(
-                revision: revision,
-                previousRecord: previousRecord,
-                previousBlobs: previousBlobs
-            )
-            sidecarWrites.begin(key: key, revision: revision, files: attachmentFiles)
-            let sidecarWrites = sidecarWrites
-            composerDraftSidecarIOQueue.async { [weak self] in
-                do {
-                    try writeAttachmentSidecars(
-                        oldPayload: oldPayload,
-                        newPayload: normalizedPayload,
-                        blobs: blobs,
-                        files: attachmentFiles,
-                        fileURL: persistenceFileURL
-                    )
-                    sidecarWrites.complete(key: key, revision: revision, succeeded: true)
-                    Task { @MainActor in
-                        self?.applyCompletedSidecarWrites()
-                        self?.scheduleSave()
-                    }
-                } catch {
-                    sidecarWrites.complete(key: key, revision: revision, succeeded: false)
-                    Task { @MainActor in
-                        self?.applyCompletedSidecarWrites()
-                        composerDraftLogger.error(
-                            "Draft attachment write failed: \(error.localizedDescription, privacy: .public)"
-                        )
-                    }
-                }
+        for attachment in normalizedPayload.attachments where composerDraftAttachmentKeepsFileSidecar(attachment) {
+            guard let relativePath = attachment.relativePath,
+                  let destination = composerDraftSidecarURL(
+                    fileURL: persistenceFileURL,
+                    relativePath: relativePath
+                  ),
+                  FileManager.default.fileExists(atPath: destination.path)
+            else {
+                lastError = "Failed to save local message draft attachments."
+                return nil
             }
-            return record
+            if let sourceURL = attachmentFiles[attachment.id],
+               sourceURL.standardizedFileURL != destination.standardizedFileURL {
+                lastError = "Failed to save local message draft attachments."
+                return nil
+            }
         }
 
         do {
@@ -686,11 +608,44 @@ final class ComposerDraftStore {
             }
             return nil
         }
-        if let pending = sidecarWrites.sourceURL(for: key, attachmentID: attachmentID),
-           FileManager.default.fileExists(atPath: pending.path) {
-            return pending
-        }
         return nil
+    }
+
+    /// Final Class B URL for a new file-backed draft attachment.
+    func makeImportedAttachmentFileURL() -> URL {
+        composerDraftSidecarDirectoryURL(for: persistenceFileURL)
+            .appending(path: "\(UUID().uuidString).blob", directoryHint: .notDirectory)
+    }
+
+    /// Copy `sourceURL` into this store's Class B sidecar directory. Callers must
+    /// run this off-main and finish before a Photos provider callback returns.
+    /// Video copies never enter the JSON sidecar queue.
+    func importAttachmentFile(from sourceURL: URL) throws -> URL {
+        let destination = makeImportedAttachmentFileURL()
+        let copy = {
+            try Self.copyImportedAttachmentFile(from: sourceURL, to: destination)
+        }
+        if Thread.isMainThread {
+            try DispatchQueue.global(qos: .userInitiated).sync(execute: copy)
+        } else {
+            try copy()
+        }
+        return destination
+    }
+
+    nonisolated static func copyImportedAttachmentFile(from sourceURL: URL, to destinationURL: URL) throws {
+        try copyProtectedComposerDraftFile(from: sourceURL, to: destinationURL)
+    }
+
+    nonisolated func isImportedAttachmentFile(_ url: URL) -> Bool {
+        composerDraftAttachmentFileIsImported(url, persistenceFileURL: persistenceFileURL)
+    }
+
+    nonisolated func deleteImportedAttachmentFile(_ url: URL) {
+        guard composerDraftAttachmentFileIsImported(url, persistenceFileURL: persistenceFileURL) else {
+            return
+        }
+        try? FileManager.default.removeItem(at: url)
     }
 
     func quickSessionDraftAttachmentFileURL(attachmentID: String) -> URL? {
@@ -796,7 +751,6 @@ final class ComposerDraftStore {
                 continuation.resume()
             }
         }
-        applyCompletedSidecarWrites()
         await persistCurrentRecords()
     }
 
@@ -857,36 +811,8 @@ final class ComposerDraftStore {
         }
     }
 
-    private func applyCompletedSidecarWrites() {
-        for completion in sidecarWrites.takeCompletions() {
-            guard let rollback = sidecarWriteRollback[completion.key],
-                  rollback.revision == completion.revision,
-                  records[completion.key]?.revision == completion.revision else {
-                continue
-            }
-            sidecarWriteRollback[completion.key] = nil
-            guard !completion.succeeded else { continue }
-
-            if let previous = rollback.previousRecord {
-                records[completion.key] = previous
-                attachmentDataByKey[completion.key] = rollback.previousBlobs
-            } else {
-                records.removeValue(forKey: completion.key)
-                attachmentDataByKey.removeValue(forKey: completion.key)
-            }
-            lastError = "Failed to save local message draft attachments."
-        }
-    }
-
     private func recordsForPersistence() -> [ComposerDraftRecord] {
-        applyCompletedSidecarWrites()
-        return records.values.compactMap { record in
-            if sidecarWrites.isInFlight(record.key, revision: record.revision) {
-                return sidecarWriteRollback[record.key]?.previousRecord
-            }
-            return record
-        }
-        .sorted { lhs, rhs in
+        return records.values.sorted { lhs, rhs in
             if lhs.key.serverID != rhs.key.serverID {
                 return lhs.key.serverID < rhs.key.serverID
             }

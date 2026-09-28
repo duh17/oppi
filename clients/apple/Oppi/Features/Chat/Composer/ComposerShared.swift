@@ -280,36 +280,53 @@ enum ComposerShared {
     static let photoLibraryImportRefusedMessage = "Photos and videos can only be attached to a message."
 
     /// Append imported attachments. Returns any items the binding dropped so the
-    /// caller can surface an error after owned files are deleted.
+    /// caller can discard their draft files and surface an error.
     static func commitImportedAttachments(
         _ attachments: [PendingAttachment],
         into pendingAttachments: Binding<[PendingAttachment]>
     ) -> [PendingAttachment] {
         pendingAttachments.wrappedValue.append(contentsOf: attachments)
         let acceptedIDs = Set(pendingAttachments.wrappedValue.map(\.id))
-        let rejected = attachments.filter { !acceptedIDs.contains($0.id) }
-        PendingAttachment.releaseOwnedFiles(rejected)
-        return rejected
+        return attachments.filter { !acceptedIDs.contains($0.id) }
     }
 
     static func importPhotoLibraryProviders(
         _ providers: [NSItemProvider],
         into pendingAttachments: Binding<[PendingAttachment]>,
+        store: ComposerDraftStore?,
         shouldAccept: @escaping @MainActor () -> Bool,
         onFailure: @escaping @MainActor (String) -> Void
     ) {
         Task { @MainActor in
-            let result = await PhotoLibraryMediaImporter.importProviders(providers)
-            guard shouldAccept() else {
-                PendingAttachment.releaseOwnedFiles(result.attachments)
-                return
-            }
-            let rejected = commitImportedAttachments(result.attachments, into: pendingAttachments)
-            if !rejected.isEmpty {
-                onFailure(photoLibraryImportRefusedMessage)
-            } else if let message = result.failureMessage {
-                onFailure(message)
-            }
+            let result = await PhotoLibraryMediaImporter.importProviders(providers, store: store)
+            finishPhotoLibraryImport(
+                result,
+                into: pendingAttachments,
+                store: store,
+                shouldAccept: shouldAccept,
+                onFailure: onFailure
+            )
+        }
+    }
+
+    static func finishPhotoLibraryImport(
+        _ result: PhotoLibraryMediaImporter.ImportResult,
+        into pendingAttachments: Binding<[PendingAttachment]>,
+        store: ComposerDraftStore?,
+        shouldAccept: @MainActor () -> Bool,
+        onFailure: @MainActor (String) -> Void
+    ) {
+        guard shouldAccept() else {
+            PhotoLibraryMediaImporter.discardImportedFiles(result.attachments, store: store)
+            onFailure(photoLibraryImportRefusedMessage)
+            return
+        }
+        let rejected = commitImportedAttachments(result.attachments, into: pendingAttachments)
+        if !rejected.isEmpty {
+            PhotoLibraryMediaImporter.discardImportedFiles(rejected, store: store)
+            onFailure(photoLibraryImportRefusedMessage)
+        } else if let message = result.failureMessage {
+            onFailure(message)
         }
     }
 
@@ -329,9 +346,7 @@ enum ComposerShared {
         _ id: String,
         from pendingAttachments: Binding<[PendingAttachment]>
     ) {
-        let removed = pendingAttachments.wrappedValue.filter { $0.id == id }
         pendingAttachments.wrappedValue.removeAll { $0.id == id }
-        PendingAttachment.releaseOwnedFiles(removed)
     }
 
     static func handlePastedImages(
@@ -389,18 +404,21 @@ enum ComposerShared {
     static func attachmentStrip(
         pendingAttachments: Binding<[PendingAttachment]>,
         horizontalPadding: CGFloat? = nil,
+        allowsMutation: Bool = true,
         onAnnotateImage: ((PendingAttachment) -> Void)? = nil
     ) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             if let horizontalPadding {
                 attachmentRow(
                     pendingAttachments: pendingAttachments,
+                    allowsMutation: allowsMutation,
                     onAnnotateImage: onAnnotateImage
                 )
                     .padding(.horizontal, horizontalPadding)
             } else {
                 attachmentRow(
                     pendingAttachments: pendingAttachments,
+                    allowsMutation: allowsMutation,
                     onAnnotateImage: onAnnotateImage
                 )
             }
@@ -425,6 +443,7 @@ enum ComposerShared {
 
     private static func attachmentRow(
         pendingAttachments: Binding<[PendingAttachment]>,
+        allowsMutation: Bool,
         onAnnotateImage: ((PendingAttachment) -> Void)? = nil
     ) -> some View {
         HStack(alignment: .center, spacing: 8) {
@@ -432,6 +451,7 @@ enum ComposerShared {
                 if attachment.source == .image, let thumbnail = attachment.thumbnail {
                     ZStack(alignment: .topTrailing) {
                         Button {
+                            guard allowsMutation else { return }
                             onAnnotateImage?(attachment)
                         } label: {
                             Image(uiImage: thumbnail)
@@ -446,32 +466,38 @@ enum ComposerShared {
                                 .frame(width: attachmentTileSize, height: attachmentTileSize, alignment: .bottomLeading)
                         }
                         .buttonStyle(.plain)
+                        .disabled(!allowsMutation)
                         .accessibilityLabel("Annotate photo")
                         .accessibilityIdentifier("chat.attachment.image.annotate.\(attachment.id)")
 
-                        Button {
-                            removeAttachment(attachment.id, from: pendingAttachments)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.title3)
-                                .symbolRenderingMode(.palette)
-                                .foregroundStyle(.themeFg, .themeScrim)
-                                .frame(
-                                    width: attachmentRemoveHitSize,
-                                    height: attachmentRemoveHitSize
-                                )
-                                .contentShape(Rectangle())
+                        if allowsMutation {
+                            Button {
+                                removeAttachment(attachment.id, from: pendingAttachments)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.title3)
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(.themeFg, .themeScrim)
+                                    .frame(
+                                        width: attachmentRemoveHitSize,
+                                        height: attachmentRemoveHitSize
+                                    )
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Remove photo")
+                            .offset(x: 8, y: -8)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Remove photo")
-                        .offset(x: 8, y: -8)
                     }
                     .frame(width: attachmentTileSize, height: attachmentTileSize)
                     .accessibilityIdentifier("chat.attachment.image.\(attachment.id)")
                 } else {
-                    ComposerAttachmentPill(name: attachment.displayName) {
-                        removeAttachment(attachment.id, from: pendingAttachments)
-                    }
+                    ComposerAttachmentPill(
+                        name: attachment.displayName,
+                        onRemove: allowsMutation ? {
+                            removeAttachment(attachment.id, from: pendingAttachments)
+                        } : nil
+                    )
                     .accessibilityIdentifier("chat.attachment.file.\(attachment.id)")
                 }
             }
@@ -944,7 +970,7 @@ struct ComposerFilePill: View {
 
 struct ComposerAttachmentPill: View {
     let name: String
-    let onRemove: () -> Void
+    var onRemove: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 4) {
@@ -956,14 +982,16 @@ struct ComposerAttachmentPill: View {
                 .lineLimit(1)
                 .fixedSize()
 
-            Button {
-                onRemove()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.appBadge)
-                    .foregroundStyle(.themeComment)
+            if let onRemove {
+                Button {
+                    onRemove()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.appBadge)
+                        .foregroundStyle(.themeComment)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .padding(.leading, 6)
         .padding(.trailing, 4)
@@ -1067,6 +1095,7 @@ extension View {
 
 private struct ComposerPhotoLibraryCoverModifier: ViewModifier {
     @Environment(\.composerMediaImportGate) private var mediaImportGate
+    @Environment(\.composerDraftStore) private var composerDraftStore
     @Binding var isPresented: Bool
     @Binding var pendingAttachments: [PendingAttachment]
     @Binding var importError: String?
@@ -1084,6 +1113,7 @@ private struct ComposerPhotoLibraryCoverModifier: ViewModifier {
                         ComposerShared.importPhotoLibraryProviders(
                             providers,
                             into: $pendingAttachments,
+                            store: composerDraftStore,
                             shouldAccept: {
                                 (mediaImportGate?.isCurrent(capturedGate) ?? true)
                                     && capturedLocal == localImportEpoch
