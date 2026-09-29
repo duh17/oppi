@@ -264,7 +264,7 @@ function loginNameFromUserProfile(profile: unknown): string | null {
 }
 
 function loginFromStatusUsers(users: unknown, userId: unknown): string | null {
-  if (!users || typeof users !== "object" || Array.isArray(users) || userId == null) {
+  if (!users || typeof users !== "object" || Array.isArray(users) || userId === null || userId === undefined) {
     return null;
   }
   const record = users as Record<string, { LoginName?: unknown } | undefined>;
