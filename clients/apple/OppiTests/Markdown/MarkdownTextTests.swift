@@ -3949,10 +3949,18 @@ struct NativeMarkdownImageViewTests {
         #expect(hasPlaceholderHeight, "Should have inline-prose loading placeholder height. Constraints: \(heightConstraints.map { "\($0.constant)" })")
     }
 
+    /// The SVG renderer is created hidden and only starts loading once the view
+    /// is in a window (`canLoadSVGHTML`), so the tap target is a property of a
+    /// displayed SVG, not of a detached view. Host the view and wait for the
+    /// loaded state.
     @Test func svgLoadedStateInstallsTapOverlayForFullscreen() async throws {
         let view = NativeMarkdownImageView()
         view.frame = CGRect(x: 0, y: 0, width: 300, height: 200)
-        view.layoutIfNeeded()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        window.addSubview(view)
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        defer { window.isHidden = true }
 
         let svg = """
         <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"300\" height=\"180\">
@@ -3971,12 +3979,14 @@ struct NativeMarkdownImageViewTests {
             fetchSessionFile: nil
         )
 
-        let hasTapOverlay = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
-            view.layoutIfNeeded()
-            return timelineAllViews(in: view).contains { $0.accessibilityIdentifier == "markdown-image.svg.tap-overlay" }
+        let hasTapOverlay = await waitForTimelineCondition(timeoutMs: 10_000) { @MainActor in
+            window.layoutIfNeeded()
+            return timelineAllViews(in: view).contains {
+                $0.accessibilityIdentifier == "markdown-image.svg.tap-overlay" && !$0.isHidden
+            }
         }
 
-        #expect(hasTapOverlay, "SVG markdown images need an explicit tap target for fullscreen")
+        #expect(hasTapOverlay, "A loaded SVG markdown image needs a visible tap target for fullscreen")
     }
 
     @Test func unsupportedURLWithEmptyAltShowsGenericPlaceholder() async throws {
