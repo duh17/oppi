@@ -161,7 +161,22 @@ struct ServerConnectionStreamRecoveryTests {
             connectCalls += 1
             return AsyncStream { $0.finish() }
         }
-        connection.setDiscoveredLANEndpoint(
+        let configured = await connection.configureForUse(
+            credentials: pairedCredentials(),
+            serverInfoBootstrap: { _, _ in try self.mockServerInfo() }
+        )
+        #expect(configured)
+        adoptVerifiedLAN(on: connection)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        connection.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")
+        return (connection, { connectCalls })
+    }
+
+    /// Paired/Tailscale is the first route (69f103303), so a verified LAN route
+    /// exists only after a paired candidate fails or the LAN is adopted later.
+    /// Start these LAN-loss scenarios from that settled LAN state.
+    private func adoptVerifiedLAN(on connection: ServerConnection) {
+        connection._adoptVerifiedLANEndpointForTesting(
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,
@@ -169,14 +184,7 @@ struct ServerConnectionStreamRecoveryTests {
                 tlsCertFingerprintPrefix: "TLSFINGERPRINT"
             )
         )
-        let configured = await connection.configureForUse(
-            credentials: pairedCredentials(),
-            serverInfoBootstrap: { _, _ in try self.mockServerInfo() }
-        )
-        #expect(configured)
-        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
-        connection.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")
-        return (connection, { connectCalls })
+        #expect(connection.transportPath == .lan)
     }
 
     private func pairedCredentials() -> ServerCredentials {
@@ -233,14 +241,6 @@ struct ServerConnectionStreamRecoveryTests {
         let holdFirstDemotion = OSAllocatedUnfairLock(initialState: true)
         defer { holdFirstDemotion.withLock { $0 = false } }
 
-        connection.setDiscoveredLANEndpoint(
-            LANDiscoveredEndpoint(
-                host: "192.168.1.42",
-                port: 7749,
-                serverFingerprintPrefix: "SERVERFINGERPRINT",
-                tlsCertFingerprintPrefix: "TLSFINGERPRINT"
-            )
-        )
         var bootstrapCalls = 0
         #expect(await connection.configureForUse(
             credentials: pairedCredentials(),
@@ -254,6 +254,7 @@ struct ServerConnectionStreamRecoveryTests {
                 return try self.mockServerInfo()
             }
         ))
+        adoptVerifiedLAN(on: connection)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")
 
@@ -302,14 +303,6 @@ struct ServerConnectionStreamRecoveryTests {
             return AsyncStream { $0.finish() }
         }
 
-        connection.setDiscoveredLANEndpoint(
-            LANDiscoveredEndpoint(
-                host: "192.168.1.42",
-                port: 7749,
-                serverFingerprintPrefix: "SERVERFINGERPRINT",
-                tlsCertFingerprintPrefix: "TLSFINGERPRINT"
-            )
-        )
         #expect(await connection.configureForUse(
             credentials: pairedCredentials(),
             serverInfoBootstrap: { _, _ in
@@ -322,6 +315,7 @@ struct ServerConnectionStreamRecoveryTests {
                 return try self.mockServerInfo()
             }
         ))
+        adoptVerifiedLAN(on: connection)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")
 
