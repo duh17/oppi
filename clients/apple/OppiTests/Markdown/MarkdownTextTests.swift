@@ -2518,56 +2518,6 @@ struct MarkdownSegmentCacheTests {
     }
 }
 
-@MainActor
-@Suite("Markdown document rendering")
-struct MarkdownDocumentRenderingTests {
-    @Test func documentPresentationDoesNotFallbackToRawSourceForLargeMarkdown() async throws {
-        let content = [
-            "# Heading",
-            "",
-            "**Bold intro** with `inline code`.",
-            "",
-            String(repeating: "Body paragraph with enough text to exercise large markdown rendering.\n\n", count: 320),
-        ].joined(separator: "\n")
-        #expect(content.count > 20_000)
-
-        let controller = UIHostingController(
-            rootView: FileContentView(
-                content: content,
-                filePath: "Notes.md",
-                presentation: .document
-            )
-        )
-        controller.loadViewIfNeeded()
-        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-
-        let window = UIWindow(frame: controller.view.frame)
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-
-        controller.view.setNeedsLayout()
-        controller.view.layoutIfNeeded()
-
-        let rendered = await waitForTimelineCondition(timeoutMs: 1_000) {
-            await MainActor.run {
-                controller.view.setNeedsLayout()
-                controller.view.layoutIfNeeded()
-                let renderedText = timelineAllTextViews(in: controller.view)
-                    .map { timelineRenderedText(of: $0) }
-                    .joined(separator: "\n")
-                return renderedText.contains("Heading")
-                    && renderedText.contains("Bold intro")
-                    && renderedText.contains("inline code")
-                    && !renderedText.contains("# Heading")
-                    && !renderedText.contains("**Bold intro**")
-                    && !renderedText.contains("`inline code`")
-            }
-        }
-
-        #expect(rendered)
-    }
-}
-
 // MARK: - FlatSegment image resolution
 
 @Suite("FlatSegment image URL resolution")
@@ -3235,7 +3185,7 @@ struct OnlineImageEndToEndTests {
 struct OnlineImageNoWorkspaceTests {
 
     @Test func httpsImageWorksWithoutWorkspaceContext() {
-        // This is exactly what MarkdownFileView does — no workspaceID, no serverBaseURL
+        // Markdown opened without workspace context — no workspaceID, no serverBaseURL
         let md = "![GitHub avatar](https://avatars.githubusercontent.com/u/1?v=4)"
         let blocks = parseCommonMark(md)
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
@@ -4354,29 +4304,6 @@ struct NativeLatexBlockViewTests {
             .map { timelineRenderedText(of: $0) }
             .joined(separator: "\n")
         #expect(visibleSource == source)
-    }
-
-    @Test func malformedLatexFileBodyShowsExactSourceWithoutPartialRaster() throws {
-        let source = "\\left x\\right)\n\\unsupported{x}"
-        let controller = UIHostingController(rootView: LaTeXFileView(
-            content: source,
-            filePath: "broken.tex",
-            presentation: .document
-        ))
-        controller.loadViewIfNeeded()
-        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        let window = UIWindow(frame: controller.view.frame)
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-        controller.view.layoutIfNeeded()
-
-        #expect(timelineFirstView(ofType: GraphicalRendererUIView.self, in: controller.view) == nil)
-        let visibleSource = timelineAllTextViews(in: controller.view)
-            .filter { timelineViewIsVisible($0) }
-            .map { timelineRenderedText(of: $0) }
-            .joined(separator: "\n")
-        #expect(visibleSource.contains(source))
     }
 
     @Test func malformedCompletedFormulaFallsBackToExactSourceInsteadOfRaster() throws {

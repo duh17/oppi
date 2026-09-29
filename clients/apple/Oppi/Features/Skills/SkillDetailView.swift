@@ -86,7 +86,6 @@ struct SkillDetailView: View {
             MarkdownContentViewWrapper(
                 content: content,
             )
-            .allowsFullScreenExpansion(false)
         }
     }
 

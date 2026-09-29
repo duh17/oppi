@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -143,57 +142,6 @@ struct OrgModePerfBench {
         print("ORG_READER_METRIC visible_count=\(body.debugVisibleCellCountForTesting)")
         window.isHidden = true
 
-        do {
-            let linkedController = UIHostingController(rootView: OrgModeFileView(
-                content: Self.orgManualDoc,
-                filePath: "org-manual.org",
-                presentation: .document
-            ))
-            let linkedWindow = try Self.makeTestWindow()
-            linkedWindow.rootViewController = linkedController
-            linkedWindow.makeKeyAndVisible()
-            linkedController.loadViewIfNeeded()
-            linkedWindow.layoutIfNeeded()
-
-            let linkedBody = try #require(
-                Self.firstDescendant(
-                    of: NativeFullScreenMarkdownBody.self,
-                    in: linkedController.view
-                ),
-                "Linked Org document must install the shared Markdown reader"
-            )
-            #expect(linkedBody.debugIsSourcePreparationPendingForTesting)
-            #expect(linkedBody.debugRenderedSegmentCountForTesting == 0)
-            await linkedBody.debugWaitForDocumentPreparationForTesting()
-            linkedWindow.layoutIfNeeded()
-            linkedBody.debugLayoutVisibleMarkdownCellsForTesting()
-            #expect(linkedBody.debugRenderedSourceTextForTesting == expectedMarkdown)
-            #expect(linkedBody.debugAppliedItemCountForTesting < linkedBody.debugRenderedSegmentCountForTesting)
-            linkedWindow.isHidden = true
-        }
-
-        do {
-            let inlineController = UIHostingController(rootView: OrgModeFileView(
-                content: Self.orgManualDoc,
-                filePath: "org-manual.org",
-                presentation: .inline
-            ))
-            let inlineWindow = try Self.makeTestWindow()
-            inlineWindow.rootViewController = inlineController
-            inlineWindow.makeKeyAndVisible()
-            inlineController.loadViewIfNeeded()
-            inlineWindow.layoutIfNeeded()
-            let inlineBody = try #require(Self.firstDescendant(
-                of: NativeFullScreenMarkdownBody.self,
-                in: inlineController.view
-            ))
-            await inlineBody.debugWaitForDocumentPreparationForTesting()
-            inlineWindow.layoutIfNeeded()
-            #expect(inlineBody.bounds.height > 0)
-            #expect(abs(inlineBody.bounds.height - 500) <= 0.5)
-            inlineWindow.isHidden = true
-        }
-
         let sourceController = FullScreenCodeViewController.makeHarnessController(
             content: .orgMode(
                 content: "#+title: Toggle check\n\n* Complete source",
@@ -207,32 +155,6 @@ struct OrgModePerfBench {
         #expect(sourceController.installedBodyViewForTesting is NativeFullScreenCodeBody)
         sourceController.toggleSourceForTesting()
         #expect(sourceController.installedBodyViewForTesting is NativeFullScreenMarkdownBody)
-    }
-
-    @MainActor
-    @Test("One-line inline Org preview uses its natural height")
-    func oneLineInlineOrgPreviewUsesNaturalHeight() async throws {
-        let controller = UIHostingController(rootView: OrgModeFileView(
-            content: "* Short preview",
-            filePath: "short.org",
-            presentation: .inline
-        ))
-        let window = try Self.makeTestWindow()
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-        controller.loadViewIfNeeded()
-        window.layoutIfNeeded()
-        defer { window.isHidden = true }
-
-        let body = try #require(Self.firstDescendant(
-            of: NativeFullScreenMarkdownBody.self,
-            in: controller.view
-        ))
-        await body.debugWaitForDocumentPreparationForTesting()
-        window.layoutIfNeeded()
-
-        #expect(body.bounds.height > 20)
-        #expect(body.bounds.height < 200)
     }
 
     @Test("Org conversion skips later stages when cancelled after parsing")
@@ -256,15 +178,6 @@ struct OrgModePerfBench {
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 393, height: 844)
         return window
-    }
-
-    @MainActor
-    private static func firstDescendant<T: UIView>(of type: T.Type, in root: UIView) -> T? {
-        if let match = root as? T { return match }
-        for child in root.subviews {
-            if let match = firstDescendant(of: type, in: child) { return match }
-        }
-        return nil
     }
 
     // MARK: - Full Pipeline Benchmark (Primary Metric)

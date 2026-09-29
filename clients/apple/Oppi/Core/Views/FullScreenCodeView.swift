@@ -382,8 +382,8 @@ indirect enum FullScreenCodeContent {
 
 /// SwiftUI wrapper around ``FullScreenCodeViewController``.
 ///
-/// Used by `.fullScreenCover` in `FileContentView`, `MarkdownText`,
-/// and `DiffContentView`. All rendering is UIKit.
+/// Used by the `.fullScreenViewer` modifier and by SwiftUI hosts that embed
+/// the viewer directly. All rendering is UIKit.
 // MARK: - Full-Screen Sheet Modifier
 
 extension View {

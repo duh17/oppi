@@ -384,19 +384,3 @@ struct FilePreviewCategoryTests {
         #expect(FileType.detect(from: "archive.zip").previewCategory == .binary)
     }
 }
-
-@Suite("File content presentation policy")
-struct FileContentPresentationPolicyTests {
-    @Test func inlinePresentationUsesTimelineChrome() {
-        #expect(FileContentPresentation.inline.usesInlineChrome)
-        #expect(FileContentPresentation.inline.viewportMaxHeight == 500)
-        #expect(FileContentPresentation.inline.allowsExpansionAffordance)
-    }
-
-    @Test func documentPresentationUsesNativeViewerLayout() {
-        #expect(FileContentPresentation.document.usesInlineChrome == false)
-        #expect(FileContentPresentation.document.viewportMaxHeight == nil)
-        #expect(FileContentPresentation.document.allowsExpansionAffordance == false)
-    }
-
-}

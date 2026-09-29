@@ -566,22 +566,12 @@ private struct ReviewCommentSelectionScopeEnvironmentKey: EnvironmentKey {
     static let defaultValue: ReviewCommentSelectionScope? = nil
 }
 
-private struct ReviewCommentSourceContextEnvironmentKey: EnvironmentKey {
-    static let defaultValue: ReviewCommentSourceContext? = nil
-}
-
 extension EnvironmentValues {
     /// Routing scope for selected-text review comments.
     /// Boundary views inject this explicitly; shared renderers only consume it.
     var reviewCommentSelectionScope: ReviewCommentSelectionScope? {
         get { self[ReviewCommentSelectionScopeEnvironmentKey.self] }
         set { self[ReviewCommentSelectionScopeEnvironmentKey.self] = newValue }
-    }
-
-    /// Source metadata for shared selectable renderers embedded inside a file surface.
-    var reviewCommentSourceContext: ReviewCommentSourceContext? {
-        get { self[ReviewCommentSourceContextEnvironmentKey.self] }
-        set { self[ReviewCommentSourceContextEnvironmentKey.self] = newValue }
     }
 
     /// Convenience read-only access to the scoped review comment router.

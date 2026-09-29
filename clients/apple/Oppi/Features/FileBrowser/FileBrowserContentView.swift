@@ -94,15 +94,12 @@ enum FileBrowserMediaLoadPolicy {
 
 /// Displays the content of a workspace file in browse mode.
 ///
-/// Delegates to `FileContentView` for type-aware rendering:
-/// - Markdown: rendered prose via the chat markdown renderer
-/// - Code: syntax-highlighted source with line numbers
-/// - JSON: pretty-printed with colored tokens
+/// Text renders through `EmbeddedFileViewerView` (UIKit `FullScreenCodeViewController`),
+/// which picks the reader for the detected file type. Other types use dedicated previews:
 /// - Images: inline preview
 /// - Audio: lyrics-first full-screen player
 /// - Video: system video player with playback controls
 /// - PDF: PDFKit with scroll, zoom, and text selection
-/// - Plain text: monospaced with line numbers
 ///
 /// Large text files (>1MB) show a size warning before loading.
 /// On cellular networks, an additional data warning is displayed.

@@ -377,6 +377,23 @@ private final class FullScreenCodeChunkCell: UICollectionViewCell {
     }
 }
 
+/// Generate line number string and compute gutter width.
+func lineNumberInfo(lineCount: Int, startLine: Int, font: UIFont? = nil) -> (numbers: String, width: CGFloat) {
+    let endLine = startLine + lineCount - 1
+    let numbers = (startLine...endLine).map(String.init).joined(separator: "\n")
+    let digits = max(String(endLine).count, 2)
+    let fixedWidth = CGFloat(digits) * 7.5
+    let width: CGFloat
+    if let font {
+        let sample = String(repeating: "8", count: digits) as NSString
+        let measuredWidth = sample.size(withAttributes: [.font: font]).width
+        width = max(fixedWidth, ceil(measuredWidth) + 2)
+    } else {
+        width = fixedWidth
+    }
+    return (numbers, width)
+}
+
 final class NativeFullScreenCodeBody: UIView, UIScrollViewDelegate, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
     private static let virtualizationThresholdBytes = 128 * 1024
     private static let virtualizedChunkLineLimit = 160

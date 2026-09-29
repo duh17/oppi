@@ -529,10 +529,6 @@ struct ToolTimelineRowViewportPolicyTests {
         )
         #expect(size.height < 280, "Fitted CSV tool row should stay compact; got \(size.height)")
         #expect(timelineFirstView(ofType: DelimitedTableRenderView.self, in: view) != nil)
-        #expect(
-            timelineFirstView(ofType: RenderableDocumentView.self, in: view) == nil,
-            "Timeline row must not wrap the table in file-browser document chrome"
-        )
         #expect(privateView(named: "expandFloatingButton", in: view) == nil)
     }
 
@@ -563,7 +559,6 @@ struct ToolTimelineRowViewportPolicyTests {
             "Capped table bounds must follow the viewport, not the full grid; got \(table.bounds.height)"
         )
         #expect(table.bounds.height > 200, "Capped table should still paint in the viewport; got \(table.bounds.height)")
-        #expect(timelineFirstView(ofType: RenderableDocumentView.self, in: view) == nil)
     }
 
     @Test func completedMarkdownFittingDoesNotPublishStreamingFirstFit() throws {

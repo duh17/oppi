@@ -4,9 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -323,24 +321,6 @@ function filterAllowed(files: string[], allowed: RegExp): string[] {
   return files.filter((file) => !allowed.test(file));
 }
 
-function findNamedFiles(root: string, fileName: string): string[] {
-  if (!existsSync(root)) {
-    return [];
-  }
-
-  const result: string[] = [];
-  for (const entry of readdirSync(root)) {
-    const fullPath = join(root, entry);
-    const stat = statSync(fullPath);
-    if (stat.isDirectory()) {
-      result.push(...findNamedFiles(fullPath, fileName));
-    } else if (entry === fileName) {
-      result.push(fullPath);
-    }
-  }
-  return result;
-}
-
 function privateFunctionNames(relativePath: string): Set<string> {
   const path = join(appleRoot, relativePath);
   if (!existsSync(path)) {
@@ -420,18 +400,6 @@ function runAppleGuardrails(): GuardrailResult {
       "Use .fullScreenViewer() modifier — it handles sheet configuration",
       hits,
     );
-  }
-
-  for (const view of ["MarkdownFileView", "LaTeXFileView", "MermaidFileView", "OrgModeFileView", "HTMLFileView"]) {
-    const [file] = findNamedFiles(join(appleRoot, "Oppi"), `${view}.swift`);
-    if (file && !readFileSync(file, "utf8").includes("RenderableDocumentWrapper")) {
-      const relativeFile = relative(appleRoot, file);
-      err(
-        `${view} does not use RenderableDocumentWrapper`,
-        "Renderable file views must use RenderableDocumentWrapper for shared chrome",
-        [relativeFile],
-      );
-    }
   }
 
   const chatInputFunctions = privateFunctionNames("Oppi/Features/Chat/Composer/ChatInputBar.swift");
