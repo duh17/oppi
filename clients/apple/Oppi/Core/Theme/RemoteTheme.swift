@@ -242,6 +242,35 @@ enum CustomThemeStore {
         loadAll()[name]
     }
 
+    private static let paletteLock = NSLock()
+    nonisolated(unsafe) private static var paletteCacheData: Data?
+    nonisolated(unsafe) private static var paletteCache: [String: ThemePalette?] = [:]
+
+    /// Resolved palette for a custom theme. Theme-aware paint resolves this on
+    /// every render, so it must not decode the stored JSON each time; the memo
+    /// is keyed by the stored bytes and drops itself when a theme is saved.
+    static func palette(name: String) -> ThemePalette? {
+        let stored = UserDefaults.standard.data(forKey: storageKey)
+        paletteLock.lock()
+        if paletteCacheData == stored, let hit = paletteCache[name] {
+            paletteLock.unlock()
+            return hit
+        }
+        paletteLock.unlock()
+
+        // May migrate renamed themes, which rewrites the stored bytes.
+        let palette = load(name: name)?.toPalette()
+        let current = UserDefaults.standard.data(forKey: storageKey)
+        paletteLock.lock()
+        if paletteCacheData != current {
+            paletteCacheData = current
+            paletteCache = [:]
+        }
+        paletteCache[name] = .some(palette)
+        paletteLock.unlock()
+        return palette
+    }
+
     // periphery:ignore - API surface for future theme management UI
     /// Delete a custom theme.
     static func delete(name: String) {

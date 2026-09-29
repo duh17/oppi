@@ -221,11 +221,7 @@ enum ThemeID: Hashable, Codable, Sendable {
         case .night:
             return ThemePalettes.night
         case .custom(let name):
-            if let remote = CustomThemeStore.load(name: name),
-               let palette = remote.toPalette() {
-                return palette
-            }
-            return ThemePalettes.dark // fallback
+            return CustomThemeStore.palette(name: name) ?? ThemePalettes.dark // fallback
         }
     }
 }

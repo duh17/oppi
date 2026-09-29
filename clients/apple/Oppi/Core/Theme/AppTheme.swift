@@ -263,8 +263,7 @@ extension ThemeID {
             return .night
         case .custom(let name):
             // Build from imported palette if available
-            if let remote = CustomThemeStore.load(name: name),
-               let palette = remote.toPalette() {
+            if let palette = CustomThemeStore.palette(name: name) {
                 return AppTheme.from(palette: palette)
             }
             return .dark
