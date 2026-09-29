@@ -532,7 +532,10 @@ struct ChatView: View {
             extensionWorkingState: extensionSurfaceState?.working,
             extensionHiddenThinkingLabel: extensionSurfaceState?.hiddenThinkingLabel,
             currentModel: session?.model,
-            connection: connection,
+            sessionContent: connection.sessionContent,
+            iconAssetCache: connection.iconAssetCache,
+            openDestination: timelineDestinationAction,
+            loadOlderPage: olderTimelinePageAction,
             scrollController: scrollController,
             sessionManager: sessionManager,
             audioLifecycleCoordinator: audioLifecycleCoordinator,
@@ -550,6 +553,30 @@ struct ChatView: View {
             },
             outlineAvailability: outlineAvailability
         )
+    }
+
+    /// Commit and path-pill destinations are built here, not by the timeline, so the timeline
+    /// holds no app services.
+    private var timelineDestinationAction: ChatTimelineOpenDestination {
+        let presenter = ChatTimelineDestinationPresenter(
+            connection: connection,
+            audioPlayer: audioPlayer,
+            composerDraftStore: composerDraftStore
+        )
+        return { presenter.open($0) }
+    }
+
+    /// Older history pages load through this chat's own session runtime, rebound to the
+    /// connection it already uses. The timeline only decides when to call it.
+    private var olderTimelinePageAction: @MainActor () async -> Bool {
+        let sessionManager = sessionManager
+        let connection = connection
+        return {
+            await sessionManager.loadOlderTracePage(
+                connection: connection,
+                sessionStore: connection.sessionStore
+            )
+        }
     }
 
     static func currentToolFileTarget(

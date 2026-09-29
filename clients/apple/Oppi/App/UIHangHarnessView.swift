@@ -899,7 +899,8 @@ struct UIHangHarnessView: View {
                     toolArgsStore: harnessReducer.toolArgsStore,
                     toolSegmentStore: harnessReducer.toolSegmentStore,
                     toolDetailsStore: harnessReducer.toolDetailsStore,
-                    connection: connection,
+                    sessionContent: connection.sessionContent,
+                    iconAssetCache: connection.iconAssetCache,
                     audioPlayer: connection.audioPlayer
                 )
             )

@@ -526,7 +526,7 @@ extension ChatTimelineCollectionHost.Controller {
               reducer != nil,
               toolArgsStore != nil,
               toolDetailsStore != nil,
-              connection != nil,
+              sessionContent != nil,
               audioPlayer != nil
         else {
             applyNativeFrictionRow(

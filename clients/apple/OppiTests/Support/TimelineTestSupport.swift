@@ -478,7 +478,10 @@ func makeTimelineConfiguration(
     ownsTimelineProjection: Bool = false,
     quietModeEnabled: Bool = false,
     workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons,
-    sessionManager: ChatSessionManager? = nil
+    sessionManager: ChatSessionManager? = nil,
+    hasOlderServerPage: Bool = false,
+    openDestination: ChatTimelineOpenDestination? = nil,
+    loadOlderPage: (@MainActor () async -> Bool)? = nil
 ) -> ChatTimelineCollectionHost.Configuration {
     ChatTimelineCollectionHost.Configuration(
         items: items,
@@ -486,6 +489,7 @@ func makeTimelineConfiguration(
         workLineByID: workLineByID,
         fullTimelineItemIDs: fullTimelineItemIDs,
         hiddenCount: hiddenCount,
+        hasOlderServerPage: hasOlderServerPage,
         renderWindowStep: renderWindowStep,
         isBusy: isBusy,
         streamingAssistantID: streamingAssistantID,
@@ -503,7 +507,10 @@ func makeTimelineConfiguration(
         toolOutputStore: toolOutputStore,
         toolArgsStore: toolArgsStore,
         toolSegmentStore: toolSegmentStore,
-        connection: connection,
+        sessionContent: connection.sessionContent,
+        iconAssetCache: connection.iconAssetCache,
+        openDestination: openDestination,
+        loadOlderPage: loadOlderPage,
         audioPlayer: audioPlayer,
         reviewCommentSelectionRouter: reviewCommentSelectionRouter,
         topOverlap: topOverlap,

@@ -48,6 +48,37 @@ struct SessionContentAccessTests {
         #expect(String(data: data, encoding: .utf8) == request.url?.absoluteString)
     }
 
+    @Test("Timeline user rows read session files for the timeline's own workspace and session")
+    func timelineUserRowReaderTargetsBoundWorkspaceAndSession() async throws {
+        let harness = makeTimelineHarness(sessionId: "s-row")
+        harness.connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        harness.coordinator.apply(
+            configuration: makeTimelineConfiguration(
+                sessionId: "s-row",
+                reducer: harness.reducer,
+                toolOutputStore: harness.toolOutputStore,
+                toolArgsStore: harness.toolArgsStore,
+                connection: harness.connection,
+                scrollController: harness.scrollController,
+                audioPlayer: harness.audioPlayer,
+                workspaceId: "w-row"
+            ),
+            to: harness.collectionView
+        )
+
+        let row = try #require(harness.coordinator.userRowConfiguration(
+            itemID: "user-1",
+            item: .userMessage(id: "user-1", text: "see notes", timestamp: Date())
+        ))
+        let read = try #require(row.fetchWorkspaceFileData)
+        _ = try await read("notes/a.txt")
+
+        let request = try #require(RecordingContentProtocol.requests.first)
+        #expect(RecordingContentProtocol.requests.count == 1)
+        #expect(request.url?.host == "server-a.test")
+        #expect(request.url?.path == "/workspaces/w-row/sessions/s-row/raw/notes/a.txt")
+    }
+
     @Test("Connection supplies its current client and server-scoped workspace catalog")
     func connectionSuppliesCurrentClientAndCatalog() async throws {
         let connection = ServerConnection()

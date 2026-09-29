@@ -338,9 +338,138 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
-    @Test("timeline commit pill presents the commit viewer")
-    func timelineCommitPillPresentsCommitViewer() throws {
-        let harness = makeTimelineHarness(sessionId: "commit-pill-present")
+    @Test("user rows get a session-file reader only while a client and workspace exist")
+    func userRowSessionFileReaderNeedsClientAndWorkspaceAtBuildTime() throws {
+        let sessionId = "user-row-file-reader"
+        let item = ChatItem.userMessage(id: "user-1", text: "look at this", timestamp: Date())
+
+        func hasFileReader(connection: ServerConnection, workspaceId: String?) throws -> Bool {
+            let harness = makeTimelineHarness(sessionId: sessionId)
+            harness.coordinator.apply(
+                configuration: makeTimelineConfiguration(
+                    sessionId: sessionId,
+                    reducer: harness.reducer,
+                    toolOutputStore: harness.toolOutputStore,
+                    toolArgsStore: harness.toolArgsStore,
+                    connection: connection,
+                    scrollController: harness.scrollController,
+                    audioPlayer: harness.audioPlayer,
+                    workspaceId: workspaceId
+                ),
+                to: harness.collectionView
+            )
+            let row = try #require(harness.coordinator.userRowConfiguration(itemID: "user-1", item: item))
+            return row.fetchWorkspaceFileData != nil
+        }
+
+        let connection = ServerConnection()
+        #expect(connection.apiClient == nil)
+        #expect(try !hasFileReader(connection: connection, workspaceId: "ws-test"))
+
+        #expect(connection.configure(credentials: ServerCredentials(
+            host: "127.0.0.1",
+            port: 7749,
+            token: "test-token",
+            name: "Test Server",
+            scheme: .https
+        )))
+        #expect(try hasFileReader(connection: connection, workspaceId: "ws-test"))
+        #expect(try !hasFileReader(connection: connection, workspaceId: nil))
+    }
+
+    @MainActor
+    @Test("pill taps raise typed destination requests with source identity and review scope")
+    func pillTapsRaiseTypedDestinationRequests() throws {
+        let sessionId = "pill-request"
+        let harness = makeTimelineHarness(sessionId: sessionId)
+        var requests: [ChatTimelineDestinationRequest] = []
+        let router = ReviewCommentSelectionRouter { _ in }
+        harness.coordinator.apply(
+            configuration: makeTimelineConfiguration(
+                sessionId: sessionId,
+                reducer: harness.reducer,
+                toolOutputStore: harness.toolOutputStore,
+                toolArgsStore: harness.toolArgsStore,
+                connection: harness.connection,
+                scrollController: harness.scrollController,
+                audioPlayer: harness.audioPlayer,
+                reviewCommentSelectionRouter: router,
+                serverId: "server-1",
+                openDestination: { requests.append($0) }
+            ),
+            to: harness.collectionView
+        )
+        let host = UIViewController()
+        let source = UIView(frame: CGRect(x: 0, y: 0, width: 20, height: 20))
+        host.view.addSubview(source)
+
+        let filePill = UserMessagePathPill(kind: .reviewFile, path: "docs/notes.md")
+        harness.coordinator.openUserMessagePathPill(
+            UserMessagePathPill(kind: .gitCommit, path: "0486bc75"),
+            from: source
+        )
+        harness.coordinator.openUserMessagePathPill(filePill, from: source)
+
+        #expect(requests.map(\.destination) == [.commitDetail(sha: "0486bc75"), .workspaceFile(filePill)])
+        for request in requests {
+            #expect(request.serverId == "server-1")
+            #expect(request.workspaceId == "ws-test")
+            #expect(request.sessionId == sessionId)
+            #expect(request.sourceView === source)
+            #expect(request.presenter === host)
+            guard case .activeSession(let scopedRouter) = request.reviewCommentSelectionScope else {
+                Issue.record("Expected the active-session review scope for \(request.destination)")
+                continue
+            }
+            #expect(scopedRouter === router)
+        }
+    }
+
+    @MainActor
+    @Test("pill taps without workspace, presenter, or destination action raise nothing")
+    func pillTapsWithoutTargetRaiseNothing() {
+        let sessionId = "pill-no-request"
+        let harness = makeTimelineHarness(sessionId: sessionId)
+        var requests: [ChatTimelineDestinationRequest] = []
+        let host = UIViewController()
+        let source = UIView(frame: CGRect(x: 0, y: 0, width: 20, height: 20))
+        host.view.addSubview(source)
+        let detached = UIView()
+        let commit = UserMessagePathPill(kind: .gitCommit, path: "0486bc75")
+
+        func apply(workspaceId: String?, openDestination: ChatTimelineOpenDestination?) {
+            harness.coordinator.apply(
+                configuration: makeTimelineConfiguration(
+                    sessionId: sessionId,
+                    reducer: harness.reducer,
+                    toolOutputStore: harness.toolOutputStore,
+                    toolArgsStore: harness.toolArgsStore,
+                    connection: harness.connection,
+                    scrollController: harness.scrollController,
+                    audioPlayer: harness.audioPlayer,
+                    workspaceId: workspaceId,
+                    openDestination: openDestination
+                ),
+                to: harness.collectionView
+            )
+        }
+
+        apply(workspaceId: nil, openDestination: { requests.append($0) })
+        harness.coordinator.openUserMessagePathPill(commit, from: source)
+        apply(workspaceId: "", openDestination: { requests.append($0) })
+        harness.coordinator.openUserMessagePathPill(commit, from: source)
+        apply(workspaceId: "ws-test", openDestination: { requests.append($0) })
+        harness.coordinator.openUserMessagePathPill(commit, from: detached)
+        apply(workspaceId: "ws-test", openDestination: nil)
+        harness.coordinator.openUserMessagePathPill(commit, from: source)
+
+        #expect(requests.isEmpty)
+    }
+
+    @MainActor
+    @Test("chat composition presents the commit viewer for a commit destination")
+    func chatCompositionPresentsCommitViewer() throws {
+        let connection = ServerConnection()
         let host = UIViewController()
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
@@ -354,9 +483,20 @@ struct UserTimelineRowContentTests {
         let source = UIView(frame: CGRect(x: 0, y: 0, width: 20, height: 20))
         host.view.addSubview(source)
 
-        harness.coordinator.openUserMessagePathPill(
-            UserMessagePathPill(kind: .gitCommit, path: "0486bc75"),
-            from: source
+        ChatTimelineDestinationPresenter(
+            connection: connection,
+            audioPlayer: connection.audioPlayer,
+            composerDraftStore: nil
+        ).open(
+            ChatTimelineDestinationRequest(
+                destination: .commitDetail(sha: "0486bc75"),
+                serverId: "server-1",
+                workspaceId: "ws-test",
+                sessionId: "commit-pill-present",
+                reviewCommentSelectionScope: nil,
+                sourceView: source,
+                presenter: host
+            )
         )
 
         let presented = try #require(host.presentedViewController)
@@ -371,43 +511,53 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
-    @Test("timeline file pills open the session's checkout; uploads keep their session origin")
-    func timelineFilePillsOpenSessionCheckout() {
+    @Test("path-pill file viewers open the session's checkout; uploads keep their session origin")
+    func pathPillFileViewersOpenSessionCheckout() {
         let sessionId = "pill-checkout"
-        let harness = makeTimelineHarness(sessionId: sessionId)
-        harness.connection.setPreviewServerId("server-1")
-        harness.connection.sessionStore.switchServer(to: "server-1")
+        let connection = ServerConnection()
+        connection.setPreviewServerId("server-1")
+        connection.sessionStore.switchServer(to: "server-1")
         var session = makeTestSession(id: sessionId, workspaceId: "ws-test")
         session.worktreeId = "wt-agent"
-        harness.connection.sessionStore.upsert(session)
-        harness.coordinator.apply(
-            configuration: makeTimelineConfiguration(
-                sessionId: sessionId,
-                reducer: harness.reducer,
-                toolOutputStore: harness.toolOutputStore,
-                toolArgsStore: harness.toolArgsStore,
-                connection: harness.connection,
-                scrollController: harness.scrollController,
-                audioPlayer: harness.audioPlayer,
-                serverId: "server-1"
-            ),
-            to: harness.collectionView
+        connection.sessionStore.upsert(session)
+        let presenter = ChatTimelineDestinationPresenter(
+            connection: connection,
+            audioPlayer: connection.audioPlayer,
+            composerDraftStore: nil
         )
 
-        for kind in [UserMessagePathPill.Kind.repoFile, .reviewFile] {
-            let reader = harness.coordinator.userMessagePathPillFileContent(
-                for: UserMessagePathPill(kind: kind, path: "docs/notes.md"),
-                workspaceId: "ws-test"
+        func request(_ pill: UserMessagePathPill, workspaceId: String = "ws-test") -> ChatTimelineDestinationRequest {
+            ChatTimelineDestinationRequest(
+                destination: .workspaceFile(pill),
+                serverId: "server-1",
+                workspaceId: workspaceId,
+                sessionId: sessionId,
+                reviewCommentSelectionScope: nil,
+                sourceView: UIView(),
+                presenter: UIViewController()
             )
+        }
+
+        for kind in [UserMessagePathPill.Kind.repoFile, .reviewFile] {
+            let pill = UserMessagePathPill(kind: kind, path: "docs/notes.md")
+            let reader = presenter.fileContent(for: pill, request: request(pill))
             #expect(reader.debugSourceForTesting == .workspaceFile, "\(kind)")
             #expect(reader.debugWorktreeIdForTesting == "wt-agent", "\(kind) must not open main")
             #expect(reader.debugServerIdForTesting == "server-1", "\(kind)")
         }
 
-        let upload = harness.coordinator.userMessagePathPillFileContent(
-            for: UserMessagePathPill(kind: .uploadedFile, path: ".pi/attachments/\(sessionId)/turn/photo.txt"),
-            workspaceId: "ws-test"
+        let otherWorkspace = UserMessagePathPill(kind: .repoFile, path: "docs/notes.md")
+        #expect(
+            presenter.fileContent(for: otherWorkspace, request: request(otherWorkspace, workspaceId: "ws-other"))
+                .debugWorktreeIdForTesting == nil,
+            "A worktree from a different workspace must not be applied"
         )
+
+        let uploadPill = UserMessagePathPill(
+            kind: .uploadedFile,
+            path: ".pi/attachments/\(sessionId)/turn/photo.txt"
+        )
+        let upload = presenter.fileContent(for: uploadPill, request: request(uploadPill))
         #expect(upload.debugSourceForTesting == .sessionFile(sessionId: sessionId))
         #expect(upload.debugWorktreeIdForTesting == nil)
     }

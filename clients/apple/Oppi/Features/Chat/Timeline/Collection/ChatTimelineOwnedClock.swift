@@ -329,6 +329,7 @@ extension ChatTimelineCollectionHost.Controller {
             || previous.extensionHiddenThinkingLabel != next.extensionHiddenThinkingLabel
             || previous.agentId != next.agentId
             || previous.agentIcon != next.agentIcon
+            || previous.iconAssetCache !== next.iconAssetCache
             || previous.topOverlap != next.topOverlap
             || previous.bottomOverlap != next.bottomOverlap
     }
@@ -452,15 +453,11 @@ extension ChatTimelineCollectionHost.Controller {
             ownedClock.renderWindow = newWindow
             applyOwnedProjection()
         case .fetchOlderPage:
-            let sessionManager = config.sessionManager
-            let connection = config.connection
+            let loadOlderPage = config.loadOlderPage
             let step = config.renderWindowStep
             Task { @MainActor [weak self] in
-                guard let self, let sessionManager else { return }
-                let didLoad = await sessionManager.loadOlderTracePage(
-                    connection: connection,
-                    sessionStore: connection.sessionStore
-                )
+                guard let self, let loadOlderPage else { return }
+                let didLoad = await loadOlderPage()
                 if didLoad {
                     self.ownedClock.renderWindow = min(
                         reducer.items.count,

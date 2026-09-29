@@ -19,7 +19,9 @@ final class ChatTimelineControllerContext {
     var toolArgsStore: ToolArgsStore?
     var toolSegmentStore: ToolSegmentStore?
     var toolDetailsStore: ToolDetailsStore?
-    var connection: ServerConnection?
+    var sessionContent: SessionContentAccess?
+    var iconAssetCache: IconAssetCache?
+    var openDestination: ChatTimelineOpenDestination?
     var currentModel: String?
     var extensionWorkingState: ExtensionWorkingState?
     var extensionHiddenThinkingLabel: String?
@@ -57,7 +59,9 @@ final class ChatTimelineControllerContext {
         toolArgsStore = configuration.toolArgsStore
         toolSegmentStore = configuration.toolSegmentStore
         toolDetailsStore = configuration.toolDetailsStore
-        connection = configuration.connection
+        sessionContent = configuration.sessionContent
+        iconAssetCache = configuration.iconAssetCache
+        openDestination = configuration.openDestination
         currentModel = configuration.currentModel
         extensionWorkingState = configuration.extensionWorkingState
         extensionHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel

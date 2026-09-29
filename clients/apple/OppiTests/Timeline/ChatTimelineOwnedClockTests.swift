@@ -501,6 +501,83 @@ struct ChatTimelineOwnedClockTests {
         #expect(windowed.coordinator.currentIDs.first != ChatTimelineCollectionHost.loadMoreID)
     }
 
+    @Test func ownedShowEarlierPagesThroughOlderPageActionOnlyAfterLocalRowsAreShown() async {
+        let windowed = makeWindowedTimelineHarness(sessionId: "owned-older-page")
+        windowed.reducer.loadSession(ownedClockTraceEvents(count: 90))
+        var pageRequests = 0
+        let step = 30
+        let config = makeTimelineConfiguration(
+            items: [],
+            renderWindowStep: step,
+            isBusy: false,
+            sessionId: windowed.sessionId,
+            reducer: windowed.reducer,
+            toolOutputStore: windowed.toolOutputStore,
+            toolArgsStore: windowed.toolArgsStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer,
+            ownsTimelineProjection: true,
+            hasOlderServerPage: true,
+            loadOlderPage: {
+                pageRequests += 1
+                windowed.reducer.loadSession(ownedClockTraceEvents(count: 200))
+                return true
+            }
+        )
+        windowed.coordinator.updateHostChrome(configuration: config, to: windowed.collectionView)
+        windowed.collectionView.layoutIfNeeded()
+        #expect(windowed.coordinator.ownedTimelineRenderWindowForTesting == TimelineRenderWindowPolicy.standardWindow)
+
+        // Hidden local rows are revealed first; the remote page is not requested yet.
+        windowed.coordinator.onShowEarlier?()
+        #expect(windowed.coordinator.ownedTimelineRenderWindowForTesting == 90)
+        #expect(pageRequests == 0)
+
+        windowed.coordinator.onShowEarlier?()
+        let paged = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run { windowed.reducer.items.count == 200 }
+        }
+        #expect(paged)
+        // The render window grows by exactly the configured step from where it was.
+        #expect(windowed.coordinator.ownedTimelineRenderWindowForTesting == 90 + step)
+        #expect(pageRequests == 1)
+    }
+
+    @Test func ownedShowEarlierKeepsRenderWindowWhenOlderPageDoesNotLoad() async {
+        let windowed = makeWindowedTimelineHarness(sessionId: "owned-older-page-failed")
+        windowed.reducer.loadSession(ownedClockTraceEvents(count: 40))
+        var pageRequests = 0
+        let config = makeTimelineConfiguration(
+            items: [],
+            renderWindowStep: 30,
+            isBusy: false,
+            sessionId: windowed.sessionId,
+            reducer: windowed.reducer,
+            toolOutputStore: windowed.toolOutputStore,
+            toolArgsStore: windowed.toolArgsStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer,
+            ownsTimelineProjection: true,
+            hasOlderServerPage: true,
+            loadOlderPage: {
+                pageRequests += 1
+                return false
+            }
+        )
+        windowed.coordinator.updateHostChrome(configuration: config, to: windowed.collectionView)
+        windowed.collectionView.layoutIfNeeded()
+        #expect(windowed.coordinator.ownedTimelineRenderWindowForTesting == 40)
+
+        windowed.coordinator.onShowEarlier?()
+        let requested = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run { pageRequests == 1 }
+        }
+        #expect(requested)
+        #expect(windowed.coordinator.ownedTimelineRenderWindowForTesting == 40)
+    }
+
     @Test func dismantleStopsOwnedObservation() async {
         let windowed = makeWindowedTimelineHarness(sessionId: "owned-dismantle")
         let config = makeTimelineConfiguration(
@@ -615,7 +692,10 @@ private func makeHostedOwnedTimeline(isBusy: Bool) -> HostedOwnedTimelineFixture
             extensionWorkingState: nil,
             extensionHiddenThinkingLabel: nil,
             currentModel: nil,
-            connection: connection,
+            sessionContent: connection.sessionContent,
+            iconAssetCache: nil,
+            openDestination: nil,
+            loadOlderPage: nil,
             scrollController: scrollController,
             sessionManager: sessionManager,
             audioLifecycleCoordinator: nil,
@@ -643,4 +723,22 @@ private func makeHostedOwnedTimeline(isBusy: Bool) -> HostedOwnedTimelineFixture
         reducer: reducer,
         sessionId: sessionId
     )
+}
+
+private func ownedClockTraceEvents(count: Int) -> [TraceEvent] {
+    (0..<count).map { index in
+        TraceEvent(
+            id: "row-\(index)",
+            type: index.isMultiple(of: 2) ? .user : .assistant,
+            timestamp: "2026-09-07T10:00:00Z",
+            text: "Message \(index)",
+            tool: nil,
+            args: nil,
+            output: nil,
+            toolCallId: nil,
+            toolName: nil,
+            isError: nil,
+            thinking: nil
+        )
+    }
 }

@@ -131,6 +131,69 @@ describe("architecture layer rule helpers", () => {
     }
   });
 
+  it("flags view-layer files that hold the connection or reach transport through it", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-ios-connection-"));
+
+    try {
+      const cases: Array<[string, string]> = [
+        [
+          "clients/apple/Oppi/Features/Chat/Timeline/HoldsConnection.swift",
+          "struct HoldsConnection { let connection: ServerConnection }",
+        ],
+        [
+          "clients/apple/Oppi/Features/Chat/Timeline/ReadsApiClient.swift",
+          "func fetch(_ c: Owner) { _ = c.apiClient }",
+        ],
+        [
+          "clients/apple/Oppi/Features/Chat/Timeline/WritesEnvironment.swift",
+          "func host(_ v: V) -> some View { v.environment(\\.apiClient, nil) }",
+        ],
+        [
+          "clients/apple/Oppi/Features/Chat/Timeline/ReadsWsClient.swift",
+          "func stream(_ c: Owner) { _ = c.wsClient }",
+        ],
+        [
+          "clients/apple/Oppi/Features/Chat/Timeline/ReadsStore.swift",
+          "func lookup(_ c: Owner) { _ = c.sessionStore.session(id: \"s\") }",
+        ],
+        [
+          "clients/apple/Oppi/Features/Chat/Timeline/HoldsWorkspaceStore.swift",
+          "struct HoldsWorkspaceStore { let store: WorkspaceStore }",
+        ],
+        [
+          "clients/apple/Oppi/Core/Views/CoreViewConnection.swift",
+          "struct CoreViewConnection { let coordinator: ConnectionCoordinator }",
+        ],
+      ];
+      for (const [file, source] of cases) {
+        write(join(repoRoot, file), `import Foundation\n${source}\n`);
+      }
+      write(
+        join(repoRoot, "clients/apple/Oppi/Features/Chat/Timeline/Clean.swift"),
+        [
+          "import Foundation",
+          "// ServerConnection and .apiClient in comments do not count.",
+          'let note = "ServerConnection apiClient sessionStore"',
+          "struct Clean { let sessionContent: SessionContentAccess; let manager: ChatSessionManager }",
+        ].join("\n"),
+      );
+      write(
+        join(repoRoot, "clients/apple/Oppi/Features/Chat/ChatComposition.swift"),
+        "struct ChatComposition { let connection: ServerConnection; let store: SessionStore }\n",
+      );
+
+      const violations = findIosLayerViolations(repoRoot).filter(
+        (violation) => violation.rule === "view-layer-connection-boundary",
+      );
+
+      expect(violations.map((violation) => violation.file).sort()).toEqual(
+        cases.map(([file]) => file).sort(),
+      );
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("flags platform imports in non-adapter shared Apple core files", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-apple-core-"));
 

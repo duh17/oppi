@@ -393,7 +393,8 @@ private struct NavigationChromeProfileHeavyTimelineDestination: View {
                 toolArgsStore: reducer.toolArgsStore,
                 toolSegmentStore: reducer.toolSegmentStore,
                 toolDetailsStore: reducer.toolDetailsStore,
-                connection: connection,
+                sessionContent: connection.sessionContent,
+                iconAssetCache: connection.iconAssetCache,
                 currentModel: "profile/model",
                 audioPlayer: connection.audioPlayer
             )

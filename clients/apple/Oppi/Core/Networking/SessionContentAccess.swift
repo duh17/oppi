@@ -14,8 +14,8 @@ import Foundation
 /// bounded time for readiness (`readinessAttempts` polls spaced `readinessPoll` apart),
 /// honors task cancellation, and then resolves the origin (workspace, session, host, or
 /// stored attachment) from the caller's bound source identity plus current metadata.
-/// `toolOutputAccess` does not wait: it resolves synchronously from the current client
-/// and returns nil when the client or route scope is missing.
+/// `toolOutputAccess` and `sessionFileReader` do not wait: they resolve synchronously from
+/// the current client and return nil when the client or route scope/workspace is missing.
 @MainActor
 final class SessionContentAccess {
     static let readinessAttempts = 50
@@ -88,6 +88,24 @@ final class SessionContentAccess {
     }
 
     // MARK: - Session files
+
+    /// Session-file reader for user-message image pills, bound to the current API client
+    /// and the caller's workspace and session. Nil when either is missing right now: like
+    /// `toolOutputAccess`, this does not wait for readiness, so a row built before the
+    /// client or workspace exists simply has no reader.
+    func sessionFileReader(
+        workspaceId: String?,
+        sessionId: String
+    ) -> ((_ path: String) async throws -> Data)? {
+        guard let apiClient = currentAPIClient(), let workspaceId else { return nil }
+        return { path in
+            try await apiClient.getSessionFileData(
+                workspaceId: workspaceId,
+                sessionId: sessionId,
+                path: path
+            )
+        }
+    }
 
     func fetchSessionFileData(
         workspaceId: String?,

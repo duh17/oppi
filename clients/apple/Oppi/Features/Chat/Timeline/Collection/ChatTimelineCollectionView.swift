@@ -19,8 +19,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
     static let loadMoreID = "__timeline.load-more__"
     static let workingIndicatorID = "working-indicator"
 
-    @Environment(\.composerDraftStore) private var composerDraftStore
-
     struct Configuration {
         var items: [ChatItem]
         var displayRows: [TimelineDisplayRow]
@@ -53,7 +51,15 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let toolArgsStore: ToolArgsStore
         let toolSegmentStore: ToolSegmentStore
         let toolDetailsStore: ToolDetailsStore
-        let connection: ServerConnection
+        /// Session content owner for assistant/tool/user rows, supplied by chat composition.
+        let sessionContent: SessionContentAccess
+        let iconAssetCache: IconAssetCache?
+        /// Opens a commit or path-pill destination built by chat composition. Nil: pills
+        /// do nothing.
+        let openDestination: ChatTimelineOpenDestination?
+        /// Loads the next older trace page through the session runtime chat composition
+        /// already bound. The timeline decides when to call it; nil means no remote paging.
+        let loadOlderPage: (@MainActor () async -> Bool)?
         let currentModel: String?
         let extensionWorkingState: ExtensionWorkingState?
         let extensionHiddenThinkingLabel: String?
@@ -101,7 +107,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             toolArgsStore: ToolArgsStore,
             toolSegmentStore: ToolSegmentStore,
             toolDetailsStore: ToolDetailsStore? = nil,
-            connection: ServerConnection,
+            sessionContent: SessionContentAccess,
+            iconAssetCache: IconAssetCache? = nil,
+            openDestination: ChatTimelineOpenDestination? = nil,
+            loadOlderPage: (@MainActor () async -> Bool)? = nil,
             currentModel: String? = nil,
             extensionWorkingState: ExtensionWorkingState? = nil,
             extensionHiddenThinkingLabel: String? = nil,
@@ -147,7 +156,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.toolArgsStore = toolArgsStore
             self.toolSegmentStore = toolSegmentStore
             self.toolDetailsStore = toolDetailsStore ?? reducer.toolDetailsStore
-            self.connection = connection
+            self.sessionContent = sessionContent
+            self.iconAssetCache = iconAssetCache
+            self.openDestination = openDestination
+            self.loadOlderPage = loadOlderPage
             self.currentModel = currentModel
             self.extensionWorkingState = extensionWorkingState
             self.extensionHiddenThinkingLabel = extensionHiddenThinkingLabel
@@ -204,7 +216,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
     func updateUIView(_ collectionView: UICollectionView, context: Context) {
         ChatTimelinePerf.recordHostUpdateUIView()
         ChatReaderOpenLookup.install(configuration.onOpenChatReader, on: collectionView)
-        context.coordinator.composerDraftStore = composerDraftStore
         if configuration.ownsTimelineProjection {
             context.coordinator.updateHostChrome(configuration: configuration, to: collectionView)
         } else {
@@ -256,7 +267,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)?
         var timelineTopOverlap: CGFloat = 0
         var timelineBottomOverlap: CGFloat = 0
-        var composerDraftStore: ComposerDraftStore?
         private var lastPublishedVisibleAudioStripItemIDs = Set<String>()
 
         override init() {
@@ -379,9 +389,19 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             set { context.toolDetailsStore = newValue }
         }
 
-        var connection: ServerConnection? {
-            get { context.connection }
-            set { context.connection = newValue }
+        var sessionContent: SessionContentAccess? {
+            get { context.sessionContent }
+            set { context.sessionContent = newValue }
+        }
+
+        var iconAssetCache: IconAssetCache? {
+            get { context.iconAssetCache }
+            set { context.iconAssetCache = newValue }
+        }
+
+        var openDestination: ChatTimelineOpenDestination? {
+            get { context.openDestination }
+            set { context.openDestination = newValue }
         }
 
         var currentModel: String? {

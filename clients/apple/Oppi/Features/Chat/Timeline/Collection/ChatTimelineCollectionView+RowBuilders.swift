@@ -14,48 +14,6 @@ private extension UIView {
     }
 }
 
-struct TimelineCommitDetailHost: View {
-    let workspaceId: String
-    let commit: GitCommitSummary
-    let onDismiss: () -> Void
-    var composerDraftStore: ComposerDraftStore? = nil
-    var testingQuickActionDestination: QuickActionSessionNavDestination? = nil
-
-    var body: some View {
-        NavigationStack {
-            CommitDetailView(
-                workspaceId: workspaceId,
-                commit: commit,
-                testingQuickActionDestination: testingQuickActionDestination
-            )
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(action: onDismiss) {
-                        Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
-                    }
-                    .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
-                    .accessibilityIdentifier("chat.commit-detail.dismiss")
-                }
-            }
-        }
-        .environment(\.composerDraftStore, composerDraftStore)
-        .modifier(TimelineCommitThemeEnvironment())
-    }
-}
-
-struct TimelineCommitThemeEnvironment: ViewModifier {
-    @State private var themeID = ThemeRuntimeState.currentThemeID()
-
-    func body(content: Content) -> some View {
-        content
-            .environment(\.theme, themeID.appTheme)
-            .environment(\.themeID, themeID)
-            .onReceive(NotificationCenter.default.publisher(for: .oppiThemeDidChange)) { _ in
-                themeID = ThemeRuntimeState.currentThemeID()
-            }
-    }
-}
-
 // MARK: - Row Configuration Builders
 
 extension ChatTimelineCollectionHost.Controller {
@@ -100,25 +58,25 @@ extension ChatTimelineCollectionHost.Controller {
             sessionId: sessionId,
             agentId: agentId,
             agentIcon: agentIcon,
-            iconAssetCache: connection?.iconAssetCache,
+            iconAssetCache: iconAssetCache,
             interactionContext: interactionContext,
             resourceAccess: markdownResourceAccess(includesInlineMedia: true),
             resourcePressure: resourcePressure
         )
     }
 
-    /// Tool-output capabilities for this timeline's session, resolved when asked. Nil while the
-    /// connection has no API client or the timeline has no route scope. Requests are built by
-    /// the connection's content adapter; the timeline only decides when to use them.
+    /// Tool-output capabilities for this timeline's session, resolved when asked. Nil while
+    /// the content owner has no API client or the timeline has no route scope. Requests are
+    /// built by the content adapter; the timeline only decides when to use them.
     var toolOutputAccess: SessionToolOutputAccess? {
-        connection?.sessionContent.toolOutputAccess(sessionId: sessionId, routeScope: routeScope)
+        sessionContent?.toolOutputAccess(sessionId: sessionId, routeScope: routeScope)
     }
 
     /// The Markdown resource access for this timeline's own source. Identity is always the
-    /// timeline's bound scope; providers come from the connection's content adapter, which
-    /// owns routing, readiness, and origin policy. Rows never build those closures.
+    /// timeline's bound scope; providers come from the content adapter, which owns routing,
+    /// readiness, and origin policy. Rows never build those closures.
     private func markdownResourceAccess(includesInlineMedia: Bool) -> MarkdownResourceAccess {
-        guard let sessionContent = connection?.sessionContent else {
+        guard let sessionContent else {
             return MarkdownResourceAccess(
                 identity: MarkdownResourceAccess.Identity(
                     serverID: serverId,
@@ -149,16 +107,10 @@ extension ChatTimelineCollectionHost.Controller {
         return UserTimelineRowConfiguration(
             text: text,
             images: images,
-            fetchWorkspaceFileData: connection?.apiClient.flatMap { client in
-                guard let workspaceId else { return nil }
-                return { path in
-                    try await client.getSessionFileData(
-                        workspaceId: workspaceId,
-                        sessionId: self.sessionId,
-                        path: path
-                    )
-                }
-            },
+            fetchWorkspaceFileData: sessionContent?.sessionFileReader(
+                workspaceId: workspaceId,
+                sessionId: sessionId
+            ),
             onOpenPathPill: { [weak self] pill, sourceView in
                 self?.openUserMessagePathPill(pill, from: sourceView)
             },
@@ -169,133 +121,36 @@ extension ChatTimelineCollectionHost.Controller {
         )
     }
 
+    /// Maps a pill tap to a typed destination request. Building and presenting the destination
+    /// belongs to chat composition (`openDestination`); the timeline supplies source identity,
+    /// review-comment scope, and the view/presenter it was tapped from.
     func openUserMessagePathPill(_ pill: UserMessagePathPill, from sourceView: UIView) {
         guard let destination = pill.timelineDestination,
               let workspaceId, !workspaceId.isEmpty,
-              let presenter = sourceView.nearestViewController() else {
+              let presenter = sourceView.nearestViewController(),
+              let openDestination else {
             return
         }
 
+        let target: ChatTimelineDestination
         switch destination {
         case .commitDetail:
-            presentCommitDetail(
-                sha: pill.path,
-                workspaceId: workspaceId,
-                from: sourceView,
-                presenter: presenter
-            )
+            target = .commitDetail(sha: pill.path)
         case .workspaceFileBrowser:
-            presentWorkspaceFileBrowser(
-                for: pill,
+            target = .workspaceFile(pill)
+        }
+        openDestination(
+            ChatTimelineDestinationRequest(
+                destination: target,
+                serverId: serverId,
                 workspaceId: workspaceId,
-                from: sourceView,
+                sessionId: sessionId,
+                reviewCommentSelectionScope: interactionContext.reviewCommentSelectionRouter
+                    .map(ReviewCommentSelectionScope.activeSession),
+                sourceView: sourceView,
                 presenter: presenter
             )
-        }
-    }
-
-    private func presentCommitDetail(
-        sha: String,
-        workspaceId: String,
-        from sourceView: UIView,
-        presenter: UIViewController
-    ) {
-        guard let connection else { return }
-
-        let commit = GitCommitSummary(sha: sha, message: "", date: "")
-        let view = TimelineCommitDetailHost(
-            workspaceId: workspaceId,
-            commit: commit,
-            onDismiss: { [weak presenter] in
-                presenter?.dismiss(animated: true)
-            },
-            composerDraftStore: composerDraftStore
         )
-        .environment(\.apiClient, connection.apiClient)
-        .environment(connection)
-        .environment(connection.chatState)
-        .environment(connection.sessionStore)
-        .environment(connection.audioPlayer)
-        .environment(connection.gitStatusStore)
-        .environment(connection.fileIndexStore)
-        .environment(connection.messageQueueStore)
-        .environment(connection.askRequestStore)
-        .environment(AppNavigation())
-        .environment(QuickCommentTemplateStore(templates: []))
-        .environment(
-            \.reviewCommentSelectionScope,
-            interactionContext.reviewCommentSelectionRouter.map(ReviewCommentSelectionScope.activeSession)
-        )
-
-        let host = UIHostingController(rootView: view)
-        FullScreenViewerPresentationPolicy.configureLargePresentation(
-            host,
-            traitCollection: sourceView.traitCollection
-        )
-        presenter.present(host, animated: true)
-    }
-
-    private func presentWorkspaceFileBrowser(
-        for pill: UserMessagePathPill,
-        workspaceId: String,
-        from sourceView: UIView,
-        presenter: UIViewController
-    ) {
-        guard let connection, let apiClient = connection.apiClient else { return }
-
-        let view = userMessagePathPillFileContent(for: pill, workspaceId: workspaceId)
-        .environment(\.apiClient, apiClient)
-        .environment(audioPlayer)
-        .environment(connection.sessionStore)
-        .environment(
-            \.reviewCommentSelectionScope,
-            interactionContext.reviewCommentSelectionRouter.map(ReviewCommentSelectionScope.activeSession)
-        )
-
-        presentTimelineViewer(view, from: sourceView, presenter: presenter)
-    }
-
-    /// Upload pills open the session-origin copy the server materialized in
-    /// the session's checkout. Review and repo pills open the workspace file in
-    /// the session's checkout, so Edit writes where the agent works.
-    func userMessagePathPillFileContent(
-        for pill: UserMessagePathPill,
-        workspaceId: String
-    ) -> FileBrowserContentView {
-        let source: FileBrowserContentSource
-        if MarkdownWikiLinkRewriter.resolvedHostPath(pill.path) != nil {
-            source = .hostFile
-        } else if pill.kind == .uploadedFile {
-            source = .sessionFile(sessionId: sessionId)
-        } else {
-            source = .workspaceFile
-        }
-        let session = connection?.sessionStore.session(id: sessionId)
-        let sessionWorktreeId = session?.workspaceId == workspaceId ? session?.worktreeId : nil
-        return FileBrowserContentView(
-            workspaceId: workspaceId,
-            worktreeId: source == .workspaceFile ? sessionWorktreeId : nil,
-            serverId: serverId,
-            filePath: pill.path,
-            fileName: pill.label,
-            source: source,
-            sessionId: sessionId,
-            fileSize: nil
-        )
-    }
-
-    private func presentTimelineViewer<Content: View>(
-        _ view: Content,
-        from sourceView: UIView,
-        presenter: UIViewController
-    ) {
-        let host = UIHostingController(rootView: view)
-        let navigation = UINavigationController(rootViewController: host)
-        FullScreenViewerPresentationPolicy.configureLargePresentation(
-            navigation,
-            traitCollection: sourceView.traitCollection
-        )
-        presenter.present(navigation, animated: true)
     }
 
     func thinkingRowConfiguration(itemID: String, item: ChatItem) -> ThinkingTimelineRowConfiguration? {
@@ -485,7 +340,7 @@ extension ChatTimelineCollectionHost.Controller {
         )
 
         let interactionCtx = self.interactionContext
-        let sessionContent = connection?.sessionContent
+        let sessionContent = self.sessionContent
         // Stored tool attachments belong to the session, not its workspace path.
         // Keep their fetchers available while workspace metadata is still resolving.
         let attachmentFetcher: ((String) async throws -> Data)? = sessionContent.map { content in

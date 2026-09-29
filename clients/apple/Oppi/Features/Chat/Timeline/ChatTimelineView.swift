@@ -93,7 +93,10 @@ struct ChatTimelineView: View {
     let extensionWorkingState: ExtensionWorkingState?
     let extensionHiddenThinkingLabel: String?
     let currentModel: String?
-    let connection: ServerConnection
+    let sessionContent: SessionContentAccess
+    let iconAssetCache: IconAssetCache?
+    let openDestination: ChatTimelineOpenDestination?
+    let loadOlderPage: (@MainActor () async -> Bool)?
     let scrollController: ChatScrollController
     let sessionManager: ChatSessionManager
     let audioLifecycleCoordinator: AudioLifecycleCoordinator?
@@ -142,7 +145,10 @@ struct ChatTimelineView: View {
                 toolArgsStore: reducer.toolArgsStore,
                 toolSegmentStore: reducer.toolSegmentStore,
                 toolDetailsStore: reducer.toolDetailsStore,
-                connection: connection,
+                sessionContent: sessionContent,
+                iconAssetCache: iconAssetCache,
+                openDestination: openDestination,
+                loadOlderPage: loadOlderPage,
                 currentModel: currentModel,
                 extensionWorkingState: extensionWorkingState,
                 extensionHiddenThinkingLabel: extensionHiddenThinkingLabel,

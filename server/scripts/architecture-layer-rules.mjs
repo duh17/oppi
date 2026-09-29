@@ -89,6 +89,18 @@ const IOS_VIEW_LAYER_PATH_PREFIXES = [
 
 const IOS_FORBIDDEN_VIEW_NETWORK_TYPES = ["APIClient", "WebSocketClient"];
 
+// View-layer files receive explicit values and actions from composition. They must not hold the
+// connection or reach transport or shared stores through it. Each entry is a way the timeline used to
+// reach app services (direct type, coordinator lookup, or a member/environment key on the connection).
+const IOS_FORBIDDEN_VIEW_CONNECTION_ACCESS = [
+  { label: "ServerConnection", pattern: /\bServerConnection\b/ },
+  { label: "ConnectionCoordinator", pattern: /\bConnectionCoordinator\b/ },
+  { label: "apiClient (member, key path, or binding)", pattern: /\bapiClient\b/ },
+  { label: "wsClient", pattern: /\bwsClient\b/ },
+  { label: "SessionStore / sessionStore", pattern: /\b[sS]essionStore\b/ },
+  { label: "WorkspaceStore / workspaceStore", pattern: /\b[wW]orkspaceStore\b/ },
+];
+
 const GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_FULL_FILES = new Set([
   "clients/apple/Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift",
   "clients/apple/OppiMac/Views/MacExtensionSurfacePanel.swift",
@@ -1123,6 +1135,37 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
           reason: `View-layer files must not reference ${forbiddenType} directly.`,
           remediation:
             "Route network operations through stores/session managers and keep view files focused on rendering + user intent.",
+        }),
+      );
+    }
+  }
+
+  for (const file of candidateFiles) {
+    if (!IOS_VIEW_LAYER_PATH_PREFIXES.some((prefix) => file.startsWith(prefix))) {
+      continue;
+    }
+
+    const parsed = readSwiftSource(repoRoot, file);
+    if (!parsed) {
+      continue;
+    }
+
+    for (const { label, pattern } of IOS_FORBIDDEN_VIEW_CONNECTION_ACCESS) {
+      const match = findFirstMatch(parsed.stripped, pattern);
+      if (!match) {
+        continue;
+      }
+
+      const location = lineAndColumnForIndex(parsed.stripped, match.index);
+      violations.push(
+        makeIosViolation({
+          rule: "view-layer-connection-boundary",
+          file,
+          line: location.line,
+          column: location.column,
+          reason: `View-layer files must not reference ${label}; the connection and its shared stores stay outside them.`,
+          remediation:
+            "Take explicit values (SessionContentAccess, MarkdownResourceAccess, icon cache) and typed actions from chat composition instead of reading app services in the view layer.",
         }),
       );
     }

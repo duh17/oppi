@@ -42,7 +42,8 @@ struct SessionTimelineNavigationTests {
         let timeline = ChatTimelineView(
             sessionId: manager.sessionId, serverId: nil, workspaceId: nil,
             isBusy: false, extensionWorkingState: nil, extensionHiddenThinkingLabel: nil,
-            currentModel: nil, connection: connection, scrollController: scrollController,
+            currentModel: nil, sessionContent: connection.sessionContent,
+            iconAssetCache: nil, openDestination: nil, loadOlderPage: nil, scrollController: scrollController,
             sessionManager: manager, audioLifecycleCoordinator: nil,
             quietModeEnabled: scenario == .quietTool,
             onFork: { _ in }, onOpenCurrentFile: { _ in }, onBackSwipe: {}, reviewCommentSelectionRouter: nil,

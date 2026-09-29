@@ -459,7 +459,8 @@ func makeTimelineConfiguration(
         toolOutputStore: toolOutputStore,
         toolArgsStore: toolArgsStore,
         toolSegmentStore: toolSegmentStore,
-        connection: connection,
+        sessionContent: connection.sessionContent,
+        iconAssetCache: connection.iconAssetCache,
         audioPlayer: audioPlayer,
         topOverlap: topOverlap,
         bottomOverlap: bottomOverlap
