@@ -455,6 +455,18 @@ export class QueuedModelTurnsAuthorityError extends Error {
   }
 }
 
+/**
+ * A queue replay was refused while Pi's queues still held exactly what did
+ * queue. Carries the settled-state authority so the caller can re-check it in
+ * the same JavaScript turn as the rollback's clearQueue().
+ */
+class QueuedModelTurnsReplayRejected {
+  constructor(
+    readonly reason: unknown,
+    readonly authority: QueuedModelTurnsAuthority,
+  ) {}
+}
+
 export const QUEUE_RECONCILIATION_REQUIRED_ERROR =
   "Queue reconciliation required: retry setQueue from the last acknowledged queue version";
 
@@ -1603,10 +1615,24 @@ export class SdkBackend {
         : (await this.replayQueuedModelTurns(batch), undefined);
       this.queueReconciliationRequired = false;
       return replayAuthority;
-    } catch (error) {
+    } catch (caught) {
+      const rejected = caught instanceof QueuedModelTurnsReplayRejected ? caught : undefined;
+      const error = rejected ? rejected.reason : caught;
       if (error instanceof QueuedModelTurnsAuthorityError) {
         if (error.phase !== "before_replay") this.queueReconciliationRequired = false;
         throw error;
+      }
+      try {
+        // The content check ran before the rejection reached this catch. Pi may
+        // have consumed a queued message since, and rollback would restore it.
+        // Re-check with no await before replayQueuedModelTurns() clears the queue.
+        if (rejected)
+          this.assertQueuedModelTurnsAuthority(rejected.authority, permit, "during_replay");
+      } catch (authorityError) {
+        if (authorityError instanceof QueuedModelTurnsAuthorityError) {
+          this.queueReconciliationRequired = false;
+        }
+        throw authorityError;
       }
       try {
         await this.replayQueuedModelTurns(previous);
@@ -1658,10 +1684,12 @@ export class SdkBackend {
     }
     this.assertQueuedModelTurnsAuthority(authority, permit, "before_replay");
 
-    // Pi exposes no queue mutation barrier. Its queue methods mutate synchronously
-    // before their promises settle, so invoke the whole clear/replay batch in one
-    // JavaScript turn. Pi cannot consume between the final authority check and
-    // the clear, or between individual replays.
+    // Pi exposes no queue mutation barrier. clearQueue() mutates synchronously,
+    // but steer()/followUp() await input handlers before they queue, so each
+    // one appends and emits its own queue_update on a later microtask. Start the
+    // whole batch in one JavaScript turn so clear and replay stay adjacent, then
+    // wait for every replay to settle: none may still be pending when a rollback
+    // or the Oppi commit runs.
     const replays: Promise<void>[] = [];
     this.piSession.clearQueue();
     for (const item of batch.steering) {
@@ -1670,26 +1698,47 @@ export class SdkBackend {
     for (const item of batch.followUp) {
       replays.push(this.piSession.followUp(item.message, item.images));
     }
-    const replayAuthority = this.captureQueuedModelTurnsAuthority(permit);
+    const settled = await Promise.allSettled(replays);
+    const fulfilled = (
+      offset: number,
+      items: QueuedModelTurnBatch["steering"],
+    ): QueuedModelTurnBatch["steering"] =>
+      items.filter((_, index) => settled[offset + index]?.status === "fulfilled");
+    const expected = {
+      steering: fulfilled(0, batch.steering),
+      followUp: fulfilled(batch.steering.length, batch.followUp),
+    };
 
-    try {
-      await Promise.all(replays);
-    } catch (error) {
-      // An authoritative dequeue outranks a concurrent replay rejection. Do not
-      // roll stale pre-replay intent back over a message Pi already consumed.
-      this.assertQueuedModelTurnsAuthority(replayAuthority, permit, "during_replay");
-      throw error;
+    // Everything settled, so Oppi's own queue_update events have all landed and
+    // the generation captured here is the baseline for anything Pi does next.
+    // Capturing earlier would count our own events as a foreign change, and a
+    // generation count cannot tell them apart. Compare content instead: Pi's
+    // queues must hold exactly the items whose replay succeeded, in order.
+    const replayAuthority = this.captureQueuedModelTurnsAuthority(permit);
+    const queueMatches = this.piQueueMatches(expected);
+
+    const rejected = settled.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (rejected) {
+      // A replay was refused. Rolling back is only safe if Pi still holds exactly
+      // what did queue. If Pi started one of those messages meanwhile, restoring
+      // the pre-edit queue would send it a second time, so reconcile instead.
+      if (!queueMatches) throw new QueuedModelTurnsAuthorityError("during_replay");
+      throw new QueuedModelTurnsReplayRejected(rejected.reason, replayAuthority);
     }
-    this.assertQueuedModelTurnsAuthority(replayAuthority, permit, "during_replay");
-    const steering = this.piSession.getSteeringMessages();
-    const followUp = this.piSession.getFollowUpMessages();
-    const queueMatches =
-      steering.length === batch.steering.length &&
-      steering.every((message, index) => message === batch.steering[index]?.message) &&
-      followUp.length === batch.followUp.length &&
-      followUp.every((message, index) => message === batch.followUp[index]?.message);
     if (!queueMatches) throw new QueuedModelTurnsAuthorityError("during_replay");
     return replayAuthority;
+  }
+
+  private piQueueMatches(expected: Pick<QueuedModelTurnBatch, "steering" | "followUp">): boolean {
+    const same = (live: readonly string[], items: QueuedModelTurnBatch["steering"]): boolean =>
+      live.length === items.length &&
+      live.every((message, index) => message === items[index]?.message);
+    return (
+      same(this.piSession.getSteeringMessages(), expected.steering) &&
+      same(this.piSession.getFollowUpMessages(), expected.followUp)
+    );
   }
 
   private async promptWithoutTransaction(
