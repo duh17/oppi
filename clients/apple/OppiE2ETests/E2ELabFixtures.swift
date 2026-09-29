@@ -328,8 +328,14 @@ extension E2ETestCase {
     }
 
     /// Calls the paired E2E server API for binary endpoints using the harness token.
-    func e2eLabAPIBytes(method: String, path: String, body: [String: Any] = [:]) throws -> (statusCode: Int, body: Data) {
-        let response = try e2eLabAPIData(method: method, path: path, body: body)
+    /// Pass `bearerToken` to call as another device instead of the harness lab device.
+    func e2eLabAPIBytes(
+        method: String,
+        path: String,
+        body: [String: Any] = [:],
+        bearerToken: String? = nil
+    ) throws -> (statusCode: Int, body: Data) {
+        let response = try e2eLabAPIData(method: method, path: path, body: body, bearerToken: bearerToken)
         return (response.statusCode, response.body)
     }
 
@@ -350,11 +356,16 @@ extension E2ETestCase {
         return outputURL
     }
 
-    private func e2eLabAPIData(method: String, path: String, body: [String: Any] = [:]) throws -> E2ELabHTTPResponse {
+    private func e2eLabAPIData(
+        method: String,
+        path: String,
+        body: [String: Any] = [:],
+        bearerToken: String? = nil
+    ) throws -> E2ELabHTTPResponse {
         var lastError: Error?
         for scheme in e2eLabSchemes() {
             do {
-                return try e2eLabAPIData(method: method, path: path, body: body, scheme: scheme)
+                return try e2eLabAPIData(method: method, path: path, body: body, bearerToken: bearerToken, scheme: scheme)
             } catch {
                 lastError = error
             }
@@ -366,10 +377,11 @@ extension E2ETestCase {
         method: String,
         path: String,
         body: [String: Any],
+        bearerToken: String?,
         scheme: String
     ) throws -> E2ELabHTTPResponse {
         let url = try e2eLabURL(path: path, scheme: scheme)
-        let token = try e2eLabDeviceToken()
+        let token = try bearerToken ?? e2eLabDeviceToken()
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

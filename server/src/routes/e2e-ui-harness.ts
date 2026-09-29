@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -78,6 +78,16 @@ export function createE2EUIHarnessRoutes(
         return true;
       }
       await handleLocalPiSessionFixture(ctx, helpers, req, res);
+      return true;
+    }
+
+    const pairedDeviceFixtureMatch = path.match(/^\/e2e\/ui\/fixtures\/paired-device$/);
+    if (pairedDeviceFixtureMatch) {
+      if (method !== "POST") {
+        helpers.error(res, 405, "Method not allowed");
+        return true;
+      }
+      await handlePairedDeviceFixture(ctx, helpers, req, res);
       return true;
     }
 
@@ -400,6 +410,38 @@ async function handleLocalPiSessionFixture(
   await discoverLocalSessions(undefined, { dataDir: ctx.storage.getDataDir() });
 
   helpers.json(res, { ok: true, path: realpathSync(filePath), piSessionId: sessionId, cwd, name });
+}
+
+/**
+ * Enrolls a throwaway paired device so UI tests can revoke it without touching the
+ * harness's shared lab token or the app's own device.
+ */
+async function handlePairedDeviceFixture(
+  ctx: RouteContext,
+  helpers: RouteHelpers,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const body = await helpers.parseBody<Record<string, unknown>>(req, {
+    maxBytes: MAX_E2E_UI_MESSAGE_BYTES,
+  });
+  const name = stringField(body.name)?.trim();
+  if (!name) {
+    helpers.error(res, 400, "Fixture requires name");
+    return;
+  }
+
+  const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const jwk = publicKey.export({ format: "jwk" }) as { x?: string; y?: string };
+  const enrolled = ctx.storage.enrollViaPairing(ctx.storage.issuePairingToken(), {
+    publicKey: { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y },
+    name,
+  });
+  if (!enrolled) {
+    helpers.error(res, 500, "Failed to enroll fixture device");
+    return;
+  }
+  helpers.json(res, { deviceId: enrolled.deviceId, accessToken: enrolled.accessToken });
 }
 
 async function handleStoppedSessionsFixture(

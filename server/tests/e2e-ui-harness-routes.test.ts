@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createRouteHelpers } from "../src/routes/http.js";
+import { Storage } from "../src/storage.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { createE2EUIHarnessRoutes } from "../src/routes/e2e-ui-harness.js";
 import { getSessionAttachment } from "../src/session-attachments.js";
@@ -239,6 +240,54 @@ describe("E2E UI harness routes", () => {
       expect(cleanupResponse.statusCode).toBe(200);
       expect(JSON.parse(cleanupResponse.body)).toEqual({ ok: true, deletedCount: 3 });
       expect(fixtureSessions).toHaveLength(0);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("enrolls a throwaway paired device that can be revoked on its own", async () => {
+    process.env.OPPI_E2E_UI_HARNESS = "1";
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-e2e-paired-device-route-"));
+    try {
+      const storage = new Storage(dataDir);
+      const dispatch = createE2EUIHarnessRoutes(
+        { storage } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+      const enroll = async (name: string) => {
+        const res = makeResponse();
+        await dispatch({
+          method: "POST",
+          path: "/e2e/ui/fixtures/paired-device",
+          url: new URL("http://localhost/e2e/ui/fixtures/paired-device"),
+          req: makeRequest({ name }),
+          res: res as never,
+        });
+        return res;
+      };
+
+      const first = await enroll("Lab Throwaway");
+      const second = await enroll("Lab Bystander");
+      expect(first.statusCode).toBe(200);
+      const throwaway = JSON.parse(first.body) as { deviceId: string; accessToken: string };
+      const bystander = JSON.parse(second.body) as { deviceId: string; accessToken: string };
+      expect(storage.listDevices().map((device) => device.name)).toEqual(
+        expect.arrayContaining(["Lab Throwaway", "Lab Bystander"]),
+      );
+
+      expect(storage.revokeDevice(throwaway.deviceId)).toBe(true);
+      expect(storage.validateAccessToken(throwaway.accessToken).ok).toBe(false);
+      expect(storage.validateAccessToken(bystander.accessToken).ok).toBe(true);
+
+      const missingName = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: "/e2e/ui/fixtures/paired-device",
+        url: new URL("http://localhost/e2e/ui/fixtures/paired-device"),
+        req: makeRequest({ name: "  " }),
+        res: missingName as never,
+      });
+      expect(missingName.statusCode).toBe(400);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

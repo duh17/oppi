@@ -40,6 +40,8 @@ Example:
 
 ### Added
 
+- **Client:** Server detail lists paired devices with a "This device" marker and last-used time, and revokes other devices after a confirmation. New pairings send the device name (a generic "iPhone" gets a short per-device suffix such as `iPhone (A3F9)`; names are capped at 64 characters).
+- **Docs:** `GET /auth/devices`, `DELETE /auth/devices/:id`, and the `POST /pair` `deviceName` field in Onboarding and pairing.
 - **Mac:** Help → Client Script runs `focus`, `command`, and `catalog` steps by name. The accessibility value `mac.clientScript.snapshot` reports focus, section, session, tool row, and document so computer use can check a shortcut against the same action. Sidebar sections are `mac.sidebar.*`. Timeline rows are `mac.timeline`, `mac.timeline.userMessage`, and `mac.timeline.assistantMessage`.
 - **Mac:** Keyboard-first commands. ⌘N opens a new session, ⌘K opens a command palette over every command and session (⌘↩ opens a session in a split), ⌘P jumps to a session, ⌘{ / ⌘} step through sessions, ⌘L / ⌘J focus the composer or timeline, ⌘⇧M toggles dictation, ⌘1–6 switch sidebar sections, and ⌘/ shows the shortcut sheet. Every command appears in the menu bar with its current shortcut.
 - **Mac:** Settings → Keyboard rebinds any command (a taken chord moves, system shortcuts are refused) and picks a timeline preset: Mac Standard, Vim (j/k, h/l, g/G, i or Tab to the composer, Esc back), or Emacs (⌃N/⌃P, ⌃F/⌃B, ⌥< / ⌥>, ⌃G, ⌃O).

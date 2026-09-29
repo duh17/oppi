@@ -92,6 +92,8 @@ Git checkouts, Docker images, and other non-npm installs show a copyable `npm in
 
 If this app build needs a newer server than the one you are connected to, All Sessions shows a single notice that opens Server. That notice goes away after you update and reconnect.
 
+**Server** detail also lists **Paired Devices**. Your device is marked **This device** and has no Revoke button. Other devices show when they were last used; **Revoke** asks for confirmation, then signs that device out immediately. See [Onboarding](onboarding.md#paired-devices).
+
 ## What stays Pi
 
 Oppi does not replace Pi's coding-agent manual. Use [Pi's usage guide](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/usage.md) for slash commands, skills, compaction, the TUI, and the extensions API. Oppi documents only mobile daily use and the [extension overlay](extensions.md).

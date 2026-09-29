@@ -94,6 +94,17 @@ oppi config set port <public-port>
 - Invites contain signed server identity and HTTPS authorization.
 - Deep-link details are in [Deep links](deeplinks.md).
 
+## Paired devices
+
+Each paired device has a name. Oppi sends the device name in the `deviceName` field of `POST /pair` (trimmed, at most 64 characters). iOS 16 and later report only the generic model name ("iPhone") unless the app holds Apple's restricted device-name entitlement, so Oppi appends a short per-device suffix, for example `iPhone (A3F9)`. The server stores a missing or blank name as `Device`.
+
+List and revoke devices from the host with `oppi devices` and `oppi devices revoke <id>`, or from a paired device with the same endpoints:
+
+- `GET /auth/devices` returns `{"devices":[{"id","name","scope","createdAt","lastUsedAt","revokedAt","keyEnrolled"}]}`. Revoked devices stay in the list with `revokedAt` set. Times are Unix milliseconds.
+- `DELETE /auth/devices/:id` revokes a device, invalidates its access tokens, and closes its open sockets. It returns `{"ok":true}`, or `404` for an unknown or already-revoked id.
+
+Any paired device can list and revoke any other; there is no per-device permission. `GET /auth/devices` does not mark the caller, so a client compares the list with the device id in its own stored credential to find itself.
+
 ## Troubleshooting
 
 ### Invite expired, used, or pairing result unknown

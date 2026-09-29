@@ -347,6 +347,7 @@ enum InviteBootstrapService {
         apiFactory: @MainActor (URL, String, String?) -> any InviteBootstrapAPI = { baseURL, token, tlsCertFingerprint in
             APIClient(baseURL: baseURL, token: token, tlsCertFingerprint: tlsCertFingerprint)
         },
+        deviceName: String? = PairingDeviceName.current(),
         deviceKeyProvider: @MainActor () throws -> any DeviceKey = {
             try DeviceKeyProvider.shared.loadOrCreate()
         }
@@ -380,7 +381,7 @@ enum InviteBootstrapService {
             do {
                 pairResult = try await bootstrapAPI.pairDevice(
                     pairingToken: pairingToken,
-                    deviceName: nil,
+                    deviceName: PairingDeviceName.resolved(deviceName),
                     devicePublicKey: try deviceKeyProvider().publicKey
                 )
             } catch {
@@ -497,7 +498,7 @@ enum E2EAppAuthBootstrap {
         do {
             pairResult = try await pairingAPI.pairDevice(
                 pairingToken: pairingToken,
-                deviceName: nil,
+                deviceName: PairingDeviceName.current(),
                 devicePublicKey: try deviceKeyProvider().publicKey
             )
         } catch {

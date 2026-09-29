@@ -351,6 +351,12 @@ struct ServerDetailView: View {
     @State private var updateDidNotReturn = false
     @State private var copiedManualCommand = false
     @State private var updatePollTask: Task<Void, Never>?
+    @State private var pairedDevices: [AuthDevice]?
+    @State private var isLoadingPairedDevices = false
+    @State private var pairedDevicesError: String?
+    @State private var isRevokingDevice = false
+    @State private var showRevokeConfirmation = false
+    @State private var devicePendingRevoke: PairedDeviceRoster.Row?
 
     private var pairedServer: PairedServer {
         ServerDetailModelProvidersNavigation.visibleServer(
@@ -413,6 +419,8 @@ struct ServerDetailView: View {
                 isLoading = true
                 mobileOutputGuide = nil
                 mobileOutputGuideError = nil
+                pairedDevices = nil
+                pairedDevicesError = nil
                 await load()
             }
         }
@@ -480,6 +488,22 @@ struct ServerDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text("Choose where the sign-in page opens. On server opens a browser on the server's own desktop.")
+        }
+        .confirmationDialog(
+            revokeDeviceTitle,
+            isPresented: $showRevokeConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Revoke", role: .destructive) {
+                if let row = devicePendingRevoke {
+                    Task { await revokeDevice(row) }
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                devicePendingRevoke = nil
+            }
+        } message: {
+            Text("\(devicePendingRevoke?.title ?? "That device") will lose access immediately. Pair it again to restore access.")
         }
         .sheet(isPresented: $isFlowSheetPresented, onDismiss: handleFlowSheetDismissed) {
             providerFlowSheet
@@ -601,6 +625,7 @@ struct ServerDetailView: View {
         if info != nil {
             serverUpdateSection
         }
+        pairedDevicesSection
 
         Section {
             ServerModelProvidersNavigationRow(
@@ -772,6 +797,120 @@ struct ServerDetailView: View {
             }
         }
         }
+    }
+
+    private var currentDeviceId: String? {
+        pairedServer.deviceCredential?.deviceId
+    }
+
+    private var pairedDevicesState: ServerDetailPairedDevicesState {
+        ServerDetailPairedDevicesState.resolve(
+            devices: pairedDevices,
+            currentDeviceId: currentDeviceId,
+            isLoading: isLoadingPairedDevices,
+            error: pairedDevicesError
+        )
+    }
+
+    private var revokeDeviceTitle: String {
+        if let title = devicePendingRevoke?.title, !title.isEmpty {
+            return "Revoke \(title)?"
+        }
+        return "Revoke this device?"
+    }
+
+    @ViewBuilder
+    private var pairedDevicesSection: some View {
+        Section {
+            switch pairedDevicesState {
+            case .loading:
+                HStack {
+                    Spacer()
+                    ProgressView()
+                    Spacer()
+                }
+                .accessibilityIdentifier("server.pairedDevices.loading")
+            case .loaded(let rows, let error):
+                if rows.isEmpty {
+                    Text("No paired devices")
+                        .foregroundStyle(.themeComment)
+                } else {
+                    ForEach(rows) { row in
+                        pairedDeviceRow(row)
+                    }
+                }
+                if let error {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.themeOrange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("server.pairedDevices.error")
+                }
+            case .failed(let message):
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.themeOrange)
+                    Button("Retry") {
+                        Task { await loadPairedDevices() }
+                    }
+                }
+                .accessibilityIdentifier("server.pairedDevices.error")
+            }
+        } header: {
+            Text("Paired Devices")
+        } footer: {
+            Text("Every paired device can see this list. Revoking disconnects that device immediately.")
+        }
+    }
+
+    @ViewBuilder
+    private func pairedDeviceRow(_ row: PairedDeviceRoster.Row) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.title)
+                    .foregroundStyle(.themeFg)
+                Text(pairedDeviceCaption(row))
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+            }
+            // Group only the text: a container-level identifier or label would also
+            // overwrite the Revoke button's.
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier(
+                row.isThisDevice ? "server.pairedDevices.thisDevice" : "server.pairedDevices.row.\(row.id)"
+            )
+            Spacer(minLength: 8)
+            if row.canRevoke {
+                Button("Revoke", role: .destructive) {
+                    devicePendingRevoke = row
+                    showRevokeConfirmation = true
+                }
+                .buttonStyle(.borderless)
+                .font(.footnote)
+                .disabled(isRevokingDevice)
+                .accessibilityLabel("Revoke \(row.title)")
+                .accessibilityIdentifier("server.pairedDevices.revoke.\(row.id)")
+            }
+        }
+    }
+
+    private func pairedDeviceCaption(_ row: PairedDeviceRoster.Row) -> String {
+        if row.isThisDevice {
+            return "This device"
+        }
+        guard let lastUsedAt = row.lastUsedAt else {
+            return "Never used"
+        }
+        let date = Date(timeIntervalSince1970: TimeInterval(lastUsedAt) / 1_000)
+        let relative = pairedDeviceRelativeFormatter.localizedString(for: date, relativeTo: Date())
+        return "Last used \(relative)"
+    }
+
+    private var pairedDeviceRelativeFormatter: RelativeDateTimeFormatter {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
     }
 
     private var connectionStatusTitle: String {
@@ -1346,6 +1485,7 @@ struct ServerDetailView: View {
     private func load() async {
         guard let api = await prepareAPIClient() else {
             error = "Unable to prepare server transport"
+            pairedDevicesError = "Unable to prepare server transport"
             isLoading = false
             return
         }
@@ -1369,8 +1509,54 @@ struct ServerDetailView: View {
 
         async let providers: () = loadProviderConfiguration(api: api)
         async let guide: () = loadMobileOutputGuide(api: api)
-        _ = await (providers, guide)
+        async let devices: () = loadPairedDevices(api: api)
+        _ = await (providers, guide, devices)
         isLoading = false
+    }
+
+    private func loadPairedDevices(api: APIClient? = nil) async {
+        isLoadingPairedDevices = true
+        defer { isLoadingPairedDevices = false }
+
+        let client: APIClient
+        if let api {
+            client = api
+        } else if let prepared = await prepareAPIClient() {
+            client = prepared
+        } else {
+            pairedDevicesError = "Unable to prepare server transport"
+            return
+        }
+
+        do {
+            pairedDevices = try await client.listAuthDevices()
+            pairedDevicesError = nil
+        } catch {
+            pairedDevicesError = error.localizedDescription
+        }
+    }
+
+    private func revokeDevice(_ row: PairedDeviceRoster.Row) async {
+        guard row.canRevoke else { return }
+        isRevokingDevice = true
+        defer {
+            isRevokingDevice = false
+            devicePendingRevoke = nil
+        }
+        guard let api = await prepareAPIClient() else {
+            pairedDevicesError = "Unable to prepare server transport"
+            return
+        }
+        do {
+            try await api.revokeAuthDevice(id: row.id)
+            pairedDevices = (pairedDevices ?? []).filter { $0.id != row.id }
+            pairedDevicesError = nil
+            await loadPairedDevices(api: api)
+        } catch {
+            // Another device may have revoked it first; refresh so no stale row stays.
+            await loadPairedDevices(api: api)
+            pairedDevicesError = error.localizedDescription
+        }
     }
 
     private func prepareAPIClient() async -> APIClient? {

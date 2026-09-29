@@ -159,6 +159,24 @@ struct InviteBootstrapServiceTests {
         #expect(!cancelMessage.contains("Secure connection"))
     }
 
+    @Test func pairingSendsResolvedDeviceName() async throws {
+        let log = InviteBootstrapCallLog()
+        let pairingAPI = RecordingInviteBootstrapAPI(log: log, accessToken: "at_paired")
+        let authenticatedAPI = RecordingInviteBootstrapAPI(log: log)
+        var apis = [pairingAPI, authenticatedAPI]
+
+        _ = try await InviteBootstrapService.validateAndBootstrap(
+            credentials: credentials(),
+            existingCredentials: nil,
+            confirmTrust: { _ in true },
+            apiFactory: { _, _, _ in apis.removeFirst() },
+            deviceName: "Chen iPhone",
+            deviceKeyProvider: { InMemoryP256DeviceKey() }
+        )
+
+        #expect(await pairingAPI.lastPairedDeviceName() == "Chen iPhone")
+    }
+
     @Test func decodesCredentialsFromInviteURL() throws {
         let payload = #"{"v":3,"host":"pairing.example.test","port":7749,"token":"invite-token","name":"Pairing Server"}"#
         let encoded = try #require(payload.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed))
@@ -232,6 +250,7 @@ private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
     private let log: InviteBootstrapCallLog
     private let accessToken: String
     private let incompleteResponse: Bool
+    private var pairedDeviceName: String?
 
     init(
         log: InviteBootstrapCallLog,
@@ -243,11 +262,14 @@ private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
         self.incompleteResponse = incompleteResponse
     }
 
+    func lastPairedDeviceName() -> String? { pairedDeviceName }
+
     func pairDevice(
         pairingToken: String,
-        deviceName _: String?,
+        deviceName: String?,
         devicePublicKey: DevicePublicKey
     ) async throws -> PairDeviceResponse {
+        pairedDeviceName = deviceName
         await log.append("pair:\(pairingToken)")
         #expect(devicePublicKey.kty == "EC")
         #expect(devicePublicKey.crv == "P-256")

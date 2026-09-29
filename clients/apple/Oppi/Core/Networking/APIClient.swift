@@ -486,6 +486,21 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(User.self, from: data)
     }
 
+    /// List paired devices for this server. Includes revoked rows.
+    func listAuthDevices() async throws -> [AuthDevice] {
+        let data = try await get("/auth/devices")
+        return try JSONDecoder().decode(AuthDeviceListResponse.self, from: data).devices
+    }
+
+    /// Revoke a paired device. Its access tokens are invalidated immediately.
+    func revokeAuthDevice(id: String) async throws {
+        let (data, response) = try await request(
+            "DELETE",
+            path: "/auth/devices/\(id)"
+        )
+        try checkStatus(response, data: data)
+    }
+
     /// Fetch server metadata (version, uptime, stats) for the server detail view.
     func serverInfo() async throws -> ServerInfo {
         let data = try await get("/server/info")
