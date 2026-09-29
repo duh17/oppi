@@ -1372,8 +1372,7 @@ extension ChatTimelineCollectionHost.Controller: UICollectionViewDataSourcePrefe
     }
 
     private func timelineImageTarget() -> ChatTimelinePreparationRunway.ImageTarget {
-        let fallbackBounds = UIScreen.main.bounds
-        let collectionBounds = collectionView?.bounds ?? fallbackBounds
+        let collectionBounds = collectionView?.bounds ?? .zero
         let pointWidth = max(
             1,
             collectionBounds.width
@@ -1381,11 +1380,12 @@ extension ChatTimelineCollectionHost.Controller: UICollectionViewDataSourcePrefe
                 - AssistantTimelineRowContentView.bubbleLeadingPadding
                 - AssistantTimelineRowContentView.bubbleTrailingPadding
         )
-        let screen = collectionView?.window?.windowScene?.screen
+        let traitScale = collectionView?.traitCollection.displayScale ?? 0
+        let windowHeight = collectionView?.window?.bounds.height ?? 0
         return ChatTimelinePreparationRunway.ImageTarget(
             pointWidth: pointWidth,
-            displayScale: screen?.scale ?? UIScreen.main.scale,
-            screenHeight: screen?.bounds.height ?? fallbackBounds.height,
+            displayScale: traitScale > 0 ? traitScale : 1,
+            screenHeight: windowHeight > 0 ? windowHeight : max(collectionBounds.height, 1),
             detailScale: StreamingRenderPolicy.imageDetailScale(for: resourcePressure)
         )
     }

@@ -233,7 +233,7 @@ final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInte
             bashBodyView.outputScrollView.delaysContentTouches = false
             let mode = ToolRowViewportCalculator.ViewportMode.output
             let geometry = ToolRowViewportCalculator.GeometryContext(
-                windowHeight: window?.bounds.height ?? UIScreen.main.bounds.height,
+                windowHeight: window?.bounds.height ?? bounds.height,
                 safeAreaInsets: window?.safeAreaInsets ?? .zero,
                 cellWidth: configuration.bodyWidth + 12
             )
