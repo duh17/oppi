@@ -74,6 +74,7 @@ Example:
 
 ### Fixed
 
+- **Client:** A finished thinking block no longer looks stuck while the model is still writing the next tool call or reply. The row closes when the next block starts instead of waiting for the whole message. GPT models could leave it as a tall, unformatted, still-streaming bubble for tens of seconds.
 - **Mac:** Timeline scrolling and streaming no longer stall under an imported custom theme. Theme-aware paint decoded the stored custom-theme JSON on every render (about a quarter of main-thread time while scrolling); the resolved palette is now memoized until the stored theme changes. Timeline rows also skip re-rendering when a token lands in another row, and syntax highlighting is cached.
 - **Mac:** The top of the timeline no longer shows a toolbar-height blurred band over the first rows, and the composer no longer grows to a tall empty capsule when the pane has room.
 - **Server:** Sandbox workspace file reads and listings no longer follow symlinks out of the mount. Every byte read comes from a handle verified against the checked path, so a symlink swapped in after the check returns 404.

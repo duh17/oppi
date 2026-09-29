@@ -96,6 +96,74 @@ struct TimelineReducerStreamingTests {
         #expect(secondText == "Done.")
     }
 
+    /// GPT often streams a short reasoning summary, then spends a long time on
+    /// tool arguments before message_end. The thinking row must stop streaming
+    /// as soon as the next content block starts, on both reducer paths.
+    @Test(arguments: [false, true])
+    func thinkingFinalizesWhenNextBlockStartsBeforeMessageEnd(batched: Bool) {
+        let reducer = TimelineReducer()
+        let apply: ([AgentEvent]) -> Void = { events in
+            if batched { reducer.processBatch(events) } else { events.forEach(reducer.process) }
+        }
+
+        apply([
+            .agentStart(sessionId: "s1"),
+            .thinkingDelta(sessionId: "s1", delta: "**Verifying tree equality**"),
+            .toolUpdate(sessionId: "s1", toolEventId: "t1", tool: "edit", args: ["path": .string("a.md")]),
+        ])
+        guard case .thinking(_, _, _, let doneAtToolPreview) = reducer.items[0] else {
+            Issue.record("Expected thinking row, got \(reducer.items)")
+            return
+        }
+        #expect(doneAtToolPreview)
+
+        apply([
+            .thinkingDelta(sessionId: "s1", delta: "second"),
+            .textDelta(sessionId: "s1", delta: "Answer"),
+        ])
+        #expect(reducer.items.count == 4)
+        guard case .thinking(_, let second, _, let doneAtText) = reducer.items[2] else {
+            Issue.record("Expected second thinking row, got \(reducer.items)")
+            return
+        }
+        #expect(second == "second")
+        #expect(doneAtText)
+
+        // A later thinking block starts a fresh live row instead of reopening.
+        apply([.thinkingDelta(sessionId: "s1", delta: "third")])
+        guard case .thinking(_, let third, _, let thirdDone) = reducer.items.last else {
+            Issue.record("Expected live third thinking row, got \(reducer.items)")
+            return
+        }
+        #expect(reducer.items.count == 5)
+        #expect(third == "third")
+        #expect(!thirdDone)
+
+        // Canonical message_end adopts the early-finalized rows in place.
+        let thinkingIDs = reducer.items.compactMap { item -> String? in
+            if case .thinking(let id, _, _, _) = item { return id }
+            return nil
+        }
+        reducer.expandedItemIDs.insert(thinkingIDs[0])
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "Answer",
+            assistantContent: [
+                AssistantMessageContentPart(kind: "thinking", content: "**Verifying tree equality**", contentIndex: 0, id: "e-0"),
+                AssistantMessageContentPart(kind: "tool", contentIndex: 1, toolCallId: "t1", id: "t1"),
+                AssistantMessageContentPart(kind: "thinking", content: "second", contentIndex: 2, id: "e-2"),
+                AssistantMessageContentPart(kind: "text", content: "Answer", contentIndex: 3, id: "e-3"),
+                AssistantMessageContentPart(kind: "thinking", content: "third", contentIndex: 4, id: "e-4"),
+            ]
+        ))
+        #expect(reducer.items.map(\.id) == ["e-0", "t1", "e-2", "e-3", "e-4"])
+        #expect(reducer.expandedItemIDs.contains("e-0"))
+        #expect(reducer.items.allSatisfy { item in
+            if case .thinking(_, _, _, let isDone) = item { return isDone }
+            return true
+        })
+    }
+
     @Test func indexedThinkingDeltasSplitWithinOneCoalescedBatch() {
         let reducer = TimelineReducer()
 

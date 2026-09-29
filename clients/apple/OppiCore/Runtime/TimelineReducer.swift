@@ -933,6 +933,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         for event in events {
             switch event {
             case .textDelta(_, let delta, let contentIndex):
+                // Text is a structural boundary. Pi streams content blocks in
+                // order, so the thinking block before it has ended even though
+                // message_end may still be far away.
+                if hasPendingThinkingUpsert || currentThinkingID != nil {
+                    flushPendingUpserts()
+                    finalizeThinking()
+                    didMutate = true
+                }
                 if prepareAssistantBlock(contentIndex: contentIndex) {
                     flushPendingUpserts()
                     finalizeAssistantMessage()
@@ -1077,6 +1085,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return renderMutationCheckpoint() != before
 
         case .textDelta(_, let delta, let contentIndex):
+            finalizeThinking()
             let crossedBoundary = prepareAssistantBlock(contentIndex: contentIndex)
             if crossedBoundary {
                 finalizeAssistantMessage()
@@ -1216,6 +1225,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             existingToolState = nil
         }
         finalizeAssistantMessage()
+        // A streamed tool call can take minutes to finish its arguments before
+        // message_end. The preceding thinking block is complete now; leaving
+        // it live keeps the fixed-height plain-text streaming bubble on screen.
+        // A replayed event for a completed tool is not a new block boundary.
+        if existingToolState?.isDone != true {
+            finalizeThinking()
+        }
         // Record start time only once real execution begins. Streaming
         // tool_update previews should not start the elapsed timer. A duplicate
         // start for a completed call is stale replay and must not restart timing.
