@@ -145,6 +145,14 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "ms",
     description: "Client lag from command_result frame receipt to command waiter resolution.",
   },
+  "network.handshake_ms": {
+    unit: "ms",
+    description: "Client HTTPS candidate handshake duration, tagged by connection route and status.",
+  },
+  "network.ws_ping_rtt_ms": {
+    unit: "ms",
+    description: "Client WebSocket ping round-trip time, tagged by connection route.",
+  },
   "chat.queue_sync_ms": {
     unit: "ms",
     description: "Latency for initial queue snapshot refresh (get_queue command).",

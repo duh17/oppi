@@ -310,6 +310,66 @@ describe("telemetry module", () => {
     }
   });
 
+  it("stores the client network timing metrics instead of dropping them", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-chat-metrics-network-"));
+    try {
+      const ctx = {
+        storage: {
+          getDataDir: () => dataDir,
+        },
+      } as unknown as RouteContext;
+
+      const dispatch = createTelemetryRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+      const generatedAt = Date.now();
+
+      await dispatch({
+        method: "POST",
+        path: "/telemetry/chat-metrics",
+        url: new URL("http://localhost/telemetry/chat-metrics"),
+        req: makeRequest({
+          generatedAt,
+          samples: [
+            {
+              ts: generatedAt,
+              metric: "network.handshake_ms",
+              value: 84,
+              unit: "ms",
+              tags: { route: "socks", status: "ok" },
+            },
+            {
+              ts: generatedAt,
+              metric: "network.ws_ping_rtt_ms",
+              value: 31,
+              unit: "ms",
+              tags: { route: "socks" },
+            },
+          ],
+        }) as never,
+        res: res as never,
+      });
+
+      expect(res.statusCode).toBe(200);
+      const dayFile = join(
+        dataDir,
+        "diagnostics",
+        "telemetry",
+        `chat-metrics-${new Date(generatedAt).toISOString().slice(0, 10)}.jsonl`,
+      );
+      const record = JSON.parse(readFileSync(dayFile, "utf8").trim().split("\n")[0]) as {
+        sampleCount: number;
+        samples: Array<{ metric: string }>;
+      };
+      expect(record.sampleCount).toBe(2);
+      expect(record.samples.map((sample) => sample.metric)).toEqual([
+        "network.handshake_ms",
+        "network.ws_ping_rtt_ms",
+      ]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects chat metrics payloads when all samples are invalid", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-chat-metrics-invalid-"));
     try {
