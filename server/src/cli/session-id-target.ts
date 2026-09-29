@@ -16,21 +16,11 @@ export type SessionIdTargetError = Error & {
  * exact Session.id first, otherwise id.startsWith(target). Unlike Pi's first-match,
  * this is unique-or-error so an ambiguous prefix lists every full id.
  *
- * Completeness depends on GET /sessions returning every Session.id with no
- * default limit or recency window. A later default cap would make unique-prefix
- * resolution silently wrong.
+ * `sessionIds` must hold every Session.id that starts with the target. The
+ * server's idPrefix filter guarantees that without a limit or recency window.
  */
 export function resolveUniqueSessionId(target: string, sessionIds: readonly string[]): string {
-  const trimmed = target.trim();
-  if (!trimmed) {
-    throw sessionIdTargetError(
-      "session id is required",
-      400,
-      "session_id_required",
-      "Pass a Session.id or a unique prefix, for example 11111111.",
-    );
-  }
-
+  const trimmed = requiredTarget(target);
   const ids = [...new Set(sessionIds.filter((id) => id.length > 0))];
   const exact = ids.find((id) => id === trimmed);
   if (exact !== undefined) return exact;
@@ -60,12 +50,32 @@ export async function resolveSessionIdTargets(
   targets: readonly string[],
   call: SessionListApiCall,
 ): Promise<string[]> {
-  if (targets.length === 0) return [];
-  const result = await call<{ sessions?: Array<{ id?: unknown }> }>("/sessions");
-  const sessionIds = (result.sessions ?? [])
-    .map((session) => session.id)
-    .filter((id): id is string => typeof id === "string" && id.length > 0);
-  return targets.map((target) => resolveUniqueSessionId(target, sessionIds));
+  const resolved: string[] = [];
+  for (const target of targets) {
+    // Empty targets fail locally; an empty idPrefix would list every session.
+    const trimmed = requiredTarget(target);
+    // Ask the server for prefix matches only. The full list serializes every
+    // stored session and was the server's most expensive request.
+    const result = await call<{ sessions?: Array<{ id?: unknown }> }>(
+      `/sessions?idPrefix=${encodeURIComponent(trimmed)}`,
+    );
+    const sessionIds = (result.sessions ?? [])
+      .map((session) => session.id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+    resolved.push(resolveUniqueSessionId(trimmed, sessionIds));
+  }
+  return resolved;
+}
+
+function requiredTarget(target: string): string {
+  const trimmed = target.trim();
+  if (trimmed) return trimmed;
+  throw sessionIdTargetError(
+    "session id is required",
+    400,
+    "session_id_required",
+    "Pass a Session.id or a unique prefix, for example 11111111.",
+  );
 }
 
 function formatAmbiguousMatches(matches: readonly string[]): string {

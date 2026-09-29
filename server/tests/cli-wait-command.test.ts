@@ -108,7 +108,7 @@ describe("cmdWait", () => {
     const paths: string[] = [];
     request.mockImplementation(async (_conn, path) => {
       paths.push(path);
-      if (path === "/sessions") {
+      if (path.startsWith("/sessions?idPrefix=")) {
         return { sessions: [{ id: UUID_A, status: "ready" }, { id: UUID_B, status: "ready" }] };
       }
       if (path === `/sessions/${UUID_A}`) {
@@ -126,14 +126,14 @@ describe("cmdWait", () => {
       ok: true,
       data: { session: { id: UUID_A }, matchedStatus: "stopped" },
     });
-    expect(paths).toEqual(["/sessions", `/sessions/${UUID_A}`]);
+    expect(paths).toEqual(["/sessions?idPrefix=019e1fff-5555", `/sessions/${UUID_A}`]);
   });
 
   it("fails an ambiguous prefix without polling a session route", async () => {
     const paths: string[] = [];
     request.mockImplementation(async (_conn, path) => {
       paths.push(path);
-      if (path === "/sessions") {
+      if (path.startsWith("/sessions?idPrefix=")) {
         return { sessions: [{ id: UUID_A }, { id: UUID_B }] };
       }
       throw new Error(`unexpected CLI path ${path}`);
@@ -148,14 +148,14 @@ describe("cmdWait", () => {
     expect(JSON.parse(stdout).error.message).toContain("Ambiguous session prefix '019e1fff'");
     expect(JSON.parse(stdout).error.message).toContain(UUID_A);
     expect(JSON.parse(stdout).error.message).toContain(UUID_B);
-    expect(paths).toEqual(["/sessions"]);
+    expect(paths).toEqual(["/sessions?idPrefix=019e1fff"]);
   });
 
   it("fails an unknown prefix without polling a session route", async () => {
     const paths: string[] = [];
     request.mockImplementation(async (_conn, path) => {
       paths.push(path);
-      if (path === "/sessions") {
+      if (path.startsWith("/sessions?idPrefix=")) {
         return { sessions: [{ id: UUID_A }] };
       }
       throw new Error(`unexpected CLI path ${path}`);
@@ -175,7 +175,7 @@ describe("cmdWait", () => {
         exit_code: 1,
       },
     });
-    expect(paths).toEqual(["/sessions"]);
+    expect(paths).toEqual(["/sessions?idPrefix=deadbeef"]);
   });
 
   it("rejects a prefix that uniquely resolves to the calling session", async () => {
@@ -183,7 +183,7 @@ describe("cmdWait", () => {
     const paths: string[] = [];
     request.mockImplementation(async (_conn, path) => {
       paths.push(path);
-      if (path === "/sessions") {
+      if (path.startsWith("/sessions?idPrefix=")) {
         return { sessions: [{ id: UUID_A }, { id: UUID_B }] };
       }
       throw new Error(`unexpected CLI path ${path}`);
@@ -200,7 +200,7 @@ describe("cmdWait", () => {
         ok: false,
         error: { message: `Cannot target the calling Oppi session (${UUID_A})` },
       });
-      expect(paths).toEqual(["/sessions"]);
+      expect(paths).toEqual(["/sessions?idPrefix=019e1fff-5555"]);
     } finally {
       if (previousCallerSessionId === undefined) delete process.env.OPPI_CALLER_SESSION_ID;
       else process.env.OPPI_CALLER_SESSION_ID = previousCallerSessionId;

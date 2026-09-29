@@ -28,7 +28,7 @@ describe("schedule session targeting", () => {
     const calls: Array<{ path: string; body?: unknown }> = [];
     request.mockImplementation(async (_conn, path, options) => {
       calls.push({ path, body: options?.body });
-      if (path === "/sessions") {
+      if (path.startsWith("/sessions?idPrefix=")) {
         return { sessions: [{ id: UUID_A, workspaceId: "ws-1" }, { id: UUID_B }] };
       }
       if (path === `/sessions/${UUID_A}`) {
@@ -52,7 +52,7 @@ describe("schedule session targeting", () => {
     expect(exitCode).toBe(0);
     expect(JSON.parse(stdout).ok).toBe(true);
     expect(calls.map((call) => call.path)).toEqual([
-      "/sessions",
+      "/sessions?idPrefix=019e1fff-5555",
       `/sessions/${UUID_A}`,
       "/schedules",
     ]);
@@ -65,7 +65,7 @@ describe("schedule session targeting", () => {
     const paths: string[] = [];
     request.mockImplementation(async (_conn, path) => {
       paths.push(path);
-      if (path === "/sessions") {
+      if (path.startsWith("/sessions?idPrefix=")) {
         return { sessions: [{ id: UUID_A }, { id: UUID_B }] };
       }
       if (path === `/schedules?sessionId=${UUID_A}`) {
@@ -79,14 +79,14 @@ describe("schedule session targeting", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(paths).toEqual(["/sessions", `/schedules?sessionId=${UUID_A}`]);
+    expect(paths).toEqual(["/sessions?idPrefix=019e1fff-5555", `/schedules?sessionId=${UUID_A}`]);
   });
 
   it("resolves action.sessionId from schedule update --definition-json before PATCH", async () => {
     const calls: Array<{ path: string; body?: unknown }> = [];
     request.mockImplementation(async (_conn, path, options) => {
       calls.push({ path, body: options?.body });
-      if (path === "/sessions") {
+      if (path.startsWith("/sessions?idPrefix=")) {
         return { sessions: [{ id: UUID_A }, { id: UUID_B }] };
       }
       if (path === "/schedules/sch-1") {
@@ -105,7 +105,7 @@ describe("schedule session targeting", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(calls.map((call) => call.path)).toEqual(["/sessions", "/schedules/sch-1"]);
+    expect(calls.map((call) => call.path)).toEqual(["/sessions?idPrefix=019e1fff-5555", "/schedules/sch-1"]);
     expect(calls[1]?.body).toEqual({
       action: { type: "existing_session", sessionId: UUID_A },
     });
@@ -121,7 +121,7 @@ describe("schedule session targeting", () => {
     const calls: Array<{ path: string; body?: unknown }> = [];
     request.mockImplementation(async (_conn, path, options) => {
       calls.push({ path, body: options?.body });
-      if (path === "/sessions") {
+      if (path.startsWith("/sessions?idPrefix=")) {
         return { sessions: [{ id: UUID_A }, { id: UUID_B }] };
       }
       if (path === "/schedules/sch-1") {
@@ -139,7 +139,7 @@ describe("schedule session targeting", () => {
       );
 
       expect(exitCode).toBe(0);
-      expect(calls.map((call) => call.path)).toEqual(["/sessions", "/schedules/sch-1"]);
+      expect(calls.map((call) => call.path)).toEqual(["/sessions?idPrefix=019e1fff-5555", "/schedules/sch-1"]);
       expect(calls[1]?.body).toEqual({
         action: { type: "existing_session", sessionId: UUID_A },
       });
@@ -191,7 +191,7 @@ describe("schedule session targeting", () => {
     const paths: string[] = [];
     request.mockImplementation(async (_conn, path) => {
       paths.push(path);
-      if (path === "/sessions") {
+      if (path.startsWith("/sessions?idPrefix=")) {
         return { sessions: [{ id: UUID_A }, { id: UUID_B }] };
       }
       throw new Error(`unexpected CLI path ${path}`);
@@ -207,7 +207,7 @@ describe("schedule session targeting", () => {
     );
     expect(create.exitCode).toBe(1);
     expect(JSON.parse(create.stdout).error.message).toContain("Ambiguous session prefix '019e1fff'");
-    expect(paths).toEqual(["/sessions"]);
+    expect(paths).toEqual(["/sessions?idPrefix=019e1fff"]);
 
     paths.length = 0;
     const list = await captureCliOutput(() =>
@@ -215,6 +215,6 @@ describe("schedule session targeting", () => {
     );
     expect(list.exitCode).toBe(1);
     expect(JSON.parse(list.stdout).error.message).toContain("Ambiguous session prefix '019e1fff'");
-    expect(paths).toEqual(["/sessions"]);
+    expect(paths).toEqual(["/sessions?idPrefix=019e1fff"]);
   });
 });

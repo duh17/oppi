@@ -79,6 +79,7 @@ interface MockRouteContext {
     getSession: ReturnType<typeof vi.fn>;
     deleteSession: ReturnType<typeof vi.fn>;
     listSessions: ReturnType<typeof vi.fn>;
+    findSessionByLaunchIdempotencyKey: ReturnType<typeof vi.fn>;
   };
   sessionRuntimes: {
     getActiveSessionIds: ReturnType<typeof vi.fn>;
@@ -121,6 +122,7 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
     getSession: vi.fn(),
     deleteSession: vi.fn().mockReturnValue(true),
     listSessions: vi.fn().mockReturnValue([]),
+    findSessionByLaunchIdempotencyKey: vi.fn().mockReturnValue(undefined),
   };
 
   const sessions = {
@@ -698,7 +700,9 @@ describe("POST /workspaces/:id/sessions", () => {
         autoStop: true,
       },
     });
-    mock.storage.listSessions.mockReturnValue([existing]);
+    mock.storage.findSessionByLaunchIdempotencyKey.mockImplementation((key: string) =>
+      key === "cli-autostop" ? existing : undefined,
+    );
     mock.storage.getSession.mockImplementation((sessionId: string) =>
       sessionId === existing.id ? existing : undefined,
     );

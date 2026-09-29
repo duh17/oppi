@@ -1200,6 +1200,55 @@ describe("sessions module", () => {
     ]);
   });
 
+  it("limits the generic session list to stored and active ids with the idPrefix", async () => {
+    const session = (id: string, lastActivity: number, status = "stopped") => ({
+      id,
+      workspaceId: "ws-1",
+      status,
+      createdAt: 0,
+      lastActivity,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    });
+    const active = {
+      "019e1fff-3333": session("019e1fff-3333", 30, "busy"),
+      "019e2000-4444": session("019e2000-4444", 40, "busy"),
+    };
+    const ctx = {
+      storage: {
+        listSessions: vi.fn(() => [
+          session("019e1fff-1111", 10),
+          session("019e2000-2222", 20),
+          session("xx019e1fff", 50),
+        ]),
+      },
+      sessionRuntimes: {
+        getActiveSessionIds: vi.fn(() => new Set(Object.keys(active))),
+        getActiveSession: vi.fn((id: keyof typeof active) => active[id]),
+      },
+      ensureSessionContextWindow: vi.fn((s: unknown) => s),
+    } as unknown as RouteContext;
+
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "GET",
+      path: "/sessions",
+      url: new URL("http://localhost/sessions?idPrefix=019e1fff"),
+      req: { url: "/sessions?idPrefix=019e1fff" } as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).sessions.map((s: { id: string }) => s.id)).toEqual([
+      "019e1fff-3333",
+      "019e1fff-1111",
+    ]);
+  });
+
   it("exposes generic session get/read/events/command/stop routes for CLI use", async () => {
     const session = {
       id: "s1",

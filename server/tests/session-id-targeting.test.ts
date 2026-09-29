@@ -233,18 +233,18 @@ describe("session targeting uses Pi-native Session.id", () => {
       {
         action: "get",
         flags: { json: "true" },
-        expected: ["/sessions", `/sessions/${PI_SESSION_ID}`],
+        expected: [`/sessions?idPrefix=${PI_SESSION_ID}`, `/sessions/${PI_SESSION_ID}`],
       },
       {
         action: "send",
         flags: { text: "hello", json: "true" },
-        expected: ["/sessions", `/sessions/${PI_SESSION_ID}/command`],
+        expected: [`/sessions?idPrefix=${PI_SESSION_ID}`, `/sessions/${PI_SESSION_ID}/command`],
       },
       {
         action: "inspect",
         flags: { json: "true" },
         expected: [
-          "/sessions",
+          `/sessions?idPrefix=${PI_SESSION_ID}`,
           `/sessions/${PI_SESSION_ID}`,
           `/workspaces/ws-1/sessions/${PI_SESSION_ID}/trace-outline`,
         ],
@@ -253,7 +253,7 @@ describe("session targeting uses Pi-native Session.id", () => {
         action: "resume",
         flags: { json: "true" },
         expected: [
-          "/sessions",
+          `/sessions?idPrefix=${PI_SESSION_ID}`,
           `/sessions/${PI_SESSION_ID}`,
           `/workspaces/ws-1/sessions/${PI_SESSION_ID}/resume`,
         ],
@@ -261,38 +261,38 @@ describe("session targeting uses Pi-native Session.id", () => {
       {
         action: "wait",
         flags: { for: "idle", json: "true" },
-        expected: ["/sessions", `/sessions/${PI_SESSION_ID}/events?since=0`],
+        expected: [`/sessions?idPrefix=${PI_SESSION_ID}`, `/sessions/${PI_SESSION_ID}/events?since=0`],
       },
       {
         action: "stop",
         flags: { json: "true" },
-        expected: ["/sessions", `/sessions/${PI_SESSION_ID}/stop`],
+        expected: [`/sessions?idPrefix=${PI_SESSION_ID}`, `/sessions/${PI_SESSION_ID}/stop`],
       },
       {
         action: "abort",
         flags: { json: "true" },
-        expected: ["/sessions", `/sessions/${PI_SESSION_ID}/command`],
+        expected: [`/sessions?idPrefix=${PI_SESSION_ID}`, `/sessions/${PI_SESSION_ID}/command`],
       },
       {
         action: "read",
         flags: { json: "true" },
-        expected: ["/sessions", `/sessions/${PI_SESSION_ID}/read`],
+        expected: [`/sessions?idPrefix=${PI_SESSION_ID}`, `/sessions/${PI_SESSION_ID}/read`],
       },
       {
         action: "events",
         flags: { json: "true" },
-        expected: ["/sessions", `/sessions/${PI_SESSION_ID}/events`],
+        expected: [`/sessions?idPrefix=${PI_SESSION_ID}`, `/sessions/${PI_SESSION_ID}/events`],
       },
       {
         action: "trace",
         flags: { json: "true" },
-        expected: ["/sessions", `/sessions/${PI_SESSION_ID}/trace`],
+        expected: [`/sessions?idPrefix=${PI_SESSION_ID}`, `/sessions/${PI_SESSION_ID}/trace`],
       },
       {
         action: "delete",
         flags: { json: "true" },
         expected: [
-          "/sessions",
+          `/sessions?idPrefix=${PI_SESSION_ID}`,
           `/sessions/${PI_SESSION_ID}`,
           `/workspaces/ws-1/sessions/${PI_SESSION_ID}`,
         ],
@@ -301,7 +301,7 @@ describe("session targeting uses Pi-native Session.id", () => {
         action: "fork",
         flags: { entry: "entry-1", json: "true" },
         expected: [
-          "/sessions",
+          `/sessions?idPrefix=${PI_SESSION_ID}`,
           `/sessions/${PI_SESSION_ID}`,
           `/workspaces/ws-1/sessions/${PI_SESSION_ID}/fork`,
         ],
@@ -311,7 +311,7 @@ describe("session targeting uses Pi-native Session.id", () => {
         flags: { json: "true" },
         extraPositional: ["tool-1"],
         expected: [
-          "/sessions",
+          `/sessions?idPrefix=${PI_SESSION_ID}`,
           `/sessions/${PI_SESSION_ID}`,
           `/workspaces/ws-1/sessions/${PI_SESSION_ID}/tool-output/tool-1`,
         ],
@@ -320,7 +320,7 @@ describe("session targeting uses Pi-native Session.id", () => {
         action: "trace-page",
         flags: { json: "true" },
         expected: [
-          "/sessions",
+          `/sessions?idPrefix=${PI_SESSION_ID}`,
           `/sessions/${PI_SESSION_ID}`,
           `/workspaces/ws-1/sessions/${PI_SESSION_ID}/trace-page`,
         ],
@@ -329,7 +329,7 @@ describe("session targeting uses Pi-native Session.id", () => {
         action: "trace-outline",
         flags: { json: "true" },
         expected: [
-          "/sessions",
+          `/sessions?idPrefix=${PI_SESSION_ID}`,
           `/sessions/${PI_SESSION_ID}`,
           `/workspaces/ws-1/sessions/${PI_SESSION_ID}/trace-outline`,
         ],
@@ -340,7 +340,7 @@ describe("session targeting uses Pi-native Session.id", () => {
         const paths: string[] = [];
         request.mockImplementation(async (_conn, path, options) => {
           paths.push(path);
-          if (path === "/sessions") {
+          if (path.startsWith("/sessions?idPrefix=")) {
             return { sessions: [{ id: PI_SESSION_ID, workspaceId: "ws-1", status: "ready" }] };
           }
           if (path === `/sessions/${PI_SESSION_ID}`) {
@@ -408,7 +408,7 @@ describe("session targeting uses Pi-native Session.id", () => {
       const paths: string[] = [];
       request.mockImplementation(async (_conn, path) => {
         paths.push(path);
-        if (path === "/sessions") {
+        if (path.startsWith("/sessions?idPrefix=")) {
           return {
             sessions: [
               { id: PI_SESSION_ID, workspaceId: "ws-1", status: "ready" },
@@ -431,14 +431,14 @@ describe("session targeting uses Pi-native Session.id", () => {
         ok: true,
         data: { session: { id: PI_SESSION_ID } },
       });
-      expect(paths).toEqual(["/sessions", `/sessions/${PI_SESSION_ID}`]);
+      expect(paths).toEqual(["/sessions?idPrefix=019e1fff-5555", `/sessions/${PI_SESSION_ID}`]);
     });
 
     it("fails an ambiguous prefix and lists the full Session.ids", async () => {
       const paths: string[] = [];
       request.mockImplementation(async (_conn, path) => {
         paths.push(path);
-        if (path === "/sessions") {
+        if (path.startsWith("/sessions?idPrefix=")) {
           return {
             sessions: [{ id: PI_SESSION_ID }, { id: PI_SESSION_ID_B }],
           };
@@ -461,14 +461,14 @@ describe("session targeting uses Pi-native Session.id", () => {
       });
       expect(JSON.parse(stdout).error.message).toContain(PI_SESSION_ID);
       expect(JSON.parse(stdout).error.message).toContain(PI_SESSION_ID_B);
-      expect(paths).toEqual(["/sessions"]);
+      expect(paths).toEqual(["/sessions?idPrefix=019e1fff"]);
     });
 
     it("fails an unknown prefix without calling the session route", async () => {
       const paths: string[] = [];
       request.mockImplementation(async (_conn, path) => {
         paths.push(path);
-        if (path === "/sessions") {
+        if (path.startsWith("/sessions?idPrefix=")) {
           return { sessions: [{ id: PI_SESSION_ID }] };
         }
         throw new Error(`unexpected CLI path ${path}`);
@@ -489,14 +489,14 @@ describe("session targeting uses Pi-native Session.id", () => {
           exit_code: 1,
         },
       });
-      expect(paths).toEqual(["/sessions"]);
+      expect(paths).toEqual(["/sessions?idPrefix=deadbeef"]);
     });
 
     it("treats a leftover short wrapper as exact Session.id only", async () => {
       const paths: string[] = [];
       request.mockImplementation(async (_conn, path) => {
         paths.push(path);
-        if (path === "/sessions") {
+        if (path.startsWith("/sessions?idPrefix=")) {
           return {
             sessions: [
               {
@@ -527,7 +527,7 @@ describe("session targeting uses Pi-native Session.id", () => {
           exit_code: 1,
         },
       });
-      expect(paths).toEqual(["/sessions"]);
+      expect(paths).toEqual([`/sessions?idPrefix=${LEFTOVER_WRAPPER_ID}`]);
 
       paths.length = 0;
       const exact = await captureCliOutput(() =>
@@ -538,14 +538,14 @@ describe("session targeting uses Pi-native Session.id", () => {
         ok: true,
         data: { session: { id: WRAPPER_ID } },
       });
-      expect(paths).toEqual(["/sessions", `/sessions/${WRAPPER_ID}`]);
+      expect(paths).toEqual([`/sessions?idPrefix=${WRAPPER_ID}`, `/sessions/${WRAPPER_ID}`]);
     });
 
     it("resolves each wait target to a unique Session.id before live wait streaming", async () => {
       const paths: string[] = [];
       request.mockImplementation(async (_conn, path) => {
         paths.push(path);
-        if (path === "/sessions") {
+        if (path.startsWith("/sessions?idPrefix=")) {
           return { sessions: [{ id: PI_SESSION_ID }, { id: PI_SESSION_ID_B }] };
         }
         if (path === `/sessions/${PI_SESSION_ID}/events?since=0`) {
@@ -567,7 +567,10 @@ describe("session targeting uses Pi-native Session.id", () => {
         ok: true,
         data: { session_id: PI_SESSION_ID, reason: "idle" },
       });
-      expect(paths).toEqual(["/sessions", `/sessions/${PI_SESSION_ID}/events?since=0`]);
+      expect(paths).toEqual([
+        "/sessions?idPrefix=019e1fff-5555",
+        `/sessions/${PI_SESSION_ID}/events?since=0`,
+      ]);
     });
   });
 });

@@ -83,6 +83,7 @@ Example:
 
 ### Fixed
 
+- **Server:** `oppi session get|send|wait|…` and `oppi schedule --session` no longer download every stored session to resolve one id. The CLI asks `GET /sessions?idPrefix=<target>` for matching ids only. With about 10,000 stored sessions, each lookup had cost the server roughly 0.4 s of CPU, and a handful of parallel subagent calls could push its memory up by 500 MB.
 - **Server:** Editing the message queue on a busy session (for example moving a steering message to follow-up) no longer saves the change and then reports "Queue changed before your edit was saved". The server counted its own queue replay as a concurrent change. If Pi starts a queued message while the edit is saving, the edit is still rejected and the queue refreshes.
 - **Client:** In a control session, a Markdown file opened full screen from a tool now loads its host images and its links open, instead of doing nothing.
 - **Client:** A finished thinking block no longer looks stuck while the model is still writing the next tool call or reply. The row closes when the next block starts instead of waiting for the whole message. GPT models could leave it as a tall, unformatted, still-streaming bubble for tens of seconds.

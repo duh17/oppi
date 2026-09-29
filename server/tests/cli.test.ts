@@ -1562,7 +1562,7 @@ describe("oppi local API commands", () => {
         },
         {
           args: ["session", "get", "sess-1", "--json"],
-          expected: ["GET /sessions", "GET /sessions/sess-1"],
+          expected: ["GET /sessions?idPrefix=sess-1", "GET /sessions/sess-1"],
         },
         {
           args: [
@@ -1592,23 +1592,23 @@ describe("oppi local API commands", () => {
         },
         {
           args: ["session", "read", "sess-1", "--tail", "1", "--json"],
-          expected: ["GET /sessions", "GET /sessions/sess-1/read?tail=1"],
+          expected: ["GET /sessions?idPrefix=sess-1", "GET /sessions/sess-1/read?tail=1"],
         },
         {
           args: ["session", "events", "sess-1", "--since", "4", "--json"],
-          expected: ["GET /sessions", "GET /sessions/sess-1/events?since=4"],
+          expected: ["GET /sessions?idPrefix=sess-1", "GET /sessions/sess-1/events?since=4"],
         },
         {
           args: ["session", "trace", "sess-1", "--include", "summary,tools", "--json"],
-          expected: ["GET /sessions", "GET /sessions/sess-1/trace?include=summary%2Ctools"],
+          expected: ["GET /sessions?idPrefix=sess-1", "GET /sessions/sess-1/trace?include=summary%2Ctools"],
         },
         {
           args: ["session", "send", "sess-1", "--text", "hello", "--json"],
-          expected: ["GET /sessions", "POST /sessions/sess-1/command"],
+          expected: ["GET /sessions?idPrefix=sess-1", "POST /sessions/sess-1/command"],
         },
         {
           args: ["session", "stop", "sess-1", "--json"],
-          expected: ["GET /sessions", "POST /sessions/sess-1/stop"],
+          expected: ["GET /sessions?idPrefix=sess-1", "POST /sessions/sess-1/stop"],
         },
         {
           args: [
@@ -1634,21 +1634,21 @@ describe("oppi local API commands", () => {
         },
         {
           args: ["session", "inspect", "sess-1", "--turns", "all", "--view", "messages", "--json"],
-          expected: ["GET /sessions", "GET /sessions/sess-1/trace"],
+          expected: ["GET /sessions?idPrefix=sess-1", "GET /sessions/sess-1/trace"],
         },
         {
           args: ["session", "inspect", "sess-1", "--turn", "1", "--view", "messages", "--json"],
-          expected: ["GET /sessions", "GET /sessions/sess-1/trace"],
+          expected: ["GET /sessions?idPrefix=sess-1", "GET /sessions/sess-1/trace"],
         },
         {
           args: ["session", "inspect", "sess-1", "--view", "response", "--json"],
-          expected: ["GET /sessions", "GET /sessions/sess-1/trace?include=messages"],
+          expected: ["GET /sessions?idPrefix=sess-1", "GET /sessions/sess-1/trace?include=messages"],
           exact: true,
         },
         {
           args: ["session", "inspect", "sess-1", "--json"],
           expected: [
-            "GET /sessions",
+            "GET /sessions?idPrefix=sess-1",
             "GET /sessions/sess-1",
             "GET /workspaces/ws-1/sessions/sess-1/trace-outline",
           ],
@@ -1657,7 +1657,7 @@ describe("oppi local API commands", () => {
         {
           args: ["session", "inspect", "sess-1", "--view", "summary", "--json"],
           expected: [
-            "GET /sessions",
+            "GET /sessions?idPrefix=sess-1",
             "GET /sessions/sess-1",
             "GET /workspaces/ws-1/sessions/sess-1/trace-outline",
           ],
@@ -1666,7 +1666,7 @@ describe("oppi local API commands", () => {
         {
           args: ["session", "resume", "sess-1", "--json"],
           expected: [
-            "GET /sessions",
+            "GET /sessions?idPrefix=sess-1",
             "GET /sessions/sess-1",
             "POST /workspaces/ws-1/sessions/sess-1/resume",
           ],
@@ -1674,7 +1674,7 @@ describe("oppi local API commands", () => {
         {
           args: ["session", "fork", "sess-1", "--entry", "entry-1", "--name", "Fork", "--json"],
           expected: [
-            "GET /sessions",
+            "GET /sessions?idPrefix=sess-1",
             "GET /sessions/sess-1",
             "POST /workspaces/ws-1/sessions/sess-1/fork",
           ],
@@ -1682,7 +1682,7 @@ describe("oppi local API commands", () => {
         {
           args: ["session", "delete", "sess-1", "--json"],
           expected: [
-            "GET /sessions",
+            "GET /sessions?idPrefix=sess-1",
             "GET /sessions/sess-1",
             "DELETE /workspaces/ws-1/sessions/sess-1",
           ],
@@ -1690,7 +1690,7 @@ describe("oppi local API commands", () => {
         {
           args: ["session", "tool-output", "sess-1", "tool-1", "--json"],
           expected: [
-            "GET /sessions",
+            "GET /sessions?idPrefix=sess-1",
             "GET /sessions/sess-1",
             "GET /workspaces/ws-1/sessions/sess-1/tool-output/tool-1",
           ],
@@ -1698,7 +1698,7 @@ describe("oppi local API commands", () => {
         {
           args: ["session", "trace-page", "sess-1", "--target-events", "80", "--json"],
           expected: [
-            "GET /sessions",
+            "GET /sessions?idPrefix=sess-1",
             "GET /sessions/sess-1",
             "GET /workspaces/ws-1/sessions/sess-1/trace-page?targetEvents=80",
           ],
@@ -1706,7 +1706,7 @@ describe("oppi local API commands", () => {
         {
           args: ["session", "trace-outline", "sess-1", "--json"],
           expected: [
-            "GET /sessions",
+            "GET /sessions?idPrefix=sess-1",
             "GET /sessions/sess-1",
             "GET /workspaces/ws-1/sessions/sess-1/trace-outline",
           ],
@@ -1804,7 +1804,7 @@ describe("oppi local API commands", () => {
         },
         {
           args: ["wait", "session", "sess-1", "--status", "stopped", "--json"],
-          expected: ["GET /sessions", "GET /sessions/sess-1"],
+          expected: ["GET /sessions?idPrefix=sess-1", "GET /sessions/sess-1"],
         },
       ];
 

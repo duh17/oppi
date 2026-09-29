@@ -66,7 +66,7 @@ describe("sandbox-scoped CLI JSON", () => {
       launch: { target: { displayCwd: "/workspace/sandbox" } },
     };
     request.mockImplementation(async (_storage, path) => {
-      if (path === "/sessions") {
+      if (path.startsWith("/sessions?idPrefix=")) {
         return { sessions: [{ id: "sess-1", workspaceId: "ws-sandbox" }] } as never;
       }
       if (path === "/sessions/sess-1") {

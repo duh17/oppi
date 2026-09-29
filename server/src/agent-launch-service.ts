@@ -99,7 +99,6 @@ export interface AgentLaunchServiceDeps {
     | "getDataDir"
     | "getSession"
     | "getWorkspace"
-    | "listSessions"
     | "saveSession"
   >;
   sessions: {
@@ -155,7 +154,7 @@ export class AgentLaunchService {
     const now = this.nowMs();
 
     if (idempotencyKey) {
-      const existing = this.findSessionByIdempotencyKey(idempotencyKey);
+      const existing = this.deps.storage.findSessionByLaunchIdempotencyKey(idempotencyKey);
       if (existing) {
         this.assertIdempotentDelegationMatches(existing, delegation);
         this.assertIdempotentAutoStopMatches(existing, request.autoStop);
@@ -175,7 +174,7 @@ export class AgentLaunchService {
       this.deps.storage.saveSession(session);
     } catch (error) {
       const existing = idempotencyKey
-        ? this.findSessionByIdempotencyKey(idempotencyKey)
+        ? this.deps.storage.findSessionByLaunchIdempotencyKey(idempotencyKey)
         : undefined;
       if (existing) {
         this.assertIdempotentDelegationMatches(existing, delegation);
@@ -707,14 +706,6 @@ export class AgentLaunchService {
         promptDispatch: "not_sent",
       };
     }
-  }
-
-  private findSessionByIdempotencyKey(idempotencyKey: string): Session | undefined {
-    const direct = this.deps.storage.findSessionByLaunchIdempotencyKey?.(idempotencyKey);
-    if (direct) return direct;
-    return this.deps.storage
-      .listSessions()
-      .find((session) => session.launch?.idempotencyKey === idempotencyKey);
   }
 
   private currentSession(session: Session): Session {

@@ -23,6 +23,26 @@ type SessionListRouteHandlers = {
   handleGenericSessionCollection: (url: URL, res: ServerResponse) => void;
 };
 
+/**
+ * Stored sessions whose ids pass `includeId`, with each active runtime's copy
+ * replacing the stored one because it carries fresher status.
+ */
+export function sessionsWithLiveStatus(
+  ctx: Pick<RouteContext, "storage" | "sessionRuntimes">,
+  includeId: (sessionId: string) => boolean = () => true,
+): Session[] {
+  const byId = new Map<string, Session>();
+  for (const session of ctx.storage.listSessions()) {
+    if (includeId(session.id)) byId.set(session.id, session);
+  }
+  for (const activeSessionId of ctx.sessionRuntimes.getActiveSessionIds()) {
+    if (!includeId(activeSessionId)) continue;
+    const active = ctx.sessionRuntimes.getActiveSession(activeSessionId);
+    if (active) byId.set(active.id, active);
+  }
+  return Array.from(byId.values());
+}
+
 export function createSessionListRouteHandlers(
   ctx: RouteContext,
   helpers: RouteHelpers,
@@ -324,14 +344,11 @@ export function createSessionListRouteHandlers(
   }
 
   function handleGenericSessionCollection(url: URL, res: ServerResponse): void {
-    const byId = new Map<string, Session>();
-    for (const session of ctx.storage.listSessions()) {
-      byId.set(session.id, session);
-    }
-    for (const activeSessionId of ctx.sessionRuntimes.getActiveSessionIds()) {
-      const active = ctx.sessionRuntimes.getActiveSession(activeSessionId);
-      if (active) byId.set(active.id, active);
-    }
+    // CLI target resolution sends idPrefix on every `oppi session <cmd> <id>`.
+    // Filter before any per-session work: an unfiltered list serializes every
+    // stored session (10k+ rows is tens of MB and ~0.4s of server CPU).
+    const idPrefix = url.searchParams.get("idPrefix")?.trim();
+    let sessions = sessionsWithLiveStatus(ctx, (id) => !idPrefix || id.startsWith(idPrefix));
 
     const workspaceId = url.searchParams.get("workspaceId")?.trim();
     const worktreeId = url.searchParams.get("worktreeId")?.trim();
@@ -357,7 +374,6 @@ export function createSessionListRouteHandlers(
       return;
     }
 
-    let sessions = Array.from(byId.values());
     if (workspaceId) {
       sessions = sessions.filter((session) => session.workspaceId === workspaceId);
     }

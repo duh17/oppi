@@ -6,7 +6,10 @@ import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
 import { decodeWorkspaceRoutePath } from "../file-serving-policy.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
-import { createSessionListRouteHandlers } from "./session-list-handlers.js";
+import {
+  createSessionListRouteHandlers,
+  sessionsWithLiveStatus,
+} from "./session-list-handlers.js";
 import { createSessionTraceRouteHandlers } from "./session-trace-handlers.js";
 import { WsMessageHandler } from "../ws-message-handler.js";
 import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktrees.js";
@@ -643,14 +646,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   }
 
   function handleGetSessionThread(sessionId: string, res: ServerResponse): void {
-    // Active runtimes carry fresher status than storage, like the generic collection.
-    const byId = new Map<string, Session>();
-    for (const session of ctx.storage.listSessions()) byId.set(session.id, session);
-    for (const activeId of ctx.sessionRuntimes.getActiveSessionIds()) {
-      const active = ctx.sessionRuntimes.getActiveSession(activeId);
-      if (active) byId.set(active.id, active);
-    }
-    const thread = buildSessionThread([...byId.values()], sessionId, (ids) =>
+    const thread = buildSessionThread(sessionsWithLiveStatus(ctx), sessionId, (ids) =>
       ctx.storage.listSessionInteractions(ids),
     );
     if (!thread) {

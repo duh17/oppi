@@ -47,7 +47,7 @@ describe("session command dispatch and output boundaries", () => {
       }),
     );
 
-    expect(request).toHaveBeenNthCalledWith(1, storage, "/sessions", undefined);
+    expect(request).toHaveBeenNthCalledWith(1, storage, "/sessions?idPrefix=s%2F1", undefined);
     expect(request).toHaveBeenNthCalledWith(2, storage, "/sessions/s%2F1", undefined);
     expect(request).toHaveBeenNthCalledWith(
       3,
@@ -149,7 +149,7 @@ describe("session command dispatch and output boundaries", () => {
 
   it("waits for any of several session ids by default", async () => {
     request.mockImplementation(async (_storage, path) => {
-      if (path === "/sessions") {
+      if (path.startsWith("/sessions?idPrefix=")) {
         return { sessions: [{ id: "a" }, { id: "b" }] };
       }
       if (path.includes("/sessions/a/events")) {
@@ -178,7 +178,7 @@ describe("session command dispatch and output boundaries", () => {
 
   it("waits until every session is idle when --all is set", async () => {
     request.mockImplementation(async (_storage, path) => {
-      if (path === "/sessions") {
+      if (path.startsWith("/sessions?idPrefix=")) {
         return { sessions: [{ id: "a" }, { id: "b" }] };
       }
       if (path.includes("/sessions/a/events") || path.includes("/sessions/b/events")) {
@@ -239,7 +239,7 @@ describe("session command dispatch and output boundaries", () => {
 
   it("wait resolves to a terminal JSON record when the session is idle", async () => {
     request.mockImplementation(async (_storage, path) => {
-      if (path === "/sessions") return { sessions: [{ id: "sess-1" }] };
+      if (path.startsWith("/sessions?idPrefix=")) return { sessions: [{ id: "sess-1" }] };
       if (path === "/sessions/sess-1/events?since=0") {
         return {
           session: { status: "ready", lastMessage: "done" },
@@ -263,7 +263,7 @@ describe("session command dispatch and output boundaries", () => {
 
   it("returns a still-ongoing snapshot when wait times out", async () => {
     request.mockImplementation(async (_storage, path) => {
-      if (path === "/sessions") return { sessions: [{ id: "sess-1" }] };
+      if (path.startsWith("/sessions?idPrefix=")) return { sessions: [{ id: "sess-1" }] };
       if (path.startsWith("/sessions/sess-1/events")) {
         return { session: { status: "busy", name: "child" }, events: [], currentSeq: 1 };
       }
@@ -399,7 +399,7 @@ describe("session command dispatch and output boundaries", () => {
 
   it("attributes send text with the caller session id", async () => {
     request.mockImplementation(async (_conn, path) => {
-      if (path === "/sessions") return { sessions: [{ id: "child-1" }] };
+      if (path.startsWith("/sessions?idPrefix=")) return { sessions: [{ id: "child-1" }] };
       return { messages: [] };
     });
 
@@ -428,7 +428,7 @@ describe("session command dispatch and output boundaries", () => {
 
   it("leaves unaffiliated send text unchanged", async () => {
     request.mockImplementation(async (_conn, path) => {
-      if (path === "/sessions") return { sessions: [{ id: "child-1" }] };
+      if (path.startsWith("/sessions?idPrefix=")) return { sessions: [{ id: "child-1" }] };
       return { messages: [] };
     });
 
@@ -667,7 +667,7 @@ describe("session command dispatch and output boundaries", () => {
 
   it("prints the live rebind sentence on resume and keeps it off Session JSON", async () => {
     request.mockImplementation(async (_storage, path) => {
-      if (path === "/sessions") return { sessions: [{ id: "sess-1", workspaceId: "ws-1" }] };
+      if (path.startsWith("/sessions?idPrefix=")) return { sessions: [{ id: "sess-1", workspaceId: "ws-1" }] };
       if (path === "/sessions/sess-1") {
         return { session: { id: "sess-1", workspaceId: "ws-1" } };
       }
@@ -706,7 +706,7 @@ describe("session command dispatch and output boundaries", () => {
 
   it("does not print a rebind sentence on a second resume already on Main", async () => {
     request.mockImplementation(async (_storage, path) => {
-      if (path === "/sessions") return { sessions: [{ id: "sess-1", workspaceId: "ws-1" }] };
+      if (path.startsWith("/sessions?idPrefix=")) return { sessions: [{ id: "sess-1", workspaceId: "ws-1" }] };
       if (path === "/sessions/sess-1") {
         return { session: { id: "sess-1", workspaceId: "ws-1", worktreeId: "main" } };
       }

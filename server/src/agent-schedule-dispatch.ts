@@ -20,7 +20,6 @@ export interface AgentScheduleDispatchDeps {
     | "getAgentDefinitionStore"
     | "getSession"
     | "getWorkspace"
-    | "listSessions"
     | "saveSession"
   >;
   sessions: {
