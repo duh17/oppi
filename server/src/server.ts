@@ -174,6 +174,8 @@ function secureTokenEquals(expected: string, actual: string): boolean {
 const WS_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
 const WS_CLOSE_GOING_AWAY = 1001;
 const WS_SHUTDOWN_GRACE_MS = 500;
+/** Longest shutdown waits for a post-restart resume start already in flight. */
+const RESTART_RESUME_DRAIN_MS = 10_000;
 const MIN_UPLOAD_GC_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_UPLOAD_GC_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -1044,10 +1046,19 @@ export class Server {
 
     let shutdownError: unknown;
     try {
-      // Finish a start already in flight so stopAll() sees it, and start no more.
+      // Let a start already in flight register so stopAll() sees it, and start
+      // no more. Bounded: a stalled start or hook must not block shutdown.
       if (this.restartResume) {
         this.restartResume.cancelled = true;
-        await this.restartResume.done;
+        let timer: NodeJS.Timeout | undefined;
+        const settled = await Promise.race([
+          this.restartResume.done.then(() => true),
+          new Promise<false>((resolve) => {
+            timer = setTimeout(() => resolve(false), RESTART_RESUME_DRAIN_MS);
+          }),
+        ]);
+        clearTimeout(timer);
+        if (!settled) log.warn("session_restart.drain_timeout", { ms: RESTART_RESUME_DRAIN_MS });
       }
       try {
         recordLiveSessionsForRestart(this.storage, this.liveSessions());
@@ -1222,6 +1233,7 @@ export class Server {
       storage: this.storage,
       lifecycle,
       sendPrompt: (sessionId, text) => this.sessions.sendPrompt(sessionId, text),
+      claim: (sessionId, run) => this.sessions.withRestartResumeClaim(sessionId, run),
       cancelled: () => state.cancelled,
     }).then(
       () => undefined,

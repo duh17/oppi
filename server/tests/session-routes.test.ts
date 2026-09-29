@@ -253,6 +253,7 @@ describe("sessions module", () => {
         getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
         getSession: vi.fn(() => session),
         saveSession,
+        clearRestartResume: vi.fn(),
       },
       sessionRuntimes: {
         isSessionConnected: vi.fn(() => false),
@@ -1265,6 +1266,7 @@ describe("sessions module", () => {
     const ctx = {
       storage: {
         getSession: vi.fn(() => session),
+        clearRestartResume: vi.fn(),
       },
       sessionRuntimes: {
         sendSteer,

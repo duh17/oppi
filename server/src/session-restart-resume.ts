@@ -15,8 +15,10 @@
  * already resumed is stored as running and the crash path queues it again.
  *
  * Any other start of a session (a client opening it, a prompt) clears its
- * entry in SessionManager.startSession, so a session someone already resumed,
- * and possibly stopped again, is left alone.
+ * entry in SessionManager.startSession, and an explicit stop clears it in
+ * SessionLifecycleService.stopSession, so a session someone already resumed or
+ * stopped is left alone. The resume's own start runs under `claim` and keeps
+ * the entry until the continuation is sent.
  */
 
 import { safeErrorMessage } from "./log-utils.js";
@@ -101,6 +103,8 @@ export interface RestartResumeDeps {
   storage: RestartStorage;
   lifecycle: Pick<SessionLifecycleService, "resumeControlSession" | "resumeWorkspaceSession">;
   sendPrompt: (sessionId: string, text: string) => Promise<void>;
+  /** Marks the resume's own start so it does not clear the entry. */
+  claim: <T>(sessionId: string, run: () => Promise<T>) => Promise<T>;
   /** Stop before the next entry; server shutdown sets this. */
   cancelled?: () => boolean;
 }
@@ -119,7 +123,9 @@ export async function resumeSessionsAfterRestart(
     if (deps.cancelled?.()) break;
     const [entry] = deps.storage.listRestartResume();
     if (!entry) break;
-    const result = await resumeOne(deps, entry);
+    const result = await deps.claim(entry.sessionId, () => resumeOne(deps, entry));
+    // Shutdown mid-resume keeps the entry (and wasBusy) for the next start.
+    if (deps.cancelled?.()) break;
     deps.storage.clearRestartResume(entry.sessionId);
     results.push({ sessionId: entry.sessionId, ...result });
     const fields = { sessionId: entry.sessionId, wasBusy: entry.wasBusy, ...result };
@@ -161,8 +167,10 @@ async function resumeOne(
   }
 
   // Someone may have prompted the session between startup and this resume;
-  // only an idle session gets the continuation.
-  if (!entry.wasBusy || resumed.status !== "ready") return { outcome: "resumed" };
+  // only an idle session gets the continuation. Skip it once shutdown began.
+  if (!entry.wasBusy || resumed.status !== "ready" || deps.cancelled?.()) {
+    return { outcome: "resumed" };
+  }
   try {
     await deps.sendPrompt(session.id, RESTART_CONTINUE_PROMPT);
   } catch (error: unknown) {

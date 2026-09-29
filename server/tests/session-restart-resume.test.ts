@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SdkBackend } from "../src/sdk-backend.js";
+import { SessionLifecycleService } from "../src/session-lifecycle-service.js";
 import { SessionManager } from "../src/sessions.js";
 import { makeSdkBackendStub } from "./sdk-backend.helpers.js";
 
@@ -70,6 +71,7 @@ function makeDeps(
       resumeControlSession: (session) => resume(session),
     },
     sendPrompt: vi.fn(async () => undefined),
+    claim: (_sessionId, run) => run(),
   };
 }
 
@@ -251,14 +253,14 @@ describe("session restart resume", () => {
     }
   });
 
-  it("stops before the next entry when cancelled and keeps the rest queued", async () => {
+  it("keeps every entry and skips the continuation when shutdown interrupts a resume", async () => {
     const { storage, workspace } = makeStorage();
     const ws = { workspaceId: workspace.id, status: "stopped" as const };
     saveSession(storage, "first", ws);
     saveSession(storage, "second", ws);
     storage.queueRestartResume(
       [
-        { sessionId: "first", wasBusy: false },
+        { sessionId: "first", wasBusy: true },
         { sessionId: "second", wasBusy: false },
       ],
       1,
@@ -274,7 +276,61 @@ describe("session restart resume", () => {
     await resumeSessionsAfterRestart({ ...deps, cancelled: () => cancelled });
 
     expect(deps.resumed).toEqual(["first"]);
-    expect(storage.listRestartResume()).toEqual([{ sessionId: "second", wasBusy: false }]);
+    expect(deps.sendPrompt).not.toHaveBeenCalled();
+    expect(storage.listRestartResume()).toEqual([
+      { sessionId: "first", wasBusy: true },
+      { sessionId: "second", wasBusy: false },
+    ]);
+  });
+
+  it("does not resume a queued session the user stopped before its turn", async () => {
+    const { storage, workspace } = makeStorage();
+    const session = saveSession(storage, "s1", { workspaceId: workspace.id, status: "stopped" });
+    storage.queueRestartResume([{ sessionId: "s1", wasBusy: true }], 1);
+    const lifecycle = new SessionLifecycleService({
+      storage,
+      sessions: {} as never,
+      sessionRuntimes: { isSessionConnected: () => false } as never,
+      ensureSessionContextWindow: (s) => s,
+    });
+
+    await lifecycle.stopSession(session);
+    const deps = makeDeps(storage);
+    await resumeSessionsAfterRestart(deps);
+
+    expect(deps.resumed).toEqual([]);
+    expect(deps.sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("keeps the resume's own entry queued until its continuation is sent", async () => {
+    const { storage, workspace } = makeStorage();
+    saveSession(storage, "s1", { workspaceId: workspace.id, status: "stopped" });
+    storage.queueRestartResume([{ sessionId: "s1", wasBusy: true }], 1);
+    const { sdkBackend } = makeSdkBackendStub();
+    const create = vi.spyOn(SdkBackend, "create").mockResolvedValue(sdkBackend);
+    const manager = new SessionManager(storage);
+    try {
+      const deps = makeDeps(storage);
+      const queuedAtContinuation: unknown[] = [];
+      deps.lifecycle.resumeWorkspaceSession = async ({ session }) => ({
+        session: { ...(await manager.startSession(session.id, workspace)), status: "ready" },
+      }) as never;
+      deps.sendPrompt.mockImplementation(async () => {
+        // A crash here must still find the entry, busy flag included.
+        queuedAtContinuation.push(...storage.listRestartResume());
+      });
+
+      await resumeSessionsAfterRestart({
+        ...deps,
+        claim: (id, run) => manager.withRestartResumeClaim(id, run),
+      });
+
+      expect(queuedAtContinuation).toEqual([{ sessionId: "s1", wasBusy: true }]);
+      expect(storage.listRestartResume()).toEqual([]);
+    } finally {
+      await manager.stopAll().catch(() => {});
+      create.mockRestore();
+    }
   });
 
   it("keeps later entries queued while an earlier one is resuming", async () => {

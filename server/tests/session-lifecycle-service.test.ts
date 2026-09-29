@@ -212,6 +212,7 @@ function makeService(
       saveSession,
       findSessionByLaunchIdempotencyKey,
       claimSessionLaunchRecovery,
+      clearRestartResume: vi.fn(),
     },
     sessions: { runCommand, sendPrompt, startSession, stopSession },
     sessionRuntimes: {

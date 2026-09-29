@@ -147,6 +147,7 @@ export interface SessionLifecycleServiceDeps {
     | "claimSessionLaunchRecovery"
     | "createSession"
     | "deleteSession"
+    | "clearRestartResume"
     | "getDataDir"
     | "getSession"
     | "getWorkspace"
@@ -773,6 +774,9 @@ export class SessionLifecycleService {
   }
 
   async stopSession(session: Session): Promise<StopSessionResult> {
+    // An explicit stop outranks a pending post-restart resume, including for
+    // a session that is not running yet.
+    this.deps.storage.clearRestartResume(session.id);
     const hydratedSession = this.deps.ensureSessionContextWindow(session);
     let storedStopOnly = false;
     const markStoredSessionStopped = (reason?: string): void => {

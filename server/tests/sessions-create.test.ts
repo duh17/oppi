@@ -119,6 +119,7 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
         }),
     ),
     saveSession: vi.fn(),
+    clearRestartResume: vi.fn(),
     getSession: vi.fn(),
     deleteSession: vi.fn().mockReturnValue(true),
     listSessions: vi.fn().mockReturnValue([]),

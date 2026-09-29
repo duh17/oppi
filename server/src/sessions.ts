@@ -204,14 +204,29 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return sessionId;
   }
 
+  /** Sessions the post-restart resume is starting right now. */
+  private readonly restartResumeClaims = new Set<string>();
+
+  /** Run the post-restart resume of one session; see startSession. */
+  async withRestartResumeClaim<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
+    this.restartResumeClaims.add(sessionId);
+    try {
+      return await run();
+    } finally {
+      this.restartResumeClaims.delete(sessionId);
+    }
+  }
+
   /**
    * Start a new session — creates an in-process pi SDK session.
    */
   async startSession(sessionId: string, workspace?: Workspace): Promise<Session> {
     const key = this.sessionKey(sessionId);
-    // Any start supersedes a pending post-restart resume, so that resume
-    // cannot re-open a session a client already opened and stopped again.
-    this.storage.clearRestartResume(sessionId);
+    // Any other start supersedes a pending post-restart resume, so that resume
+    // cannot re-open a session a client already opened and stopped again. The
+    // resume's own start keeps the entry until its continuation is sent, so a
+    // crash mid-resume still finds it.
+    if (!this.restartResumeClaims.has(sessionId)) this.storage.clearRestartResume(sessionId);
     this.ensureMobileRenderersLoaded();
     const startWorkspace = workspace ?? this.resolveStoredWorkspace(sessionId);
     const session = await this.activationCoordinator.startSession(key, sessionId, startWorkspace);
