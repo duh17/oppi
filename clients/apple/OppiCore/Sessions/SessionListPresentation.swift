@@ -68,13 +68,11 @@ struct SessionListRefreshPollingPolicy: Equatable {
 enum SessionListPresentation {
     static func activeSectionKind(
         for session: Session,
-        attention: SessionListAttentionCounts = .none,
-        hasWorkingDescendant: Bool = false
+        attention: SessionListAttentionCounts = .none
     ) -> SessionListActiveSectionKind? {
         if session.status == .stopped { return nil }
         if attention.hasAttention { return .yourTurn }
         if session.isAwaitingFirstPrompt { return .yourTurn }
-        if hasWorkingDescendant { return .working }
 
         switch session.status {
         case .ready, .error:

@@ -12,6 +12,45 @@ private struct SessionInboxItem: Identifiable {
 
 private typealias SessionInboxStoppedGroup = SessionInboxStoppedDayGroup<SessionInboxItem>
 
+/// Thread-mode row: the root's inbox item plus its loaded launch tree.
+private struct SessionInboxThreadItem: Identifiable {
+    let root: SessionInboxItem
+    let rollup: SessionThreadRollup
+
+    var id: String { root.id }
+    var stoppedListID: String { root.stoppedListID }
+}
+
+private typealias SessionInboxThreadStoppedGroup = SessionInboxStoppedDayGroup<SessionInboxThreadItem>
+
+private struct SessionInboxThreadSections {
+    let yourTurn: [SessionInboxThreadItem]
+    let working: [SessionInboxThreadItem]
+    let stoppedGroups: [SessionInboxThreadStoppedGroup]
+}
+
+/// All Sessions presentation: launch-tree threads or the flat session list.
+enum SessionInboxListMode: String, CaseIterable, Identifiable {
+    case threads
+    case sessions
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .threads: "Threads"
+        case .sessions: "Sessions"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .threads: "point.3.connected.trianglepath.dotted"
+        case .sessions: "list.bullet"
+        }
+    }
+}
+
 private struct SessionInboxViewData {
     let yourTurn: [SessionInboxItem]
     let working: [SessionInboxItem]
@@ -172,6 +211,7 @@ enum SessionInboxSessionRouting {
 /// content focused on session rows and uses small row context instead of a
 /// workspace header card.
 struct SessionInboxView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
@@ -344,6 +384,61 @@ struct SessionInboxView: View {
         )
     }
 
+    /// Launch trees among the loaded sessions, sectioned by every member's state.
+    private func threadSections(_ items: [SessionInboxItem]) -> SessionInboxThreadSections {
+        let itemsById = Dictionary(items.map { ($0.session.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let threadItems = SessionThreadGrouping.rollups(from: items.map(\.session)).compactMap { rollup in
+            itemsById[rollup.root.id].map { SessionInboxThreadItem(root: $0, rollup: rollup) }
+        }
+        let grouped = SessionInboxGrouping.make(
+            items: threadItems,
+            now: Date(),
+            calendar: Calendar.current,
+            session: { thread in
+                // Sort and bucket by the thread's latest activity, not the root's.
+                var representative = thread.rollup.root
+                representative.lastActivity = thread.rollup.latestActivity
+                return representative
+            },
+            attention: { attentionCounts(for: $0.root) },
+            sectionKind: { thread in
+                SessionThreadGrouping.sectionKind(for: thread.rollup) { member in
+                    SessionRowPresentationBuilder.attentionCounts(
+                        sessionId: member.id,
+                        pendingAskCountForSession: { pendingAskCount(for: $0, connection: thread.root.connection) }
+                    )
+                }
+            }
+        )
+        return SessionInboxThreadSections(
+            yourTurn: grouped.yourTurn,
+            working: grouped.working,
+            stoppedGroups: grouped.stoppedGroups
+        )
+    }
+
+    private var listMode: SessionInboxListMode {
+        navigation.inboxListMode
+    }
+
+    /// One tap flips Threads and Sessions; the icon shows the current view.
+    private var listModeButton: some View {
+        let next: SessionInboxListMode = listMode == .threads ? .sessions : .threads
+        return Button {
+            withAnimation(ThemeMotion.animation(.snappy(duration: 0.25), reduceMotion: reduceMotion)) {
+                navigation.inboxListMode = next
+            }
+        } label: {
+            Image(systemName: listMode.systemImage)
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .foregroundStyle(.themeFg)
+        .accessibilityLabel("Inbox view")
+        .accessibilityValue(listMode.label)
+        .accessibilityHint("Shows \(next.label)")
+        .accessibilityIdentifier("workspace.inbox.mode")
+    }
+
     var body: some View {
         let data = viewData
 
@@ -400,16 +495,29 @@ struct SessionInboxView: View {
                     sessionSection("Results", items: data.searchMatches)
                 }
             } else {
-                if !data.yourTurn.isEmpty {
-                    sessionSection(SessionInboxSectionTitle.yourTurn, items: data.yourTurn)
-                }
+                if listMode == .threads {
+                    let threads = threadSections(sessionItems())
+                    if !threads.yourTurn.isEmpty {
+                        threadSection(SessionInboxSectionTitle.yourTurn, items: threads.yourTurn)
+                    }
+                    if !threads.working.isEmpty {
+                        threadSection(SessionInboxSectionTitle.working, items: threads.working)
+                    }
+                    ForEach(threads.stoppedGroups) { group in
+                        stoppedThreadSection(group)
+                    }
+                } else {
+                    if !data.yourTurn.isEmpty {
+                        sessionSection(SessionInboxSectionTitle.yourTurn, items: data.yourTurn)
+                    }
 
-                if !data.working.isEmpty {
-                    sessionSection(SessionInboxSectionTitle.working, items: data.working)
-                }
+                    if !data.working.isEmpty {
+                        sessionSection(SessionInboxSectionTitle.working, items: data.working)
+                    }
 
-                ForEach(data.stoppedGroups) { group in
-                    stoppedSessionSection(group)
+                    ForEach(data.stoppedGroups) { group in
+                        stoppedSessionSection(group)
+                    }
                 }
 
                 if ProviderSetupPromptPolicy.shouldShowInboxEmptyState(
@@ -586,6 +694,9 @@ struct SessionInboxView: View {
         .navigationDestination(for: ModelProvidersNavTarget.self) { target in
             ModelProvidersScopedDestinationView(target: target)
         }
+        .navigationDestination(for: SessionThreadNavTarget.self) { target in
+            SessionThreadDetailView(target: target)
+        }
     }
 
     private var showsMinimumServerVersionNotice: Bool {
@@ -648,6 +759,10 @@ struct SessionInboxView: View {
                 .accessibilityLabel("Show workspaces")
                 .accessibilityIdentifier("workspace.sidebar.open")
             }
+        }
+
+        ToolbarItem(placement: .topBarTrailing) {
+            listModeButton
         }
 
         ToolbarItem(placement: .topBarTrailing) {
@@ -897,6 +1012,78 @@ struct SessionInboxView: View {
             }
     }
 
+    private func threadSection(_ title: String, items: [SessionInboxThreadItem]) -> some View {
+        Section(title) {
+            ForEach(items) { item in
+                threadRow(item)
+            }
+        }
+    }
+
+    private func stoppedThreadSection(_ group: SessionInboxThreadStoppedGroup) -> some View {
+        Section {
+            if isStoppedDayExpanded(group.id, day: group.day) {
+                ForEach(group.items, id: \.stoppedListID) { item in
+                    threadRow(item)
+                }
+            }
+        } header: {
+            Button {
+                toggleStoppedDayExpansion(group.id, day: group.day)
+            } label: {
+                HStack(spacing: 8) {
+                    Text(SessionInboxSectionTitle.stopped(day: group.day, now: Date(), calendar: Calendar.current))
+                    Spacer()
+                    Image(systemName: isStoppedDayExpanded(group.id, day: group.day) ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themeComment)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("workspace.sessionList.\(group.id)")
+            .accessibilityValue(isStoppedDayExpanded(group.id, day: group.day) ? "Expanded" : "Collapsed")
+        }
+    }
+
+    /// Root row plus the thread strip. A thread with children opens the thread
+    /// view; a lone session opens its chat like the flat list.
+    private func threadRow(_ item: SessionInboxThreadItem) -> some View {
+        let hasChildren = !item.rollup.descendants.isEmpty
+        let attentionMember = item.rollup.descendants.first {
+            pendingAskCount(for: $0.id, connection: item.root.connection) > 0
+        }
+        let rootHasQuestion = pendingAskCount(for: item.rollup.root.id, connection: item.root.connection) > 0
+        let open = {
+            if hasChildren {
+                applySearchNavigation(.willOpenDestination)
+                navigation.openSessionThread(
+                    SessionThreadNavTarget(serverId: item.root.serverId, rootSessionId: item.rollup.root.id)
+                )
+            } else {
+                openSession(item.root)
+            }
+        }
+        return VStack(alignment: .leading, spacing: 6) {
+            SessionRow(presentation: rowPresentation(for: item.root))
+            if hasChildren {
+                SessionThreadStrip(rollup: item.rollup, attentionMember: attentionMember)
+                    .padding(.leading, 30)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: open)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { open() }
+        .accessibilityIdentifier(hasChildren ? "thread.nav.\(item.rollup.root.id)" : "session.nav.\(item.rollup.root.id)")
+        .accessibilityValue(rootHasQuestion || attentionMember != nil ? "Question pending" : "")
+        .listRowBackground(theme.bg.primary)
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            sessionSwipeActions(for: item.root)
+        }
+    }
+
     private func stoppedGroupTitle(_ group: SessionInboxStoppedGroup) -> String {
         SessionInboxSectionTitle.stopped(
             day: group.day,
@@ -906,26 +1093,34 @@ struct SessionInboxView: View {
     }
 
     private func isStoppedGroupExpanded(_ group: SessionInboxStoppedGroup) -> Bool {
-        if expandedStoppedGroupIDs.contains(group.id) {
+        isStoppedDayExpanded(group.id, day: group.day)
+    }
+
+    private func toggleStoppedGroupExpansion(_ group: SessionInboxStoppedGroup) {
+        toggleStoppedDayExpansion(group.id, day: group.day)
+    }
+
+    private func isStoppedDayExpanded(_ groupID: String, day: Date) -> Bool {
+        if expandedStoppedGroupIDs.contains(groupID) {
             return true
         }
-        if collapsedStoppedGroupIDs.contains(group.id) {
+        if collapsedStoppedGroupIDs.contains(groupID) {
             return false
         }
         return SessionInboxStoppedDayPolicy.isExpandedByDefault(
-            day: group.day,
+            day: day,
             now: Date(),
             calendar: Calendar.current
         )
     }
 
-    private func toggleStoppedGroupExpansion(_ group: SessionInboxStoppedGroup) {
-        if isStoppedGroupExpanded(group) {
-            expandedStoppedGroupIDs.remove(group.id)
-            collapsedStoppedGroupIDs.insert(group.id)
+    private func toggleStoppedDayExpansion(_ groupID: String, day: Date) {
+        if isStoppedDayExpanded(groupID, day: day) {
+            expandedStoppedGroupIDs.remove(groupID)
+            collapsedStoppedGroupIDs.insert(groupID)
         } else {
-            collapsedStoppedGroupIDs.remove(group.id)
-            expandedStoppedGroupIDs.insert(group.id)
+            collapsedStoppedGroupIDs.remove(groupID)
+            expandedStoppedGroupIDs.insert(groupID)
         }
     }
 

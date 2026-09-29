@@ -130,6 +130,8 @@ struct ProtocolSnapshotTests {
         #expect(session.thinkingLevel == "high")
         #expect(session.launch?.agentId == "agent-reviewer")
         #expect(session.launch?.agentIcon == .symbol("checkmark.shield"))
+        // Full Session records carry the launch parent under `launch`.
+        #expect(session.parentSessionId == "parent-session-1")
     }
 
     @Test func sessionSummaryCarriesAgentPresentationSnapshot() throws {
@@ -141,6 +143,7 @@ struct ProtocolSnapshotTests {
 
         #expect(summary.agentId == "agent-reviewer")
         #expect(summary.agentIcon == .symbol("checkmark.shield"))
+        #expect(summary.parentSessionId == "parent-session-1")
         #expect(summary.session.launch?.agentIcon == .symbol("checkmark.shield"))
     }
 

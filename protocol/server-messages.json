@@ -47,6 +47,7 @@
             "kind": "symbol",
             "name": "checkmark.shield"
           },
+          "parentSessionId": "parent-session-1",
           "status": "accepted",
           "requestedAt": 1739750399000,
           "completedAt": 1739750400000
@@ -106,6 +107,7 @@
             "kind": "symbol",
             "name": "checkmark.shield"
           },
+          "parentSessionId": "parent-session-1",
           "status": "accepted",
           "requestedAt": 1739750399000,
           "completedAt": 1739750400000
@@ -154,7 +156,8 @@
         "agentIcon": {
           "kind": "symbol",
           "name": "checkmark.shield"
-        }
+        },
+        "parentSessionId": "parent-session-1"
       }
     },
     "state_control": {
@@ -197,6 +200,7 @@
             "kind": "symbol",
             "name": "checkmark.shield"
           },
+          "parentSessionId": "parent-session-1",
           "status": "accepted",
           "requestedAt": 1739750399000,
           "completedAt": 1739750400000
@@ -250,6 +254,7 @@
           "kind": "symbol",
           "name": "checkmark.shield"
         },
+        "parentSessionId": "parent-session-1",
         "control": {
           "domain": "skills",
           "intent": "revise",
@@ -299,6 +304,7 @@
           "agentIcon": {
             "kind": "default"
           },
+          "parentSessionId": "parent-session-1",
           "status": "accepted",
           "requestedAt": 1739750399000,
           "completedAt": 1739750400000
@@ -351,6 +357,7 @@
             "kind": "emoji",
             "value": "🧘"
           },
+          "parentSessionId": "parent-session-1",
           "status": "accepted",
           "requestedAt": 1739750399000,
           "completedAt": 1739750400000
@@ -404,6 +411,7 @@
             "assetId": "ia_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             "contentDescription": "A smiling fox"
           },
+          "parentSessionId": "parent-session-1",
           "status": "accepted",
           "requestedAt": 1739750399000,
           "completedAt": 1739750400000
@@ -456,6 +464,7 @@
             "kind": "emoji",
             "value": "not emoji"
           },
+          "parentSessionId": "parent-session-1",
           "status": "accepted",
           "requestedAt": 1739750399000,
           "completedAt": 1739750400000
@@ -508,6 +517,7 @@
             "kind": "animated",
             "version": 2
           },
+          "parentSessionId": "parent-session-1",
           "status": "accepted",
           "requestedAt": 1739750399000,
           "completedAt": 1739750400000

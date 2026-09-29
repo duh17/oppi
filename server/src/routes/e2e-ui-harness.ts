@@ -18,7 +18,13 @@ import {
 import { discoverLocalSessions, getPiSessionsRoot } from "../local-sessions.js";
 import { hasToolMediaDetails } from "../session-agent-event-media.js";
 import { materializeToolMediaDetails } from "../session-attachments.js";
-import type { AskQuestion, ServerMessage, StyledSegment } from "../types.js";
+import type {
+  AskQuestion,
+  ServerMessage,
+  Session,
+  SessionInteractionKind,
+  StyledSegment,
+} from "../types.js";
 import type { RouteDispatcher, RouteHelpers, RouteContext } from "./types.js";
 
 const MAX_E2E_UI_MESSAGE_BYTES = 2 * 1024 * 1024;
@@ -97,6 +103,18 @@ export function createE2EUIHarnessRoutes(
         await handleStoppedSessionsFixture(ctx, helpers, req, res);
       } else if (method === "DELETE") {
         await handleDeleteStoppedSessionsFixture(ctx, helpers, req, res);
+      } else {
+        helpers.error(res, 405, "Method not allowed");
+      }
+      return true;
+    }
+
+    const sessionThreadsFixtureMatch = path.match(/^\/e2e\/ui\/fixtures\/session-threads$/);
+    if (sessionThreadsFixtureMatch) {
+      if (method === "POST") {
+        await handleSessionThreadsFixture(ctx, helpers, req, res);
+      } else if (method === "DELETE") {
+        handleDeleteSessionThreadsFixture(ctx, helpers, res);
       } else {
         helpers.error(res, 405, "Method not allowed");
       }
@@ -542,6 +560,144 @@ async function handleDeleteStoppedSessionsFixture(
       e2eStoppedSessionFixtureIds.delete(sessionId);
     }
   }
+  helpers.json(res, { ok: true, deletedCount });
+}
+
+const E2E_THREAD_STATUSES = new Set<Session["status"]>(["busy", "ready", "stopped", "error"]);
+const E2E_INTERACTION_KINDS = new Set<SessionInteractionKind>([
+  "prompt",
+  "steer",
+  "follow_up",
+  "abort",
+  "stop",
+  "resume",
+]);
+const e2eSessionThreadFixtureIds = new Set<string>();
+
+/**
+ * Seed a stored session-thread snapshot: sessions linked by launch parent plus
+ * recorded interactions. Times are offsets from `nowMs` so relative labels stay
+ * stable. Sessions are storage-only; no runtime starts.
+ */
+async function handleSessionThreadsFixture(
+  ctx: RouteContext,
+  helpers: RouteHelpers,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const body = await helpers.parseBody<Record<string, unknown>>(req, {
+    maxBytes: MAX_E2E_FIXTURE_BODY_BYTES,
+  });
+  const defaultWorkspaceId = stringField(body.workspaceId)?.trim() ?? "";
+  const nowMs = numberField(body.nowMs) ?? Date.now();
+  const rawSessions = Array.isArray(body.sessions) ? body.sessions : [];
+  const rawInteractions = Array.isArray(body.interactions) ? body.interactions : [];
+  if (rawSessions.length < 1 || rawSessions.length > MAX_E2E_STOPPED_SESSION_FIXTURES) {
+    helpers.error(res, 400, `Fixture requires 1-${MAX_E2E_STOPPED_SESSION_FIXTURES} sessions`);
+    return;
+  }
+
+  const idsByKey = new Map<string, string>();
+  const pending: Array<{ session: Session; parentKey?: string }> = [];
+  for (const raw of rawSessions) {
+    const item = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+    const key = stringField(item.key)?.trim();
+    const name = stringField(item.name)?.trim();
+    const status = stringField(item.status) as Session["status"] | undefined;
+    const createdOffset = numberField(item.createdAtOffsetMs);
+    const activityOffset = numberField(item.lastActivityOffsetMs);
+    if (
+      !key ||
+      idsByKey.has(key) ||
+      !name ||
+      !status ||
+      !E2E_THREAD_STATUSES.has(status) ||
+      createdOffset === undefined ||
+      activityOffset === undefined
+    ) {
+      helpers.error(res, 400, "Each session needs a unique key, name, status, and time offsets");
+      return;
+    }
+    const workspace = ctx.storage.getWorkspace(
+      stringField(item.workspaceId)?.trim() || defaultWorkspaceId,
+    );
+    if (!workspace) {
+      helpers.error(res, 404, `Workspace not found for session ${key}`);
+      return;
+    }
+    const session = ctx.storage.createSession(name, stringField(item.model));
+    session.workspaceId = workspace.id;
+    session.workspaceName = workspace.name;
+    session.status = status;
+    session.createdAt = nowMs + createdOffset;
+    session.lastActivity = nowMs + activityOffset;
+    session.messageCount = numberField(item.messageCount) ?? 1;
+    session.cost = numberField(item.cost) ?? 0;
+    const contextTokens = numberField(item.contextTokens);
+    const contextWindow = numberField(item.contextWindow);
+    if (contextTokens !== undefined) session.contextTokens = contextTokens;
+    if (contextWindow !== undefined) session.contextWindow = contextWindow;
+    if (status === "busy") session.currentTurnStartedAt = nowMs + activityOffset;
+    idsByKey.set(key, session.id);
+    e2eSessionThreadFixtureIds.add(session.id);
+    pending.push({ session, parentKey: stringField(item.parentKey)?.trim() });
+  }
+
+  for (const { session, parentKey } of pending) {
+    const parentSessionId = parentKey ? idsByKey.get(parentKey) : undefined;
+    if (parentKey && !parentSessionId) {
+      helpers.error(res, 400, `Unknown parentKey ${parentKey}`);
+      return;
+    }
+    if (parentSessionId) {
+      session.launch = {
+        source: "agent",
+        parentSessionId,
+        status: "created",
+        requestedAt: session.createdAt,
+        completedAt: session.createdAt,
+      };
+    }
+    ctx.storage.saveSession(session);
+  }
+
+  for (const raw of rawInteractions) {
+    const item = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+    const fromSessionId = idsByKey.get(stringField(item.fromKey) ?? "");
+    const toSessionId = idsByKey.get(stringField(item.toKey) ?? "");
+    const kind = stringField(item.kind) as SessionInteractionKind | undefined;
+    const atOffset = numberField(item.atOffsetMs);
+    if (
+      !fromSessionId ||
+      !toSessionId ||
+      !kind ||
+      !E2E_INTERACTION_KINDS.has(kind) ||
+      atOffset === undefined
+    ) {
+      helpers.error(res, 400, "Each interaction needs known fromKey/toKey, a kind, and atOffsetMs");
+      return;
+    }
+    ctx.storage.recordSessionInteraction({
+      at: nowMs + atOffset,
+      fromSessionId,
+      toSessionId,
+      kind,
+    });
+  }
+
+  helpers.json(res, { ok: true, sessionIds: Object.fromEntries(idsByKey) });
+}
+
+function handleDeleteSessionThreadsFixture(
+  ctx: RouteContext,
+  helpers: RouteHelpers,
+  res: ServerResponse,
+): void {
+  let deletedCount = 0;
+  for (const sessionId of e2eSessionThreadFixtureIds) {
+    if (ctx.storage.deleteSession(sessionId)) deletedCount += 1;
+  }
+  e2eSessionThreadFixtureIds.clear();
   helpers.json(res, { ok: true, deletedCount });
 }
 

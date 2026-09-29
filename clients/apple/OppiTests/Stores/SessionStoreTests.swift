@@ -29,6 +29,22 @@ struct SessionStorePartitioningTests {
         #expect(store.sessions[0].id == "s1")
     }
 
+    @Test func sparseSessionUpdateKeepsLaunchParent() throws {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        var child = makeTestSession(id: "child")
+        child.parentSessionId = "root"
+        store.upsert(child)
+
+        // A full `state` record decoded without the parent must not detach the child.
+        var update = makeTestSession(id: "child")
+        update.status = .busy
+        store.upsert(update)
+
+        #expect(store.session(id: "child")?.parentSessionId == "root")
+        #expect(store.session(id: "child")?.status == .busy)
+    }
+
     @Test func sessionsForSpecificServer() {
         let store = SessionStore()
         store.switchServer(to: "srv1")

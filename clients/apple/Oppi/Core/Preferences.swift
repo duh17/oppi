@@ -66,6 +66,26 @@ enum AppPreferences {
         }
     }
 
+    // MARK: - Inbox
+
+    enum Inbox {
+        private static let defaultListModeKey = "\(AppIdentifiers.subsystem).inbox.defaultListMode"
+
+        /// View All Sessions opens in. The inbox view button switches for the current launch only.
+        static var defaultListMode: SessionInboxListMode {
+            guard let raw = UserDefaults.standard.string(forKey: defaultListModeKey),
+                  let mode = SessionInboxListMode(rawValue: raw)
+            else {
+                return .threads
+            }
+            return mode
+        }
+
+        static func setDefaultListMode(_ mode: SessionInboxListMode) {
+            UserDefaults.standard.set(mode.rawValue, forKey: defaultListModeKey)
+        }
+    }
+
     // MARK: - Browser
 
     /// User-facing preference for where regular web links open.

@@ -247,8 +247,42 @@ export interface SessionSummary {
   agentIcon?: IconChoice;
   control?: ControlSessionMetadata;
   ephemeral?: boolean;
+  /** Launching session; clients build session threads from this edge. */
+  parentSessionId?: string;
   /** Cold-list ask badge count; omitted outside list endpoints. */
   pendingAskCount?: number;
+}
+
+/**
+ * Cross-session primitive recorded when one session drives another through the
+ * Oppi CLI. Launch edges are not recorded here: they stay derived from
+ * `parentSessionId` + `createdAt` so each fact has one owner.
+ */
+export type SessionInteractionKind = "prompt" | "steer" | "follow_up" | "abort" | "stop" | "resume";
+
+export interface SessionInteraction {
+  id: number;
+  at: number;
+  fromSessionId: string;
+  toSessionId: string;
+  kind: SessionInteractionKind;
+}
+
+/** Session outside a thread that exchanged interactions with it. */
+export interface SessionThreadCounterpart {
+  id: string;
+  name?: string;
+  status?: Session["status"];
+  rootSessionId: string;
+  rootName?: string;
+}
+
+/** `GET /sessions/:id/thread` response. */
+export interface SessionThreadResponse {
+  rootSessionId: string;
+  sessions: SessionSummary[];
+  interactions: SessionInteraction[];
+  counterparts: SessionThreadCounterpart[];
 }
 
 export interface SessionMessage {

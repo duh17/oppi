@@ -13,6 +13,11 @@ import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktre
 import { isDeclaredControlSession } from "../control-session.js";
 import { parseClientCommand } from "../session-command-parse.js";
 import { isThinkingLevel } from "../thinking-levels.js";
+import {
+  buildSessionThread,
+  interactionKindForCommand,
+  recordCallerInteraction,
+} from "../session-interactions.js";
 
 const CONTROL_SESSION_DOMAINS = new Set(["agents", "schedules", "skills", "workspaces"] as const);
 const CONTROL_SESSION_INTENTS = new Set(["create", "revise"] as const);
@@ -459,6 +464,13 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
+    const interactionKind = interactionKindForCommand(parsed.message.type);
+    const failed = messages.some(
+      (message) => message.type === "command_result" && message.success === false,
+    );
+    if (interactionKind && !failed) {
+      recordCallerInteraction(ctx.storage, req, session, interactionKind);
+    }
     helpers.json(res, { messages });
   }
 
@@ -476,6 +488,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   async function handleResumeWorkspaceSession(
     workspaceId: string,
     sessionId: string,
+    req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
     const workspace = ctx.storage.getWorkspace(workspaceId);
@@ -502,6 +515,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     try {
       const result = await lifecycle.resumeWorkspaceSession({ session, workspace });
+      recordCallerInteraction(ctx.storage, req, session, "resume");
       helpers.json(res, {
         session: result.session,
         ...(result.rebound ? { rebound: true } : {}),
@@ -577,12 +591,20 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
   }
 
-  async function stopKnownSession(session: Session, res: ServerResponse): Promise<void> {
+  async function stopKnownSession(
+    session: Session,
+    res: ServerResponse,
+    req?: IncomingMessage,
+  ): Promise<void> {
+    // Timestamp before the lifecycle sets lastActivity so the stop precedes the
+    // session's end on the thread timeline.
+    const requestedAt = Date.now();
     try {
       const result = await lifecycle.stopSession(session);
       if (result.storedStopOnly && result.session) {
         ctx.appEvents?.emitStopConfirmed(result.session, "user");
       }
+      if (req) recordCallerInteraction(ctx.storage, req, session, "stop", requestedAt);
       helpers.json(res, { ok: true, session: result.session });
     } catch (error: unknown) {
       helpers.error(res, 500, safeErrorMessage(error));
@@ -592,11 +614,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   async function handleStopSession(
     workspaceId: string,
     sessionId: string,
+    req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
     const session = requireWorkspaceSession(workspaceId, sessionId, res);
     if (!session) return;
-    await stopKnownSession(session, res);
+    await stopKnownSession(session, res, req);
   }
 
   async function handleGenericSessionCommand(
@@ -609,10 +632,32 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     await dispatchSessionCommand(session, req, res);
   }
 
-  async function handleGenericStopSession(sessionId: string, res: ServerResponse): Promise<void> {
+  async function handleGenericStopSession(
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     const session = requireGenericMutableSession(sessionId, res);
     if (!session) return;
-    await stopKnownSession(session, res);
+    await stopKnownSession(session, res, req);
+  }
+
+  function handleGetSessionThread(sessionId: string, res: ServerResponse): void {
+    // Active runtimes carry fresher status than storage, like the generic collection.
+    const byId = new Map<string, Session>();
+    for (const session of ctx.storage.listSessions()) byId.set(session.id, session);
+    for (const activeId of ctx.sessionRuntimes.getActiveSessionIds()) {
+      const active = ctx.sessionRuntimes.getActiveSession(activeId);
+      if (active) byId.set(active.id, active);
+    }
+    const thread = buildSessionThread([...byId.values()], sessionId, (ids) =>
+      ctx.storage.listSessionInteractions(ids),
+    );
+    if (!thread) {
+      helpers.error(res, 404, "Session not found");
+      return;
+    }
+    helpers.json(res, thread);
   }
 
   async function handleDeleteSession(
@@ -765,7 +810,13 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const sessionStopMatch = path.match(/^\/sessions\/([^/]+)\/stop$/);
     if (sessionStopMatch && method === "POST") {
-      await handleGenericStopSession(sessionStopMatch[1], res);
+      await handleGenericStopSession(sessionStopMatch[1], req, res);
+      return true;
+    }
+
+    const sessionThreadMatch = path.match(/^\/sessions\/([^/]+)\/thread$/);
+    if (sessionThreadMatch && method === "GET") {
+      handleGetSessionThread(sessionThreadMatch[1], res);
       return true;
     }
 
@@ -843,13 +894,18 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const wsSessionStopMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stop$/);
     if (wsSessionStopMatch && method === "POST") {
-      await handleStopSession(wsSessionStopMatch[1], wsSessionStopMatch[2], res);
+      await handleStopSession(wsSessionStopMatch[1], wsSessionStopMatch[2], req, res);
       return true;
     }
 
     const wsSessionResumeMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/resume$/);
     if (wsSessionResumeMatch && method === "POST") {
-      await handleResumeWorkspaceSession(wsSessionResumeMatch[1], wsSessionResumeMatch[2], res);
+      await handleResumeWorkspaceSession(
+        wsSessionResumeMatch[1],
+        wsSessionResumeMatch[2],
+        req,
+        res,
+      );
       return true;
     }
 

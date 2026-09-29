@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cmdSession } from "../src/cli/commands/session.js";
 import { localApiRequest, type LocalApiConnection } from "../src/cli/local-api-client.js";
@@ -14,9 +14,17 @@ const request = vi.mocked(localApiRequest);
 const storage = {} as LocalApiConnection;
 
 describe("session command dispatch and output boundaries", () => {
+  // Agents run this suite inside Oppi sessions; never inherit their caller identity.
+  let inheritedCaller: string | undefined;
   beforeEach(() => {
     request.mockReset();
     process.exitCode = undefined;
+    inheritedCaller = process.env[OPPI_CALLER_SESSION_ID_ENV];
+    delete process.env[OPPI_CALLER_SESSION_ID_ENV];
+  });
+  afterEach(() => {
+    if (inheritedCaller === undefined) delete process.env[OPPI_CALLER_SESSION_ID_ENV];
+    else process.env[OPPI_CALLER_SESSION_ID_ENV] = inheritedCaller;
   });
 
   it("forwards trace-page pagination flags and removes redundant session metadata", async () => {
@@ -406,6 +414,7 @@ describe("session command dispatch and output boundaries", () => {
       ),
     );
 
+    // The caller id also travels as request metadata so the server records the interaction.
     expect(request).toHaveBeenCalledWith(storage, "/sessions/child-1/command", {
       method: "POST",
       body: {
@@ -413,6 +422,7 @@ describe("session command dispatch and output boundaries", () => {
         message: "This is a message from session parent-1: Focus on the failing test",
         streamingBehavior: "steer",
       },
+      callerSessionId: "parent-1",
     });
   });
 

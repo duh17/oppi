@@ -712,6 +712,13 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(Response.self, from: data).session
     }
 
+    /// Launch tree containing `sessionId` plus its recorded interactions.
+    func getSessionThread(sessionId: String) async throws -> SessionThreadSnapshot {
+        let encodedSessionId = try percentEncodePathSegment(sessionId)
+        let data = try await get("/sessions/\(encodedSessionId)/thread")
+        return try JSONDecoder().decode(SessionThreadSnapshot.self, from: data)
+    }
+
     struct SessionDialogsResponse: Decodable, Sendable, Equatable {
         let dialogs: [ExtensionUIRequest.DialogSnapshot]
         let serverNow: Int64?

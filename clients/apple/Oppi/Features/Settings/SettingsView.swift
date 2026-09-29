@@ -16,6 +16,7 @@ struct SettingsView: View {
     @State private var selectedMessageTextScale = FontPreferences.messageTextScale
     @State private var useMonoMessages = FontPreferences.useMonoForMessages
     @State private var linkOpeningMode = AppPreferences.Browser.linkOpeningMode
+    @State private var inboxDefaultListMode = AppPreferences.Inbox.defaultListMode
     @State private var voiceEngineMode = AppPreferences.Voice.engineMode
     @State private var voiceReplyMode = AppPreferences.Voice.replyMode
     @State private var hapticFeedbackEnabled = AppPreferences.Interaction.isHapticFeedbackEnabled
@@ -227,6 +228,20 @@ struct SettingsView: View {
                             .foregroundStyle(.themeComment)
                     }
                 }
+
+                Picker("All Sessions opens in", selection: $inboxDefaultListMode) {
+                    ForEach(SessionInboxListMode.allCases) { mode in
+                        Label(mode.label, systemImage: mode.systemImage).tag(mode)
+                    }
+                }
+                .onChange(of: inboxDefaultListMode) { _, newValue in
+                    AppPreferences.Inbox.setDefaultListMode(newValue)
+                }
+                .accessibilityIdentifier("settings.inboxDefaultListMode")
+
+                Text("Threads groups sessions under the session that launched them. The view button in All Sessions switches until Oppi next opens.")
+                    .font(.footnote)
+                    .foregroundStyle(.themeComment)
 
                 Picker("Keep screen awake", selection: $screenAwakePreset) {
                     ForEach(AppPreferences.ScreenAwake.TimeoutPreset.allCases) { preset in

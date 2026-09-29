@@ -92,7 +92,8 @@ enum SessionInboxGrouping {
         now: Date,
         calendar: Calendar,
         session: (Item) -> Session,
-        attention: (Item) -> SessionListAttentionCounts
+        attention: (Item) -> SessionListAttentionCounts,
+        sectionKind: ((Item) -> SessionListActiveSectionKind?)? = nil
     ) -> SessionInboxSections<Item> {
         var yourTurn: [Item] = []
         var working: [Item] = []
@@ -100,10 +101,10 @@ enum SessionInboxGrouping {
 
         for item in items {
             let sessionValue = session(item)
-            switch SessionListPresentation.activeSectionKind(
-                for: sessionValue,
-                attention: attention(item)
-            ) {
+            // Threads classify by every member; plain rows by their own session.
+            let kind = sectionKind.map { $0(item) }
+                ?? SessionListPresentation.activeSectionKind(for: sessionValue, attention: attention(item))
+            switch kind {
             case .yourTurn:
                 yourTurn.append(item)
             case .working:

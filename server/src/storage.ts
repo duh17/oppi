@@ -47,6 +47,7 @@ import type {
   CreateWorkspaceRequest,
   ServerConfig,
   Session,
+  SessionInteraction,
   UpdateWorkspaceRequest,
   Workspace,
 } from "./types.js";
@@ -447,6 +448,16 @@ export class Storage {
       nowMs,
       worktreeId,
     );
+  }
+
+  recordSessionInteraction(
+    input: Parameters<SessionSqliteStore["recordSessionInteraction"]>[0],
+  ): void {
+    this.sessionStore.recordSessionInteraction(input);
+  }
+
+  listSessionInteractions(sessionIds: readonly string[]): SessionInteraction[] {
+    return this.sessionStore.listSessionInteractions(sessionIds);
   }
 
   deleteSession(sessionId: string): boolean {

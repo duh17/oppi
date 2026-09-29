@@ -20,6 +20,7 @@ const TEST_SESSION_LAUNCH: NonNullable<Session["launch"]> = {
   agentId: "agent-reviewer",
   agentVersion: 4,
   agentIcon: { kind: "symbol", name: "checkmark.shield" },
+  parentSessionId: "parent-session-1",
   status: "accepted",
   requestedAt: 1739750399000,
   completedAt: 1739750400000,
@@ -76,6 +77,7 @@ const TEST_SESSION_SUMMARY: SessionSummary = {
   agentId: TEST_SESSION.launch?.agentId,
   agentIcon: TEST_SESSION.launch?.agentIcon,
   ephemeral: TEST_SESSION.ephemeral,
+  parentSessionId: TEST_SESSION.launch?.parentSessionId,
 };
 
 const TEST_CONTROL_SESSION: Session = {

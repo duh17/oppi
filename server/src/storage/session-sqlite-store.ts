@@ -6,7 +6,12 @@ import { mintSessionId } from "../id.js";
 import { ICON_ASSET_ID_PATTERN, migrateIconChoice, validateIconChoice } from "../icon-choice.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
-import type { Session, SessionChangeStats } from "../types.js";
+import type {
+  Session,
+  SessionChangeStats,
+  SessionInteraction,
+  SessionInteractionKind,
+} from "../types.js";
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "../sqlite-compat.js";
 import type {
   WorkspaceSessionSummarySnapshot,
@@ -180,6 +185,8 @@ export class SessionSqliteStore {
   private stmtGet!: SqliteStatement;
   private stmtList!: SqliteStatement;
   private stmtDelete!: SqliteStatement;
+  private stmtInsertInteraction!: SqliteStatement;
+  private stmtDeleteInteractions!: SqliteStatement;
 
   constructor(dataDir: string, dbPathOrOptions?: string | SessionSqliteStoreOptions) {
     if (!existsSync(dataDir)) {
@@ -469,8 +476,52 @@ export class SessionSqliteStore {
 
   deleteSession(sessionId: string): boolean {
     const result = this.stmtDelete.run(sessionId) as { changes?: number };
+    this.stmtDeleteInteractions.run(sessionId, sessionId);
     this.cache?.delete(sessionId);
     return (result.changes ?? 0) > 0;
+  }
+
+  recordSessionInteraction(input: {
+    at: number;
+    fromSessionId: string;
+    toSessionId: string;
+    kind: SessionInteractionKind;
+  }): void {
+    this.stmtInsertInteraction.run(input.at, input.fromSessionId, input.toSessionId, input.kind);
+  }
+
+  /**
+   * Newest `limit` interactions where either end is in `sessionIds`, returned
+   * oldest first. Rows live until either session is deleted.
+   */
+  listSessionInteractions(sessionIds: readonly string[], limit = 2_000): SessionInteraction[] {
+    if (sessionIds.length === 0) return [];
+    const ids = JSON.stringify(sessionIds);
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM (
+           SELECT id, at, from_session_id, to_session_id, kind
+           FROM session_interactions
+           WHERE from_session_id IN (SELECT value FROM json_each(?))
+              OR to_session_id IN (SELECT value FROM json_each(?))
+           ORDER BY at DESC, id DESC
+           LIMIT ?
+         ) ORDER BY at ASC, id ASC`,
+      )
+      .all(ids, ids, limit) as Array<{
+      id: number;
+      at: number;
+      from_session_id: string;
+      to_session_id: string;
+      kind: SessionInteractionKind;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      at: row.at,
+      fromSessionId: row.from_session_id,
+      toSessionId: row.to_session_id,
+      kind: row.kind,
+    }));
   }
 
   private ensureSchema(): void {
@@ -577,6 +628,20 @@ export class SessionSqliteStore {
       CREATE INDEX IF NOT EXISTS session_state_sessions_launch_schedule_idx
         ON session_state_sessions (schedule_id, schedule_run_id)
         WHERE schedule_id IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS session_interactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at INTEGER NOT NULL,
+        from_session_id TEXT NOT NULL,
+        to_session_id TEXT NOT NULL,
+        kind TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS session_interactions_from_idx
+        ON session_interactions (from_session_id, at);
+
+      CREATE INDEX IF NOT EXISTS session_interactions_to_idx
+        ON session_interactions (to_session_id, at);
 
       CREATE TABLE IF NOT EXISTS session_state_schema (
         key TEXT PRIMARY KEY,
@@ -749,6 +814,12 @@ export class SessionSqliteStore {
       ORDER BY last_activity DESC, id ASC
     `);
     this.stmtDelete = this.db.prepare("DELETE FROM session_state_sessions WHERE id = ?");
+    this.stmtInsertInteraction = this.db.prepare(
+      "INSERT INTO session_interactions (at, from_session_id, to_session_id, kind) VALUES (?, ?, ?, ?)",
+    );
+    this.stmtDeleteInteractions = this.db.prepare(
+      "DELETE FROM session_interactions WHERE from_session_id = ? OR to_session_id = ?",
+    );
   }
 
   findSessionByLaunchIdempotencyKey(idempotencyKey: string): Session | undefined {

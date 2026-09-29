@@ -185,6 +185,8 @@ struct Session: Identifiable, Sendable, Equatable {
     var mirror: PiTuiMirrorSessionMetadata? = nil
     var control: ControlSessionMetadata? = nil
     var launch: SessionLaunchMetadata? = nil
+    /// Launching session; the inbox groups session threads by this edge.
+    var parentSessionId: String? = nil
 
     // Privacy / persistence
     var ephemeral: Bool?
@@ -285,6 +287,7 @@ struct SessionSummary: Sendable, Equatable {
     var control: ControlSessionMetadata? = nil
     var agentId: String? = nil
     var agentIcon: IconChoice? = nil
+    var parentSessionId: String? = nil
     var ephemeral: Bool?
     var pendingAskCount: Int {
         didSet { hasPendingAskCount = true }
@@ -321,6 +324,7 @@ struct SessionSummary: Sendable, Equatable {
             mirror: mirror,
             control: control,
             launch: agentId.map { SessionLaunchMetadata(agentId: $0, agentIcon: agentIcon) },
+            parentSessionId: parentSessionId,
             ephemeral: ephemeral
         )
     }
@@ -353,6 +357,7 @@ extension SessionSummary {
         self.control = session.control
         self.agentId = session.launch?.agentId
         self.agentIcon = session.launch?.agentIcon
+        self.parentSessionId = session.parentSessionId
         self.ephemeral = session.ephemeral
         self.pendingAskCount = 0
         self.hasPendingAskCount = false
@@ -364,8 +369,12 @@ private enum SessionWireCodingKeys: String, CodingKey {
     case name, status, createdAt, lastActivity, lastAgentReplyAt, currentTurnStartedAt
     case model, messageCount, tokens, cost, changeStats
     case contextTokens, contextWindow, firstMessage, lastMessage
-    case thinkingLevel, runtime, mirror, control, launch, agentId, agentIcon, ephemeral, warnings
+    case thinkingLevel, runtime, mirror, control, launch, agentId, agentIcon, parentSessionId, ephemeral, warnings
     case pendingAskCount
+}
+
+private struct LaunchParentWire: Decodable {
+    let parentSessionId: String?
 }
 
 private struct DecodedSessionWireFields {
@@ -395,6 +404,7 @@ private struct DecodedSessionWireFields {
     let launch: SessionLaunchMetadata?
     let agentId: String?
     let agentIcon: IconChoice?
+    let parentSessionId: String?
     let ephemeral: Bool?
     let warnings: [String]?
 
@@ -425,6 +435,10 @@ private struct DecodedSessionWireFields {
         launch = try container.decodeIfPresent(SessionLaunchMetadata.self, forKey: .launch)
         agentId = try container.decodeIfPresent(String.self, forKey: .agentId)
         agentIcon = try container.decodeIfPresent(IconChoice.self, forKey: .agentIcon)
+        // Summaries carry the parent at the top level; full `Session` records
+        // (connected/state) carry it under `launch`.
+        parentSessionId = try container.decodeIfPresent(String.self, forKey: .parentSessionId)
+            ?? container.decodeIfPresent(LaunchParentWire.self, forKey: .launch)?.parentSessionId
         ephemeral = try container.decodeIfPresent(Bool.self, forKey: .ephemeral)
         warnings = try container.decodeIfPresent([String].self, forKey: .warnings)
     }
@@ -460,6 +474,7 @@ private extension DecodedSessionWireFields {
             mirror: mirror,
             control: control,
             launch: presentationLaunch,
+            parentSessionId: parentSessionId,
             ephemeral: ephemeral,
             warnings: warnings
         )
@@ -526,6 +541,7 @@ extension Session: Codable {
         try c.encodeIfPresent(mirror, forKey: .mirror)
         try c.encodeIfPresent(control, forKey: .control)
         try c.encodeIfPresent(launch, forKey: .launch)
+        try c.encodeIfPresent(parentSessionId, forKey: .parentSessionId)
         try c.encodeIfPresent(ephemeral, forKey: .ephemeral)
         try c.encodeIfPresent(warnings, forKey: .warnings)
 

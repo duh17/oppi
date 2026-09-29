@@ -1,12 +1,15 @@
 import { request as httpRequest, type IncomingMessage } from "node:http";
 
 import { localApiSocketPath } from "../local-api-socket.js";
+import { OPPI_CALLER_SESSION_HEADER } from "../session-caller-identity.js";
 import type { ServerConfig } from "../types.js";
 
 export type LocalApiRequestOptions = {
   method?: string;
   body?: Record<string, unknown>;
   signal?: AbortSignal;
+  /** Oppi session issuing this request; the server records cross-session primitives. */
+  callerSessionId?: string;
 };
 
 export interface LocalApiError extends Error {
@@ -37,6 +40,7 @@ export async function localApiRequest<T>(
   const body = options.body ? JSON.stringify(options.body) : undefined;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
+    ...(options.callerSessionId ? { [OPPI_CALLER_SESSION_HEADER]: options.callerSessionId } : {}),
     ...(body
       ? { "Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(body)) }
       : {}),

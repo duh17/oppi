@@ -108,6 +108,9 @@ private struct WorkspaceSplitRootView: View {
                     .navigationDestination(for: ModelProvidersNavTarget.self) { target in
                         ModelProvidersScopedDestinationView(target: target)
                     }
+                    .navigationDestination(for: SessionThreadNavTarget.self) { target in
+                        SessionThreadDetailView(target: target)
+                    }
             }
             .id(navigation.splitDetailTarget)
             .toolbar {

@@ -89,12 +89,17 @@ export async function cmdSession(
   const mode = requestedMode === "start" ? "create" : requestedMode;
   const jsonOutput = flags.json === "true";
 
-  const { call, output } = createLocalApiCommandContext(storage, jsonOutput, callerContext.signal);
+  const callerSessionId = callerContext.callerSessionId ?? callerSessionIdFromEnvironment();
+  const { call, output } = createLocalApiCommandContext(
+    storage,
+    jsonOutput,
+    callerContext.signal,
+    callerSessionId,
+  );
 
   try {
     flags = normalizeSessionFlagAliases(mode, flags);
     assertSessionFlags(mode, flags);
-    const callerSessionId = callerContext.callerSessionId ?? callerSessionIdFromEnvironment();
     const rawTargets = sessionTargetsForMode(mode, positional);
     // Exact self-target stays local so managed callers fail before any HTTP call.
     assertNotSelfTargetingSession(rawTargets, callerSessionId);

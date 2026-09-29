@@ -789,6 +789,10 @@ final class SessionStore {
         if merged.control == nil {
             merged.control = existing.control
         }
+        // Launch parents are immutable; a sparse update must not detach a child.
+        if merged.parentSessionId == nil {
+            merged.parentSessionId = existing.parentSessionId
+        }
         if let incomingLaunch = merged.launch {
             merged.launch = SessionLaunchMetadata(
                 agentId: incomingLaunch.agentId ?? existing.launch?.agentId,

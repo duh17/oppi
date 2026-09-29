@@ -23,13 +23,24 @@ export function createLocalApiCommandContext(
   storage: LocalApiConnection,
   jsonOutput: boolean,
   signal?: AbortSignal,
+  callerSessionId?: string,
 ): {
   call: <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
   output: (data: Record<string, unknown>, human: () => void) => void;
 } {
   return {
     call: <T>(path: string, options?: LocalApiRequestOptions) =>
-      localApiRequest<T>(storage, path, signal ? { ...options, signal } : options),
+      localApiRequest<T>(
+        storage,
+        path,
+        signal || callerSessionId
+          ? {
+              ...options,
+              ...(signal ? { signal } : {}),
+              ...(callerSessionId ? { callerSessionId } : {}),
+            }
+          : options,
+      ),
     output: (data, human) => {
       if (jsonOutput) {
         writeJsonEnvelope({ ok: true, data });

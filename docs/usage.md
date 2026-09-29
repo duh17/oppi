@@ -16,6 +16,11 @@ The Workspaces tab opens **All Sessions** for the active server.
 - **Working** — sessions that are busy.
 - Stopped sessions sit below, grouped by day. Each row shows the workspace name.
 
+All Sessions opens in **Threads**: sessions that other sessions launched sit under the session that launched them. A thread with work in progress stays in **Working** even while its root waits. The view button in the top bar, next to the server switcher, flips to the flat **Sessions** list until Oppi next opens; Settings → Sessions → **All Sessions opens in** changes the default. Open a thread and use its pill for two views:
+
+- **Outline** — the launch tree. Finished children fold into one row under their parent.
+- **Timeline** — one lane per session, with launches, stops, and messages or control commands sent between sessions with `oppi session`. Filter chips hide or show each kind. Messages to sessions in other threads appear as cross-thread rows.
+
 The sidebar or drawer manages saved Agents and schedules, collapses the workspace list, opens App Settings, or browses a workspace's sessions, files, and settings.
 
 Open a session to see the chat timeline. Tap a tool row to inspect command, output, diff, or file content. The changed-files bar lists files this session touched. If an extension shows a card or sheet, answer it in the app; you do not need to go back to a Mac.

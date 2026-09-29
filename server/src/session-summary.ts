@@ -39,6 +39,7 @@ export function buildSessionSummary(session: Session): SessionSummary {
       : {}),
     control: session.control,
     ephemeral: session.ephemeral,
+    ...(session.launch?.parentSessionId ? { parentSessionId: session.launch.parentSessionId } : {}),
   };
 }
 
