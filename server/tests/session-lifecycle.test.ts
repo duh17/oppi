@@ -153,6 +153,7 @@ describe("SessionManager startSession", () => {
       getWorkspace: vi.fn((id: string) => (id === workspace.id ? workspace : null)),
       listSessions: vi.fn(() => [session]),
       saveSession: vi.fn(),
+      clearRestartResume: vi.fn(),
     } as unknown as Storage;
     const { sdkBackend } = makeSdkBackendStub();
     const createSpy = vi.spyOn(SdkBackend, "create").mockResolvedValue(sdkBackend);

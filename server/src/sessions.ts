@@ -209,6 +209,9 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
    */
   async startSession(sessionId: string, workspace?: Workspace): Promise<Session> {
     const key = this.sessionKey(sessionId);
+    // Any start supersedes a pending post-restart resume, so that resume
+    // cannot re-open a session a client already opened and stopped again.
+    this.storage.clearRestartResume(sessionId);
     this.ensureMobileRenderersLoaded();
     const startWorkspace = workspace ?? this.resolveStoredWorkspace(sessionId);
     const session = await this.activationCoordinator.startSession(key, sessionId, startWorkspace);

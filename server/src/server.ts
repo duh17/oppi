@@ -492,6 +492,8 @@ export class Server {
 
   // Full-text search index (SQLite FTS5)
   private searchIndex: SearchIndex | null = null;
+  /** Background post-restart resume; stop() cancels it and waits. */
+  private restartResume: { cancelled: boolean; done: Promise<void> } | null = null;
   private appEventStreamMux!: AppEventStreamMux;
   private boundSessionStreamMux!: BoundSessionStreamMux;
   private dictationStreamMux!: DictationStreamMux;
@@ -896,9 +898,6 @@ export class Server {
     // Prime model catalog so first picker open is fast.
     await this.models.refresh();
 
-    // Heal stale persisted contextWindow fallbacks before any client connects.
-    this.models.healPersistedSessionContextWindows();
-
     // The old npm/Pi self-updater left this cache behind after Sparkle took over.
     // Delete it so a stale version cannot be mistaken for live status.
     if (removeRetiredRuntimeStatusFile(this.storage.getDataDir())) {
@@ -950,6 +949,10 @@ export class Server {
     // Healing earlier let a second server that then failed the lock mark the
     // live server's sessions stopped. This runs before any request is served.
     queueOrphanedSessionsForRestart(this.storage);
+    // Heal stale persisted contextWindow fallbacks. It saves sessions, so it
+    // also waits for ownership; being synchronous, it finishes before the
+    // socket serves a request.
+    this.models.healPersistedSessionContextWindows();
     this.localApiServer.on("upgrade", (req, socket, head) => {
       this.handleLocalUpgrade(req, socket, head);
     });
@@ -1041,6 +1044,11 @@ export class Server {
 
     let shutdownError: unknown;
     try {
+      // Finish a start already in flight so stopAll() sees it, and start no more.
+      if (this.restartResume) {
+        this.restartResume.cancelled = true;
+        await this.restartResume.done;
+      }
       try {
         recordLiveSessionsForRestart(this.storage, this.liveSessions());
       } catch (error: unknown) {
@@ -1209,13 +1217,19 @@ export class Server {
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       deleteSearchIndexSession: (sessionId) => this.searchIndex?.deleteSession(sessionId),
     });
-    void resumeSessionsAfterRestart({
+    const state = { cancelled: false, done: Promise.resolve() };
+    state.done = resumeSessionsAfterRestart({
       storage: this.storage,
       lifecycle,
       sendPrompt: (sessionId, text) => this.sessions.sendPrompt(sessionId, text),
-    }).catch((err: unknown) => {
-      log.error("session_restart.resume_crashed", { error: safeErrorMessage(err) });
-    });
+      cancelled: () => state.cancelled,
+    }).then(
+      () => undefined,
+      (err: unknown) => {
+        log.error("session_restart.resume_crashed", { error: safeErrorMessage(err) });
+      },
+    );
+    this.restartResume = state;
   }
 
   // ─── Dictation ───

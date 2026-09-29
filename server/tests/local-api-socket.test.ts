@@ -161,7 +161,11 @@ describe("Unix-socket local API", () => {
     const live = storage.createSession("Live on the owning server");
     live.workspaceId = "ws-1";
     live.status = "busy";
+    // No context window yet: the startup context-window heal would save one.
+    live.model = "anthropic/claude-opus-5-5";
+    live.contextWindow = undefined;
     storage.saveSession(live);
+    const before = new Storage(dataDir).getSession(live.id);
 
     const owner = createHttpServer();
     const binding = await listenOnLocalApiSocket(owner, localApiSocketPath(dataDir));
@@ -169,7 +173,7 @@ describe("Unix-socket local API", () => {
     try {
       await expect(second.start()).rejects.toThrow(/startup is already owned/);
       const reread = new Storage(dataDir);
-      expect(reread.getSession(live.id)?.status).toBe("busy");
+      expect(reread.getSession(live.id)).toEqual(before);
       expect(reread.listRestartResume()).toEqual([]);
     } finally {
       await second.stop().catch(() => {});

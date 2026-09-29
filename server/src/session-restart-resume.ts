@@ -13,6 +13,10 @@
  * gets a continuation prompt so the agent picks the work back up. Entries are
  * cleared one by one, so a crash during resume keeps the rest queued; a session
  * already resumed is stored as running and the crash path queues it again.
+ *
+ * Any other start of a session (a client opening it, a prompt) clears its
+ * entry in SessionManager.startSession, so a session someone already resumed,
+ * and possibly stopped again, is left alone.
  */
 
 import { safeErrorMessage } from "./log-utils.js";
@@ -43,15 +47,19 @@ type RestartStorage = Pick<
   | "saveSession"
 >;
 
+/** A session caught mid-stop was on its way out; do not bring it back. */
+function restartEntry(session: Session): RestartResumeEntry | undefined {
+  if (session.status === "stopping" || !canResumeAfterRestart(session)) return undefined;
+  return { sessionId: session.id, wasBusy: session.status === "busy" };
+}
+
 /** Graceful stop: remember live sessions before the stop flow marks them stopped. */
 export function recordLiveSessionsForRestart(
   storage: Pick<Storage, "queueRestartResume">,
   liveSessions: readonly Session[],
   nowMs: number = Date.now(),
 ): RestartResumeEntry[] {
-  const entries = liveSessions
-    .filter(canResumeAfterRestart)
-    .map((session) => ({ sessionId: session.id, wasBusy: session.status === "busy" }));
+  const entries = liveSessions.flatMap((session) => restartEntry(session) ?? []);
   storage.queueRestartResume(entries, nowMs);
   if (entries.length > 0) {
     log.info("session_restart.recorded", { source: "shutdown", sessions: entries });
@@ -68,22 +76,20 @@ export function queueOrphanedSessionsForRestart(
   storage: Pick<Storage, "listSessions" | "queueRestartResume" | "saveSession">,
   nowMs: number = Date.now(),
 ): RestartResumeEntry[] {
-  const entries: RestartResumeEntry[] = [];
-  let healed = 0;
-  for (const session of storage.listSessions()) {
-    if (session.status === "stopped" || session.status === "error") continue;
-    // A session caught mid-stop was on its way out; do not bring it back.
-    if (session.status !== "stopping" && canResumeAfterRestart(session)) {
-      entries.push({ sessionId: session.id, wasBusy: session.status === "busy" });
-    }
+  const orphaned = storage
+    .listSessions()
+    .filter((session) => session.status !== "stopped" && session.status !== "error");
+  const entries = orphaned.flatMap((session) => restartEntry(session) ?? []);
+  // Queue before marking stopped: the running status is the only evidence.
+  // A crash in between leaves them running, and the next start queues again.
+  storage.queueRestartResume(entries, nowMs);
+  for (const session of orphaned) {
     session.status = "stopped";
     session.currentTurnStartedAt = undefined;
     storage.saveSession(session);
-    healed++;
   }
-  storage.queueRestartResume(entries, nowMs);
-  if (healed > 0) {
-    log.info("startup.healed_orphaned_sessions", { count: healed });
+  if (orphaned.length > 0) {
+    log.info("startup.healed_orphaned_sessions", { count: orphaned.length });
   }
   if (entries.length > 0) {
     log.info("session_restart.recorded", { source: "orphaned", sessions: entries });
@@ -95,6 +101,8 @@ export interface RestartResumeDeps {
   storage: RestartStorage;
   lifecycle: Pick<SessionLifecycleService, "resumeControlSession" | "resumeWorkspaceSession">;
   sendPrompt: (sessionId: string, text: string) => Promise<void>;
+  /** Stop before the next entry; server shutdown sets this. */
+  cancelled?: () => boolean;
 }
 
 export type RestartResumeOutcome = "continued" | "resumed" | "skipped" | "failed";
@@ -105,7 +113,12 @@ export async function resumeSessionsAfterRestart(
 ): Promise<Array<{ sessionId: string; outcome: RestartResumeOutcome; reason?: string }>> {
   const results: Array<{ sessionId: string; outcome: RestartResumeOutcome; reason?: string }> =
     [];
-  for (const entry of deps.storage.listRestartResume()) {
+  // Re-read the queue each time: a client start while earlier entries were
+  // resuming removes that session's entry.
+  for (;;) {
+    if (deps.cancelled?.()) break;
+    const [entry] = deps.storage.listRestartResume();
+    if (!entry) break;
     const result = await resumeOne(deps, entry);
     deps.storage.clearRestartResume(entry.sessionId);
     results.push({ sessionId: entry.sessionId, ...result });
@@ -113,16 +126,16 @@ export async function resumeSessionsAfterRestart(
     if (result.outcome === "failed") log.error("session_restart.resume_failed", fields);
     else log.info("session_restart.resumed", fields);
   }
-  if (results.length > 0) {
-    const count = (outcome: RestartResumeOutcome): number =>
-      results.filter((result) => result.outcome === outcome).length;
-    log.info("session_restart.resume_complete", {
-      continued: count("continued"),
-      resumed: count("resumed"),
-      skipped: count("skipped"),
-      failed: count("failed"),
-    });
-  }
+  // Always logged, even with nothing queued: restart tooling waits for it.
+  const count = (outcome: RestartResumeOutcome): number =>
+    results.filter((result) => result.outcome === outcome).length;
+  log.info("session_restart.resume_complete", {
+    continued: count("continued"),
+    resumed: count("resumed"),
+    skipped: count("skipped"),
+    failed: count("failed"),
+    ...(deps.cancelled?.() ? { cancelled: true } : {}),
+  });
   return results;
 }
 

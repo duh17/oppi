@@ -4,6 +4,10 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { SdkBackend } from "../src/sdk-backend.js";
+import { SessionManager } from "../src/sessions.js";
+import { makeSdkBackendStub } from "./sdk-backend.helpers.js";
+
 import {
   RESTART_CONTINUE_PROMPT,
   queueOrphanedSessionsForRestart,
@@ -104,6 +108,39 @@ describe("session restart resume", () => {
     expect(storage.getSession("failed")?.status).toBe("error");
   });
 
+  it("keeps the resume queued when marking crash orphans stopped fails partway", () => {
+    const { storage, workspace } = makeStorage();
+    saveSession(storage, "a", { workspaceId: workspace.id, status: "busy" });
+    saveSession(storage, "b", { workspaceId: workspace.id, status: "ready" });
+    const failing = {
+      listSessions: () => storage.listSessions(),
+      queueRestartResume: storage.queueRestartResume.bind(storage),
+      saveSession: () => {
+        throw new Error("disk full");
+      },
+    };
+
+    expect(() => queueOrphanedSessionsForRestart(failing)).toThrow("disk full");
+
+    expect(storage.listRestartResume()).toEqual(
+      expect.arrayContaining([
+        { sessionId: "a", wasBusy: true },
+        { sessionId: "b", wasBusy: false },
+      ]),
+    );
+  });
+
+  it("does not record a session that was being stopped at shutdown", () => {
+    const { storage, workspace } = makeStorage();
+    const ws = { workspaceId: workspace.id };
+    recordLiveSessionsForRestart(storage, [
+      saveSession(storage, "stopping", { ...ws, status: "stopping" }),
+      saveSession(storage, "busy", { ...ws, status: "busy" }),
+    ]);
+
+    expect(storage.listRestartResume()).toEqual([{ sessionId: "busy", wasBusy: true }]);
+  });
+
   it("keeps a session busy when a shutdown record and a crash both queue it", () => {
     const { storage, workspace } = makeStorage();
     const live = saveSession(storage, "s1", { workspaceId: workspace.id, status: "busy" });
@@ -177,6 +214,67 @@ describe("session restart resume", () => {
     expect(results).toHaveLength(3);
     expect(deps.sendPrompt).not.toHaveBeenCalled();
     expect(storage.listRestartResume()).toEqual([]);
+  });
+
+  it("leaves a session alone once any other start has claimed it", async () => {
+    const { storage, workspace } = makeStorage();
+    const ws = { workspaceId: workspace.id, status: "stopped" as const };
+    saveSession(storage, "first", ws);
+    saveSession(storage, "second", ws);
+    storage.queueRestartResume(
+      [
+        { sessionId: "first", wasBusy: true },
+        { sessionId: "second", wasBusy: true },
+      ],
+      1,
+    );
+    const { sdkBackend } = makeSdkBackendStub();
+    const create = vi.spyOn(SdkBackend, "create").mockResolvedValue(sdkBackend);
+    const manager = new SessionManager(storage);
+    try {
+      const deps = makeDeps(storage);
+      const resumeWorkspaceSession = deps.lifecycle.resumeWorkspaceSession;
+      deps.lifecycle.resumeWorkspaceSession = async (params) => {
+        // While "first" resumes, a client opens "second" (and may stop it again).
+        if (params.session.id === "first") await manager.startSession("second", workspace);
+        return resumeWorkspaceSession(params);
+      };
+
+      const results = await resumeSessionsAfterRestart(deps);
+
+      expect(deps.resumed).toEqual(["first"]);
+      expect(deps.sendPrompt.mock.calls).toEqual([["first", RESTART_CONTINUE_PROMPT]]);
+      expect(results.map((r) => r.sessionId)).toEqual(["first"]);
+    } finally {
+      await manager.stopAll().catch(() => {});
+      create.mockRestore();
+    }
+  });
+
+  it("stops before the next entry when cancelled and keeps the rest queued", async () => {
+    const { storage, workspace } = makeStorage();
+    const ws = { workspaceId: workspace.id, status: "stopped" as const };
+    saveSession(storage, "first", ws);
+    saveSession(storage, "second", ws);
+    storage.queueRestartResume(
+      [
+        { sessionId: "first", wasBusy: false },
+        { sessionId: "second", wasBusy: false },
+      ],
+      1,
+    );
+    let cancelled = false;
+    const deps = makeDeps(storage);
+    const resumeWorkspaceSession = deps.lifecycle.resumeWorkspaceSession;
+    deps.lifecycle.resumeWorkspaceSession = async (params) => {
+      cancelled = true; // server shutdown begins while "first" is starting
+      return resumeWorkspaceSession(params);
+    };
+
+    await resumeSessionsAfterRestart({ ...deps, cancelled: () => cancelled });
+
+    expect(deps.resumed).toEqual(["first"]);
+    expect(storage.listRestartResume()).toEqual([{ sessionId: "second", wasBusy: false }]);
   });
 
   it("keeps later entries queued while an earlier one is resuming", async () => {
