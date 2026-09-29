@@ -142,7 +142,6 @@ enum ToolTimelineRowViewStyler {
         expandedContainer: UIView,
         expandedScrollView: UIScrollView,
         expandedLabel: UITextView,
-        expandedMarkdownView: AssistantMarkdownContentView,
         expandedReadMediaContainer: UIView,
         delegate: UIScrollViewDelegate
     ) {
@@ -180,10 +179,6 @@ enum ToolTimelineRowViewStyler {
         expandedLabel.textContainer.lineFragmentPadding = 0
         expandedLabel.textContainer.lineBreakMode = .byCharWrapping
         expandedLabel.backgroundColor = .clear
-
-        expandedMarkdownView.translatesAutoresizingMaskIntoConstraints = false
-        expandedMarkdownView.backgroundColor = .clear
-        expandedMarkdownView.isHidden = true
 
         expandedReadMediaContainer.translatesAutoresizingMaskIntoConstraints = false
         expandedReadMediaContainer.backgroundColor = .clear

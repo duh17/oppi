@@ -1581,14 +1581,20 @@ struct ToolExpandedSurfaceHostTests {
         ThemeRuntimeState.setThemeID(.light)
         let view = ToolTimelineRowContentView(configuration: configuration)
         _ = fittedTimelineSize(for: view, width: 360)
-        #expect(view.expandedMarkdownViewportThemeIDForTesting == .light)
+        #expect(view.markdownSurface.themeID == .light)
+        let lightReader = view.markdownSurface.completedBody
+        #expect(lightReader != nil)
 
         ThemeRuntimeState.setThemeID(.dark)
         view.configuration = configuration
         _ = fittedTimelineSize(for: view, width: 360)
 
         #expect(view.activeExpandedSurfaceKindForTesting == .markdown)
-        #expect(view.expandedMarkdownViewportThemeIDForTesting == .dark)
+        #expect(view.markdownSurface.themeID == .dark)
+        #expect(
+            view.markdownSurface.completedBody != nil && view.markdownSurface.completedBody !== lightReader,
+            "A theme change must replace the reader, not repaint the light one"
+        )
     }
 
     @Test func expandedSurfaceHostSwitchesActiveSurfaceOnReuse() {

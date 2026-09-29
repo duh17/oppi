@@ -70,7 +70,7 @@ extension ToolTimelineRowContentView {
 
                 guard self.expandedRenderSignature == deferredHighlight.signature,
                       self.expandedViewportMode == .code,
-                      !self.expandedUsesMarkdownLayout,
+                      !self.markdownSurface.isLiveLayoutActive,
                       !self.expandedUsesReadMediaLayout else {
                     return
                 }

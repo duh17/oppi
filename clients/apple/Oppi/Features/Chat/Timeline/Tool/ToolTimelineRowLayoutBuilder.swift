@@ -9,7 +9,6 @@ enum ToolTimelineRowLayoutBuilder {
         let titleLeadingToTool: NSLayoutConstraint
         let expandedLabelWidth: NSLayoutConstraint
         let expandedLabelHeightLock: NSLayoutConstraint
-        let expandedMarkdownWidth: NSLayoutConstraint
         let expandedReadMediaWidth: NSLayoutConstraint
         let imagePreviewHeight: NSLayoutConstraint
         let expandedViewportHeight: NSLayoutConstraint
@@ -97,7 +96,6 @@ enum ToolTimelineRowLayoutBuilder {
         expandedScrollView: UIScrollView,
         expandedSurfaceHostView: UIView,
         expandedLabel: UITextView,
-        expandedMarkdownView: UIView,
         expandedReadMediaContainer: UIView,
         imagePreviewContainer: UIView,
         imagePreviewImageView: UIImageView,
@@ -116,10 +114,6 @@ enum ToolTimelineRowLayoutBuilder {
         let expandedLabelHeightLock = expandedLabel.heightAnchor.constraint(
             equalTo: expandedScrollView.frameLayoutGuide.heightAnchor,
             constant: -10
-        )
-        let expandedMarkdownWidth = expandedMarkdownView.widthAnchor.constraint(
-            equalTo: expandedScrollView.frameLayoutGuide.widthAnchor,
-            constant: -12
         )
         let expandedReadMediaWidth = expandedReadMediaContainer.widthAnchor.constraint(
             equalTo: expandedScrollView.frameLayoutGuide.widthAnchor,
@@ -175,7 +169,6 @@ enum ToolTimelineRowLayoutBuilder {
             expandedSurfaceHostView.bottomAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.bottomAnchor),
 
             expandedLabelWidth,
-            expandedMarkdownWidth,
             expandedReadMediaWidth,
 
             imagePreviewImageView.leadingAnchor.constraint(equalTo: imagePreviewContainer.leadingAnchor, constant: 6),
@@ -192,7 +185,6 @@ enum ToolTimelineRowLayoutBuilder {
             titleLeadingToTool: titleLeadingToTool,
             expandedLabelWidth: expandedLabelWidth,
             expandedLabelHeightLock: expandedLabelHeightLock,
-            expandedMarkdownWidth: expandedMarkdownWidth,
             expandedReadMediaWidth: expandedReadMediaWidth,
             imagePreviewHeight: imagePreviewHeight,
             expandedViewportHeight: expandedViewportHeight,

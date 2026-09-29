@@ -176,7 +176,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var featureTipView: FeatureEducationTipBannerView?
     private var featureTipID: String?
     let expandedLabel = UITextView()
-    private let expandedMarkdownView = AssistantMarkdownContentView()
+    /// Owns the expanded Markdown viewport (live and completed); the row mounts
+    /// it through `expandedSurfaceHostView` and forwards layout and scroll events.
+    let markdownSurface: ToolExpandedMarkdownSurface
     private let expandedReadMediaContainer = UIView()
     private let imagePreviewContainer = UIView()
     private let imagePreviewImageView = UIImageView()
@@ -199,7 +201,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var expandedViewportHeightConstraint: NSLayoutConstraint?
     private var expandedLabelWidthConstraint: NSLayoutConstraint?
     private var expandedLabelHeightLockConstraint: NSLayoutConstraint?
-    private var expandedMarkdownWidthConstraint: NSLayoutConstraint?
     private var expandedReadMediaWidthConstraint: NSLayoutConstraint?
     private var imagePreviewHeightConstraint: NSLayoutConstraint?
     private var toolLeadingConstraint: NSLayoutConstraint?
@@ -207,17 +208,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var titleLeadingToStatusConstraint: NSLayoutConstraint?
     private var titleLeadingToToolConstraint: NSLayoutConstraint?
     var expandedShouldAutoFollow = true
-    private var liveStreamingFollow = LiveStreamingPresentation.ViewportPolicy(followsTail: true)
     var expandedRenderSignature: Int?
     private var expandedUsesViewport = false
-    var expandedUsesMarkdownLayout = false
     var expandedUsesReadMediaLayout = false
     private var expandedReadMediaContentView: UIView?
-    /// Theme captured by the reusable incremental Markdown viewport.
-    private var expandedMarkdownViewportThemeID: ThemeID?
-    private var expandedMarkdownUsesIncrementalViewport = false
-    private var expandedMarkdownLastContainerWidth: CGFloat?
-    private var expandedMarkdownLastViewportHeight: CGFloat?
     private var activeExpandedViewportPolicy: ToolRowViewportPolicy?
     private var expandedReadMediaViewportHeightConstraint: NSLayoutConstraint?
     /// Tracks which base64 image is currently being decoded / displayed.
@@ -272,6 +266,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     init(configuration: ToolTimelineRowConfiguration) {
         self.currentConfiguration = configuration
+        self.markdownSurface = ToolExpandedMarkdownSurface(viewport: expandedScrollView)
         self.fullScreenTerminalStream = TerminalTraceStream(
             output: configuration.copyOutputText ?? "",
             command: configuration.copyCommandText,
@@ -367,6 +362,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     override func updateConstraints() {
         updateExpandedReadMediaWidthIfNeeded()
+        markdownSurface.updateCompletedWidthPriority()
         super.updateConstraints()
     }
 
@@ -400,7 +396,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         if expandedPendingScrollToBottom {
             let contentView: UIView = expandedUsesReadMediaLayout
                 ? expandedReadMediaContainer
-                : (expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel)
+                : (markdownSurface.followTailTarget ?? expandedLabel)
             expandedPendingScrollToBottom = false
             ToolTimelineRowUIHelpers.followTail(
                 in: expandedScrollView,
@@ -488,26 +484,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         geometry: ToolRowViewportCalculator.GeometryContext
     ) {
         let setHeight: (CGFloat) -> Void = { [weak self] height in
-            guard let self else {
-                constraint.constant = height
-                return
-            }
-            let previousHeight = self.expandedMarkdownLastViewportHeight
             constraint.constant = height
-            guard self.activeExpandedViewportPolicy?.surface == .markdownViewport,
-                  self.expandedUsesMarkdownLayout
-                    || self.expandedReadMediaContentView is NativeFullScreenMarkdownBody else {
-                self.expandedMarkdownLastViewportHeight = nil
-                return
-            }
-            if let previousHeight,
-               abs(previousHeight - height) > 0.5 {
-                // The fixed streaming height can still change when the
-                // available geometry changes. Treat that as a real outer
-                // geometry transition, not as Markdown content churn.
+            guard let self else { return }
+            let policyOwnsMarkdownViewport = self.activeExpandedViewportPolicy?.surface == .markdownViewport
+            if self.markdownSurface.recordViewportHeight(
+                height,
+                policyOwnsViewport: policyOwnsMarkdownViewport
+            ) {
                 ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
             }
-            self.expandedMarkdownLastViewportHeight = height
         }
 
         switch policy.heightBehavior {
@@ -589,7 +574,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         mode: ViewportMode,
         geometry: ToolRowViewportCalculator.GeometryContext
     ) -> CGFloat {
-        let expandedContentView = expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel
+        let expandedContentView: UIView = markdownSurface.isLiveLayoutActive
+            ? markdownSurface.liveView
+            : expandedLabel
         let widthBucket = Int(expandedContainer.bounds.width.rounded())
         let signature = expandedRenderSignature
 
@@ -662,29 +649,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func updateExpandedMarkdownWidthIfNeeded() {
-        guard let expandedMarkdownWidthConstraint else { return }
-        expandedMarkdownWidthConstraint.constant = -12
-
-        guard activeExpandedViewportPolicy?.surface == .markdownViewport,
-              expandedUsesMarkdownLayout
-                || expandedReadMediaContentView is NativeFullScreenMarkdownBody else {
-            expandedMarkdownLastContainerWidth = nil
-            return
-        }
-
-        let width = expandedUsesMarkdownLayout
-            ? expandedMarkdownView.bounds.width
-            : expandedReadMediaContainer.bounds.width
-        guard width > 0 else { return }
-
-        if let previousWidth = expandedMarkdownLastContainerWidth,
-           abs(previousWidth - width) > 0.5 {
-            // Markdown content stays inside a fixed-height viewport, but a
-            // width change can alter wrapping and the outer cell's geometry.
-            // Request one outer pass for that geometry change only.
+        let policyOwnsMarkdownViewport = activeExpandedViewportPolicy?.surface == .markdownViewport
+        if markdownSurface.refreshWidthSignature(policyOwnsViewport: policyOwnsMarkdownViewport) {
+            // Request one outer pass for the geometry change only.
             ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
         }
-        expandedMarkdownLastContainerWidth = width
+        markdownSurface.updateCompletedWidthPriority()
     }
 
     private func updateExpandedReadMediaWidthIfNeeded() {
@@ -714,7 +684,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         guard expandedUsesViewport else { return nil }
 
         let kind: ToolTimelineRowViewportKind
-        if expandedUsesMarkdownLayout {
+        if markdownSurface.isLiveLayoutActive {
             kind = .markdown
         } else if expandedUsesReadMediaLayout {
             kind = .readMedia
@@ -812,81 +782,37 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
+    /// Hands the strategy's Markdown install intent and this row's configuration
+    /// to the Markdown surface, which owns the viewport from there.
     private func installExpandedMarkdownViewport(
         text: String,
         isStreaming: Bool,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
-        textSelectionEnabled: Bool
+        textSelectionEnabled: Bool,
+        wasVisible: Bool,
+        shouldRerender: Bool
     ) {
-        let themeID = ThemeRuntimeState.currentThemeID()
-        let liveViewportIntent = (!isStreaming && expandedMarkdownUsesIncrementalViewport)
-            ? FullScreenMarkdownViewportIntent.capturing(
-                scrollView: expandedScrollView,
-                followsTail: expandedShouldAutoFollow
-            )
-            : nil
-        expandedMarkdownUsesIncrementalViewport = isStreaming
-
-        let sourceFilePath = markdownRewriteSourceFilePath
-        if isStreaming {
-            clearExpandedReadMediaView()
-            expandedMarkdownViewportThemeID = themeID
-            expandedMarkdownView.accessibilityIdentifier = "chat.timeline.row.\(currentConfiguration.itemID).markdownViewport"
-            expandedMarkdownView.apply(configuration: .make(
-                content: text,
-                isStreaming: true,
-                themeID: themeID,
-                textSelectionEnabled: textSelectionEnabled,
-                reviewCommentSelectionRouter: reviewCommentSelectionRouter,
-                reviewCommentSourceContext: reviewCommentSourceContext,
-                resourceAccess: currentConfiguration.resourceAccess,
-                sourceFilePath: sourceFilePath,
-                perfSurface: .toolExpanded,
-                renderingMode: .live,
-                resourcePressure: currentConfiguration.resourcePressure
-            ))
-            expandedMarkdownView.setNeedsLayout()
-            setNeedsLayout()
-            return
-        }
-
-        clearExpandedMarkdownContent()
-        if expandedMarkdownViewportThemeID == themeID,
-           expandedRenderedText == text,
-           expandedReadMediaContentView is NativeFullScreenMarkdownBody {
-            return
-        }
+        // The Markdown viewport replaces whatever hosted content the row showed.
         clearExpandedReadMediaView()
-        let native = NativeFullScreenMarkdownBody(
-            content: text,
-            themeID: themeID,
-            palette: themeID.palette,
+        let outcome = markdownSurface.apply(ToolExpandedMarkdownSurface.Input(
+            itemID: currentConfiguration.itemID,
+            text: text,
+            isStreaming: isStreaming,
+            textSelectionEnabled: textSelectionEnabled,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext,
-            textSelectionEnabled: textSelectionEnabled,
             resourceAccess: currentConfiguration.resourceAccess,
-            sourceFilePath: sourceFilePath,
-            readerPreferences: FullScreenReaderContentFamily.markdown.defaultPreferences,
-            perfSurface: .toolExpanded,
-            allowsVerticalBounce: false,
-            allowsVerticalScrolling: false
-        )
-        expandedMarkdownViewportThemeID = themeID
-        native.accessibilityIdentifier = "chat.timeline.row.\(currentConfiguration.itemID).markdownViewport"
-        installExpandedEmbeddedView(native, invalidatesOuterLayout: false)
-        expandedReadMediaViewportHeightConstraint?.isActive = false
-        let heightConstraint = expandedReadMediaContainer.heightAnchor.constraint(
-            equalTo: expandedScrollView.frameLayoutGuide.heightAnchor
-        )
-        heightConstraint.priority = .required
-        heightConstraint.isActive = true
-        expandedReadMediaViewportHeightConstraint = heightConstraint
-        if let liveViewportIntent {
-            native.restoreViewportAfterMutableTransition(liveViewportIntent)
+            sourceFilePath: markdownRewriteSourceFilePath,
+            resourcePressure: currentConfiguration.resourcePressure,
+            viewportFollowsTail: expandedShouldAutoFollow,
+            wasVisible: wasVisible,
+            previousText: expandedRenderedText,
+            shouldRerender: shouldRerender
+        ))
+        if outcome != .completedUnchanged {
+            setNeedsLayout()
         }
-        native.setNeedsLayout()
-        setNeedsLayout()
     }
 
     private var markdownRewriteSourceFilePath: String? {
@@ -974,10 +900,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedReadMediaViewportHeightConstraint = heightConstraint
     }
 
-    private func installExpandedEmbeddedView(
-        _ view: UIView,
-        invalidatesOuterLayout: Bool = true
-    ) {
+    private func installExpandedEmbeddedView(_ view: UIView) {
         view.translatesAutoresizingMaskIntoConstraints = false
         expandedReadMediaContainer.addSubview(view)
         NSLayoutConstraint.activate([
@@ -993,9 +916,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         // current runloop tick, so all synchronous changes from the enclosing
         // apply() settle before one single layoutIfNeeded fires.
         setNeedsLayout()
-        if invalidatesOuterLayout {
-            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
-        }
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     // MARK: - Collapsed Image Preview
@@ -1065,23 +986,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private func clearExpandedReadMediaView() {
         expandedReadMediaViewportHeightConstraint?.isActive = false
-        expandedMarkdownViewportThemeID = nil
-        expandedMarkdownLastContainerWidth = nil
-        expandedMarkdownLastViewportHeight = nil
         expandedReadMediaViewportHeightConstraint = nil
         expandedReadMediaContentView?.removeFromSuperview()
         expandedReadMediaContentView = nil
-    }
-
-    /// Reset the markdown view so it no longer contributes intrinsic size.
-    ///
-    /// Called when switching away from markdown mode. The markdown view's
-    /// constraints still bind to the scroll view's content layout guide,
-    /// so stale content would conflict with the active view's constraints.
-    /// Uses `clearContent()` instead of `apply(configuration:)` to bypass
-    /// the equality guard and cache pipeline for guaranteed cleanup.
-    private func clearExpandedMarkdownContent() {
-        expandedMarkdownView.clearContent()
     }
 
     // MARK: - Expanded Content Helpers
@@ -1092,32 +999,31 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         compactHostedSurfaceHostView.isHidden = true
         expandedScrollView.isHidden = false
         expandedSurfaceHostView.activateSurfaceView(expandedLabel)
-        expandedMarkdownView.isHidden = true
         expandedLabel.isHidden = false
         expandedReadMediaContainer.isHidden = true
-        expandedUsesMarkdownLayout = false
         expandedUsesReadMediaLayout = false
         clearExpandedReadMediaView()
-        // Clear stale markdown content to prevent constraint conflicts.
-        // All three expanded subviews pin to the same contentLayoutGuide
-        // edges at required priority. If the markdown view retains content
-        // from a previous cell reuse cycle, its intrinsic height conflicts
-        // with the label's, and Auto Layout may zero out the label frame.
-        clearExpandedMarkdownContent()
+        // The label owns the viewport now; the Markdown surface drops its
+        // parsed content and completed reader.
+        markdownSurface.retire(.replaced)
     }
 
-    private func showExpandedMarkdownViewport() {
+    /// Prepare for the expanded Markdown viewport (live while streaming,
+    /// immutable reader once done). The surface picks the view and its insets.
+    private func showExpandedMarkdownSurface() {
         compactHostedSurfaceHostView.clearActiveSurface()
         compactHostedSurfaceHostView.isHidden = true
         expandedScrollView.isHidden = false
-        expandedSurfaceHostView.activateSurfaceView(expandedMarkdownView)
+        expandedSurfaceHostView.activateSurfaceView(
+            markdownSurface.mountedView,
+            contentInsets: markdownSurface.mountInsets
+        )
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
         expandedLabel.isHidden = true
-        expandedMarkdownView.isHidden = false
         expandedReadMediaContainer.isHidden = true
-        expandedUsesMarkdownLayout = true
         expandedUsesReadMediaLayout = false
+        markdownSurface.didActivate()
         expandedLabelWidthConstraint?.priority = .defaultHigh
         expandedLabelWidthConstraint?.constant = -12
         setExpandedContainerGestureInterceptionEnabled(true)
@@ -1132,11 +1038,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
         expandedLabel.isHidden = true
-        expandedMarkdownView.isHidden = true
         expandedReadMediaContainer.isHidden = false
-        expandedUsesMarkdownLayout = false
         expandedUsesReadMediaLayout = true
-        clearExpandedMarkdownContent()
+        markdownSurface.retire(.replaced)
         // Reset the label width constraint from code/diff mode to prevent
         // the hidden label from dominating contentLayoutGuide width.
         expandedLabelWidthConstraint?.priority = .defaultHigh
@@ -1153,11 +1057,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
         expandedLabel.isHidden = true
-        expandedMarkdownView.isHidden = true
         expandedReadMediaContainer.isHidden = false
-        expandedUsesMarkdownLayout = false
         expandedUsesReadMediaLayout = true
-        clearExpandedMarkdownContent()
+        markdownSurface.retire(.replaced)
         expandedLabelWidthConstraint?.priority = .defaultHigh
         expandedLabelWidthConstraint?.constant = -12
         setExpandedContainerGestureInterceptionEnabled(false)
@@ -1181,11 +1083,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedLabel.textColor = outputColor
         expandedLabel.textContainer.lineBreakMode = .byCharWrapping
         expandedLabel.isHidden = true
-        expandedMarkdownView.isHidden = true
         expandedReadMediaContainer.isHidden = true
-        expandedUsesMarkdownLayout = false
         expandedUsesReadMediaLayout = false
         clearExpandedReadMediaView()
+        markdownSurface.retire(.collapsed)
         expandedScrollView.isHidden = false
         compactHostedSurfaceHostView.isHidden = true
         expandedScrollView.alwaysBounceHorizontal = false
@@ -1200,7 +1101,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedViewportHeightConstraint?.isActive = false
         expandedUsesViewport = false
         expandedShouldAutoFollow = true
-        liveStreamingFollow = LiveStreamingPresentation.ViewportPolicy(followsTail: true)
         ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView)
     }
 
@@ -1227,7 +1127,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedContainer: expandedContainer,
             expandedScrollView: expandedScrollView,
             expandedLabel: expandedLabel,
-            expandedMarkdownView: expandedMarkdownView,
             expandedReadMediaContainer: expandedReadMediaContainer,
             delegate: self
         )
@@ -1279,7 +1178,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         expandedScrollView.addSubview(expandedSurfaceHostView)
         expandedSurfaceHostView.prepareSurfaceView(expandedLabel)
-        expandedSurfaceHostView.prepareSurfaceView(expandedMarkdownView)
+        markdownSurface.mount(in: expandedSurfaceHostView)
         expandedSurfaceHostView.prepareSurfaceView(expandedReadMediaContainer)
         compactHostedSurfaceHostView.isHidden = true
         bodyStack.addArrangedSubview(previewLabel)
@@ -1326,7 +1225,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedScrollView: expandedScrollView,
             expandedSurfaceHostView: expandedSurfaceHostView,
             expandedLabel: expandedLabel,
-            expandedMarkdownView: expandedMarkdownView,
             expandedReadMediaContainer: expandedReadMediaContainer,
             imagePreviewContainer: imagePreviewContainer,
             imagePreviewImageView: imagePreviewImageView,
@@ -1340,16 +1238,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         titleLeadingToToolConstraint = layout.titleLeadingToTool
         expandedLabelWidthConstraint = layout.expandedLabelWidth
         expandedLabelHeightLockConstraint = layout.expandedLabelHeightLock
-        expandedMarkdownWidthConstraint = layout.expandedMarkdownWidth
         expandedReadMediaWidthConstraint = layout.expandedReadMediaWidth
         imagePreviewHeightConstraint = layout.imagePreviewHeight
         expandedViewportHeightConstraint = layout.expandedViewportHeight
 
         // During the first self-sizing measurement pass, scroll view frame
-        // layout guides can still report width=0. Keep markdown/hosted width
-        // constraints below required priority so systemLayoutSizeFitting can
+        // layout guides can still report width=0. Keep the hosted width
+        // constraint below required priority so systemLayoutSizeFitting can
         // provide a temporary fitting width instead of measuring at 0px.
-        expandedMarkdownWidthConstraint?.priority = .defaultHigh
+        // (The Markdown surface does the same for its own width constraints.)
         expandedReadMediaWidthConstraint?.priority = .defaultHigh
 
         NSLayoutConstraint.activate(layout.all)
@@ -1890,9 +1787,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 previousRenderedText: expandedRenderedText,
                 previousAutoFollow: expandedShouldAutoFollow,
                 wasExpandedVisible: wasExpandedVisible,
-                isUsingMarkdownViewportLayout: expandedUsesMarkdownLayout
-                    || expandedReadMediaContentView is NativeFullScreenMarkdownBody,
-                isThemeChanged: expandedMarkdownViewportThemeID != ThemeRuntimeState.currentThemeID(),
+                isUsingMarkdownViewportLayout: markdownSurface.isViewportActive,
+                isThemeChanged: markdownSurface.isThemeStale,
                 reviewCommentSelectionRouter: markdownSelectionEnabled ? reviewCommentSelectionRouter : nil,
                 reviewCommentSourceContext: markdownSelectionEnabled ? reviewCommentSourceContext : nil,
                 textSelectionEnabled: markdownSelectionEnabled,
@@ -1957,7 +1853,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 previousAutoFollow: expandedShouldAutoFollow,
                 wasExpandedVisible: wasExpandedVisible,
                 isCurrentModeText: expandedViewportMode == .text,
-                isUsingMarkdownLayout: expandedUsesMarkdownLayout,
+                isUsingMarkdownLayout: markdownSurface.isLiveLayoutActive,
                 isUsingReadMediaLayout: expandedUsesReadMediaLayout,
                 sessionId: perfSessionId,
                 viewportPolicy: viewportPolicy
@@ -1977,7 +1873,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 previousAutoFollow: expandedShouldAutoFollow,
                 wasExpandedVisible: wasExpandedVisible,
                 isCurrentModeText: expandedViewportMode == .text,
-                isUsingMarkdownLayout: expandedUsesMarkdownLayout,
+                isUsingMarkdownLayout: markdownSurface.isLiveLayoutActive,
                 isUsingReadMediaLayout: expandedUsesReadMediaLayout,
                 sessionId: perfSessionId,
                 viewportPolicy: viewportPolicy
@@ -2024,8 +1920,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func applyExpandedRenderOutput(_ output: ExpandedRenderOutput, isExpandingTransition: Bool) {
-        let wasMarkdownViewport = expandedUsesMarkdownLayout
-            || expandedReadMediaContentView is NativeFullScreenMarkdownBody
+        let wasMarkdownViewport = markdownSurface.isViewportActive
 
         // Execute view-installation intent before surface switch so the
         // hosted view is in the hierarchy when showExpandedHostedView() runs.
@@ -2056,7 +1951,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 isStreaming: isStreaming,
                 reviewCommentSelectionRouter: reviewCommentSelectionRouter,
                 reviewCommentSourceContext: reviewCommentSourceContext,
-                textSelectionEnabled: textSelectionEnabled
+                textSelectionEnabled: textSelectionEnabled,
+                wasVisible: wasMarkdownViewport,
+                shouldRerender: output.scrollBehavior != .preserve
             )
         case .delimitedTable(let text, let filePath):
             installExpandedDelimitedTableView(text: text, filePath: filePath)
@@ -2068,21 +1965,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         case .label: showExpandedLabel()
         case .hostedView: showExpandedHostedView()
         case .compactHostedView: showCompactHostedView()
-        case .markdownViewport:
-            expandedMarkdownUsesIncrementalViewport
-                ? showExpandedMarkdownViewport()
-                : showExpandedHostedView()
+        case .markdownViewport: showExpandedMarkdownSurface()
         }
 
         if output.surface == .markdownViewport {
-            _ = liveStreamingFollow.applyStreamTick(
-                isStreaming: !currentConfiguration.isDone,
-                shouldRerender: output.scrollBehavior != .preserve,
-                wasVisible: wasMarkdownViewport,
-                previousText: expandedRenderedText,
-                currentText: output.renderedText ?? ""
-            )
-            expandedShouldAutoFollow = liveStreamingFollow.followsTail
+            expandedShouldAutoFollow = markdownSurface.followsTail
         } else {
             expandedShouldAutoFollow = output.shouldAutoFollow
         }
@@ -2129,7 +2016,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
 
         if policy.surface == .markdownViewport {
-            expandedScrollView.isScrollEnabled = expandedMarkdownUsesIncrementalViewport
+            expandedScrollView.isScrollEnabled = markdownSurface.usesIncrementalViewport
             expandedScrollView.alwaysBounceVertical = false
             expandedScrollView.bounces = false
             setExpandedContainerGestureInterceptionEnabled(true)
@@ -2170,7 +2057,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             hasOutputContext: hasSession,
             hasExpandedContext: hasExpandedContext,
             hasMarkdownContext: hasSession,
-            isMarkdownLayout: expandedUsesMarkdownLayout,
+            isMarkdownLayout: markdownSurface.isLiveLayoutActive,
             isReadMediaLayout: expandedUsesReadMediaLayout
         )
 
@@ -2275,18 +2162,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         switch expandedSurfaceHostView.activeView {
         case expandedLabel:
             .label
-        case expandedMarkdownView:
+        case markdownSurface.liveView, markdownSurface.completedContainer:
             .markdown
         case expandedReadMediaContainer:
-            expandedReadMediaContentView is NativeFullScreenMarkdownBody ? .markdown : .hosted
+            .hosted
         default:
             .none
         }
-    }
-
-    // periphery:ignore - used by ToolExpandedSurfaceHostTests via @testable import
-    var expandedMarkdownViewportThemeIDForTesting: ThemeID? {
-        expandedMarkdownViewportThemeID
     }
     #endif
 
@@ -2653,7 +2535,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func flushPendingFollowTail() {
         bashToolRowView.flushFollowTail()
         if expandedNeedsFollowTail, !expandedContainer.isHidden {
-            let label: UIView = expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel
+            let label: UIView = markdownSurface.isLiveLayoutActive ? markdownSurface.liveView : expandedLabel
             label.invalidateIntrinsicContentSize()
             expandedScrollView.setNeedsLayout()
             expandedPendingScrollToBottom = true
@@ -2684,28 +2566,25 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     #endif
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-        guard scrollView === expandedScrollView, expandedUsesMarkdownLayout else { return }
-        _ = liveStreamingFollow.handle(.interactionBegan)
-        expandedShouldAutoFollow = liveStreamingFollow.followsTail
+        guard scrollView === expandedScrollView, markdownSurface.isLiveLayoutActive else { return }
+        markdownSurface.viewportInteractionBegan()
+        expandedShouldAutoFollow = markdownSurface.followsTail
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        guard scrollView === expandedScrollView, expandedUsesMarkdownLayout, !decelerate else { return }
+        guard scrollView === expandedScrollView, markdownSurface.isLiveLayoutActive, !decelerate else { return }
         finishMarkdownLiveFollowInteraction()
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        guard scrollView === expandedScrollView, expandedUsesMarkdownLayout else { return }
+        guard scrollView === expandedScrollView, markdownSurface.isLiveLayoutActive else { return }
         finishMarkdownLiveFollowInteraction()
     }
 
     private func finishMarkdownLiveFollowInteraction() {
-        let intent = liveStreamingFollow.handle(.interactionEnded(
-            isNearBottom: ToolTimelineRowUIHelpers.isNearBottom(expandedScrollView),
-            isStreaming: !currentConfiguration.isDone
-        ))
-        expandedShouldAutoFollow = liveStreamingFollow.followsTail
-        if intent == .followTail {
+        let resumesTailFollow = markdownSurface.viewportInteractionEnded(isStreaming: !currentConfiguration.isDone)
+        expandedShouldAutoFollow = markdownSurface.followsTail
+        if resumesTailFollow {
             scheduleExpandedAutoScrollToBottomIfNeeded()
         }
     }
@@ -2719,7 +2598,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     expandedScrollView.contentOffset.y = lockedY
                 }
             }
-            if expandedUsesMarkdownLayout { return }
+            if markdownSurface.isLiveLayoutActive { return }
             expandedShouldAutoFollow = ToolTimelineRowUIHelpers.isNearBottom(expandedScrollView)
         }
     }
