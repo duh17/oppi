@@ -258,6 +258,8 @@ install -m 755 .githooks/pre-push "$(git rev-parse --git-path hooks)/pre-push"
 
 Use the Oppi workflow wrapper. It starts a paired E2E server, writes invite/device-token files under `/tmp`, launches XCUITests, and cleans up the server.
 
+Parent-facing strict UI verification with source-bound receipts is `bun clients/apple/scripts/qa-verify.ts`. See [qa-verification.md](qa-verification.md). That CLI always sets `OPPI_SIM_POOL_HANG_RETRIES=0` and does not claim Jev, speed, or terminal-mirror coverage.
+
 ```bash
 ~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test
 

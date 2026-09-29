@@ -540,6 +540,8 @@ targets:
     sources:
       - path: OppiUITests
         type: group
+      - path: QAVerificationSupport
+        type: group
     dependencies:
       - target: Oppi
     settings:
@@ -553,6 +555,8 @@ targets:
     platform: iOS
     sources:
       - path: OppiE2ETests
+        type: group
+      - path: QAVerificationSupport
         type: group
     dependencies:
       - target: Oppi

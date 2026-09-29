@@ -60,6 +60,9 @@ clients/apple/scripts/*
 !clients/apple/scripts/periphery-scan.ts
 !clients/apple/scripts/analyze-visual-recording.ts
 !clients/apple/scripts/analyze-visual-recording.test.ts
+!clients/apple/scripts/qa-verify.ts
+!clients/apple/scripts/qa-verify-lib.ts
+!clients/apple/scripts/qa-verify.test.ts
 !clients/apple/scripts/ipad-shell-diagnostic.sh
 server/scripts/manual/*
 !server/scripts/manual/telemetry-import-sqlite.mjs
