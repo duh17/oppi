@@ -296,6 +296,10 @@ export class BoundSessionStreamMux {
     let firstMessageRecorded = false;
     let unsubscribed = false;
     let unsubscribeBoundSession: (() => void) | undefined;
+    const startupRelay: {
+      unsubscribe?: () => void;
+      messageHandler?: (data: RawData, isBinary: boolean) => void;
+    } = {};
     const liveConnectionCleanup: { run?: () => void } = {};
     let connectionClosed = false;
     let pendingToolUpdate: ServerMessage | undefined;
@@ -314,6 +318,8 @@ export class BoundSessionStreamMux {
         unsubscribed = true;
         unsubscribeBoundSession?.();
       }
+      startupRelay.unsubscribe?.();
+      if (startupRelay.messageHandler) ws.off("message", startupRelay.messageHandler);
       liveConnectionCleanup.run?.();
       stopPing();
       this.ctx.untrackConnection(ws);
@@ -442,6 +448,39 @@ export class BoundSessionStreamMux {
     };
 
     send(streamConnectedMessage(this.ctx, owner));
+
+    // Dialog responses must bypass startup's await (and queued prompts). Do not
+    // admit any model turn until the runtime's trust decision and load finish.
+    const startupMessages: Array<{ data: RawData; isBinary: boolean }> = [];
+    startupRelay.messageHandler = (data, isBinary) => {
+      const parsed = !isBinary ? parseIncomingSessionCommand(data) : undefined;
+      if (
+        parsed?.ok &&
+        parsed.message.type === "extension_ui_response" &&
+        (parsed.message.sessionId ?? sessionId) === sessionId
+      ) {
+        msgRecv += 1;
+        void this.ctx
+          .handleClientMessage(session, { ...parsed.message, sessionId }, sendForSession, {
+            connId,
+          })
+          .catch((error: unknown) => {
+            sendForSession({ type: "error", error: safeErrorMessage(error) });
+          });
+        return;
+      }
+      if (startupMessages.length >= 100) {
+        cleanupBoundConnection(1008);
+        ws.close(1008, "Too many commands during session startup");
+        return;
+      }
+      startupMessages.push({ data, isBinary });
+    };
+    ws.on("message", startupRelay.messageHandler);
+    startupRelay.unsubscribe = this.ctx.sessionRuntimes.subscribeStartupUI(
+      sessionId,
+      sendForSession,
+    );
 
     try {
       // Capture the durable cursor before session opening. Opening an already-running
@@ -692,6 +731,10 @@ export class BoundSessionStreamMux {
             send({ type: "error", error: message, sessionId });
           });
       });
+      ws.off("message", startupRelay.messageHandler);
+      startupRelay.unsubscribe?.();
+      startupRelay.unsubscribe = undefined;
+      for (const frame of startupMessages) ws.emit("message", frame.data, frame.isBinary);
     } catch (err: unknown) {
       const message = safeErrorMessage(err);
       metrics?.record("server.session_subscribe_ms", Date.now() - connectedAt, {

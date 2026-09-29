@@ -1,6 +1,7 @@
 import type { AgentDefinition } from "./agent-launch-service.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend } from "./sdk-backend.js";
+import type { SdkUiBridge } from "./sdk-ui-bridge.js";
 import {
   createRuntimeSessionStateScaffold,
   type RuntimeSessionStateScaffold,
@@ -31,6 +32,8 @@ export interface SessionStartCoordinatorDeps {
   /** True once the owning SessionManager is closed for server shutdown. */
   isClosed?: () => boolean;
   metrics?: ServerMetricCollector;
+  onUIBridgeReady?: (key: string, bridge: SdkUiBridge | undefined) => void;
+  hasUI?: (key: string) => boolean;
 }
 
 export class SessionStartCoordinator {
@@ -69,6 +72,8 @@ export class SessionStartCoordinator {
           getMobileOutputGuideSettings: () => this.deps.storage.getMobileOutputGuideSettings(),
           metrics: this.deps.metrics,
           serverConfig: this.deps.config,
+          onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
+          hasUI: () => this.deps.hasUI?.(key) ?? false,
         });
         this.deps.metrics?.record("server.session_create_ms", Date.now() - createStart);
 

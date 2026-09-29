@@ -1,6 +1,7 @@
 import { DefaultPackageManager, type SettingsManager } from "@earendil-works/pi-coding-agent";
 
 import { AgentConfigurationError } from "./agent-launch-errors.js";
+import { BUILTIN_EXTENSION_PATH_PREFIX } from "./host-mcp-extensions.js";
 import { serverResourceId } from "./server-resource-id.js";
 
 /** Scopes that can satisfy an Agent's exact Extension selection for a launch cwd. */
@@ -13,12 +14,17 @@ const SELECTABLE_EXTENSION_SCOPES = new Set(["user", "project"]);
  * project resources. Project scope matters when a workspace re-enables an
  * Extension that is disabled at user scope — the package manager then reports
  * the path under project scope for that cwd.
+ *
+ * `builtin:<name>` IDs name Pi built-ins Oppi supplies as named factories. They
+ * resolve to themselves only when listed in `availableBuiltinNames` (managed
+ * host workspace); otherwise they are unavailable like any stale ID.
  */
 export async function resolveSelectedAgentExtensionPaths(
   extensionIds: string[] | undefined,
   cwd: string,
   agentDir: string,
   settingsManager: SettingsManager,
+  availableBuiltinNames: readonly string[] = [],
 ): Promise<string[] | undefined> {
   if (extensionIds === undefined) return undefined;
   if (extensionIds.length === 0) return [];
@@ -33,6 +39,13 @@ export async function resolveSelectedAgentExtensionPaths(
   const selectedPaths: string[] = [];
   const unavailableExtensions: string[] = [];
   for (const extensionId of new Set(extensionIds)) {
+    if (
+      extensionId.startsWith(BUILTIN_EXTENSION_PATH_PREFIX) &&
+      availableBuiltinNames.includes(extensionId.slice(BUILTIN_EXTENSION_PATH_PREFIX.length))
+    ) {
+      selectedPaths.push(extensionId);
+      continue;
+    }
     const path = pathsById.get(extensionId);
     if (!path) {
       unavailableExtensions.push(extensionId);

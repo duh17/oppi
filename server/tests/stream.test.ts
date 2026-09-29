@@ -12,6 +12,10 @@ import type { SessionCatchUpResponse } from "../src/session-broadcast.js";
 import { SessionLifecycleService } from "../src/session-lifecycle-service.js";
 import { Storage } from "../src/storage.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "../src/types.js";
+import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
+import { buildExtensionUIRequestMessage } from "../src/extension-ui-contract.js";
+import { SessionManager } from "../src/sessions.js";
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 
 function makeSession(id: string, workspaceId?: string): Session {
   return {
@@ -140,6 +144,8 @@ function createMockContext(sessions: Session[]): {
     getPendingUIRequestMessages: (id: string) =>
       runtimeOverride(id).getPendingUIRequestMessages?.(id) ??
       ctx.sessions.getPendingUIRequestMessages(id),
+    subscribeStartupUI: (id: string, send: (message: ServerMessage) => void) =>
+      ctx.sessions.subscribeStartupUI?.(id, send) ?? (() => {}),
     stopSession: vi.fn(async () => {}),
     stopSessionIfActive: vi.fn(async () => {}),
   } as unknown as StreamContext["sessionRuntimes"];
@@ -198,6 +204,144 @@ function mirrorRuntimeStubs(
 }
 
 describe("BoundSessionStreamMux", () => {
+  it("delivers startup dialogs and accepts answers ahead of buffered session commands", async () => {
+    const session = makeSession("startup-trust", "w1");
+    const { ctx } = createMockContext([session]);
+    let sendStartup: ((message: ServerMessage) => void) | undefined;
+    const detach = vi.fn();
+    ctx.sessions.subscribeStartupUI = vi.fn((_id, send) => {
+      sendStartup = send;
+      return detach;
+    });
+    const bridge = new SdkUiBridge(
+      (event) => {
+        if (event.type === "extension_ui_request")
+          sendStartup?.(buildExtensionUIRequestMessage(session.id, event));
+      },
+      () => false,
+    );
+    let answer: string | undefined;
+    vi.mocked(ctx.sessions.startSession).mockImplementation(async () => {
+      answer = await bridge
+        .createContext()
+        .select("Trust project?", ["Trust", "Don't trust"], { timeout: 1000 });
+      return session;
+    });
+    ctx.handleClientMessage = vi.fn(async (_session, message) => {
+      if (message.type === "extension_ui_response") {
+        expect(bridge.respond(message)).toBe(true);
+      }
+    });
+    const ws = new FakeWebSocket();
+    ws.onSend = (message) => {
+      if (message.type !== "extension_ui_request") return;
+      expect(ws.sentOfType("connected")).toHaveLength(0);
+      ws.receive({ type: "get_state" });
+      ws.receive({ type: "extension_ui_response", id: message.id, value: "Don't trust" });
+    };
+    try {
+      await new BoundSessionStreamMux(ctx).handleWebSocket(
+        "w1",
+        session.id,
+        ws as unknown as WebSocket,
+      );
+      await drain();
+      expect(answer).toBe("Don't trust");
+      expect(ws.sentOfType("connected")).toHaveLength(1);
+      expect(vi.mocked(ctx.handleClientMessage).mock.calls.map((call) => call[1].type)).toEqual([
+        "extension_ui_response",
+        "get_state",
+      ]);
+      expect(detach).toHaveBeenCalled();
+    } finally {
+      ws.close();
+      bridge.dispose();
+    }
+  });
+  it("closing an opened stream does not detach a second stream's startup UI", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-stream-startup-"));
+    const rendererLoad = vi
+      .spyOn(MobileRendererRegistry.prototype, "loadAllRenderers")
+      .mockResolvedValue({ loaded: [], errors: [] });
+    const manager = new SessionManager(new Storage(dir));
+    const session = makeSession("two-startup-streams", "w1");
+    const { ctx } = createMockContext([session]);
+    let staleDetach!: () => void;
+    ctx.sessions.subscribeStartupUI = (id, send) => {
+      const detach = manager.subscribeStartupUI(id, send);
+      staleDetach ??= detach;
+      return detach;
+    };
+    const mux = new BoundSessionStreamMux(ctx);
+    const first = new FakeWebSocket();
+    const second = new FakeWebSocket();
+    let finish!: (session: Session) => void;
+    try {
+      await mux.handleWebSocket("w1", session.id, first as unknown as WebSocket);
+      vi.mocked(ctx.sessions.startSession).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const opening = mux.handleWebSocket("w1", session.id, second as unknown as WebSocket);
+      await drain();
+      staleDetach(); // Explicit repeated disposal must also be safe outside stream cleanup.
+      first.close();
+      // Drive the real subscription owner, not a mock subscriber registry.
+      const relay = manager as unknown as {
+        broadcastStartupUI: (id: string, message: ServerMessage) => void;
+      };
+      relay.broadcastStartupUI(session.id, {
+        type: "extension_ui_request",
+        id: "second-dialog",
+        method: "select",
+        title: "Trust?",
+        options: ["yes", "no"],
+      });
+      expect(second.sentOfType("extension_ui_request")).toHaveLength(1);
+      finish(session);
+      await opening;
+      expect(second.sentOfType("connected")).toHaveLength(1);
+    } finally {
+      first.close();
+      second.close();
+      rendererLoad.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("buffers 100 startup frames and closes on the next without replaying commands", async () => {
+    const session = makeSession("startup-cap", "w1");
+    const { ctx } = createMockContext([session]);
+    const detach = vi.fn();
+    ctx.sessions.subscribeStartupUI = vi.fn(() => detach);
+    let finish!: (session: Session) => void;
+    vi.mocked(ctx.sessions.startSession).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const ws = new FakeWebSocket();
+    const opening = new BoundSessionStreamMux(ctx).handleWebSocket(
+      "w1",
+      session.id,
+      ws as unknown as WebSocket,
+    );
+    await drain();
+    for (let i = 0; i < 100; i++) ws.receive({ type: "get_state" });
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    ws.receive({ type: "get_state" });
+    expect(ws.closeCode).toBe(1008);
+    expect(detach).toHaveBeenCalledTimes(1);
+    expect(ws.listenerCount("message")).toBe(0);
+    finish(session);
+    await opening;
+    expect(ctx.handleClientMessage).not.toHaveBeenCalled();
+    expect(ws.sentOfType("connected")).toHaveLength(0);
+  });
+
   it("opens declared control streams and rejects both workspace and undeclared sessions", async () => {
     const control = {
       ...makeSession("control-session"),
@@ -916,6 +1060,8 @@ describe("BoundSessionStreamMux", () => {
   it("cleans up when the bound session socket closes during startup", async () => {
     const session = makeSession("sess-bound", "w1");
     const { ctx } = createMockContext([session]);
+    const detach = vi.fn();
+    ctx.sessions.subscribeStartupUI = vi.fn(() => detach);
     let resolveStart: ((session: Session) => void) | undefined;
     vi.mocked(ctx.sessions.startSession).mockImplementation(
       () =>
@@ -933,6 +1079,10 @@ describe("BoundSessionStreamMux", () => {
     await drain();
 
     expect(ctx.untrackConnection).toHaveBeenCalledWith(ws);
+    expect(detach).toHaveBeenCalledTimes(1);
+    expect(ws.listenerCount("message")).toBe(0);
+    ws.receive({ type: "get_state" });
+    expect(ctx.handleClientMessage).not.toHaveBeenCalled();
     expect(resolveStart).toBeDefined();
     resolveStart?.(session);
     await connect;

@@ -3,7 +3,7 @@ import type { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
 import type { SessionManager } from "./sessions.js";
 import type { Storage } from "./storage.js";
 import type { LiveEntryRendererSet } from "./trace.js";
-import type { Session } from "./types.js";
+import type { ServerMessage, Session } from "./types.js";
 
 /**
  * Concrete facade for the two runtime owners Oppi supports.
@@ -86,6 +86,11 @@ export class SessionRuntimes implements AgentRuntimeTransport {
       sessionFile: snapshot.piSessionFile,
       sessionId: snapshot.id,
     };
+  }
+
+  /** Startup belongs to Oppi, including a disconnected mirror promoted during open. */
+  subscribeStartupUI(sessionId: string, send: (message: ServerMessage) => void): () => void {
+    return this.oppi.subscribeStartupUI(sessionId, send);
   }
 
   getEntryRenderers(sessionId: string): LiveEntryRendererSet | undefined {

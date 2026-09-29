@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { AgentLaunchService, type AgentDefinition } from "../src/agent-launch-service.js";
 import type { Session, Workspace } from "../src/types.js";
@@ -26,7 +29,11 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 function makeService(
-  options: { sessions?: Session[]; nowMs?: number; recoveryClaim?: "win" | "lose" } = {},
+  options: {
+    sessions?: Session[];
+    nowMs?: number;
+    recoveryClaim?: "win" | "lose";
+  } = {},
 ) {
   const storedSessions = [...(options.sessions ?? [])];
   const createSession = vi.fn((name?: string, model?: string) => {
@@ -88,7 +95,10 @@ function makeService(
       findSessionByLaunchIdempotencyKey,
       claimSessionLaunchRecovery,
     },
-    sessions: { startSession, sendPrompt },
+    sessions: {
+      startSession,
+      sendPrompt,
+    },
     ensureSessionContextWindow: (session) => ({ ...session, contextWindow: 200_000 }),
     nowMs: () => options.nowMs ?? 1_000,
     leaseTtlMs: 60_000,
@@ -109,6 +119,26 @@ function makeService(
 }
 
 describe("AgentLaunchService", () => {
+  it("accepts a saved Agent's builtin:mcp selection for a host workspace", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "oppi-preflight-mcp-"));
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    try {
+      const { service, startSession } = makeService();
+      const result = await service.launch({
+        agent: { name: "MCP", resources: { extensionIds: ["builtin:mcp"] } },
+        target: { workspace: makeWorkspace({ runtime: "host", hostMount: agentDir }) },
+        prompt: "hello",
+      });
+      expect(startSession).toHaveBeenCalledTimes(1);
+      expect(result.failure).toBeUndefined();
+    } finally {
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      rmSync(agentDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects sandbox parents launching into another workspace or granting nested delegation", async () => {
     const parent = makeSession({ id: "parent-sand", workspaceId: "sand-1" });
     const getWorkspace = vi.fn((id: string) =>

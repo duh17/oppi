@@ -39,6 +39,7 @@ import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
 import type { ServerConfig, ServerMessage, Session } from "./types.js";
 import type { WorkspaceRuntime } from "./workspace-runtime.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
+import type { SdkUiBridge } from "./sdk-ui-bridge.js";
 
 export type { SessionCatchUpResponse };
 
@@ -95,6 +96,11 @@ export interface SessionCoordinatorBundleDeps {
   onFirstMessage?: (session: Session) => void;
   /** Operational metrics collector for session lifecycle timing. */
   metrics?: ServerMetricCollector;
+  onUIBridgeReady?: (key: string, bridge: SdkUiBridge | undefined) => void;
+  hasUI?: (key: string) => boolean;
+  takeStartupUIRequests?: (
+    key: string,
+  ) => SessionStartActiveSession["pendingUIRequests"] | undefined;
 }
 
 export function createSessionCoordinatorBundle(
@@ -154,7 +160,14 @@ export function createSessionCoordinatorBundle(
     getSkillPathResolver: () => deps.getSkillPathResolver(),
     onPiEvent: (key, event) => deps.onPiEvent(key, event),
     onSessionEnd: (key, reason) => deps.onSessionEnd(key, reason),
-    registerActiveSession: (key, active) => deps.active.set(key, active),
+    registerActiveSession: (key, active) => {
+      // Unawaited session_start dialogs still belong to this bridge after activation.
+      const requests = deps.takeStartupUIRequests?.(key);
+      if (requests) active.pendingUIRequests = requests;
+      deps.active.set(key, active);
+    },
+    onUIBridgeReady: deps.onUIBridgeReady,
+    hasUI: deps.hasUI,
     persistSessionNow: (key, session) => deps.persistSessionNow(key, session),
     resetIdleTimer: (key) => deps.resetIdleTimer(key),
     bootstrapSessionState: (key) => deps.bootstrapSessionState(key),

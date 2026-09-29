@@ -9,7 +9,7 @@ import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { isDeclaredControlSession } from "./control-session.js";
 import { createLogger } from "./logger.js";
-import { chmodSync, existsSync, lstatSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, posix, relative, resolve as resolvePath } from "node:path";
 
@@ -36,6 +36,7 @@ import {
   ModelRegistry,
   SettingsManager,
   getAgentDir,
+  hasTrustRequiringProjectResources,
   resolveModelScopeWithDiagnostics,
 } from "@earendil-works/pi-coding-agent";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -55,6 +56,12 @@ import {
 } from "./model-resolution.js";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
 import { applyPendingProviderRegistrations } from "./extension-model-discovery.js";
+import { PROJECT_TRUST_TIMEOUT_MS, resolveManagedProjectTrust } from "./project-trust.js";
+import {
+  availableHostMcpBuiltinNames,
+  createHostMcpBuiltinExtensions,
+  isBuiltinExtensionPath,
+} from "./host-mcp-extensions.js";
 import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
 import {
   DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS,
@@ -246,7 +253,11 @@ function assertSelectedAgentResourcesAvailable(
       `Selected Agent Skill is unavailable: ${unavailableSkills.join(", ")}`,
     );
   }
-  const unavailableExtensions = (selectedExtensionPaths ?? []).filter((path) => !existsSync(path));
+  // `builtin:<name>` selections are not files; the selection resolver already
+  // restricted them to built-ins this session supplies.
+  const unavailableExtensions = (selectedExtensionPaths ?? []).filter(
+    (path) => !isBuiltinExtensionPath(path) && !existsSync(path),
+  );
   if (unavailableExtensions.length > 0) {
     throw new AgentConfigurationError(
       "agent_extensions_unavailable",
@@ -286,11 +297,13 @@ function assertSelectedAgentExtensionsLoaded(
   if (selectedPaths === undefined) return;
   const unavailableExtensions = selectedPaths.filter(
     (selectedPath) =>
-      !result.extensions.some(
-        (extension) =>
-          !extension.path.startsWith("<inline:") &&
-          (isPathWithin(selectedPath, extension.resolvedPath) ||
-            isPathWithin(extension.resolvedPath, selectedPath)),
+      !result.extensions.some((extension) =>
+        isBuiltinExtensionPath(selectedPath)
+          ? extension.path === selectedPath
+          : !extension.path.startsWith("<inline:") &&
+            !isBuiltinExtensionPath(extension.path) &&
+            (isPathWithin(selectedPath, extension.resolvedPath) ||
+              isPathWithin(extension.resolvedPath, selectedPath)),
       ),
   );
   if (unavailableExtensions.length > 0) {
@@ -307,6 +320,15 @@ function isPathWithin(parent: string, child: string): boolean {
   const resolvedChild = resolvePath(child);
   const rel = relative(resolvedParent, resolvedChild);
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/** Real path when it exists (symlinks followed), else the lexical path; like Pi's canonicalizePath. */
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolvePath(path);
+  }
 }
 
 function hostWorkspacePathToGuest(
@@ -427,6 +449,9 @@ export interface SdkBackendConfig {
   serverConfig?: Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt">;
   /** Reads one atomic Mobile Output Guide snapshot for each managed runtime rebuild. */
   getMobileOutputGuideSettings?: () => MobileOutputGuideSettingsSnapshot;
+  /** Startup-only relay, registered before protected project resources load. */
+  onUIBridgeReady?: (bridge: SdkUiBridge | undefined) => void;
+  hasUI?: () => boolean;
 }
 
 type MobileOutputGuideSettingsHolder = {
@@ -691,6 +716,7 @@ export class SdkBackend {
     },
     assertSelectedResourcesAvailableBeforeReload?: () => void,
     consumeSelectedResourceReloadError?: () => Error | undefined,
+    uiBridge?: SdkUiBridge,
   ) {
     this.runtime = runtime;
     this.emitEvent = emitEvent;
@@ -702,7 +728,7 @@ export class SdkBackend {
       assertSelectedResourcesAvailableBeforeReload;
     this.consumeSelectedResourceReloadError = consumeSelectedResourceReloadError;
     this.sessionManagerDisplayCwd = cwdOverrides?.displayCwd;
-    this.uiBridge = new SdkUiBridge(emitEvent, () => this.disposed);
+    this.uiBridge = uiBridge ?? new SdkUiBridge(emitEvent, () => this.disposed);
     this.restoreSessionManagerDisplayCwd();
     this.subscribeToCurrentSession();
   }
@@ -786,6 +812,14 @@ export class SdkBackend {
     const mobileOutputGuideSettingsHolder: MobileOutputGuideSettingsHolder = {
       snapshot: DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS,
     };
+    let bridgeDisposed = false;
+    const backendRef: { current?: SdkBackend } = {};
+    const uiBridge = new SdkUiBridge(
+      onEvent,
+      () => bridgeDisposed || backendRef.current?.disposed === true,
+    );
+    config.onUIBridgeReady?.(uiBridge);
+    const trustUI = uiBridge.createContext();
     let assertSelectedResourcesAvailableBeforeReload: (() => void) | undefined;
     let consumeSelectedResourceReloadError: (() => Error | undefined) | undefined;
     const createRuntimeFactory: CreateAgentSessionRuntimeFactory = async ({
@@ -813,12 +847,86 @@ export class SdkBackend {
         authPath: join(runtimeAgentDir, "auth.json"),
         modelsPath: join(runtimeAgentDir, "models.json"),
       });
-      const settingsManager = SettingsManager.create(hostCwd, runtimeAgentDir);
+      const trustManagedProject = managedSession && !sandboxMode;
+      const settingsManager = SettingsManager.create(hostCwd, runtimeAgentDir, {
+        projectTrusted: !trustManagedProject,
+      });
+      let sessionTrust: boolean | undefined;
+      // Handlers see only Pi's declared `select`/`confirm`/`input`/`notify`,
+      // each bounded so an unanswered phone cannot hold startup (and the
+      // workspace lock) forever. Timeouts <= 0 mean "no timeout" upstream.
+      const boundTrustDialog = <T extends { timeout?: number }>(opts: T | undefined): T =>
+        ({
+          ...opts,
+          timeout: Math.min(
+            opts?.timeout && opts.timeout > 0 ? opts.timeout : PROJECT_TRUST_TIMEOUT_MS,
+            PROJECT_TRUST_TIMEOUT_MS,
+          ),
+        }) as T;
+      const resolveTrust = async (): Promise<void> => {
+        if (!trustManagedProject) return;
+        // Nothing to gate is not a decision: do not cache it. Protected files
+        // added mid-session (an agent can write `.pi/mcp.json`) must reach a real
+        // trust decision on the next /reload, as in Pi's own per-call check.
+        if (!hasTrustRequiringProjectResources(hostCwd)) {
+          settingsManager.setProjectTrusted(true);
+          await settingsManager.reload();
+          return;
+        }
+        const hasUI = config.hasUI?.() ?? false;
+        // Remember a session-only/default-allow decision across /reload. A runtime
+        // replacement gets a new cwd-bound decision through this factory.
+        sessionTrust ??= await resolveManagedProjectTrust(
+          hostCwd,
+          runtimeAgentDir,
+          settingsManager,
+          {
+            cwd: hostCwd,
+            mode: "rpc",
+            hasUI,
+            ui: hasUI
+              ? {
+                  select: (title, choices, opts) =>
+                    trustUI.select(title, choices, boundTrustDialog(opts)),
+                  confirm: (title, message, opts) =>
+                    trustUI.confirm(title, message, boundTrustDialog(opts)),
+                  input: (title, placeholder, opts) =>
+                    trustUI.input(title, placeholder, boundTrustDialog(opts)),
+                  notify: trustUI.notify,
+                }
+              : // Like Pi's CLI context: no phone attached, so dialogs resolve
+                // immediately instead of holding startup for the 15 s bound.
+                {
+                  select: async () => undefined,
+                  confirm: async () => false,
+                  input: async () => undefined,
+                  notify: trustUI.notify,
+                },
+          },
+          (extensionPath, error) =>
+            onEvent({
+              type: "extension_error",
+              extensionPath,
+              event: "project_trust",
+              error: safeErrorMessage(error),
+            }),
+          selectedAgentExtensionIds,
+        );
+        settingsManager.setProjectTrusted(sessionTrust);
+        await settingsManager.reload();
+      };
+      await resolveTrust();
+      // Pi MCP/codemode/tool-search: always on for managed host sessions.
+      const hostMcpBuiltinNames = availableHostMcpBuiltinNames({
+        sandbox: sandboxMode,
+        managed: managedSession,
+      });
       const selectedAgentExtensionPaths = await resolveSelectedAgentExtensionPaths(
         selectedAgentExtensionIds,
         hostCwd,
         runtimeAgentDir,
         settingsManager,
+        hostMcpBuiltinNames,
       );
 
       // Resource loader: follow Pi's normal cwd/settings/package discovery.
@@ -859,6 +967,34 @@ export class SdkBackend {
       const normalizedSelectedAgentSkillPaths = selectedAgentSkillPaths?.map((path) =>
         isAbsolute(path) ? path : resolvePath(hostCwd, path),
       );
+      if (trustManagedProject && !settingsManager.isProjectTrusted()) {
+        // Explicit Skill paths are CLI resources to Pi. They must not bypass
+        // the host session's denial of protected project directories.
+        // Compare real paths so a symlinked cwd (or a skill path given through
+        // the real location) cannot slip past the protected-directory check.
+        const canonicalCwd = canonicalPath(hostCwd);
+        const canonicalHome = canonicalPath(homedir());
+        // `.pi` itself may be a symlink; canonicalize it like the .agents/skills walk.
+        const canonicalProjectPi = canonicalPath(join(canonicalCwd, ".pi"));
+        const unavailableSkills = (normalizedSelectedAgentSkillPaths ?? []).filter((original) => {
+          const path = canonicalPath(original);
+          if (isPathWithin(canonicalProjectPi, path)) return true;
+          for (let parent = canonicalCwd; ; parent = resolvePath(parent, "..")) {
+            if (
+              parent !== canonicalHome &&
+              isPathWithin(canonicalPath(join(parent, ".agents", "skills")), path)
+            )
+              return true;
+            if (parent === resolvePath(parent, "..")) return false;
+          }
+        });
+        if (unavailableSkills.length > 0)
+          throw new AgentConfigurationError(
+            "agent_skills_unavailable",
+            { unavailableSkills },
+            `Selected Agent Skill is unavailable in an untrusted project: ${unavailableSkills.join(", ")}`,
+          );
+      }
       assertSelectedResourcesAvailableBeforeReload = () =>
         assertSelectedAgentResourcesAvailable(
           normalizedSelectedAgentSkillPaths,
@@ -886,7 +1022,10 @@ export class SdkBackend {
         agentDir: runtimeAgentDir,
         settingsManager,
         appendSystemPromptOverride: (base) => buildCurrentAppendSystemPrompt(base),
-        extensionFactories: [createLifecycleJournalExtension(sessionManager)],
+        extensionFactories: [
+          createLifecycleJournalExtension(sessionManager),
+          ...createHostMcpBuiltinExtensions(hostMcpBuiltinNames),
+        ],
         ...(selectedAgentSkillPaths !== undefined
           ? { noSkills: true, additionalSkillPaths: selectedAgentSkillPaths }
           : config.skillPaths
@@ -961,6 +1100,7 @@ export class SdkBackend {
       const reload = loader.reload.bind(loader);
       loader.reload = async (options) => {
         selectedResourceReloadError = undefined;
+        await resolveTrust();
         await reload(options);
         try {
           if (!sandboxMode) {
@@ -1226,11 +1366,19 @@ export class SdkBackend {
       };
     };
 
-    const runtime = await createAgentSessionRuntime(createRuntimeFactory, {
-      cwd: initialHostCwd,
-      agentDir,
-      sessionManager: initialSessionManager,
-    });
+    let runtime: AgentSessionRuntime;
+    try {
+      runtime = await createAgentSessionRuntime(createRuntimeFactory, {
+        cwd: initialHostCwd,
+        agentDir,
+        sessionManager: initialSessionManager,
+      });
+    } catch (error) {
+      bridgeDisposed = true;
+      uiBridge.dispose();
+      config.onUIBridgeReady?.(undefined);
+      throw error;
+    }
 
     const backend = new SdkBackend(
       runtime,
@@ -1246,12 +1394,21 @@ export class SdkBackend {
         : undefined,
       () => assertSelectedResourcesAvailableBeforeReload?.(),
       () => consumeSelectedResourceReloadError?.(),
+      uiBridge,
     );
 
+    backendRef.current = backend;
     const preBindMs = Date.now() - createStartMs;
     config.metrics?.record("server.session_create_sdk_ms", preBindMs);
 
-    await backend.bindCurrentSessionExtensions();
+    try {
+      await backend.bindCurrentSessionExtensions();
+    } catch (error) {
+      await backend.dispose();
+      throw error;
+    } finally {
+      config.onUIBridgeReady?.(undefined);
+    }
 
     const totalMs = Date.now() - createStartMs;
     const bindMs = totalMs - preBindMs;
@@ -1960,6 +2117,8 @@ export class SdkBackend {
       timeoutMs,
     };
     this.markLocallyDisposed();
+    // Same limit as the shutdown-timeout force path below: no session_shutdown,
+    // so MCP stdio servers can survive if a handler was still pending.
     session.dispose();
     const diagnosedResult = this.withLocalCleanupDiagnostic(result);
     this.forcedDisposalResult = diagnosedResult;
@@ -2110,6 +2269,14 @@ export class SdkBackend {
           // Pi waits for every extension's session_shutdown handler before it
           // invalidates the session. A broken handler must not retain Oppi's
           // lifecycle transaction and workspace locks forever.
+          //
+          // Known limit: dispose() does not emit session_shutdown. If an earlier
+          // handler hung, Pi's MCP extension never closed its stdio servers and
+          // they can outlive this session. Pi's public surface offers no handle
+          // to close them: `createMcpExtension({ createTransport })` needs the
+          // default transport, which Pi does not export, and rebuilding it would
+          // copy Pi internals (process-group spawn and kill). Revisit when Pi
+          // exposes connection close or transport tracking.
           session.dispose();
           const result = this.withLocalCleanupDiagnostic({
             disposal: "forced",

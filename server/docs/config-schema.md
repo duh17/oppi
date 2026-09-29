@@ -7,7 +7,7 @@ Oppi server uses a JSON config file with validated fields and defaults.
 | `~/.config/oppi/config.json` | Default data dir |
 | `$OPPI_DATA_DIR/config.json` | Custom data dir  |
 
-Oppi creates the file on the first `oppi serve`. You can also create it with `oppi init`. On load, invalid fields fall back to defaults with warnings. Startup backfills new fields automatically.
+Oppi creates the file on the first `oppi serve`. You can also create it with `oppi init`. On load, invalid fields fall back to defaults with warnings. Startup backfills required defaults.
 
 ## All settings
 
@@ -171,6 +171,8 @@ Controls client-side preprocessing for image attachments before upload.
 | Setting                           | Type   | Default | Description                                                                          |
 | --------------------------------- | ------ | ------- | ------------------------------------------------------------------------------------ |
 | `extensions.voice.defaultVoiceId` | string | -       | Default saved voice ID used by the sample voice extension. See [`tts.md`](./tts.md). |
+
+There is no Oppi flag for MCP, codemode, or tool search. Managed host sessions always load Pi's `mcp`, `codemode`, and `tool-search` built-ins, and `-builtin:<name>` in Pi's `extensions` setting turns one off. Sandbox workspaces and terminal-owned mirror sessions never load them. See [server configuration](../../docs/server-configuration.md#mcp-servers-codemode-and-tool-search).
 
 ## Extension UI compatibility
 

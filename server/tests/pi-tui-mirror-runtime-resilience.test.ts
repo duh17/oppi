@@ -182,6 +182,7 @@ function makeHarness(root: string) {
     getCurrentSeq: vi.fn(() => 0),
     getCatchUp: vi.fn(() => null),
     subscribe: vi.fn(() => () => {}),
+    subscribeStartupUI: vi.fn(() => () => {}),
     getPendingUIRequestMessages: vi.fn(() => []),
     isActive: vi.fn(() => false),
     isSessionConnected: vi.fn(() => false),

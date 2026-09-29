@@ -2,6 +2,7 @@ import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { existsSync, statSync } from "node:fs";
 
 import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
+import { availableHostMcpBuiltinNames } from "./host-mcp-extensions.js";
 import { mintSessionId } from "./id.js";
 import { AgentConfigurationError, type AgentConfigurationFailure } from "./agent-launch-errors.js";
 import {
@@ -545,8 +546,20 @@ export class AgentLaunchService {
       );
     }
     const agentDir = getAgentDir();
+    // Availability-only preflight: resolve without executing factories or installing
+    // missing packages. Start separately resolves trust and rejects unavailable
+    // project selections before loading them (fail-closed, possibly after preflight).
     const settingsManager = SettingsManager.create(hostCwd, agentDir);
-    await resolveSelectedAgentExtensionPaths(extensionIds, hostCwd, agentDir, settingsManager);
+    await resolveSelectedAgentExtensionPaths(
+      extensionIds,
+      hostCwd,
+      agentDir,
+      settingsManager,
+      availableHostMcpBuiltinNames({
+        sandbox: request.target.workspace.runtime === "sandbox",
+        managed: true,
+      }),
+    );
   }
 
   private markLaunchComplete(

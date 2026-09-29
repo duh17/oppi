@@ -21,6 +21,7 @@ import type {
   SessionPromptCacheWarmer,
   ServerMessage,
   Workspace,
+  ServerConfig,
 } from "./types.js";
 import type { Storage } from "./storage.js";
 import { WorkspaceRuntime, resolveRuntimeLimits } from "./workspace-runtime.js";
@@ -40,6 +41,8 @@ import {
   cancelPendingAskRequest,
   handleExtensionUIRequest,
   respondToExtensionUIRequest,
+  settleExtensionUIRequest,
+  type ExtensionUIState,
   type ExtensionUIResponse,
 } from "./extension-ui-state.js";
 import type { SearchIndex } from "./search-index.js";
@@ -49,6 +52,7 @@ import { SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS, SdkBackend } from "./sdk-backend.js";
 import type { LiveEntryRendererSet } from "./trace.js";
 import type { SessionStopTimers } from "./session-stop.js";
 import { notifySandboxWorkspaceActivity } from "./workspace-sandbox-lifecycle.js";
+import type { SdkUiBridge } from "./sdk-ui-bridge.js";
 
 const log = createLogger({ base: { component: "sessions" } });
 
@@ -75,6 +79,9 @@ type ActiveSession = SessionStartActiveSession;
 export class SessionManager extends EventEmitter implements AgentRuntimeTransport {
   private storage: Storage;
   private active: Map<string, ActiveSession> = new Map();
+  private readonly config: ServerConfig;
+  private readonly startupUI = new Map<string, { bridge: SdkUiBridge; state: ExtensionUIState }>();
+  private readonly startupUISubscribers = new Map<string, Set<(message: ServerMessage) => void>>();
 
   /** Injected by the server to resolve context window for a model ID. */
   contextWindowResolver: ((modelId: string) => number) | null = null;
@@ -109,6 +116,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     this.storage = storage;
     if (metrics) this.opsMetrics = metrics;
     const config = storage.getConfig();
+    this.config = config;
     const runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(config));
     this.mobileRenderers = new MobileRendererRegistry();
     const eventRingCapacity = parsePositiveIntEnv("OPPI_SESSION_EVENT_RING_CAPACITY", 500);
@@ -129,6 +137,22 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       getSkillPathResolver: () => this.skillPathResolver,
       emitSessionEvent: (payload) => this.emit("session_event", payload),
       onPiEvent: (key, event) => this.handlePiEvent(key, event),
+      hasUI: (key) =>
+        (this.startupUISubscribers.get(key)?.size ?? 0) > 0 ||
+        (this.active.get(key)?.subscribers.size ?? 0) > 0,
+      onUIBridgeReady: (key, bridge) => {
+        if (bridge)
+          this.startupUI.set(key, {
+            bridge,
+            state: { session: { id: key }, pendingUIRequests: new Map() },
+          });
+        else if (!this.startupUI.get(key)?.state.pendingUIRequests.size) this.startupUI.delete(key);
+      },
+      takeStartupUIRequests: (key) => {
+        const requests = this.startupUI.get(key)?.state.pendingUIRequests;
+        this.startupUI.delete(key);
+        return requests;
+      },
       onSessionEnd: (key, reason, stopConfirmationReason) =>
         this.handleSessionEnd(key, reason, stopConfirmationReason),
       persistSessionNow: (key, session) => this.persistSessionNow(key, session),
@@ -155,6 +179,34 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     this.agentEventCoordinator = bundle.agentEventCoordinator;
     this.stopFlowCoordinator = bundle.stopFlowCoordinator;
     this.ensureMobileRenderersLoaded();
+  }
+
+  /** Focused streams can relay startup dialogs before the SDK runtime exists. */
+  subscribeStartupUI(sessionId: string, send: (message: ServerMessage) => void): () => void {
+    let subscribers = this.startupUISubscribers.get(sessionId);
+    if (!subscribers) {
+      subscribers = new Set();
+      this.startupUISubscribers.set(sessionId, subscribers);
+    }
+    subscribers.add(send);
+    const state = this.startupUI.get(sessionId)?.state;
+    if (state)
+      for (const message of buildPendingExtensionUIRequestMessages(state)) {
+        send({ ...message, sessionId });
+      }
+    let detached = false;
+    return () => {
+      if (detached) return;
+      detached = true;
+      subscribers.delete(send);
+      if (subscribers.size === 0 && this.startupUISubscribers.get(sessionId) === subscribers)
+        this.startupUISubscribers.delete(sessionId);
+    };
+  }
+
+  private broadcastStartupUI(key: string, message: ServerMessage): void {
+    for (const send of this.startupUISubscribers.get(key) ?? [])
+      send({ ...message, sessionId: key });
   }
 
   get mobileRenderer(): Pick<MobileRendererRegistry, "renderCall" | "renderResult"> {
@@ -221,6 +273,19 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   /** Process a pi agent event from the SDK subscribe callback. */
   private handlePiEvent(key: string, data: SessionBackendEvent): void {
     try {
+      const startup = !this.active.has(key) ? this.startupUI.get(key) : undefined;
+      if (startup && data.type === "extension_ui_request") {
+        handleExtensionUIRequest(startup.state, data, {
+          broadcast: (message) => this.broadcastStartupUI(key, message),
+        });
+        return;
+      }
+      if (startup && data.type === "extension_ui_request_settled") {
+        settleExtensionUIRequest(startup.state, data.id, {
+          broadcastSettled: (message) => this.broadcastStartupUI(key, message),
+        });
+        return;
+      }
       this.agentEventCoordinator.handlePiEvent(key, data);
     } catch (error: unknown) {
       log.error("sessions.pi_event_handler.failed", {
@@ -242,7 +307,11 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const key = this.sessionKey(sessionId);
     const active = this.active.get(key);
     if (!active) {
-      return false;
+      const startup = this.startupUI.get(key);
+      return respondToExtensionUIRequest(startup?.state, response, {
+        deliver: (payload) => startup?.bridge.respond(payload) ?? false,
+        broadcastSettled: (message) => this.broadcastStartupUI(key, message),
+      });
     }
     return respondToExtensionUIRequest(active, response, {
       metrics: this.opsMetrics ?? undefined,

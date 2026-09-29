@@ -97,6 +97,38 @@ Useful companion docs:
 
 Provider API keys use `pi auth`, not Oppi config.
 
+## MCP servers, codemode, and tool search
+
+Pi 0.99 ships built-in MCP, `codemode`, and `tool-search` extensions. Managed sessions in **host** workspaces load all three by default, like a Pi CLI session. There is no Oppi config flag for this. Sessions pick the built-ins up when they start.
+
+Oppi follows Pi's own setup:
+
+- Servers come from Pi's global `~/.pi/agent/mcp.json` (and a project `.pi/mcp.json` once Pi trusts the project). Credentials live in Pi's `~/.pi/agent/mcp-auth.json`. Oppi keeps no second store.
+- Tools are named `mcp__<server>__<tool>` and follow each server's `exposure` setting (`codemode` by default, so tools are reached through the `codemode` tool). Every call, including calls made from codemode scripts, goes through the normal tool pipeline, so permission extensions apply.
+- `"extensions": ["-builtin:mcp"]` (or `-builtin:codemode`, `-builtin:tool-search`) in Pi settings turns one off in discovery mode. An exact-selection Agent that explicitly selects a built-in overrides this exclusion.
+- Stdio servers run as processes on the host with your authority. Configure only servers you trust. A normal session stop closes its stdio servers. If another extension's shutdown handler hangs past five seconds, Oppi force-disposes the session and Pi does not get to close MCP servers, so a stdio server can outlive the session; stop it from a host shell.
+
+Limits:
+
+- **Sandbox workspaces never load these extensions.** MCP would connect and spawn host processes before any approval, which is not confinement.
+- Terminal-owned Pi mirror sessions are untouched.
+- Oppi never opens a browser on the host for MCP sign-in. Sign in from a host shell with `pi mcp login <server>`; a running session picks up the new credentials on its next turn. In-session `/mcp login <server>` shows the authorization URL in a phone notification and accepts a pasted redirect URL through an input dialog. It holds that session's prompt while waiting. Pi's five-minute callback timeout ends the wait and aborts the paste dialog; the input itself has no separate timeout and can be dismissed. This fallback has not been tested against a live OAuth provider; Oppi has no dedicated phone MCP sign-in flow.
+- A saved Agent with an exact Extension selection loads a built-in only if it selects `builtin:mcp`, `builtin:codemode`, or `builtin:tool-search` in `resources.extensionIds` (for example `oppi agent create --extensions builtin:mcp,builtin:codemode`). In a sandbox workspace, such a selection makes the launch fail as an unavailable Extension.
+
+### Project trust in managed host sessions
+
+Before loading protected project resources, Oppi checks user-level `project_trust` extension handlers, then Pi's saved decisions in `~/.pi/agent/trust.json` (the closest parent wins), then the agent-directory `defaultProjectTrust` setting. `always` allows and `never` declines when no earlier decision applies.
+
+An Agent with an exact Extension selection runs only its selected user-level handlers in the trust bootstrap. Project extensions cannot run until trust is resolved. Agent launch preflight checks Extension availability without executing factories or installing missing packages, using project settings as if trusted. This is an availability check, not a trust grant: start resolves trust and rejects unavailable project selections before loading them. Such a launch fails closed, but its error can arrive after preflight.
+
+With `ask`, the phone shows **Trust (remember)**, **Trust this session**, or **Don't trust (remember)**. Remembered choices use Pi's store, shared with the CLI. Dismissal or no answer within 15 seconds allows this session without saving a decision.
+
+Only a start that has a phone attached before the runtime starts can prompt: opening a new or stopped session through the focused stream. Every other start is headless and uses a remembered decision, or allows without prompting when none exists. That covers Resume (`POST /sessions/:id/resume`, including the phone Resume button), Resume after a server restart, and scheduled and `oppi session` starts. A headless allow is not remembered.
+
+Session-only decisions persist through `/reload`, and a new runtime resolves trust again. A project with no protected resources needs no decision. If an agent or you add one during a session (for example `.pi/mcp.json`), the next `/reload` resolves trust before loading it.
+
+Trust protects `.pi/settings.json`, `.pi/mcp.json`, `.pi/extensions`, `.pi/skills`, `.pi/prompts`, `.pi/themes`, `.pi/SYSTEM.md`, `.pi/APPEND_SYSTEM.md`, and project `.agents/skills`. A bare `.pi` folder does not trigger the prompt. Context files such as `AGENTS.md` still load. Oppi creates or reopens the session file before resolving trust; it does not use the project's `sessionDir` setting for that lookup. Trust controls resource loading, not tool permissions or filesystem confinement. Sandbox and terminal-owned mirror behavior is unchanged.
+
 ## Common operator keys
 
 | Key                                     | Notes                                                               |
