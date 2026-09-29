@@ -91,6 +91,7 @@ extension ChatTimelineCollectionHost.Controller {
         // Unified native markdown renderer — handles all content (plain
         // text, rich markdown, code blocks, tables) via
         // AssistantMarkdownContentView.
+        let sessionContent = connection?.sessionContent
         let sourceSession = connection?.sessionStore.session(id: sessionId)
         let sourceWorkspaceRuntime: WorkspaceRuntime? = {
             guard let connection, let workspaceId else { return nil }
@@ -141,9 +142,9 @@ extension ChatTimelineCollectionHost.Controller {
                 }
             },
             fetchSessionFile: nil,
-            fetchHostFile: connection.map { connection in
+            fetchHostFile: sessionContent.map { content in
                 return { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] path in
-                    try await connection.fetchHostFileWhenReady(
+                    try await content.fetchHostFile(
                         path: path,
                         workspaceId: workspaceId,
                         sessionId: sessionId,
@@ -152,9 +153,9 @@ extension ChatTimelineCollectionHost.Controller {
                     )
                 }
             },
-            makeMarkdownVideoSource: connection.map { connection in
+            makeMarkdownVideoSource: sessionContent.map { content in
                 { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] embed in
-                    try await connection.makeMarkdownVideoMediaSourceWhenReady(
+                    try await content.makeMarkdownVideoMediaSource(
                         embed: embed,
                         workspaceId: workspaceId,
                         sessionId: sessionId,
@@ -163,9 +164,9 @@ extension ChatTimelineCollectionHost.Controller {
                     )
                 }
             },
-            makeMarkdownAudioSource: connection.map { connection in
+            makeMarkdownAudioSource: sessionContent.map { content in
                 { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] embed in
-                    try await connection.makeMarkdownAudioMediaSourceWhenReady(
+                    try await content.makeMarkdownAudioMediaSource(
                         embed: embed,
                         workspaceId: workspaceId,
                         sessionId: sessionId,
@@ -174,9 +175,9 @@ extension ChatTimelineCollectionHost.Controller {
                     )
                 }
             },
-            makeMarkdownUSDZFile: connection.map { connection in
+            makeMarkdownUSDZFile: sessionContent.map { content in
                 { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] embed in
-                    try await connection.makeMarkdownUSDZFileWhenReady(
+                    try await content.makeMarkdownUSDZFile(
                         embed: embed,
                         workspaceId: workspaceId,
                         sessionId: sessionId,
@@ -185,9 +186,9 @@ extension ChatTimelineCollectionHost.Controller {
                     )
                 }
             },
-            makeTimedTextSidecar: connection.map { connection in
+            makeTimedTextSidecar: sessionContent.map { content in
                 { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] mediaPath, kind, reference in
-                    await connection.loadTimedTextSidecarWhenReady(
+                    await content.loadTimedTextSidecar(
                         mediaPath: mediaPath,
                         kind: kind,
                         reference: reference,
@@ -552,20 +553,21 @@ extension ChatTimelineCollectionHost.Controller {
         )
 
         let interactionCtx = self.interactionContext
+        let sessionContent = connection?.sessionContent
         // Stored tool attachments belong to the session, not its workspace path.
         // Keep their fetchers available while workspace metadata is still resolving.
-        let attachmentFetcher: ((String) async throws -> Data)? = connection.map { connection in
+        let attachmentFetcher: ((String) async throws -> Data)? = sessionContent.map { content in
             { [sessionId, routeScope] attachmentId in
-                try await connection.fetchSessionAttachmentWhenReady(
+                try await content.fetchSessionAttachment(
                     sessionId: sessionId,
                     attachmentId: attachmentId,
                     routeScope: routeScope
                 )
             }
         }
-        let attachmentMediaSourceProvider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)? = connection.map { connection in
+        let attachmentMediaSourceProvider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)? = sessionContent.map { content in
             { [sessionId, routeScope] attachmentId, mimeType, sourceFileExtension in
-                try await connection.makeSessionAttachmentMediaSourceWhenReady(
+                try await content.makeSessionAttachmentMediaSource(
                     sessionId: sessionId,
                     attachmentId: attachmentId,
                     contentTypeHint: mimeType,
@@ -576,19 +578,19 @@ extension ChatTimelineCollectionHost.Controller {
         }
         // Session-file rows can be created from cached trace data before the API client or
         // session workspace metadata is ready. Resolve both when the row actually fetches.
-        let sessionFileDataFetcher: ((String) async throws -> Data)? = connection.map { connection in
+        let sessionFileDataFetcher: ((String) async throws -> Data)? = sessionContent.map { content in
             { [sessionId, workspaceId] path in
-                try await connection.fetchSessionFileDataWhenReady(
+                try await content.fetchSessionFileData(
                     workspaceId: workspaceId,
                     sessionId: sessionId,
                     path: path
                 )
             }
         }
-        let sessionFileMediaSourceProvider: ((String) async throws -> AuthenticatedMediaSource)? = connection.map { connection in
+        let sessionFileMediaSourceProvider: ((String) async throws -> AuthenticatedMediaSource)? = sessionContent.map { content in
             { [sessionId, workspaceId] path in
                 let pathExtension = (path as NSString).pathExtension
-                return try await connection.makeSessionFileMediaSourceWhenReady(
+                return try await content.makeSessionFileMediaSource(
                     workspaceId: workspaceId,
                     sessionId: sessionId,
                     path: path,
@@ -629,9 +631,9 @@ extension ChatTimelineCollectionHost.Controller {
                 )
             }
         }
-        let fetchHostFile: ((_ path: String) async throws -> Data)? = connection.map { connection in
+        let fetchHostFile: ((_ path: String) async throws -> Data)? = sessionContent.map { content in
             return { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] path in
-                try await connection.fetchHostFileWhenReady(
+                try await content.fetchHostFile(
                     path: path,
                     workspaceId: workspaceId,
                     sessionId: sessionId,
