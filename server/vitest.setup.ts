@@ -25,6 +25,17 @@ export function sanitizeGitLocalEnvironment(
   }
 }
 
+/**
+ * OPPI_TAILSCALE_BIN redirects every `tailscale` lookup. A developer who exports
+ * it for the macOS app CLI would make in-process tests bypass their fake-PATH
+ * setups and run `<bin> cert` for real. Tests that need a specific binary set it
+ * themselves; CLI spawns get a stopped fake from tests/harness/cli-process.ts.
+ */
+export function clearTailscaleBinaryOverride(environment: NodeJS.ProcessEnv): void {
+  delete environment.OPPI_TAILSCALE_BIN;
+}
+clearTailscaleBinaryOverride(process.env);
+
 const gitLocalVariableNames = execFileSync("git", ["rev-parse", "--local-env-vars"], {
   encoding: "utf8",
 })

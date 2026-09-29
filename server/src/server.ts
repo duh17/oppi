@@ -902,6 +902,11 @@ export class Server {
 
   async start(): Promise<void> {
     const config = this.storage.getConfig();
+    const invalidTls = this.storage.describeInvalidTlsConfig();
+    // An invalid on-disk TLS block cannot opt into plaintext, even via a proxy.
+    if (invalidTls && !isLoopbackBindHost(normalizeBindHost(config.host))) {
+      throw new Error(invalidTls);
+    }
     const startupSecurityError = validateStartupSecurityConfig(config);
     if (startupSecurityError) {
       throw new Error(startupSecurityError);

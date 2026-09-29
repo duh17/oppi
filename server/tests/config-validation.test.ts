@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Storage } from "../src/storage.js";
+import { ConfigStore } from "../src/storage/config-store.js";
 
 describe("Storage config validation", () => {
   let dir: string;
@@ -28,8 +29,20 @@ describe("Storage config validation", () => {
     expect(result.config?.runtimePathEntries?.length).toBeGreaterThan(0);
     expect(result.config?.oppiDocsPrompt?.enabled).toBe(true);
     expect(result.config?.oppiCliPrompt?.enabled).toBe(true);
-    expect(result.config?.tls?.mode).toBe("self-signed");
+    // New configs leave TLS undecided; first `init`/`serve`/`pair` chooses it.
+    expect(result.config?.tls?.mode).toBe("disabled");
     expect(result.config?.images?.autoResize).toBe(false);
+  });
+
+  it("backfills self-signed TLS for a paired config that predates the tls key", () => {
+    const { tls: _tls, ...legacy } = Storage.getDefaultConfig(dir);
+    const paired = Storage.validateConfig({ ...legacy, token: "sk_legacy" }, dir, false);
+    expect(paired.valid).toBe(true);
+    expect(paired.config?.tls?.mode).toBe("self-signed");
+
+    // Never served: no token, so the first serve/pair/init still decides.
+    const unpaired = Storage.validateConfig(legacy, dir, false);
+    expect(unpaired.config?.tls?.mode).toBe("disabled");
   });
 
   it("rejects unknown top-level keys in strict mode", () => {
@@ -42,6 +55,33 @@ describe("Storage config validation", () => {
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.includes("config.unknownKey: unknown key"))).toBe(true);
   });
+
+  it.each([
+    { mode: "cloudflare" },
+    { mode: "self-signed", certPath: "" },
+    { mode: "disabled", certPath: "", allowInsecureNetworkHttp: true },
+  ])(
+    "preserves an invalid tls block across unrelated writes until tls is fixed: %j",
+    (invalidTls) => {
+      const configPath = join(dir, "config.json");
+      writeFileSync(configPath, JSON.stringify({ token: "sk_invalid_tls", tls: invalidTls }));
+
+      const store = new ConfigStore(dir);
+      expect(store.getConfig().tls).toEqual({ mode: "disabled" });
+      store.mutate(() => ({ maxSessionsGlobal: 7 }));
+      const persisted = JSON.parse(readFileSync(configPath, "utf8"));
+      expect(persisted.tls).toEqual(invalidTls);
+      expect(persisted.maxSessionsGlobal).toBe(7);
+
+      const reloaded = new ConfigStore(dir);
+      expect(reloaded.getConfig().tls).toEqual({ mode: "disabled" });
+      expect(reloaded.describeInvalidTlsConfig()).toContain("config.tls");
+      reloaded.mutate(() => ({ tls: { mode: "self-signed" } }));
+      expect(JSON.parse(readFileSync(configPath, "utf8")).tls).toEqual({ mode: "self-signed" });
+      expect(reloaded.describeInvalidTlsConfig()).toBeNull();
+      expect(new ConfigStore(dir).describeInvalidTlsConfig()).toBeNull();
+    },
+  );
 
   it("accepts tls self-signed config", () => {
     const raw = {

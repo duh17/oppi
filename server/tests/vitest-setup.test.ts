@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { sanitizeGitLocalEnvironment } from "../vitest.setup.ts";
+import { clearTailscaleBinaryOverride, sanitizeGitLocalEnvironment } from "../vitest.setup.ts";
 
 describe("Vitest Git environment isolation", () => {
   it("removes repository routing without discarding unrelated Git identity", () => {
@@ -20,5 +20,18 @@ describe("Vitest Git environment isolation", () => {
       PATH: "/usr/bin",
       GIT_AUTHOR_NAME: "Expected Committer",
     });
+  });
+});
+
+describe("Vitest Tailscale isolation", () => {
+  it("drops an exported OPPI_TAILSCALE_BIN and keeps PATH", () => {
+    const environment: NodeJS.ProcessEnv = {
+      PATH: "/usr/bin",
+      OPPI_TAILSCALE_BIN: "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+    };
+
+    clearTailscaleBinaryOverride(environment);
+
+    expect(environment).toEqual({ PATH: "/usr/bin" });
   });
 });

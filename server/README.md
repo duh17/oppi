@@ -12,7 +12,7 @@ oppi --version
 oppi serve
 ```
 
-On the first `serve`, Oppi creates `~/.config/oppi/`, generates owner credentials, starts the local CLI API at `~/.config/oppi/run/oppi.sock`, bootstraps remote HTTPS/WSS with `tls.mode=self-signed`, and prints a pairing QR and invite link for the iPhone/iPad app. Use `oppi pair` later to generate a fresh single-use invite.
+On the first `serve`, Oppi creates `~/.config/oppi/`, generates owner credentials, starts the local CLI API at `~/.config/oppi/run/oppi.sock`, bootstraps remote HTTPS/WSS (`tls.mode=tailscale` when `tailscale cert` can issue a certificate for this machine, otherwise `tls.mode=self-signed`), and prints a pairing QR and invite link for the iPhone/iPad app. Use `oppi pair` later to generate a fresh single-use invite.
 
 Upgrade or uninstall the global CLI with npm:
 

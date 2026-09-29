@@ -176,6 +176,7 @@ describe("POST /pair/tailscale", () => {
     delete process.env.OPPI_TEST_SELF_STABLE_ID;
     delete process.env.OPPI_TEST_PEER_STABLE_ID;
     delete process.env.OPPI_TEST_CERT_LOG;
+    delete process.env.OPPI_TAILSCALE_BIN;
     if (server) {
       await server.stop().catch(() => {});
       server = undefined;
@@ -247,6 +248,20 @@ describe("POST /pair/tailscale", () => {
         expect(body.host).toBe("mac.tail1234.ts.net");
         expect(storage.getConfig().pairingToken).toBe(body.pairingToken);
         expect(certLogContents(certLog)).toBe(certBefore);
+      });
+
+      it("runs the identity proof through OPPI_TAILSCALE_BIN when tailscale is not on PATH", async () => {
+        await startServer("tailscale");
+        process.env.PATH = "/usr/bin:/bin";
+        process.env.OPPI_TAILSCALE_BIN = join(fakeBinDir, "tailscale");
+        const res = await httpsJSON(`https://127.0.0.1:${server!.port}/pair/tailscale`, {
+          method: "POST",
+          body: {},
+        });
+        expect(res.status).toBe(200);
+        expect(typeof (JSON.parse(res.body) as { pairingToken?: string }).pairingToken).toBe(
+          "string",
+        );
       });
 
       it("rejects the server's own Tailscale IP even when its login matches", async () => {

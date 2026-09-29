@@ -1,14 +1,14 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { hostname as osHostname, networkInterfaces } from "node:os";
 
 import * as c from "../ansi.js";
-import { tlsSchemeForConfig } from "../tls.js";
+import { tailscaleBinary, tlsSchemeForConfig } from "../tls.js";
 import type { CliConnectionConfig } from "./connection-config.js";
 import { captureHumanCliOutput, writeHumanLine, writeJsonEnvelope } from "./output.js";
 
 export function getTailscaleHostname(): string | null {
   try {
-    const result = execSync("tailscale status --json", {
+    const result = execFileSync(tailscaleBinary(), ["status", "--json"], {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -23,7 +23,10 @@ export function getTailscaleHostname(): string | null {
 export function getTailscaleIp(): string | null {
   try {
     return (
-      execSync("tailscale ip -4", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] })
+      execFileSync(tailscaleBinary(), ["ip", "-4"], {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      })
         .trim()
         .split("\n")[0] ?? null
     );

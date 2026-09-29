@@ -251,6 +251,10 @@ export class Storage {
     return this.configStore.getConfig();
   }
 
+  describeInvalidTlsConfig(): string | null {
+    return this.configStore.describeInvalidTlsConfig();
+  }
+
   getConfigPath(): string {
     return this.configStore.getConfigPath();
   }

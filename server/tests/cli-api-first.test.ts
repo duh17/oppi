@@ -1,24 +1,16 @@
 import { execFile } from "node:child_process";
 import { createServer as createHttpServer, type ServerResponse } from "node:http";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { OPPI_CALLER_SESSION_ID_ENV } from "../src/session-caller-identity.js";
 import { openDatabase } from "../src/sqlite-compat.js";
 import { ConfigStore } from "../src/storage/config-store.js";
+import { CLI, cliSpawnEnv } from "./harness/cli-process.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
-
-const CLI = process.env.OPPI_TEST_CLI ?? resolve(__dirname, "../dist/src/cli.js");
 
 function writeCliConfig(dataDir: string): void {
   mkdirSync(dataDir, { recursive: true });
@@ -37,7 +29,7 @@ function sessionStateDbFiles(dataDir: string): string[] {
 }
 
 function cliProcessEnv(dataDir: string, env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const next: NodeJS.ProcessEnv = { ...process.env, OPPI_DATA_DIR: dataDir, ...env };
+  const next: NodeJS.ProcessEnv = { ...cliSpawnEnv(), OPPI_DATA_DIR: dataDir, ...env };
   if (env?.[OPPI_CALLER_SESSION_ID_ENV] === undefined) {
     delete next[OPPI_CALLER_SESSION_ID_ENV];
   }
@@ -451,10 +443,7 @@ describe("CLI app-state API boundary", () => {
     await withOrchApi(
       (res) => sendJson(res, { messages: [] }),
       async ({ dataDir, requests }) => {
-        await runCliResult(
-          ["session", "send", "sess-1", "--text", "default", "--json"],
-          dataDir,
-        );
+        await runCliResult(["session", "send", "sess-1", "--text", "default", "--json"], dataDir);
         await runCliResult(
           ["session", "send", "sess-1", "--text", "hi", "--steer", "--json"],
           dataDir,

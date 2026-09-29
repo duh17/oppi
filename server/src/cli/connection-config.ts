@@ -17,6 +17,8 @@ export interface CliConnectionConfig extends LocalApiConnection {
 
 export interface CliConfigStorage extends CliConnectionConfig {
   updateConfig(updates: Partial<ServerConfig>): void;
+  /** Locked read/merge/write against the latest disk snapshot. */
+  mutateConfig(mutator: (latest: ServerConfig) => Partial<ServerConfig>): ServerConfig;
   ensurePaired(): string;
   rotateToken(): string;
   issuePairingToken(ttlMs?: number): string;
@@ -32,8 +34,6 @@ export interface CliConfigCommandStorage extends CliConfigStorage {
   getDefaultConfig(): ServerConfig;
   /** Validate a config file at an explicit path, defaulting to the storage config path. */
   validateConfigFile(target?: string): ConfigValidationResult;
-  /** Locked read/merge/write against the latest disk snapshot. */
-  mutateConfig(mutator: (latest: ServerConfig) => Partial<ServerConfig>): ServerConfig;
 }
 
 export class FileCliConnectionConfig implements CliConnectionConfig {

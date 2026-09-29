@@ -28,6 +28,7 @@ describe("startup security validation", () => {
     const config = Storage.getDefaultConfig("/tmp/oppi-startup-security-token");
     config.host = "0.0.0.0";
     config.token = "sk_test_token";
+    config.tls = { mode: "self-signed" };
 
     const error = validateStartupSecurityConfig(config);
     expect(error).toBeNull();

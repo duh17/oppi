@@ -17,7 +17,7 @@ import { execFile } from "node:child_process";
 import { isIP } from "node:net";
 
 import { ipMatchesCidrs, normalizeIp } from "./proxy-config.js";
-import { isTailscaleHostname } from "./tls.js";
+import { isTailscaleHostname, tailscaleBinary } from "./tls.js";
 import type { TlsMode } from "./types.js";
 
 const TAILSCALE_TIMEOUT_MS = 10_000;
@@ -225,7 +225,7 @@ function runTailscale(
 ): Promise<{ ok: true; stdout: string } | { ok: false; reason: string }> {
   return new Promise((resolve) => {
     execFile(
-      "tailscale",
+      tailscaleBinary(),
       args,
       {
         encoding: "utf-8",

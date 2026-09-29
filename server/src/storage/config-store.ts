@@ -82,7 +82,9 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     oppiCliPrompt: {
       enabled: true,
     },
-    tls: { mode: "self-signed" },
+    // New hosts leave TLS undecided; the first `oppi init`, `oppi serve`, or
+    // `oppi pair` picks Tailscale when a certificate is available, else self-signed.
+    tls: { mode: "disabled" },
     providerQuotas: {
       openaiUseCodexPlan: false,
     },
@@ -103,11 +105,12 @@ function normalizeConfig(
   raw: unknown,
   dataDir: string,
   strictUnknown: boolean,
-): ConfigValidationResult & { config: ServerConfig; changed: boolean } {
+): ConfigValidationResult & { config: ServerConfig; changed: boolean; invalidTls?: unknown } {
   const defaults = createDefaultConfig(dataDir);
   const errors: string[] = [];
   const warnings: string[] = [];
   let changed = false;
+  let invalidTls: unknown;
 
   const config: ServerConfig = {
     ...defaults,
@@ -419,11 +422,21 @@ function normalizeConfig(
   };
 
   if ("tls" in obj) {
+    const errorsBeforeTls = errors.length;
     const parsed = parseTlsConfig(obj.tls, "config.tls");
-    if (parsed) {
+    if (errors.length > errorsBeforeTls) {
+      invalidTls = obj.tls;
+    } else if (parsed) {
       config.tls = parsed;
     }
   } else {
+    // A paired config without `tls` predates the TLS key and was always
+    // backfilled to self-signed. Keep that: the new-config `disabled` default
+    // would make an already-served host refuse to bind until the operator sets
+    // a mode by hand. An unpaired one has not chosen yet, so `disabled` stays.
+    if (typeof obj.token === "string" && obj.token.length > 0) {
+      config.tls = { mode: "self-signed" };
+    }
     changed = true;
   }
 
@@ -842,7 +855,7 @@ function normalizeConfig(
     }
   }
 
-  return { valid: errors.length === 0, errors, warnings, config, changed };
+  return { valid: errors.length === 0, errors, warnings, config, changed, invalidTls };
 }
 
 function isLivePid(pid: number): boolean {
@@ -912,6 +925,7 @@ export class ConfigStore {
   private readonly configPath: string;
   private readonly workspacesDir: string;
   private config: ServerConfig;
+  private invalidTlsOnDisk: unknown;
 
   constructor(dataDir: string = DEFAULT_DATA_DIR) {
     this.dataDir = dataDir;
@@ -920,6 +934,22 @@ export class ConfigStore {
 
     this.ensureDirectories();
     this.config = this.loadConfig();
+  }
+
+  /**
+   * Explanation when config.json holds a `tls` block that failed validation.
+   * Loading falls back to the `disabled` default for it; startup must say why
+   * TLS is off instead of reporting only "TLS disabled".
+   */
+  describeInvalidTlsConfig(): string | null {
+    const result = ConfigStore.validateConfigFile(this.configPath, this.dataDir, false);
+    const tlsErrors = result.errors.filter((error) => error.includes("config.tls"));
+    if (tlsErrors.length === 0) return null;
+    return (
+      `${tlsErrors.join("; ")}. The invalid tls block loads as tls.mode=disabled, so the server ` +
+      "will not start. Fix it with `oppi config set tls.mode self-signed` " +
+      "(or tailscale, manual, disabled)."
+    );
   }
 
   private ensureDirectories(): void {
@@ -996,6 +1026,7 @@ export class ConfigStore {
         throw new Error(`${this.configPath}: invalid JSON (${message})`, { cause: err });
       }
 
+      this.invalidTlsOnDisk = normalized.invalidTls;
       for (const err of normalized.errors) {
         log.warn("config_store.field.invalid", {
           issue: err,
@@ -1038,6 +1069,7 @@ export class ConfigStore {
           this.saveConfig(normalized.config);
         }
         this.config = normalized.config;
+        this.invalidTlsOnDisk = normalized.invalidTls;
         return this.config;
       }
       if (!options.createIfMissing) {
@@ -1062,7 +1094,7 @@ export class ConfigStore {
     }
   }
 
-  private saveConfig(config: ServerConfig): void {
+  private saveConfig(config: Omit<ServerConfig, "tls"> & { tls?: unknown }): void {
     const temporaryPath = join(this.dataDir, `.config.${process.pid}.${randomUUID()}.tmp`);
     let fileDescriptor: number | undefined;
     let directoryDescriptor: number | undefined;
@@ -1124,7 +1156,9 @@ export class ConfigStore {
 
   private reloadFromDisk(): void {
     if (!existsSync(this.configPath)) return;
-    this.config = this.readAuthoritativeConfig().config;
+    const normalized = this.readAuthoritativeConfig();
+    this.config = normalized.config;
+    this.invalidTlsOnDisk = normalized.invalidTls;
   }
 
   private commitUpdates(updates: Partial<ServerConfig>): ServerConfig {
@@ -1137,7 +1171,13 @@ export class ConfigStore {
     if (!normalized.valid) {
       throw new Error(`Invalid config update: ${normalized.errors.join("; ")}`);
     }
-    this.saveConfig(normalized.config);
+    // An unrelated write must not erase the operator's block or startup diagnostic.
+    if (this.invalidTlsOnDisk !== undefined && !("tls" in updates)) {
+      this.saveConfig({ ...normalized.config, tls: this.invalidTlsOnDisk });
+    } else {
+      this.saveConfig(normalized.config);
+      this.invalidTlsOnDisk = undefined;
+    }
     this.config = normalized.config;
     return this.config;
   }

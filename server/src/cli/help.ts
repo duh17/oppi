@@ -132,7 +132,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--host", value: "<host>", summary: "hostname/IP encoded in first-run pairing QR" },
     ],
     notes: [
-      "On first run, serve creates owner credentials, enables self-signed TLS (unless publicUrl + proxy.trustedPeers configure a trusted HTTP reverse proxy), and prints a pairing QR.",
+      "On first run, serve creates owner credentials, enables TLS, and prints a pairing QR. It uses Tailscale TLS when `tailscale cert` can issue a certificate for this machine, otherwise self-signed TLS. It keeps any tls.mode other than disabled, and keeps disabled when publicUrl + proxy.trustedPeers configure a trusted HTTP reverse proxy.",
       "Press Ctrl+C to stop the foreground server.",
     ],
     examples: [{ command: "oppi serve" }, { command: "oppi serve --host mac-studio.local" }],

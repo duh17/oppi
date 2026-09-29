@@ -39,10 +39,34 @@ export interface TlsPreparationOptions {
 }
 
 export class TailscaleRemoteUnavailableError extends Error {
-  constructor(message: string) {
+  /** Short cause for one-line CLI output; `message` keeps the full detail. */
+  readonly reason: string;
+
+  constructor(message: string, reason: string = message) {
     super(message);
     this.name = "TailscaleRemoteUnavailableError";
+    this.reason = reason;
   }
+}
+
+/** `tailscale` failed; `detail` is its own stderr/stdout without our command line. */
+class TailscaleCommandError extends Error {
+  readonly detail: string;
+
+  constructor(message: string, detail: string, cause: unknown) {
+    super(message, { cause });
+    this.name = "TailscaleCommandError";
+    this.detail = detail;
+  }
+}
+
+/**
+ * Tailscale executable. Defaults to `tailscale` on PATH; OPPI_TAILSCALE_BIN
+ * selects another binary (the macOS app CLI is often not on PATH, and tests
+ * point it at a fake so no run can reach a real certificate authority).
+ */
+export function tailscaleBinary(): string {
+  return process.env.OPPI_TAILSCALE_BIN?.trim() || "tailscale";
 }
 
 interface SelfSignedPaths {
@@ -466,6 +490,9 @@ function ensureTailscaleMaterial(
           throw new TailscaleRemoteUnavailableError(
             `Unable to renew Tailscale TLS material and no usable existing certificate remains. ` +
               `Renewal error: ${errorMessage(renewalError)}. Existing material: ${errorMessage(existingError)}`,
+            renewalError instanceof TailscaleCommandError
+              ? renewalError.detail
+              : errorMessage(renewalError),
           );
         }
       }
@@ -887,9 +914,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function detectTailscaleHostname(): string | null {
+/** Live tailnet DNS name from `tailscale status --json`, or null when unavailable. */
+export function detectTailscaleHostname(): string | null {
   try {
-    const output = execFileSync("tailscale", ["status", "--json"], {
+    const output = execFileSync(tailscaleBinary(), ["status", "--json"], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 10_000,
@@ -911,7 +939,7 @@ function detectTailscaleHostname(): string | null {
 
 function runTailscale(args: string[]): void {
   try {
-    execFileSync("tailscale", args, {
+    execFileSync(tailscaleBinary(), args, {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 45_000,
     });
@@ -928,7 +956,7 @@ function runTailscale(args: string[]): void {
 
     const detail =
       stderr.trim() || stdout.trim() || (err instanceof Error ? err.message : String(err));
-    throw new Error(`tailscale ${args.join(" ")} failed: ${detail}`, { cause: err });
+    throw new TailscaleCommandError(`tailscale ${args.join(" ")} failed: ${detail}`, detail, err);
   }
 }
 

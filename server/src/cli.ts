@@ -9,7 +9,7 @@
 import * as c from "./ansi.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { renderTerminal as renderQR } from "./qr.js";
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { readFileSync, existsSync, rmdirSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { basename, dirname, join } from "node:path";
 import { runCli } from "./cli/runner.js";
@@ -31,9 +31,13 @@ import {
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import type { APNsConfig } from "./push.js";
 import {
+  detectTailscaleHostname,
+  isTailscaleHostname,
+  prepareTlsForServer,
   readCertificateExpiryMs,
   readCertificateFingerprint,
   resolveTlsConfig,
+  TailscaleRemoteUnavailableError,
   validateTailscaleMaterial,
 } from "./tls.js";
 import type { ServerConfig } from "./types.js";
@@ -118,20 +122,135 @@ function shortHostLabel(host: string): string {
   return host.split(".")[0] || host;
 }
 
+type FirstRunTlsMode = "tailscale" | "self-signed";
+
+/**
+ * TLS is still undecided: `disabled` (the new-config default), without an
+ * explicit insecure-HTTP opt-in or a trusted private-HTTP reverse proxy whose
+ * listener must stay plaintext. Any other mode is an explicit choice.
+ */
+function tlsUndecided(config: ServerConfig): boolean {
+  return (
+    (config.tls?.mode ?? "disabled") === "disabled" &&
+    config.tls?.allowInsecureNetworkHttp !== true &&
+    !allowsTrustedPrivateHttpBind(config)
+  );
+}
+
+/**
+ * Apply the configured host environment, then keep the npm bin directory that
+ * supplied this `oppi` executable first for managed host-session tools. `serve`,
+ * `pair`, and `init` all resolve `tailscale` through this same PATH, so they
+ * reach the same first-run TLS decision.
+ */
+function applyManagedHostEnv(config: ServerConfig): void {
+  applyHostEnv(config);
+  const invokedCli = process.argv[1];
+  if (invokedCli && basename(invokedCli) === "oppi") {
+    process.env.PATH = prependPathEntry(process.env.PATH, dirname(invokedCli));
+  }
+}
+
+function removeEmptyTailscaleTlsDirs(dataDir: string): void {
+  for (const dir of [join(dataDir, "tls", "tailscale"), join(dataDir, "tls")]) {
+    try {
+      rmdirSync(dir);
+    } catch {
+      // Missing, or it holds material worth keeping.
+    }
+  }
+}
+
+/**
+ * Whether `tailscale cert` (through the same renew/validate path the server
+ * uses) yields usable certificate material. A detected tailnet name alone is
+ * not enough: the command fails when tailnet HTTPS is off. Without a live node
+ * or an earlier certificate there is nothing to probe, so stay silent and leave
+ * no `tls/tailscale` directory behind.
+ */
+function probeTailscaleTls(
+  dataDir: string,
+  requestedHost: string | undefined,
+  bindHost: string,
+  log: (line: string) => void,
+): boolean {
+  const certPath = resolveTlsConfig({ tls: { mode: "tailscale" } }, dataDir).certPath;
+  if (!detectTailscaleHostname() && !(certPath && existsSync(certPath))) {
+    return false;
+  }
+
+  log(c.dim("  Checking Tailscale HTTPS certificate (can take up to a minute)..."));
+  try {
+    prepareTlsForServer({ tls: { mode: "tailscale" } }, dataDir, {
+      additionalHosts: requestedHost ? [requestedHost, bindHost] : [bindHost],
+    });
+    return true;
+  } catch (error: unknown) {
+    const reason =
+      error instanceof TailscaleRemoteUnavailableError ? error.reason : safeErrorMessage(error);
+    const firstLine = reason.split("\n")[0]?.trim() ?? "";
+    const short = firstLine.length > 160 ? `${firstLine.slice(0, 157)}...` : firstLine;
+    log(c.dim(`  Tailscale HTTPS not ready (${short}); using self-signed TLS`));
+    removeEmptyTailscaleTlsDirs(dataDir);
+    return false;
+  }
+}
+
+/**
+ * First-run TLS choice for a host whose TLS is still undecided. Returns the mode
+ * this call stored, or undefined when it stored nothing: a mode set by anyone
+ * else stays, including one written while the (slow) probe ran.
+ *
+ * Tailscale is skipped when the invite host cannot be a Tailnet name (publicUrl
+ * or a non-Tailnet --host), since tailscale mode requires a *.ts.net invite
+ * host. The probe runs outside the config lock; the write re-checks the latest
+ * disk config under it. Callers apply the managed host environment first.
+ */
+function chooseFirstRunTlsMode(
+  storage: CliConfigStorage,
+  pairHost: string | undefined,
+  log: (line: string) => void,
+): FirstRunTlsMode | undefined {
+  const snapshot = storage.getConfig();
+  if (!tlsUndecided(snapshot)) {
+    return undefined;
+  }
+
+  let mode: FirstRunTlsMode = "self-signed";
+  const requestedHost = pairHost?.trim();
+  if (
+    !snapshot.publicUrl &&
+    (!requestedHost || isTailscaleHostname(requestedHost)) &&
+    probeTailscaleTls(storage.getDataDir(), requestedHost, snapshot.host, log)
+  ) {
+    mode = "tailscale";
+  }
+
+  const stored: { mode?: FirstRunTlsMode } = {};
+  storage.mutateConfig((latest) => {
+    if (!tlsUndecided(latest)) {
+      return {};
+    }
+    stored.mode = mode;
+    return { tls: { mode } };
+  });
+  return stored.mode;
+}
+
 // ─── Commands ───
 
 async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   const wasPaired = storage.isPaired();
 
+  applyManagedHostEnv(storage.getConfig());
+
   // Auto-init: generate owner token + identity keys if this is a fresh install.
   if (!wasPaired) {
-    const current = storage.getConfig();
-    const currentTlsMode = current.tls?.mode ?? "disabled";
-    // Direct first-run keeps HTTPS. A configured trusted private-HTTP reverse
-    // proxy must stay plaintext so the listener matches publicUrl + trustedPeers.
-    if (currentTlsMode === "disabled" && !allowsTrustedPrivateHttpBind(current)) {
-      storage.updateConfig({ tls: { mode: "self-signed" } });
-      console.log(c.green("  ✓ First run — TLS mode set to self-signed"));
+    // Store the mode before new Server: Server.start validates TLS first.
+    // The local socket has no consumer before this host is paired.
+    const mode = chooseFirstRunTlsMode(storage, pairHost, console.log);
+    if (mode) {
+      console.log(c.green(`  ✓ First run — TLS mode set to ${mode}`));
     }
 
     storage.rotateToken();
@@ -140,14 +259,6 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
 
   const config = storage.getConfig();
-
-  // Apply the explicit host environment, then keep the npm bin directory that
-  // supplied this `oppi` executable first for managed host-session tools.
-  applyHostEnv(config);
-  const invokedCli = process.argv[1];
-  if (invokedCli && basename(invokedCli) === "oppi") {
-    process.env.PATH = prependPathEntry(process.env.PATH, dirname(invokedCli));
-  }
   const tailscaleHostname = getTailscaleHostname();
   const tailscaleIp = getTailscaleIp();
   const localHostname = getLocalHostname();
@@ -382,6 +493,8 @@ async function cmdPair(
   jsonOutput = false,
   ttl?: string,
 ): Promise<void> {
+  applyManagedHostEnv(storage.getConfig());
+
   let ttlMs: number | undefined;
   try {
     ttlMs = parsePairTtlMs(ttl);
@@ -389,6 +502,18 @@ async function cmdPair(
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`Error: ${message}\n`);
     process.exit(1);
+  }
+
+  // Pairing before the first serve decides TLS now, so the invite scheme and
+  // host match the listener that serve starts later.
+  if (!storage.isPaired()) {
+    const log = jsonOutput
+      ? (line: string) => process.stderr.write(`${line}\n`)
+      : (line: string) => console.log(line);
+    const mode = chooseFirstRunTlsMode(storage, hostOverride, log);
+    if (mode) {
+      log(c.green(`  ✓ First run — TLS mode set to ${mode}`));
+    }
   }
 
   if (jsonOutput) {
@@ -507,11 +632,17 @@ function cmdDoctor(storage: CliConnectionConfig): void {
 
   const tls = resolveTlsConfig(config, storage.getDataDir());
   if (!tls.enabled) {
+    // A never-served host still has the new-config default (`disabled`); the
+    // first serve/pair/init chooses Tailscale or self-signed, so say that
+    // instead of implying an operator turned TLS off.
+    const undecided = !loopback && !config.token && tlsUndecided(config);
     checks.push({
       level: loopback ? "pass" : "warn",
       message: loopback
         ? "TLS disabled (loopback-only bind)"
-        : `TLS disabled while binding to ${config.host}`,
+        : undecided
+          ? "TLS not chosen yet (the first `oppi serve`, `oppi pair`, or `oppi init` picks Tailscale or self-signed)"
+          : `TLS disabled while binding to ${config.host}`,
     });
   } else {
     checks.push({ level: "pass", message: `TLS mode configured (${tls.mode})` });
@@ -857,20 +988,22 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
 
   // Create config storage (auto-creates dirs + default config)
   const storage = createCliConfigStorage(dataDir);
+  applyManagedHostEnv(storage.getConfig());
 
   // Apply user choices + generate owner token so `oppi serve` can bind to 0.0.0.0.
-  // Default to self-signed TLS so first `oppi serve` boots HTTPS/WSS out of the box.
-  storage.updateConfig({
-    port,
-    maxSessionsGlobal,
-    tls: { mode: "self-signed" },
-  });
+  // The token makes the host paired, so init owns the first-run TLS choice.
+  storage.updateConfig({ port, maxSessionsGlobal });
+  console.log("");
+  const tlsMode = !storage.isPaired()
+    ? chooseFirstRunTlsMode(storage, undefined, console.log)
+    : undefined;
   storage.rotateToken();
 
-  console.log("");
   console.log(c.green("  ✓ Config written to ") + c.dim(storage.getConfigPath()));
   console.log(c.green("  ✓ Owner token generated"));
-  console.log(c.green("  ✓ TLS mode set to self-signed (cert generated on first serve)"));
+  if (tlsMode) {
+    console.log(c.green(`  ✓ TLS mode set to ${tlsMode}`));
+  }
 
   // 4. Generate identity keys
   ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));

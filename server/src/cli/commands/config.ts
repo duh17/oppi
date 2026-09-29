@@ -334,9 +334,15 @@ function cloneConfig(config: ServerConfig): Record<string, unknown> {
   return JSON.parse(JSON.stringify(config)) as Record<string, unknown>;
 }
 
-function setConfigPath(config: ServerConfig, path: string, value: unknown): ServerConfig {
+/**
+ * Returns only the top-level field the path changes. Untouched fields stay out
+ * of the update so the store keeps on-disk values it could not parse, such as
+ * an invalid `tls` block.
+ */
+function setConfigPath(config: ServerConfig, path: string, value: unknown): Partial<ServerConfig> {
   const parts = splitConfigPath(path);
-  if (parts.length === 0) throw new Error("Config key cannot be empty");
+  const topLevel = parts[0];
+  if (!topLevel) throw new Error("Config key cannot be empty");
 
   const next = cloneConfig(config);
   let cursor = next;
@@ -350,7 +356,7 @@ function setConfigPath(config: ServerConfig, path: string, value: unknown): Serv
   const lastPart = parts[parts.length - 1];
   if (!lastPart) throw new Error("Config key cannot be empty");
   cursor[lastPart] = value;
-  return next as unknown as ServerConfig;
+  return { [topLevel]: next[topLevel] } as Partial<ServerConfig>;
 }
 
 function configPathLeaf(path: string): string {
