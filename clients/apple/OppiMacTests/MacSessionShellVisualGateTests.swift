@@ -40,6 +40,55 @@ final class MacSessionShellVisualGateTests: XCTestCase {
         )
     }
 
+    func testCommandPaletteAndKeyboardSettingsPaint() throws {
+        let window = MacWindowCommandCenter()
+        let dispatch = MacAppCommandDispatch(window: window, panes: nil, sessionItems: [:])
+        let palette = try captureHostedView(
+            MacCommandPaletteHost(
+                mode: .all,
+                dispatch: dispatch,
+                sessions: [],
+                openSession: { _ in },
+                splitSession: { _ in },
+                dismiss: {},
+                cancel: {}
+            )
+            .frame(width: 900, height: 640),
+            width: 900,
+            height: 640
+        )
+        addStructuralAttachment(palette, name: "mac-command-palette-dark-900x640")
+        assertCaptureBounds(palette, expectedWidth: 900, expectedHeight: 640)
+        XCTAssertGreaterThan(
+            bodyPaintedFraction(in: palette),
+            0.04,
+            "The command palette should paint a command list, not an empty overlay"
+        )
+
+        let keyboard = try captureHostedView(
+            MacKeyboardSettingsView()
+                .frame(width: 720, height: 900),
+            width: 720,
+            height: 900
+        )
+        addStructuralAttachment(keyboard, name: "mac-keyboard-settings-dark-720x900")
+        assertCaptureBounds(keyboard, expectedWidth: 720, expectedHeight: 900)
+        XCTAssertGreaterThan(
+            bodyPaintedFraction(in: keyboard),
+            0.04,
+            "Keyboard settings should paint the timeline preset and shortcut rows"
+        )
+
+        let cheatSheet = try captureHostedView(
+            MacKeyboardCheatSheetView(dismiss: {})
+                .frame(width: 760, height: 560),
+            width: 760,
+            height: 560
+        )
+        addStructuralAttachment(cheatSheet, name: "mac-keyboard-cheat-sheet-dark-760x560")
+        assertCaptureBounds(cheatSheet, expectedWidth: 760, expectedHeight: 560)
+    }
+
     func testFullShellRepaintsForLightTheme() throws {
         let dark = try captureShell(
             width: 1_200,

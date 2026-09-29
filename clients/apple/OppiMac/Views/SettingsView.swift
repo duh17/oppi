@@ -172,7 +172,6 @@ struct AppSettingsView: View {
     @State private var selectedMessageTextScale = FontPreferenceStore.messageTextScale
     @State private var useMonoMessages = FontPreferenceStore.useMonoForMessages
     @State private var selectedSpinnerStyle = SpinnerStyle.current
-    @State private var selectedKeybindingMode = KeybindingPreferenceStore().mode
     @State private var launchAtLogin = false
     @State private var loginItemStatus: SMAppService.Status = .notRegistered
     @State private var importedThemeNames: [String] = CustomThemeStore.names()
@@ -267,22 +266,6 @@ struct AppSettingsView: View {
                 Text(ThinkingOrbAttribution.summary)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-
-                Picker(
-                    MacAppSettingsPreferenceControl.keybindings.title,
-                    selection: $selectedKeybindingMode
-                ) {
-                    ForEach(KeybindingMode.allCases, id: \.rawValue) { mode in
-                        Text(mode == .macDefault ? "Mac Default" : "Vim")
-                            .tag(mode)
-                    }
-                }
-                .onChange(of: selectedKeybindingMode) { _, newValue in
-                    KeybindingPreferenceStore().mode = newValue
-                }
-                .accessibilityIdentifier(
-                    MacAppSettingsPreferenceControl.keybindings.accessibilityIdentifier
-                )
             } header: {
                 Text("Chat Display")
             } footer: {
@@ -573,6 +556,12 @@ struct AppSettingsView: View {
                 }
             }
 
+            Section("Keyboard") {
+                NavigationLink("Keyboard Shortcuts") {
+                    MacKeyboardSettingsView()
+                }
+            }
+
             Section("About") {
                 NavigationLink("Acknowledgments") {
                     ThinkingOrbAcknowledgmentsView()
@@ -591,6 +580,13 @@ struct AppSettingsView: View {
             NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
         ) { _ in
             refreshLoginItemStatus()
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: FontPreferenceStore.didChangeNotification)
+        ) { _ in
+            // ⌘+ / ⌘- change the scales from the menu bar while Settings is open.
+            selectedCodeTextScale = FontPreferenceStore.codeTextScale
+            selectedMessageTextScale = FontPreferenceStore.messageTextScale
         }
     }
 
@@ -631,7 +627,6 @@ struct AppSettingsView: View {
         selectedMessageTextScale = FontPreferenceStore.messageTextScale
         useMonoMessages = FontPreferenceStore.useMonoForMessages
         selectedSpinnerStyle = SpinnerStyle.current
-        selectedKeybindingMode = KeybindingPreferenceStore().mode
         screenAwakePreset = AppPreferenceStore.ScreenAwake.timeoutPreset
         voiceReplyMode = AppPreferenceStore.Voice.replyMode
     }

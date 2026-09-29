@@ -1,13 +1,15 @@
 import Foundation
 
-/// Hardware-keyboard catalog mode.
+/// Hardware-keyboard timeline preset.
 ///
-/// `macDefault` is arrows / Return / Esc. It never consumes unmodified
-/// letters, so a global or timeline monitor cannot steal composer typing.
-/// `vim` adds letter bindings only while the timeline is focused.
+/// `macDefault` (Mac Standard) is arrows / Return / Esc. It never consumes
+/// unmodified letters, so a global or timeline monitor cannot steal composer
+/// typing. `vim` adds letter bindings and `emacs` adds Control / Option
+/// chords, both only while the timeline is focused.
 enum KeybindingMode: String, CaseIterable, Sendable {
     case macDefault
     case vim
+    case emacs
 
     /// Named UserDefaults key for the persisted catalog mode.
     static let preferenceKey = "oppi.keybinding.mode"
@@ -18,6 +20,14 @@ enum KeybindingMode: String, CaseIterable, Sendable {
             return .macDefault
         }
         return mode
+    }
+
+    var displayName: String {
+        switch self {
+        case .macDefault: "Mac Standard"
+        case .vim: "Vim"
+        case .emacs: "Emacs"
+        }
     }
 }
 
@@ -84,12 +94,12 @@ struct KeybindingChord: Equatable, Hashable, Sendable {
         KeybindingChord(key: .character(character), command: command, shift: shift)
     }
 
-    var hasNoModifiers: Bool {
-        !command && !shift && !option && !control
+    static func control(_ character: Character) -> KeybindingChord {
+        KeybindingChord(key: .character(character), control: true)
     }
 
-    var hasOnlyCommand: Bool {
-        command && !shift && !option && !control
+    var hasNoModifiers: Bool {
+        !command && !shift && !option && !control
     }
 
     var hasOnlyShift: Bool {
@@ -113,6 +123,13 @@ enum KeybindingAction: Equatable, Sendable {
     case send
 }
 
+/// One chord → action row. The catalog is data so help screens and
+/// hardware adapters read the same table the matcher uses.
+struct KeybindingBinding: Equatable, Sendable {
+    let chord: KeybindingChord
+    let action: KeybindingAction
+}
+
 /// Mode × focus lookup. Pure data; platform adapters decide how to paint.
 enum KeybindingCatalog {
     static func action(
@@ -120,106 +137,88 @@ enum KeybindingCatalog {
         mode: KeybindingMode,
         focus: KeybindingFocus
     ) -> KeybindingAction? {
-        switch (mode, focus) {
-        case (_, .composer):
-            return composerAction(for: chord)
-        case (.macDefault, .timeline):
-            return macDefaultTimelineAction(for: chord)
-        case (.vim, .timeline):
-            return vimTimelineAction(for: chord)
-        case (_, .viewer):
-            return viewerAction(for: chord)
-        }
+        bindings(mode: mode, focus: focus).first { $0.chord == chord }?.action
     }
 
     /// Chords that currently produce an action for this mode×focus.
     /// Adapters register from this list; they do not keep a second table.
     static func boundChords(mode: KeybindingMode, focus: KeybindingFocus) -> [KeybindingChord] {
-        registrableHardwareChords.filter { action(for: $0, mode: mode, focus: focus) != nil }
+        bindings(mode: mode, focus: focus).map(\.chord)
+    }
+
+    /// Ordered rows for a mode×focus. Earlier rows win on duplicate chords.
+    static func bindings(mode: KeybindingMode, focus: KeybindingFocus) -> [KeybindingBinding] {
+        switch (mode, focus) {
+        case (_, .composer):
+            return composerBindings
+        case (.macDefault, .timeline):
+            return macStandardTimelineBindings
+        case (.vim, .timeline):
+            return macStandardTimelineBindings + vimTimelineBindings
+        case (.emacs, .timeline):
+            return macStandardTimelineBindings + emacsTimelineBindings
+        case (.emacs, .viewer):
+            return viewerBindings + [KeybindingBinding(chord: .control("g"), action: .closeViewer)]
+        case (_, .viewer):
+            return viewerBindings
+        }
     }
 
     /// Composer keeps letter keys. Cmd-Return stays send, never a timeline
     /// `openViewer` consume.
-    private static func composerAction(for chord: KeybindingChord) -> KeybindingAction? {
-        if chord.key == .return, chord.hasOnlyCommand {
-            return .send
-        }
-        return nil
-    }
+    private static let composerBindings: [KeybindingBinding] = [
+        KeybindingBinding(chord: .commandReturn, action: .send),
+    ]
 
     /// Arrows + Return / Cmd-Return + Esc. Unmodified letters are not bound.
-    private static func macDefaultTimelineAction(for chord: KeybindingChord) -> KeybindingAction? {
-        switch chord.key {
-        case .upArrow where chord.hasNoModifiers:
-            return .previousToolRow
-        case .downArrow where chord.hasNoModifiers:
-            return .nextToolRow
-        case .leftArrow where chord.hasNoModifiers:
-            return .collapse
-        case .rightArrow where chord.hasNoModifiers:
-            return .expand
-        case .return where chord.hasNoModifiers || chord.hasOnlyCommand:
-            return .openViewer
-        case .escape where chord.hasNoModifiers:
-            return .closeViewer
-        default:
-            return nil
-        }
-    }
+    private static let macStandardTimelineBindings: [KeybindingBinding] = [
+        KeybindingBinding(chord: .upArrow, action: .previousToolRow),
+        KeybindingBinding(chord: .downArrow, action: .nextToolRow),
+        KeybindingBinding(chord: .leftArrow, action: .collapse),
+        KeybindingBinding(chord: .rightArrow, action: .expand),
+        KeybindingBinding(chord: .return, action: .openViewer),
+        KeybindingBinding(chord: .commandReturn, action: .openViewer),
+        KeybindingBinding(chord: .escape, action: .closeViewer),
+        KeybindingBinding(chord: KeybindingChord(key: .upArrow, command: true), action: .moveToTop),
+        KeybindingBinding(chord: KeybindingChord(key: .downArrow, command: true), action: .moveToBottom),
+    ]
 
-    /// macDefault timeline plus j/k h/l e g/G Tab/i.
-    private static func vimTimelineAction(for chord: KeybindingChord) -> KeybindingAction? {
-        if let action = macDefaultTimelineAction(for: chord) {
-            return action
-        }
-        switch chord.key {
-        case .character("j") where chord.hasNoModifiers:
-            return .nextToolRow
-        case .character("k") where chord.hasNoModifiers:
-            return .previousToolRow
-        case .character("h") where chord.hasNoModifiers:
-            return .collapse
-        case .character("l") where chord.hasNoModifiers:
-            return .expand
-        case .character("e") where chord.hasNoModifiers:
-            return .toggleExpanded
-        case .character("g") where chord.hasNoModifiers:
-            return .moveToTop
-        case .character("g") where chord.hasOnlyShift:
-            return .moveToBottom
-        case .tab where chord.hasNoModifiers:
-            return .focusComposer
-        case .character("i") where chord.hasNoModifiers:
-            return .focusComposer
-        default:
-            return nil
-        }
-    }
+    /// j/k h/l e g/G Tab/i on top of Mac Standard.
+    private static let vimTimelineBindings: [KeybindingBinding] = [
+        KeybindingBinding(chord: .letter("j"), action: .nextToolRow),
+        KeybindingBinding(chord: .letter("k"), action: .previousToolRow),
+        KeybindingBinding(chord: .letter("h"), action: .collapse),
+        KeybindingBinding(chord: .letter("l"), action: .expand),
+        KeybindingBinding(chord: .letter("e"), action: .toggleExpanded),
+        KeybindingBinding(chord: .letter("g"), action: .moveToTop),
+        KeybindingBinding(chord: .letter("g", shift: true), action: .moveToBottom),
+        KeybindingBinding(chord: .tab, action: .focusComposer),
+        KeybindingBinding(chord: .letter("i"), action: .focusComposer),
+    ]
 
-    private static func viewerAction(for chord: KeybindingChord) -> KeybindingAction? {
-        if chord.key == .escape, chord.hasNoModifiers {
-            return .closeViewer
-        }
-        return nil
-    }
+    /// C-n/C-p C-f/C-b, Tab folds like org-mode, M-< / M->, C-g quits,
+    /// C-o jumps to the composer.
+    private static let emacsTimelineBindings: [KeybindingBinding] = [
+        KeybindingBinding(chord: .control("n"), action: .nextToolRow),
+        KeybindingBinding(chord: .control("p"), action: .previousToolRow),
+        KeybindingBinding(chord: .control("b"), action: .collapse),
+        KeybindingBinding(chord: .control("f"), action: .expand),
+        KeybindingBinding(chord: .tab, action: .toggleExpanded),
+        KeybindingBinding(
+            chord: KeybindingChord(key: .character("<"), shift: true, option: true),
+            action: .moveToTop
+        ),
+        KeybindingBinding(
+            chord: KeybindingChord(key: .character(">"), shift: true, option: true),
+            action: .moveToBottom
+        ),
+        KeybindingBinding(chord: .control("g"), action: .closeViewer),
+        KeybindingBinding(chord: .control("o"), action: .focusComposer),
+    ]
 
-    /// Hardware keys adapters may probe. Not a mode×focus table; `action` is
-    /// the matcher.
-    private static let registrableHardwareChords: [KeybindingChord] = {
-        var chords: [KeybindingChord] = [
-            .upArrow, .downArrow, .leftArrow, .rightArrow,
-            .return, .commandReturn, .escape, .tab,
-        ]
-        let a = UnicodeScalar("a").value
-        let z = UnicodeScalar("z").value
-        for scalar in a...z {
-            guard let unicode = UnicodeScalar(scalar) else { continue }
-            let character = Character(unicode)
-            chords.append(.letter(character))
-            chords.append(.letter(character, shift: true))
-        }
-        return chords
-    }()
+    private static let viewerBindings: [KeybindingBinding] = [
+        KeybindingBinding(chord: .escape, action: .closeViewer),
+    ]
 }
 
 /// Persists `KeybindingMode` under `KeybindingMode.preferenceKey`.

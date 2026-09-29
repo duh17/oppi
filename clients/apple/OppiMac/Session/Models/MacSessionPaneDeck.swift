@@ -47,6 +47,7 @@ final class MacSessionPaneRuntime: Identifiable {
 
     func updateTarget(_ target: MacSelectedSessionTarget) {
         let changedSession = self.target?.sessionId != target.sessionId
+        let replacingEmptyPane = self.target == nil
         bumpRestorationAttempt()
         self.target = target
         restorationError = nil
@@ -56,7 +57,11 @@ final class MacSessionPaneRuntime: Identifiable {
             traceStore.select(target)
         }
         if changedSession {
-            composerState.resetForSessionChange()
+            // Empty pane → new session keeps a staged draft and files. A
+            // switch between two sessions still clears them.
+            if !replacingEmptyPane || composerState.pendingAttachments.isEmpty {
+                composerState.resetForSessionChange()
+            }
             quickSession.reset()
             presentation.resetForSessionChange()
             restorationError = nil
@@ -291,10 +296,6 @@ final class MacSessionPaneDeck {
         return runtimesByPaneID[paneID]
     }
 
-    var hasComposerFirstResponder: Bool {
-        runtimes.contains { $0.composerState.isComposerFirstResponder }
-    }
-
     /// Destination pane owns AppKit keyboard after split/focus/close commands.
     /// Click-to-focus does not use this path.
     func synchronizeKeyboardOwnership() {
@@ -384,6 +385,25 @@ final class MacSessionPaneDeck {
         }
 
         runtime.updateTarget(target)
+        commit(nextLayout)
+        return runtime
+    }
+
+    /// `⌘N`: an empty Quick Session composer. Focuses an existing empty pane
+    /// when one is open; otherwise clears the focused pane's route.
+    @discardableResult
+    func showNewSessionPane() -> MacSessionPaneRuntime? {
+        if let empty = runtimes.first(where: \.isEmpty) {
+            _ = focus(paneID: empty.id)
+            return empty
+        }
+        guard var nextLayout = layout, let runtime = focusedRuntime else { return nil }
+        do {
+            try nextLayout.setRoute(nil, for: runtime.id)
+        } catch {
+            return nil
+        }
+        runtime.clearSelection()
         commit(nextLayout)
         return runtime
     }

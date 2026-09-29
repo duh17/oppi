@@ -81,8 +81,7 @@ struct OppiMacApp: App {
         }
         .defaultLaunchBehavior(.presented)
         .commands {
-            MacSessionCommands()
-            MacSessionPaneCommandMenu()
+            MacAppCommandMenus()
             DesktopCaptureCommands(session: captureRuntime.session)
         }
 
@@ -98,9 +97,9 @@ struct OppiMacApp: App {
                 }
             )
             .macSharedTheme(themeStore)
-            .frame(minWidth: 520, idealWidth: 560, minHeight: 420)
+            .frame(minWidth: 560, idealWidth: 620, minHeight: 480)
         }
-        .defaultSize(width: 560, height: 640)
+        .defaultSize(width: 620, height: 680)
 
         MenuBarExtra {
             MenuBarPopover(

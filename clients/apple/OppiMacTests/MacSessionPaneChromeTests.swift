@@ -283,30 +283,6 @@ struct MacSessionPaneCommandTests {
         #expect(main.contains("isPaneDeckDisplayed ? paneCommands : nil"))
     }
 
-    @Test func paneShortcutsMatchTheContract() {
-        #expect(MacSessionPaneCommand.splitRight.key == "d")
-        #expect(MacSessionPaneCommand.splitRight.modifiers == .command)
-        #expect(MacSessionPaneCommand.splitDown.key == "d")
-        #expect(MacSessionPaneCommand.splitDown.modifiers == [.command, .shift])
-        #expect(MacSessionPaneCommand.focusLeft.key == .leftArrow)
-        #expect(MacSessionPaneCommand.focusRight.key == .rightArrow)
-        #expect(MacSessionPaneCommand.focusUp.key == .upArrow)
-        #expect(MacSessionPaneCommand.focusDown.key == .downArrow)
-        #expect(MacSessionPaneCommand.focusLeft.modifiers == [.command, .option])
-        #expect(MacSessionPaneCommand.closePane.key == "w")
-        #expect(MacSessionPaneCommand.closePane.modifiers == [.command, .shift])
-    }
-
-    @Test func viewMenuAndHelpExposeTheSameBindings() throws {
-        let source = try paneCommandsSource()
-        #expect(source.contains("CommandMenu(\"View\")"))
-        #expect(source.contains("CommandGroup(after: .help)"))
-        #expect(source.contains("Keyboard Shortcuts"))
-        #expect(source.contains("keyboardShortcut(\"?\", modifiers: .shift)"))
-        #expect(source.contains("canShowCheatSheet"))
-        #expect(!source.contains("KeybindingCatalog.action"))
-    }
-
     @Test @MainActor func paneShortcutsTransferKeyboardOwnershipAwayFromTheOriginComposer() async throws {
         let deck = MacSessionPaneDeck()
         deck.noteWindowSize(MacSessionPaneMeasuredSize(width: 1_200, height: 800))
@@ -345,7 +321,6 @@ struct MacSessionPaneCommandTests {
         #expect(deck.focusedPaneID == paneA.id)
         #expect(paneA.composerState.isComposerFirstResponder)
         #expect(!paneB.composerState.isComposerFirstResponder)
-        #expect(!commands.canShowCheatSheet)
 
         commands.perform(.focusRight)
         for _ in 0..<10 {
@@ -367,88 +342,6 @@ struct MacSessionPaneCommandTests {
         }
         #expect(!originInput.string.contains("?"))
         #expect(!paneA.composerState.draft.contains("?"))
-        if paneB.composerState.isComposerFirstResponder {
-            #expect(!commands.canShowCheatSheet)
-        }
-    }
-}
-
-@Suite("Mac keyboard cheat sheet")
-struct MacAppKeybindingHelpTests {
-    @Test func listsEveryMacAppBinding() {
-        let actions = Set(MacAppKeybindingHelp.entries.map(\.action))
-        for required in [
-            "Split Right", "Split Down", "Focus Left", "Focus Right",
-            "Focus Up", "Focus Down", "Close Pane", "Close Window",
-            "Send", "Keyboard Shortcuts", "Close Document",
-            "Previous Tool Row", "Next Tool Row", "Open Document",
-            "Vim Next Tool Row", "Vim Focus Composer",
-        ] {
-            #expect(actions.contains(required), "Missing \(required)")
-        }
-        #expect(MacAppKeybindingHelp.entries.contains { $0.shortcut == "⌘D" })
-        #expect(MacAppKeybindingHelp.entries.contains { $0.shortcut == "⌘⇧D" })
-        #expect(MacAppKeybindingHelp.entries.contains { $0.shortcut == "⌘⇧W" })
-        #expect(MacAppKeybindingHelp.entries.contains { $0.shortcut == "⌘W" })
-        #expect(MacAppKeybindingHelp.entries.contains { $0.shortcut == "⇧?" })
-        #expect(MacAppKeybindingHelp.entries.count == MacAppKeybindingHelp.paneEntries.count
-            + MacAppKeybindingHelp.sessionEntries.count
-            + MacAppKeybindingHelp.timelineEntries.count)
-    }
-
-    @Test func shiftQuestionDoesNotStealComposerTyping() {
-        #expect(MacAppKeybindingHelp.allowsCheatSheetShortcut(composerIsFirstResponder: false))
-        #expect(!MacAppKeybindingHelp.allowsCheatSheetShortcut(composerIsFirstResponder: true))
-    }
-
-    @Test @MainActor func cheatSheetWorksUntilTheComposerIsFirstResponder() throws {
-        let deck = MacSessionPaneDeck()
-        let session = Session(
-            id: "session-a",
-            workspaceId: "workspace",
-            workspaceName: "workspace",
-            status: .ready,
-            createdAt: Date(timeIntervalSince1970: 1_800_000_000),
-            lastActivity: Date(timeIntervalSince1970: 1_800_000_001),
-            messageCount: 1,
-            tokens: TokenUsage(input: 0, output: 0),
-            cost: 0
-        )
-        let runtime = try #require(deck.openOrFocus(
-            MacSelectedSessionTarget(
-                workspaceId: "workspace",
-                sessionId: "session-a",
-                summary: SessionSummary(from: session)
-            )
-        ))
-        let commands = MacSessionPaneCommandCenter(deck: deck)
-
-        #expect(runtime.traceStore.keybindingFocus == .composer)
-        #expect(!runtime.composerState.isComposerFirstResponder)
-        #expect(commands.canShowCheatSheet)
-
-        runtime.composerState.isComposerFirstResponder = true
-        #expect(!commands.canShowCheatSheet)
-
-        runtime.composerState.isComposerFirstResponder = false
-        #expect(commands.canShowCheatSheet)
-    }
-
-    @Test @MainActor func shiftQuestionFollowsTheTypingComposerNotTheOutlinedPane() throws {
-        let deck = MacSessionPaneDeck()
-        deck.noteWindowSize(MacSessionPaneMeasuredSize(width: 1_200, height: 800))
-        let paneA = try #require(deck.openOrFocus(chromeTarget(sessionID: "session-a")))
-        let paneB = try #require(deck.splitFocusedRight())
-        #expect(deck.focus(paneID: paneA.id))
-        paneA.composerState.isComposerFirstResponder = true
-        let commands = MacSessionPaneCommandCenter(deck: deck)
-        #expect(!commands.canShowCheatSheet)
-
-        #expect(deck.focus(paneID: paneB.id))
-        #expect(deck.focusedPaneID == paneB.id)
-        #expect(paneA.composerState.isComposerFirstResponder)
-        #expect(!paneB.composerState.isComposerFirstResponder)
-        #expect(!commands.canShowCheatSheet)
     }
 }
 
@@ -611,13 +504,6 @@ private func chromeMatchesIdentifier(_ view: NSView, identifier: String) -> Bool
     }
     if identifier == "mac.session.pane.close",
        (view.accessibilityHelp() ?? "").localizedCaseInsensitiveContains("Close Pane")
-    {
-        return true
-    }
-    if identifier == "mac.session.pane.close",
-       let button = view as? NSButton,
-       button.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-       (button.accessibilityLabel() ?? "").isEmpty
     {
         return true
     }

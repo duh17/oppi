@@ -1,4 +1,5 @@
-import Foundation
+import AppKit
+import SwiftUI
 
 /// Session-owned timeline selection, expansion, and catalog application.
 ///
@@ -24,6 +25,11 @@ enum MacTimelineKeybinding {
             self.focus = focus
             self.openToolDocumentID = openToolDocumentID
         }
+    }
+
+    /// Vim's insert-mode exit. Composer-owned, so it is not a catalog row.
+    static func composerEscapeFocusesTimeline(mode: KeybindingMode) -> Bool {
+        mode == .vim
     }
 
     static func toolRowIDs(in items: [ChatItem]) -> [String] {
@@ -89,7 +95,15 @@ enum MacTimelineKeybinding {
             if state.focus == .viewer {
                 state.focus = state.selectedToolRowID == nil ? .composer : .timeline
             }
-        case .send, .moveToTop, .moveToBottom, .focusComposer:
+        case .moveToTop:
+            state.selectedToolRowID = toolRowIDs.first ?? state.selectedToolRowID
+            state.focus = .timeline
+        case .moveToBottom:
+            state.selectedToolRowID = toolRowIDs.last ?? state.selectedToolRowID
+            state.focus = .timeline
+        case .focusComposer:
+            state.focus = .composer
+        case .send:
             break
         }
     }
@@ -123,5 +137,55 @@ enum MacTimelineKeybinding {
         }
         let previous = index - 1
         return previous >= 0 ? ids[previous] : selected
+    }
+}
+
+/// Mouse contract for a tool row header. AppKit delivers the second click of
+/// a double click as its own click with `clickCount == 2`, after the first
+/// click already toggled expansion; the double click undoes that toggle so
+/// the row keeps its prior state while its document opens beside the timeline.
+enum MacToolRowClick: Equatable {
+    case toggleExpanded
+    case openDocument(revertExpansion: Bool)
+
+    static func action(clickCount: Int, canExpand: Bool, canOpenDocument: Bool) -> Self? {
+        switch clickCount {
+        case 1:
+            return canExpand ? .toggleExpanded : nil
+        case 2:
+            return canOpenDocument ? .openDocument(revertExpansion: canExpand) : nil
+        default:
+            return nil
+        }
+    }
+}
+
+extension KeyPress {
+    /// SwiftUI `characters` carries Control / Option transforms (`⌃N` is
+    /// U+000E, `⌥⇧,` is `¯`). The catalog matches base keys, so read the
+    /// AppKit key-down's `charactersIgnoringModifiers` when it is this press.
+    var keybindingChord: KeybindingChord? {
+        let baseCharacters: String
+        if let event = NSApp.currentEvent,
+           event.type == .keyDown,
+           let ignoring = event.charactersIgnoringModifiers {
+            baseCharacters = ignoring
+        } else {
+            baseCharacters = characters
+        }
+        return KeybindingEventMap.chord(
+            characters: baseCharacters,
+            isUpArrow: key == .upArrow,
+            isDownArrow: key == .downArrow,
+            isLeftArrow: key == .leftArrow,
+            isRightArrow: key == .rightArrow,
+            isReturn: key == .return,
+            isEscape: key == .escape,
+            isTab: key == .tab,
+            command: modifiers.contains(.command),
+            shift: modifiers.contains(.shift),
+            option: modifiers.contains(.option),
+            control: modifiers.contains(.control)
+        )
     }
 }

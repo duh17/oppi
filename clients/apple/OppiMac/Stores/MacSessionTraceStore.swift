@@ -117,6 +117,9 @@ final class MacSessionTraceStore {
     private(set) var expandedToolRowIDs: Set<String> = []
     /// Wide document column beside the timeline. Nil means the column is closed.
     private(set) var openToolDocumentID: String?
+    /// Keyboard selection the timeline should scroll into view. Clicks never
+    /// set this, so selecting a row with the mouse does not move the viewport.
+    private(set) var revealToolRowID: String?
     /// Full-session outline from `GET .../trace-outline`. Nil until loaded.
     private(set) var sessionOutline: SessionOutlineSnapshot?
     private(set) var sessionOutlineError: String?
@@ -361,6 +364,84 @@ final class MacSessionTraceStore {
         }
     }
 
+    /// Single click on a tool row header: select it, then toggle inline
+    /// expansion. Double click: open the document column, restoring the
+    /// expansion the first click of the pair toggled.
+    func handleToolRowClick(
+        _ id: String,
+        clickCount: Int,
+        canExpand: Bool,
+        canOpenDocument: Bool
+    ) {
+        selectToolRow(id)
+        switch MacToolRowClick.action(
+            clickCount: clickCount,
+            canExpand: canExpand,
+            canOpenDocument: canOpenDocument
+        ) {
+        case .toggleExpanded:
+            setToolRowExpanded(id, expanded: !isToolRowExpanded(id))
+        case .openDocument(let revertExpansion):
+            if revertExpansion {
+                setToolRowExpanded(id, expanded: !isToolRowExpanded(id))
+            }
+            openToolDocument(id)
+        case .none:
+            break
+        }
+    }
+
+    /// Selects the row and opens its document column beside the timeline.
+    func openToolDocument(_ id: String) {
+        var state = timelineKeybindingState
+        MacTimelineKeybinding.selectToolRow(id, in: &state)
+        MacTimelineKeybinding.apply(.openViewer, to: &state, toolRowIDs: [id])
+        applyTimelineKeybindingState(state)
+    }
+
+    /// App-level "Focus Timeline": keyboard focus plus a selected row so the
+    /// catalog keys act immediately. Prefers the latest tool row.
+    func focusTimeline() {
+        adoptFocus(.timeline)
+    }
+
+    /// Script and keyboard share this owner. Timeline focus also selects a
+    /// row so catalog actions have something to move.
+    func adoptFocus(_ focus: KeybindingFocus) {
+        var state = timelineKeybindingState
+        state.focus = focus
+        if focus == .timeline, state.selectedToolRowID == nil {
+            state.selectedToolRowID = MacTimelineKeybinding.toolRowIDs(in: items).last
+        }
+        applyTimelineKeybindingState(state)
+        if focus == .timeline {
+            revealToolRowID = state.selectedToolRowID
+        }
+    }
+
+    @discardableResult
+    func applyCatalogAction(_ action: KeybindingAction) -> KeybindingAction {
+        var state = timelineKeybindingState
+        let previousSelection = selectedToolRowID
+        MacTimelineKeybinding.apply(
+            action,
+            to: &state,
+            toolRowIDs: MacTimelineKeybinding.toolRowIDs(in: items)
+        )
+        applyTimelineKeybindingState(state)
+        if selectedToolRowID != previousSelection {
+            revealToolRowID = selectedToolRowID
+        }
+        if action == .focusComposer {
+            extensionComposer?.claimKeyboardOwnership()
+        }
+        return action
+    }
+
+    func clearRevealToolRow() {
+        revealToolRowID = nil
+    }
+
     func closeToolDocument() {
         var state = timelineKeybindingState
         MacTimelineKeybinding.apply(.closeViewer, to: &state, toolRowIDs: [])
@@ -433,7 +514,14 @@ final class MacSessionTraceStore {
             to: &state,
             toolRowIDs: toolRowIDs ?? MacTimelineKeybinding.toolRowIDs(in: items)
         )
+        let previousSelection = selectedToolRowID
         applyTimelineKeybindingState(state)
+        if selectedToolRowID != previousSelection {
+            revealToolRowID = selectedToolRowID
+        }
+        if action == .focusComposer {
+            extensionComposer?.claimKeyboardOwnership()
+        }
         return action
     }
 
@@ -463,6 +551,7 @@ final class MacSessionTraceStore {
         collapsedToolRowIDs = []
         keybindingFocus = .composer
         openToolDocumentID = nil
+        revealToolRowID = nil
     }
 
     /// A selected session owns these in-flight flags. Reset them immediately

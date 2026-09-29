@@ -5,16 +5,6 @@ import Testing
 
 @Suite("Mac session command availability")
 struct MacSessionCommandAvailabilityTests {
-    @Test func appCommandsMountSessionAndPaneMenus() throws {
-        let sourceURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appending(path: "OppiMac/App/OppiMacApp.swift")
-        let source = try String(contentsOf: sourceURL, encoding: .utf8)
-        #expect(source.contains("MacSessionCommands()"))
-        #expect(source.contains("MacSessionPaneCommandMenu()"))
-    }
-
     @Test func absentOrHiddenSessionDisablesEveryCommand() {
         let hiddenHome = MacSessionCommandAvailability.evaluate(
             input(visible: false, status: .ready, hasDraft: true, canSendMessage: true)
@@ -147,18 +137,6 @@ struct MacSessionCommandAvailabilityTests {
         let availability = MacSessionCommandAvailability.evaluate(values)
         #expect(!availability.resume)
         #expect(availability.panels)
-    }
-
-    @Test func onlySendUsesCommandReturnAndEscapeStaysUnbound() {
-        #expect(MacSessionCommandKind.send.keyboardShortcut == .return)
-        #expect(MacSessionCommandKind.send.keyboardShortcutModifiers == .command)
-        for kind in MacSessionCommandKind.allCases where kind != .send {
-            #expect(kind.keyboardShortcut == nil)
-        }
-        #expect(MacSessionCommandKind.stopTurn.keyboardShortcut != .escape)
-        #expect(MacSessionCommandKind.allCases.map(\.menuTitle) == [
-            "Send", "Stop Turn", "Resume", "Files", "Session Outline", "Context",
-        ])
     }
 
     private func input(

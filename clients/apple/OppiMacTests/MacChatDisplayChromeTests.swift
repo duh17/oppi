@@ -8,9 +8,6 @@ struct MacChatDisplayChromeTests {
         let source = try macSettingsSource()
         #expect(source.contains("MacAppSettingsPreferenceControl.spinnerStyle.title"))
         #expect(source.contains("MacAppSettingsPreferenceControl.keepScreenAwake.title"))
-        #expect(source.contains("MacAppSettingsPreferenceControl.keybindings.title"))
-        #expect(source.contains("KeybindingMode.allCases"))
-        #expect(source.contains("KeybindingPreferenceStore().mode = newValue"))
         #expect(source.contains("AppPreferenceStore.ScreenAwake.TimeoutPreset.allCases"))
         #expect(source.contains("MacScreenAwakeController.shared.refreshFromPreferences"))
         #expect(source.contains("Clear Local Cache"))
@@ -28,18 +25,6 @@ struct MacChatDisplayChromeTests {
         #expect(!source.contains("TimelineCache.shared"))
         #expect(!source.contains("isIdleTimerDisabled"))
         #expect(!source.contains("UIApplication"))
-    }
-
-    @Test func timelinePaintsAssistantAvatarAndWorkingSpinner() throws {
-        let source = try macTimelineSource()
-        #expect(source.contains("showsAssistantAvatar: role == .assistant"))
-        #expect(source.contains("MacAssistantAvatarView(size: 18)"))
-        #expect(source.contains("MacWorkingIndicatorRow(state:"))
-        #expect(source.contains("MacWorkingIndicatorRow.rowID"))
-        #expect(source.contains("isBusy: Bool = false"))
-        #expect(!source.contains("WorkingIndicatorTimelineRowContentView"))
-        #expect(!source.contains("AvatarPickerView"))
-        #expect(!source.contains("WindowGroup"))
     }
 
     @Test func shellPassesBusyStateIntoTimeline() throws {

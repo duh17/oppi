@@ -46,6 +46,11 @@ struct MainWindowView: View {
             unresolvedRestoredRoute: .lookup
         )
     )
+    @State private var windowCommands = MacWindowCommandCenter()
+    @State private var paletteReturnsToComposer = false
+    @State private var clientScriptLine = "focus timeline"
+    @State private var clientScriptLastStep = "-"
+    @State private var clientScriptLastResult = "-"
     @State private var remoteServerStore = MacRemoteServerStore()
     @Bindable private var catalogStore = MacCatalogStore.shared
 
@@ -142,8 +147,35 @@ struct MainWindowView: View {
             publishVisibleAttentionSession()
         }
         .focusedSceneValue(\.macSessionPaneCommands, isPaneDeckDisplayed ? paneCommands : nil)
+        .focusedSceneValue(\.macWindowCommands, windowCommands)
+        .overlay(alignment: .top) {
+            if let mode = windowCommands.palette, let dispatch = windowCommands.paletteDispatch {
+                MacCommandPaletteHost(
+                    mode: mode,
+                    dispatch: dispatch,
+                    sessions: MacHomeSessionOrder.ordered(workspaceStore.sessionTargets),
+                    openSession: selectSessionTarget,
+                    splitSession: { splitSessionTarget($0, axis: .horizontal) },
+                    dismiss: { windowCommands.closePalette() },
+                    cancel: {
+                        windowCommands.closePalette()
+                        if paletteReturnsToComposer {
+                            paneDeck.focusedRuntime?.composerState.claimKeyboardOwnership()
+                        }
+                    }
+                )
+            }
+        }
+        .onChange(of: windowCommands.palette != nil) { _, isOpen in
+            guard isOpen, let composer = paneDeck.focusedRuntime?.composerState else { return }
+            // The composer is an AppKit text view; SwiftUI focus cannot take
+            // first responder from it until it resigns.
+            paletteReturnsToComposer = composer.isComposerFirstResponder
+            composer.resignKeyboardOwnership()
+        }
         .onAppear {
             paneCommands.isDeckDisplayed = isPaneDeckDisplayed
+            windowCommands.handler = { handleWindowCommand($0) }
         }
         .onChange(of: isPaneDeckDisplayed) { _, displayed in
             paneCommands.isDeckDisplayed = displayed
@@ -166,13 +198,120 @@ struct MainWindowView: View {
             }
         }
         .sheet(isPresented: Binding(
-            get: { paneCommands.isCheatSheetPresented },
-            set: { paneCommands.isCheatSheetPresented = $0 }
+            get: { windowCommands.isCheatSheetPresented },
+            set: { windowCommands.isCheatSheetPresented = $0 }
         )) {
             MacKeyboardCheatSheetView {
-                paneCommands.isCheatSheetPresented = false
+                windowCommands.isCheatSheetPresented = false
             }
         }
+        .sheet(isPresented: Binding(
+            get: { windowCommands.isClientScriptPresented },
+            set: { windowCommands.isClientScriptPresented = $0 }
+        )) {
+            MacClientScriptSheet(
+                line: $clientScriptLine,
+                snapshot: clientScriptSnapshot.accessibilityValue,
+                run: runClientScript,
+                dismiss: { windowCommands.isClientScriptPresented = false }
+            )
+        }
+        .background {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement()
+                .accessibilityIdentifier("mac.clientScript.snapshot")
+                .accessibilityLabel("Client script snapshot")
+                .accessibilityValue(clientScriptSnapshot.accessibilityValue)
+        }
+    }
+
+    private var clientScriptSnapshot: MacClientScriptSnapshot {
+        let runtime = paneDeck.focusedRuntime
+        return MacClientScriptSnapshot(
+            focus: runtime?.traceStore.keybindingFocus.rawValue ?? "-",
+            section: selectedSection.rawValue,
+            sessionID: paneDeck.focusedSessionID ?? "-",
+            selectedToolRowID: runtime?.traceStore.selectedToolRowID ?? "-",
+            openDocumentID: runtime?.traceStore.openToolDocumentID ?? "-",
+            palette: windowCommands.palette.map { $0 == .all ? "commands" : "sessions" } ?? "closed",
+            lastStep: clientScriptLastStep,
+            lastResult: clientScriptLastResult
+        )
+    }
+
+    private func runClientScript() {
+        let line = clientScriptLine
+        let result = MacClientScriptLog.measure(line) {
+            applyClientScript(line)
+        }
+        clientScriptLastStep = line
+        clientScriptLastResult = result
+    }
+
+    private func applyClientScript(_ line: String) -> String {
+        guard let step = MacClientScript.parse(line) else { return "ignored" }
+        switch step {
+        case .focus(let focus):
+            return applyScriptFocus(focus)
+        case .catalog(let action):
+            guard let runtime = paneDeck.focusedRuntime, !runtime.isEmpty else { return "ignored" }
+            runtime.traceStore.applyCatalogAction(action)
+            if action == .focusComposer {
+                runtime.composerState.claimKeyboardOwnership()
+            }
+            return "performed"
+        case .command(let command):
+            if let control = MacClientScript.controlIdentifier(for: command) {
+                return "click \(control)"
+            }
+            if command == .commandPalette || command == .goToSession || command == .keyboardShortcuts {
+                windowCommands.perform(command, dispatch: scriptDispatch())
+                return "performed"
+            }
+            if let paneCommand = command.paneCommand {
+                guard paneCommands.canClosePane else { return "disabled" }
+                paneCommands.perform(paneCommand)
+                return "performed"
+            }
+            switch command {
+            case .zoomIn:
+                MacTextZoom.apply(MacTextZoom.stepped(MacTextZoom.current, .larger))
+            case .zoomOut:
+                MacTextZoom.apply(MacTextZoom.stepped(MacTextZoom.current, .smaller))
+            case .actualSize:
+                MacTextZoom.apply(MacTextZoom.actualSize)
+            default:
+                handleWindowCommand(command)
+            }
+            return "performed"
+        }
+    }
+
+    private func applyScriptFocus(_ focus: KeybindingFocus) -> String {
+        selectedSection = .sessionHome
+        guard let runtime = paneDeck.focusedRuntime, !runtime.isEmpty else { return "ignored" }
+        switch focus {
+        case .composer:
+            runtime.traceStore.adoptFocus(.composer)
+            runtime.composerState.claimKeyboardOwnership()
+        case .timeline:
+            runtime.composerState.resignKeyboardOwnership()
+            runtime.traceStore.focusTimeline()
+        case .viewer:
+            guard runtime.traceStore.openToolDocumentID != nil else { return "ignored" }
+            runtime.composerState.resignKeyboardOwnership()
+            runtime.traceStore.adoptFocus(.viewer)
+        }
+        return "performed"
+    }
+
+    private func scriptDispatch() -> MacAppCommandDispatch {
+        MacAppCommandDispatch(
+            window: windowCommands,
+            panes: isPaneDeckDisplayed ? paneCommands : nil,
+            sessionItems: [:]
+        )
     }
 
     private var controlLaunchPresented: Binding<Bool> {
@@ -275,12 +414,14 @@ struct MainWindowView: View {
                 )
                     .tag(MacSidebarSelection.section(MacSidebarHomeAffordance.home.destination))
                     .help("Show sessions")
+                    .accessibilityIdentifier("mac.sidebar.sessionHome")
                     .accessibilityLabel("Home")
                     .accessibilityHint("Shows the session list")
 
                 ForEach(MacSidebarSection.primaryDestinations.filter { !$0.isDisclosure }) { section in
                     MacSidebarLabel(title: section.title, systemImage: section.icon)
                         .tag(MacSidebarSelection.section(section))
+                        .accessibilityIdentifier("mac.sidebar.\(section.rawValue)")
                 }
             }
 
@@ -307,6 +448,7 @@ struct MainWindowView: View {
                     systemImage: MacSidebarSection.settings.icon
                 )
                     .tag(MacSidebarSelection.section(.settings))
+                    .accessibilityIdentifier("mac.sidebar.settings")
             }
         }
         .listStyle(.sidebar)
@@ -654,6 +796,39 @@ struct MainWindowView: View {
         _ = paneDeck.openOrFocus(target)
         selectedSessionID = target.sessionId
         selectedSection = .sessionHome
+    }
+
+    private func handleWindowCommand(_ command: MacAppCommand) {
+        if let section = command.sidebarSection {
+            selectedSection = section
+            return
+        }
+        switch command {
+        case .newSession:
+            selectedSection = .sessionHome
+            guard let runtime = paneDeck.showNewSessionPane() else { return }
+            selectedSessionID = nil
+            paneDeck.synchronizeKeyboardOwnership()
+            runtime.composerState.claimKeyboardOwnership()
+        case .nextSession, .previousSession:
+            let ordered = MacHomeSessionOrder.ordered(workspaceStore.sessionTargets)
+            guard let target = MacHomeSessionOrder.adjacent(
+                to: selectedSection == .sessionHome ? paneDeck.focusedSessionID ?? selectedSessionID : nil,
+                in: ordered,
+                offset: command == .nextSession ? 1 : -1
+            ) else { return }
+            selectSessionTarget(target)
+        case .focusComposer:
+            selectedSection = .sessionHome
+            paneDeck.focusedRuntime?.composerState.claimKeyboardOwnership()
+        case .focusTimeline:
+            selectedSection = .sessionHome
+            guard let runtime = paneDeck.focusedRuntime, !runtime.isEmpty else { return }
+            runtime.composerState.resignKeyboardOwnership()
+            runtime.traceStore.focusTimeline()
+        default:
+            break
+        }
     }
 
     private func splitSessionTarget(_ target: MacSelectedSessionTarget, axis: MacSessionPaneSplitAxis) {

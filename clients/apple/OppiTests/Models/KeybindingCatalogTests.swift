@@ -69,12 +69,13 @@ struct KeybindingPreferenceStoreTests {
         let defaults = try makeDefaults()
         let store = KeybindingPreferenceStore(defaults: defaults)
 
-        defaults.set("emacs", forKey: KeybindingMode.preferenceKey)
+        defaults.set("helix", forKey: KeybindingMode.preferenceKey)
         #expect(store.mode == .macDefault)
-        #expect(KeybindingMode.resolved("emacs") == .macDefault)
+        #expect(KeybindingMode.resolved("helix") == .macDefault)
         #expect(KeybindingMode.resolved("") == .macDefault)
         #expect(KeybindingMode.resolved("macDefault") == .macDefault)
         #expect(KeybindingMode.resolved("vim") == .vim)
+        #expect(KeybindingMode.resolved("emacs") == .emacs)
     }
 
     @Test func persistsChosenMode() throws {
@@ -126,7 +127,7 @@ extension KeybindingCatalogTests {
     }
 
     fileprivate static var timelineCatalogRows: [CatalogRow] {
-        macDefaultTimelineRows + vimTimelineRows + timelineOpenViewerRows
+        macDefaultTimelineRows + vimTimelineRows + emacsTimelineRows + timelineOpenViewerRows
     }
 
     fileprivate static var macDefaultTimelineRows: [CatalogRow] {
@@ -173,7 +174,48 @@ extension KeybindingCatalogTests {
                 chord: .escape,
                 expected: .closeViewer
             ),
+            CatalogRow(
+                name: "macDefault timeline Cmd-Up",
+                mode: .macDefault,
+                focus: .timeline,
+                chord: KeybindingChord(key: .upArrow, command: true),
+                expected: .moveToTop
+            ),
+            CatalogRow(
+                name: "macDefault timeline Cmd-Down",
+                mode: .macDefault,
+                focus: .timeline,
+                chord: KeybindingChord(key: .downArrow, command: true),
+                expected: .moveToBottom
+            ),
+            CatalogRow(
+                name: "macDefault timeline Control-N is not bound",
+                mode: .macDefault,
+                focus: .timeline,
+                chord: .control("n"),
+                expected: nil
+            ),
         ]
+    }
+
+    fileprivate static var emacsTimelineRows: [CatalogRow] {
+        let rows: [(String, KeybindingChord, KeybindingAction?)] = [
+            ("C-n", .control("n"), .nextToolRow),
+            ("C-p", .control("p"), .previousToolRow),
+            ("C-f", .control("f"), .expand),
+            ("C-b", .control("b"), .collapse),
+            ("Tab folds", .tab, .toggleExpanded),
+            ("M-<", KeybindingChord(key: .character("<"), shift: true, option: true), .moveToTop),
+            ("M->", KeybindingChord(key: .character(">"), shift: true, option: true), .moveToBottom),
+            ("C-g", .control("g"), .closeViewer),
+            ("C-o", .control("o"), .focusComposer),
+            ("arrows still navigate", .downArrow, .nextToolRow),
+            ("bare n types nothing", .letter("n"), nil),
+            ("bare j is not vim", .letter("j"), nil),
+        ]
+        return rows.map { name, chord, expected in
+            CatalogRow(name: "emacs timeline \(name)", mode: .emacs, focus: .timeline, chord: chord, expected: expected)
+        }
     }
 
     fileprivate static var vimTimelineRows: [CatalogRow] {
@@ -309,7 +351,10 @@ extension KeybindingCatalogTests {
                 chord: .escape,
                 expected: .closeViewer
             )
-        }
+        } + [
+            CatalogRow(name: "emacs viewer C-g", mode: .emacs, focus: .viewer, chord: .control("g"), expected: .closeViewer),
+            CatalogRow(name: "vim viewer C-g", mode: .vim, focus: .viewer, chord: .control("g"), expected: nil),
+        ]
     }
 
     fileprivate static let vimLetters: [Character] = ["j", "k", "h", "l", "e", "g", "i"]

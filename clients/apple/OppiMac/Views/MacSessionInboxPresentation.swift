@@ -44,6 +44,33 @@ enum MacSessionInboxPresentation {
     }
 }
 
+/// Home-list display order (Your Turn, Working, then stopped by day) for
+/// keyboard session switching. Stops at the ends instead of wrapping.
+enum MacHomeSessionOrder {
+    static func ordered(
+        _ targets: [MacSelectedSessionTarget],
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> [MacSelectedSessionTarget] {
+        let sections = MacSessionInboxPresentation.sections(targets: targets, now: now, calendar: calendar)
+        return sections.yourTurn + sections.working + sections.stoppedGroups.flatMap(\.items)
+    }
+
+    static func adjacent(
+        to sessionID: String?,
+        in ordered: [MacSelectedSessionTarget],
+        offset: Int
+    ) -> MacSelectedSessionTarget? {
+        guard !ordered.isEmpty else { return nil }
+        guard let sessionID,
+              let index = ordered.firstIndex(where: { $0.sessionId == sessionID }) else {
+            return offset >= 0 ? ordered.first : ordered.last
+        }
+        let next = index + offset
+        return ordered.indices.contains(next) ? ordered[next] : nil
+    }
+}
+
 /// Home-list runtime caption. Runtime-only rows paint a compact status strip.
 /// ``SessionShellDetail`` paints its own stats grid and does not use this caption.
 enum MacHomeSessionListPaint {

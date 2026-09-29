@@ -6,44 +6,82 @@ struct MacAppKeybindingHelpEntry: Equatable, Sendable, Identifiable {
     let shortcut: String
 }
 
-/// Mac-app keyboard help. Pane actions stay here, not in the shared iOS catalog.
+struct MacAppKeybindingHelpSection: Equatable, Sendable, Identifiable {
+    var id: String { title }
+    let title: String
+    let entries: [MacAppKeybindingHelpEntry]
+}
+
+/// Cheat-sheet rows derived from the live configuration: app commands from
+/// `MacKeybindingStore`, timeline rows from the shared catalog preset.
 enum MacAppKeybindingHelp {
-    static let entries: [MacAppKeybindingHelpEntry] = paneEntries + sessionEntries + timelineEntries
+    @MainActor
+    static func sections(store: MacKeybindingStore) -> [MacAppKeybindingHelpSection] {
+        commandSections(shortcut: store.shortcut(for:))
+            + [
+                timelineSection(mode: store.timelinePreset),
+                documentSection(mode: store.timelinePreset),
+                mouseSection,
+            ]
+    }
 
-    static let paneEntries: [MacAppKeybindingHelpEntry] = [
-        .init(action: "Split Right", shortcut: "⌘D"),
-        .init(action: "Split Down", shortcut: "⌘⇧D"),
-        .init(action: "Focus Left", shortcut: "⌘⌥←"),
-        .init(action: "Focus Right", shortcut: "⌘⌥→"),
-        .init(action: "Focus Up", shortcut: "⌘⌥↑"),
-        .init(action: "Focus Down", shortcut: "⌘⌥↓"),
-        .init(action: "Close Pane", shortcut: "⌘⇧W"),
-        .init(action: "Close Window", shortcut: "⌘W"),
-    ]
+    static func commandSections(
+        shortcut: (MacAppCommand) -> MacKeyShortcut?
+    ) -> [MacAppKeybindingHelpSection] {
+        MacAppCommand.Category.allCases.map { category in
+            MacAppKeybindingHelpSection(
+                title: category.rawValue,
+                entries: MacAppCommand.commands(in: category).map { command in
+                    MacAppKeybindingHelpEntry(
+                        action: command.title,
+                        shortcut: shortcut(command)?.displayString ?? "—"
+                    )
+                }
+            )
+        }
+    }
 
-    static let sessionEntries: [MacAppKeybindingHelpEntry] = [
-        .init(action: "Send", shortcut: "⌘↩"),
-        .init(action: "Keyboard Shortcuts", shortcut: "⇧?"),
-        .init(action: "Close Document", shortcut: "Esc"),
-    ]
+    static func timelineSection(mode: KeybindingMode) -> MacAppKeybindingHelpSection {
+        var entries = catalogEntries(mode: mode, focus: .timeline)
+        if MacTimelineKeybinding.composerEscapeFocusesTimeline(mode: mode) {
+            entries.append(.init(action: "Leave Composer for Timeline", shortcut: "Esc"))
+        }
+        return MacAppKeybindingHelpSection(title: "Timeline (\(mode.displayName))", entries: entries)
+    }
 
-    static let timelineEntries: [MacAppKeybindingHelpEntry] = [
-        .init(action: "Previous Tool Row", shortcut: "↑"),
-        .init(action: "Next Tool Row", shortcut: "↓"),
-        .init(action: "Collapse Tool Row", shortcut: "←"),
-        .init(action: "Expand Tool Row", shortcut: "→"),
-        .init(action: "Open Document", shortcut: "↩"),
-        .init(action: "Vim Next Tool Row", shortcut: "j"),
-        .init(action: "Vim Previous Tool Row", shortcut: "k"),
-        .init(action: "Vim Collapse Tool Row", shortcut: "h"),
-        .init(action: "Vim Expand Tool Row", shortcut: "l"),
-        .init(action: "Vim Toggle Expanded", shortcut: "e"),
-        .init(action: "Vim Move to Top", shortcut: "g"),
-        .init(action: "Vim Move to Bottom", shortcut: "G"),
-        .init(action: "Vim Focus Composer", shortcut: "Tab / i"),
-    ]
+    static func documentSection(mode: KeybindingMode) -> MacAppKeybindingHelpSection {
+        MacAppKeybindingHelpSection(
+            title: "Document",
+            entries: catalogEntries(mode: mode, focus: .viewer)
+        )
+    }
 
-    static func allowsCheatSheetShortcut(composerIsFirstResponder: Bool) -> Bool {
-        !composerIsFirstResponder
+    static let mouseSection = MacAppKeybindingHelpSection(
+        title: "Mouse",
+        entries: [
+            .init(action: "Expand or Collapse Tool Row", shortcut: "Click"),
+            .init(action: "Open Tool Row in Document View", shortcut: "Double-click"),
+        ]
+    )
+
+    /// One row per action; chords for the same action join with " / ".
+    private static func catalogEntries(
+        mode: KeybindingMode,
+        focus: KeybindingFocus
+    ) -> [MacAppKeybindingHelpEntry] {
+        var order: [KeybindingAction] = []
+        var chords: [KeybindingAction: [String]] = [:]
+        for binding in KeybindingCatalog.bindings(mode: mode, focus: focus) {
+            if chords[binding.action] == nil {
+                order.append(binding.action)
+            }
+            chords[binding.action, default: []].append(binding.chord.displayString)
+        }
+        return order.map { action in
+            MacAppKeybindingHelpEntry(
+                action: action.displayTitle,
+                shortcut: chords[action, default: []].joined(separator: " / ")
+            )
+        }
     }
 }

@@ -1,38 +1,28 @@
 import SwiftUI
 
-/// Session menu commands. Titles stay visible; enablement follows the
-/// currently focused session, not last-selected.
+/// Session-scoped commands published by the mounted session. Titles and
+/// shortcuts come from `MacAppCommand`; enablement follows the currently
+/// focused session, not last-selected.
 enum MacSessionCommandKind: String, CaseIterable, Sendable {
     case send
     case stopTurn
     case resume
+    case dictation
     case files
     case outline
     case context
 
-    var menuTitle: String {
-        switch self {
-        case .send: "Send"
-        case .stopTurn: "Stop Turn"
-        case .resume: "Resume"
-        case .files: "Files"
-        case .outline: "Session Outline"
-        case .context: "Context"
-        }
-    }
+    var menuTitle: String { command.title }
 
-    /// Only Send keeps a shortcut (existing Cmd-Return). Escape stays timeline/viewer.
-    var keyboardShortcut: KeyEquivalent? {
+    var command: MacAppCommand {
         switch self {
-        case .send: .return
-        case .stopTurn, .resume, .files, .outline, .context: nil
-        }
-    }
-
-    var keyboardShortcutModifiers: EventModifiers {
-        switch self {
-        case .send: .command
-        case .stopTurn, .resume, .files, .outline, .context: []
+        case .send: .send
+        case .stopTurn: .stopTurn
+        case .resume: .resume
+        case .dictation: .toggleDictation
+        case .files: .toggleFiles
+        case .outline: .toggleOutline
+        case .context: .toggleContext
         }
     }
 }
@@ -104,7 +94,7 @@ struct MacSessionCommandAvailability: Equatable, Sendable {
         case .send: send
         case .stopTurn: stopTurn
         case .resume: resume
-        case .files, .outline, .context: panels
+        case .dictation, .files, .outline, .context: panels
         }
     }
 }
@@ -130,6 +120,10 @@ private struct MacSessionStopTurnCommandKey: FocusedValueKey {
 }
 
 private struct MacSessionResumeCommandKey: FocusedValueKey {
+    typealias Value = MacSessionCommandItem
+}
+
+private struct MacSessionDictationCommandKey: FocusedValueKey {
     typealias Value = MacSessionCommandItem
 }
 
@@ -161,6 +155,11 @@ extension FocusedValues {
         set { self[MacSessionResumeCommandKey.self] = newValue }
     }
 
+    var macSessionDictationCommand: MacSessionCommandItem? {
+        get { self[MacSessionDictationCommandKey.self] }
+        set { self[MacSessionDictationCommandKey.self] = newValue }
+    }
+
     var macSessionFilesCommand: MacSessionCommandItem? {
         get { self[MacSessionFilesCommandKey.self] }
         set { self[MacSessionFilesCommandKey.self] = newValue }
@@ -174,44 +173,5 @@ extension FocusedValues {
     var macSessionContextCommand: MacSessionCommandItem? {
         get { self[MacSessionContextCommandKey.self] }
         set { self[MacSessionContextCommandKey.self] = newValue }
-    }
-}
-
-/// Session menu. Shortcut only on Send (Cmd-Return). Stop Turn is abort-turn.
-struct MacSessionCommands: Commands {
-    @FocusedValue(\.macSessionSendCommand) private var send
-    @FocusedValue(\.macSessionStopTurnCommand) private var stopTurn
-    @FocusedValue(\.macSessionResumeCommand) private var resume
-    @FocusedValue(\.macSessionFilesCommand) private var files
-    @FocusedValue(\.macSessionOutlineCommand) private var outline
-    @FocusedValue(\.macSessionContextCommand) private var context
-
-    var body: some Commands {
-        CommandMenu("Session") {
-            commandButton(.send, item: send)
-            commandButton(.stopTurn, item: stopTurn)
-            commandButton(.resume, item: resume)
-            Divider()
-            commandButton(.files, item: files)
-            commandButton(.outline, item: outline)
-            commandButton(.context, item: context)
-        }
-    }
-
-    @ViewBuilder
-    private func commandButton(
-        _ kind: MacSessionCommandKind,
-        item: MacSessionCommandItem?
-    ) -> some View {
-        let button = Button(kind.menuTitle) {
-            item?.perform()
-        }
-        .disabled(!(item?.enabled ?? false))
-
-        if let shortcut = kind.keyboardShortcut {
-            button.keyboardShortcut(shortcut, modifiers: kind.keyboardShortcutModifiers)
-        } else {
-            button
-        }
     }
 }

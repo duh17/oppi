@@ -10,38 +10,6 @@ enum MacSessionPaneCommand: String, CaseIterable, Sendable {
     case focusUp
     case focusDown
     case closePane
-
-    var title: String {
-        switch self {
-        case .splitRight: "Split Right"
-        case .splitDown: "Split Down"
-        case .focusLeft: "Focus Left"
-        case .focusRight: "Focus Right"
-        case .focusUp: "Focus Up"
-        case .focusDown: "Focus Down"
-        case .closePane: "Close Pane"
-        }
-    }
-
-    var key: KeyEquivalent {
-        switch self {
-        case .splitRight, .splitDown: "d"
-        case .focusLeft: .leftArrow
-        case .focusRight: .rightArrow
-        case .focusUp: .upArrow
-        case .focusDown: .downArrow
-        case .closePane: "w"
-        }
-    }
-
-    var modifiers: EventModifiers {
-        switch self {
-        case .splitRight: .command
-        case .splitDown: [.command, .shift]
-        case .focusLeft, .focusRight, .focusUp, .focusDown: [.command, .option]
-        case .closePane: [.command, .shift]
-        }
-    }
 }
 
 enum MacSessionPaneCommandAvailability {
@@ -61,7 +29,6 @@ enum MacSessionPaneCommandAvailability {
 @Observable
 final class MacSessionPaneCommandCenter {
     let deck: MacSessionPaneDeck
-    var isCheatSheetPresented = false
     var isDeckDisplayed = true
 
     init(deck: MacSessionPaneDeck) {
@@ -70,12 +37,6 @@ final class MacSessionPaneCommandCenter {
 
     var canSplit: Bool { isDeckDisplayed && deck.layout != nil }
     var canClosePane: Bool { isDeckDisplayed && deck.layout != nil }
-    var canShowCheatSheet: Bool {
-        MacAppKeybindingHelp.allowsCheatSheetShortcut(
-            composerIsFirstResponder: deck.hasComposerFirstResponder
-        )
-    }
-
     func perform(_ command: MacSessionPaneCommand) {
         guard isDeckDisplayed else { return }
         let originID = deck.focusedPaneID
@@ -99,11 +60,6 @@ final class MacSessionPaneCommandCenter {
             deck.synchronizeKeyboardOwnership()
         }
     }
-
-    func showCheatSheet() {
-        guard canShowCheatSheet else { return }
-        isCheatSheetPresented = true
-    }
 }
 
 private struct MacSessionPaneCommandCenterKey: FocusedValueKey {
@@ -114,76 +70,5 @@ extension FocusedValues {
     var macSessionPaneCommands: MacSessionPaneCommandCenter? {
         get { self[MacSessionPaneCommandCenterKey.self] }
         set { self[MacSessionPaneCommandCenterKey.self] = newValue }
-    }
-}
-
-struct MacSessionPaneCommandMenu: Commands {
-    @FocusedValue(\.macSessionPaneCommands) private var commands
-
-    var body: some Commands {
-        CommandMenu("View") {
-            commandButton(.splitRight)
-            commandButton(.splitDown)
-            Divider()
-            commandButton(.focusLeft)
-            commandButton(.focusRight)
-            commandButton(.focusUp)
-            commandButton(.focusDown)
-            Divider()
-            commandButton(.closePane)
-        }
-
-        CommandGroup(after: .help) {
-            Button("Keyboard Shortcuts") {
-                commands?.showCheatSheet()
-            }
-            .keyboardShortcut("?", modifiers: .shift)
-            .disabled(commands?.canShowCheatSheet != true)
-        }
-    }
-
-    @ViewBuilder
-    private func commandButton(_ command: MacSessionPaneCommand) -> some View {
-        Button(command.title) {
-            commands?.perform(command)
-        }
-        .keyboardShortcut(command.key, modifiers: command.modifiers)
-        .disabled(!isEnabled(command))
-    }
-
-    private func isEnabled(_ command: MacSessionPaneCommand) -> Bool {
-        switch command {
-        case .splitRight, .splitDown, .focusLeft, .focusRight, .focusUp, .focusDown, .closePane:
-            commands?.canClosePane == true
-        }
-    }
-}
-
-struct MacKeyboardCheatSheetView: View {
-    let dismiss: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Keyboard Shortcuts")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-                Button("Close", action: dismiss)
-                    .keyboardShortcut(.cancelAction)
-            }
-
-            List(MacAppKeybindingHelp.entries) { entry in
-                HStack {
-                    Text(entry.action)
-                    Spacer()
-                    Text(entry.shortcut)
-                        .font(.body.monospaced())
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .padding(20)
-        .frame(minWidth: 420, minHeight: 480)
-        .accessibilityIdentifier("mac.keyboardCheatSheet")
     }
 }
