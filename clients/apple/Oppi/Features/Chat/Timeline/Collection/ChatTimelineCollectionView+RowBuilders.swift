@@ -107,6 +107,13 @@ extension ChatTimelineCollectionHost.Controller {
         )
     }
 
+    /// Tool-output capabilities for this timeline's session, resolved when asked. Nil while the
+    /// connection has no API client or the timeline has no route scope. Requests are built by
+    /// the connection's content adapter; the timeline only decides when to use them.
+    var toolOutputAccess: SessionToolOutputAccess? {
+        connection?.sessionContent.toolOutputAccess(sessionId: sessionId, routeScope: routeScope)
+    }
+
     /// The Markdown resource access for this timeline's own source. Identity is always the
     /// timeline's bound scope; providers come from the connection's content adapter, which
     /// owns routing, readiness, and origin policy. Rows never build those closures.
@@ -556,41 +563,13 @@ extension ChatTimelineCollectionHost.Controller {
                 configuration.sourceFilePath = trimmed
             }
         }
-        if let apiClient = connection?.apiClient, let routeScope {
-            let toolCallId = itemID
-            let capturedSessionId = sessionId
-            configuration.toolOutputSidecarSource = ToolOutputSidecarWindowSource(
-                loadFirst: {
-                    try await apiClient.openFullToolOutputSidecar(
-                        scope: routeScope,
-                        sessionId: capturedSessionId,
-                        toolCallId: toolCallId
-                    )
-                },
-                loadNext: { startByte in
-                    try await apiClient.getFullToolOutputSidecarWindow(
-                        scope: routeScope,
-                        sessionId: capturedSessionId,
-                        toolCallId: toolCallId,
-                        startByte: startByte
-                    )
-                }
+        if let access = toolOutputAccess {
+            configuration.toolOutputSidecarSource = access.sidecarSource(toolCallId: itemID)
+            configuration.fetchCompleteToolOutput = access.completeOutputFetch(
+                tool: tool,
+                toolCallId: itemID,
+                store: toolOutputStore
             )
-            if ExpandedToolOutputFetch.isShellSidecarTool(tool) {
-                let store = toolOutputStore
-                configuration.fetchCompleteToolOutput = {
-                    if let store, store.hasCompleteOutput(for: toolCallId) {
-                        let text = store.fullOutput(for: toolCallId)
-                        return text.isEmpty ? nil : text
-                    }
-                    return try await ExpandedToolOutputFetch.fetchForCopy(
-                        apiClient: apiClient,
-                        scope: routeScope,
-                        sessionId: capturedSessionId,
-                        toolCallId: toolCallId
-                    )
-                }
-            }
         }
         return configuration
             .withReviewCommentSelection(router: interactionCtx.reviewCommentSelectionRouter, sessionId: interactionCtx.sessionId)

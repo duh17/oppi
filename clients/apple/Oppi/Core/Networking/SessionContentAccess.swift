@@ -1,7 +1,8 @@
 import Foundation
 
 /// iOS owner of session-scoped content access: attachments, session files,
-/// host files, and Markdown media/sidecar resources for assistant and tool rows.
+/// host files, Markdown media/sidecar resources, and tool-output capabilities for
+/// assistant and tool rows.
 ///
 /// `ServerConnection` stays authoritative for API-client installation,
 /// authentication, and lifecycle. This adapter only reads the *current* client
@@ -9,10 +10,12 @@ import Foundation
 /// resumes, so cached rows can request content before the client or workspace
 /// catalog is ready without pinning a stale client, runtime, or worktree.
 ///
-/// Every operation waits a bounded time for readiness (`readinessAttempts` polls
-/// spaced `readinessPoll` apart), honors task cancellation, and then resolves the
-/// origin (workspace, session, host, or stored attachment) from the caller's
-/// bound source identity plus current metadata.
+/// Every content fetch (attachments, session files, host files, Markdown media) waits a
+/// bounded time for readiness (`readinessAttempts` polls spaced `readinessPoll` apart),
+/// honors task cancellation, and then resolves the origin (workspace, session, host, or
+/// stored attachment) from the caller's bound source identity plus current metadata.
+/// `toolOutputAccess` does not wait: it resolves synchronously from the current client
+/// and returns nil when the client or route scope is missing.
 @MainActor
 final class SessionContentAccess {
     static let readinessAttempts = 50
@@ -68,6 +71,20 @@ final class SessionContentAccess {
             contentTypeHint: contentTypeHint,
             sourceFileExtension: sourceFileExtension
         )
+    }
+
+    // MARK: - Tool output
+
+    /// Tool-output capabilities for `sessionId`, bound to the current API client and the
+    /// caller's route scope. Nil when either is missing right now: unlike the operations
+    /// above, this does not wait for readiness, so a timeline built before the client
+    /// exists simply has no tool-output fetch, sidecar, or copy.
+    func toolOutputAccess(
+        sessionId: String,
+        routeScope: SessionRouteScope?
+    ) -> SessionToolOutputAccess? {
+        guard let apiClient = currentAPIClient(), let routeScope else { return nil }
+        return SessionToolOutputAccess(apiClient: apiClient, scope: routeScope, sessionId: sessionId)
     }
 
     // MARK: - Session files

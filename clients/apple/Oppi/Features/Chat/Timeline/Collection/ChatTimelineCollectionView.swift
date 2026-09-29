@@ -1668,20 +1668,14 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             toolOutputLoader.loadIfNeeded(request)
         }
 
+        /// Expansion fetch over the session's tool-output access. Access is bound to this
+        /// timeline's session and scope right now; without a client or scope there is no fetch.
         private func makeDefaultFetchToolOutput(tool: String) -> ExpandedToolOutputLoader.FetchToolOutput? {
-            guard let apiClient = connection?.apiClient,
-                  let routeScope else {
-                return nil
-            }
-
-            return { sessionId, toolCallId in
-                try await ExpandedToolOutputFetch.fetchForExpand(
-                    tool: tool,
-                    apiClient: apiClient,
-                    scope: routeScope,
-                    sessionId: sessionId,
-                    toolCallId: toolCallId
-                )
+            guard let access = toolOutputAccess else { return nil }
+            // The loader's session id is `access.sessionId`: both come from this controller's
+            // `sessionId` in the same synchronous call.
+            return { _, toolCallId in
+                try await access.fetchForExpand(tool: tool, toolCallId: toolCallId)
             }
         }
 
