@@ -964,6 +964,111 @@ describe("BoundSessionStreamMux", () => {
     expect(result?.success).toBe(false);
   });
 
+  it("sends complete tool previews immediately and coalesces later snapshots per socket", async () => {
+    vi.useFakeTimers();
+    const first = new FakeWebSocket();
+    const second = new FakeWebSocket();
+    try {
+      const session = makeSession("sess-tool-preview", "w1");
+      const { ctx, broadcastTo } = createMockContext([session]);
+      const mux = new BoundSessionStreamMux(ctx);
+      await mux.handleWebSocket("w1", session.id, first as unknown as WebSocket);
+      await mux.handleWebSocket("w1", session.id, second as unknown as WebSocket);
+      first.sent.length = 0;
+      second.sent.length = 0;
+
+      const update = (toolCallId: string, content: string): ServerMessage => ({
+        type: "tool_update",
+        tool: "write",
+        toolCallId,
+        args: { path: "note.txt", content },
+        callSegments: [{ text: content }],
+      });
+      const emit = (message: ServerMessage) => broadcastTo(session.id, message);
+      emit(update("a", "first"));
+      expect(first.sent).toEqual([{ ...update("a", "first"), sessionId: session.id }]);
+      expect(second.sent).toEqual(first.sent);
+
+      await vi.advanceTimersByTimeAsync(10);
+      emit(update("a", "second"));
+      await vi.advanceTimersByTimeAsync(10);
+      emit(update("a", "third"));
+      expect(first.sent).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(29);
+      expect(first.sent).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(first.sent).toEqual([
+        { ...update("a", "first"), sessionId: session.id },
+        { ...update("a", "third"), sessionId: session.id },
+      ]);
+      expect(second.sent).toEqual(first.sent);
+
+      // The timer's send anchors a fresh 50ms window for the next burst.
+      await vi.advanceTimersByTimeAsync(10);
+      emit(update("a", "after flush"));
+      expect(first.sent).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(10);
+      emit(update("a", "latest after flush"));
+      expect(first.sent).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(29);
+      expect(first.sent).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(first.sent).toEqual([
+        { ...update("a", "first"), sessionId: session.id },
+        { ...update("a", "third"), sessionId: session.id },
+        { ...update("a", "latest after flush"), sessionId: session.id },
+      ]);
+      expect(second.sent).toEqual(first.sent);
+
+      // An 80ms producer cadence must not lose any complete snapshot.
+      await vi.advanceTimersByTimeAsync(80);
+      emit(update("a", "fourth"));
+      expect(first.sent.at(-1)).toEqual({ ...update("a", "fourth"), sessionId: session.id });
+      await vi.advanceTimersByTimeAsync(80);
+      emit(update("a", "fifth"));
+      expect(first.sent.at(-1)).toEqual({ ...update("a", "fifth"), sessionId: session.id });
+      await vi.advanceTimersByTimeAsync(10);
+      emit(update("a", "sixth"));
+      emit({ type: "tool_start", tool: "write", toolCallId: "a", args: {} });
+      expect(first.sent.slice(-2)).toEqual([
+        { ...update("a", "sixth"), sessionId: session.id },
+        { type: "tool_start", tool: "write", toolCallId: "a", args: {}, sessionId: session.id },
+      ]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(first.sent.at(-1)?.type).toBe("tool_start");
+
+      emit(update("b", "other first"));
+      await vi.advanceTimersByTimeAsync(10);
+      emit(update("b", "other held"));
+      emit(update("c", "new call"));
+      expect(first.sent.slice(-2)).toEqual([
+        { ...update("b", "other held"), sessionId: session.id },
+        { ...update("c", "new call"), sessionId: session.id },
+      ]);
+      await vi.advanceTimersByTimeAsync(10);
+      emit(update("c", "pending end"));
+      emit({ type: "tool_end", tool: "write", toolCallId: "c" });
+      expect(first.sent.slice(-2)).toEqual([
+        { ...update("c", "pending end"), sessionId: session.id },
+        { type: "tool_end", tool: "write", toolCallId: "c", sessionId: session.id },
+      ]);
+
+      // One socket may close with a held preview while the other still flushes.
+      emit(update("d", "open"));
+      await vi.advanceTimersByTimeAsync(10);
+      emit(update("d", "held"));
+      first.close();
+      const beforeCloseCount = first.sent.length;
+      await vi.advanceTimersByTimeAsync(40);
+      expect(first.sent).toHaveLength(beforeCloseCount);
+      expect(second.sent.at(-1)).toEqual({ ...update("d", "held"), sessionId: session.id });
+    } finally {
+      if (first.readyState === WebSocket.OPEN) first.close();
+      if (second.readyState === WebSocket.OPEN) second.close();
+      vi.useRealTimers();
+    }
+  });
+
   it("unsubscribes from session manager when the socket closes", async () => {
     const session = makeSession("sess-bound", "w1");
     const { ctx, broadcastTo } = createMockContext([session]);

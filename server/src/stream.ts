@@ -298,11 +298,18 @@ export class BoundSessionStreamMux {
     let unsubscribeBoundSession: (() => void) | undefined;
     const liveConnectionCleanup: { run?: () => void } = {};
     let connectionClosed = false;
+    let pendingToolUpdate: ServerMessage | undefined;
+    let toolUpdateTimer: ReturnType<typeof setTimeout> | undefined;
+    let heldToolCallId: string | undefined;
+    let lastToolUpdateSentAt = 0;
     let queue: Promise<void> = Promise.resolve();
 
     const cleanupBoundConnection = (code: number, reason?: Buffer): void => {
       if (connectionClosed) return;
       connectionClosed = true;
+      if (toolUpdateTimer) clearTimeout(toolUpdateTimer);
+      toolUpdateTimer = undefined;
+      pendingToolUpdate = undefined;
       if (!unsubscribed) {
         unsubscribed = true;
         unsubscribeBoundSession?.();
@@ -343,8 +350,8 @@ export class BoundSessionStreamMux {
       });
     });
 
-    const send = (msg: ServerMessage): boolean => {
-      if (ws.readyState !== WebSocket.OPEN) {
+    const sendWire = (msg: ServerMessage, fromSession: boolean): boolean => {
+      if (connectionClosed || ws.readyState !== WebSocket.OPEN) {
         const context = {
           connId,
           messageType: msg.type,
@@ -360,17 +367,64 @@ export class BoundSessionStreamMux {
       }
       msgSent += 1;
       ws.send(JSON.stringify(msg));
-      return true;
-    };
-
-    const sendForSession = (msg: ServerMessage): void => {
-      if (send({ ...msg, sessionId })) {
+      if (fromSession) {
         metrics?.record("server.ws_message_sent", 1, {
           type: msg.type,
           level: "bound_session",
           path: "bound_session_stream",
         });
       }
+      return true;
+    };
+
+    const flushToolUpdate = (): void => {
+      if (toolUpdateTimer) clearTimeout(toolUpdateTimer);
+      toolUpdateTimer = undefined;
+      const pending = pendingToolUpdate;
+      pendingToolUpdate = undefined;
+      if (pending) {
+        lastToolUpdateSentAt = Date.now();
+        sendWire(pending, true);
+      }
+    };
+
+    const send = (msg: ServerMessage, fromSession = false): boolean => {
+      if (connectionClosed || ws.readyState !== WebSocket.OPEN) return false;
+      if (msg.type !== "tool_update" || !msg.toolCallId || msg.toolCallId !== heldToolCallId) {
+        flushToolUpdate();
+        heldToolCallId = undefined;
+      }
+      if (msg.type !== "tool_update" || !msg.toolCallId) return sendWire(msg, fromSession);
+
+      if (heldToolCallId === undefined) {
+        heldToolCallId = msg.toolCallId;
+        lastToolUpdateSentAt = Date.now();
+        return sendWire(msg, fromSession);
+      }
+
+      const remaining = 50 - (Date.now() - lastToolUpdateSentAt);
+      if (remaining <= 0) {
+        // A due timer may not have run yet. Replace its snapshot rather than
+        // sending both held frames at the same deadline.
+        if (pendingToolUpdate) {
+          pendingToolUpdate = msg;
+          flushToolUpdate();
+          return true;
+        }
+        lastToolUpdateSentAt = Date.now();
+        return sendWire(msg, fromSession);
+      }
+      // Latest complete snapshot wins; the deadline is anchored to the last send,
+      // not reset by every Pi snapshot in a growing write.
+      pendingToolUpdate = msg;
+      if (!toolUpdateTimer) {
+        toolUpdateTimer = setTimeout(flushToolUpdate, remaining);
+      }
+      return true;
+    };
+
+    const sendForSession = (msg: ServerMessage): void => {
+      send({ ...msg, sessionId }, true);
     };
 
     let liveConnections = this.liveSessionConnections.get(sessionId);
