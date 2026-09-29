@@ -101,11 +101,20 @@ class E2ETestCase: XCTestCase {
 
     /// Launches the app, pairs with the E2E server, and navigates to the e2e-workspace.
     private func launchAndPair() throws {
-        let inviteURL = try readInviteURL()
+        let invite: (url: String, source: String)
+        do {
+            invite = try E2ELabServerContext.readInviteURLWithSource()
+        } catch {
+            throw XCTSkip("No invite URL found in PI_E2E_INVITE_URL or at /tmp/oppi-e2e-invite.txt — run the Oppi E2E server harness to set up pairing")
+        }
+        let inviteURL = invite.url
 
         let application = XCUIApplication()
         application.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
         application.launchEnvironment["PI_E2E_INVITE_URL"] = inviteURL
+        // Beat a leftover runner/SIMCTL invite. Offline two-server tests already
+        // documented that the UI runner does not inherit the host env.
+        application.launchEnvironment["OPPI_E2E_LAUNCH_INVITE"] = inviteURL
         if !e2eLaunchesWorkspaceHomeOnly && !e2eLaunchesSessionsInboxOnly {
             application.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = "e2e-workspace"
             if e2eAutoCreatesSessionOnLaunch {
@@ -148,7 +157,8 @@ class E2ETestCase: XCTestCase {
         }
         XCTAssertTrue(
             paired,
-            "Workspace surface did not appear after pairing"
+            pairingFailureToast(in: application).map { "Workspace surface did not appear after pairing. \($0)" }
+                ?? "Workspace surface did not appear after pairing"
         )
         guard paired else { return }
 
@@ -222,12 +232,24 @@ class E2ETestCase: XCTestCase {
         _ = waitForWorkspaceList(in: application, timeout: 2)
     }
 
+    private func pairingFailureToast(in application: XCUIApplication) -> String? {
+        let toast = application.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Invite link failed:")
+        ).firstMatch
+        guard toast.exists else { return nil }
+        return toast.label
+    }
+
     private func waitForPairedAppSurface(
         in application: XCUIApplication,
         timeout: TimeInterval
     ) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
+            if let message = pairingFailureToast(in: application) {
+                XCTFail(message)
+                return false
+            }
             if workspaceListSurfaceExists(in: application)
                 || sessionsInboxSurfaceExists(in: application)
                 || workspaceDetailSurfaceExists(in: application)
@@ -276,28 +298,6 @@ class E2ETestCase: XCTestCase {
     private func workspaceListElement(in application: XCUIApplication) -> XCUIElement {
         let sidebarScroll = application.scrollViews["workspace.sidebar.scroll"]
         return sidebarScroll.exists ? sidebarScroll : application.collectionViews["workspace.list"]
-    }
-
-    /// Reads the invite URL provided by the E2E server harness.
-    private func readInviteURL() throws -> String {
-        for key in ["PI_E2E_INVITE_URL", "SIMCTL_CHILD_PI_E2E_INVITE_URL"] {
-            if let url = ProcessInfo.processInfo.environment[key]?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-                !url.isEmpty {
-                return url
-            }
-        }
-
-        let path = "/tmp/oppi-e2e-invite.txt"
-        guard FileManager.default.fileExists(atPath: path) else {
-            throw XCTSkip("No invite URL found in PI_E2E_INVITE_URL or at \(path) — run the Oppi E2E server harness to set up pairing")
-        }
-        let url = try String(contentsOfFile: path, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !url.isEmpty else {
-            throw XCTSkip("Invite URL file is empty")
-        }
-        return url
     }
 
     // MARK: - State Recovery
@@ -500,15 +500,14 @@ class E2ETestCase: XCTestCase {
     }
 
     private func dismissExtensionSurfaceIfNeeded(in application: XCUIApplication, timeout: TimeInterval) {
-        let buttons = [
-            application.buttons["extension.dialog.cancel"],
-            application.buttons["Cancel"],
-            application.buttons["Done"],
-        ]
+        // Only the real extension-dialog cancel control. Generic Done/Cancel also
+        // match ExtensionToastSheet (navigation title "Extension"), including the
+        // E2E pairing-failure toast.
+        let button = application.buttons["extension.dialog.cancel"]
         let deadline = Date().addingTimeInterval(timeout)
 
         repeat {
-            for button in buttons where button.exists {
+            if button.exists {
                 if button.isHittable {
                     button.tap()
                 } else {

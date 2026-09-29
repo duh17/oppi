@@ -462,20 +462,46 @@ extension E2ETestCase {
 }
 
 enum E2ELabServerContext {
+    static let inviteFilePath = "/tmp/oppi-e2e-invite.txt"
+
     static func baseURL() throws -> URL {
         try baseURL(inviteURLString: inviteURLString())
     }
 
+    /// Harness file wins over process environment. The Xcode UI test runner does
+    /// not reliably inherit the host `PI_E2E_INVITE_URL`, and a leftover runner
+    /// value pins a previous self-signed leaf against the current server.
+    static func resolveInviteURL(
+        environment: [String: String],
+        fileContents: String?
+    ) -> (url: String, source: String)? {
+        let trimmedFile = fileContents?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedFile.isEmpty {
+            return (trimmedFile, "file")
+        }
+        for key in ["PI_E2E_INVITE_URL", "SIMCTL_CHILD_PI_E2E_INVITE_URL"] {
+            if let url = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !url.isEmpty {
+                return (url, "env:\(key)")
+            }
+        }
+        return nil
+    }
+
+    static func readInviteURLWithSource() throws -> (url: String, source: String) {
+        let fileContents = try? String(contentsOfFile: inviteFilePath, encoding: .utf8)
+        guard let resolved = resolveInviteURL(
+            environment: ProcessInfo.processInfo.environment,
+            fileContents: fileContents
+        ) else {
+            throw E2ELabAPIError.invalidInvite
+        }
+        return resolved
+    }
+
     static func baseURL(inviteURLString: String) throws -> URL {
-        guard let url = URL(string: inviteURLString),
-              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let inviteValue = components.queryItems?.first(where: { $0.name == "invite" })?.value,
-              let envelopeData = Data(e2eBase64URLEncoded: inviteValue),
-              let envelope = try JSONSerialization.jsonObject(with: envelopeData) as? [String: Any],
-              let signedPayloadValue = envelope["signedPayload"] as? String,
-              let payloadData = Data(e2eBase64URLEncoded: signedPayloadValue),
-              let payload = try JSONSerialization.jsonObject(with: payloadData) as? [String: Any],
-              let scheme = payload["scheme"] as? String,
+        let payload = try signedInvitePayload(inviteURLString)
+        guard let scheme = payload["scheme"] as? String,
               let host = payload["host"] as? String,
               let port = payload["port"] as? Int else {
             throw E2ELabAPIError.invalidInvite
@@ -491,6 +517,20 @@ enum E2ELabServerContext {
         return baseURL
     }
 
+    private static func signedInvitePayload(_ inviteURLString: String) throws -> [String: Any] {
+        guard let url = URL(string: inviteURLString),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let inviteValue = components.queryItems?.first(where: { $0.name == "invite" })?.value,
+              let envelopeData = Data(e2eBase64URLEncoded: inviteValue),
+              let envelope = try JSONSerialization.jsonObject(with: envelopeData) as? [String: Any],
+              let signedPayloadValue = envelope["signedPayload"] as? String,
+              let payloadData = Data(e2eBase64URLEncoded: signedPayloadValue),
+              let payload = try JSONSerialization.jsonObject(with: payloadData) as? [String: Any] else {
+            throw E2ELabAPIError.invalidInvite
+        }
+        return payload
+    }
+
     static func environmentValue(for keys: [String]) -> String? {
         for key in keys {
             if let value = ProcessInfo.processInfo.environment[key]?
@@ -503,17 +543,30 @@ enum E2ELabServerContext {
     }
 
     private static func inviteURLString() throws -> String {
-        if let url = environmentValue(for: ["PI_E2E_INVITE_URL", "SIMCTL_CHILD_PI_E2E_INVITE_URL"]) {
-            return url
-        }
+        try readInviteURLWithSource().url
+    }
+}
 
-        let path = "/tmp/oppi-e2e-invite.txt"
-        let url = try String(contentsOfFile: path, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !url.isEmpty else {
-            throw E2ELabAPIError.invalidInvite
-        }
-        return url
+final class E2EInviteURLResolutionTests: XCTestCase {
+    func testHarnessFileWinsOverStaleProcessEnvironment() {
+        let resolved = E2ELabServerContext.resolveInviteURL(
+            environment: [
+                "PI_E2E_INVITE_URL": "oppi://connect?v=3&invite=stale-runner",
+                "SIMCTL_CHILD_PI_E2E_INVITE_URL": "oppi://connect?v=3&invite=stale-simctl",
+            ],
+            fileContents: "oppi://connect?v=3&invite=fresh-harness"
+        )
+        XCTAssertEqual(resolved?.source, "file")
+        XCTAssertEqual(resolved?.url, "oppi://connect?v=3&invite=fresh-harness")
+    }
+
+    func testFallsBackToProcessEnvironmentWhenHarnessFileMissing() {
+        let resolved = E2ELabServerContext.resolveInviteURL(
+            environment: ["PI_E2E_INVITE_URL": "oppi://connect?v=3&invite=env-only"],
+            fileContents: "  "
+        )
+        XCTAssertEqual(resolved?.source, "env:PI_E2E_INVITE_URL")
+        XCTAssertEqual(resolved?.url, "oppi://connect?v=3&invite=env-only")
     }
 }
 

@@ -141,6 +141,24 @@ struct InviteBootstrapServiceTests {
         ) == "Secure connection to pairing.example.test failed. Verify the invite host and certificate, then try again.")
     }
 
+    @Test func cancelledTransportIsNotClassifiedAsUnreachableOrTLS() {
+        let urlMessage = InviteBootstrapService.pairingFailureMessage(
+            for: URLError(.cancelled),
+            host: "192.168.68.66"
+        )
+        #expect(urlMessage.hasPrefix("Pairing failed:"))
+        #expect(!urlMessage.contains("Could not reach"))
+        #expect(!urlMessage.contains("Secure connection"))
+
+        let cancelMessage = InviteBootstrapService.pairingFailureMessage(
+            for: CancellationError(),
+            host: "127.0.0.1"
+        )
+        #expect(cancelMessage.hasPrefix("Pairing failed:"))
+        #expect(!cancelMessage.contains("Could not reach"))
+        #expect(!cancelMessage.contains("Secure connection"))
+    }
+
     @Test func decodesCredentialsFromInviteURL() throws {
         let payload = #"{"v":3,"host":"pairing.example.test","port":7749,"token":"invite-token","name":"Pairing Server"}"#
         let encoded = try #require(payload.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed))
