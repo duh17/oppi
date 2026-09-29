@@ -40,6 +40,11 @@ Example:
 
 ### Added
 
+- **Mac:** Help → Client Script runs `focus`, `command`, and `catalog` steps by name. The accessibility value `mac.clientScript.snapshot` reports focus, section, session, tool row, and document so computer use can check a shortcut against the same action. Sidebar sections are `mac.sidebar.*`. Timeline rows are `mac.timeline`, `mac.timeline.userMessage`, and `mac.timeline.assistantMessage`.
+- **Mac:** Keyboard-first commands. ⌘N opens a new session, ⌘K opens a command palette over every command and session (⌘↩ opens a session in a split), ⌘P jumps to a session, ⌘{ / ⌘} step through sessions, ⌘L / ⌘J focus the composer or timeline, ⌘⇧M toggles dictation, ⌘1–6 switch sidebar sections, and ⌘/ shows the shortcut sheet. Every command appears in the menu bar with its current shortcut.
+- **Mac:** Settings → Keyboard rebinds any command (a taken chord moves, system shortcuts are refused) and picks a timeline preset: Mac Standard, Vim (j/k, h/l, g/G, i or Tab to the composer, Esc back), or Emacs (⌃N/⌃P, ⌃F/⌃B, ⌥< / ⌥>, ⌃G, ⌃O).
+- **Mac:** ⌘+, ⌘-, and ⌘0 resize timeline, tool, and document text in place without losing scroll position.
+- **Mac:** Clicking a tool row header expands or collapses it; double-clicking opens it in the document column.
 - **Client:** Server settings can update a globally installed `oppi-server` with one tap, then reconnect. A single All Sessions notice points at Server when the paired host is older than this app build (0.50.0).
 - **Server:** `GET /server/info` reports install kind and a cached latest npm version. `POST /server/update` installs that exact version for global npm installs, then restarts the process (in-place `execve`, or a non-zero LaunchAgent exit so KeepAlive brings it back).
 - **Protocol:** Additive `update` object on `GET /server/info` and owner `POST /server/update`.
@@ -60,6 +65,8 @@ Example:
 
 - **Client:** New orbs animate for dictation and the agent's thinking/working indicator, adapted from Thinking Orbs designs by Jakub Antalik and a Swift port by Haplo LLC. The dictation orb responds to voice. On-device dictation prefers Apple's DictationTranscriber, which accepts Dictionary phrase hints and gave better results than SpeechTranscriber in our normal-path use; SpeechTranscriber remains the fallback.
 - **Server:** Bundled Pi runtime moves to `0.87.1`.
+- **Mac:** New Session uses the same mic, plus, model, and thinking pills as the session composer. Code fences use the iPhone card: an 11 pt language header, wrap, and copy, over a shorter code body.
+- **Mac:** The session timeline reads like the iPhone one on a desktop column: user, assistant, thinking, and tool rows are tinted cards in one centered reading column that widens with text zoom, and the composer sits in the same column. At 100% zoom message text is 15 pt (was 13 pt) and code is 13 pt (was 12 pt); inline code follows the message size with a highlight wash. Assistant messages and the composer model pill show the model's provider mark. Command bars and diff lines (timeline and document column) are syntax-highlighted. The tool row's document button is gone: click the header to expand, double-click to open the document column, or use the row's "Open in Document View" accessibility action.
 - **Server:** The Node.js requirement is 22.19.0 or newer, matching Pi. Sandbox workspaces still need Node.js 23.6+.
 - **Mirror:** Mirrored Pi `turn_end` frames omit duplicate message bodies and tool results.
 - **Client:** Everything the iOS app and Share extension store on disk now uses iOS Data Protection class *Complete unless open*: timeline cache, message drafts, file-browser cache, HTTP cache, and shared-file inbox. That data cannot be read while the device is locked; before, it was readable from the first unlock after a reboot. Background work can still write new files after lock. The first launch after updating upgrades files that are already stored.
@@ -67,6 +74,8 @@ Example:
 
 ### Fixed
 
+- **Mac:** Timeline scrolling and streaming no longer stall under an imported custom theme. Theme-aware paint decoded the stored custom-theme JSON on every render (about a quarter of main-thread time while scrolling); the resolved palette is now memoized until the stored theme changes. Timeline rows also skip re-rendering when a token lands in another row, and syntax highlighting is cached.
+- **Mac:** The top of the timeline no longer shows a toolbar-height blurred band over the first rows, and the composer no longer grows to a tall empty capsule when the pane has room.
 - **Server:** Sandbox workspace file reads and listings no longer follow symlinks out of the mount. Every byte read comes from a handle verified against the checked path, so a symlink swapped in after the check returns 404.
 - **Server:** An aborted media Range request (common when a player seeks) closes its file handle instead of crashing `oppi serve` on Node's DEP0137 garbage-collection close.
 - **Client:** Video sidecar captions keep following playback in native fullscreen for chat embeds and the file browser instead of freezing on the last inline caption.
