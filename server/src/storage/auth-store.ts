@@ -2,6 +2,9 @@ import { hostname } from "node:os";
 import { generateId } from "../id.js";
 import type { ConfigStore } from "./config-store.js";
 
+/** Longest pairing invite life. Bounds how long a leaked single-use link can pair a device. */
+export const MAX_PAIRING_TOKEN_TTL_MS = 30 * 86_400_000;
+
 export class AuthStore {
   constructor(private readonly configStore: ConfigStore) {}
 
@@ -46,6 +49,10 @@ export class AuthStore {
   }
 
   issuePairingToken(ttlMs: number = 90_000): string {
+    // Reject before writing: an invalid ttl must not replace the outstanding invite.
+    if (!Number.isFinite(ttlMs) || ttlMs > MAX_PAIRING_TOKEN_TTL_MS) {
+      throw new Error("Pairing token ttl must be finite and at most 30d");
+    }
     const pairingToken = AuthStore.generatePairingToken();
     this.configStore.updateConfig({
       pairingToken,

@@ -171,7 +171,7 @@ Use `oppi ...` for npm/global and Docker installs. In a source checkout before l
 ```bash
 oppi serve [--host <h>]      # start server
 oppi init                    # interactive first-time setup
-oppi pair [--host <h>]       # regenerate pairing QR + invite link
+oppi pair [--host <h>] [--ttl <d>]  # regenerate pairing QR + invite link; ttl 1s to 30d
 oppi status                  # server, network, and pairing status
 oppi quota                   # provider plan, remaining quota, and pace
 oppi models [query]          # enabled models by provider, with quota

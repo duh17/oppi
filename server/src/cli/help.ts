@@ -156,10 +156,17 @@ const HELP_TOPICS: HelpTopic[] = [
     flags: [
       { name: "--host", value: "<host>", summary: "hostname/IP encoded in the invite" },
       { name: "--json", summary: "write the invite payload as JSON" },
+      {
+        name: "--ttl",
+        value: "<duration>",
+        summary: "invite lifetime, 1s to 30d (e.g. 10m, 14d); default 90s",
+      },
       { name: "--show-token", summary: "print the owner bearer token in human output; unsafe" },
     ],
     notes: [
       "The QR and link carry the same signed invite.",
+      "Invites are single-use. Issuing a new invite replaces any outstanding one.",
+      "Use a long --ttl only for asynchronous hand-offs such as App Review notes.",
       "When publicUrl is set, the invite advertises that HTTPS origin and omits the origin TLS leaf pin.",
       "--host must not conflict with publicUrl.",
       "Use --show-token only for manual recovery; it exposes the owner token in the terminal.",
@@ -168,6 +175,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { command: 'oppi pair "Chen"' },
       { command: "oppi pair --host mac-studio.local" },
       { command: "oppi pair --json" },
+      { command: 'oppi pair "App Review" --ttl 14d --json' },
     ],
   },
   {

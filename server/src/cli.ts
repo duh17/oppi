@@ -20,6 +20,7 @@ import {
   getTailscaleIp,
 } from "./cli/status.js";
 import { Storage } from "./storage.js";
+import { MAX_PAIRING_TOKEN_TTL_MS } from "./storage/auth-store.js";
 import { Server } from "./server.js";
 import {
   applyHostEnv,
@@ -71,6 +72,7 @@ import {
 } from "./server-update.js";
 import type { ServerRestartMode } from "./types/server-update.js";
 import { cmdConfig } from "./cli/commands/config.js";
+import { parseDurationMs } from "./cli/commands/wait.js";
 import { setCapturedCliExitCode, writeJsonEnvelope } from "./cli/output.js";
 
 function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
@@ -282,13 +284,27 @@ function generatePairInvite(
   storage: CliConfigStorage,
   hostOverride?: string,
   requestedName?: string,
+  pairingTokenTtlMs?: number,
 ): GeneratedInvite {
   return generateInvite(
     storage,
     (override) => resolveInviteHost(storage.getConfig(), override),
     shortHostLabel,
-    { hostOverride, requestedName },
+    { hostOverride, requestedName, pairingTokenTtlMs },
   );
+}
+
+function parsePairTtlMs(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const range = `--ttl must be a duration from 1s to 30d, like 90s, 15m, or 14d (got "${value}")`;
+  let ttlMs: number;
+  try {
+    ttlMs = parseDurationMs(value);
+  } catch {
+    throw new Error(range);
+  }
+  if (ttlMs < 1_000 || ttlMs > MAX_PAIRING_TOKEN_TTL_MS) throw new Error(range);
+  return ttlMs;
 }
 
 /**
@@ -300,10 +316,11 @@ function showPairingQR(
   requestedName?: string,
   hostOverride?: string,
   showToken = false,
+  pairingTokenTtlMs?: number,
 ): boolean {
   let invite;
   try {
-    invite = generatePairInvite(storage, hostOverride, requestedName);
+    invite = generatePairInvite(storage, hostOverride, requestedName, pairingTokenTtlMs);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.log(c.red(`  Error: ${message}`));
@@ -344,6 +361,7 @@ function showPairingQR(
   console.log("");
   console.log("  Or share this link:");
   console.log(`  ${c.cyan(invite.inviteURL)}`);
+  console.log(c.dim(`  Single use. Expires ${new Date(invite.expiresAt).toLocaleString()}.`));
   console.log("");
 
   if (showToken) {
@@ -362,10 +380,20 @@ async function cmdPair(
   hostOverride?: string,
   showToken = false,
   jsonOutput = false,
+  ttl?: string,
 ): Promise<void> {
+  let ttlMs: number | undefined;
+  try {
+    ttlMs = parsePairTtlMs(ttl);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`Error: ${message}\n`);
+    process.exit(1);
+  }
+
   if (jsonOutput) {
     try {
-      const invite = generatePairInvite(storage, hostOverride, requestedName);
+      const invite = generatePairInvite(storage, hostOverride, requestedName, ttlMs);
       process.stdout.write(JSON.stringify(invite, null, 2) + "\n");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -375,7 +403,7 @@ async function cmdPair(
     return;
   }
 
-  if (!showPairingQR(storage, requestedName, hostOverride, showToken)) {
+  if (!showPairingQR(storage, requestedName, hostOverride, showToken, ttlMs)) {
     process.exit(1);
   }
 }
@@ -1092,15 +1120,24 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
       await cmdServe(new Storage(dataDir), flags.host);
       break;
 
-    case "pair":
+    case "pair": {
+      // parseCliArgs does not split `--flag=value`; without this the typo
+      // would silently issue a default 90s invite and replace the outstanding one.
+      const ttlEquals = Object.keys(flags).find((key) => key.startsWith("ttl="));
+      if (ttlEquals) {
+        process.stderr.write("Error: use --ttl <duration> (a space, not =)\n");
+        process.exit(1);
+      }
       await cmdPair(
         createCliConfigStorage(dataDir),
         positional[0],
         flags.host,
         flags["show-token"] === "true",
         flags.json === "true",
+        flags.ttl,
       );
       break;
+    }
 
     case "status":
     case "quota":

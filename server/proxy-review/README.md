@@ -29,14 +29,14 @@ Origin seeds a synthetic workspace named `review` and skips `oppi init` when `/d
 ## Pair for App Review notes
 
 ```bash
-docker compose -f docker-compose.review.yml exec origin oppi pair --json
+docker compose -f docker-compose.review.yml exec origin oppi pair "App Review" --ttl 14d --json
 ```
 
-Paste the `oppi://connect` URL into App Review notes. `oppi pair` remains the pairing primitive.
+Paste the `inviteURL` into App Review notes and record `expiresAt`. The default 90-second invite would expire before Review opens it. The invite is single-use, and any later `oppi pair` on this origin replaces it.
 
 ## Re-pair
 
-If Review asks again, use Resolution Center: run `oppi pair` on origin and send the new `oppi://connect` URL. Do not add a stable enrollment link.
+If Review asks again, or the invite expired or was used, use Resolution Center: run the same `oppi pair --ttl` command on origin and send the new `oppi://connect` URL. Do not add a stable enrollment link.
 
 ## Automated proof
 

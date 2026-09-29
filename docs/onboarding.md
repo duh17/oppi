@@ -90,7 +90,7 @@ oppi config set port <public-port>
 ## Invite rules
 
 - Each invite is single-use.
-- Invites expire after 90 seconds by default.
+- Invites expire after 90 seconds by default. `oppi pair --ttl <duration>` sets another lifetime, from 1 second to 30 days (for example `--ttl 10m`).
 - Invites contain signed server identity and HTTPS authorization.
 - Deep-link details are in [Deep links](deeplinks.md).
 

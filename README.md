@@ -91,7 +91,7 @@ Supported remote access is authenticated HTTPS/WSS, including through Tailscale.
 Notes:
 
 - `--host` expects host/IP only (no `https://`, no `:port`).
-- Invites are single-use and short-lived (90 seconds by default). If pairing fails, generate a fresh invite.
+- Invites are single-use and short-lived (90 seconds by default; `oppi pair --ttl <1s to 30d>` changes it). If pairing fails, generate a fresh invite.
 - Invite port comes from server config (`oppi config get port`).
 
 To include your Tailscale host in the first QR code from `serve`, run:
@@ -129,7 +129,7 @@ After installing `oppi-server` from npm, use these common commands:
 ```bash
 oppi serve [--host <h>]      # start server
 oppi init                    # interactive first-time setup
-oppi pair [--host <h>]       # regenerate pairing QR + invite link
+oppi pair [--host <h>] [--ttl <d>]  # regenerate pairing QR + invite link
 oppi status                  # server, network, and pairing status
 oppi doctor                  # security and environment diagnostics
 oppi workspace ...           # list/create/update/delete workspaces

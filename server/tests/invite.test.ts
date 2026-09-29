@@ -66,12 +66,16 @@ function makeStorage(config: {
   host: string;
   tls?: { mode?: "disabled" | "self-signed" | "tailscale" | "manual" };
   publicUrl?: string;
+  pairingTokenExpiresAt?: number;
 }) {
   return {
     getConfig: vi.fn(() => config),
     ensurePaired: vi.fn(() => "server-token"),
     getDataDir: vi.fn(() => "/tmp/oppi-test"),
-    issuePairingToken: vi.fn((ttlMs?: number) => `pair-${ttlMs ?? 90_000}`),
+    issuePairingToken: vi.fn((ttlMs?: number) => {
+      config.pairingTokenExpiresAt = Date.now() + (ttlMs ?? 90_000);
+      return `pair-${ttlMs ?? 90_000}`;
+    }),
   } as unknown as Pick<Storage, "getConfig" | "ensurePaired" | "getDataDir" | "issuePairingToken">;
 }
 
@@ -244,6 +248,7 @@ describe("generateInvite", () => {
       fingerprint: identity.fingerprint,
       tlsCertFingerprint: "sha256:cert-fingerprint",
     });
+    expect(new Date(invite.expiresAt).getTime()).toBe(storage.getConfig().pairingTokenExpiresAt);
     expect((storage as Storage).ensurePaired).toHaveBeenCalledOnce();
     expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(12_345);
     expect(mockReadCertificateFingerprint).toHaveBeenCalledWith("/tmp/server.crt");

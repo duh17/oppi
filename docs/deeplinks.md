@@ -59,7 +59,8 @@ The signed payload contains the host, port, transport scheme, one-time pairing t
 Rules:
 
 - Treat pairing invites as sensitive until they expire or are used.
-- Invites are single-use and short-lived; the default TTL is 90 seconds.
+- Invites are single-use and short-lived; the default TTL is 90 seconds. `oppi pair --ttl <duration>` sets the lifetime from 1 second to 30 days; use a long one only for asynchronous hand-offs such as App Review notes.
+- A leaked invite stays valid until it is used or expires. Running `oppi pair` again replaces it, and `oppi token rotate` also revokes the owner token and every paired device. There is no dedicated revoke command.
 - Do not hand-edit invite payloads.
 - Do not put owner tokens or device tokens in deep links.
 

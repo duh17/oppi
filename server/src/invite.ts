@@ -22,6 +22,8 @@ export interface GeneratedInvite {
   port: number;
   scheme: "http" | "https";
   inviteURL: string;
+  /** ISO time after which the single-use pairing token is rejected. */
+  expiresAt: string;
 }
 
 export interface GenerateInviteOptions {
@@ -169,6 +171,11 @@ function signInvite(
   },
 ): GeneratedInvite {
   const pairingToken = storage.issuePairingToken(invite.pairingTokenTtlMs ?? 90_000);
+  // Read back the stored deadline so output matches what pairing enforces.
+  const expiresAtMs = storage.getConfig().pairingTokenExpiresAt;
+  if (expiresAtMs === undefined) {
+    throw new Error("Pairing token was issued without an expiry");
+  }
   const identity = ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
   const inviteData: InviteData = {
     host: invite.host,
@@ -210,5 +217,6 @@ function signInvite(
     port: invite.port,
     scheme: invite.scheme,
     inviteURL,
+    expiresAt: new Date(expiresAtMs).toISOString(),
   };
 }

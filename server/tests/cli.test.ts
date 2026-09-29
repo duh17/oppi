@@ -2438,6 +2438,79 @@ describe("oppi pair", () => {
     // Should contain QR blocks or URL
     expect(stdout.length).toBeGreaterThan(50);
   });
+
+  it("honors --ttl for the enforced deadline and keeps the outstanding invite on a rejected --ttl", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-cli-pair-ttl-"));
+    const env = { OPPI_DATA_DIR: dataDir };
+    const readPairing = () =>
+      JSON.parse(readFileSync(join(dataDir, "config.json"), "utf-8")) as {
+        pairingToken?: string;
+        pairingTokenExpiresAt?: number;
+      };
+    const pairJson = (...extra: string[]) => {
+      const before = Date.now();
+      const result = run(["pair", "--host", "127.0.0.1", "--json", ...extra], env);
+      expect(result.exitCode).toBe(0);
+      const invite = JSON.parse(result.stdout) as { pairingToken: string; expiresAt: string };
+      return { invite, lifetimeMs: Date.parse(invite.expiresAt) - before };
+    };
+
+    try {
+      const fallback = pairJson();
+      expect(fallback.lifetimeMs).toBeGreaterThanOrEqual(90_000);
+      expect(fallback.lifetimeMs).toBeLessThan(90_000 + 10_000);
+
+      const review = pairJson("--ttl", "14d");
+      const fourteenDaysMs = 14 * 86_400_000;
+      expect(review.lifetimeMs).toBeGreaterThanOrEqual(fourteenDaysMs);
+      expect(review.lifetimeMs).toBeLessThan(fourteenDaysMs + 10_000);
+      // Printed expiry must be the deadline pairing actually enforces.
+      expect(readPairing()).toMatchObject({
+        pairingToken: review.invite.pairingToken,
+        pairingTokenExpiresAt: Date.parse(review.invite.expiresAt),
+      });
+
+      // Bounds are inclusive: 1s and 30d issue, anything else exits 1 before a token is written.
+      const accepted: Array<[string, number]> = [
+        ["1s", 1_000],
+        ["1000ms", 1_000],
+        ["30d", 30 * 86_400_000],
+      ];
+      for (const [ttl, expectedMs] of accepted) {
+        const issued = pairJson("--ttl", ttl);
+        expect(issued.lifetimeMs, ttl).toBeGreaterThanOrEqual(expectedMs);
+        expect(issued.lifetimeMs, ttl).toBeLessThan(expectedMs + 10_000);
+        expect(readPairing().pairingToken).toBe(issued.invite.pairingToken);
+      }
+
+      const outstanding = pairJson("--ttl", "14d").invite.pairingToken;
+      const rejectedArgs = [
+        ["--ttl", "31d"],
+        ["--ttl", "500ms"],
+        ["--ttl", "0"],
+        ["--ttl", "-1d"],
+        ["--ttl", "NaN"],
+        ["--ttl", "1.5d"],
+        ["--ttl", "soon"],
+        ["--ttl", "99999999999999999999d"],
+        ["--ttl"],
+        // parseCliArgs does not split `=`; this must not fall back to a 90s invite.
+        ["--ttl=14d"],
+      ];
+      for (const extra of rejectedArgs) {
+        const rejected = run(["pair", "--host", "127.0.0.1", "--json", ...extra], env);
+        expect(rejected.exitCode, extra.join(" ")).toBe(1);
+        expect(rejected.stdout).toBe("");
+        // A typo must not silently replace the invite already handed out.
+        expect(readPairing().pairingToken, extra.join(" ")).toBe(outstanding);
+      }
+      const rangeError = run(["pair", "--host", "127.0.0.1", "--json", "--ttl", "500ms"], env);
+      expect(rangeError.stderr).toContain("1s to 30d");
+      expect(rangeError.stderr).not.toContain("500ms, 15s");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
 
 describe.skipIf(
