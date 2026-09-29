@@ -122,6 +122,17 @@ oppi server restart
 
 `oppi server restart` is operator-only. A Pi Control session runs with host-user authority, so inspect the current state before changing configuration and tell the user when a restart is required.
 
+### Running sessions across a restart
+
+Sessions that were running when the server stopped come back when it starts again. This covers a normal stop or restart, an in-app update, and a crash or kill.
+
+- Every running Oppi session is resumed, one at a time, after the server is listening.
+- A session that was in the middle of a turn also gets a short message saying the server restarted and asking the agent to continue. Tool calls and background jobs that were running at the time were stopped, so the agent is told to re-check them.
+- If you prompt a session before its resume reaches it, it is resumed without the extra message.
+- Incognito sessions and Pi TUI mirror sessions are not resumed. A session whose workspace was deleted is skipped.
+
+The pending list lives in the `session_restart_resume` table of `session-state.db` until each session is resumed, so a crash during the resume keeps the rest. `server.log` records `session_restart.recorded`, `session_restart.resumed`, `session_restart.resume_failed`, and a `session_restart.resume_complete` summary.
+
 ## Updating the server
 
 A global npm install can be updated from iPhone **Server** settings or with `oppi update`. See [Server settings](usage.md#server-settings). Git checkouts still use `git pull && npm install && npm run build`.

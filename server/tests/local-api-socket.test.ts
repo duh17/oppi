@@ -153,6 +153,32 @@ describe("Unix-socket local API", () => {
     }
   });
 
+  it("leaves the owning server's sessions alone when a second server fails the lock", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-socket-second-server-"));
+    const storage = new Storage(dataDir);
+    storage.ensurePaired();
+    storage.updateConfig({ host: "127.0.0.1", port: 0, tls: { mode: "disabled" } });
+    const live = storage.createSession("Live on the owning server");
+    live.workspaceId = "ws-1";
+    live.status = "busy";
+    storage.saveSession(live);
+
+    const owner = createHttpServer();
+    const binding = await listenOnLocalApiSocket(owner, localApiSocketPath(dataDir));
+    const second = new Server(new Storage(dataDir));
+    try {
+      await expect(second.start()).rejects.toThrow(/startup is already owned/);
+      const reread = new Storage(dataDir);
+      expect(reread.getSession(live.id)?.status).toBe("busy");
+      expect(reread.listRestartResume()).toEqual([]);
+    } finally {
+      await second.stop().catch(() => {});
+      await close(owner);
+      binding.release();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("reclaims a lock left by an earlier process instance with the same PID", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-socket-pid-reuse-"));
     const socketPath = localApiSocketPath(dataDir);

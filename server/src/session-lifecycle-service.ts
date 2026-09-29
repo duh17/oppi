@@ -120,6 +120,17 @@ export interface CreateWorkspaceSessionResult {
   launchKind?: AgentLaunchResult["kind"];
 }
 
+/**
+ * Whether this server can bring the session back after its own restart. Pi TUI
+ * mirrors reconnect from their terminal, and incognito sessions have no
+ * transcript to resume.
+ */
+export function canResumeAfterServerRestart(session: Session): boolean {
+  if (session.ephemeral) return false;
+  if (session.runtime === "pi-tui") return false;
+  return session.workspaceId !== undefined || isDeclaredControlSession(session);
+}
+
 export class SessionLifecycleError extends Error {
   constructor(
     message: string,

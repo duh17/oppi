@@ -40,7 +40,7 @@ import {
   type IconAssetRecord,
 } from "./storage/icon-asset-store.js";
 import { MobileOutputGuideSettingsStore } from "./storage/mobile-output-guide-settings-store.js";
-import { SessionSqliteStore } from "./storage/session-sqlite-store.js";
+import { SessionSqliteStore, type RestartResumeEntry } from "./storage/session-sqlite-store.js";
 import { WorkspaceStore } from "./storage/workspace-store.js";
 import type { MobileOutputGuideSettingsSnapshot } from "./mobile-output-guide-settings.js";
 import type {
@@ -458,6 +458,18 @@ export class Storage {
 
   listSessionInteractions(sessionIds: readonly string[]): SessionInteraction[] {
     return this.sessionStore.listSessionInteractions(sessionIds);
+  }
+
+  queueRestartResume(entries: readonly RestartResumeEntry[], recordedAt: number): void {
+    this.sessionStore.queueRestartResume(entries, recordedAt);
+  }
+
+  listRestartResume(): RestartResumeEntry[] {
+    return this.sessionStore.listRestartResume();
+  }
+
+  clearRestartResume(sessionId: string): void {
+    this.sessionStore.clearRestartResume(sessionId);
   }
 
   deleteSession(sessionId: string): boolean {

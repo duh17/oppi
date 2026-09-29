@@ -91,7 +91,7 @@ Pick models from the in-app picker. Remaining provider quota and pace live on **
 
 **Server** (host switcher → Server Settings) shows the paired server version.
 
-When a newer `oppi-server` is on npm and this host is a global npm install, the screen shows **Update available** and an **Update** button. Confirming names the version and warns that running sessions will be interrupted. Oppi installs that exact version, restarts the server, and reconnects.
+When a newer `oppi-server` is on npm and this host is a global npm install, the screen shows **Update available** and an **Update** button. Confirming names the version and warns that running sessions will be interrupted. Oppi installs that exact version, restarts the server, and reconnects. Interrupted sessions resume after the restart; see [Running sessions across a restart](server-configuration.md#running-sessions-across-a-restart).
 
 Git checkouts, Docker images, and other non-npm installs show a copyable `npm install -g oppi-server@…` command instead of a button. `oppi update` on the host uses the same install check.
 

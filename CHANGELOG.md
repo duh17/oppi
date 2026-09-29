@@ -83,6 +83,8 @@ Example:
 
 ### Fixed
 
+- **Server:** Sessions that were running when the server stopped, restarted, updated, or crashed now resume on the next start, instead of all showing Stopped. A session that was mid-turn also gets a message asking the agent to continue. See [Running sessions across a restart](docs/server-configuration.md#running-sessions-across-a-restart).
+- **Server:** A second `oppi serve` for the same data directory that fails to start no longer marks the running server's sessions stopped. Startup now touches session state only after it owns the data directory.
 - **Server:** `oppi session get|send|wait|…` and `oppi schedule --session` no longer download every stored session to resolve one id. The CLI asks `GET /sessions?idPrefix=<target>` for matching ids only. With about 10,000 stored sessions, each lookup had cost the server roughly 0.4 s of CPU, and a handful of parallel subagent calls could push its memory up by 500 MB.
 - **Server:** Editing the message queue on a busy session (for example moving a steering message to follow-up) no longer saves the change and then reports "Queue changed before your edit was saved". The server counted its own queue replay as a concurrent change. If Pi starts a queued message while the edit is saving, the edit is still rejected and the queue refreshes.
 - **Client:** In a control session, a Markdown file opened full screen from a tool now loads its host images and its links open, instead of doing nothing.

@@ -92,6 +92,13 @@ export interface SessionSqliteStoreOptions {
   dbPath?: string;
 }
 
+/** A session to bring back after a server restart. */
+export interface RestartResumeEntry {
+  sessionId: string;
+  /** Mid-turn when the previous process ended; the resume sends a continuation. */
+  wasBusy: boolean;
+}
+
 const SESSION_PROJECTION_COLUMNS = `
   id,
   workspace_id,
@@ -524,6 +531,39 @@ export class SessionSqliteStore {
     }));
   }
 
+  /**
+   * Queue sessions to resume after the next server start. A session queued
+   * twice stays busy if either record saw it mid-turn.
+   */
+  queueRestartResume(entries: readonly RestartResumeEntry[], recordedAt: number): void {
+    if (entries.length === 0) return;
+    const upsert = this.db.prepare(
+      `INSERT INTO session_restart_resume (session_id, was_busy, recorded_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET
+         was_busy = MAX(was_busy, excluded.was_busy),
+         recorded_at = excluded.recorded_at`,
+    );
+    this.db.transaction(() => {
+      for (const entry of entries) {
+        upsert.run(entry.sessionId, entry.wasBusy ? 1 : 0, recordedAt);
+      }
+    })();
+  }
+
+  listRestartResume(): RestartResumeEntry[] {
+    const rows = this.db
+      .prepare(
+        "SELECT session_id, was_busy FROM session_restart_resume ORDER BY recorded_at ASC, session_id ASC",
+      )
+      .all() as Array<{ session_id: string; was_busy: number }>;
+    return rows.map((row) => ({ sessionId: row.session_id, wasBusy: row.was_busy === 1 }));
+  }
+
+  clearRestartResume(sessionId: string): void {
+    this.db.prepare("DELETE FROM session_restart_resume WHERE session_id = ?").run(sessionId);
+  }
+
   private ensureSchema(): void {
     const hasSessionTable = this.db
       .prepare(
@@ -642,6 +682,12 @@ export class SessionSqliteStore {
 
       CREATE INDEX IF NOT EXISTS session_interactions_to_idx
         ON session_interactions (to_session_id, at);
+
+      CREATE TABLE IF NOT EXISTS session_restart_resume (
+        session_id TEXT PRIMARY KEY,
+        was_busy INTEGER NOT NULL,
+        recorded_at INTEGER NOT NULL
+      );
 
       CREATE TABLE IF NOT EXISTS session_state_schema (
         key TEXT PRIMARY KEY,

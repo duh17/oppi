@@ -52,6 +52,12 @@ import {
 import { SkillRegistry } from "./skills.js";
 import { isDeclaredControlSession } from "./control-session.js";
 import { ServerResourceService } from "./server-resource-service.js";
+import { SessionLifecycleService } from "./session-lifecycle-service.js";
+import {
+  queueOrphanedSessionsForRestart,
+  recordLiveSessionsForRestart,
+  resumeSessionsAfterRestart,
+} from "./session-restart-resume.js";
 
 import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 
@@ -893,10 +899,6 @@ export class Server {
     // Heal stale persisted contextWindow fallbacks before any client connects.
     this.models.healPersistedSessionContextWindows();
 
-    // Mark zombie sessions (non-terminal status on disk but not in memory) as stopped.
-    // These are sessions that crashed mid-startup or were orphaned by a server restart.
-    this.healOrphanedSessions();
-
     // The old npm/Pi self-updater left this cache behind after Sparkle took over.
     // Delete it so a stale version cannot be mistaken for live status.
     if (removeRetiredRuntimeStatusFile(this.storage.getDataDir())) {
@@ -920,6 +922,7 @@ export class Server {
       this.opsMetrics.start();
       this.startUploadGcLoop();
       this.scheduleRunner.start();
+      this.resumeSessionsAfterRestartInBackground();
 
       // Background: warm the search index without monopolizing the event loop.
       if (this.searchIndex) {
@@ -943,6 +946,10 @@ export class Server {
 
     this.localApiBinding = await listenOnLocalApiSocket(this.localApiServer, this.localApiSocket);
     log.info("server.local_api_listening", { socketPath: this.localApiSocket });
+    // Only the process holding the local API lock owns this data directory.
+    // Healing earlier let a second server that then failed the lock mark the
+    // live server's sessions stopped. This runs before any request is served.
+    queueOrphanedSessionsForRestart(this.storage);
     this.localApiServer.on("upgrade", (req, socket, head) => {
       this.handleLocalUpgrade(req, socket, head);
     });
@@ -1034,6 +1041,12 @@ export class Server {
 
     let shutdownError: unknown;
     try {
+      try {
+        recordLiveSessionsForRestart(this.storage, this.liveSessions());
+      } catch (error: unknown) {
+        // Losing the resume record must not keep sessions running past shutdown.
+        log.error("session_restart.record_failed", { error: safeErrorMessage(error) });
+      }
       await this.sessions.stopAll();
       await SdkBackend.stopAllWorkspaceVms();
       this.liveActivity.shutdown();
@@ -1177,26 +1190,32 @@ export class Server {
     this.bonjourAdvertiser = null;
   }
 
-  // ─── Startup Healing ───
+  // ─── Restart Resume ───
 
-  private healOrphanedSessions(): void {
-    const sessions = this.storage.listSessions();
-    let healed = 0;
-
-    for (const s of sessions) {
-      // Non-active sessions stuck in running states
-      if (s.status !== "stopped" && s.status !== "error") {
-        s.status = "stopped";
-        s.currentTurnStartedAt = undefined;
-        this.storage.saveSession(s);
-        healed++;
-        continue;
-      }
+  private liveSessions(): Session[] {
+    const sessions: Session[] = [];
+    for (const id of this.sessionRuntimes.getActiveSessionIds()) {
+      const session = this.sessionRuntimes.getActiveSession(id);
+      if (session) sessions.push(session);
     }
+    return sessions;
+  }
 
-    if (healed > 0) {
-      log.info("startup.healed_orphaned_sessions", { count: healed });
-    }
+  private resumeSessionsAfterRestartInBackground(): void {
+    const lifecycle = new SessionLifecycleService({
+      storage: this.storage,
+      sessions: this.sessions,
+      sessionRuntimes: this.sessionRuntimes,
+      ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
+      deleteSearchIndexSession: (sessionId) => this.searchIndex?.deleteSession(sessionId),
+    });
+    void resumeSessionsAfterRestart({
+      storage: this.storage,
+      lifecycle,
+      sendPrompt: (sessionId, text) => this.sessions.sendPrompt(sessionId, text),
+    }).catch((err: unknown) => {
+      log.error("session_restart.resume_crashed", { error: safeErrorMessage(err) });
+    });
   }
 
   // ─── Dictation ───
