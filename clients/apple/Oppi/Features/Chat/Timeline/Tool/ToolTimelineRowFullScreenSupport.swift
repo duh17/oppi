@@ -91,7 +91,7 @@ enum ToolTimelineRowFullScreenSupport {
             return .markdown(
                 content: text,
                 filePath: path,
-                workspaceContext: markdownWorkspaceContext(configuration: configuration)
+                resourceAccess: configuration.resourceAccess
             )
 
         case .delimitedTable(let text, let filePath):
@@ -192,7 +192,6 @@ enum ToolTimelineRowFullScreenSupport {
         case .markdown(let text, let filePath):
             guard !text.isEmpty else { return nil }
             let path = resolvedMarkdownFilePath(filePath, configuration: configuration)
-            let workspaceContext = markdownWorkspaceContext(configuration: configuration)
             return SourceTraceStream.Snapshot(
                 text: text,
                 filePath: path,
@@ -200,7 +199,7 @@ enum ToolTimelineRowFullScreenSupport {
                 finalContent: .markdown(
                     content: text,
                     filePath: path,
-                    workspaceContext: workspaceContext
+                    resourceAccess: configuration.resourceAccess
                 )
             )
 
@@ -249,26 +248,5 @@ enum ToolTimelineRowFullScreenSupport {
             }
         }
         return nil
-    }
-
-    private static func markdownWorkspaceContext(
-        configuration: ToolTimelineRowConfiguration
-    ) -> FullScreenCodeContent.WorkspaceContext? {
-        let workspaceID = configuration.workspaceID?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let workspaceID, !workspaceID.isEmpty,
-              let serverBaseURL = configuration.serverBaseURL,
-              let fetchWorkspaceFile = configuration.fetchWorkspaceFile else {
-            return nil
-        }
-        return .init(
-            workspaceID: workspaceID,
-            serverID: configuration.serverID,
-            worktreeId: configuration.worktreeId,
-            serverBaseURL: serverBaseURL,
-            fetchWorkspaceFile: fetchWorkspaceFile,
-            sessionID: configuration.sessionID,
-            fetchHostFile: configuration.fetchHostFile,
-            audioPlayer: configuration.audioPlayer
-        )
     }
 }

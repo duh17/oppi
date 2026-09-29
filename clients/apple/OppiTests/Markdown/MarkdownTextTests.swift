@@ -2861,23 +2861,20 @@ struct SessionFileFullScreenContentBuilderTests {
             filePath: "/tmp/session-report.md",
             workspaceID: "workspace-1",
             serverBaseURL: serverBaseURL,
-            workspaceHostMount: "/Users/example/workspace/oppi",
-            workspaceRuntime: .host,
             fetchSessionFileData: { _ in Data([1]) },
             sessionID: "session-1"
         )
 
-        guard case .markdown(_, let filePath, let workspaceContext) = content else {
+        guard case .markdown(_, let filePath, let resourceAccess) = content else {
             Issue.record("Expected markdown full-screen content")
             return
         }
 
         #expect(filePath == "/tmp/session-report.md")
-        let context = try #require(workspaceContext)
-        #expect(context.workspaceID == "workspace-1")
-        #expect(context.sessionID == "session-1")
-        #expect(context.fetchSessionFile == nil)
-        #expect(context.fetchHostFile != nil)
+        #expect(resourceAccess.identity.workspaceID == "workspace-1")
+        #expect(resourceAccess.identity.sessionID == "session-1")
+        #expect(resourceAccess.fetchSessionFile == nil)
+        #expect(resourceAccess.fetchHostFile != nil)
     }
 
     @Test func sessionTouchedMarkdownThreadsFetchHostFile() throws {
@@ -2887,18 +2884,15 @@ struct SessionFileFullScreenContentBuilderTests {
             filePath: "/tmp/session-report.md",
             workspaceID: "workspace-1",
             serverBaseURL: serverBaseURL,
-            workspaceHostMount: "/Users/example/workspace/oppi",
-            workspaceRuntime: .host,
             fetchSessionFileData: { _ in Data([1]) },
             sessionID: "session-1"
         )
 
-        guard case .markdown(_, _, let workspaceContext) = content else {
+        guard case .markdown(_, _, let resourceAccess) = content else {
             Issue.record("Expected markdown full-screen content")
             return
         }
-        let context = try #require(workspaceContext)
-        #expect(context.fetchHostFile != nil)
+        #expect(resourceAccess.fetchHostFile != nil)
     }
 
     @Test func hostFileMarkdownKeepsAbsoluteDisplayPath() throws {
@@ -2908,8 +2902,6 @@ struct SessionFileFullScreenContentBuilderTests {
             filePath: "/tmp/session-report.md",
             workspaceID: "workspace-1",
             serverBaseURL: serverBaseURL,
-            workspaceHostMount: "/tmp",
-            workspaceRuntime: .host,
             fetchSessionFileData: { _ in Data([1]) },
             sessionID: "session-1"
         )
@@ -3232,19 +3224,23 @@ struct AssistantMarkdownInlineImageRenderingTests {
         let imageData = try makeReadSupportedTestImageData(ext: ext)
         let markdownView = AssistantMarkdownContentView()
         markdownView.frame = CGRect(x: 0, y: 0, width: 320, height: 400)
-        markdownView.fetchWorkspaceFile = { workspaceID, path in
-            #expect(workspaceID == "workspace-1")
-            #expect(path == "fixtures/red-green.\(ext)")
-            return imageData
-        }
 
         let serverBaseURL = try #require(URL(string: "https://server.example.com/api"))
         markdownView.apply(configuration: .make(
             content: "Before ![Red green](fixtures/red-green.\(ext)) after",
             isStreaming: false,
             themeID: .dark,
-            workspaceID: "workspace-1",
-            serverBaseURL: serverBaseURL
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "workspace-1",
+                    serverBaseURL: serverBaseURL
+                ),
+                fetchWorkspaceFile: { workspaceID, path in
+                    #expect(workspaceID == "workspace-1")
+                    #expect(path == "fixtures/red-green.\(ext)")
+                    return imageData
+                }
+            )
         ))
         markdownView.layoutIfNeeded()
 
@@ -3267,19 +3263,23 @@ struct AssistantMarkdownInlineImageRenderingTests {
     @Test func mixedParagraphFileURLEmbedsAsHostImageWithoutSessionFetch() throws {
         let markdownView = AssistantMarkdownContentView()
         markdownView.frame = CGRect(x: 0, y: 0, width: 320, height: 400)
-        markdownView.fetchSessionFile = { _, _, _ in
-            Issue.record("Absolute markdown images must not use the session raw-file fetcher")
-            return Data()
-        }
 
         let serverBaseURL = try #require(URL(string: "https://server.example.com/api"))
         markdownView.apply(configuration: .make(
             content: "Before ![Red green](file:///Users/example/workspace/oppi/downloads/red-green.jpeg) after",
             isStreaming: false,
             themeID: .dark,
-            workspaceID: "workspace-1",
-            sessionID: "session-1",
-            serverBaseURL: serverBaseURL
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "workspace-1",
+                    sessionID: "session-1",
+                    serverBaseURL: serverBaseURL
+                ),
+                fetchSessionFile: { _, _, _ in
+                    Issue.record("Absolute markdown images must not use the session raw-file fetcher")
+                    return Data()
+                }
+            )
         ))
         markdownView.layoutIfNeeded()
 
@@ -3290,6 +3290,49 @@ struct AssistantMarkdownInlineImageRenderingTests {
         #expect(renderedText.contains("Before"))
         #expect(renderedText.contains("after"))
         #expect(!renderedText.contains("[Red green]"))
+    }
+
+    @Test func laterApplyLoadsNewImagesThroughTheNewestProvider() async throws {
+        let imageData = try makeReadSupportedTestImageData(ext: "png")
+        let identity = MarkdownResourceAccess.Identity(
+            workspaceID: "workspace-1",
+            serverBaseURL: try #require(URL(string: "https://server.example.com/api"))
+        )
+        var loadedBy: [String: String] = [:]
+        func access(_ label: String) -> MarkdownResourceAccess {
+            MarkdownResourceAccess(
+                identity: identity,
+                fetchWorkspaceFile: { _, path in
+                    loadedBy[path] = label
+                    return imageData
+                }
+            )
+        }
+        let markdownView = AssistantMarkdownContentView()
+        markdownView.frame = CGRect(x: 0, y: 0, width: 320, height: 600)
+
+        markdownView.apply(configuration: .make(
+            content: "![one](one.png)",
+            isStreaming: true,
+            themeID: .dark,
+            resourceAccess: access("first")
+        ))
+        markdownView.layoutIfNeeded()
+        // Same identity, streaming growth, fresh providers: the new image must not use the first set.
+        markdownView.apply(configuration: .make(
+            content: "![one](one.png)\n\n![two](two.png)",
+            isStreaming: true,
+            themeID: .dark,
+            resourceAccess: access("second")
+        ))
+        markdownView.layoutIfNeeded()
+
+        let loaded = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            loadedBy.count == 2
+        }
+        #expect(loaded)
+        #expect(loadedBy["one.png"] == "first")
+        #expect(loadedBy["two.png"] == "second")
     }
 
     private func makeReadSupportedTestImageData(ext: String) throws -> Data {
@@ -3970,22 +4013,26 @@ struct NativeMarkdownImageViewTests {
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
-            workspaceID: "workspace-1",
-            sessionID: "session-1",
-            serverBaseURL: URL(string: "https://example.com/api")!,
-            fetchWorkspaceFile: { _, _ in
-                Issue.record("Host markdown images must not use the workspace fetcher")
-                return Data()
-            },
-            fetchSessionFile: { _, _, _ in
-                Issue.record("Absolute markdown images must not use the session raw-file fetcher")
-                return Data()
-            },
-            fetchHostFile: { path in
-                hostFetchCount += 1
-                #expect(path == "/tmp/chart.png")
-                return imageData
-            }
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "workspace-1",
+                    sessionID: "session-1",
+                    serverBaseURL: URL(string: "https://example.com/api")!
+                ),
+                fetchWorkspaceFile: { _, _ in
+                    Issue.record("Host markdown images must not use the workspace fetcher")
+                    return Data()
+                },
+                fetchSessionFile: { _, _, _ in
+                    Issue.record("Absolute markdown images must not use the session raw-file fetcher")
+                    return Data()
+                },
+                fetchHostFile: { path in
+                    hostFetchCount += 1
+                    #expect(path == "/tmp/chart.png")
+                    return imageData
+                }
+            )
         )
 
         let host = UIView(frame: CGRect(x: 0, y: 0, width: 600, height: 1000))

@@ -163,9 +163,13 @@ struct ChatTimelinePreparationRunwayTests {
             content: content,
             isStreaming: false,
             themeID: .dark,
-            serverID: scope.serverID,
-            workspaceID: scope.workspaceID,
-            sessionID: scope.sessionID
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: scope.serverID,
+                    workspaceID: scope.workspaceID,
+                    sessionID: scope.sessionID
+                )
+            )
         )
         let source = AssistantMarkdownSegmentSource()
         let neverPrefetched = segmentContentSignature(source.buildSegments(configuration))

@@ -52,14 +52,13 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil
     var reviewCommentSessionId: String? = nil
     var resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
-    var serverID: String? = nil
-    var workspaceID: String? = nil
-    var sessionID: String? = nil
-    var worktreeId: String? = nil
-    var serverBaseURL: URL? = nil
+    /// Bound source identity and file providers for this row's Markdown viewport and
+    /// its full-screen reader. Tool Markdown hosts file reads only, so inline media
+    /// providers stay unset here.
+    var resourceAccess: MarkdownResourceAccess = .empty
+    /// Document location. Relative links and images resolve against it, independent
+    /// of which origin serves the bytes.
     var sourceFilePath: String? = nil
-    var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil
-    var fetchHostFile: ((_ path: String) async throws -> Data)? = nil
     var currentFileOpenIntent: ToolCurrentFileOpenIntent? = nil
     var openCurrentFile: (() -> Void)? = nil
     var openFullScreen: ((ChatReaderPayload) -> Void)? = nil
@@ -834,9 +833,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             clearExpandedReadMediaView()
             expandedMarkdownViewportThemeID = themeID
             expandedMarkdownView.accessibilityIdentifier = "chat.timeline.row.\(currentConfiguration.itemID).markdownViewport"
-            expandedMarkdownView.fetchWorkspaceFile = currentConfiguration.fetchWorkspaceFile
-            expandedMarkdownView.fetchHostFile = currentConfiguration.fetchHostFile
-            expandedMarkdownView.audioPlayer = currentConfiguration.audioPlayer
             expandedMarkdownView.apply(configuration: .make(
                 content: text,
                 isStreaming: true,
@@ -844,11 +840,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 textSelectionEnabled: textSelectionEnabled,
                 reviewCommentSelectionRouter: reviewCommentSelectionRouter,
                 reviewCommentSourceContext: reviewCommentSourceContext,
-                serverID: currentConfiguration.serverID,
-                workspaceID: currentConfiguration.workspaceID,
-                worktreeId: currentConfiguration.worktreeId,
-                sessionID: currentConfiguration.sessionID,
-                serverBaseURL: currentConfiguration.serverBaseURL,
+                resourceAccess: currentConfiguration.resourceAccess,
                 sourceFilePath: sourceFilePath,
                 perfSurface: .toolExpanded,
                 renderingMode: .live,
@@ -873,19 +865,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext,
             textSelectionEnabled: textSelectionEnabled,
-            serverID: currentConfiguration.serverID,
-            workspaceID: currentConfiguration.workspaceID,
-            worktreeId: currentConfiguration.worktreeId,
-            sessionID: currentConfiguration.sessionID,
-            serverBaseURL: currentConfiguration.serverBaseURL,
+            resourceAccess: currentConfiguration.resourceAccess,
             sourceFilePath: sourceFilePath,
             readerPreferences: FullScreenReaderContentFamily.markdown.defaultPreferences,
             perfSurface: .toolExpanded,
             allowsVerticalBounce: false,
-            allowsVerticalScrolling: false,
-            fetchWorkspaceFile: currentConfiguration.fetchWorkspaceFile,
-            fetchHostFile: currentConfiguration.fetchHostFile,
-            audioPlayer: currentConfiguration.audioPlayer
+            allowsVerticalScrolling: false
         )
         expandedMarkdownViewportThemeID = themeID
         native.accessibilityIdentifier = "chat.timeline.row.\(currentConfiguration.itemID).markdownViewport"

@@ -347,19 +347,21 @@ struct MarkdownStressCrashRegressionTests {
     }
 
     private func makeLinkedFileReader(gate: VideoSourceGate) throws -> FullScreenCodeViewController {
-        let context = FullScreenCodeContent.WorkspaceContext(
-            workspaceID: "workspace-a",
-            serverID: "server-a",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
+        let context = MarkdownResourceAccess(
+            identity: .init(
+                serverID: "server-a",
+                workspaceID: "workspace-a",
+                sessionID: "session-a",
+                serverBaseURL: try #require(URL(string: "https://server.example.com"))
+            ),
             fetchWorkspaceFile: { _, _ in Data() },
-            sessionID: "session-a",
             makeMarkdownVideoSource: { _ in try await gate.source() }
         )
         return FullScreenCodeViewController(
             content: .markdown(
                 content: "# Corpus\n\nIntro paragraph.\n\n![[clip.mp4]]\n\nAfter the clip.",
                 filePath: ".internal/qa/markdown-viewer-corpus.md",
-                workspaceContext: context
+                resourceAccess: context
             ),
             presentationMode: .embedded(onDismiss: {})
         )
@@ -452,10 +454,14 @@ struct MarkdownStressCrashRegressionTests {
             content: content,
             isStreaming: true,
             themeID: .dark,
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "session-a",
-            serverBaseURL: URL(string: "https://server.example.com")
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-a",
+                    workspaceID: "workspace-a",
+                    sessionID: "session-a",
+                    serverBaseURL: URL(string: "https://server.example.com")
+                )
+            )
         )
     }
 

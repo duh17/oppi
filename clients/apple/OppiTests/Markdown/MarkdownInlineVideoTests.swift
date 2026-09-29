@@ -362,10 +362,14 @@ struct MarkdownInlineVideoTests {
             canFork: false,
             onFork: nil,
             sessionId: "session-a",
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            serverBaseURL: baseURL,
-            makeMarkdownVideoSource: { _ in throw CocoaError(.fileNoSuchFile) }
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-a",
+                    workspaceID: "workspace-a",
+                    serverBaseURL: baseURL
+                ),
+                makeMarkdownVideoSource: { _ in throw CocoaError(.fileNoSuchFile) }
+            )
         ))
         row.frame = CGRect(x: 0, y: 0, width: 360, height: 500)
         row.layoutIfNeeded()
@@ -379,19 +383,23 @@ struct MarkdownInlineVideoTests {
         let baseURL = try #require(URL(string: "https://server.example.com"))
         let view = AssistantMarkdownContentView()
         var resolutionCount = 0
-        view.makeMarkdownVideoSource = { _ in
-            resolutionCount += 1
-            throw CocoaError(.fileNoSuchFile)
-        }
         view.frame = CGRect(x: 0, y: 0, width: 320, height: 400)
         view.apply(configuration: .make(
             content: "![[movie.mp4]]",
             isStreaming: false,
             themeID: .dark,
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "session-a",
-            serverBaseURL: baseURL,
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-a",
+                    workspaceID: "workspace-a",
+                    sessionID: "session-a",
+                    serverBaseURL: baseURL
+                ),
+                makeMarkdownVideoSource: { _ in
+                    resolutionCount += 1
+                    throw CocoaError(.fileNoSuchFile)
+                }
+            ),
             renderingMode: .export
         ))
         view.layoutIfNeeded()
@@ -412,11 +420,15 @@ struct MarkdownInlineVideoTests {
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "session-a",
-            serverBaseURL: baseURL,
-            makeMarkdownVideoSource: { _ in throw CocoaError(.fileNoSuchFile) }
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-a",
+                    workspaceID: "workspace-a",
+                    sessionID: "session-a",
+                    serverBaseURL: baseURL
+                ),
+                makeMarkdownVideoSource: { _ in throw CocoaError(.fileNoSuchFile) }
+            )
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.addSubview(body)
@@ -481,10 +493,14 @@ struct MarkdownInlineVideoTests {
             content: "![[movie.mp4]]",
             isStreaming: true,
             themeID: .dark,
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "session-a",
-            serverBaseURL: baseURL
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-a",
+                    workspaceID: "workspace-a",
+                    sessionID: "session-a",
+                    serverBaseURL: baseURL
+                )
+            )
         ))
         view.layoutIfNeeded()
         let video = try #require(timelineFirstView(ofType: NativeMarkdownVideoView.self, in: view))
@@ -495,10 +511,14 @@ struct MarkdownInlineVideoTests {
             content: "![[movie.mp4]]\n\nTrailing stream text.",
             isStreaming: true,
             themeID: .dark,
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "session-a",
-            serverBaseURL: baseURL
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-a",
+                    workspaceID: "workspace-a",
+                    sessionID: "session-a",
+                    serverBaseURL: baseURL
+                )
+            )
         ))
         view.layoutIfNeeded()
         let updated = try #require(timelineFirstView(ofType: NativeMarkdownVideoView.self, in: view))
@@ -655,8 +675,6 @@ struct MarkdownInlineVideoTests {
             filePath: "docs/readme.md",
             workspaceID: "workspace-a",
             serverBaseURL: baseURL,
-            workspaceHostMount: nil,
-            workspaceRuntime: .sandbox,
             fetchSessionFileData: { _ in Data() },
             sessionID: "session-a"
         )
@@ -1064,10 +1082,14 @@ struct MarkdownInlineVideoTests {
             content: "![[movie.mp4]]",
             isStreaming: false,
             themeID: .dark,
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "session-a",
-            serverBaseURL: baseURL
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-a",
+                    workspaceID: "workspace-a",
+                    sessionID: "session-a",
+                    serverBaseURL: baseURL
+                )
+            )
         ))
         view.layoutIfNeeded()
         let video = try #require(timelineFirstView(ofType: NativeMarkdownVideoView.self, in: view))
@@ -1320,7 +1342,6 @@ struct MarkdownInlineVideoTests {
         let source = dummyMediaSource()
         let parent = UIViewController()
         let markdown = AssistantMarkdownContentView()
-        markdown.makeMarkdownVideoSource = { _ in source }
         parent.view.addSubview(markdown)
         markdown.frame = CGRect(x: 0, y: 0, width: 360, height: 700)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
@@ -1332,10 +1353,15 @@ struct MarkdownInlineVideoTests {
             content: "![[one.mp4]]\n\n![[two.mp4]]\n\n![[three.mp4]]",
             isStreaming: false,
             themeID: .dark,
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "session-a",
-            serverBaseURL: baseURL
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-a",
+                    workspaceID: "workspace-a",
+                    sessionID: "session-a",
+                    serverBaseURL: baseURL
+                ),
+                makeMarkdownVideoSource: { _ in source }
+            )
         )
         markdown.apply(configuration: configuration)
         markdown.layoutIfNeeded()
@@ -1464,7 +1490,6 @@ struct MarkdownInlineVideoTests {
         let source = dummyMediaSource()
         let parent = UIViewController()
         let view = AssistantMarkdownContentView()
-        view.makeMarkdownVideoSource = { _ in source }
         parent.view.addSubview(view)
         view.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -1482,10 +1507,15 @@ struct MarkdownInlineVideoTests {
             content: "![[movie.mp4]]",
             isStreaming: false,
             themeID: .dark,
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "session-a",
-            serverBaseURL: baseURL
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-a",
+                    workspaceID: "workspace-a",
+                    sessionID: "session-a",
+                    serverBaseURL: baseURL
+                ),
+                makeMarkdownVideoSource: { _ in source }
+            )
         ))
         view.layoutIfNeeded()
 
@@ -1513,7 +1543,6 @@ struct MarkdownInlineVideoTests {
         let source = dummyMediaSource()
         let parent = UIViewController()
         let view = AssistantMarkdownContentView()
-        view.makeMarkdownVideoSource = { _ in source }
         parent.view.addSubview(view)
         view.frame = CGRect(x: 0, y: 0, width: 360, height: 900)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 900))
@@ -1522,14 +1551,21 @@ struct MarkdownInlineVideoTests {
         defer { window.isHidden = true }
 
         let content = "![[one.mp4]]\n\n![[two.mp4]]\n\n![[three.mp4]]\n\n![[four.mp4]]"
+        // Every apply carries the same access, as a row rebuild hands it to a reused view.
+        let resourceAccess = MarkdownResourceAccess(
+            identity: .init(
+                serverID: "server-a",
+                workspaceID: "workspace-a",
+                sessionID: "session-a",
+                serverBaseURL: baseURL
+            ),
+            makeMarkdownVideoSource: { _ in source }
+        )
         view.apply(configuration: .make(
             content: content,
             isStreaming: false,
             themeID: .dark,
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "session-a",
-            serverBaseURL: baseURL
+            resourceAccess: resourceAccess
         ))
         view.layoutIfNeeded()
 
@@ -1558,10 +1594,7 @@ struct MarkdownInlineVideoTests {
             content: content,
             isStreaming: false,
             themeID: .light,
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "session-a",
-            serverBaseURL: baseURL
+            resourceAccess: resourceAccess
         ))
         view.layoutIfNeeded()
 
@@ -1578,10 +1611,7 @@ struct MarkdownInlineVideoTests {
             content: "![[one.mp4]]",
             isStreaming: false,
             themeID: .light,
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "session-a",
-            serverBaseURL: baseURL
+            resourceAccess: resourceAccess
         ))
         view.layoutIfNeeded()
         let remaining = timelineAllViews(in: view).compactMap { $0 as? NativeMarkdownVideoView }
@@ -1599,7 +1629,6 @@ struct MarkdownInlineVideoTests {
         let source = dummyMediaSource()
         let parent = UIViewController()
         let view = AssistantMarkdownContentView()
-        view.makeMarkdownVideoSource = { _ in source }
         parent.view.addSubview(view)
         view.frame = CGRect(x: 0, y: 0, width: 360, height: 400)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
@@ -1611,10 +1640,15 @@ struct MarkdownInlineVideoTests {
             content: "![[movie.mp4]]",
             isStreaming: false,
             themeID: .dark,
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "session-a",
-            serverBaseURL: baseURL
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-a",
+                    workspaceID: "workspace-a",
+                    sessionID: "session-a",
+                    serverBaseURL: baseURL
+                ),
+                makeMarkdownVideoSource: { _ in source }
+            )
         ))
         view.layoutIfNeeded()
 

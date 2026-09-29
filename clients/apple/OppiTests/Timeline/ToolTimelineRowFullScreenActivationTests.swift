@@ -319,9 +319,13 @@ struct ToolTimelineRowFullScreenActivationTests {
             isExpanded: true,
             isDone: true
         )
-        configuration.workspaceID = "workspace-1"
-        configuration.serverBaseURL = URL(string: "https://example.test")
-        configuration.fetchWorkspaceFile = { _, _ in Data() }
+        configuration.resourceAccess = MarkdownResourceAccess(
+            identity: .init(
+                workspaceID: "workspace-1",
+                serverBaseURL: URL(string: "https://example.test")
+            ),
+            fetchWorkspaceFile: { _, _ in Data() }
+        )
 
         let content = ToolTimelineRowFullScreenSupport.staticFullScreenContent(
             configuration: configuration,
@@ -329,14 +333,14 @@ struct ToolTimelineRowFullScreenActivationTests {
             terminalStream: nil
         )
 
-        guard case .markdown(let text, let filePath, let workspaceContext) = content else {
+        guard case .markdown(let text, let filePath, let resourceAccess) = content else {
             Issue.record("Expected done markdown full-screen content, got \(String(describing: content))")
             return
         }
         #expect(text == body)
         #expect(filePath == path)
-        #expect(workspaceContext?.workspaceID == "workspace-1")
-        #expect(workspaceContext?.serverBaseURL.absoluteString == "https://example.test")
+        #expect(resourceAccess.identity.workspaceID == "workspace-1")
+        #expect(resourceAccess.identity.serverBaseURL?.absoluteString == "https://example.test")
     }
 
     @Test("streaming HTML full screen content carries HTML render hint")

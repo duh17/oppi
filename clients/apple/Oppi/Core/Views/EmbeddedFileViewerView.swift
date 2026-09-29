@@ -482,27 +482,29 @@ struct ChatReaderDestinationView: View {
         for action: LinkAction,
         payload: ChatReaderPayload
     ) -> WorkspaceLinkedFileNavTarget? {
-        let context = documentWorkspaceContext(payload)
+        let identity = documentIdentity(payload)
         return ChatReaderLinkedFileRouting.target(
             for: action,
-            serverID: context?.serverID,
-            workspaceID: context?.workspaceID,
-            sessionID: context?.sessionID,
-            workspaceRuntime: context?.workspaceRuntime
+            serverID: identity.serverID,
+            workspaceID: identity.workspaceID,
+            sessionID: identity.sessionID,
+            workspaceRuntime: identity.workspaceRuntime
         )
     }
 
-    private func documentWorkspaceContext(
+    /// The source identity the pushed reader was built with. Link routing reads it from
+    /// the payload, never from whichever chat is active when the link is tapped.
+    private func documentIdentity(
         _ payload: ChatReaderPayload
-    ) -> FullScreenCodeContent.WorkspaceContext? {
+    ) -> MarkdownResourceAccess.Identity {
         switch payload.kind {
         case .document(let content, _):
-            if case .markdown(_, _, let context) = content {
-                return context
+            if case .markdown(_, _, let resourceAccess) = content {
+                return resourceAccess.identity
             }
-            return nil
+            return MarkdownResourceAccess.Identity()
         case .image, .imageData, .audioLyrics, .video, .nowPlaying, .extensionNative:
-            return nil
+            return MarkdownResourceAccess.Identity()
         }
     }
 

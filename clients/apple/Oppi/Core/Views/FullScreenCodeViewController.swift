@@ -1367,7 +1367,7 @@ final class FullScreenCodeViewController: UIViewController {
                     filePath: document.filePath
                 )
             )
-        case .markdown(let text, let filePath, let wsContext):
+        case .markdown(let text, let filePath, let resourceAccess):
             let body = NativeFullScreenMarkdownBody(
                 content: text,
                 themeID: themeID,
@@ -1377,26 +1377,12 @@ final class FullScreenCodeViewController: UIViewController {
                     surface: .fullScreenMarkdown,
                     filePath: filePath
                 ),
-                serverID: wsContext?.serverID,
-                workspaceID: wsContext?.workspaceID,
-                worktreeId: wsContext?.worktreeId,
-                sessionID: wsContext?.sessionID,
-                routesFileReferencesThroughSession: wsContext?.routesFileReferencesThroughSession ?? false,
-                workspaceRuntime: wsContext?.workspaceRuntime,
-                serverBaseURL: wsContext?.serverBaseURL,
+                resourceAccess: resourceAccess,
                 sourceFilePath: filePath,
                 lineAnchor: lineAnchor,
                 focusLineAnchor: focusLineAnchor,
                 readerPreferences: readerPreferences(for: content),
-                perfSurface: .fullScreenMarkdown,
-                fetchWorkspaceFile: wsContext?.fetchWorkspaceFile,
-                fetchSessionFile: wsContext?.fetchSessionFile,
-                fetchHostFile: wsContext?.fetchHostFile,
-                makeMarkdownVideoSource: wsContext?.makeMarkdownVideoSource,
-                makeMarkdownAudioSource: wsContext?.makeMarkdownAudioSource,
-                makeMarkdownUSDZFile: wsContext?.makeMarkdownUSDZFile,
-                makeTimedTextSidecar: wsContext?.makeTimedTextSidecar,
-                audioPlayer: wsContext?.audioPlayer
+                perfSurface: .fullScreenMarkdown
             )
             body.accessibilityIdentifier = "full-screen.markdown.body"
             return body
@@ -1591,7 +1577,7 @@ final class FullScreenCodeViewController: UIViewController {
     private func makeLiveSourceMarkdownBody(
         text: String,
         filePath: String?,
-        workspaceContext: FullScreenCodeContent.WorkspaceContext?,
+        resourceAccess: MarkdownResourceAccess,
         isStreaming: Bool,
         themeID: ThemeID
     ) -> NativeMutableFullScreenMarkdownBody {
@@ -1606,24 +1592,10 @@ final class FullScreenCodeViewController: UIViewController {
                 surface: .fullScreenMarkdown,
                 filePath: filePath
             ),
-            serverID: workspaceContext?.serverID,
-            workspaceID: workspaceContext?.workspaceID,
-            worktreeId: workspaceContext?.worktreeId,
-            sessionID: workspaceContext?.sessionID,
-            routesFileReferencesThroughSession: workspaceContext?.routesFileReferencesThroughSession ?? false,
-            workspaceRuntime: workspaceContext?.workspaceRuntime,
-            serverBaseURL: workspaceContext?.serverBaseURL,
+            resourceAccess: resourceAccess,
             sourceFilePath: filePath,
-            readerPreferences: readerPreferences(for: .markdown(content: text, filePath: filePath, workspaceContext: workspaceContext)),
-            perfSurface: .fullScreenMarkdown,
-            fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
-            fetchSessionFile: workspaceContext?.fetchSessionFile,
-            fetchHostFile: workspaceContext?.fetchHostFile,
-            makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource,
-            makeMarkdownAudioSource: workspaceContext?.makeMarkdownAudioSource,
-            makeMarkdownUSDZFile: workspaceContext?.makeMarkdownUSDZFile,
-            makeTimedTextSidecar: workspaceContext?.makeTimedTextSidecar,
-            audioPlayer: workspaceContext?.audioPlayer
+            readerPreferences: readerPreferences(for: .markdown(content: text, filePath: filePath, resourceAccess: resourceAccess)),
+            perfSurface: .fullScreenMarkdown
         )
     }
 
@@ -1654,11 +1626,11 @@ final class FullScreenCodeViewController: UIViewController {
         themeID: ThemeID
     ) -> UIView {
         switch bodyContent(for: snapshot) {
-        case .markdown(let text, let filePath, let workspaceContext):
+        case .markdown(let text, let filePath, let resourceAccess):
             let body = makeLiveSourceMarkdownBody(
                 text: text,
                 filePath: filePath,
-                workspaceContext: workspaceContext,
+                resourceAccess: resourceAccess,
                 isStreaming: true,
                 themeID: themeID
             )
@@ -1680,7 +1652,7 @@ final class FullScreenCodeViewController: UIViewController {
     ) {
         let palette = themeID.palette
         switch bodyContent(for: snapshot) {
-        case .markdown(let text, let filePath, let workspaceContext):
+        case .markdown(let text, let filePath, let resourceAccess):
             liveSourceBodyView = nil
             liveSourceHTMLBodyView = nil
             if let body = liveSourceMarkdownBodyView, installedBodyView === body {
@@ -1692,28 +1664,14 @@ final class FullScreenCodeViewController: UIViewController {
                         surface: .fullScreenMarkdown,
                         filePath: filePath
                     ),
-                    serverID: workspaceContext?.serverID,
-                    workspaceID: workspaceContext?.workspaceID,
-                    worktreeId: workspaceContext?.worktreeId,
-                    sessionID: workspaceContext?.sessionID,
-                    routesFileReferencesThroughSession: workspaceContext?.routesFileReferencesThroughSession ?? false,
-                    workspaceRuntime: workspaceContext?.workspaceRuntime,
-                    serverBaseURL: workspaceContext?.serverBaseURL,
-                    sourceFilePath: filePath,
-                    fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
-                    fetchSessionFile: workspaceContext?.fetchSessionFile,
-                    fetchHostFile: workspaceContext?.fetchHostFile,
-                    makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource,
-                    makeMarkdownAudioSource: workspaceContext?.makeMarkdownAudioSource,
-                    makeMarkdownUSDZFile: workspaceContext?.makeMarkdownUSDZFile,
-                    makeTimedTextSidecar: workspaceContext?.makeTimedTextSidecar,
-                    audioPlayer: workspaceContext?.audioPlayer
+                    resourceAccess: resourceAccess,
+                    sourceFilePath: filePath
                 )
             } else {
                 let body = makeLiveSourceMarkdownBody(
                     text: text,
                     filePath: filePath,
-                    workspaceContext: workspaceContext,
+                    resourceAccess: resourceAccess,
                     isStreaming: true,
                     themeID: themeID
                 )
@@ -1754,7 +1712,7 @@ final class FullScreenCodeViewController: UIViewController {
         let palette = themeID.palette
         if snapshot.isDone {
             let presentation = makePresentation()
-            if case .markdown(let text, let filePath, let workspaceContext) = presentation.bodyContent,
+            if case .markdown(let text, let filePath, let resourceAccess) = presentation.bodyContent,
                let body = liveSourceMarkdownBodyView,
                installedBodyView === body {
                 // Flush final bytes and final source context through the shared
@@ -1768,22 +1726,8 @@ final class FullScreenCodeViewController: UIViewController {
                         surface: .fullScreenMarkdown,
                         filePath: filePath
                     ),
-                    serverID: workspaceContext?.serverID,
-                    workspaceID: workspaceContext?.workspaceID,
-                    worktreeId: workspaceContext?.worktreeId,
-                    sessionID: workspaceContext?.sessionID,
-                    routesFileReferencesThroughSession: workspaceContext?.routesFileReferencesThroughSession ?? false,
-                    workspaceRuntime: workspaceContext?.workspaceRuntime,
-                    serverBaseURL: workspaceContext?.serverBaseURL,
-                    sourceFilePath: filePath,
-                    fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
-                    fetchSessionFile: workspaceContext?.fetchSessionFile,
-                    fetchHostFile: workspaceContext?.fetchHostFile,
-                    makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource,
-                    makeMarkdownAudioSource: workspaceContext?.makeMarkdownAudioSource,
-                    makeMarkdownUSDZFile: workspaceContext?.makeMarkdownUSDZFile,
-                    makeTimedTextSidecar: workspaceContext?.makeTimedTextSidecar,
-                    audioPlayer: workspaceContext?.audioPlayer
+                    resourceAccess: resourceAccess,
+                    sourceFilePath: filePath
                 )
                 liveSourceMarkdownBodyView = nil
                 liveSourceBodyView = nil
@@ -1829,11 +1773,11 @@ final class FullScreenCodeViewController: UIViewController {
         fallbackFilePath: String?
     ) -> FullScreenCodeContent {
         switch content {
-        case .markdown(_, let filePath, let workspaceContext):
+        case .markdown(_, let filePath, let resourceAccess):
             return .markdown(
                 content: text,
                 filePath: filePath ?? fallbackFilePath,
-                workspaceContext: workspaceContext
+                resourceAccess: resourceAccess
             )
         case .html(_, let filePath):
             return .html(content: text, filePath: filePath ?? fallbackFilePath)

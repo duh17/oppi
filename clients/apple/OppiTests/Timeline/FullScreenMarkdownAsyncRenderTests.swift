@@ -564,9 +564,11 @@ struct FullScreenMarkdownAsyncRenderTests {
         }
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        let workspaceContext: FullScreenCodeContent.WorkspaceContext? = workspaceFiles.isEmpty ? nil : .init(
-            workspaceID: "workspace-visual-preview",
-            serverBaseURL: URL(string: "https://example.com/api")!,
+        let resourceAccess: MarkdownResourceAccess = workspaceFiles.isEmpty ? .empty : MarkdownResourceAccess(
+            identity: .init(
+                workspaceID: "workspace-visual-preview",
+                serverBaseURL: URL(string: "https://example.com/api")!
+            ),
             fetchWorkspaceFile: { _, path in
                 guard let data = workspaceFiles[path] else {
                     throw CocoaError(.fileNoSuchFile)
@@ -578,7 +580,7 @@ struct FullScreenMarkdownAsyncRenderTests {
             content: .markdown(
                 content: content,
                 filePath: "preview.md",
-                workspaceContext: workspaceContext
+                resourceAccess: resourceAccess
             )
         )
         window.rootViewController = reader

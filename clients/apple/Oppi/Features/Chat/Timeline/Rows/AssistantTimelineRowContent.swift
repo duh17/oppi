@@ -21,27 +21,9 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let iconAssetCache: IconAssetCache?
     /// Shared interaction context for π text-selection actions.
     let interactionContext: TimelineInteractionContext?
-    /// Stable server scope for resource references.
-    let serverID: String?
-    /// Workspace context for resolving markdown image paths.
-    let workspaceID: String?
-    /// Source-session firstCheckout worktree for workspace image URL identity.
-    let worktreeId: String?
-    let serverBaseURL: URL?
-    /// Closure for fetching a workspace file by path. Wraps `APIClient.fetchWorkspaceFile`
-    /// at the caller site so view-layer files stay decoupled from `APIClient` directly.
-    let fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
-    /// Closure for fetching a file from the active session working directory.
-    let fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
-    /// Owner-host image fetcher. Sandbox callers remap guest POSIX paths.
-    let fetchHostFile: ((_ path: String) async throws -> Data)?
-    /// Existing authenticated/range-capable source path for inline wiki videos.
-    let makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
-    /// Existing authenticated/range-capable source path for inline wiki audio.
-    let makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
-    let makeMarkdownUSDZFile: MarkdownUSDZFileProvider?
-    let makeTimedTextSidecar: TimedTextSidecarProvider?
-    let audioPlayer: AudioPlayerService?
+    /// Bound source identity and resource providers for this row's Markdown, built
+    /// by the timeline from the row's own session, server, and checkout.
+    let resourceAccess: MarkdownResourceAccess
     /// Runway-owned artifacts are hints; nil keeps the canonical renderer.
     var preparedBlocks: [MarkdownBlock]?
     var preparationRevision: UInt64
@@ -63,18 +45,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         agentIcon: IconChoice? = nil,
         iconAssetCache: IconAssetCache? = nil,
         interactionContext: TimelineInteractionContext? = nil,
-        serverID: String? = nil,
-        workspaceID: String? = nil,
-        worktreeId: String? = nil,
-        serverBaseURL: URL? = nil,
-        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
-        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil,
-        fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
-        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
-        makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
-        makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil,
-        makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
-        audioPlayer: AudioPlayerService? = nil,
+        resourceAccess: MarkdownResourceAccess = .empty,
         preparedBlocks: [MarkdownBlock]? = nil,
         preparationRevision: UInt64 = 0,
         imagePreparationContext: TimelineImagePreparationContext? = nil,
@@ -90,18 +61,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.agentIcon = agentIcon
         self.iconAssetCache = iconAssetCache
         self.interactionContext = interactionContext
-        self.serverID = serverID
-        self.workspaceID = workspaceID
-        self.worktreeId = worktreeId
-        self.serverBaseURL = serverBaseURL
-        self.fetchWorkspaceFile = fetchWorkspaceFile
-        self.fetchSessionFile = fetchSessionFile
-        self.fetchHostFile = fetchHostFile
-        self.makeMarkdownVideoSource = makeMarkdownVideoSource
-        self.makeMarkdownAudioSource = makeMarkdownAudioSource
-        self.makeMarkdownUSDZFile = makeMarkdownUSDZFile
-        self.makeTimedTextSidecar = makeTimedTextSidecar
-        self.audioPlayer = audioPlayer
+        self.resourceAccess = resourceAccess
         self.preparedBlocks = preparedBlocks
         self.preparationRevision = preparationRevision
         self.imagePreparationContext = imagePreparationContext
@@ -341,14 +301,6 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         // with FNV-1a prefix caching) keeps main-thread cost low. The segment
         // applier does structural diffing and only updates the growing tail.
         // The segment applier settles only the newly appended TextKit range.
-        markdownView.fetchWorkspaceFile = configuration.fetchWorkspaceFile
-        markdownView.fetchSessionFile = configuration.fetchSessionFile
-        markdownView.fetchHostFile = configuration.fetchHostFile
-        markdownView.makeMarkdownVideoSource = configuration.makeMarkdownVideoSource
-        markdownView.makeMarkdownAudioSource = configuration.makeMarkdownAudioSource
-        markdownView.makeMarkdownUSDZFile = configuration.makeMarkdownUSDZFile
-        markdownView.makeTimedTextSidecar = configuration.makeTimedTextSidecar
-        markdownView.audioPlayer = configuration.audioPlayer
         markdownView.preparedBlocks = configuration.preparedBlocks
         markdownView.imagePreparationContext = configuration.imagePreparationContext
         let reviewCommentSourceContext = configuration.interactionContext?.sourceContext(
@@ -361,11 +313,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             themeID: ThemeRuntimeState.currentThemeID(),
             reviewCommentSelectionRouter: configuration.interactionContext?.reviewCommentSelectionContext?.dispatcher,
             reviewCommentSourceContext: reviewCommentSourceContext,
-            serverID: configuration.serverID,
-            workspaceID: configuration.workspaceID,
-            worktreeId: configuration.worktreeId,
-            sessionID: configuration.sessionId,
-            serverBaseURL: configuration.serverBaseURL,
+            resourceAccess: configuration.resourceAccess,
             preparationRevision: configuration.preparationRevision,
             perfSurface: .inlineAssistant,
             resourcePressure: configuration.resourcePressure

@@ -394,16 +394,24 @@ struct StreamingMarkdownDifferentialTests {
             content: initial,
             isStreaming: true,
             themeID: .dark,
-            workspaceID: "workspace-a",
-            serverBaseURL: baseURL
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "workspace-a",
+                    serverBaseURL: baseURL
+                )
+            )
         ))
         let incremental = source.buildSegments(.make(
             content: updated,
             isStreaming: true,
             themeID: .dark,
-            workspaceID: "workspace-a",
-            sessionID: "session-a",
-            serverBaseURL: baseURL
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "workspace-a",
+                    sessionID: "session-a",
+                    serverBaseURL: baseURL
+                )
+            )
         ))
         let canonical = canonicalSegments(
             content: updated,
@@ -426,16 +434,24 @@ struct StreamingMarkdownDifferentialTests {
             content: initial,
             isStreaming: true,
             themeID: .dark,
-            workspaceID: "workspace-a",
-            serverBaseURL: baseURL,
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "workspace-a",
+                    serverBaseURL: baseURL
+                )
+            ),
             sourceFilePath: "docs/one.md"
         ))
         let incremental = source.buildSegments(.make(
             content: updated,
             isStreaming: true,
             themeID: .dark,
-            workspaceID: "workspace-b",
-            serverBaseURL: baseURL,
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "workspace-b",
+                    serverBaseURL: baseURL
+                )
+            ),
             sourceFilePath: "guides/two.md"
         ))
         let canonical = canonicalSegments(

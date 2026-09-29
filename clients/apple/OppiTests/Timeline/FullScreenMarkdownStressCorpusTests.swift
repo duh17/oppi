@@ -115,13 +115,17 @@ struct FullScreenMarkdownStressCorpusTests {
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
-            workspaceID: "ws-markdown-stress",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
-            sourceFilePath: "docs/mixed-markdown-stress-corpus.md",
-            fetchWorkspaceFile: { workspaceID, path in
-                await imageProbe.record(workspaceID: workspaceID, path: path)
-                return pngData
-            }
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "ws-markdown-stress",
+                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                ),
+                fetchWorkspaceFile: { workspaceID, path in
+                    await imageProbe.record(workspaceID: workspaceID, path: path)
+                    return pngData
+                }
+            ),
+            sourceFilePath: "docs/mixed-markdown-stress-corpus.md"
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
@@ -177,8 +181,12 @@ struct FullScreenMarkdownStressCorpusTests {
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
-            workspaceID: "ws-markdown-stress",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "ws-markdown-stress",
+                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                )
+            ),
             sourceFilePath: "docs/mixed-markdown-stress-corpus.md"
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
@@ -224,10 +232,14 @@ struct FullScreenMarkdownStressCorpusTests {
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
-            workspaceID: "ws-markdown-stress",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
-            sourceFilePath: "docs/mixed-markdown-stress-corpus.md",
-            fetchWorkspaceFile: { _, _ in pngData }
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "ws-markdown-stress",
+                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                ),
+                fetchWorkspaceFile: { _, _ in pngData }
+            ),
+            sourceFilePath: "docs/mixed-markdown-stress-corpus.md"
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
@@ -362,10 +374,14 @@ struct FullScreenMarkdownStressCorpusTests {
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
-            workspaceID: "ws-markdown-stress",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
-            sourceFilePath: "docs/mixed-markdown-stress-corpus.md",
-            fetchWorkspaceFile: { _, _ in pngData }
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "ws-markdown-stress",
+                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                ),
+                fetchWorkspaceFile: { _, _ in pngData }
+            ),
+            sourceFilePath: "docs/mixed-markdown-stress-corpus.md"
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
@@ -636,12 +652,16 @@ struct FullScreenMarkdownStressCorpusTests {
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
-            workspaceID: "ws-markdown-interaction",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
-            sourceFilePath: "docs/deferred-interaction.md",
-            fetchWorkspaceFile: { _, _ in
-                await fetchGate.wait()
-            }
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "ws-markdown-interaction",
+                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                ),
+                fetchWorkspaceFile: { _, _ in
+                    await fetchGate.wait()
+                }
+            ),
+            sourceFilePath: "docs/deferred-interaction.md"
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
@@ -721,12 +741,16 @@ struct FullScreenMarkdownStressCorpusTests {
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
-            workspaceID: "ws-markdown-stress",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
-            sourceFilePath: "docs/mixed-markdown-stress-corpus.md",
-            fetchWorkspaceFile: { _, _ in
-                await fetchGate.wait()
-            }
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "ws-markdown-stress",
+                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                ),
+                fetchWorkspaceFile: { _, _ in
+                    await fetchGate.wait()
+                }
+            ),
+            sourceFilePath: "docs/mixed-markdown-stress-corpus.md"
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)

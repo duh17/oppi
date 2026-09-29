@@ -289,8 +289,13 @@ struct AssistantTimelineRowContentViewTests {
             canFork: false,
             onFork: nil,
             sessionId: "session-source",
-            serverID: "server-1",
-            workspaceID: "workspace-1"
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-1",
+                    workspaceID: "workspace-1",
+                    sessionID: "session-source"
+                )
+            )
         ))
         let textView = try #require(timelineFirstTextView(in: view))
 
@@ -715,7 +720,11 @@ struct AssistantTimelineRowContentViewTests {
             isStreaming: false,
             canFork: false,
             onFork: nil,
-            workspaceID: "workspace-1"
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "workspace-1"
+                )
+            )
         ))
         _ = fittedTimelineSize(for: view, width: 370)
         let tableView = try #require(timelineFirstView(ofType: NativeTableBlockView.self, in: view))
@@ -750,8 +759,12 @@ struct AssistantTimelineRowContentViewTests {
             isStreaming: false,
             canFork: false,
             onFork: nil,
-            serverID: "server-1",
-            workspaceID: "workspace-1"
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-1",
+                    workspaceID: "workspace-1"
+                )
+            )
         ))
         _ = fittedTimelineSize(for: view, width: 370)
         let tableView = try #require(timelineFirstView(ofType: NativeTableBlockView.self, in: view))
@@ -1067,17 +1080,25 @@ struct AssistantTimelineRowContentViewTests {
             content: content,
             isStreaming: true,
             themeID: .dark,
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "source-a"
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-a",
+                    workspaceID: "workspace-a",
+                    sessionID: "source-a"
+                )
+            )
         ))
         markdownView.apply(configuration: .make(
             content: content + " grows",
             isStreaming: true,
             themeID: .dark,
-            serverID: "server-b",
-            workspaceID: "workspace-b",
-            sessionID: "source-b"
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-b",
+                    workspaceID: "workspace-b",
+                    sessionID: "source-b"
+                )
+            )
         ))
 
         let references = timelineAllTextViews(in: markdownView).flatMap { textView in
@@ -1279,9 +1300,13 @@ struct AssistantTimelineRowContentViewTests {
             content: "See [[notes/sessions/oppi-jZhDRKeV|session note]]",
             isStreaming: false,
             themeID: .light,
-            serverID: "server-1",
-            workspaceID: "workspace-1",
-            sessionID: "session-source"
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-1",
+                    workspaceID: "workspace-1",
+                    sessionID: "session-source"
+                )
+            )
         ))
 
         let reference = ResourceReference(
@@ -1303,8 +1328,12 @@ struct AssistantTimelineRowContentViewTests {
             content: "See [[RV97TbYj]]",
             isStreaming: false,
             themeID: .light,
-            serverID: "server-1",
-            sessionID: "session-source"
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-1",
+                    sessionID: "session-source"
+                )
+            )
         ))
         let textView = try #require(timelineFirstTextView(in: markdownView))
         let url = try #require(textView.attributedText.attribute(
@@ -1326,8 +1355,12 @@ struct AssistantTimelineRowContentViewTests {
             content: "Open [[/tmp/oppi-debug.log]]",
             isStreaming: false,
             themeID: .light,
-            serverID: "server-1",
-            sessionID: "session-source"
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-1",
+                    sessionID: "session-source"
+                )
+            )
         ))
         let textView = try #require(timelineFirstTextView(in: markdownView))
         let url = try #require(textView.attributedText.attribute(
@@ -1349,7 +1382,11 @@ struct AssistantTimelineRowContentViewTests {
             content: "See [[notes/sessions/oppi-jZhDRKeV|session note]]",
             isStreaming: false,
             themeID: .light,
-            workspaceID: "workspace-1"
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "workspace-1"
+                )
+            )
         ))
 
         let url = try #require(ResourceReferenceURL.make(ResourceReference(
@@ -1370,9 +1407,13 @@ struct AssistantTimelineRowContentViewTests {
             content: "See [[RV97TbYj]]",
             isStreaming: false,
             themeID: .light,
-            serverID: "server-1",
-            workspaceID: "workspace-1",
-            sessionID: "session-source"
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-1",
+                    workspaceID: "workspace-1",
+                    sessionID: "session-source"
+                )
+            )
         ))
         let url = try #require(ResourceReferenceURL.make(ResourceReference(
             target: "RV97TbYj",
@@ -1403,8 +1444,12 @@ struct AssistantTimelineRowContentViewTests {
             content: "[Open](oppi://session/RV97TbYj)",
             isStreaming: false,
             themeID: .light,
-            serverID: "server-source",
-            sessionID: "session-source"
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-source",
+                    sessionID: "session-source"
+                )
+            )
         ))
         let url = try #require(URL(string: "oppi://session/RV97TbYj"))
         var receivedURL: URL?
@@ -1438,8 +1483,12 @@ struct AssistantTimelineRowContentViewTests {
             content: "[server.ts](file:///Users/example/workspace/oppi/server/src/server.ts)",
             isStreaming: false,
             themeID: .light,
-            workspaceID: "workspace-1",
-            sessionID: "session-1"
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "workspace-1",
+                    sessionID: "session-1"
+                )
+            )
         ))
 
         let url = try #require(URL(string: "file:///Users/example/workspace/oppi/server/src/server.ts"))

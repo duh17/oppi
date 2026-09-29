@@ -300,33 +300,6 @@ final class AssistantMarkdownSegmentApplier {
     }
     #endif
 
-    /// Closure for fetching workspace files (for inline markdown images).
-    /// Injected by the owning view chain, wrapping `APIClient` at the site
-    /// where it's available so view-layer files stay decoupled from `APIClient`.
-    var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
-
-    /// Closure for fetching files from the active session working directory.
-    var fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
-
-    /// Closure for fetching owner-host images through the host-origin current-file read.
-    /// Sandbox injection remaps guest POSIX paths the same way AV does.
-    var fetchHostFile: ((_ path: String) async throws -> Data)?
-
-    /// Authenticated file-backed media resolver for `![[video-file]]`.
-    var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
-
-    /// Authenticated file-backed media resolver for `![[audio-file]]`.
-    var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
-
-    /// Authenticated file-backed USDZ resolver for `![[scene.usdz]]`.
-    var makeMarkdownUSDZFile: MarkdownUSDZFileProvider?
-
-    /// Workspace/session sidecar lyrics and captions. Host media stays sidecar-free.
-    var makeTimedTextSidecar: TimedTextSidecarProvider?
-
-    /// Shared playback owner for markdown audio strips.
-    var audioPlayer: AudioPlayerService?
-
     /// Full-screen runway probes resolve sources but keep playback torn down
     /// until a real cell owns the segment.
     var videoPlaybackVisible = true
@@ -685,8 +658,8 @@ final class AssistantMarkdownSegmentApplier {
                 )
             )
             tableView.configureResourceReferenceScope(
-                serverID: config.serverID,
-                workspaceID: config.workspaceID
+                serverID: config.resourceAccess.identity.serverID,
+                workspaceID: config.resourceAccess.identity.workspaceID
             )
             tableView.apply(headers: headers, rows: rows, palette: palette)
             stackView.addArrangedSubview(tableView)
@@ -702,9 +675,9 @@ final class AssistantMarkdownSegmentApplier {
             imageView.apply(
                 url: url,
                 alt: alt,
-                fetchWorkspaceFile: fetchWorkspaceFile,
-                fetchSessionFile: fetchSessionFile,
-                fetchHostFile: fetchHostFile,
+                fetchWorkspaceFile: config.resourceAccess.fetchWorkspaceFile,
+                fetchSessionFile: config.resourceAccess.fetchSessionFile,
+                fetchHostFile: config.resourceAccess.fetchHostFile,
                 renderingMode: config.renderingMode,
                 preferredDisplayWidth: preparationWidth,
                 preparesForDisplay: preparesImagesForDisplay,
@@ -719,10 +692,10 @@ final class AssistantMarkdownSegmentApplier {
             videoView.onPreparedGeometry = onVideoPreparedGeometry
             videoView.apply(
                 embed: embed,
-                sourceProvider: makeMarkdownVideoSource,
+                sourceProvider: config.resourceAccess.makeMarkdownVideoSource,
                 renderingMode: config.renderingMode,
                 preferredDisplayWidth: preparationWidth,
-                sidecarProvider: makeTimedTextSidecar
+                sidecarProvider: config.resourceAccess.makeTimedTextSidecar
             )
             videoView.setPlaybackVisible(videoPlaybackVisible)
             stackView.addArrangedSubview(videoView)
@@ -732,12 +705,12 @@ final class AssistantMarkdownSegmentApplier {
             let audioView = NativeMarkdownAudioView()
             audioView.apply(
                 embed: embed,
-                sourceProvider: makeMarkdownAudioSource,
-                audioPlayer: audioPlayer,
+                sourceProvider: config.resourceAccess.makeMarkdownAudioSource,
+                audioPlayer: config.resourceAccess.audioPlayer,
                 renderingMode: config.renderingMode,
                 preferredDisplayWidth: preparationWidth,
-                worktreeID: config.worktreeId,
-                sidecarProvider: makeTimedTextSidecar
+                worktreeID: config.resourceAccess.identity.worktreeId,
+                sidecarProvider: config.resourceAccess.makeTimedTextSidecar
             )
             stackView.addArrangedSubview(audioView)
             audioViews[index] = audioView
@@ -747,7 +720,7 @@ final class AssistantMarkdownSegmentApplier {
             usdzView.onPreparedGeometry = onVideoPreparedGeometry
             usdzView.apply(
                 embed: embed,
-                fileProvider: makeMarkdownUSDZFile,
+                fileProvider: config.resourceAccess.makeMarkdownUSDZFile,
                 renderingMode: config.renderingMode,
                 preferredDisplayWidth: preparationWidth
             )
@@ -1036,8 +1009,8 @@ final class AssistantMarkdownSegmentApplier {
                         )
                     )
                     tableView.configureResourceReferenceScope(
-                        serverID: config.serverID,
-                        workspaceID: config.workspaceID
+                        serverID: config.resourceAccess.identity.serverID,
+                        workspaceID: config.resourceAccess.identity.workspaceID
                     )
                     tableView.apply(headers: headers, rows: rows, palette: palette)
                 }
@@ -1053,9 +1026,9 @@ final class AssistantMarkdownSegmentApplier {
                     imageView.apply(
                         url: url,
                         alt: alt,
-                        fetchWorkspaceFile: fetchWorkspaceFile,
-                        fetchSessionFile: fetchSessionFile,
-                        fetchHostFile: fetchHostFile,
+                        fetchWorkspaceFile: config.resourceAccess.fetchWorkspaceFile,
+                        fetchSessionFile: config.resourceAccess.fetchSessionFile,
+                        fetchHostFile: config.resourceAccess.fetchHostFile,
                         renderingMode: config.renderingMode,
                         preferredDisplayWidth: preparationWidth,
                         preparesForDisplay: preparesImagesForDisplay,
@@ -1068,29 +1041,29 @@ final class AssistantMarkdownSegmentApplier {
                 videoViews[index]?.onPreparedGeometry = onVideoPreparedGeometry
                 videoViews[index]?.apply(
                     embed: embed,
-                    sourceProvider: makeMarkdownVideoSource,
+                    sourceProvider: config.resourceAccess.makeMarkdownVideoSource,
                     renderingMode: config.renderingMode,
                     preferredDisplayWidth: preparationWidth,
-                    sidecarProvider: makeTimedTextSidecar
+                    sidecarProvider: config.resourceAccess.makeTimedTextSidecar
                 )
                 videoViews[index]?.setPlaybackVisible(videoPlaybackVisible)
 
             case .audio(let embed):
                 audioViews[index]?.apply(
                     embed: embed,
-                    sourceProvider: makeMarkdownAudioSource,
-                    audioPlayer: audioPlayer,
+                    sourceProvider: config.resourceAccess.makeMarkdownAudioSource,
+                    audioPlayer: config.resourceAccess.audioPlayer,
                     renderingMode: config.renderingMode,
                     preferredDisplayWidth: preparationWidth,
-                    worktreeID: config.worktreeId,
-                    sidecarProvider: makeTimedTextSidecar
+                    worktreeID: config.resourceAccess.identity.worktreeId,
+                    sidecarProvider: config.resourceAccess.makeTimedTextSidecar
                 )
 
             case .usdz(let embed):
                 usdzViews[index]?.onPreparedGeometry = onVideoPreparedGeometry
                 usdzViews[index]?.apply(
                     embed: embed,
-                    fileProvider: makeMarkdownUSDZFile,
+                    fileProvider: config.resourceAccess.makeMarkdownUSDZFile,
                     renderingMode: config.renderingMode,
                     preferredDisplayWidth: preparationWidth
                 )
@@ -1598,12 +1571,13 @@ private struct SegmentRenderContext: Equatable {
 
     init(_ config: AssistantMarkdownContentView.Configuration) {
         themeID = config.themeID
-        serverID = config.serverID
-        workspaceID = config.workspaceID
-        sessionID = config.sessionID
-        serverBaseURL = config.serverBaseURL
+        let identity = config.resourceAccess.identity
+        serverID = identity.serverID
+        workspaceID = identity.workspaceID
+        sessionID = identity.sessionID
+        serverBaseURL = identity.serverBaseURL
         sourceDirectory = config.sourceDirectory
-        worktreeId = config.worktreeId
+        worktreeId = identity.worktreeId
     }
 }
 

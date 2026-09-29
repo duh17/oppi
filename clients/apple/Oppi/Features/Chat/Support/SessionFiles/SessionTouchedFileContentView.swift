@@ -1,14 +1,16 @@
 import SwiftUI
 
 /// Builds the same full-screen file viewer used by session-touched file preview.
+///
+/// The touched-file reader keeps its own route construction (`SessionTouchedFileLoadRoute`
+/// closures built in `SessionTouchedFileContentView.loadContent`); this only binds those
+/// providers to the source session as one ``MarkdownResourceAccess``.
 enum SessionFileFullScreenContentBuilder {
     static func content(
         text: String,
         filePath: String,
         workspaceID: String?,
         serverBaseURL: URL?,
-        workspaceHostMount: String?,
-        workspaceRuntime: WorkspaceRuntime?,
         fetchSessionFileData: ((String) async throws -> Data)?,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
@@ -17,23 +19,18 @@ enum SessionFileFullScreenContentBuilder {
         audioPlayer: AudioPlayerService? = nil,
         sessionID: String
     ) -> FullScreenCodeContent {
-        guard let workspaceID,
-              let serverBaseURL,
-              let fetchSessionFileData else {
-            return .fromText(text, filePath: filePath)
-        }
-
-        return .fromText(
+        .fromText(
             text,
             filePath: filePath,
-            workspaceContext: .init(
-                workspaceID: workspaceID,
-                serverBaseURL: serverBaseURL,
-                fetchWorkspaceFile: { _, path in
-                    try await fetchSessionFileData(path)
+            resourceAccess: MarkdownResourceAccess(
+                identity: MarkdownResourceAccess.Identity(
+                    workspaceID: workspaceID,
+                    sessionID: sessionID,
+                    serverBaseURL: serverBaseURL
+                ),
+                fetchWorkspaceFile: fetchSessionFileData.map { fetch in
+                    { _, path in try await fetch(path) }
                 },
-                sessionID: sessionID,
-                fetchSessionFile: nil,
                 fetchHostFile: fetchSessionFileData,
                 makeMarkdownVideoSource: makeMarkdownVideoSource,
                 makeMarkdownAudioSource: makeMarkdownAudioSource,
@@ -124,8 +121,6 @@ struct SessionTouchedFileContentView: View {
             filePath: currentFilePath,
             workspaceID: workspaceId,
             serverBaseURL: loadedServerBaseURL,
-            workspaceHostMount: currentWorkspaceHostMount,
-            workspaceRuntime: currentWorkspaceRuntime,
             fetchSessionFileData: fetchSessionFileData,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,

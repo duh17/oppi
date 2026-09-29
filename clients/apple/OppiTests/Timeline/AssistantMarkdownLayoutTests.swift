@@ -128,12 +128,16 @@ struct AssistantMarkdownLayoutTests {
                     canFork: false,
                     onFork: nil,
                     sessionId: "assistant-png-detached-relayout",
-                    workspaceID: "ws-png",
-                    serverBaseURL: URL(string: "https://server.example.com")!,
-                    fetchWorkspaceFile: { _, _ in
-                        try await Task.sleep(for: .milliseconds(80))
-                        return imageData
-                    }
+                    resourceAccess: MarkdownResourceAccess(
+                        identity: .init(
+                            workspaceID: "ws-png",
+                            serverBaseURL: URL(string: "https://server.example.com")!
+                        ),
+                        fetchWorkspaceFile: { _, _ in
+                            try await Task.sleep(for: .milliseconds(80))
+                            return imageData
+                        }
+                    )
                 )
             ),
             (
@@ -239,12 +243,16 @@ struct AssistantMarkdownLayoutTests {
                     canFork: false,
                     onFork: nil,
                     sessionId: "assistant-svg-async-relayout",
-                    workspaceID: "ws-svg",
-                    serverBaseURL: URL(string: "https://server.example.com")!,
-                    fetchWorkspaceFile: { _, _ in
-                        try await Task.sleep(for: .milliseconds(50))
-                        return Data("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 320 180\"><rect width=\"320\" height=\"180\" fill=\"red\"/></svg>".utf8)
-                    }
+                    resourceAccess: MarkdownResourceAccess(
+                        identity: .init(
+                            workspaceID: "ws-svg",
+                            serverBaseURL: URL(string: "https://server.example.com")!
+                        ),
+                        fetchWorkspaceFile: { _, _ in
+                            try await Task.sleep(for: .milliseconds(50))
+                            return Data("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 320 180\"><rect width=\"320\" height=\"180\" fill=\"red\"/></svg>".utf8)
+                        }
+                    )
                 )
             ),
             (

@@ -48,20 +48,10 @@ final class AssistantMarkdownContentView: UIView {
         let textSelectionEnabled: Bool
         let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
         let reviewCommentSourceContext: ReviewCommentSourceContext?
-        /// Stable server scope for resolving resource references at tap time.
-        let serverID: String?
-        /// Workspace context for resolving inline image paths and file candidates.
-        let workspaceID: String?
-        /// Source-session firstCheckout worktree for workspace image URL identity.
-        /// Nil/main omit the query, matching `WorkspaceFileURL.make`.
-        let worktreeId: String?
-        /// Session context retained for review and full-screen presentation.
-        let sessionID: String?
-        /// File-reader links keep using the exact source-session file route.
-        let routesFileReferencesThroughSession: Bool
-        /// Sandbox origin keeps guest `/workspace/...` children on the session origin.
-        let workspaceRuntime: WorkspaceRuntime?
-        let serverBaseURL: URL?
+        /// Bound source identity and resource providers. Only the identity takes part
+        /// in equality: a fresh provider set with the same identity must not re-render,
+        /// yet every apply hands the newest providers to the segment views it builds.
+        let resourceAccess: MarkdownResourceAccess
         /// Path of the source markdown file in the workspace (e.g. "docs/readme.md").
         /// Used to resolve relative image paths against the file's directory.
         let sourceFilePath: String?
@@ -100,13 +90,7 @@ final class AssistantMarkdownContentView: UIView {
             textSelectionEnabled: Bool = true,
             reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
             reviewCommentSourceContext: ReviewCommentSourceContext? = nil,
-            serverID: String? = nil,
-            workspaceID: String? = nil,
-            worktreeId: String? = nil,
-            sessionID: String? = nil,
-            routesFileReferencesThroughSession: Bool = false,
-            workspaceRuntime: WorkspaceRuntime? = nil,
-            serverBaseURL: URL? = nil,
+            resourceAccess: MarkdownResourceAccess = .empty,
             sourceFilePath: String? = nil,
             lineAnchor: SourceLineAnchor? = nil,
             readerPreferences: FullScreenReaderPreferences? = nil,
@@ -121,13 +105,7 @@ final class AssistantMarkdownContentView: UIView {
             self.textSelectionEnabled = textSelectionEnabled
             self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
             self.reviewCommentSourceContext = reviewCommentSourceContext
-            self.serverID = serverID
-            self.workspaceID = workspaceID
-            self.worktreeId = worktreeId
-            self.sessionID = sessionID
-            self.routesFileReferencesThroughSession = routesFileReferencesThroughSession
-            self.workspaceRuntime = workspaceRuntime
-            self.serverBaseURL = serverBaseURL
+            self.resourceAccess = resourceAccess
             self.sourceFilePath = sourceFilePath
             self.lineAnchor = lineAnchor
             self.readerPreferences = readerPreferences
@@ -144,13 +122,7 @@ final class AssistantMarkdownContentView: UIView {
             textSelectionEnabled: Bool = true,
             reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
             reviewCommentSourceContext: ReviewCommentSourceContext? = nil,
-            serverID: String? = nil,
-            workspaceID: String? = nil,
-            worktreeId: String? = nil,
-            sessionID: String? = nil,
-            routesFileReferencesThroughSession: Bool = false,
-            workspaceRuntime: WorkspaceRuntime? = nil,
-            serverBaseURL: URL? = nil,
+            resourceAccess: MarkdownResourceAccess = .empty,
             sourceFilePath: String? = nil,
             lineAnchor: SourceLineAnchor? = nil,
             readerPreferences: FullScreenReaderPreferences? = nil,
@@ -166,13 +138,7 @@ final class AssistantMarkdownContentView: UIView {
                 textSelectionEnabled: textSelectionEnabled,
                 reviewCommentSelectionRouter: reviewCommentSelectionRouter,
                 reviewCommentSourceContext: reviewCommentSourceContext,
-                serverID: serverID,
-                workspaceID: workspaceID,
-                worktreeId: worktreeId,
-                sessionID: sessionID,
-                routesFileReferencesThroughSession: routesFileReferencesThroughSession,
-                workspaceRuntime: workspaceRuntime,
-                serverBaseURL: serverBaseURL,
+                resourceAccess: resourceAccess,
                 sourceFilePath: sourceFilePath,
                 lineAnchor: lineAnchor,
                 readerPreferences: readerPreferences,
@@ -190,13 +156,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.textSelectionEnabled == rhs.textSelectionEnabled
                 && lhs.reviewCommentSelectionRouter === rhs.reviewCommentSelectionRouter
                 && lhs.reviewCommentSourceContext == rhs.reviewCommentSourceContext
-                && lhs.serverID == rhs.serverID
-                && lhs.workspaceID == rhs.workspaceID
-                && lhs.worktreeId == rhs.worktreeId
-                && lhs.sessionID == rhs.sessionID
-                && lhs.routesFileReferencesThroughSession == rhs.routesFileReferencesThroughSession
-                && lhs.workspaceRuntime == rhs.workspaceRuntime
-                && lhs.serverBaseURL == rhs.serverBaseURL
+                && lhs.resourceAccess.identity == rhs.resourceAccess.identity
                 && lhs.sourceFilePath == rhs.sourceFilePath
                 && lhs.lineAnchor == rhs.lineAnchor
                 && lhs.readerPreferences == rhs.readerPreferences
@@ -277,45 +237,6 @@ final class AssistantMarkdownContentView: UIView {
                 height: leadingHangHeight
             )
         }
-    }
-
-    /// Closure for fetching workspace files (for inline markdown images).
-    /// Wraps `APIClient.fetchWorkspaceFile` at the injection site, keeping this
-    /// view file decoupled from `APIClient` directly.
-    var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? {
-        didSet { segmentApplier.fetchWorkspaceFile = fetchWorkspaceFile }
-    }
-
-    /// Optional session-file fetcher retained for internal session-file URLs.
-    var fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? {
-        didSet { segmentApplier.fetchSessionFile = fetchSessionFile }
-    }
-
-    /// Owner-host image fetcher. Sandbox callers remap guest POSIX paths.
-    var fetchHostFile: ((_ path: String) async throws -> Data)? {
-        didSet { segmentApplier.fetchHostFile = fetchHostFile }
-    }
-
-    /// Resolves policy-checked wiki-file video embeds through existing
-    /// authenticated media endpoints.
-    var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? {
-        didSet { segmentApplier.makeMarkdownVideoSource = makeMarkdownVideoSource }
-    }
-
-    var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? {
-        didSet { segmentApplier.makeMarkdownAudioSource = makeMarkdownAudioSource }
-    }
-
-    var makeMarkdownUSDZFile: MarkdownUSDZFileProvider? {
-        didSet { segmentApplier.makeMarkdownUSDZFile = makeMarkdownUSDZFile }
-    }
-
-    var makeTimedTextSidecar: TimedTextSidecarProvider? {
-        didSet { segmentApplier.makeTimedTextSidecar = makeTimedTextSidecar }
-    }
-
-    var audioPlayer: AudioPlayerService? {
-        didSet { segmentApplier.audioPlayer = audioPlayer }
     }
 
     func setVideoPlaybackVisible(_ visible: Bool) {
@@ -602,13 +523,14 @@ enum MarkdownLinkInteractionSupport {
 extension AssistantMarkdownContentView: UITextViewDelegate {
     /// Classify a URL for tap/long-press behavior. Exposed for testing.
     func classifyLink(_ url: URL) -> LinkAction {
-        MarkdownLinkInteractionSupport.classify(
+        let identity = currentConfig?.resourceAccess.identity
+        return MarkdownLinkInteractionSupport.classify(
             url,
-            serverID: currentConfig?.serverID,
-            workspaceID: currentConfig?.workspaceID,
-            sessionID: currentConfig?.sessionID,
-            routesFileReferencesThroughSession: currentConfig?.routesFileReferencesThroughSession ?? false,
-            workspaceRuntime: currentConfig?.workspaceRuntime
+            serverID: identity?.serverID,
+            workspaceID: identity?.workspaceID,
+            sessionID: identity?.sessionID,
+            routesFileReferencesThroughSession: identity?.routesFileReferencesThroughSession ?? false,
+            workspaceRuntime: identity?.workspaceRuntime
         )
     }
 

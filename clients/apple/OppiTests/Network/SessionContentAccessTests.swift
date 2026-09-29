@@ -281,6 +281,287 @@ struct SessionContentAccessTests {
         #expect(source.contentTypeHint == "video/mp4")
     }
 
+    @Test("Markdown resource access binds the row's identity and routes each provider from it")
+    func markdownResourceAccessBindsRowIdentity() async throws {
+        let connection = ServerConnection()
+        connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        var session = makeTestSession(id: "s-bound", workspaceId: "w1")
+        session.worktreeId = "wt_feature"
+        connection.sessionStore.upsert(session)
+
+        let access = connection.sessionContent.markdownResourceAccess(
+            serverID: "server-a",
+            workspaceID: "w1",
+            sessionID: "s-bound",
+            audioPlayer: nil,
+            includesInlineMedia: true
+        )
+
+        // Identity is the row's bound scope, the source session's checkout, and the client's URL.
+        #expect(access.identity == MarkdownResourceAccess.Identity(
+            serverID: "server-a",
+            workspaceID: "w1",
+            worktreeId: "wt_feature",
+            sessionID: "s-bound",
+            serverBaseURL: try #require(URL(string: "http://server-a.test:7749"))
+        ))
+
+        let readWorkspaceFile = try #require(access.fetchWorkspaceFile)
+        let readHostFile = try #require(access.fetchHostFile)
+        let makeVideoSource = try #require(access.makeMarkdownVideoSource)
+        _ = try await readWorkspaceFile("w1", "docs/a.png")
+        _ = try await readWorkspaceFile("elsewhere", "docs/b.png")
+        _ = try await readHostFile("/tmp/c.png")
+        // The reference serializes a different session; the row's bound session decides the origin.
+        let video = try await makeVideoSource(try makeVideoEmbed("![[clips/d.mp4]]"))
+
+        let requests = RecordingContentProtocol.requests
+        #expect(requests.count == 3)
+        expectPath(requests[0], prefix: "/workspaces/w1/raw/", file: "docs/a.png")
+        #expect(query(requests[0], "worktreeId") == "wt_feature")
+        // A workspace outside the source session has no checkout to list: main.
+        expectPath(requests[1], prefix: "/workspaces/elsewhere/raw/", file: "docs/b.png")
+        #expect(query(requests[1], "worktreeId") == nil)
+        // Unknown runtime is an owner-host read.
+        #expect(requests[2].url?.path == "/files/raw")
+        #expect(query(requests[2], "path") == "/tmp/c.png")
+        expectPath(video.url, prefix: "/workspaces/w1/sessions/s-bound/raw/", file: "clips/d.mp4")
+
+        // Tool Markdown hosts file reads only; the same source carries no inline media there.
+        let toolAccess = connection.sessionContent.markdownResourceAccess(
+            serverID: "server-a",
+            workspaceID: "w1",
+            sessionID: "s-bound",
+            audioPlayer: nil,
+            includesInlineMedia: false
+        )
+        #expect(toolAccess.identity == access.identity)
+        #expect(toolAccess.fetchWorkspaceFile != nil)
+        #expect(toolAccess.fetchHostFile != nil)
+        #expect(toolAccess.makeMarkdownVideoSource == nil)
+        #expect(toolAccess.makeMarkdownAudioSource == nil)
+        #expect(toolAccess.makeMarkdownUSDZFile == nil)
+        #expect(toolAccess.makeTimedTextSidecar == nil)
+    }
+
+    @Test("Access built before the client and workspace exist reads through the client that arrives")
+    func markdownResourceAccessBuiltBeforeClientReadsThroughLaterClient() async throws {
+        let connection = ServerConnection()
+        // A cached control-session row: server and session are known; no client, no workspace.
+        let access = connection.sessionContent.markdownResourceAccess(
+            serverID: "server-a",
+            workspaceID: nil,
+            sessionID: "s-control",
+            audioPlayer: nil,
+            includesInlineMedia: true
+        )
+
+        #expect(access.identity.serverID == "server-a")
+        #expect(access.identity.sessionID == "s-control")
+        #expect(access.identity.workspaceID == nil)
+        #expect(access.identity.serverBaseURL == nil)
+        // Workspace-relative reads need a client when the value is built...
+        #expect(access.fetchWorkspaceFile == nil)
+        // ...but host and media providers do not depend on workspace or client readiness.
+        let readHostFile = try #require(access.fetchHostFile)
+        #expect(access.makeMarkdownVideoSource != nil)
+
+        let read = Task { @MainActor in try await readHostFile("/tmp/late.png") }
+        await Task.yield()
+        #expect(RecordingContentProtocol.requests.isEmpty)
+        connection.setAPIClientForTesting(makeClient(host: "server-late.test"))
+        _ = try await read.value
+
+        let request = try #require(RecordingContentProtocol.requests.first)
+        #expect(RecordingContentProtocol.requests.count == 1)
+        #expect(request.url?.host == "server-late.test")
+        #expect(request.url?.path == "/files/raw")
+        #expect(query(request, "path") == "/tmp/late.png")
+    }
+
+    @Test("Assistant row image loads through the row's bound checkout")
+    func assistantRowImageLoadsThroughBoundCheckout() async throws {
+        let wh = makeWindowedTimelineHarness(sessionId: "s-bound")
+        defer { wh.window.isHidden = true }
+        wh.connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        var session = makeTestSession(id: "s-bound", workspaceId: "ws-test")
+        session.worktreeId = "wt_feature"
+        wh.connection.sessionStore.upsert(session)
+
+        // Real timeline: controller row builder, cell, Markdown view, image leaf, then HTTP.
+        wh.applyItems(
+            [.assistantMessage(id: "a1", text: "![chart](docs/chart.png)", timestamp: Date(timeIntervalSince1970: 0))],
+            isBusy: false
+        )
+        let requested = await waitForTimelineCondition(timeoutMs: 3_000) { @MainActor in
+            wh.collectionView.layoutIfNeeded()
+            return !RecordingContentProtocol.requests.isEmpty
+        }
+
+        #expect(requested)
+        let request = try #require(RecordingContentProtocol.requests.first)
+        #expect(request.url?.host == "server-a.test")
+        expectPath(request, prefix: "/workspaces/ws-test/raw/", file: "docs/chart.png")
+        #expect(query(request, "worktreeId") == "wt_feature")
+    }
+
+    @Test(
+        "Tool row Markdown viewport loads relative images through the row's bound checkout and document path",
+        arguments: [true, false]
+    )
+    func toolMarkdownViewportLoadsImageThroughBoundCheckout(isDone: Bool) async throws {
+        let wh = makeWindowedTimelineHarness(sessionId: "s-bound")
+        defer { wh.window.isHidden = true }
+        wh.connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        var session = makeTestSession(id: "s-bound", workspaceId: "ws-test")
+        session.worktreeId = "wt_feature"
+        wh.connection.sessionStore.upsert(session)
+
+        // Real timeline: expanded tool row (streaming and completed viewports), image leaf, then HTTP.
+        wh.toolArgsStore.set(["path": .string("docs/README.md")], for: "read-md")
+        wh.reducer.expandedItemIDs.insert("read-md")
+        wh.toolOutputStore.append("# Title\n\n![diagram](diagram.png)", to: "read-md")
+        wh.applyItems(
+            [.toolCall(
+                id: "read-md",
+                tool: "read",
+                argsSummary: "path: docs/README.md",
+                outputPreview: "# Title",
+                outputByteCount: 32,
+                isError: false,
+                isDone: isDone
+            )],
+            isBusy: !isDone
+        )
+        let requested = await waitForTimelineCondition(timeoutMs: 3_000) { @MainActor in
+            wh.collectionView.layoutIfNeeded()
+            return !RecordingContentProtocol.requests.isEmpty
+        }
+
+        #expect(requested)
+        let request = try #require(RecordingContentProtocol.requests.first)
+        #expect(request.url?.host == "server-a.test")
+        // The image resolves against the document's directory, not the workspace root.
+        expectPath(request, prefix: "/workspaces/ws-test/raw/", file: "docs/diagram.png")
+        #expect(query(request, "worktreeId") == "wt_feature")
+    }
+
+    @Test("Tool Markdown full screen carries the row's bound access when workspace metadata is missing")
+    func toolMarkdownFullScreenCarriesRowAccessWithoutWorkspace() async throws {
+        // The harness owns the connection the providers read through; keep it alive.
+        let harness = makeTimelineHarness(sessionId: "s-control")
+        defer { withExtendedLifetime(harness) {} }
+        let content = try makeControlSessionToolMarkdownContent(harness, markdown: "# Title\n\n![](diagram.png)")
+        guard case .markdown(_, let filePath, let access) = content else {
+            Issue.record("Expected Markdown full-screen content, got \(content)")
+            return
+        }
+
+        // The document keeps its own location; the reader carries the row's own source.
+        #expect(filePath == "docs/README.md")
+        #expect(access.identity.serverID == "server-a")
+        #expect(access.identity.sessionID == "s-control")
+        #expect(access.identity.workspaceID == nil)
+        #expect(access.identity.serverBaseURL?.host == "server-a.test")
+        // Without a workspace the host provider survives, and it reads through the bound client.
+        let readHostFile = try #require(access.fetchHostFile)
+        _ = try await readHostFile("/tmp/diagram.png")
+        let request = try #require(RecordingContentProtocol.requests.first)
+        #expect(request.url?.host == "server-a.test")
+        #expect(request.url?.path == "/files/raw")
+        #expect(query(request, "path") == "/tmp/diagram.png")
+    }
+
+    @Test("Tool Markdown full-screen link in a control session opens a host file on the source server")
+    func toolMarkdownFullScreenLinkRoutesToHostFileWithoutWorkspace() throws {
+        let hostPath = "/Users/owner/docs/child.md"
+        let harness = makeTimelineHarness(sessionId: "s-control")
+        defer { withExtendedLifetime(harness) {} }
+        let content = try makeControlSessionToolMarkdownContent(harness, markdown: "[[\(hostPath)|Child]]")
+        guard case .markdown(let markdown, let filePath, let access) = content else {
+            Issue.record("Expected Markdown full-screen content, got \(content)")
+            return
+        }
+
+        // The real full-screen reader classifies the tapped link with the row's own identity.
+        let controller = FullScreenCodeViewController(
+            content: .markdown(content: markdown, filePath: filePath, resourceAccess: access)
+        )
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        controller.view.layoutIfNeeded()
+        let body = try #require(
+            timelineAllViews(in: controller.view).compactMap { $0 as? NativeFullScreenMarkdownBody }.first
+        )
+        let textView = try #require(
+            timelineAllTextViews(in: body).first { timelineRenderedText(of: $0).contains("Child") }
+        )
+        let link = try #require(
+            textView.attributedText?.attribute(.link, at: 0, effectiveRange: nil) as? URL
+        )
+        let action = body.linkAction(for: link)
+
+        // The pushed reader routes with the payload's identity (`ChatReaderDestinationView`).
+        let target = ChatReaderLinkedFileRouting.target(
+            for: action,
+            serverID: access.identity.serverID,
+            workspaceID: access.identity.workspaceID,
+            sessionID: access.identity.sessionID,
+            workspaceRuntime: access.identity.workspaceRuntime
+        )
+        #expect(target == .hostFile(
+            serverId: "server-a",
+            workspaceId: "",
+            path: hostPath,
+            lineAnchor: nil,
+            sourceSessionId: "s-control"
+        ))
+    }
+
+    /// A tool row for `read docs/README.md` in a control session (server known, no workspace),
+    /// taken through the real timeline row builder to its full-screen content.
+    private func makeControlSessionToolMarkdownContent(
+        _ harness: TimelineTestHarness,
+        markdown: String
+    ) throws -> FullScreenCodeContent {
+        harness.coordinator.apply(
+            configuration: makeTimelineConfiguration(
+                sessionId: "s-control",
+                reducer: harness.reducer,
+                toolOutputStore: harness.toolOutputStore,
+                toolArgsStore: harness.toolArgsStore,
+                connection: harness.connection,
+                scrollController: harness.scrollController,
+                audioPlayer: harness.audioPlayer,
+                workspaceId: nil,
+                serverId: "server-a"
+            ),
+            to: harness.collectionView
+        )
+        harness.connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        harness.toolArgsStore.set(["path": .string("docs/README.md")], for: "read-md")
+        harness.reducer.expandedItemIDs.insert("read-md")
+        harness.toolOutputStore.append(markdown, to: "read-md")
+        let item = ChatItem.toolCall(
+            id: "read-md",
+            tool: "read",
+            argsSummary: "path: docs/README.md",
+            outputPreview: "# Title",
+            outputByteCount: markdown.utf8.count,
+            isError: false,
+            isDone: true
+        )
+
+        let row = try #require(
+            harness.coordinator.toolRowConfiguration(itemID: item.id, item: item) as? ToolTimelineRowConfiguration
+        )
+        return try #require(ToolTimelineRowFullScreenSupport.staticFullScreenContent(
+            configuration: row,
+            outputCopyText: nil,
+            terminalStream: nil
+        ))
+    }
+
     // MARK: - Helpers
 
     private func makeClient(host: String) -> APIClient {

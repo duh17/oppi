@@ -65,24 +65,13 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
     private var textSelectionEnabled: Bool
-    private var serverID: String?
-    private var workspaceID: String?
-    private var worktreeId: String?
-    private var sessionID: String?
-    private var routesFileReferencesThroughSession: Bool
-    private var workspaceRuntime: WorkspaceRuntime?
-    private var serverBaseURL: URL?
+    /// Latest owner-supplied access. Each `update` replaces it wholesale, so the
+    /// immutable reader installed at completion carries the final identity and
+    /// providers, never the ones this wrapper started with.
+    private var resourceAccess: MarkdownResourceAccess
     private var sourceFilePath: String?
     private let lineAnchor: SourceLineAnchor?
     private let perfSurface: MarkdownStreamingPerf.Surface?
-    private var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
-    private var fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
-    private var fetchHostFile: ((_ path: String) async throws -> Data)?
-    private var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
-    private var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
-    private var makeMarkdownUSDZFile: MarkdownUSDZFileProvider?
-    private var makeTimedTextSidecar: TimedTextSidecarProvider?
-    private var audioPlayer: AudioPlayerService?
 
     private var readerPreferences: FullScreenReaderPreferences
     private var latestContent: String
@@ -114,50 +103,22 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
         textSelectionEnabled: Bool = true,
-        serverID: String? = nil,
-        workspaceID: String? = nil,
-        worktreeId: String? = nil,
-        sessionID: String? = nil,
-        routesFileReferencesThroughSession: Bool = false,
-        workspaceRuntime: WorkspaceRuntime? = nil,
-        serverBaseURL: URL? = nil,
+        resourceAccess: MarkdownResourceAccess = .empty,
         sourceFilePath: String? = nil,
         lineAnchor: SourceLineAnchor? = nil,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.markdown.defaultPreferences,
-        perfSurface: MarkdownStreamingPerf.Surface? = nil,
-        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
-        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil,
-        fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
-        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
-        makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
-        makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil,
-        makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
-        audioPlayer: AudioPlayerService? = nil
+        perfSurface: MarkdownStreamingPerf.Surface? = nil
     ) {
         self.themeID = themeID ?? ThemeRuntimeState.currentThemeID()
         self.palette = palette
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
         self.textSelectionEnabled = textSelectionEnabled
-        self.serverID = serverID
-        self.workspaceID = workspaceID
-        self.worktreeId = worktreeId
-        self.sessionID = sessionID
-        self.routesFileReferencesThroughSession = routesFileReferencesThroughSession
-        self.workspaceRuntime = workspaceRuntime
-        self.serverBaseURL = serverBaseURL
+        self.resourceAccess = resourceAccess
         self.sourceFilePath = sourceFilePath
         self.lineAnchor = lineAnchor
         self.readerPreferences = readerPreferences
         self.perfSurface = perfSurface
-        self.fetchWorkspaceFile = fetchWorkspaceFile
-        self.fetchSessionFile = fetchSessionFile
-        self.fetchHostFile = fetchHostFile
-        self.makeMarkdownVideoSource = makeMarkdownVideoSource
-        self.makeMarkdownAudioSource = makeMarkdownAudioSource
-        self.makeMarkdownUSDZFile = makeMarkdownUSDZFile
-        self.makeTimedTextSidecar = makeTimedTextSidecar
-        self.audioPlayer = audioPlayer
         self.latestContent = content
         self.isStreaming = isStreaming
         super.init(frame: .zero)
@@ -201,14 +162,6 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
 
         markdownView.translatesAutoresizingMaskIntoConstraints = false
         markdownView.backgroundColor = .clear
-        markdownView.fetchWorkspaceFile = fetchWorkspaceFile
-        markdownView.fetchSessionFile = fetchSessionFile
-        markdownView.fetchHostFile = fetchHostFile
-        markdownView.makeMarkdownVideoSource = makeMarkdownVideoSource
-        markdownView.makeMarkdownAudioSource = makeMarkdownAudioSource
-        markdownView.makeMarkdownUSDZFile = makeMarkdownUSDZFile
-        markdownView.makeTimedTextSidecar = makeTimedTextSidecar
-        markdownView.audioPlayer = audioPlayer
 
         addSubview(scrollView)
         scrollView.addSubview(markdownView)
@@ -232,22 +185,8 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             isStreaming: isStreaming,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext,
-            serverID: serverID,
-            workspaceID: workspaceID,
-            worktreeId: worktreeId,
-            sessionID: sessionID,
-            routesFileReferencesThroughSession: routesFileReferencesThroughSession,
-            workspaceRuntime: workspaceRuntime,
-            serverBaseURL: serverBaseURL,
-            sourceFilePath: sourceFilePath,
-            fetchWorkspaceFile: fetchWorkspaceFile,
-            fetchSessionFile: fetchSessionFile,
-            fetchHostFile: fetchHostFile,
-            makeMarkdownVideoSource: makeMarkdownVideoSource,
-            makeMarkdownAudioSource: makeMarkdownAudioSource,
-            makeMarkdownUSDZFile: makeMarkdownUSDZFile,
-            makeTimedTextSidecar: makeTimedTextSidecar,
-            audioPlayer: audioPlayer
+            resourceAccess: resourceAccess,
+            sourceFilePath: sourceFilePath
         )
     }
 
@@ -256,64 +195,24 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         isStreaming: Bool,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
-        serverID: String?,
-        workspaceID: String?,
-        worktreeId: String? = nil,
-        sessionID: String?,
-        routesFileReferencesThroughSession: Bool = false,
-        workspaceRuntime: WorkspaceRuntime? = nil,
-        serverBaseURL: URL?,
-        sourceFilePath: String?,
-        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?,
-        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?,
-        fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
-        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?,
-        makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
-        makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil,
-        makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
-        audioPlayer: AudioPlayerService? = nil
+        resourceAccess: MarkdownResourceAccess,
+        sourceFilePath: String?
     ) {
         guard immutableBody == nil else { return }
         let completionIntent = isStreaming ? nil : currentViewportIntent()
         let contentChanged = latestContent != content
         let streamingChanged = self.isStreaming != isStreaming
+        // Providers never trigger a re-apply on their own (they cannot be compared),
+        // but they are always kept: the next apply and the completion swap use them.
         let contextChanged = self.reviewCommentSelectionRouter !== reviewCommentSelectionRouter
             || self.reviewCommentSourceContext != reviewCommentSourceContext
-            || self.serverID != serverID
-            || self.workspaceID != workspaceID
-            || self.worktreeId != worktreeId
-            || self.sessionID != sessionID
-            || self.routesFileReferencesThroughSession != routesFileReferencesThroughSession
-            || self.workspaceRuntime != workspaceRuntime
-            || self.serverBaseURL != serverBaseURL
+            || self.resourceAccess.identity != resourceAccess.identity
             || self.sourceFilePath != sourceFilePath
 
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
-        self.serverID = serverID
-        self.workspaceID = workspaceID
-        self.worktreeId = worktreeId
-        self.sessionID = sessionID
-        self.routesFileReferencesThroughSession = routesFileReferencesThroughSession
-        self.workspaceRuntime = workspaceRuntime
-        self.serverBaseURL = serverBaseURL
+        self.resourceAccess = resourceAccess
         self.sourceFilePath = sourceFilePath
-        self.fetchWorkspaceFile = fetchWorkspaceFile
-        self.fetchSessionFile = fetchSessionFile
-        self.fetchHostFile = fetchHostFile
-        self.makeMarkdownVideoSource = makeMarkdownVideoSource
-        self.makeMarkdownAudioSource = makeMarkdownAudioSource
-        self.makeMarkdownUSDZFile = makeMarkdownUSDZFile
-        self.makeTimedTextSidecar = makeTimedTextSidecar
-        self.audioPlayer = audioPlayer
-        markdownView.fetchWorkspaceFile = fetchWorkspaceFile
-        markdownView.fetchSessionFile = fetchSessionFile
-        markdownView.fetchHostFile = fetchHostFile
-        markdownView.makeMarkdownVideoSource = makeMarkdownVideoSource
-        markdownView.makeMarkdownAudioSource = makeMarkdownAudioSource
-        markdownView.makeMarkdownUSDZFile = makeMarkdownUSDZFile
-        markdownView.makeTimedTextSidecar = makeTimedTextSidecar
-        markdownView.audioPlayer = audioPlayer
 
         guard contentChanged || streamingChanged || contextChanged else {
             viewportOwner.scheduleFollowTail()
@@ -350,13 +249,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             textSelectionEnabled: textSelectionEnabled,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext,
-            serverID: serverID,
-            workspaceID: workspaceID,
-            worktreeId: worktreeId,
-            sessionID: sessionID,
-            routesFileReferencesThroughSession: routesFileReferencesThroughSession,
-            workspaceRuntime: workspaceRuntime,
-            serverBaseURL: serverBaseURL,
+            resourceAccess: resourceAccess,
             sourceFilePath: sourceFilePath,
             lineAnchor: lineAnchor,
             readerPreferences: readerPreferences,
@@ -386,26 +279,12 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext,
             textSelectionEnabled: textSelectionEnabled,
-            serverID: serverID,
-            workspaceID: workspaceID,
-            worktreeId: worktreeId,
-            sessionID: sessionID,
-            routesFileReferencesThroughSession: routesFileReferencesThroughSession,
-            workspaceRuntime: workspaceRuntime,
-            serverBaseURL: serverBaseURL,
+            resourceAccess: resourceAccess,
             sourceFilePath: sourceFilePath,
             lineAnchor: lineAnchor,
             focusLineAnchor: false,
             readerPreferences: readerPreferences,
-            perfSurface: perfSurface,
-            fetchWorkspaceFile: fetchWorkspaceFile,
-            fetchSessionFile: fetchSessionFile,
-            fetchHostFile: fetchHostFile,
-            makeMarkdownVideoSource: makeMarkdownVideoSource,
-            makeMarkdownAudioSource: makeMarkdownAudioSource,
-            makeMarkdownUSDZFile: makeMarkdownUSDZFile,
-            makeTimedTextSidecar: makeTimedTextSidecar,
-            audioPlayer: audioPlayer
+            perfSurface: perfSurface
         )
         body.accessibilityIdentifier = accessibilityIdentifier
         body.translatesAutoresizingMaskIntoConstraints = false
@@ -484,14 +363,16 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             let dir = (sourceFilePath as NSString).deletingLastPathComponent
             return dir.isEmpty || dir == "." ? nil : dir
         }()
+        let identity = resourceAccess.identity
         let build = FlatSegment.buildWithSourceLineRanges(
             from: parseCommonMarkLocated(latestContent),
             themeID: themeID,
-            serverID: serverID,
-            workspaceID: workspaceID,
-            sessionID: sessionID,
-            serverBaseURL: serverBaseURL,
+            serverID: identity.serverID,
+            workspaceID: identity.workspaceID,
+            sessionID: identity.sessionID,
+            serverBaseURL: identity.serverBaseURL,
             sourceDirectory: sourceDirectory,
+            worktreeId: identity.worktreeId,
             mergeAdjacentTextSegments: lineAnchor == nil
         )
         return build.identities

@@ -268,6 +268,158 @@ final class SessionContentAccess {
         return try await fetchData(route: route, apiClient: apiClient)
     }
 
+    // MARK: - Markdown resource access (timeline rows)
+
+    /// The source a row's providers are bound to. Captured by value so a provider never
+    /// consults whichever session is active when it runs.
+    private struct BoundSource: Sendable {
+        let workspaceID: String?
+        let sessionID: String
+        let worktreeId: String?
+        let runtime: WorkspaceRuntime?
+    }
+
+    /// Builds the ``MarkdownResourceAccess`` an assistant or tool row hands to its Markdown
+    /// renderers and, through them, to the full-screen reader.
+    ///
+    /// `serverID`, `workspaceID`, and `sessionID` are the row's bound source. The rest follows
+    /// the split row construction has always used:
+    ///
+    /// - Captured at construction: the source session's checkout (with a fetch-time lookup only
+    ///   when that captured worktree is nil), the source workspace's runtime (a fallback only),
+    ///   the client's base URL, and the client that `fetchWorkspaceFile` reads through. Without
+    ///   a client the base URL and that provider stay unset, and the timeline builds a fresh
+    ///   value once one exists.
+    /// - Resolved when a provider runs: the client and the current catalog runtime, with this
+    ///   adapter's bounded waits and cancellation. The workspace is never re-derived from the
+    ///   session. A row built from cached data can therefore start loading before the client
+    ///   exists.
+    ///
+    /// `includesInlineMedia == false` leaves the video, audio, USDZ, and sidecar providers unset:
+    /// expanded tool Markdown renders file reads only.
+    func markdownResourceAccess(
+        serverID: String?,
+        workspaceID: String?,
+        sessionID: String,
+        audioPlayer: AudioPlayerService?,
+        includesInlineMedia: Bool
+    ) -> MarkdownResourceAccess {
+        let client = currentAPIClient()
+        let sourceSession = sessionStore.session(id: sessionID)
+        let source = BoundSource(
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            worktreeId: MarkdownVideoWorkspaceContext.firstCheckout(
+                session: sourceSession,
+                workspaceId: workspaceID
+            ),
+            runtime: boundWorkspaceRuntime(workspaceID: workspaceID, serverID: serverID)
+        )
+
+        // Missing or foreign source session lists main (nil), matching
+        // WorkspaceWikiLinkFileLookupPolicy.
+        let readWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? =
+            client.map { client in
+                { [sourceSession] requestedWorkspaceID, path in
+                    let sourceSessionResolved = sourceSession?.workspaceId == requestedWorkspaceID
+                    return try await WorkspaceMarkdownImageFileLookup.fetch(
+                        workspaceID: requestedWorkspaceID,
+                        path: path,
+                        sourceSessionResolved: sourceSessionResolved,
+                        sourceSessionWorktreeID: sourceSessionResolved ? sourceSession?.worktreeId : nil,
+                        fetchWorkspaceFile: { @Sendable workspaceID, path, worktreeId in
+                            try await client.fetchWorkspaceFile(
+                                workspaceID: workspaceID,
+                                path: path,
+                                worktreeId: worktreeId
+                            )
+                        }
+                    )
+                }
+            }
+        let readHostFile: (_ path: String) async throws -> Data = { [source] path in
+            try await self.fetchHostFile(
+                path: path,
+                workspaceId: source.workspaceID,
+                sessionId: source.sessionID,
+                worktreeId: source.worktreeId,
+                workspaceRuntime: source.runtime
+            )
+        }
+        let identity = MarkdownResourceAccess.Identity(
+            serverID: serverID,
+            workspaceID: workspaceID,
+            worktreeId: source.worktreeId,
+            sessionID: sessionID,
+            serverBaseURL: client?.baseURL
+        )
+        guard includesInlineMedia else {
+            return MarkdownResourceAccess(
+                identity: identity,
+                fetchWorkspaceFile: readWorkspaceFile,
+                fetchHostFile: readHostFile,
+                audioPlayer: audioPlayer
+            )
+        }
+        return MarkdownResourceAccess(
+            identity: identity,
+            fetchWorkspaceFile: readWorkspaceFile,
+            fetchHostFile: readHostFile,
+            makeMarkdownVideoSource: { [source] embed in
+                try await self.makeMarkdownVideoMediaSource(
+                    embed: embed,
+                    workspaceId: source.workspaceID,
+                    sessionId: source.sessionID,
+                    worktreeId: source.worktreeId,
+                    workspaceRuntime: source.runtime
+                )
+            },
+            makeMarkdownAudioSource: { [source] embed in
+                try await self.makeMarkdownAudioMediaSource(
+                    embed: embed,
+                    workspaceId: source.workspaceID,
+                    sessionId: source.sessionID,
+                    worktreeId: source.worktreeId,
+                    workspaceRuntime: source.runtime
+                )
+            },
+            makeMarkdownUSDZFile: { [source] embed in
+                try await self.makeMarkdownUSDZFile(
+                    embed: embed,
+                    workspaceId: source.workspaceID,
+                    sessionId: source.sessionID,
+                    worktreeId: source.worktreeId,
+                    workspaceRuntime: source.runtime
+                )
+            },
+            makeTimedTextSidecar: { [source] mediaPath, kind, reference in
+                await self.loadTimedTextSidecar(
+                    mediaPath: mediaPath,
+                    kind: kind,
+                    reference: reference,
+                    workspaceId: source.workspaceID,
+                    sessionId: source.sessionID,
+                    worktreeId: source.worktreeId,
+                    workspaceRuntime: source.runtime
+                )
+            },
+            audioPlayer: audioPlayer
+        )
+    }
+
+    /// The runtime of the row's own workspace, looked up in the row's own server partition
+    /// (or the flat catalog when the row has no server). A fetch-time lookup of the current
+    /// catalog wins over this snapshot; the snapshot only covers a catalog that no longer
+    /// lists the workspace.
+    private func boundWorkspaceRuntime(workspaceID: String?, serverID: String?) -> WorkspaceRuntime? {
+        guard let workspaceID else { return nil }
+        if let serverID {
+            return workspaceStore.workspacesByServer[serverID]?
+                .first(where: { $0.id == workspaceID })?.runtime
+        }
+        return workspaceStore.workspaces.first(where: { $0.id == workspaceID })?.runtime
+    }
+
     // MARK: - Routing helpers
 
     /// Runtime/worktree metadata is read after the client is ready: cache-first

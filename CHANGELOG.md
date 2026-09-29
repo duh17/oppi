@@ -76,6 +76,7 @@ Example:
 ### Fixed
 
 - **Server:** Editing the message queue on a busy session (for example moving a steering message to follow-up) no longer saves the change and then reports "Queue changed before your edit was saved". The server counted its own queue replay as a concurrent change. If Pi starts a queued message while the edit is saving, the edit is still rejected and the queue refreshes.
+- **Client:** In a control session, a Markdown file opened full screen from a tool now loads its host images and its links open, instead of doing nothing.
 - **Client:** A finished thinking block no longer looks stuck while the model is still writing the next tool call or reply. The row closes when the next block starts instead of waiting for the whole message. GPT models could leave it as a tall, unformatted, still-streaming bubble for tens of seconds.
 - **Mac:** Timeline scrolling and streaming no longer stall under an imported custom theme. Theme-aware paint decoded the stored custom-theme JSON on every render (about a quarter of main-thread time while scrolling); the resolved palette is now memoized until the stored theme changes. Timeline rows also skip re-rendering when a token lands in another row, and syntax highlighting is cached.
 - **Mac:** The top of the timeline no longer shows a toolbar-height blurred band over the first rows, and the composer no longer grows to a tall empty capsule when the pane has room.

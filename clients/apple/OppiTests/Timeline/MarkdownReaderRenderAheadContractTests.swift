@@ -423,10 +423,14 @@ struct MarkdownReaderRenderAheadContractTests {
                 palette: ThemeID.dark.palette,
                 reviewCommentSelectionRouter: nil,
                 reviewCommentSourceContext: nil,
-                workspaceID: "cold-\(fixture.name)",
-                serverBaseURL: try #require(URL(string: "https://server.example.com")),
-                sourceFilePath: "docs/cold.md",
-                fetchWorkspaceFile: { _, path in try await gate.fetch(path: path) }
+                resourceAccess: MarkdownResourceAccess(
+                    identity: .init(
+                        workspaceID: "cold-\(fixture.name)",
+                        serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    ),
+                    fetchWorkspaceFile: { _, path in try await gate.fetch(path: path) }
+                ),
+                sourceFilePath: "docs/cold.md"
             )
             let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
             window.addSubview(body)
@@ -528,12 +532,16 @@ struct MarkdownReaderRenderAheadContractTests {
                 palette: ThemeID.dark.palette,
                 reviewCommentSelectionRouter: nil,
                 reviewCommentSourceContext: nil,
-                workspaceID: "reader-width-matrix-\(Int(width))",
-                serverBaseURL: baseURL,
-                sourceFilePath: "docs/matrix.md",
-                fetchWorkspaceFile: { _, path in
-                    path.hasSuffix("diagram.svg") ? svg : raster
-                }
+                resourceAccess: MarkdownResourceAccess(
+                    identity: .init(
+                        workspaceID: "reader-width-matrix-\(Int(width))",
+                        serverBaseURL: baseURL
+                    ),
+                    fetchWorkspaceFile: { _, path in
+                        path.hasSuffix("diagram.svg") ? svg : raster
+                    }
+                ),
+                sourceFilePath: "docs/matrix.md"
             )
             let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 844))
             window.addSubview(body)
@@ -590,14 +598,18 @@ struct MarkdownReaderRenderAheadContractTests {
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
-            workspaceID: "line-anchor-width",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "line-anchor-width",
+                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                ),
+                fetchWorkspaceFile: { _, path in
+                    path.hasSuffix("diagram.svg") ? Self.svgData : raster
+                }
+            ),
             sourceFilePath: "docs/anchored.md",
             lineAnchor: anchor,
-            focusLineAnchor: false,
-            fetchWorkspaceFile: { _, path in
-                path.hasSuffix("diagram.svg") ? Self.svgData : raster
-            }
+            focusLineAnchor: false
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 844))
         window.addSubview(body)
@@ -667,7 +679,6 @@ struct MarkdownReaderRenderAheadContractTests {
 
         let data = try #require(Self.pngData(size: CGSize(width: 80, height: 240)))
         let markdown = AssistantMarkdownContentView()
-        markdown.fetchWorkspaceFile = { _, _ in data }
         markdown.frame = CGRect(x: 0, y: 0, width: 320, height: 500)
         let window = UIWindow(frame: markdown.frame)
         window.addSubview(markdown)
@@ -678,8 +689,13 @@ struct MarkdownReaderRenderAheadContractTests {
             content: "![chat raster](chat.png)",
             isStreaming: false,
             themeID: .dark,
-            workspaceID: "chat-metadata",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "chat-metadata",
+                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                ),
+                fetchWorkspaceFile: { _, _ in data }
+            ),
             sourceFilePath: "docs/chat.md",
             renderingMode: .live
         ))
@@ -722,10 +738,14 @@ struct MarkdownReaderRenderAheadContractTests {
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
-            workspaceID: "svg-gate",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
-            sourceFilePath: "docs/svg.md",
-            fetchWorkspaceFile: { _, path in try await gate.fetch(path: path) }
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "svg-gate",
+                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                ),
+                fetchWorkspaceFile: { _, path in try await gate.fetch(path: path) }
+            ),
+            sourceFilePath: "docs/svg.md"
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.addSubview(body)

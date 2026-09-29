@@ -7,9 +7,7 @@ struct MarkdownContentViewWrapper: UIViewRepresentable {
     var isStreaming = false
     var textSelectionEnabled = true
     var reviewCommentSourceContext: ReviewCommentSourceContext? = nil
-    var workspaceID: String?
-    var serverBaseURL: URL?
-    var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
+    var resourceAccess: MarkdownResourceAccess = .empty
     var renderingMode: ContentRenderingMode = .live
 
     @Environment(\.reviewCommentSelectionRouter) private var reviewCommentSelectionRouter
@@ -23,7 +21,6 @@ struct MarkdownContentViewWrapper: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: AssistantMarkdownContentView, context: Context) {
-        uiView.fetchWorkspaceFile = fetchWorkspaceFile
         uiView.apply(configuration: .make(
             content: content,
             isStreaming: isStreaming,
@@ -31,8 +28,7 @@ struct MarkdownContentViewWrapper: UIViewRepresentable {
             textSelectionEnabled: textSelectionEnabled,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext,
-            workspaceID: workspaceID,
-            serverBaseURL: serverBaseURL,
+            resourceAccess: resourceAccess,
             renderingMode: renderingMode
         ))
     }

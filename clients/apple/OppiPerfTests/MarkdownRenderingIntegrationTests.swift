@@ -380,15 +380,19 @@ struct MarkdownRenderingIntegrationTests {
     @Test func workspaceContextCreatesImageViews() {
         let md = "![Test image](images/test.png)"
         let view = AssistantMarkdownContentView()
-        view.fetchWorkspaceFile = { _, _ in Data() } // dummy — we just need non-nil
 
         view.apply(configuration: .make(
             content: md,
             isStreaming: false,
             themeID: .light,
             textSelectionEnabled: false,
-            workspaceID: "test-ws",
-            serverBaseURL: URL(string: "https://example.com/api")!,
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "test-ws",
+                    serverBaseURL: URL(string: "https://example.com/api")!
+                ),
+                fetchWorkspaceFile: { _, _ in Data() } // dummy — we just need non-nil
+            ),
             sourceFilePath: "docs/readme.md",
             renderingMode: .export
         ))
@@ -447,9 +451,11 @@ struct MarkdownRenderingIntegrationTests {
             result = .markdown(
                 content: content,
                 filePath: path,
-                workspaceContext: .init(
-                    workspaceID: "test-ws",
-                    serverBaseURL: URL(string: "https://example.com/api")!,
+                resourceAccess: MarkdownResourceAccess(
+                    identity: .init(
+                        workspaceID: "test-ws",
+                        serverBaseURL: URL(string: "https://example.com/api")!
+                    ),
                     fetchWorkspaceFile: { _, _ in Data() }
                 )
             )
@@ -481,15 +487,17 @@ struct MarkdownRenderingIntegrationTests {
     /// Verify workspace context flows through FullScreenCodeViewController
     /// → NativeFullScreenMarkdownBody → AssistantMarkdownContentView.
     @Test func workspaceContextFlowsThroughFullScreenVC() {
-        let wsContext = FullScreenCodeContent.WorkspaceContext(
-            workspaceID: "test-ws",
-            serverBaseURL: URL(string: "https://example.com/api")!,
+        let resourceAccess = MarkdownResourceAccess(
+            identity: .init(
+                workspaceID: "test-ws",
+                serverBaseURL: URL(string: "https://example.com/api")!
+            ),
             fetchWorkspaceFile: { _, _ in Data() }
         )
         let content = FullScreenCodeContent.markdown(
             content: "![Chart](images/chart.png)",
             filePath: "docs/readme.md",
-            workspaceContext: wsContext
+            resourceAccess: resourceAccess
         )
 
         let vc = FullScreenCodeViewController(
@@ -522,10 +530,14 @@ struct MarkdownRenderingIntegrationTests {
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
-            workspaceID: "test-ws",
-            serverBaseURL: URL(string: "https://example.com/api")!,
-            sourceFilePath: "docs/readme.md",
-            fetchWorkspaceFile: { _, _ in Data() }
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "test-ws",
+                    serverBaseURL: URL(string: "https://example.com/api")!
+                ),
+                fetchWorkspaceFile: { _, _ in Data() }
+            ),
+            sourceFilePath: "docs/readme.md"
         )
 
         let host = UIView(frame: CGRect(x: 0, y: 0, width: 600, height: 1000))

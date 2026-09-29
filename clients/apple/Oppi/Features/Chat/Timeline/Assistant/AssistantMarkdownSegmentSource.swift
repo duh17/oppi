@@ -44,6 +44,7 @@ final class AssistantMarkdownSegmentSource {
         preparedBlocks: [MarkdownBlock]? = nil
     ) -> [FlatSegment] {
         let content = config.content
+        let identity = config.resourceAccess.identity
 
         if !config.isStreaming,
            mergeAdjacentTextSegments,
@@ -51,12 +52,12 @@ final class AssistantMarkdownSegmentSource {
             let segments = FlatSegment.build(
                 from: preparedBlocks,
                 themeID: config.themeID,
-                serverID: config.serverID,
-                workspaceID: config.workspaceID,
-                sessionID: config.sessionID,
-                serverBaseURL: config.serverBaseURL,
+                serverID: identity.serverID,
+                workspaceID: identity.workspaceID,
+                sessionID: identity.sessionID,
+                serverBaseURL: identity.serverBaseURL,
                 sourceDirectory: config.sourceDirectory,
-                worktreeId: config.worktreeId
+                worktreeId: identity.worktreeId
             )
             return Self.applyReaderPreferences(to: segments, config: config)
         }
@@ -66,12 +67,12 @@ final class AssistantMarkdownSegmentSource {
            let cached = MarkdownSegmentCache.shared.get(
                content,
                themeID: config.themeID,
-               serverID: config.serverID,
-               workspaceID: config.workspaceID,
-               sessionID: config.sessionID,
-               serverBaseURL: config.serverBaseURL,
+               serverID: identity.serverID,
+               workspaceID: identity.workspaceID,
+               sessionID: identity.sessionID,
+               serverBaseURL: identity.serverBaseURL,
                sourceDirectory: config.sourceDirectory,
-               worktreeId: config.worktreeId
+               worktreeId: identity.worktreeId
            ) {
             return Self.applyReaderPreferences(to: cached, config: config)
         }
@@ -86,12 +87,12 @@ final class AssistantMarkdownSegmentSource {
         let segments = FlatSegment.build(
             from: blocks,
             themeID: config.themeID,
-            serverID: config.serverID,
-            workspaceID: config.workspaceID,
-            sessionID: config.sessionID,
-            serverBaseURL: config.serverBaseURL,
+            serverID: identity.serverID,
+            workspaceID: identity.workspaceID,
+            sessionID: identity.sessionID,
+            serverBaseURL: identity.serverBaseURL,
             sourceDirectory: config.sourceDirectory,
-            worktreeId: config.worktreeId,
+            worktreeId: identity.worktreeId,
             mergeAdjacentTextSegments: mergeAdjacentTextSegments
         )
         let buildEnd = MarkdownStreamingPerf.timestampNs()
@@ -108,12 +109,12 @@ final class AssistantMarkdownSegmentSource {
             MarkdownSegmentCache.shared.set(
                 content,
                 themeID: config.themeID,
-                serverID: config.serverID,
-                workspaceID: config.workspaceID,
-                sessionID: config.sessionID,
-                serverBaseURL: config.serverBaseURL,
+                serverID: identity.serverID,
+                workspaceID: identity.workspaceID,
+                sessionID: identity.sessionID,
+                serverBaseURL: identity.serverBaseURL,
                 sourceDirectory: config.sourceDirectory,
-                worktreeId: config.worktreeId,
+                worktreeId: identity.worktreeId,
                 segments: segments
             )
         }
@@ -128,18 +129,19 @@ final class AssistantMarkdownSegmentSource {
         // this path canonical during streaming: segment splitting/merging must
         // finish before same-key occurrence ordinals are assigned.
         let content = config.content
+        let identity = config.resourceAccess.identity
         let parseStart = MarkdownStreamingPerf.timestampNs()
         let blocks = parseCommonMarkLocated(content)
         let parseEnd = MarkdownStreamingPerf.timestampNs()
         let build = FlatSegment.buildWithSourceLineRanges(
             from: blocks,
             themeID: config.themeID,
-            serverID: config.serverID,
-            workspaceID: config.workspaceID,
-            sessionID: config.sessionID,
-            serverBaseURL: config.serverBaseURL,
+            serverID: identity.serverID,
+            workspaceID: identity.workspaceID,
+            sessionID: identity.sessionID,
+            serverBaseURL: identity.serverBaseURL,
             sourceDirectory: config.sourceDirectory,
-            worktreeId: config.worktreeId,
+            worktreeId: identity.worktreeId,
             mergeAdjacentTextSegments: mergeAdjacentTextSegments
         )
         let buildEnd = MarkdownStreamingPerf.timestampNs()
@@ -183,14 +185,15 @@ final class AssistantMarkdownSegmentSource {
     private func buildSegmentsIncremental(
         _ config: AssistantMarkdownContentView.Configuration
     ) -> [FlatSegment] {
+        let identity = config.resourceAccess.identity
         let buildContext = SegmentBuildContext(
             themeID: config.themeID,
-            serverID: config.serverID,
-            workspaceID: config.workspaceID,
-            sessionID: config.sessionID,
-            serverBaseURL: config.serverBaseURL,
+            serverID: identity.serverID,
+            workspaceID: identity.workspaceID,
+            sessionID: identity.sessionID,
+            serverBaseURL: identity.serverBaseURL,
             sourceDirectory: config.sourceDirectory,
-            worktreeId: config.worktreeId
+            worktreeId: identity.worktreeId
         )
         let parseStart = MarkdownStreamingPerf.timestampNs()
         let parsed = streamingParser.parse(config.content)
@@ -207,12 +210,12 @@ final class AssistantMarkdownSegmentSource {
             prefixSegments = FlatSegment.build(
                 from: parsed.prefixBlocks,
                 themeID: config.themeID,
-                serverID: config.serverID,
-                workspaceID: config.workspaceID,
-                sessionID: config.sessionID,
-                serverBaseURL: config.serverBaseURL,
+                serverID: identity.serverID,
+                workspaceID: identity.workspaceID,
+                sessionID: identity.sessionID,
+                serverBaseURL: identity.serverBaseURL,
                 sourceDirectory: config.sourceDirectory,
-                worktreeId: config.worktreeId
+                worktreeId: identity.worktreeId
             )
             prefixReused = false
         }
@@ -220,12 +223,12 @@ final class AssistantMarkdownSegmentSource {
         let tailSegments = FlatSegment.build(
             from: parsed.tailBlocks,
             themeID: config.themeID,
-            serverID: config.serverID,
-            workspaceID: config.workspaceID,
-            sessionID: config.sessionID,
-            serverBaseURL: config.serverBaseURL,
+            serverID: identity.serverID,
+            workspaceID: identity.workspaceID,
+            sessionID: identity.sessionID,
+            serverBaseURL: identity.serverBaseURL,
             sourceDirectory: config.sourceDirectory,
-            worktreeId: config.worktreeId
+            worktreeId: identity.worktreeId
         )
         let buildEnd = MarkdownStreamingPerf.timestampNs()
 

@@ -333,15 +333,17 @@ struct SessionTouchedFileRoutingTests {
 
     @MainActor
     @Test func completedReaderControllerCarriesExactOriginIntoActualLinkDelegate() throws {
-        let context = FullScreenCodeContent.WorkspaceContext(
-            workspaceID: "workspace-origin", serverID: "server-origin",
-            serverBaseURL: try #require(URL(string: "https://origin.example")),
-            fetchWorkspaceFile: { _, _ in Data() }, sessionID: "session-origin",
-            routesFileReferencesThroughSession: true,
-            workspaceRuntime: .host
+        let context = MarkdownResourceAccess(
+            identity: .init(
+                serverID: "server-origin", workspaceID: "workspace-origin", sessionID: "session-origin",
+                workspaceRuntime: .host,
+                serverBaseURL: try #require(URL(string: "https://origin.example")),
+                routesFileReferencesThroughSession: true
+            ),
+            fetchWorkspaceFile: { _, _ in Data() }
         )
         let controller = FullScreenCodeViewController(
-            content: .markdown(content: "[Child](child.md)", filePath: "docs/current.md", workspaceContext: context)
+            content: .markdown(content: "[Child](child.md)", filePath: "docs/current.md", resourceAccess: context)
         )
         controller.loadViewIfNeeded()
         controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -363,18 +365,20 @@ struct SessionTouchedFileRoutingTests {
 
     @MainActor
     @Test func completedReaderSandboxGuestChildStaysOnSessionRaw() throws {
-        let context = FullScreenCodeContent.WorkspaceContext(
-            workspaceID: "workspace-origin", serverID: "server-origin",
-            serverBaseURL: try #require(URL(string: "https://origin.example")),
-            fetchWorkspaceFile: { _, _ in Data() }, sessionID: "session-origin",
-            routesFileReferencesThroughSession: true,
-            workspaceRuntime: .sandbox
+        let context = MarkdownResourceAccess(
+            identity: .init(
+                serverID: "server-origin", workspaceID: "workspace-origin", sessionID: "session-origin",
+                workspaceRuntime: .sandbox,
+                serverBaseURL: try #require(URL(string: "https://origin.example")),
+                routesFileReferencesThroughSession: true
+            ),
+            fetchWorkspaceFile: { _, _ in Data() }
         )
         let controller = FullScreenCodeViewController(
             content: .markdown(
                 content: "[Child](child.md)",
                 filePath: "/workspace/project/docs/current.md",
-                workspaceContext: context
+                resourceAccess: context
             )
         )
         controller.loadViewIfNeeded()
@@ -397,18 +401,20 @@ struct SessionTouchedFileRoutingTests {
 
     @MainActor
     @Test func completedReaderHostFileChildUsesHostRawNotSessionRaw() throws {
-        let context = FullScreenCodeContent.WorkspaceContext(
-            workspaceID: "workspace-origin", serverID: "server-origin",
-            serverBaseURL: try #require(URL(string: "https://origin.example")),
-            fetchWorkspaceFile: { _, _ in Data() }, sessionID: "session-origin",
-            routesFileReferencesThroughSession: true,
-            workspaceRuntime: .host
+        let context = MarkdownResourceAccess(
+            identity: .init(
+                serverID: "server-origin", workspaceID: "workspace-origin", sessionID: "session-origin",
+                workspaceRuntime: .host,
+                serverBaseURL: try #require(URL(string: "https://origin.example")),
+                routesFileReferencesThroughSession: true
+            ),
+            fetchWorkspaceFile: { _, _ in Data() }
         )
         let controller = FullScreenCodeViewController(
             content: .markdown(
                 content: "[[/Users/owner/docs/child.md|Child]]",
                 filePath: "docs/current.md",
-                workspaceContext: context
+                resourceAccess: context
             )
         )
         controller.loadViewIfNeeded()

@@ -977,11 +977,16 @@ struct FileBrowserContentView: View {
         return .fromText(
             text,
             filePath: sourcePath,
-            workspaceContext: .init(
-                workspaceID: workspaceId,
-                serverID: serverId,
-                worktreeId: worktreeId,
-                serverBaseURL: api.baseURL,
+            resourceAccess: MarkdownResourceAccess(
+                identity: MarkdownResourceAccess.Identity(
+                    serverID: serverId,
+                    workspaceID: workspaceId,
+                    worktreeId: worktreeId,
+                    sessionID: sessionId,
+                    workspaceRuntime: workspaceRuntime,
+                    serverBaseURL: api.baseURL,
+                    routesFileReferencesThroughSession: source.routesFileReferencesThroughSession
+                ),
                 fetchWorkspaceFile: { [workspaceId, worktreeId, source, controlSessionId] wsID, filePath in
                     switch source {
                     case .hostFile:
@@ -1003,9 +1008,6 @@ struct FileBrowserContentView: View {
                         )
                     }
                 },
-                sessionID: sessionId,
-                routesFileReferencesThroughSession: source.routesFileReferencesThroughSession,
-                workspaceRuntime: workspaceRuntime,
                 fetchSessionFile: { workspaceID, sourceSessionID, path in
                     try await api.getSessionFileData(
                         workspaceId: workspaceID,

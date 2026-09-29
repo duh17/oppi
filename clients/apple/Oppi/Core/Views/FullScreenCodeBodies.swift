@@ -2968,15 +2968,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
     fileprivate func bindReaderChrome(
         lineAnchorModeEnabled: Bool,
         textViewDelegate: any UITextViewDelegate,
-        doubleTapActivation: (() -> Void)?,
-        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?,
-        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?,
-        fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
-        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?,
-        makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
-        makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil,
-        makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
-        audioPlayer: AudioPlayerService? = nil
+        doubleTapActivation: (() -> Void)?
     ) {
         // The source-line enclosure is painted by the reader's overlay. Keep
         // the arranged content at the ledger's canonical width instead of
@@ -2985,14 +2977,6 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         _ = lineAnchorModeEnabled
         self.textViewDelegate = textViewDelegate
         self.doubleTapActivation = doubleTapActivation
-        segmentApplier.fetchWorkspaceFile = fetchWorkspaceFile
-        segmentApplier.fetchSessionFile = fetchSessionFile
-        segmentApplier.fetchHostFile = fetchHostFile
-        segmentApplier.makeMarkdownVideoSource = makeMarkdownVideoSource
-        segmentApplier.makeMarkdownAudioSource = makeMarkdownAudioSource
-        segmentApplier.makeMarkdownUSDZFile = makeMarkdownUSDZFile
-        segmentApplier.makeTimedTextSidecar = makeTimedTextSidecar
-        segmentApplier.audioPlayer = audioPlayer
     }
 
     func apply(
@@ -3003,16 +2987,8 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         palette: ThemePalette,
         textViewDelegate: any UITextViewDelegate,
         doubleTapActivation: (() -> Void)?,
-        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?,
-        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?,
-        fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
-        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?,
         canonicalWidth: CGFloat? = nil,
-        preparesImagesForDisplay: Bool = true,
-        makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
-        makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil,
-        makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
-        audioPlayer: AudioPlayerService? = nil
+        preparesImagesForDisplay: Bool = true
     ) {
         // Source-line chrome overlays the cell; arranged content always uses
         // the same canonical width used by the ledger and artifact renderers.
@@ -3020,14 +2996,6 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         _ = lineAnchorModeEnabled
         self.textViewDelegate = textViewDelegate
         self.doubleTapActivation = doubleTapActivation
-        segmentApplier.fetchWorkspaceFile = fetchWorkspaceFile
-        segmentApplier.fetchSessionFile = fetchSessionFile
-        segmentApplier.fetchHostFile = fetchHostFile
-        segmentApplier.makeMarkdownVideoSource = makeMarkdownVideoSource
-        segmentApplier.makeMarkdownAudioSource = makeMarkdownAudioSource
-        segmentApplier.makeMarkdownUSDZFile = makeMarkdownUSDZFile
-        segmentApplier.makeTimedTextSidecar = makeTimedTextSidecar
-        segmentApplier.audioPlayer = audioPlayer
         segmentApplier.preparationWidth = canonicalWidth
         segmentApplier.preparesImagesForDisplay = preparesImagesForDisplay
         segmentApplier.videoPlaybackVisible = preparesImagesForDisplay
@@ -3253,24 +3221,12 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
     private var textSelectionEnabled: Bool
-    private let serverID: String?
-    private let workspaceID: String?
-    private let worktreeId: String?
-    private let sessionID: String?
-    private let routesFileReferencesThroughSession: Bool
-    private let workspaceRuntime: WorkspaceRuntime?
-    private let serverBaseURL: URL?
+    /// Bound at construction. The reader never re-derives identity, and its
+    /// providers are the ones its owner supplied for this document.
+    private let resourceAccess: MarkdownResourceAccess
     private let sourceFilePath: String?
     private let lineAnchor: SourceLineAnchor?
     private let lineAnchorResolution: SourceLineAnchorResolution?
-    private let fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
-    private let fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
-    private let fetchHostFile: ((_ path: String) async throws -> Data)?
-    private let makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
-    private let makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
-    private let makeMarkdownUSDZFile: MarkdownUSDZFileProvider?
-    private let makeTimedTextSidecar: TimedTextSidecarProvider?
-    private let audioPlayer: AudioPlayerService?
     private let maximumViewportHeight: CGFloat?
     private var intrinsicViewportContentHeight: CGFloat = 44
     private var readerPreferences: FullScreenReaderPreferences
@@ -3327,13 +3283,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
         textSelectionEnabled: Bool = true,
-        serverID: String? = nil,
-        workspaceID: String? = nil,
-        worktreeId: String? = nil,
-        sessionID: String? = nil,
-        routesFileReferencesThroughSession: Bool = false,
-        workspaceRuntime: WorkspaceRuntime? = nil,
-        serverBaseURL: URL? = nil,
+        resourceAccess: MarkdownResourceAccess = .empty,
         sourceFilePath: String? = nil,
         lineAnchor: SourceLineAnchor? = nil,
         focusLineAnchor: Bool = true,
@@ -3341,15 +3291,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         perfSurface: MarkdownStreamingPerf.Surface? = nil,
         maximumViewportHeight: CGFloat? = nil,
         allowsVerticalBounce: Bool = true,
-        allowsVerticalScrolling: Bool = true,
-        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
-        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil,
-        fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
-        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
-        makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
-        makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil,
-        makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
-        audioPlayer: AudioPlayerService? = nil
+        allowsVerticalScrolling: Bool = true
     ) {
         self.sourceFormat = sourceFormat
         self.themeID = themeID ?? ThemeRuntimeState.currentThemeID()
@@ -3357,27 +3299,13 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
         self.textSelectionEnabled = textSelectionEnabled
-        self.serverID = serverID
-        self.workspaceID = workspaceID
-        self.worktreeId = worktreeId
-        self.sessionID = sessionID
-        self.routesFileReferencesThroughSession = routesFileReferencesThroughSession
-        self.workspaceRuntime = workspaceRuntime
-        self.serverBaseURL = serverBaseURL
+        self.resourceAccess = resourceAccess
         self.sourceFilePath = sourceFilePath
         self.lineAnchor = lineAnchor
         let initialText = content
         self.lineAnchorResolution = lineAnchor?.resolution(fileContent: initialText)
         self.readerPreferences = readerPreferences
         self.maximumViewportHeight = maximumViewportHeight
-        self.fetchWorkspaceFile = fetchWorkspaceFile
-        self.fetchSessionFile = fetchSessionFile
-        self.fetchHostFile = fetchHostFile
-        self.makeMarkdownVideoSource = makeMarkdownVideoSource
-        self.makeMarkdownAudioSource = makeMarkdownAudioSource
-        self.makeMarkdownUSDZFile = makeMarkdownUSDZFile
-        self.makeTimedTextSidecar = makeTimedTextSidecar
-        self.audioPlayer = audioPlayer
         self.lineAnchorFocusPending = lineAnchor != nil && focusLineAnchor
         let initialSnapshot = sourceFormat == .markdown
             ? ThinkingTraceStream.Snapshot(text: content, isDone: true)
@@ -3740,13 +3668,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             textSelectionEnabled: textSelectionEnabled,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext,
-            serverID: serverID,
-            workspaceID: workspaceID,
-            worktreeId: worktreeId,
-            sessionID: sessionID,
-            routesFileReferencesThroughSession: routesFileReferencesThroughSession,
-            workspaceRuntime: workspaceRuntime,
-            serverBaseURL: serverBaseURL,
+            resourceAccess: resourceAccess,
             sourceFilePath: sourceFilePath,
             lineAnchor: lineAnchor,
             readerPreferences: readerPreferences,
@@ -3828,10 +3750,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
         let source = config.content
         let themeID = config.themeID
-        let serverID = config.serverID
-        let workspaceID = config.workspaceID
-        let sessionID = config.sessionID
-        let serverBaseURL = config.serverBaseURL
+        // `Identity` is `Sendable` data, so the detached build captures the same bound
+        // source (including the checkout) that every synchronous path reads.
+        let identity = config.resourceAccess.identity
         let sourceDirectory = config.sourceDirectory
         asyncRenderTask = Task { @MainActor [weak self] in
             let build: AsyncMarkdownBuild? = await withCancellableDetachedTask(priority: .userInitiated) {
@@ -3844,11 +3765,12 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                 let build = FlatSegment.buildWithSourceLineRanges(
                     from: blocks,
                     themeID: themeID,
-                    serverID: serverID,
-                    workspaceID: workspaceID,
-                    sessionID: sessionID,
-                    serverBaseURL: serverBaseURL,
+                    serverID: identity.serverID,
+                    workspaceID: identity.workspaceID,
+                    sessionID: identity.sessionID,
+                    serverBaseURL: identity.serverBaseURL,
                     sourceDirectory: sourceDirectory,
+                    worktreeId: identity.worktreeId,
                     mergeAdjacentTextSegments: true
                 )
                 let buildEnd = DispatchTime.now().uptimeNanoseconds
@@ -4039,15 +3961,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         cell.bindReaderChrome(
             lineAnchorModeEnabled: lineAnchor != nil,
             textViewDelegate: self,
-            doubleTapActivation: viewportDoubleTapActivation,
-            fetchWorkspaceFile: fetchWorkspaceFile,
-            fetchSessionFile: fetchSessionFile,
-            fetchHostFile: fetchHostFile,
-            makeMarkdownVideoSource: makeMarkdownVideoSource,
-            makeMarkdownAudioSource: makeMarkdownAudioSource,
-            makeMarkdownUSDZFile: makeMarkdownUSDZFile,
-            makeTimedTextSidecar: makeTimedTextSidecar,
-            audioPlayer: audioPlayer
+            doubleTapActivation: viewportDoubleTapActivation
         )
         cell.appliedItemIndex = indexPath.item
         cell.appliedSegmentID = renderedSegmentIDs.indices.contains(indexPath.item)
@@ -4079,16 +3993,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                 palette: themeID.palette,
                 textViewDelegate: self,
                 doubleTapActivation: viewportDoubleTapActivation,
-                fetchWorkspaceFile: fetchWorkspaceFile,
-                fetchSessionFile: fetchSessionFile,
-                fetchHostFile: fetchHostFile,
-                makeMarkdownVideoSource: makeMarkdownVideoSource,
                 canonicalWidth: preparedCanonicalWidth,
-                preparesImagesForDisplay: true,
-                makeMarkdownAudioSource: makeMarkdownAudioSource,
-                makeMarkdownUSDZFile: makeMarkdownUSDZFile,
-                makeTimedTextSidecar: makeTimedTextSidecar,
-                audioPlayer: audioPlayer
+                preparesImagesForDisplay: true
             )
             #if DEBUG
             let visibleApplyDuration = MarkdownStreamingPerf.timestampNs() - visibleApplyStart
@@ -4520,15 +4426,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         cell.bindReaderChrome(
             lineAnchorModeEnabled: lineAnchor != nil,
             textViewDelegate: self,
-            doubleTapActivation: viewportDoubleTapActivation,
-            fetchWorkspaceFile: fetchWorkspaceFile,
-            fetchSessionFile: fetchSessionFile,
-            fetchHostFile: fetchHostFile,
-            makeMarkdownVideoSource: makeMarkdownVideoSource,
-            makeMarkdownAudioSource: makeMarkdownAudioSource,
-            makeMarkdownUSDZFile: makeMarkdownUSDZFile,
-            makeTimedTextSidecar: makeTimedTextSidecar,
-            audioPlayer: audioPlayer
+            doubleTapActivation: viewportDoubleTapActivation
         )
         cell.appliedItemIndex = item
         cell.appliedSegmentID = id
@@ -4544,16 +4442,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             palette: themeID.palette,
             textViewDelegate: self,
             doubleTapActivation: viewportDoubleTapActivation,
-            fetchWorkspaceFile: fetchWorkspaceFile,
-            fetchSessionFile: fetchSessionFile,
-            fetchHostFile: fetchHostFile,
-            makeMarkdownVideoSource: makeMarkdownVideoSource,
             canonicalWidth: canonicalWidth,
-            preparesImagesForDisplay: false,
-            makeMarkdownAudioSource: makeMarkdownAudioSource,
-            makeMarkdownUSDZFile: makeMarkdownUSDZFile,
-            makeTimedTextSidecar: makeTimedTextSidecar,
-            audioPlayer: audioPlayer
+            preparesImagesForDisplay: false
         )
         isConfiguringCell = false
         let height = cell.measuredFittingHeight(width: canonicalWidth)
@@ -5460,15 +5350,7 @@ extension NativeFullScreenMarkdownBody {
         measuringCell.bindReaderChrome(
             lineAnchorModeEnabled: lineAnchor != nil,
             textViewDelegate: self,
-            doubleTapActivation: viewportDoubleTapActivation,
-            fetchWorkspaceFile: fetchWorkspaceFile,
-            fetchSessionFile: fetchSessionFile,
-            fetchHostFile: fetchHostFile,
-            makeMarkdownVideoSource: makeMarkdownVideoSource,
-            makeMarkdownAudioSource: makeMarkdownAudioSource,
-            makeMarkdownUSDZFile: makeMarkdownUSDZFile,
-            makeTimedTextSidecar: makeTimedTextSidecar,
-            audioPlayer: audioPlayer
+            doubleTapActivation: viewportDoubleTapActivation
         )
         measuringCell.apply(
             segment: renderedSegments[item],
@@ -5480,16 +5362,8 @@ extension NativeFullScreenMarkdownBody {
             palette: themeID.palette,
             textViewDelegate: self,
             doubleTapActivation: viewportDoubleTapActivation,
-            fetchWorkspaceFile: fetchWorkspaceFile,
-            fetchSessionFile: fetchSessionFile,
-            fetchHostFile: fetchHostFile,
-            makeMarkdownVideoSource: makeMarkdownVideoSource,
             canonicalWidth: canonicalWidth,
-            preparesImagesForDisplay: false,
-            makeMarkdownAudioSource: makeMarkdownAudioSource,
-            makeMarkdownUSDZFile: makeMarkdownUSDZFile,
-            makeTimedTextSidecar: makeTimedTextSidecar,
-            audioPlayer: audioPlayer
+            preparesImagesForDisplay: false
         )
         return measuringCell.measuredFittingHeight(width: canonicalWidth)
     }
@@ -5618,13 +5492,14 @@ extension NativeFullScreenMarkdownBody {
 
 extension NativeFullScreenMarkdownBody: UITextViewDelegate {
     func linkAction(for url: URL) -> LinkAction {
-        MarkdownLinkInteractionSupport.classify(
+        let identity = resourceAccess.identity
+        return MarkdownLinkInteractionSupport.classify(
             url,
-            serverID: serverID,
-            workspaceID: workspaceID,
-            sessionID: sessionID,
-            routesFileReferencesThroughSession: routesFileReferencesThroughSession,
-            workspaceRuntime: workspaceRuntime
+            serverID: identity.serverID,
+            workspaceID: identity.workspaceID,
+            sessionID: identity.sessionID,
+            routesFileReferencesThroughSession: identity.routesFileReferencesThroughSession,
+            workspaceRuntime: identity.workspaceRuntime
         )
     }
 

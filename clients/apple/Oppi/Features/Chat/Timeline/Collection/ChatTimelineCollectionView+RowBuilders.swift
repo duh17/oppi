@@ -91,21 +91,6 @@ extension ChatTimelineCollectionHost.Controller {
         // Unified native markdown renderer — handles all content (plain
         // text, rich markdown, code blocks, tables) via
         // AssistantMarkdownContentView.
-        let sessionContent = connection?.sessionContent
-        let sourceSession = connection?.sessionStore.session(id: sessionId)
-        let sourceWorkspaceRuntime: WorkspaceRuntime? = {
-            guard let connection, let workspaceId else { return nil }
-            if let serverId {
-                return connection.workspaceStore.workspacesByServer[serverId]?
-                    .first(where: { $0.id == workspaceId })?.runtime
-            }
-            return connection.workspaceStore.workspaces.first(where: { $0.id == workspaceId })?.runtime
-        }()
-        let sourceSessionResolved = sourceSession?.workspaceId == workspaceId
-        let firstCheckout = WorkspaceWikiLinkFileLookupPolicy.firstCheckout(
-            sourceSessionResolved: sourceSessionResolved,
-            sourceSessionWorktreeID: sourceSessionResolved ? sourceSession?.worktreeId : nil
-        )
         return AssistantTimelineRowConfiguration(
             text: text,
             isStreaming: isStreaming,
@@ -117,90 +102,30 @@ extension ChatTimelineCollectionHost.Controller {
             agentIcon: agentIcon,
             iconAssetCache: connection?.iconAssetCache,
             interactionContext: interactionContext,
+            resourceAccess: markdownResourceAccess(includesInlineMedia: true),
+            resourcePressure: resourcePressure
+        )
+    }
+
+    /// The Markdown resource access for this timeline's own source. Identity is always the
+    /// timeline's bound scope; providers come from the connection's content adapter, which
+    /// owns routing, readiness, and origin policy. Rows never build those closures.
+    private func markdownResourceAccess(includesInlineMedia: Bool) -> MarkdownResourceAccess {
+        guard let sessionContent = connection?.sessionContent else {
+            return MarkdownResourceAccess(
+                identity: MarkdownResourceAccess.Identity(
+                    serverID: serverId,
+                    workspaceID: workspaceId,
+                    sessionID: sessionId
+                )
+            )
+        }
+        return sessionContent.markdownResourceAccess(
             serverID: serverId,
             workspaceID: workspaceId,
-            worktreeId: firstCheckout,
-            serverBaseURL: connection?.apiClient?.baseURL,
-            fetchWorkspaceFile: connection?.apiClient.map { client in
-                return { [sourceSession] workspaceID, path in
-                    // Missing or foreign source session lists main (nil),
-                    // matching WorkspaceWikiLinkFileLookupPolicy.
-                    let sourceSessionResolved = sourceSession?.workspaceId == workspaceID
-                    return try await WorkspaceMarkdownImageFileLookup.fetch(
-                        workspaceID: workspaceID,
-                        path: path,
-                        sourceSessionResolved: sourceSessionResolved,
-                        sourceSessionWorktreeID: sourceSessionResolved ? sourceSession?.worktreeId : nil,
-                        fetchWorkspaceFile: { @Sendable workspaceID, path, worktreeId in
-                            try await client.fetchWorkspaceFile(
-                                workspaceID: workspaceID,
-                                path: path,
-                                worktreeId: worktreeId
-                            )
-                        }
-                    )
-                }
-            },
-            fetchSessionFile: nil,
-            fetchHostFile: sessionContent.map { content in
-                return { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] path in
-                    try await content.fetchHostFile(
-                        path: path,
-                        workspaceId: workspaceId,
-                        sessionId: sessionId,
-                        worktreeId: firstCheckout,
-                        workspaceRuntime: sourceWorkspaceRuntime
-                    )
-                }
-            },
-            makeMarkdownVideoSource: sessionContent.map { content in
-                { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] embed in
-                    try await content.makeMarkdownVideoMediaSource(
-                        embed: embed,
-                        workspaceId: workspaceId,
-                        sessionId: sessionId,
-                        worktreeId: firstCheckout,
-                        workspaceRuntime: sourceWorkspaceRuntime
-                    )
-                }
-            },
-            makeMarkdownAudioSource: sessionContent.map { content in
-                { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] embed in
-                    try await content.makeMarkdownAudioMediaSource(
-                        embed: embed,
-                        workspaceId: workspaceId,
-                        sessionId: sessionId,
-                        worktreeId: firstCheckout,
-                        workspaceRuntime: sourceWorkspaceRuntime
-                    )
-                }
-            },
-            makeMarkdownUSDZFile: sessionContent.map { content in
-                { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] embed in
-                    try await content.makeMarkdownUSDZFile(
-                        embed: embed,
-                        workspaceId: workspaceId,
-                        sessionId: sessionId,
-                        worktreeId: firstCheckout,
-                        workspaceRuntime: sourceWorkspaceRuntime
-                    )
-                }
-            },
-            makeTimedTextSidecar: sessionContent.map { content in
-                { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] mediaPath, kind, reference in
-                    await content.loadTimedTextSidecar(
-                        mediaPath: mediaPath,
-                        kind: kind,
-                        reference: reference,
-                        workspaceId: workspaceId,
-                        sessionId: sessionId,
-                        worktreeId: firstCheckout,
-                        workspaceRuntime: sourceWorkspaceRuntime
-                    )
-                }
-            },
+            sessionID: sessionId,
             audioPlayer: audioPlayer,
-            resourcePressure: resourcePressure
+            includesInlineMedia: includesInlineMedia
         )
     }
 
@@ -599,49 +524,6 @@ extension ChatTimelineCollectionHost.Controller {
                 )
             }
         }
-        let sourceSession = connection?.sessionStore.session(id: sessionId)
-        let sourceWorkspaceRuntime: WorkspaceRuntime? = {
-            guard let connection, let workspaceId else { return nil }
-            if let serverId {
-                return connection.workspaceStore.workspacesByServer[serverId]?
-                    .first(where: { $0.id == workspaceId })?.runtime
-            }
-            return connection.workspaceStore.workspaces.first(where: { $0.id == workspaceId })?.runtime
-        }()
-        let sourceSessionResolved = sourceSession?.workspaceId == workspaceId
-        let firstCheckout = WorkspaceWikiLinkFileLookupPolicy.firstCheckout(
-            sourceSessionResolved: sourceSessionResolved,
-            sourceSessionWorktreeID: sourceSessionResolved ? sourceSession?.worktreeId : nil
-        )
-        let fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = connection?.apiClient.map { client in
-            return { [sourceSession] workspaceID, path in
-                let sourceSessionResolved = sourceSession?.workspaceId == workspaceID
-                return try await WorkspaceMarkdownImageFileLookup.fetch(
-                    workspaceID: workspaceID,
-                    path: path,
-                    sourceSessionResolved: sourceSessionResolved,
-                    sourceSessionWorktreeID: sourceSessionResolved ? sourceSession?.worktreeId : nil,
-                    fetchWorkspaceFile: { @Sendable workspaceID, path, worktreeId in
-                        try await client.fetchWorkspaceFile(
-                            workspaceID: workspaceID,
-                            path: path,
-                            worktreeId: worktreeId
-                        )
-                    }
-                )
-            }
-        }
-        let fetchHostFile: ((_ path: String) async throws -> Data)? = sessionContent.map { content in
-            return { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] path in
-                try await content.fetchHostFile(
-                    path: path,
-                    workspaceId: workspaceId,
-                    sessionId: sessionId,
-                    worktreeId: firstCheckout,
-                    workspaceRuntime: sourceWorkspaceRuntime
-                )
-            }
-        }
         var configuration = ToolPresentationBuilder.build(
             itemID: itemID,
             tool: tool,
@@ -666,19 +548,14 @@ extension ChatTimelineCollectionHost.Controller {
         if let onOpenChatReader {
             configuration.openFullScreen = onOpenChatReader
         }
-        configuration.serverID = serverId
-        configuration.workspaceID = workspaceId
-        configuration.sessionID = sessionId
-        configuration.worktreeId = firstCheckout
-        configuration.serverBaseURL = connection?.apiClient?.baseURL
+        // Tool Markdown hosts file reads only; inline media stays unavailable there.
+        configuration.resourceAccess = markdownResourceAccess(includesInlineMedia: false)
         if case .markdown(_, let filePath) = configuration.expandedContent {
             let trimmed = filePath?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let trimmed, !trimmed.isEmpty {
                 configuration.sourceFilePath = trimmed
             }
         }
-        configuration.fetchWorkspaceFile = fetchWorkspaceFile
-        configuration.fetchHostFile = fetchHostFile
         if let apiClient = connection?.apiClient, let routeScope {
             let toolCallId = itemID
             let capturedSessionId = sessionId

@@ -1686,13 +1686,12 @@ struct APIClientTests {
             sessionId: "session-origin",
             workspaceRuntime: nil
         )
-        guard case .markdown(_, _, let context) = view.debugFullScreenContentForTesting(text: "# Current", api: client) else {
+        guard case .markdown(_, _, let reader) = view.debugFullScreenContentForTesting(text: "# Current", api: client) else {
             Issue.record("Expected current-file Markdown reader context")
             return
         }
-        let reader = try #require(context)
         let expectedHost = await client.baseURL.host
-        #expect(reader.routesFileReferencesThroughSession)
+        #expect(reader.identity.routesFileReferencesThroughSession)
         MockURLProtocol.handler = { request in
             #expect(request.url?.path == "/workspaces/workspace-origin/sessions/session-origin/raw//workspace/project/docs/image.png")
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
@@ -1752,11 +1751,10 @@ struct APIClientTests {
                 filePath: "docs/current.md", fileName: "current.md", source: item.source,
                 sessionId: item.session, controlSessionId: "control-session", workspaceRuntime: item.runtime
             )
-            guard case .markdown(_, _, let context) = view.debugFullScreenContentForTesting(text: "# Current", api: client) else {
+            guard case .markdown(_, _, let reader) = view.debugFullScreenContentForTesting(text: "# Current", api: client) else {
                 Issue.record("Expected Markdown reader context")
                 return
             }
-            let reader = try #require(context)
             let makeVideo = try #require(reader.makeMarkdownVideoSource)
             let makeAudio = try #require(reader.makeMarkdownAudioSource)
             for (ext, mime) in [("mp4", "video/mp4"), ("m4a", "audio/mp4")] {

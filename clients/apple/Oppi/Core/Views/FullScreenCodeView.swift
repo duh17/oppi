@@ -269,7 +269,7 @@ indirect enum FullScreenCodeContent {
     case code(content: String, language: String?, filePath: String?, startLine: Int)
     case plainText(content: String, filePath: String?)
     case diff(ToolDiffDocument)
-    case markdown(content: String, filePath: String?, workspaceContext: WorkspaceContext? = nil)
+    case markdown(content: String, filePath: String?, resourceAccess: MarkdownResourceAccess = .empty)
     case html(content: String, filePath: String?)
     case thinking(content: String, stream: ThinkingTraceStream? = nil)
     case terminal(
@@ -287,59 +287,6 @@ indirect enum FullScreenCodeContent {
     case graphviz(content: String, filePath: String?)
     case delimitedTable(content: String, filePath: String?)
     case geoJSON(content: String, filePath: String?)
-
-    /// Workspace/session context for resolving image paths in markdown files.
-    struct WorkspaceContext: @unchecked Sendable {
-        let workspaceID: String
-        let serverID: String?
-        let worktreeId: String?
-        let serverBaseURL: URL
-        let fetchWorkspaceFile: (_ workspaceID: String, _ path: String) async throws -> Data
-        let sessionID: String?
-        let routesFileReferencesThroughSession: Bool
-        let workspaceRuntime: WorkspaceRuntime?
-        let fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
-        let fetchHostFile: ((_ path: String) async throws -> Data)?
-        let makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
-        let makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
-        let makeMarkdownUSDZFile: MarkdownUSDZFileProvider?
-        let makeTimedTextSidecar: TimedTextSidecarProvider?
-        let audioPlayer: AudioPlayerService?
-
-        init(
-            workspaceID: String,
-            serverID: String? = nil,
-            worktreeId: String? = nil,
-            serverBaseURL: URL,
-            fetchWorkspaceFile: @escaping (_ workspaceID: String, _ path: String) async throws -> Data,
-            sessionID: String? = nil,
-            routesFileReferencesThroughSession: Bool = false,
-            workspaceRuntime: WorkspaceRuntime? = nil,
-            fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil,
-            fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
-            makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
-            makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
-            makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil,
-            makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
-            audioPlayer: AudioPlayerService? = nil
-        ) {
-            self.workspaceID = workspaceID
-            self.serverID = serverID
-            self.worktreeId = worktreeId
-            self.serverBaseURL = serverBaseURL
-            self.fetchWorkspaceFile = fetchWorkspaceFile
-            self.sessionID = sessionID
-            self.routesFileReferencesThroughSession = routesFileReferencesThroughSession
-            self.workspaceRuntime = workspaceRuntime
-            self.fetchSessionFile = fetchSessionFile
-            self.fetchHostFile = fetchHostFile
-            self.makeMarkdownVideoSource = makeMarkdownVideoSource
-            self.makeMarkdownAudioSource = makeMarkdownAudioSource
-            self.makeMarkdownUSDZFile = makeMarkdownUSDZFile
-            self.makeTimedTextSidecar = makeTimedTextSidecar
-            self.audioPlayer = audioPlayer
-        }
-    }
 
     /// Build content from raw text and a file path by detecting the file type.
     static func fromText(_ text: String, filePath: String?) -> FullScreenCodeContent {
@@ -364,17 +311,16 @@ indirect enum FullScreenCodeContent {
         }
     }
 
-    /// Build content from raw text with workspace context for markdown image resolution.
-    /// The workspace context is only used for `.markdown` — other file types ignore it.
+    /// Build content from raw text with resource access for markdown image and media resolution.
+    /// The access is only used for `.markdown` — other file types ignore it.
     static func fromText(
         _ text: String,
         filePath: String?,
-        workspaceContext: WorkspaceContext?
+        resourceAccess: MarkdownResourceAccess
     ) -> FullScreenCodeContent {
         let base = fromText(text, filePath: filePath)
-        // Attach workspace context to markdown content for inline image resolution.
-        if let wsContext = workspaceContext, case .markdown(let content, let path, _) = base {
-            return .markdown(content: content, filePath: path, workspaceContext: wsContext)
+        if case .markdown(let content, let path, _) = base {
+            return .markdown(content: content, filePath: path, resourceAccess: resourceAccess)
         }
         return base
     }

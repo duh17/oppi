@@ -1210,23 +1210,27 @@ extension ChatTimelineCollectionHost.Controller: UICollectionViewDataSourcePrefe
         rowConfiguration: AssistantTimelineRowConfiguration
     ) -> ChatTimelinePreparationRunway.Request {
         let target = timelineImageTarget()
+        let resourceAccess = rowConfiguration.resourceAccess
+        // The runway's cache scope and image loaders are its own focused capability: it
+        // prepares images only, so it takes the row's bound checkout, base URL, and the
+        // three image byte readers and nothing else from the row's access.
         return ChatTimelinePreparationRunway.Request(
             scope: ChatTimelinePreparationRunway.Scope(
                 sessionID: sessionId,
                 serverID: serverId,
                 workspaceID: workspaceId,
-                worktreeID: rowConfiguration.worktreeId
+                worktreeID: resourceAccess.identity.worktreeId
             ),
             itemID: itemID,
             content: text,
             isStreaming: isStreaming,
             themeID: ThemeRuntimeState.currentThemeID(),
-            serverBaseURL: rowConfiguration.serverBaseURL,
+            serverBaseURL: resourceAccess.identity.serverBaseURL,
             target: target,
             imageLoaders: ChatTimelinePreparationRunway.ImageLoaders(
-                fetchWorkspaceFile: rowConfiguration.fetchWorkspaceFile,
-                fetchSessionFile: rowConfiguration.fetchSessionFile,
-                fetchHostFile: rowConfiguration.fetchHostFile
+                fetchWorkspaceFile: resourceAccess.fetchWorkspaceFile,
+                fetchSessionFile: resourceAccess.fetchSessionFile,
+                fetchHostFile: resourceAccess.fetchHostFile
             )
         )
     }

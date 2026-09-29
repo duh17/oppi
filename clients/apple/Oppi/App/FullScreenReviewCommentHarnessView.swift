@@ -587,9 +587,13 @@ final class WikiLineAnchorHarnessViewController: UIViewController, UIAdaptivePre
             isStreaming: false,
             themeID: .dark,
             textSelectionEnabled: true,
-            serverID: "wiki-anchor-server",
-            workspaceID: "wiki-anchor-workspace",
-            sessionID: "wiki-anchor-session"
+            resourceAccess: MarkdownResourceAccess(
+                identity: MarkdownResourceAccess.Identity(
+                    serverID: "wiki-anchor-server",
+                    workspaceID: "wiki-anchor-workspace",
+                    sessionID: "wiki-anchor-session"
+                )
+            )
         ))
         stack.addArrangedSubview(markdownView)
 

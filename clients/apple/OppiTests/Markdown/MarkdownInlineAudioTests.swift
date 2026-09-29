@@ -603,12 +603,16 @@ struct MarkdownInlineAudioTests {
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "session-a",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
-            makeMarkdownAudioSource: provider,
-            audioPlayer: AudioPlayerService()
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-a",
+                    workspaceID: "workspace-a",
+                    sessionID: "session-a",
+                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                ),
+                makeMarkdownAudioSource: provider,
+                audioPlayer: AudioPlayerService()
+            )
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.addSubview(body)
@@ -637,13 +641,17 @@ struct MarkdownInlineAudioTests {
                 palette: ThemeID.dark.palette,
                 reviewCommentSelectionRouter: nil,
                 reviewCommentSourceContext: nil,
-                serverID: "server-a",
-                workspaceID: "workspace-a",
-                worktreeId: worktreeId,
-                sessionID: "session-a",
-                serverBaseURL: try #require(URL(string: "https://server.example.com")),
-                makeMarkdownAudioSource: { _ in throw CocoaError(.fileNoSuchFile) },
-                audioPlayer: AudioPlayerService()
+                resourceAccess: MarkdownResourceAccess(
+                    identity: .init(
+                        serverID: "server-a",
+                        workspaceID: "workspace-a",
+                        worktreeId: worktreeId,
+                        sessionID: "session-a",
+                        serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    ),
+                    makeMarkdownAudioSource: { _ in throw CocoaError(.fileNoSuchFile) },
+                    audioPlayer: AudioPlayerService()
+                )
             )
             let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
             window.addSubview(body)

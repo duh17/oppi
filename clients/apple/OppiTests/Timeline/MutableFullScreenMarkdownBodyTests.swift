@@ -663,18 +663,20 @@ struct MutableFullScreenMarkdownBodyTests {
     @Test("live-source completion keeps the wrapper and installs the immutable reader once")
     func liveSourceCompletionUsesOneWayTransition() async throws {
         let initial = tallMarkdown(paragraphs: 35)
-        let context = FullScreenCodeContent.WorkspaceContext(
-            workspaceID: "workspace-1",
-            serverID: "server-1",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
-            fetchWorkspaceFile: { _, _ in Data() },
-            sessionID: "session-1"
+        let context = MarkdownResourceAccess(
+            identity: .init(
+                serverID: "server-1",
+                workspaceID: "workspace-1",
+                sessionID: "session-1",
+                serverBaseURL: try #require(URL(string: "https://server.example.com"))
+            ),
+            fetchWorkspaceFile: { _, _ in Data() }
         )
         let stream = SourceTraceStream(
             text: initial,
             filePath: "docs/Draft.md",
             isDone: false,
-            finalContent: .markdown(content: initial, filePath: "docs/Draft.md", workspaceContext: context)
+            finalContent: .markdown(content: initial, filePath: "docs/Draft.md", resourceAccess: context)
         )
         let controller = makeController(content: .liveSource(snapshot: stream.snapshot, stream: stream))
         let wrapper = try #require(
@@ -686,7 +688,7 @@ struct MutableFullScreenMarkdownBodyTests {
             text: final,
             filePath: "docs/Draft.md",
             isDone: true,
-            finalContent: .markdown(content: final, filePath: "docs/Draft.md", workspaceContext: context)
+            finalContent: .markdown(content: final, filePath: "docs/Draft.md", resourceAccess: context)
         )
         await drainMutableMarkdownQueue()
         controller.view.layoutIfNeeded()
@@ -775,12 +777,16 @@ struct MutableFullScreenMarkdownBodyTests {
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
-            serverID: "server-1",
-            workspaceID: "workspace-1",
-            sessionID: "session-1",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
-            sourceFilePath: "docs/Draft.md",
-            fetchWorkspaceFile: { _, _ in try #require(Self.pngData()) }
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-1",
+                    workspaceID: "workspace-1",
+                    sessionID: "session-1",
+                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                ),
+                fetchWorkspaceFile: { _, _ in try #require(Self.pngData()) }
+            ),
+            sourceFilePath: "docs/Draft.md"
         )
         let fixture = attach(body)
         defer { fixture.window.isHidden = true }
@@ -892,9 +898,11 @@ struct MutableFullScreenMarkdownBodyTests {
 
     @Test("completion uses final file and workspace context")
     func completionUsesFinalSourceContext() async throws {
-        let initialContext = FullScreenCodeContent.WorkspaceContext(
-            workspaceID: "workspace-a",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
+        let initialContext = MarkdownResourceAccess(
+            identity: .init(
+                workspaceID: "workspace-a",
+                serverBaseURL: try #require(URL(string: "https://server.example.com"))
+            ),
             fetchWorkspaceFile: { _, _ in Data() }
         )
         let initial = "# Draft\n\nProvisional"
@@ -902,13 +910,15 @@ struct MutableFullScreenMarkdownBodyTests {
             text: initial,
             filePath: "old/Draft.md",
             isDone: false,
-            finalContent: .markdown(content: initial, filePath: "old/Draft.md", workspaceContext: initialContext)
+            finalContent: .markdown(content: initial, filePath: "old/Draft.md", resourceAccess: initialContext)
         )
         let controller = makeController(content: .liveSource(snapshot: stream.snapshot, stream: stream))
         let wrapper = try #require(controller.installedBodyViewForTesting as? NativeMutableFullScreenMarkdownBody)
-        let finalContext = FullScreenCodeContent.WorkspaceContext(
-            workspaceID: "workspace-b",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
+        let finalContext = MarkdownResourceAccess(
+            identity: .init(
+                workspaceID: "workspace-b",
+                serverBaseURL: try #require(URL(string: "https://server.example.com"))
+            ),
             fetchWorkspaceFile: { _, _ in Data() }
         )
         let final = initial + "\n\n![final](images/final.png)"
@@ -916,7 +926,7 @@ struct MutableFullScreenMarkdownBodyTests {
             text: final,
             filePath: "new/Final.md",
             isDone: true,
-            finalContent: .markdown(content: final, filePath: "new/Final.md", workspaceContext: finalContext)
+            finalContent: .markdown(content: final, filePath: "new/Final.md", resourceAccess: finalContext)
         )
         await drainMutableMarkdownQueue()
         controller.view.layoutIfNeeded()
@@ -1015,14 +1025,18 @@ struct MutableFullScreenMarkdownBodyTests {
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: ReviewCommentSelectionRouter { _ in },
             reviewCommentSourceContext: sourceContext,
-            workspaceID: "workspace-1",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "workspace-1",
+                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                ),
+                fetchWorkspaceFile: { workspaceID, path in
+                    fetched = (workspaceID, path)
+                    return try #require(Self.pngData())
+                }
+            ),
             sourceFilePath: "docs/Draft.md",
-            readerPreferences: .init(textScale: 1.25, spacing: .relaxed),
-            fetchWorkspaceFile: { workspaceID, path in
-                fetched = (workspaceID, path)
-                return try #require(Self.pngData())
-            }
+            readerPreferences: .init(textScale: 1.25, spacing: .relaxed)
         )
         let fixture = attach(body)
         defer { fixture.window.isHidden = true }
@@ -1060,12 +1074,16 @@ struct MutableFullScreenMarkdownBodyTests {
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
-            serverID: "server-1",
-            workspaceID: "workspace-1",
-            sessionID: "session-1",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
-            sourceFilePath: "docs/Draft.md",
-            makeMarkdownVideoSource: provider
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-1",
+                    workspaceID: "workspace-1",
+                    sessionID: "session-1",
+                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                ),
+                makeMarkdownVideoSource: provider
+            ),
+            sourceFilePath: "docs/Draft.md"
         )
         let fixture = attach(body)
         defer { fixture.window.isHidden = true }
@@ -1086,14 +1104,16 @@ struct MutableFullScreenMarkdownBodyTests {
             isStreaming: false,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
-            serverID: "server-1",
-            workspaceID: "workspace-1",
-            sessionID: "session-1",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
-            sourceFilePath: "docs/Draft.md",
-            fetchWorkspaceFile: nil,
-            fetchSessionFile: nil,
-            makeMarkdownVideoSource: provider
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    serverID: "server-1",
+                    workspaceID: "workspace-1",
+                    sessionID: "session-1",
+                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                ),
+                makeMarkdownVideoSource: provider
+            ),
+            sourceFilePath: "docs/Draft.md"
         )
         await drainMutableMarkdownQueue()
         fixture.window.layoutIfNeeded()
@@ -1107,6 +1127,104 @@ struct MutableFullScreenMarkdownBodyTests {
             resolved > resolvedBeforeHandoff
         }
         #expect(handoffResolved)
+    }
+
+    @Test("stream completion hands the final providers to the immutable reader")
+    func completionUsesFinalProviders() async throws {
+        var initialResolved = 0
+        var finalResolved = 0
+        let identity = MarkdownResourceAccess.Identity(
+            serverID: "server-1",
+            workspaceID: "workspace-1",
+            sessionID: "session-1",
+            serverBaseURL: try #require(URL(string: "https://server.example.com"))
+        )
+        let initialAccess = MarkdownResourceAccess(
+            identity: identity,
+            makeMarkdownVideoSource: { _ in
+                initialResolved += 1
+                throw CocoaError(.fileNoSuchFile)
+            }
+        )
+        // Same identity, fresh providers: a stream completion must not keep the old ones.
+        let finalAccess = MarkdownResourceAccess(
+            identity: identity,
+            makeMarkdownVideoSource: { _ in
+                finalResolved += 1
+                throw CocoaError(.fileNoSuchFile)
+            }
+        )
+        let body = NativeMutableFullScreenMarkdownBody(
+            content: "Before\n\n![[movie.mp4]]\n\nAfter",
+            isStreaming: true,
+            themeID: .dark,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            resourceAccess: initialAccess,
+            sourceFilePath: "docs/Draft.md"
+        )
+        let fixture = attach(body)
+        defer { fixture.window.isHidden = true }
+        let liveResolved = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            initialResolved > 0
+        }
+        #expect(liveResolved)
+        let initialBeforeHandoff = initialResolved
+
+        body.update(
+            content: "Before\n\n![[movie.mp4]]\n\nAfter\n\nDone.",
+            isStreaming: false,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            resourceAccess: finalAccess,
+            sourceFilePath: "docs/Draft.md"
+        )
+        await drainMutableMarkdownQueue()
+        fixture.window.layoutIfNeeded()
+
+        #expect(body.debugIsShowingImmutableReaderForTesting)
+        let handoffResolved = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            finalResolved > 0
+        }
+        #expect(handoffResolved)
+        #expect(initialResolved == initialBeforeHandoff)
+    }
+
+    @Test("large completed reader keeps the source checkout in workspace image URLs")
+    func largeCompletedReaderKeepsCheckoutIdentity() async throws {
+        let filler = String(repeating: "Large completed paragraph with stable Markdown text. ", count: 4_500)
+        #expect(filler.utf8.count > 200 * 1024)
+        let body = NativeFullScreenMarkdownBody(
+            content: filler + "\n\n![chart](images/chart.png)",
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            resourceAccess: MarkdownResourceAccess(
+                identity: .init(
+                    workspaceID: "workspace-1",
+                    worktreeId: "wt_feature",
+                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                )
+            ),
+            sourceFilePath: "docs/Draft.md"
+        )
+        let fixture = attach(body)
+        defer { fixture.window.isHidden = true }
+
+        let rendered = await waitForTimelineCondition(timeoutMs: 4_000) { @MainActor in
+            fixture.window.layoutIfNeeded()
+            return body.debugRenderedSegmentCountForTesting > 0
+        }
+        #expect(rendered)
+        let imageURL = try #require(body.debugRenderedSegmentsForTesting.compactMap { segment -> URL? in
+            guard case .image(_, let url) = segment else { return nil }
+            return url
+        }.first)
+        let parsed = try #require(WorkspaceFileURL.parse(imageURL))
+        #expect(parsed.workspaceID == "workspace-1")
+        #expect(parsed.filePath == "docs/images/chart.png")
+        #expect(parsed.worktreeId == "wt_feature")
     }
 
     private func makeController(content: FullScreenCodeContent) -> FullScreenCodeViewController {
