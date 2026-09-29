@@ -26,7 +26,7 @@ import {
   type AgentSessionEvent,
   type AgentSessionRuntime,
   type CreateAgentSessionRuntimeFactory,
-  type ExtensionContext,
+  type ExtensionToolContext,
   type ResourceDiagnostic,
   type Skill,
   type ToolDefinition,
@@ -96,7 +96,7 @@ type AttachmentAddFileInput = {
   deleteSource?: boolean;
 };
 
-type ExtensionContextWithAttachments = ExtensionContext & {
+type ExtensionContextWithAttachments = ExtensionToolContext & {
   attachments: {
     addFile(input: AttachmentAddFileInput): Record<string, unknown>;
   };
@@ -1349,7 +1349,7 @@ export class SdkBackend {
   }
 
   private contextWithSessionAttachments(
-    ctx: ExtensionContext,
+    ctx: ExtensionToolContext,
     toolCallId: string,
   ): ExtensionContextWithAttachments {
     const dataDir = this.dataDir;
@@ -1690,7 +1690,7 @@ export class SdkBackend {
     // whole batch in one JavaScript turn so clear and replay stay adjacent, then
     // wait for every replay to settle: none may still be pending when a rollback
     // or the Oppi commit runs.
-    const replays: Promise<void>[] = [];
+    const replays: ReturnType<AgentSession["steer"]>[] = [];
     this.piSession.clearQueue();
     for (const item of batch.steering) {
       replays.push(this.piSession.steer(item.message, item.images));

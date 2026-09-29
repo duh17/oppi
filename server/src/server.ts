@@ -777,6 +777,8 @@ export class Server {
     }
     this.providerAuth = new ProviderAuthManager({
       modelRuntime: this.modelRuntime,
+      // Same global-settings id the Pi CLI uses, so both share one ChatGPT agent host.
+      getDeviceId: () => SettingsManager.create(process.cwd(), agentDir).getOrCreateDeviceId(),
       getKnownApiKeyProviderIds: () => {
         const knownApiKeyProviders = new Set<string>([
           "anthropic",

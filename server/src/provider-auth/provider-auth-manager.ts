@@ -44,6 +44,8 @@ export interface ProviderAuthManagerOptions {
   onCredentialsChanged?: () => Promise<void> | void;
   getKnownApiKeyProviderIds?: () => string[];
   openBrowser?: (url: string) => Promise<void> | void;
+  /** Stable installation id for login flows that need one (Sign in with ChatGPT). */
+  getDeviceId?: () => string;
   flowTtlMs?: number;
   terminalFlowRetentionMs?: number;
   now?: () => number;
@@ -92,6 +94,7 @@ export class ProviderAuthManager {
   private readonly onCredentialsChanged: () => Promise<void> | void;
   private readonly getKnownApiKeyProviderIds: () => string[];
   private readonly openBrowser: (url: string) => Promise<void> | void;
+  private readonly getDeviceId: (() => string) | undefined;
   private readonly flowStore: ProviderAuthFlowStore;
 
   constructor(options: ProviderAuthManagerOptions) {
@@ -99,6 +102,7 @@ export class ProviderAuthManager {
     this.onCredentialsChanged = options.onCredentialsChanged ?? (() => {});
     this.getKnownApiKeyProviderIds = options.getKnownApiKeyProviderIds ?? (() => []);
     this.openBrowser = options.openBrowser ?? defaultOpenBrowser;
+    this.getDeviceId = options.getDeviceId;
     this.flowStore = new ProviderAuthFlowStore({
       ttlMs: options.flowTtlMs,
       terminalRetentionMs: options.terminalFlowRetentionMs,
@@ -310,7 +314,9 @@ export class ProviderAuthManager {
     };
 
     try {
-      await this.modelRuntime.login(providerId, "oauth", interaction);
+      await this.modelRuntime.login(providerId, "oauth", interaction, {
+        getDeviceId: this.getDeviceId,
+      });
       this.completeCommittedLogin(flowId);
       await this.refreshAfterCredentialChange();
     } catch (error) {
