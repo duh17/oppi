@@ -147,7 +147,8 @@ export const CHAT_METRIC_REGISTRY = {
   },
   "network.handshake_ms": {
     unit: "ms",
-    description: "Client HTTPS candidate handshake duration, tagged by connection route and status.",
+    description:
+      "Client HTTPS candidate handshake duration, tagged by connection route and status.",
   },
   "network.ws_ping_rtt_ms": {
     unit: "ms",

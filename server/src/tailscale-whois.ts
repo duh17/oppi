@@ -113,16 +113,29 @@ export function parseStatusSelf(json: string): TailscaleSelfIdentity {
         return normalized ? [normalized] : [];
       })
     : [];
-  const tailscaleIPv4 =
-    firstIPv4(root.Self?.TailscaleIPs) ?? firstIPv4(root.TailscaleIPs);
+  const tailscaleIPv4 = firstIPv4(root.Self?.TailscaleIPs) ?? firstIPv4(root.TailscaleIPs);
   const selfStableId = stableNodeId(root.Self?.ID);
   if (nodeIsTagged(root.Self)) {
-    return { login: null, dnsName, tailscaleIPv4, stableNodeId: selfStableId, tailscaleIPs, tagged: true };
+    return {
+      login: null,
+      dnsName,
+      tailscaleIPv4,
+      stableNodeId: selfStableId,
+      tailscaleIPs,
+      tagged: true,
+    };
   }
   const userId = root.Self?.UserID;
   const login = loginFromStatusUsers(root.User, userId);
   if (login && loginIsTagged(login)) {
-    return { login: null, dnsName, tailscaleIPv4, stableNodeId: selfStableId, tailscaleIPs, tagged: true };
+    return {
+      login: null,
+      dnsName,
+      tailscaleIPv4,
+      stableNodeId: selfStableId,
+      tailscaleIPs,
+      tagged: true,
+    };
   }
   return { login, dnsName, tailscaleIPv4, stableNodeId: selfStableId, tailscaleIPs, tagged: false };
 }
@@ -264,7 +277,13 @@ function loginNameFromUserProfile(profile: unknown): string | null {
 }
 
 function loginFromStatusUsers(users: unknown, userId: unknown): string | null {
-  if (!users || typeof users !== "object" || Array.isArray(users) || userId === null || userId === undefined) {
+  if (
+    !users ||
+    typeof users !== "object" ||
+    Array.isArray(users) ||
+    userId === null ||
+    userId === undefined
+  ) {
     return null;
   }
   const record = users as Record<string, { LoginName?: unknown } | undefined>;

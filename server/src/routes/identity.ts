@@ -7,10 +7,7 @@ import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js
 import { createLogger } from "../logger.js";
 import { normalizeIp, trustConfigFromServerConfig } from "../proxy-config.js";
 import { isLocalRequest, resolveRequestProvenance } from "../request-trust.js";
-import {
-  inviteHostForTlsMode,
-  proveSameTailscaleUser,
-} from "../tailscale-whois.js";
+import { inviteHostForTlsMode, proveSameTailscaleUser } from "../tailscale-whois.js";
 import { SourceRateLimiter } from "../source-rate-limit.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
 import { isDictationStreamEnabled } from "../dictation-types.js";
@@ -151,7 +148,10 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     helpers.json(res, pairing);
   }
 
-  async function handleTailscalePairInvite(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async function handleTailscalePairInvite(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     if (isLocalRequest(req) || isOwnerBearer(req, ctx.storage.getToken?.())) {
       helpers.error(res, 404, "Not found");
       return;
@@ -163,9 +163,11 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return;
     }
     // Forwarding metadata means the socket peer may be a relay, not the caller.
-    if (["forwarded", "x-forwarded-for", "x-forwarded-proto", "x-real-ip", "via"].some(
-      (header) => header in req.headers,
-    )) {
+    if (
+      ["forwarded", "x-forwarded-for", "x-forwarded-proto", "x-real-ip", "via"].some(
+        (header) => header in req.headers,
+      )
+    ) {
       helpers.error(res, 403, "Tailscale pairing is not available through a reverse proxy");
       return;
     }
