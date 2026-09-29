@@ -1,9 +1,5 @@
 import SwiftUI
 
-enum MacQuickSessionPaneLayoutPolicy {
-    static let maximumSurfaceWidth: CGFloat = 640
-}
-
 /// Empty-pane Quick Session: Mac chat-input look plus workspace / worktree / Agent.
 struct MacQuickSessionPaneComposer: View {
     let workspaces: [Workspace]
@@ -18,10 +14,16 @@ struct MacQuickSessionPaneComposer: View {
     let launch: (MacQuickSessionLaunchAttempt) async -> Void
 
     @Environment(\.theme) private var theme
+    @Environment(\.macTypographyRevision) private var typographyRevision
     @State private var isLaunching = false
-    private let actionVisualDiameter: CGFloat = 32
+    @State private var models: [ModelInfo] = []
+    @State private var isLoadingModels = false
+    @State private var modelLoadError: String?
+    @State private var isModelPickerPresented = false
+    private let actionVisualDiameter = MacComposerInputMetrics.actionDiameter
 
     var body: some View {
+        let _ = typographyRevision
         VStack(alignment: .leading, spacing: 10) {
             workspaceControls
             composerCapsule
@@ -29,7 +31,7 @@ struct MacQuickSessionPaneComposer: View {
         .padding(.horizontal, 12)
         .padding(.vertical, centersInPane ? 12 : 0)
         .padding(.bottom, centersInPane ? 0 : 10)
-        .frame(maxWidth: MacQuickSessionPaneLayoutPolicy.maximumSurfaceWidth)
+        .frame(maxWidth: MacTimelineProsePaint.currentColumnWidth)
         .frame(
             maxWidth: .infinity,
             maxHeight: .infinity,
@@ -43,6 +45,21 @@ struct MacQuickSessionPaneComposer: View {
             if state.workspaceId == nil {
                 state.workspaceId = workspaces.first?.id
             }
+        }
+        .task {
+            await loadModels()
+        }
+        .sheet(isPresented: $isModelPickerPresented) {
+            MacModelPickerSheet(
+                models: models,
+                currentModel: state.modelID,
+                isLoading: isLoadingModels,
+                error: modelLoadError,
+                refresh: { await loadModels() },
+                selectModel: { model in
+                    state.modelID = MacModelSelection.fullModelID(for: model)
+                }
+            )
         }
         .onChange(of: compatibleWorkspaces.map(\.id)) { _, ids in
             if let workspaceId = state.workspaceId, ids.contains(workspaceId) {
@@ -144,8 +161,9 @@ struct MacQuickSessionPaneComposer: View {
     }
 
     private var composerCapsule: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if let errorMessage = state.errorMessage {
+        let inputFont = MacComposerInputMetrics.font
+        return VStack(alignment: .leading, spacing: 0) {
+            if let errorMessage = state.errorMessage ?? composerState.localError {
                 Text(errorMessage)
                     .font(.caption)
                     .foregroundStyle(theme.accent.red)
@@ -153,10 +171,22 @@ struct MacQuickSessionPaneComposer: View {
                     .padding(.top, 8)
             }
 
+            if !composerState.pendingAttachments.isEmpty {
+                MacPendingAttachmentStrip(
+                    attachments: composerState.pendingAttachments,
+                    remove: { id in composerState.pendingAttachments.removeAll { $0.id == id } }
+                )
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+            }
+
             HStack(alignment: .bottom, spacing: 8) {
-                ZStack(alignment: .leading) {
+                dictationButton
+
+                ZStack(alignment: .topLeading) {
                     if composerState.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Text("Message")
+                            .font(Font(inputFont))
                             .foregroundStyle(theme.text.tertiary)
                             .allowsHitTesting(false)
                             .accessibilityHidden(true)
@@ -166,6 +196,7 @@ struct MacQuickSessionPaneComposer: View {
                         isEnabled: !isLaunching,
                         accessibilityLabel: "Message",
                         textColor: NSColor(theme.text.primary),
+                        font: inputFont,
                         keyboardOwnershipGeneration: composerState.keyboardOwnershipGeneration,
                         wantsKeyboardOwnership: composerState.wantsKeyboardOwnership,
                         onFocusChange: { focused in
@@ -175,36 +206,180 @@ struct MacQuickSessionPaneComposer: View {
                                 sessionFocus.wrappedValue = .composer
                             }
                         },
-                        onPasteAttachments: { _ in }
+                        onPasteAttachments: { payload in
+                            let result = MacComposerPasteboardParser.adding(
+                                payload,
+                                to: composerState.pendingAttachments
+                            )
+                            composerState.pendingAttachments = result.attachments
+                        }
                     )
-                    .frame(
-                        minHeight: MacComposerInputMetrics.minimumHeight,
-                        maxHeight: MacComposerInputMetrics.maximumHeight
-                    )
+                    // Hug the fitted text height (sizeThatFits clamps it to
+                    // 1...6 lines). A min/max frame instead grew to the cap
+                    // whenever the overlay offered room: a tall empty capsule.
+                    .fixedSize(horizontal: false, vertical: true)
                     .focused(sessionFocus, equals: .composer)
                     .accessibilityIdentifier("mac.composer.input")
                 }
+                .frame(minHeight: actionVisualDiameter)
 
                 sendButton
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
 
-            HStack {
-                agentPicker
-                Spacer()
+            GlassEffectContainer(spacing: 0) {
+                HStack(spacing: 6) {
+                    attachButton
+                    agentPicker
+                    Spacer(minLength: 8)
+                    modelPickerButton
+                    thinkingLevelMenu
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 4)
-            .padding(.bottom, 10)
+            .padding(.horizontal, 14)
+            .padding(.top, 2)
+            .padding(.bottom, 12)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .themedSurface(
             .elevatedPanel,
-            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+            in: RoundedRectangle(cornerRadius: MacComposerInputMetrics.capsuleCornerRadius, style: .continuous)
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Session composer")
+        .onChange(of: composerState.dictation.composedDraft) { _, composed in
+            if composerState.dictation.isLive {
+                composerState.draft = composed
+            }
+        }
+    }
+
+    private var dictationButton: some View {
+        MacComposerDictationButton(
+            state: composerState.dictation.state,
+            diameter: actionVisualDiameter,
+            isEnabled: !isLaunching && composerState.dictation.state != .stopping,
+            action: { Task { await toggleDictation() } }
+        )
+    }
+
+    private func toggleDictation() async {
+        composerState.localError = nil
+        switch composerState.dictation.state {
+        case .recording:
+            await composerState.dictation.stop()
+            composerState.draft = composerState.dictation.composedDraft
+        case .requestingPermission, .connecting:
+            await composerState.dictation.cancel()
+            composerState.draft = composerState.dictation.composedDraft
+        case .stopping:
+            return
+        case .idle, .error:
+            guard let endpoint = MacDictationEndpoint.localOwner() else {
+                composerState.localError = DictationComposerPolicy.unavailableMessage
+                return
+            }
+            do {
+                try await composerState.dictation.start(
+                    baseText: composerState.draft,
+                    endpoint: endpoint
+                )
+            } catch {
+                composerState.localError = error.localizedDescription
+            }
+        }
+    }
+
+    private var selectedModel: ModelInfo? {
+        ThinkingLevelMenuSource.model(for: state.modelID, in: models)
+    }
+
+    private var attachButton: some View {
+        Button(action: chooseAttachments) {
+            MacComposerChromePill(systemImage: "plus", text: nil)
+        }
+        .buttonStyle(.plain)
+        .disabled(isLaunching)
+        .accessibilityIdentifier("mac.composer.attach")
+        .accessibilityLabel("Add attachment")
+        .help("Attach files")
+    }
+
+    private var modelPickerButton: some View {
+        Button {
+            isModelPickerPresented = true
+        } label: {
+            let provider = MacComposerActionPaint.modelPillProviderKey(for: state.modelID)
+            MacComposerChromePill(
+                systemImage: provider == nil ? "cpu" : nil,
+                text: MacModelSelection.shortDisplayName(for: state.modelID) ?? "Model",
+                showChevron: true,
+                chevronSystemImage: MacComposerActionPaint.modelChevronSystemImage
+            ) {
+                if let provider {
+                    ProviderGlyph(
+                        provider: provider,
+                        size: MacComposerChromePill<EmptyView>.glyphSize,
+                        color: theme.text.primary
+                    )
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(isLaunching)
+        .accessibilityIdentifier("mac.composer.model")
+        .accessibilityLabel("Model")
+        .help("Choose model")
+    }
+
+    private var thinkingLevelMenu: some View {
+        Menu {
+            Picker("Thinking", selection: Bindable(state).thinkingLevel) {
+                ForEach(ThinkingLevelMenuSource.levels(for: selectedModel)) { level in
+                    Text(level.displayTitle).tag(level)
+                }
+            }
+        } label: {
+            MacComposerChromePill(
+                systemImage: "sparkle",
+                text: state.thinkingLevel.compactTitle,
+                tint: theme.thinking.color(for: state.thinkingLevel)
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .disabled(isLaunching)
+        .accessibilityIdentifier("mac.composer.thinking")
+        .accessibilityLabel("Thinking level")
+        .help("Thinking level")
+    }
+
+    private func chooseAttachments() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.resolvesAliases = true
+        panel.begin { response in
+            guard response == .OK else { return }
+            let result = MacComposerPasteboardParser.adding(
+                MacComposerPasteboardPayload(fileURLs: panel.urls, images: []),
+                to: composerState.pendingAttachments
+            )
+            composerState.pendingAttachments = result.attachments
+        }
+    }
+
+    private func loadModels() async {
+        guard let client = MacWorkspaceClient.localOwner() else { return }
+        isLoadingModels = true
+        defer { isLoadingModels = false }
+        do {
+            models = try await client.listModels()
+            modelLoadError = nil
+        } catch {
+            modelLoadError = error.localizedDescription
+        }
     }
 
     private var agentPicker: some View {
@@ -242,7 +417,7 @@ struct MacQuickSessionPaneComposer: View {
                         .tint(theme.bg.primary)
                 } else {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(canSubmit ? theme.bg.primary : theme.text.tertiary)
                 }
             }
@@ -278,7 +453,7 @@ struct MacQuickSessionPaneComposer: View {
             worktreeId: resolvedWorktreeId,
             agentId: state.agentId,
             prompt: composerState.draft,
-            hasAttachments: false,
+            hasAttachments: !composerState.pendingAttachments.isEmpty,
             hasRepoReferences: false
         )
         switch state.launchAttempt(for: request) {

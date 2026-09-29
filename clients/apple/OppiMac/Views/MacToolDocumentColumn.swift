@@ -106,6 +106,13 @@ struct MacToolDocumentDiffRow: Equatable, Sendable {
 }
 
 enum MacToolDocumentDiffLayout {
+    /// Diff lines are highlighted as the edited file's language, one line at
+    /// a time, so the change ink stays on the marker, gutter, and band.
+    static func syntaxLanguage(for diff: ToolContentDescriptor.Diff) -> SyntaxLanguage? {
+        guard let path = diff.path else { return nil }
+        return FileType.detect(from: path).syntaxLanguage
+    }
+
     static func rows(from diff: ToolContentDescriptor.Diff) -> [MacToolDocumentDiffRow] {
         diff.lines.map { line in
             MacToolDocumentDiffRow(
@@ -198,7 +205,7 @@ struct MacToolDocumentColumn: View {
     private let document: Document
     private var sessionFocus: FocusState<KeybindingFocus?>.Binding?
     @Environment(\.theme) private var theme
-    @State private var fontPreferenceRevision = 0
+    @Environment(\.macTypographyRevision) private var typographyRevision
 
     init(store: MacSessionTraceStore, sessionFocus: FocusState<KeybindingFocus?>.Binding) {
         self.document = .session(store)
@@ -223,7 +230,7 @@ struct MacToolDocumentColumn: View {
     }
 
     var body: some View {
-        let _ = fontPreferenceRevision
+        let _ = typographyRevision
         Group {
             if let sessionFocus, let store = sessionStore {
                 columnStack
@@ -240,11 +247,6 @@ struct MacToolDocumentColumn: View {
             } else {
                 columnStack
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(
-            for: FontPreferenceStore.didChangeNotification
-        )) { _ in
-            fontPreferenceRevision &+= 1
         }
     }
 
@@ -457,22 +459,7 @@ struct MacToolDocumentColumn: View {
     private func handleViewerKeyPress(_ press: KeyPress) -> KeyPress.Result {
         guard let sessionFocus, sessionFocus.wrappedValue == .viewer else { return .ignored }
         guard let store = sessionStore else { return .ignored }
-        guard let chord = KeybindingEventMap.chord(
-            characters: press.characters,
-            isUpArrow: press.key == .upArrow,
-            isDownArrow: press.key == .downArrow,
-            isLeftArrow: press.key == .leftArrow,
-            isRightArrow: press.key == .rightArrow,
-            isReturn: press.key == .return,
-            isEscape: press.key == .escape,
-            isTab: press.key == .tab,
-            command: press.modifiers.contains(.command),
-            shift: press.modifiers.contains(.shift),
-            option: press.modifiers.contains(.option),
-            control: press.modifiers.contains(.control)
-        ) else {
-            return .ignored
-        }
+        guard let chord = press.keybindingChord else { return .ignored }
         let action = store.applyKeybinding(chord)
         return MacTimelineKeybinding.consumes(action) ? .handled : .ignored
     }
@@ -536,11 +523,13 @@ struct MacToolDocumentDescriptorView: View {
 }
 
 private struct MacToolDocumentTerminalView: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let terminal: ToolContentDescriptor.Terminal
     var itemID: String? = nil
     @Environment(\.theme) private var theme
 
     var body: some View {
+        let _ = typographyRevision
         VStack(alignment: .leading, spacing: 8) {
             if let command = terminal.command, !command.isEmpty {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -570,11 +559,13 @@ private struct MacToolDocumentTerminalView: View {
 }
 
 private struct MacToolDocumentCodeView: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let code: ToolContentDescriptor.Code
     var itemID: String? = nil
     @Environment(\.themeID) private var themeID
 
     var body: some View {
+        let _ = typographyRevision
         let _ = themeID
         MacReviewCommentTextView(
             text: code.text,
@@ -601,10 +592,12 @@ private struct MacToolDocumentCodeView: View {
 }
 
 private struct MacToolDocumentDiffView: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let diff: ToolContentDescriptor.Diff
     @Environment(\.theme) private var theme
 
     var body: some View {
+        let _ = typographyRevision
         GeometryReader { proxy in
             ScrollView([.horizontal, .vertical]) {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -620,7 +613,12 @@ private struct MacToolDocumentDiffView: View {
                             Rectangle()
                                 .fill(theme.text.tertiary.opacity(0.16))
                                 .frame(width: 1)
-                            Text(row.text.isEmpty ? " " : row.text)
+                            Text(row.text.isEmpty
+                                ? AttributedString(" ")
+                                : MacSyntaxHighlighter.tokenColoredText(
+                                    row.text,
+                                    language: MacToolDocumentDiffLayout.syntaxLanguage(for: diff)
+                                ))
                                 .fixedSize(horizontal: true, vertical: false)
                                 .padding(.leading, 10)
                                 .padding(.trailing, 12)

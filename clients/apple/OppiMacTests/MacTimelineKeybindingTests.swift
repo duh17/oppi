@@ -132,6 +132,22 @@ struct MacTimelineKeybindingTests {
         #expect(state.focus == .timeline)
     }
 
+    @Test func jumpKeysSelectTheEndsAndFocusKeysLeaveTheTimeline() {
+        var state = MacTimelineKeybinding.State(selectedToolRowID: "tool-b", focus: .timeline)
+        #expect(apply(KeybindingChord(key: .downArrow, command: true), mode: .macDefault, to: &state) == .moveToBottom)
+        #expect(state.selectedToolRowID == "tool-c")
+        #expect(apply(.letter("g"), mode: .vim, to: &state) == .moveToTop)
+        #expect(state.selectedToolRowID == "tool-a")
+        #expect(apply(.control("n"), mode: .emacs, to: &state) == .nextToolRow)
+        #expect(state.selectedToolRowID == "tool-b")
+
+        #expect(apply(.control("o"), mode: .emacs, to: &state) == .focusComposer)
+        #expect(state.focus == .composer)
+        // Composer focus: emacs chords no longer drive the timeline.
+        #expect(apply(.control("n"), mode: .emacs, to: &state) == nil)
+        #expect(state.selectedToolRowID == "tool-b")
+    }
+
     @Test func nextWithoutSelectionPicksTheFirstToolRow() {
         var state = MacTimelineKeybinding.State(focus: .timeline)
         #expect(apply(.downArrow, mode: .macDefault, to: &state) == .nextToolRow)
@@ -314,7 +330,8 @@ struct MacSessionTimelineSelectionStoreTests {
             .appending(path: "OppiMac/Views/MacSessionTimelineViews.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
         #expect(!source.contains("highPriorityGesture"))
-        #expect(source.contains("Button(isExpanded ? \"Collapse\" : \"Expand\")"))
+        #expect(source.contains("store.handleToolRowClick"))
+        #expect(source.contains(".accessibilityLabel(row.isExpanded ? \"Collapse\" : \"Expand\")"))
         #expect(source.contains("store.setToolRowExpanded"))
     }
 }

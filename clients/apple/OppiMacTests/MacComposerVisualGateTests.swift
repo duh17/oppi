@@ -729,8 +729,8 @@ final class MacComposerVisualGateTests: XCTestCase {
             XCTAssertGreaterThan(capture.inputFrame.minY, 180, "The start surface must not hug the bottom edge")
             XCTAssertLessThan(capture.inputFrame.maxY, 440, "The start surface must remain vertically centered")
 
-            if fixture.width > MacQuickSessionPaneLayoutPolicy.maximumSurfaceWidth {
-                let boundedInset = (fixture.width - MacQuickSessionPaneLayoutPolicy.maximumSurfaceWidth) / 2
+            if fixture.width > MacTimelineProsePaint.currentColumnWidth {
+                let boundedInset = (fixture.width - MacTimelineProsePaint.currentColumnWidth) / 2
                 XCTAssertGreaterThanOrEqual(capture.inputFrame.minX, boundedInset)
                 XCTAssertLessThanOrEqual(capture.inputFrame.maxX, fixture.width - boundedInset)
             } else {

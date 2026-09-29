@@ -733,6 +733,7 @@ actor MacWorkspaceClient {
         workspaceId: String,
         name: String? = nil,
         model: String? = nil,
+        thinking: ThinkingLevel? = nil,
         prompt: String? = nil,
         ephemeral: Bool? = nil,
         worktreeId: String? = nil,
@@ -741,6 +742,7 @@ actor MacWorkspaceClient {
         struct Body: Encodable {
             let name: String?
             let model: String?
+            let thinking: String?
             let prompt: String?
             let ephemeral: Bool?
             let worktreeId: String?
@@ -751,6 +753,7 @@ actor MacWorkspaceClient {
             body: Body(
                 name: name,
                 model: model,
+                thinking: thinking?.rawValue,
                 prompt: prompt,
                 ephemeral: ephemeral,
                 worktreeId: worktreeId,

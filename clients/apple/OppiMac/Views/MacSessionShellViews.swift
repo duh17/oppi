@@ -199,11 +199,13 @@ struct SessionTraceShellDetail: View {
     var isActivePane = true
     var activatePane: (() -> Void)? = nil
     var loadsSessionOnMount = true
+    var chromePlacement: MacSessionChromePlacement = .windowToolbar
+    var closePane: (() -> Void)? = nil
     @State private var ownedComposerState = MacSessionComposerState()
     @State private var openDescriptor: ToolContentDescriptor?
     @State private var isLoadingDocument = false
     @State private var documentError: String?
-    @State private var fontPreferenceRevision = 0
+    @Environment(\.macTypographyRevision) private var typographyRevision
     @FocusState private var sessionFocus: KeybindingFocus?
 
     private var inspectorPresented: Binding<Bool> {
@@ -242,12 +244,25 @@ struct SessionTraceShellDetail: View {
     }
 
     var body: some View {
-        let _ = fontPreferenceRevision
-        GeometryReader { proxy in
-            sessionColumns(for: MacSessionShellLayoutPolicy.columns(
-                availableWidth: proxy.size.width,
-                hasDocument: hasOpenDocument
-            ))
+        let _ = typographyRevision
+        Group {
+            if chromePlacement == .pane {
+                VStack(spacing: 0) {
+                    paneSessionChrome
+                    sessionCanvas
+                }
+            } else {
+                sessionCanvas
+                    .navigationTitle(store.session?.displayTitle ?? "Session")
+                    .toolbar {
+                        sessionToolbar
+                    }
+                    .inspector(isPresented: inspectorPresentation) {
+                        sessionInspector
+                            .navigationTitle("Files")
+                            .inspectorColumnWidth(min: 260, ideal: 320, max: 420)
+                    }
+            }
         }
             .background {
                 Rectangle()
@@ -258,14 +273,6 @@ struct SessionTraceShellDetail: View {
                 presentation.openPlan = plan
             })
             .environment(\.macReviewCommentStaging, reviewCommentStaging)
-            .navigationTitle(store.session?.displayTitle ?? "Session")
-            .toolbar {
-                sessionToolbar
-            }
-            .inspector(isPresented: inspectorPresentation) {
-                sessionInspector
-                    .inspectorColumnWidth(min: 260, ideal: 320, max: 420)
-            }
             .task(id: store.selectedTarget?.sessionId) {
                 guard loadsSessionOnMount else { return }
                 await store.mountSelectedFromLocalConfig()
@@ -289,11 +296,6 @@ struct SessionTraceShellDetail: View {
                 if !active {
                     sessionFocus = nil
                 }
-            }
-            .onReceive(NotificationCenter.default.publisher(
-                for: FontPreferenceStore.didChangeNotification
-            )) { _ in
-                fontPreferenceRevision &+= 1
             }
             .focusedSceneValue(\.macSessionFilesCommand, filesCommandItem)
             .focusedSceneValue(\.macSessionOutlineCommand, outlineCommandItem)
@@ -351,6 +353,141 @@ struct SessionTraceShellDetail: View {
 
     private func toggleContext() {
         presentation.isContextPresented.toggle()
+    }
+
+    private var hasLiveAsk: Bool {
+        store.currentExtensionRequest != nil
+            || (store.selectedTarget?.summary.pendingAskCount ?? 0) > 0
+    }
+
+    private var paneTitle: String {
+        store.session?.displayTitle
+            ?? store.selectedTarget?.summary.session.displayTitle
+            ?? "Session"
+    }
+
+    private var showsPaneFiles: Bool {
+        chromePlacement == .pane && presentation.isInspectorPresented
+    }
+
+    private var sessionCanvas: some View {
+        GeometryReader { proxy in
+            laidOutSession(width: proxy.size.width)
+        }
+    }
+
+    @ViewBuilder
+    private func laidOutSession(width: CGFloat) -> some View {
+        let filesBesideTimeline = showsPaneFiles
+            && MacSessionWindowChrome.presentsFilesBesideTimeline(availableWidth: width)
+        let timelineWidth = filesBesideTimeline
+            ? width - MacSessionWindowChrome.filesColumnWidth(availableWidth: width)
+            : width
+        let columns = sessionColumns(for: MacSessionShellLayoutPolicy.columns(
+            availableWidth: timelineWidth,
+            hasDocument: hasOpenDocument
+        ))
+        if showsPaneFiles {
+            if filesBesideTimeline {
+                HStack(spacing: 0) {
+                    columns
+                    Divider()
+                    sessionInspector
+                        .frame(width: MacSessionWindowChrome.filesColumnWidth(availableWidth: width))
+                }
+            } else {
+                sessionInspector
+            }
+        } else {
+            columns
+        }
+    }
+
+    private var paneSessionChrome: some View {
+        HStack(spacing: 6) {
+            Text(paneTitle)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.themeFg)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if hasLiveAsk {
+                Image(systemName: "questionmark.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.themeOrange)
+                    .accessibilityLabel("Needs input")
+                    .accessibilityIdentifier("mac.session.pane.ask")
+                    .help("Needs input")
+            }
+            Spacer(minLength: 8)
+            filesButton
+            outlineButton
+            if store.session != nil || store.selectedTarget != nil {
+                contextButton
+            }
+            if let closePane {
+                MacPaneCloseControl(sessionTitle: paneTitle, action: closePane)
+                    .frame(width: 16, height: 16)
+                    .help("Close Pane")
+                    .accessibilityLabel("Close \(paneTitle) pane")
+                    .accessibilityIdentifier("mac.session.pane.close")
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) { Divider() }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("mac.session.pane.header")
+    }
+
+    private var filesButton: some View {
+        Button(action: toggleFiles) {
+            Label(
+                presentation.isInspectorPresented ? "Close Files" : "Files",
+                systemImage: presentation.isInspectorPresented ? "folder.fill" : "folder"
+            )
+            .labelStyle(.iconOnly)
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .help("Session Files")
+        .accessibilityLabel(presentation.isInspectorPresented ? "Close session files" : "Open session files")
+        .accessibilityIdentifier("mac.session.toolbar.files")
+    }
+
+    private var outlineButton: some View {
+        Button(action: toggleOutline) {
+            Label("Session Outline", systemImage: "list.bullet")
+                .labelStyle(.iconOnly)
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .help("Session Outline")
+        .accessibilityLabel("Open session outline")
+        .accessibilityIdentifier("mac.session.toolbar.outline")
+        .popover(isPresented: outlinePresented, arrowEdge: .bottom) {
+            MacSessionOutlineView(store: store) {
+                presentation.isOutlinePresented = false
+            }
+            .frame(width: 380, height: 480)
+        }
+    }
+
+    private var contextButton: some View {
+        let usage = SessionContextUsagePresentation.snapshot(for: store.session)
+        return Button(action: toggleContext) {
+            MacSessionContextToolbarLabel(usage: usage)
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .help(SessionContextUsagePresentation.toolbarTitle(usage))
+        .accessibilityIdentifier("mac.session.toolbar.context")
+        .accessibilityLabel("Open context inspector")
+        .accessibilityValue(usage.accessibilityLabel)
+        .popover(isPresented: contextPresented, arrowEdge: .bottom) {
+            MacSessionContextInspectorView(store: store)
+                .frame(width: 380, height: 480)
+        }
     }
 
     @ViewBuilder
@@ -515,55 +652,28 @@ struct SessionTraceShellDetail: View {
                 .help("Pi session")
         }
 
-        ToolbarItem(placement: .primaryAction) {
-            Button(action: toggleFiles) {
-                Label(
-                    presentation.isInspectorPresented ? "Close Files" : "Files",
-                    systemImage: presentation.isInspectorPresented ? "folder.fill" : "folder"
-                )
-                .labelStyle(.iconOnly)
+        if hasLiveAsk {
+            ToolbarItem(placement: .primaryAction) {
+                Image(systemName: "questionmark.circle.fill")
+                    .foregroundStyle(.themeOrange)
+                    .accessibilityLabel("Needs input")
+                    .accessibilityIdentifier("mac.session.pane.ask")
+                    .help("Needs input")
             }
-            .help("Session Files")
-            .accessibilityLabel(presentation.isInspectorPresented ? "Close session files" : "Open session files")
-            .accessibilityIdentifier("mac.session.toolbar.files")
         }
 
         ToolbarItem(placement: .primaryAction) {
-            Button(action: toggleOutline) {
-                Label("Session Outline", systemImage: "list.bullet")
-                    .labelStyle(.iconOnly)
-            }
-            .help("Session Outline")
-            .accessibilityLabel("Open session outline")
-            .accessibilityIdentifier("mac.session.toolbar.outline")
-            .popover(isPresented: outlinePresented, arrowEdge: .bottom) {
-                MacSessionOutlineView(store: store) {
-                    presentation.isOutlinePresented = false
-                }
-                .frame(width: 380, height: 480)
-            }
+            filesButton
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            outlineButton
         }
 
         ToolbarItem(placement: .primaryAction) {
             if store.session != nil || store.selectedTarget != nil {
-                contextToolbarItem
+                contextButton
             }
-        }
-    }
-
-    @ViewBuilder
-    private var contextToolbarItem: some View {
-        let usage = SessionContextUsagePresentation.snapshot(for: store.session)
-        Button(action: toggleContext) {
-            MacSessionContextToolbarLabel(usage: usage)
-        }
-        .help(SessionContextUsagePresentation.toolbarTitle(usage))
-        .accessibilityIdentifier("mac.session.toolbar.context")
-        .accessibilityLabel("Open context inspector")
-        .accessibilityValue(usage.accessibilityLabel)
-        .popover(isPresented: contextPresented, arrowEdge: .bottom) {
-            MacSessionContextInspectorView(store: store)
-                .frame(width: 380, height: 480)
         }
     }
 
@@ -602,7 +712,6 @@ struct SessionTraceShellDetail: View {
             }
         }
         .themedScrollSurface()
-        .navigationTitle("Files")
     }
 
     private var sessionChangesInspector: some View {
@@ -650,7 +759,54 @@ struct SessionTraceShellDetail: View {
     }
 }
 
+/// Split-pane close stays one AppKit button. SwiftUI icon buttons beside it
+/// do not expose identifiers in an offscreen host, so an empty-title check
+/// would count every icon as Close.
+private struct MacPaneCloseControl: NSViewRepresentable {
+    var sessionTitle: String
+    var action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton()
+        button.bezelStyle = .inline
+        button.isBordered = false
+        button.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: nil)
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleProportionallyDown
+        button.identifier = NSUserInterfaceItemIdentifier("mac.session.pane.close")
+        button.toolTip = "Close Pane"
+        button.setAccessibilityLabel("Close \(sessionTitle) pane")
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.closePane)
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentHuggingPriority(.required, for: .vertical)
+        return button
+    }
+
+    func updateNSView(_ button: NSButton, context: Context) {
+        button.setAccessibilityLabel("Close \(sessionTitle) pane")
+        context.coordinator.action = action
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func closePane() {
+            action()
+        }
+    }
+}
+
 private struct MacSessionChangedFilesCard: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let files: [SessionChangedFile]
     let changedFileCount: Int
     let overflow: Int
@@ -669,6 +825,7 @@ private struct MacSessionChangedFilesCard: View {
     }
 
     var body: some View {
+        let _ = typographyRevision
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Label("Changed files", systemImage: "doc.on.doc")
@@ -822,9 +979,11 @@ private struct MacSessionFilePreviewCard: View {
 }
 
 private struct MacTextFileSourcePreview: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let preview: MacSessionFilePreview
 
     var body: some View {
+        let _ = typographyRevision
         if case .orgMode = preview.fileType, let text = preview.text {
             MacOrgDocumentPreview(content: text)
         } else if let language = preview.sourceLanguageLabel, let text = preview.text {
@@ -846,6 +1005,7 @@ private struct MacTextFileSourcePreview: View {
 }
 
 private struct MacSessionDiffPreview: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let diff: WorkspaceReviewDiffResponse
     let close: () -> Void
 
@@ -854,6 +1014,7 @@ private struct MacSessionDiffPreview: View {
     }
 
     var body: some View {
+        let _ = typographyRevision
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Label(diff.path, systemImage: "plus.forwardslash.minus")

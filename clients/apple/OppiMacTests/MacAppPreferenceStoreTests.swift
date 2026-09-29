@@ -137,7 +137,7 @@ struct FontPreferenceStoreTests {
             language: .swift
         )
         let font = try #require(attributed.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
-        let expectedSize = CGFloat(FontPreferenceStore.codePointSize(baseSize: 11))
+        let expectedSize = CGFloat(FontPreferenceStore.codePointSize(baseSize: MacReadingType.codeBaseSize))
         let requested = try #require(NSFont(name: "MonaspaceNeon-Regular", size: expectedSize))
 
         #expect(font.pointSize == expectedSize)
@@ -154,9 +154,8 @@ struct FontPreferenceStoreTests {
         FontPreferenceStore.setUseMonoForMessages(true)
 
         let monoFont = FontPreferenceStore.macMessageFont(forTextStyle: .body)
-        let expectedSize = CGFloat(FontPreferenceStore.messagePointSize(
-            baseSize: Double(NSFont.preferredFont(forTextStyle: .body).pointSize)
-        ))
+        // Mac body reads at 15 pt at 100%; message zoom multiplies that base.
+        let expectedSize = CGFloat(15 * FontPreferenceStore.maximumMessageTextScale)
         let requested = try #require(NSFont(name: "MonaspaceNeon-Regular", size: expectedSize))
 
         #expect(monoFont.pointSize == expectedSize)
@@ -172,31 +171,19 @@ struct FontPreferenceStoreTests {
         #expect(callout.fontName == proportionalFont.fontName)
     }
 
-    @Test func liveMacTypographyRepaintsWithoutReplacingTimelineOrDocumentSubtrees() throws {
-        let testsURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        let macViews = testsURL.deletingLastPathComponent().appending(path: "OppiMac/Views")
-        let timeline = try String(
-            contentsOf: macViews.appending(path: "MacSessionTimelineViews.swift"),
-            encoding: .utf8
-        )
-        let document = try String(
-            contentsOf: macViews.appending(path: "MacToolDocumentColumn.swift"),
-            encoding: .utf8
-        )
-        let markdown = try String(
-            contentsOf: macViews.appending(path: "MacMarkdownBlockViews.swift"),
-            encoding: .utf8
-        )
+    @Test func macReadingSizesAtOneHundredPercentSuitADesktopDisplay() {
+        let snapshot = captureFontDefaults()
+        defer { restoreFontDefaults(snapshot) }
 
-        #expect(timeline.contains("FontPreferenceStore.didChangeNotification"))
-        #expect(timeline.contains("let _ = fontPreferenceRevision"))
-        #expect(!timeline.contains(".id(fontPreferenceRevision)"))
-        #expect(timeline.contains("typography: .message"))
-        #expect(timeline.contains("typography: .thinking"))
-        #expect(document.contains("FontPreferenceStore.didChangeNotification"))
-        #expect(document.contains("let _ = fontPreferenceRevision"))
-        #expect(!document.contains(".id(fontPreferenceRevision)"))
-        #expect(markdown.contains("FontPreferenceStore.macMessageFont"))
+        FontPreferenceStore.setUseMonoForMessages(false)
+        FontPreferenceStore.setMessageTextScale(FontPreferenceStore.standardMessageTextScale)
+        FontPreferenceStore.setCodeTextScale(FontPreferenceStore.standardCodeTextScale)
+
+        #expect(FontPreferenceStore.macMessageFont(forTextStyle: .body).pointSize == 15)
+        #expect(FontPreferenceStore.macCodeFont().pointSize == 13)
+        // Inline code follows message zoom, not code zoom.
+        FontPreferenceStore.setCodeTextScale(FontPreferenceStore.minimumCodeTextScale)
+        #expect(FontPreferenceStore.macInlineCodeFont(forTextStyle: .body).pointSize == 14)
     }
 
     @Test func remainingMacCodePaintersUseFontPreferences() throws {
@@ -212,9 +199,6 @@ struct FontPreferenceStoreTests {
         )
 
         #expect(shell.contains("FontPreferenceStore.macCodeFont"))
-        #expect(shell.contains("FontPreferenceStore.didChangeNotification"))
-        #expect(shell.contains("let _ = fontPreferenceRevision"))
-        #expect(!shell.contains(".id(fontPreferenceRevision)"))
         #expect(!shell.contains("design: .monospaced"))
         #expect(!shell.contains(".caption.monospaced()"))
         #expect(extensions.contains("FontPreferenceStore.macCodeFont"))

@@ -50,8 +50,9 @@ struct MacSessionComposerBar: View {
     var isActivePane = true
     var activatePane: () -> Void = {}
     @Environment(\.theme) private var theme
+    @Environment(\.macTypographyRevision) private var typographyRevision
     /// Compact vs iOS 44pt HIG target; fill/stroke/glyph still match ChatInputBar.
-    private let actionVisualDiameter: CGFloat = 32
+    private let actionVisualDiameter = MacComposerInputMetrics.actionDiameter
     @State private var isAttachmentDropTarget = false
     @State private var isModelPickerPresented = false
     @State private var showReviewCommentStash = false
@@ -81,6 +82,7 @@ struct MacSessionComposerBar: View {
     }
 
     var body: some View {
+        let _ = typographyRevision
         VStack(alignment: .leading, spacing: 10) {
             if MacSessionWindowChrome.showsComposerStateBar(
                 surface: composerSurface,
@@ -120,6 +122,10 @@ struct MacSessionComposerBar: View {
                 }
             }
         }
+        // Same centered reading column as the timeline, like the iOS capsule
+        // sitting under its messages rather than spanning a wide pane.
+        .frame(maxWidth: MacTimelineProsePaint.currentColumnWidth)
+        .frame(maxWidth: .infinity)
         .onAppear {
             if let sessionId = store.selectedTarget?.sessionId {
                 store.bindExtensionComposer(composerState, sessionId: sessionId)
@@ -196,6 +202,7 @@ struct MacSessionComposerBar: View {
         .focusedSceneValue(\.macSessionSendCommand, sendCommandItem)
         .focusedSceneValue(\.macSessionStopTurnCommand, stopTurnCommandItem)
         .focusedSceneValue(\.macSessionResumeCommand, resumeCommandItem)
+        .focusedSceneValue(\.macSessionDictationCommand, dictationCommandItem)
     }
 
     private var composerSurface: MacSessionComposerSurface {
@@ -233,6 +240,18 @@ struct MacSessionComposerBar: View {
 
     private var resumeCommandItem: MacSessionCommandItem? {
         commandItem(enabled: sessionCommandAvailability.resume, action: resumeSession)
+    }
+
+    /// Same enablement as the mic button, so the shortcut never starts a
+    /// recording the button would refuse.
+    private var dictationCommandItem: MacSessionCommandItem? {
+        commandItem(
+            enabled: composerSurface == .editor
+                && !isSendInFlight
+                && canControlDictation
+                && composerState.dictation.state != .stopping,
+            action: { Task { await toggleDictation() } }
+        )
     }
 
     private func commandItem(
@@ -287,6 +306,17 @@ struct MacSessionComposerBar: View {
                 composerState.pendingAttachments.removeAll { sentAttachmentIDs.contains($0.id) }
             }
         }
+    }
+
+    /// Vim preset: Esc leaves "insert mode" for the timeline, where `i`
+    /// comes back. Other presets keep the text system's Esc.
+    private func leaveComposerForTimeline() -> Bool {
+        guard MacTimelineKeybinding.composerEscapeFocusesTimeline(mode: store.keybindingMode) else {
+            return false
+        }
+        composerState.resignKeyboardOwnership()
+        store.focusTimeline()
+        return true
     }
 
     private func stopTurn() {
@@ -507,7 +537,8 @@ struct MacSessionComposerBar: View {
     }
 
     private var composerCapsule: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let inputFont = MacComposerInputMetrics.font
+        return VStack(alignment: .leading, spacing: 0) {
             if !composerState.pendingAttachments.isEmpty {
                 MacPendingAttachmentStrip(
                     attachments: composerState.pendingAttachments,
@@ -529,9 +560,10 @@ struct MacSessionComposerBar: View {
             HStack(alignment: .bottom, spacing: 8) {
                 dictationButton
 
-                ZStack(alignment: .leading) {
+                ZStack(alignment: .topLeading) {
                     if composerState.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Text(composerPlaceholder)
+                            .font(Font(inputFont))
                             .foregroundStyle(placeholderStyle)
                             .allowsHitTesting(false)
                             .accessibilityHidden(true)
@@ -541,6 +573,7 @@ struct MacSessionComposerBar: View {
                         isEnabled: store.canSendMessage,
                         accessibilityLabel: composerPlaceholder,
                         textColor: NSColor(theme.text.primary),
+                        font: inputFont,
                         keyboardOwnershipGeneration: composerState.keyboardOwnershipGeneration,
                         wantsKeyboardOwnership: composerState.wantsKeyboardOwnership,
                         onFocusChange: { focused in
@@ -550,31 +583,35 @@ struct MacSessionComposerBar: View {
                                 sessionFocus.wrappedValue = .composer
                             }
                         },
-                        onPasteAttachments: stagePasteboardPayload
+                        onPasteAttachments: stagePasteboardPayload,
+                        onEscape: leaveComposerForTimeline
                     )
-                    .frame(
-                        minHeight: MacComposerInputMetrics.minimumHeight,
-                        maxHeight: MacComposerInputMetrics.maximumHeight
-                    )
+                    // Hug the fitted text height (sizeThatFits clamps it to
+                    // 1...6 lines). A min/max frame instead grew to the cap
+                    // whenever the overlay offered room: a tall empty capsule.
+                    .fixedSize(horizontal: false, vertical: true)
                     .focused(sessionFocus, equals: .composer)
                     .accessibilityIdentifier("mac.composer.input")
                     .accessibilityLabel(composerPlaceholder)
                 }
+                // One line centers between the round controls; growth pushes
+                // the controls down with the last line, as on iOS.
+                .frame(minHeight: actionVisualDiameter)
 
                 primaryActionButton
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
 
             composerActionRow
-                .padding(.horizontal, 12)
-                .padding(.top, 4)
-                .padding(.bottom, 10)
+                .padding(.horizontal, 14)
+                .padding(.top, 2)
+                .padding(.bottom, 12)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .themedSurface(
             .elevatedPanel,
-            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+            in: RoundedRectangle(cornerRadius: MacComposerInputMetrics.capsuleCornerRadius, style: .continuous)
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Session composer")
@@ -592,10 +629,14 @@ struct MacSessionComposerBar: View {
         )
     }
 
+    /// iOS groups the action pills in one glass container so neighboring
+    /// capsules blend instead of stacking separate blurs.
     private var composerActionRow: some View {
-        ViewThatFits(in: .horizontal) {
-            fullComposerActionRow
-            compactComposerActionRow
+        GlassEffectContainer(spacing: 0) {
+            ViewThatFits(in: .horizontal) {
+                fullComposerActionRow
+                compactComposerActionRow
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -816,7 +857,7 @@ struct MacSessionComposerBar: View {
                         .tint(sendActionForegroundColor)
                 } else {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(sendActionForegroundColor)
                 }
             }
@@ -845,7 +886,7 @@ struct MacSessionComposerBar: View {
                         .tint(stopActionForegroundColor)
                 } else {
                     Image(systemName: "stop.fill")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(stopActionForegroundColor)
                 }
             }
@@ -862,64 +903,13 @@ struct MacSessionComposerBar: View {
         store.canSendMessage || composerState.dictation.isLive
     }
 
-    private func dictationIndicatorColor(
-        for indicator: MacComposerDictationPaint.Indicator
-    ) -> Color {
-        switch indicator {
-        case .comment: theme.text.tertiary
-        case .cyan: theme.accent.cyan
-        }
-    }
-
     private var dictationButton: some View {
-        let paint = MacComposerDictationPaint.presentation(for: composerState.dictation.state)
-        let indicatorColor = dictationIndicatorColor(for: paint.indicator)
-
-        return Button {
-            Task { await toggleDictation() }
-        } label: {
-            ZStack {
-                Circle().fill(.themeBgHighlight)
-                Circle().stroke(
-                    indicatorColor.opacity(paint.ringOpacity),
-                    lineWidth: paint.ringLineWidth
-                )
-
-                switch paint.content {
-                case .progress:
-                    ProgressView()
-                        .controlSize(.mini)
-                        .tint(indicatorColor)
-                case .cloud:
-                    Image(systemName: "cloud")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(indicatorColor)
-                case .microphone:
-                    Image(systemName: "mic")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(indicatorColor.opacity(paint.glyphOpacity))
-                }
-            }
-            .frame(width: actionVisualDiameter, height: actionVisualDiameter)
-        }
-        .buttonStyle(.plain)
-        .disabled(isSendInFlight || !canControlDictation || composerState.dictation.state == .stopping)
-        .accessibilityIdentifier("mac.composer.dictation")
-        .accessibilityLabel(dictationActionLabel)
-        .help(dictationActionLabel)
-    }
-
-    private var dictationActionLabel: String {
-        switch composerState.dictation.state {
-        case .idle, .error:
-            "Start dictation"
-        case .requestingPermission, .connecting:
-            "Cancel dictation setup"
-        case .recording:
-            "Stop dictation"
-        case .stopping:
-            "Finishing dictation"
-        }
+        MacComposerDictationButton(
+            state: composerState.dictation.state,
+            diameter: actionVisualDiameter,
+            isEnabled: !isSendInFlight && canControlDictation && composerState.dictation.state != .stopping,
+            action: { Task { await toggleDictation() } }
+        )
     }
 
     private func toggleDictation() async {
@@ -1011,18 +1001,23 @@ struct MacSessionComposerBar: View {
                         .controlSize(.small)
                 }
             } else {
+                // The provider mark is the model's identity, as on iOS; it
+                // stays when the row compacts and the name drops.
+                let provider = MacComposerActionPaint.modelPillProviderKey(for: store.session?.model)
                 MacComposerChromePill(
-                    systemImage: compact ? "cpu" : nil,
+                    systemImage: compact && provider == nil ? "cpu" : nil,
                     text: compact
                         ? nil
                         : (MacModelSelection.shortDisplayName(for: store.session?.model) ?? "Model"),
                     showChevron: !compact,
                     chevronSystemImage: MacComposerActionPaint.modelChevronSystemImage
                 ) {
-                    if !compact, let provider = MacComposerActionPaint.modelPillProviderKey(
-                        for: store.session?.model
-                    ) {
-                        ProviderGlyph(provider: provider, size: 11, color: theme.text.primary)
+                    if let provider {
+                        ProviderGlyph(
+                            provider: provider,
+                            size: MacComposerChromePill<EmptyView>.glyphSize,
+                            color: theme.text.primary
+                        )
                     }
                 }
             }
@@ -1305,6 +1300,67 @@ enum MacComposerDictationPaint {
     }
 }
 
+/// The mic circle shared by the session composer and Quick Session. Same
+/// neutral fill and semantic ring as the iOS mic, without its UIKit owner.
+struct MacComposerDictationButton: View {
+    let state: MacComposerDictationController.State
+    let diameter: CGFloat
+    let isEnabled: Bool
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        let paint = MacComposerDictationPaint.presentation(for: state)
+        let indicatorColor = indicatorColor(for: paint.indicator)
+        Button(action: action) {
+            ZStack {
+                Circle().fill(.themeBgHighlight)
+                Circle().stroke(
+                    indicatorColor.opacity(paint.ringOpacity),
+                    lineWidth: paint.ringLineWidth
+                )
+                switch paint.content {
+                case .progress:
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(indicatorColor)
+                case .cloud:
+                    Image(systemName: "cloud")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(indicatorColor)
+                case .microphone:
+                    Image(systemName: "mic")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(indicatorColor.opacity(paint.glyphOpacity))
+                }
+            }
+            .frame(width: diameter, height: diameter)
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .accessibilityIdentifier("mac.composer.dictation")
+        .accessibilityLabel(actionLabel)
+        .help(actionLabel)
+    }
+
+    private var actionLabel: String {
+        switch state {
+        case .idle, .error: "Start dictation"
+        case .requestingPermission, .connecting: "Cancel dictation setup"
+        case .recording: "Stop dictation"
+        case .stopping: "Finishing dictation"
+        }
+    }
+
+    private func indicatorColor(for indicator: MacComposerDictationPaint.Indicator) -> Color {
+        switch indicator {
+        case .comment: theme.text.tertiary
+        case .cyan: theme.accent.cyan
+        }
+    }
+}
+
 /// Token mapping for composer send/stop/model paint. Mirrors iOS ChatInputBar
 /// colors without rendering SwiftUI in tests.
 enum MacComposerActionPaint {
@@ -1341,7 +1397,11 @@ enum MacComposerActionPaint {
     }
 }
 
+/// iOS composer pill: glass capsule, caption-weight label. Mac `.caption`
+/// is 10 pt, so sizes are explicit to land where iOS reads.
 struct MacComposerChromePill<Leading: View>: View {
+    static var glyphSize: CGFloat { 13 }
+
     var systemImage: String?
     var text: String?
     var tint: Color?
@@ -1367,28 +1427,28 @@ struct MacComposerChromePill<Leading: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             if Leading.self != EmptyView.self {
                 leading
             }
             if let systemImage {
                 Image(systemName: systemImage)
-                    .font(.caption2.weight(.semibold))
+                    .font(.system(size: 12, weight: .semibold))
             }
             if let text {
                 Text(text)
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
             }
             if showChevron {
                 Image(systemName: chevronSystemImage)
-                    .font(.caption2.weight(.semibold))
+                    .font(.system(size: 10, weight: .semibold))
             }
         }
         .foregroundStyle(tint ?? theme.text.primary)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(theme.bg.highlight.opacity(0.72), in: Capsule())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .glassEffect(.regular, in: Capsule())
         .contentShape(Capsule())
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -1562,7 +1622,7 @@ private struct MacFileMentionSuggestionList: View {
     }
 }
 
-private struct MacPendingAttachmentStrip: View {
+struct MacPendingAttachmentStrip: View {
     let attachments: [MacPendingAttachment]
     let remove: (String) -> Void
     @Environment(\.theme) private var theme

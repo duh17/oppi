@@ -4,6 +4,7 @@ import SwiftUI
 
 /// Map + source for GeoJSON/TopoJSON files. Not a sheet. Document column stays the reading surface.
 struct MacGeoJSONPreviewView: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     private enum Mode: String, Hashable {
         case rendered
         case source
@@ -17,6 +18,7 @@ struct MacGeoJSONPreviewView: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
+        let _ = typographyRevision
         VStack(alignment: .leading, spacing: 8) {
             header
             content

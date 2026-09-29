@@ -84,34 +84,21 @@ enum MacMarkdownTypography: Equatable, Sendable {
             return requested
         }
     }
-}
 
-enum MacMarkdownBlockWidthPaint: Sendable {
-    enum Role: Equatable, Sendable {
-        case prose
-        case graphical
+    /// Timeline prose breathes with its own size: paragraph gaps and leading
+    /// track message zoom. Document chrome keeps its dense defaults.
+    @MainActor var blockSpacing: CGFloat {
+        guard usesScaledMessageFont else { return 5 }
+        return (FontPreferenceStore.macMessagePointSize(forTextStyle: resolvedTextStyle(.body)) * 0.6).rounded()
     }
 
-    static func role(for block: MarkdownBlock) -> Role {
-        guard case .codeBlock(let language, let code) = block else { return .prose }
-        switch MacMarkdownPaintDispatch.codeBlockKind(language: language, code: code) {
-        case .mermaidDiagram, .geoJSONMap, .latexFormula:
-            return .graphical
-        default:
-            return .prose
-        }
+    @MainActor var listItemSpacing: CGFloat {
+        usesScaledMessageFont ? (blockSpacing * 0.5).rounded() : 5
     }
 
-    static func maximumWidth(
-        for block: MarkdownBlock,
-        proseMaximumWidth: CGFloat?
-    ) -> CGFloat {
-        switch role(for: block) {
-        case .prose:
-            return proseMaximumWidth ?? .infinity
-        case .graphical:
-            return .infinity
-        }
+    @MainActor var lineSpacing: CGFloat {
+        guard usesScaledMessageFont else { return 0 }
+        return (FontPreferenceStore.macMessagePointSize(forTextStyle: resolvedTextStyle(.body)) * 0.2).rounded()
     }
 }
 
@@ -127,7 +114,6 @@ struct MacMarkdownDocumentView: View {
     var sourceDirectory: String? = nil
     var filePath: String? = nil
     var typography: MacMarkdownTypography = .document
-    var proseMaximumWidth: CGFloat? = nil
 
     var body: some View {
         MacMarkdownBlockList(
@@ -137,8 +123,7 @@ struct MacMarkdownDocumentView: View {
             worktreeId: worktreeId,
             sourceDirectory: resolvedSourceDirectory,
             filePath: filePath,
-            typography: typography,
-            proseMaximumWidth: proseMaximumWidth
+            typography: typography
         )
     }
 
@@ -178,10 +163,11 @@ struct MacMarkdownBlockList: View {
     var sourceDirectory: String? = nil
     var filePath: String? = nil
     var typography: MacMarkdownTypography = .document
-    var proseMaximumWidth: CGFloat? = nil
+    @Environment(\.macTypographyRevision) private var typographyRevision
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        let _ = typographyRevision
+        VStack(alignment: .leading, spacing: typography.blockSpacing) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 MacMarkdownBlockView(
                     block: block,
@@ -190,16 +176,9 @@ struct MacMarkdownBlockList: View {
                     worktreeId: worktreeId,
                     sourceDirectory: sourceDirectory,
                     filePath: filePath,
-                    typography: typography,
-                    proseMaximumWidth: proseMaximumWidth
+                    typography: typography
                 )
-                .frame(
-                    maxWidth: MacMarkdownBlockWidthPaint.maximumWidth(
-                        for: block,
-                        proseMaximumWidth: proseMaximumWidth
-                    ),
-                    alignment: .leading
-                )
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -207,6 +186,7 @@ struct MacMarkdownBlockList: View {
 }
 
 struct MacMarkdownBlockView: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let block: MarkdownBlock
     var workspaceID: String? = nil
     var sessionID: String? = nil
@@ -214,11 +194,16 @@ struct MacMarkdownBlockView: View {
     var sourceDirectory: String? = nil
     var filePath: String? = nil
     var typography: MacMarkdownTypography = .document
-    var proseMaximumWidth: CGFloat? = nil
     @Environment(\.theme) private var theme
 
-    @ViewBuilder
     var body: some View {
+        let _ = typographyRevision
+        blockContent
+            .lineSpacing(typography.lineSpacing)
+    }
+
+    @ViewBuilder
+    private var blockContent: some View {
         switch block {
         case .heading(let level, let inlines):
             MacMarkdownInlineContent(
@@ -226,7 +211,8 @@ struct MacMarkdownBlockView: View {
                 workspaceID: workspaceID,
                 sessionID: sessionID,
                 worktreeId: worktreeId,
-                sourceDirectory: sourceDirectory
+                sourceDirectory: sourceDirectory,
+                typography: typography
             )
                 .font(messageFont(
                     level == 1 ? .title3 : level == 2 ? .headline : .subheadline,
@@ -244,7 +230,8 @@ struct MacMarkdownBlockView: View {
                     workspaceID: workspaceID,
                     sessionID: sessionID,
                     worktreeId: worktreeId,
-                    sourceDirectory: sourceDirectory
+                    sourceDirectory: sourceDirectory,
+                    typography: typography
                 )
                     .font(messageFont(.body, fallback: .body))
                     .foregroundStyle(proseForeground)
@@ -261,15 +248,14 @@ struct MacMarkdownBlockView: View {
                     worktreeId: worktreeId,
                     sourceDirectory: sourceDirectory,
                     filePath: filePath,
-                    typography: typography,
-                    proseMaximumWidth: proseMaximumWidth
+                    typography: typography
                 )
                     .foregroundStyle(quoteForeground)
             }
         case .codeBlock(let language, let code):
             codeBlockView(language: language, code: code)
         case .unorderedList(let items):
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: typography.listItemSpacing) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .top, spacing: 7) {
                         Text("•")
@@ -282,14 +268,13 @@ struct MacMarkdownBlockView: View {
                             worktreeId: worktreeId,
                             sourceDirectory: sourceDirectory,
                             filePath: filePath,
-                            typography: typography,
-                            proseMaximumWidth: proseMaximumWidth
+                            typography: typography
                         )
                     }
                 }
             }
         case .orderedList(let start, let items):
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: typography.listItemSpacing) {
                 ForEach(Array(items.enumerated()), id: \.offset) { offset, item in
                     HStack(alignment: .top, spacing: 7) {
                         Text("\(start + offset).")
@@ -302,14 +287,13 @@ struct MacMarkdownBlockView: View {
                             worktreeId: worktreeId,
                             sourceDirectory: sourceDirectory,
                             filePath: filePath,
-                            typography: typography,
-                            proseMaximumWidth: proseMaximumWidth
+                            typography: typography
                         )
                     }
                 }
             }
         case .taskList(let items):
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: typography.listItemSpacing) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .top, spacing: 7) {
                         Image(systemName: item.checked ? "checkmark.square" : "square")
@@ -321,8 +305,7 @@ struct MacMarkdownBlockView: View {
                             worktreeId: worktreeId,
                             sourceDirectory: sourceDirectory,
                             filePath: filePath,
-                            typography: typography,
-                            proseMaximumWidth: proseMaximumWidth
+                            typography: typography
                         )
                     }
                 }
@@ -409,6 +392,7 @@ struct MacMarkdownBlockView: View {
 
 /// Mac paint for GFM `MarkdownBlock.table`. Parse stays in OppiCore.
 private struct MacMarkdownTableView: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let headers: [[MarkdownInline]]
     let rows: [[[MarkdownInline]]]
     var workspaceID: String? = nil
@@ -423,6 +407,7 @@ private struct MacMarkdownTableView: View {
     }
 
     var body: some View {
+        let _ = typographyRevision
         let columns = max(columnCount, 1)
         Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
             GridRow {
@@ -469,7 +454,8 @@ private struct MacMarkdownTableView: View {
             workspaceID: workspaceID,
             sessionID: sessionID,
             worktreeId: worktreeId,
-            sourceDirectory: sourceDirectory
+            sourceDirectory: sourceDirectory,
+            typography: typography
         )
         .font(typography.usesScaledMessageFont
             ? Font(FontPreferenceStore.macMessageFont(
@@ -494,6 +480,7 @@ struct MacMarkdownInlineContent: View {
     var sessionID: String? = nil
     var worktreeId: String? = nil
     var sourceDirectory: String? = nil
+    var typography: MacMarkdownTypography = .document
 
     var body: some View {
         let runs = MacMarkdownPaintDispatch.inlineRuns(
@@ -502,13 +489,13 @@ struct MacMarkdownInlineContent: View {
             sessionID: sessionID
         )
         if runs.count == 1, case .text(let textInlines) = runs[0] {
-            MacMarkdownInlineText(inlines: textInlines, worktreeId: worktreeId)
+            MacMarkdownInlineText(inlines: textInlines, worktreeId: worktreeId, typography: typography)
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(runs.enumerated()), id: \.offset) { _, run in
                     switch run {
                     case .text(let textInlines):
-                        MacMarkdownInlineText(inlines: textInlines, worktreeId: worktreeId)
+                        MacMarkdownInlineText(inlines: textInlines, worktreeId: worktreeId, typography: typography)
                     case .image(let alt, let source, let imageWorkspaceID, let imageSessionID):
                         if MacMarkdownPaintDispatch.isSVGImageSource(source) {
                             MacMarkdownSVGView(
@@ -574,12 +561,15 @@ private func expandingAudioContainers(_ inlines: [MarkdownInline]) -> [MarkdownI
 }
 
 private struct MacMarkdownInlineText: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let inlines: [MarkdownInline]
     var worktreeId: String? = nil
+    var typography: MacMarkdownTypography = .document
     @Environment(\.theme) private var theme
     @Environment(\.macOpenFileViewer) private var openFileViewer
 
     var body: some View {
+        let _ = typographyRevision
         Text(attributed(from: inlines))
             .environment(\.openURL, OpenURLAction { url in
                 MacWikiFileLinkRouting.openURLResult(
@@ -609,9 +599,16 @@ private struct MacMarkdownInlineText: View {
             result.inlinePresentationIntent = .stronglyEmphasized
             return result
         case .code(let code):
+            // Timeline prose sizes code spans against the words around them
+            // and marks them with a highlight wash, matching iOS.
             var result = AttributedString(code)
-            result.font = Font(FontPreferenceStore.macCodeFont())
+            result.font = Font(typography.usesScaledMessageFont
+                ? FontPreferenceStore.macInlineCodeFont(
+                    forTextStyle: typography.resolvedTextStyle(.body)
+                )
+                : FontPreferenceStore.macCodeFont())
             result.foregroundColor = theme.markdown.code
+            result.backgroundColor = theme.bg.highlight
             return result
         case .link(let children, let destination):
             var result = attributed(from: children)

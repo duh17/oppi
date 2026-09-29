@@ -18,23 +18,33 @@ struct MacComposerWritingToolsAffordanceTests {
 
 @Suite("Mac composer input sizing")
 struct MacComposerInputMetricsTests {
-    @Test func emptyDraftUsesOneCompactLine() {
-        let height = MacComposerInputMetrics.fittedHeight(
-            text: "",
-            font: .systemFont(ofSize: 13),
-            width: 320
-        )
+    @Test func emptyDraftUsesOneLineOfTheInputFont() {
+        let font = NSFont.systemFont(ofSize: 15)
+        let height = MacComposerInputMetrics.fittedHeight(text: "", font: font, width: 320)
 
-        #expect(height == MacComposerInputMetrics.minimumHeight)
+        #expect(height == MacComposerInputMetrics.minimumHeight(for: font))
     }
 
     @Test func multilineDraftGrowsOnlyToTheScrollLimit() {
+        let font = NSFont.systemFont(ofSize: 15)
         let height = MacComposerInputMetrics.fittedHeight(
             text: Array(repeating: "A full line of composer text", count: 40).joined(separator: "\n"),
-            font: .systemFont(ofSize: 13),
+            font: font,
             width: 240
         )
 
-        #expect(height == MacComposerInputMetrics.maximumHeight)
+        #expect(height == MacComposerInputMetrics.maximumHeight(for: font))
+    }
+
+    @Test func zoomedInputKeepsTheSameVisibleLineCount() {
+        let small = NSFont.systemFont(ofSize: 13)
+        let large = NSFont.systemFont(ofSize: 20)
+        let smallLines = MacComposerInputMetrics.maximumHeight(for: small)
+            / MacComposerInputMetrics.minimumHeight(for: small)
+        let largeLines = MacComposerInputMetrics.maximumHeight(for: large)
+            / MacComposerInputMetrics.minimumHeight(for: large)
+
+        #expect(MacComposerInputMetrics.minimumHeight(for: large) > MacComposerInputMetrics.minimumHeight(for: small))
+        #expect(abs(smallLines - largeLines) < 0.2)
     }
 }

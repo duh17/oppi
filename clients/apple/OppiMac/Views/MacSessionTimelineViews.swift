@@ -15,10 +15,7 @@ struct MacSessionTimelineView: View {
     /// Pane-owned live-tail intent. Retiling must not reset this from view state.
     var presentation: MacSessionPanePresentationState? = nil
 
-    @State private var fontPreferenceRevision = 0
-
     var body: some View {
-        let _ = fontPreferenceRevision
         let emptyFailure = MacTimelineFailurePaint.message(
             status: store.session?.status,
             lastError: lastError
@@ -63,11 +60,6 @@ struct MacSessionTimelineView: View {
         .foregroundStyle(.themeFg)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .themedScrollSurface()
-        .onReceive(NotificationCenter.default.publisher(
-            for: FontPreferenceStore.didChangeNotification
-        )) { _ in
-            fontPreferenceRevision &+= 1
-        }
         .onChange(of: items.map(\.id), initial: true) { _, ids in
             MacMarkdownStreamingParserStore.shared.retain(itemIDs: Set(ids))
         }
@@ -93,20 +85,28 @@ enum MacTimelineProseRole: Equatable, Sendable {
     case assistant
 }
 
+/// One centered reading column for every timeline row and the composer.
+/// The measure is in ems of the live message size, so ⌘+ widens the
+/// column with the text instead of reflowing it into fewer words per line.
 enum MacTimelineProsePaint: Sendable {
-    enum RowAlignment: Equatable, Sendable {
-        case leading
-        case trailing
+    static let readableMeasureEms: CGFloat = 50
+    static let minimumColumnWidth: CGFloat = 560
+    /// Space between the column and the pane edge on narrow panes.
+    static let columnGutter: CGFloat = 16
+    static let rowSpacing: CGFloat = 8
+    /// Extra air above a message so turns read as turns, not log lines.
+    static let messageTopInset: CGFloat = 6
+    static let cardCornerRadius: CGFloat = 12
+
+    static func readableColumnWidth(bodyPointSize: CGFloat) -> CGFloat {
+        max(minimumColumnWidth, (bodyPointSize * readableMeasureEms).rounded())
     }
 
-    static let readableMaximumWidth: CGFloat = 720
-    static let userLeadingInset: CGFloat = 0
-
-    static func alignment(for role: MacTimelineProseRole) -> RowAlignment {
-        switch role {
-        case .user: .leading
-        case .assistant: .leading
-        }
+    @MainActor
+    static var currentColumnWidth: CGFloat {
+        readableColumnWidth(
+            bodyPointSize: FontPreferenceStore.macMessagePointSize(forTextStyle: .body)
+        )
     }
 }
 
@@ -130,6 +130,7 @@ private struct MacSessionTimelineScrollView: View {
     var presentation: MacSessionPanePresentationState? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.macTypographyRevision) private var typographyRevision
     @State private var fallbackLiveTailAttached = true
     @State private var lastContentHeight: CGFloat = 0
     @State private var lastViewportWidth: CGFloat = 0
@@ -153,18 +154,29 @@ private struct MacSessionTimelineScrollView: View {
     }
 
     var body: some View {
+        let _ = typographyRevision
+        // Session-level values are read once here and passed down as plain
+        // values. A row that reads `store.session` itself re-renders every
+        // mounted row on each token/cost update.
+        let rowContext = ChatItemRowContext(
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            worktreeId: store.session?.worktreeId,
+            model: store.session?.model,
+            hiddenThinkingLabel: store.extensionSurface.hiddenThinkingLabel
+        )
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
+                LazyVStack(alignment: .leading, spacing: MacTimelineProsePaint.rowSpacing) {
                     ForEach(items) { item in
                         ChatItemSummaryRow(
                             item: item,
-                            workspaceID: workspaceID,
-                            sessionID: sessionID,
+                            context: rowContext,
                             toolOutputStore: toolOutputStore,
                             loadFullToolOutput: loadFullToolOutput,
                             store: store
                         )
+                            .equatable()
                             .id(item.id)
                     }
                     if isBusy, MacWorkingRowPresentation(state: store.extensionSurface.working).isVisible {
@@ -176,15 +188,20 @@ private struct MacSessionTimelineScrollView: View {
                         .id(MacSessionTimelineAutoFollow.latestAnchorID)
                         .accessibilityHidden(true)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
+                .frame(maxWidth: MacTimelineProsePaint.currentColumnWidth, alignment: .leading)
+                .padding(.horizontal, MacTimelineProsePaint.columnGutter)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 10)
                 .scrollTargetLayout()
             }
             .defaultScrollAnchor(isAttachedToLatestRow ? .bottom : nil)
             .scrollPosition($scrollPosition)
-            .scrollEdgeEffectStyle(.soft, for: .top)
+            // macOS 26 treats this scroll view as the titlebar scroll pocket
+            // and paints a toolbar-height band over the first rows, even with
+            // pane chrome between them. Nothing overlaps the timeline top.
+            .scrollEdgeEffectHidden(true, for: .top)
             .scrollEdgeEffectStyle(.soft, for: .bottom)
+            .accessibilityIdentifier("mac.timeline")
             .scrollDisabled(usdzInspectLocksScroll)
             .onPreferenceChange(MacUSDZInspectScrollLockKey.self) { usdzInspectLocksScroll = $0 }
             .background {
@@ -272,6 +289,10 @@ private struct MacSessionTimelineScrollView: View {
                 pendingRemountTarget = nil
                 scrollToLatestIfAttached(proxy: proxy, animated: false)
             }
+            .onChange(of: store.revealToolRowID) { _, rowID in
+                guard let rowID else { return }
+                revealKeyboardSelection(proxy: proxy, rowID: rowID)
+            }
             .onChange(of: store.scrollTargetID) { _, targetID in
                 guard let targetID else { return }
                 scrollToOutlineTarget(proxy: proxy, targetID: targetID, items: items)
@@ -292,8 +313,8 @@ private struct MacSessionTimelineScrollView: View {
                     } label: {
                         Label("Latest", systemImage: "arrow.down")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .buttonStyle(.glass)
+                    .controlSize(.regular)
                     .padding(.trailing, 16)
                     .padding(.bottom, bottomContentInset + 12)
                     .accessibilityIdentifier("mac.timeline.jumpToLatest")
@@ -325,24 +346,23 @@ private struct MacSessionTimelineScrollView: View {
         store.clearScrollTarget()
     }
 
+    /// Keyboard navigation keeps the selected row visible without centering
+    /// it on every step. Leaving the live tail is explicit navigation.
+    private func revealKeyboardSelection(proxy: ScrollViewProxy, rowID: String) {
+        pendingRemountTarget = MacSessionTimelineAutoFollow.pendingRemountTargetAfterExplicitNavigation(
+            pendingRemountTarget
+        )
+        setAttachedToLatestRow(MacSessionTimelineAutoFollow.shouldAttachToLatestAfterJump(
+            targetID: rowID,
+            latestItemID: items.last?.id
+        ))
+        proxy.scrollTo(rowID)
+        store.clearRevealToolRow()
+    }
+
     private func handleTimelineKeyPress(_ press: KeyPress) -> KeyPress.Result {
         guard sessionFocus.wrappedValue == .timeline else { return .ignored }
-        guard let chord = KeybindingEventMap.chord(
-            characters: press.characters,
-            isUpArrow: press.key == .upArrow,
-            isDownArrow: press.key == .downArrow,
-            isLeftArrow: press.key == .leftArrow,
-            isRightArrow: press.key == .rightArrow,
-            isReturn: press.key == .return,
-            isEscape: press.key == .escape,
-            isTab: press.key == .tab,
-            command: press.modifiers.contains(.command),
-            shift: press.modifiers.contains(.shift),
-            option: press.modifiers.contains(.option),
-            control: press.modifiers.contains(.control)
-        ) else {
-            return .ignored
-        }
+        guard let chord = press.keybindingChord else { return .ignored }
         let action = store.applyKeybinding(chord)
         return MacTimelineKeybinding.consumes(action) ? .handled : .ignored
     }
@@ -409,48 +429,76 @@ private struct MacSessionTimelineScrollView: View {
     }
 }
 
-private struct ChatItemSummaryRow: View {
+/// Session-level values every row needs, captured once per timeline render.
+private struct ChatItemRowContext: Equatable, Sendable {
+    var workspaceID: String?
+    var sessionID: String?
+    var worktreeId: String?
+    var model: String?
+    var hiddenThinkingLabel: String?
+}
+
+/// Equatable so a live token in one row does not re-run every mounted row's
+/// body: the parent re-renders on each `items` change, and the load closure
+/// alone would otherwise make SwiftUI treat every row as changed.
+private struct ChatItemSummaryRow: View, Equatable {
     let item: ChatItem
-    var workspaceID: String? = nil
-    var sessionID: String? = nil
-    var toolOutputStore: ToolOutputStore? = nil
-    var loadFullToolOutput: ((String) async -> Void)? = nil
+    let context: ChatItemRowContext
+    let toolOutputStore: ToolOutputStore?
+    let loadFullToolOutput: ((String) async -> Void)?
     let store: MacSessionTraceStore
+    /// Owner identity for `==`; the stores themselves are main-actor state.
+    private let owners: [ObjectIdentifier?]
     @Environment(\.theme) private var theme
 
-    private var worktreeId: String? { store.session?.worktreeId }
+    init(
+        item: ChatItem,
+        context: ChatItemRowContext,
+        toolOutputStore: ToolOutputStore?,
+        loadFullToolOutput: ((String) async -> Void)?,
+        store: MacSessionTraceStore
+    ) {
+        self.item = item
+        self.context = context
+        self.toolOutputStore = toolOutputStore
+        self.loadFullToolOutput = loadFullToolOutput
+        self.store = store
+        owners = [ObjectIdentifier(store), toolOutputStore.map(ObjectIdentifier.init)]
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.item == rhs.item
+            && lhs.context == rhs.context
+            && lhs.owners == rhs.owners
+    }
 
     var body: some View {
         switch item {
         case .userMessage(let id, let text, let images, let timestamp):
             MarkdownTimelineBubble(
                 role: .user,
-                title: "You",
-                subtitle: timestamp.relativeString(),
+                timestamp: timestamp,
                 text: text,
                 images: images,
                 itemID: id,
-                workspaceID: workspaceID,
-                sessionID: sessionID,
-                worktreeId: worktreeId
+                context: context
             )
+            .padding(.top, MacTimelineProsePaint.messageTopInset)
         case .assistantMessage(let id, let text, let timestamp):
             MarkdownTimelineBubble(
                 role: .assistant,
-                title: "Assistant",
-                subtitle: timestamp.relativeString(),
+                timestamp: timestamp,
                 text: text,
                 itemID: id,
-                workspaceID: workspaceID,
-                sessionID: sessionID,
-                worktreeId: worktreeId
+                context: context
             )
+            .padding(.top, MacTimelineProsePaint.messageTopInset)
         case .audioClip(_, let title, _, let timestamp):
             TimelineBubble(
                 title: "Audio",
                 subtitle: timestamp.relativeString(),
                 text: title,
-                fill: theme.accent.purple.opacity(0.12)
+                fill: theme.accent.purple.opacity(0.10)
             )
         case .thinking(let id, let preview, let hasMore, let isDone):
             ThinkingTimelineBubble(
@@ -458,10 +506,10 @@ private struct ChatItemSummaryRow: View {
                 preview: preview,
                 hasMore: hasMore,
                 isDone: isDone,
-                hiddenThinkingLabel: store.extensionSurface.hiddenThinkingLabel,
-                workspaceID: workspaceID,
-                sessionID: sessionID,
-                worktreeId: worktreeId
+                hiddenThinkingLabel: context.hiddenThinkingLabel,
+                workspaceID: context.workspaceID,
+                sessionID: context.sessionID,
+                worktreeId: context.worktreeId
             )
         case .toolCall(let id, let tool, let argsSummary, let outputPreview, let outputByteCount, let isError, let isDone):
             ToolTimelineBubble(
@@ -472,9 +520,9 @@ private struct ChatItemSummaryRow: View {
                 outputByteCount: outputByteCount,
                 isError: isError,
                 isDone: isDone,
-                workspaceID: workspaceID,
-                sessionID: sessionID,
-                worktreeId: worktreeId,
+                workspaceID: context.workspaceID,
+                sessionID: context.sessionID,
+                worktreeId: context.worktreeId,
                 toolOutputStore: toolOutputStore,
                 loadFullToolOutput: loadFullToolOutput,
                 store: store
@@ -499,7 +547,6 @@ private struct ChatItemSummaryRow: View {
             )
         }
     }
-
 }
 
 /// Match the iOS information hierarchy for low-priority lifecycle events:
@@ -510,18 +557,21 @@ private struct MacSystemTimelineStrip: View {
         case warning
     }
 
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let message: String
     let style: Style
 
     var body: some View {
+        let _ = typographyRevision
+        let size = MacTimelineChromeType.captionSize
         HStack(spacing: 6) {
             Image(systemName: symbolName)
-                .frame(width: 13, height: 13)
+                .frame(width: size, height: size)
             Text(message)
                 .multilineTextAlignment(.center)
                 .textSelection(.enabled)
         }
-        .font(.caption)
+        .font(.system(size: size))
         .foregroundStyle(ThemeShapeStyle(role: foregroundRole))
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.vertical, 4)
@@ -542,8 +592,56 @@ private struct MacSystemTimelineStrip: View {
     }
 }
 
+/// Chrome text around timeline content (row headers, captions, metadata).
+/// System face even when messages use mono, scaled with message zoom so
+/// labels stay in proportion to the prose they label.
+enum MacTimelineChromeType {
+    @MainActor static var labelSize: CGFloat {
+        (FontPreferenceStore.macMessagePointSize(forTextStyle: .body) * 0.8).rounded()
+    }
+
+    @MainActor static var captionSize: CGFloat {
+        (FontPreferenceStore.macMessagePointSize(forTextStyle: .body) * 0.74).rounded()
+    }
+}
+
+/// Timeline cards: a translucent theme tint with a light hairline edge, the
+/// iOS row read. No per-row gradients or backdrop blur: the growing live
+/// card repaints every token, and gradient fills/strokes made each token
+/// cost ~3x the layout-only work (polish harness A/B, stream p50 20 ms vs 6 ms).
+private struct MacTimelineCardSurface<Fill: ShapeStyle>: ViewModifier {
+    let fill: Fill
+    /// Nil paints the default light hairline.
+    var stroke: AnyShapeStyle? = nil
+    var cornerRadius: CGFloat = MacTimelineProsePaint.cardCornerRadius
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        content
+            .background(fill, in: shape)
+            .overlay(
+                shape.strokeBorder(
+                    stroke ?? AnyShapeStyle(theme.text.primary.opacity(0.08)),
+                    lineWidth: 1
+                )
+            )
+    }
+}
+
+private extension View {
+    func macTimelineCard<Fill: ShapeStyle>(
+        _ fill: Fill,
+        stroke: AnyShapeStyle? = nil,
+        cornerRadius: CGFloat = MacTimelineProsePaint.cardCornerRadius
+    ) -> some View {
+        modifier(MacTimelineCardSurface(fill: fill, stroke: stroke, cornerRadius: cornerRadius))
+    }
+}
+
 enum MacToolTimelineChrome {
     static let compactActionTargetSize: CGFloat = 24
+    static let cornerRadius: CGFloat = 10
 
     struct FileTitleCandidates: Equatable, Sendable {
         let full: String
@@ -1052,6 +1150,7 @@ enum MacBashCommandChrome {
 }
 
 private struct ToolTimelineBubble: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let itemID: String
     let tool: String
     let argsSummary: String
@@ -1077,74 +1176,157 @@ private struct ToolTimelineBubble: View {
         )
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            header
+    /// Everything the row paints, derived once per body. Building the tool
+    /// descriptor parses output (diffs, JSON, media), so it must not run once
+    /// per property that needs it.
+    private struct Derived {
+        let isExpanded: Bool
+        let presentation: ToolContentPresentation
+        let args: [String: JSONValue]?
+        let details: JSONValue?
+        let isVoicePresentationResult: Bool
+        let fileTitles: MacToolTimelineChrome.FileTitleCandidates?
+        let styledCallSegments: [StyledSegment]?
+        let trailing: MacToolTimelineChrome.TrailingPresentation
+        let language: String?
+        let canExpand: Bool
+        let canOpenDocument: Bool
+        let audioSource: MacToolAudioSource?
+        let codeSize: CGFloat
+    }
 
-            if isExpanded {
-                expandedBody
+    private func derive() -> Derived {
+        let isExpanded = self.isExpanded
+        let args = store.toolArgsStore.args(for: itemID)
+        let details = store.toolDetailsStore.details(for: itemID)
+        let presentation = MacToolRowPresentation.make(
+            toolRowID: itemID,
+            tool: tool,
+            argsSummary: argsSummary,
+            outputPreview: outputPreview,
+            isError: isError,
+            isDone: isDone,
+            toolOutputStore: toolOutputStore ?? store.toolOutputStore,
+            toolArgsStore: store.toolArgsStore,
+            toolDetailsStore: store.toolDetailsStore,
+            isExpanded: isExpanded
+        )
+        let isVoice = ToolContentDescriptorBuilder.audioPresentation(from: details) != nil
+        let audioSource: MacToolAudioSource?
+        if case .media(let media) = presentation.content {
+            audioSource = MacToolAudioSourceResolver.source(
+                media: media,
+                sessionID: sessionID,
+                routeScope: store.selectedTarget?.routeScope
+            )
+        } else {
+            audioSource = nil
+        }
+        return Derived(
+            isExpanded: isExpanded,
+            presentation: presentation,
+            args: args,
+            details: details,
+            isVoicePresentationResult: isVoice,
+            fileTitles: MacToolTimelineChrome.fileTitleCandidates(
+                tool: tool,
+                args: args,
+                argsSummary: argsSummary,
+                isExpanded: isExpanded
+            ),
+            styledCallSegments: MacToolTimelineChrome.styledCallSegments(
+                tool: tool,
+                isExpanded: isExpanded,
+                isVoicePresentationResult: isVoice,
+                segments: store.toolCallSegments(for: itemID)
+            ),
+            trailing: MacToolTimelineChrome.trailingPresentation(
+                tool: tool,
+                args: args,
+                details: details,
+                resultSegments: store.toolResultSegments(for: itemID),
+                isDone: isDone,
+                isInterrupted: isInterrupted
+            ),
+            language: MacToolTimelineChrome.languageLabel(
+                tool: tool,
+                args: args,
+                argsSummary: argsSummary,
+                content: presentation.content
+            ),
+            canExpand: canExpand(content: presentation.content),
+            canOpenDocument: MacToolTimelineChrome.offersDocumentView(for: presentation.content),
+            audioSource: audioSource,
+            codeSize: FontPreferenceStore.macCodeFont().pointSize
+        )
+    }
+
+    var body: some View {
+        let _ = typographyRevision
+        let row = derive()
+        let shape = RoundedRectangle(cornerRadius: MacToolTimelineChrome.cornerRadius, style: .continuous)
+        VStack(alignment: .leading, spacing: 6) {
+            header(row)
+
+            if row.isExpanded {
+                expandedBody(row)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        // Same 14 pt inner edge as message and thinking cards, so every row's
+        // first glyph lines up down the column.
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
+        .macTimelineCard(
             ThemeShapeStyle(role: state.surfaceRole).opacity(state.surfaceOpacity),
-            in: RoundedRectangle(cornerRadius: 10)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(
-                    ThemeShapeStyle(role: state.borderRole).opacity(state.borderOpacity),
-                    lineWidth: 1
-                )
+            stroke: AnyShapeStyle(ThemeShapeStyle(role: state.borderRole).opacity(state.borderOpacity)),
+            cornerRadius: MacToolTimelineChrome.cornerRadius
         )
         .overlay {
             if isSelected {
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(.themeBlue.opacity(0.72), lineWidth: 2)
+                shape.strokeBorder(.themeBlue.opacity(0.72), lineWidth: 2)
             }
         }
-        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .contentShape(shape)
         .simultaneousGesture(TapGesture().onEnded {
             store.selectToolRow(itemID)
         })
         .accessibilityIdentifier("mac.timeline.toolRow")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-        .task(id: isExpanded ? itemID : "") {
-            guard isExpanded else { return }
+        .accessibilityValue(row.isExpanded ? "Expanded" : "Collapsed")
+        .task(id: row.isExpanded ? itemID : "") {
+            guard row.isExpanded else { return }
             await loadFullToolOutput?(itemID)
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 5) {
-            headerSummary
+    private func header(_ row: Derived) -> some View {
+        HStack(spacing: 6) {
+            headerSummary(row)
 
-            HStack(spacing: 5) {
-                if let audioSource {
+            HStack(spacing: 6) {
+                if let audioSource = row.audioSource {
                     MacToolAudioPlaybackButton(itemID: itemID, source: audioSource)
                 }
                 MacToolElapsedLabel(
-                    startedAt: isVoicePresentationResult ? nil : store.toolStartTime(for: itemID),
-                    elapsedSeconds: isVoicePresentationResult ? nil : store.toolElapsed(for: itemID),
-                    isDone: isDone
+                    startedAt: row.isVoicePresentationResult ? nil : store.toolStartTime(for: itemID),
+                    elapsedSeconds: row.isVoicePresentationResult ? nil : store.toolElapsed(for: itemID),
+                    isDone: isDone,
+                    size: row.codeSize * 0.8
                 )
                 .accessibilityHidden(true)
-                trailingMetadata
+                trailingMetadata(row)
                     .accessibilityHidden(true)
-                languageMetadata
+                languageMetadata(row)
 
-                if canOpenDocument {
+                if row.canExpand {
                     Button {
                         store.selectToolRow(itemID)
-                        _ = store.applyKeybinding(.commandReturn, toolRowIDs: [itemID])
+                        store.setToolRowExpanded(itemID, expanded: !row.isExpanded)
                     } label: {
-                        Image(systemName: "sidebar.trailing")
-                            .font(.system(size: 10, weight: .semibold))
+                        Image(systemName: row.isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: row.codeSize * 0.72, weight: .semibold))
                             .foregroundStyle(.themeComment)
-                            .frame(width: 16, height: 16)
                             .frame(
                                 width: MacToolTimelineChrome.compactActionTargetSize,
                                 height: MacToolTimelineChrome.compactActionTargetSize
@@ -1152,28 +1334,7 @@ private struct ToolTimelineBubble: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.borderless)
-                    .accessibilityLabel("Open in Document View")
-                    .accessibilityIdentifier("mac.timeline.openDocument")
-                    .help("Open in Document View")
-                }
-
-                if canExpand {
-                    Button {
-                        store.selectToolRow(itemID)
-                        store.setToolRowExpanded(itemID, expanded: !isExpanded)
-                    } label: {
-                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.themeComment)
-                            .frame(width: 16, height: 16)
-                            .frame(
-                                width: MacToolTimelineChrome.compactActionTargetSize,
-                                height: MacToolTimelineChrome.compactActionTargetSize
-                            )
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel(isExpanded ? "Collapse" : "Expand")
+                    .accessibilityLabel(row.isExpanded ? "Collapse" : "Expand")
                 }
             }
             .fixedSize(horizontal: true, vertical: false)
@@ -1182,50 +1343,67 @@ private struct ToolTimelineBubble: View {
 
     /// Keep the descriptive metadata as one concise accessibility element,
     /// while the adjacent audio and disclosure buttons remain real actions.
-    private var headerSummary: some View {
-        HStack(spacing: 5) {
+    /// Mouse: click toggles expansion, double-click opens the document column
+    /// (`handleToolRowClick`); the named action keeps that reachable without
+    /// a pointer.
+    private func headerSummary(_ row: Derived) -> some View {
+        HStack(spacing: 7) {
             Image(systemName: MacToolTimelineChrome.statusSymbolName(
                 isDone: isDone,
                 isError: isError,
                 isInterrupted: isInterrupted
             ))
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: row.codeSize * 0.95, weight: .semibold))
                 .foregroundStyle(ThemeShapeStyle(role: state.statusRole))
-                .frame(width: 14, height: 14)
             if let symbolName = MacToolTimelineChrome.toolSymbolName(tool: tool) {
                 Image(systemName: symbolName)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: row.codeSize * 0.85, weight: .semibold))
                     .foregroundStyle(ThemeShapeStyle(role: MacToolTimelineChrome.toolAccentRole(tool: tool)))
-                    .frame(width: 12, height: 12)
                     .help(MacToolTimelineChrome.displayTitle(tool: tool))
             }
-            headerTitle
+            headerTitle(row)
         }
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            store.handleToolRowClick(
+                itemID,
+                clickCount: NSApp.currentEvent?.clickCount ?? 1,
+                canExpand: row.canExpand,
+                canOpenDocument: row.canOpenDocument
+            )
+        }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(headerAccessibilityLabel)
+        .accessibilityLabel(headerAccessibilityLabel(row))
+        .accessibilityActions {
+            if row.canOpenDocument {
+                Button("Open in Document View") {
+                    store.openToolDocument(itemID)
+                }
+            }
+        }
     }
 
     @ViewBuilder
-    private var headerTitle: some View {
-        if let titles = fileTitleCandidates {
-            if isExpanded {
-                plainHeaderTitle(titles.full)
+    private func headerTitle(_ row: Derived) -> some View {
+        if let titles = row.fileTitles {
+            if row.isExpanded {
+                plainHeaderTitle(titles.full, row: row)
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 ViewThatFits(in: .horizontal) {
-                    plainHeaderTitle(titles.full)
+                    plainHeaderTitle(titles.full, row: row)
                         .fixedSize(horizontal: true, vertical: false)
                         .padding(.trailing, 18)
-                    plainHeaderTitle(titles.breadcrumb)
+                    plainHeaderTitle(titles.breadcrumb, row: row)
                         .fixedSize(horizontal: true, vertical: false)
-                    plainHeaderTitle(titles.fileName)
+                    plainHeaderTitle(titles.fileName, row: row)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
             }
-        } else if let styledCallSegments {
+        } else if let styledCallSegments = row.styledCallSegments {
             MacStyledSegmentText(segments: styledCallSegments, scale: .title)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -1233,45 +1411,41 @@ private struct ToolTimelineBubble: View {
         } else {
             plainHeaderTitle(MacToolTimelineChrome.headerTitle(
                 tool: tool,
-                args: toolArgs,
+                args: row.args,
                 argsSummary: argsSummary,
-                details: toolDetails,
-                isExpanded: isExpanded,
-                isVoicePresentationResult: isVoicePresentationResult
-            ))
+                details: row.details,
+                isExpanded: row.isExpanded,
+                isVoicePresentationResult: row.isVoicePresentationResult
+            ), row: row)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
     }
 
-    private func plainHeaderTitle(_ title: String) -> some View {
+    private func plainHeaderTitle(_ title: String, row: Derived) -> some View {
         Text(title)
             .font(Font(FontPreferenceStore.macCodeFont(weight: .semibold)))
             .foregroundStyle(.themeToolTitle)
-            .help(fileTitleCandidates?.full ?? argsSummary)
+            .help(row.fileTitles?.full ?? argsSummary)
     }
 
     @ViewBuilder
-    private var languageMetadata: some View {
-        if let language = MacToolTimelineChrome.languageLabel(
-            tool: tool,
-            args: toolArgs,
-            argsSummary: argsSummary,
-            content: presentation.content
-        ) {
+    private func languageMetadata(_ row: Derived) -> some View {
+        if let language = row.language {
             Image(systemName: MacToolTimelineChrome.languageSymbolName(language))
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: row.codeSize * 0.85, weight: .semibold))
                 .foregroundStyle(.themeBlue)
-                .frame(width: 14, height: 14)
                 .help(language)
                 .accessibilityHidden(true)
         }
     }
 
     @ViewBuilder
-    private var trailingMetadata: some View {
-        if let added = trailingPresentation.added,
-           let removed = trailingPresentation.removed {
+    private func trailingMetadata(_ row: Derived) -> some View {
+        let trailing = row.trailing
+        let metaFont = Font.system(size: row.codeSize * 0.8).monospacedDigit()
+        if let added = trailing.added,
+           let removed = trailing.removed {
             HStack(spacing: 4) {
                 if added == 0, removed == 0 {
                     Text("modified")
@@ -1287,37 +1461,46 @@ private struct ToolTimelineBubble: View {
                     }
                 }
             }
-            .font(.caption2.monospacedDigit())
+            .font(metaFont)
             .fixedSize()
-        } else if let segments = trailingPresentation.segments {
+        } else if let segments = trailing.segments {
             MacStyledSegmentText(segments: segments, scale: .trailing)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: 96, alignment: .trailing)
+                .frame(maxWidth: row.codeSize * 9, alignment: .trailing)
                 .help(segments.map(\.text).joined())
-        } else if let text = trailingPresentation.text {
+        } else if let text = trailing.text {
             Text(text)
-                .font(.caption2)
+                .font(metaFont)
                 .foregroundStyle(isInterrupted ? .themeOrange : .themeComment)
                 .fixedSize()
         }
     }
 
     @ViewBuilder
-    private var expandedBody: some View {
-        if let command = bashCommand {
+    private func expandedBody(_ row: Derived) -> some View {
+        if let command = MacBashCommandChrome.commandText(
+            tool: tool,
+            args: row.args,
+            argsSummary: argsSummary,
+            outputText: MacToolRowOutput.displayed(
+                isExpanded: row.isExpanded,
+                storeOutput: (toolOutputStore ?? store.toolOutputStore).fullOutput(for: itemID),
+                outputPreview: outputPreview
+            )
+        ) {
             MacBashCommandBar(command: command)
         }
 
-        toolOutput
+        toolOutput(row)
     }
 
     @ViewBuilder
-    private var toolOutput: some View {
-        switch presentation.content {
+    private func toolOutput(_ row: Derived) -> some View {
+        switch row.presentation.content {
         case .diff(let diff):
             MacToolTimelineDiffPreview(diff: diff)
-                .frame(maxHeight: isExpanded ? nil : 220, alignment: .top)
+                .frame(maxHeight: row.isExpanded ? nil : 220, alignment: .top)
                 .clipped()
         case .code(let code):
             MacCodeOutputPreview(
@@ -1329,7 +1512,7 @@ private struct ToolTimelineBubble: View {
                     startLine: code.startLine ?? 1
                 )
             )
-            .frame(maxHeight: isExpanded ? 360 : 180)
+            .frame(maxHeight: row.isExpanded ? 360 : 180)
         case .markdown(let markdown):
             MacMarkdownDocumentView(
                 markdown: markdown.text,
@@ -1340,9 +1523,9 @@ private struct ToolTimelineBubble: View {
                 filePath: markdown.filePath
             )
             .textSelection(.enabled)
-            .lineLimit(isExpanded ? nil : 12)
+            .lineLimit(row.isExpanded ? nil : 12)
         case .file(let file):
-            fileOutput(file)
+            fileOutput(file, row: row)
         case .media(let media):
             MacToolDocumentMediaView(
                 media: media,
@@ -1352,102 +1535,20 @@ private struct ToolTimelineBubble: View {
                 worktreeId: worktreeId,
                 routeScope: store.selectedTarget?.routeScope
             )
-            .frame(maxHeight: isExpanded ? nil : 220, alignment: .top)
+            .frame(maxHeight: row.isExpanded ? nil : 220, alignment: .top)
             .clipped()
         case .terminal(let terminal):
-            terminalOutput(terminal)
+            terminalOutput(terminal, row: row)
         case .status(let message):
             Text(message)
-                .font(.caption)
+                .font(.system(size: row.codeSize * 0.85))
                 .foregroundStyle(.themeFgDim)
         case nil:
             EmptyView()
         }
     }
 
-    private var presentation: ToolContentPresentation {
-        MacToolRowPresentation.make(
-            toolRowID: itemID,
-            tool: tool,
-            argsSummary: argsSummary,
-            outputPreview: outputPreview,
-            isError: isError,
-            isDone: isDone,
-            toolOutputStore: toolOutputStore ?? store.toolOutputStore,
-            toolArgsStore: store.toolArgsStore,
-            toolDetailsStore: store.toolDetailsStore,
-            isExpanded: isExpanded
-        )
-    }
-
-    private var displayedOutput: String {
-        MacToolRowOutput.displayed(
-            isExpanded: isExpanded,
-            storeOutput: (toolOutputStore ?? store.toolOutputStore).fullOutput(for: itemID),
-            outputPreview: outputPreview
-        )
-    }
-
-    private var bashCommand: String? {
-        MacBashCommandChrome.commandText(
-            tool: tool,
-            args: toolArgs,
-            argsSummary: argsSummary,
-            outputText: displayedOutput
-        )
-    }
-
-    private var toolArgs: [String: JSONValue]? {
-        store.toolArgsStore.args(for: itemID)
-    }
-
-    private var toolDetails: JSONValue? {
-        store.toolDetailsStore.details(for: itemID)
-    }
-
-    private var isVoicePresentationResult: Bool {
-        ToolContentDescriptorBuilder.audioPresentation(from: toolDetails) != nil
-    }
-
-    private var audioSource: MacToolAudioSource? {
-        guard case .media(let media) = presentation.content else { return nil }
-        return MacToolAudioSourceResolver.source(
-            media: media,
-            sessionID: sessionID,
-            routeScope: store.selectedTarget?.routeScope
-        )
-    }
-
-    private var styledCallSegments: [StyledSegment]? {
-        MacToolTimelineChrome.styledCallSegments(
-            tool: tool,
-            isExpanded: isExpanded,
-            isVoicePresentationResult: isVoicePresentationResult,
-            segments: store.toolCallSegments(for: itemID)
-        )
-    }
-
-    private var fileTitleCandidates: MacToolTimelineChrome.FileTitleCandidates? {
-        MacToolTimelineChrome.fileTitleCandidates(
-            tool: tool,
-            args: toolArgs,
-            argsSummary: argsSummary,
-            isExpanded: isExpanded
-        )
-    }
-
-    private var trailingPresentation: MacToolTimelineChrome.TrailingPresentation {
-        MacToolTimelineChrome.trailingPresentation(
-            tool: tool,
-            args: toolArgs,
-            details: toolDetails,
-            resultSegments: store.toolResultSegments(for: itemID),
-            isDone: isDone,
-            isInterrupted: isInterrupted
-        )
-    }
-
-    private var canExpand: Bool {
+    private func canExpand(content: ToolContentDescriptor?) -> Bool {
         argsSummary.components(separatedBy: .newlines).count > 4
             || argsSummary.count > 240
             || outputPreview.components(separatedBy: .newlines).count > 8
@@ -1457,15 +1558,11 @@ private struct ToolTimelineBubble: View {
             || toolOutputStore?.hasPreviewOnlyOutput(for: itemID) == true
             || (toolOutputStore?.hasCompleteOutput(for: itemID) == true
                 && (toolOutputStore?.fullOutput(for: itemID).count ?? 0) > outputPreview.count)
-            || descriptorSupportsExpansion
+            || descriptorSupportsExpansion(content)
     }
 
-    private var canOpenDocument: Bool {
-        MacToolTimelineChrome.offersDocumentView(for: presentation.content)
-    }
-
-    private var descriptorSupportsExpansion: Bool {
-        switch presentation.content {
+    private func descriptorSupportsExpansion(_ content: ToolContentDescriptor?) -> Bool {
+        switch content {
         case .diff, .code, .file, .media, .markdown, .terminal, .status:
             return true
         case .none:
@@ -1474,24 +1571,24 @@ private struct ToolTimelineBubble: View {
     }
 
     @ViewBuilder
-    private func terminalOutput(_ terminal: ToolContentDescriptor.Terminal) -> some View {
+    private func terminalOutput(_ terminal: ToolContentDescriptor.Terminal, row: Derived) -> some View {
         let output = terminal.output ?? ""
         if output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             EmptyView()
         } else {
             MacTerminalOutputPreview(
                 model: MacTerminalOutputModel(text: output, isError: isError),
-                isExpanded: isExpanded,
+                isExpanded: row.isExpanded,
                 itemID: itemID
             )
         }
     }
 
     @ViewBuilder
-    private func fileOutput(_ file: ToolContentDescriptor.File) -> some View {
+    private func fileOutput(_ file: ToolContentDescriptor.File, row: Derived) -> some View {
         if MacToolDocumentColumnPaint.fileUsesPDFPreview(file) {
             Label(file.filePath ?? "PDF", systemImage: "doc.richtext")
-                .font(.caption)
+                .font(.system(size: row.codeSize * 0.85))
                 .foregroundStyle(.themeFg)
         } else if let plan = DelimitedTableViewerPlan.opening(
             fileType: file.fileType ?? .plain,
@@ -1503,7 +1600,7 @@ private struct ToolTimelineBubble: View {
                 fillsColumn: false,
                 filePath: file.filePath
             )
-            .frame(maxHeight: isExpanded ? 360 : 180)
+            .frame(maxHeight: row.isExpanded ? 360 : 180)
             .clipped()
         } else if let plan = GeoJSONViewerPlan.opening(
             fileType: file.fileType ?? .plain,
@@ -1515,11 +1612,11 @@ private struct ToolTimelineBubble: View {
                 fillsColumn: false,
                 filePath: file.filePath
             )
-            .frame(maxHeight: isExpanded ? 360 : 180)
+            .frame(maxHeight: row.isExpanded ? 360 : 180)
             .clipped()
         } else if let kind = MacMarkupPreviewKind.from(file: file) {
             MacMarkupSourcePreviewView(source: file.text, kind: kind, fillsColumn: false)
-                .frame(maxHeight: isExpanded ? 360 : 180)
+                .frame(maxHeight: row.isExpanded ? 360 : 180)
                 .clipped()
         } else if MacToolDocumentColumnPaint.fileUsesSyntaxHighlighter(file) {
             MacCodeOutputPreview(
@@ -1531,7 +1628,7 @@ private struct ToolTimelineBubble: View {
                     startLine: file.startLine ?? 1
                 )
             )
-            .frame(maxHeight: isExpanded ? 360 : 180)
+            .frame(maxHeight: row.isExpanded ? 360 : 180)
         } else if file.fileType == .markdown {
             MacMarkdownDocumentView(
                 markdown: file.text,
@@ -1542,13 +1639,13 @@ private struct ToolTimelineBubble: View {
                 filePath: file.filePath
             )
             .textSelection(.enabled)
-            .lineLimit(isExpanded ? nil : 12)
+            .lineLimit(row.isExpanded ? nil : 12)
         } else if file.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             EmptyView()
         } else {
             MacTerminalOutputPreview(
                 model: MacTerminalOutputModel(text: file.text, isError: isError),
-                isExpanded: isExpanded,
+                isExpanded: row.isExpanded,
                 itemID: itemID,
                 sourceKind: file.filePath == nil ? .terminalOutput : .file,
                 path: file.filePath
@@ -1556,16 +1653,16 @@ private struct ToolTimelineBubble: View {
         }
     }
 
-    private var headerAccessibilityLabel: String {
+    private func headerAccessibilityLabel(_ row: Derived) -> String {
         var parts = [
-            styledCallSegments?.map(\.text).joined()
+            row.styledCallSegments?.map(\.text).joined()
                 ?? MacToolTimelineChrome.headerTitle(
                     tool: tool,
-                    args: toolArgs,
+                    args: row.args,
                     argsSummary: argsSummary,
-                    details: toolDetails,
-                    isExpanded: isExpanded,
-                    isVoicePresentationResult: isVoicePresentationResult
+                    details: row.details,
+                    isExpanded: row.isExpanded,
+                    isVoicePresentationResult: row.isVoicePresentationResult
                 ),
             MacToolTimelineChrome.statusLabel(
                 isDone: isDone,
@@ -1573,20 +1670,15 @@ private struct ToolTimelineBubble: View {
                 isInterrupted: isInterrupted
             ),
         ]
-        if let language = MacToolTimelineChrome.languageLabel(
-            tool: tool,
-            args: toolArgs,
-            argsSummary: argsSummary,
-            content: presentation.content
-        ) {
+        if let language = row.language {
             parts.insert(language, at: parts.count - 1)
         }
-        if let trailing = trailingPresentation.accessibilityText, !trailing.isEmpty {
+        if let trailing = row.trailing.accessibilityText, !trailing.isEmpty {
             parts.insert(trailing, at: parts.count - 1)
         }
         if let elapsed = MacToolTimelineChrome.elapsedText(
-            startedAt: isVoicePresentationResult ? nil : store.toolStartTime(for: itemID),
-            elapsedSeconds: isVoicePresentationResult ? nil : store.toolElapsed(for: itemID),
+            startedAt: row.isVoicePresentationResult ? nil : store.toolStartTime(for: itemID),
+            elapsedSeconds: row.isVoicePresentationResult ? nil : store.toolElapsed(for: itemID),
             isDone: isDone,
             now: Date()
         ) {
@@ -1605,10 +1697,12 @@ private struct MacStyledSegmentText: View {
     let segments: [StyledSegment]
     let scale: Scale
     @Environment(\.theme) private var theme
+    @Environment(\.macTypographyRevision) private var typographyRevision
 
     var body: some View {
         // Attributed text requires concrete colors. Reading `theme` here keeps
         // mounted timeline rows tied to the live environment on every repaint.
+        let _ = typographyRevision
         Text(attributedText)
     }
 
@@ -1623,13 +1717,16 @@ private struct MacStyledSegmentText: View {
         return result
     }
 
+    /// Same code family and zoom as plain tool titles, so styled and plain
+    /// headers line up row to row.
     private func font(for style: StyledSegment.Style?) -> Font {
-        let weight: Font.Weight = style == .bold ? .semibold : .regular
+        let weight: NSFont.Weight = style == .bold ? .semibold : .regular
         switch scale {
         case .title:
-            return Font.system(size: 11, weight: weight, design: .monospaced)
+            return Font(FontPreferenceStore.macCodeFont(weight: weight))
         case .trailing:
-            return Font.system(size: 10, weight: weight, design: .monospaced)
+            let size = FontPreferenceStore.macCodeFont().pointSize * 0.8
+            return Font(FontPreferenceStore.macCodeFont(size: size, weight: weight))
         }
     }
 
@@ -1651,6 +1748,7 @@ private struct MacToolElapsedLabel: View {
     let startedAt: Date?
     let elapsedSeconds: Int?
     let isDone: Bool
+    let size: CGFloat
 
     @ViewBuilder
     var body: some View {
@@ -1672,7 +1770,7 @@ private struct MacToolElapsedLabel: View {
             now: date
         ) {
             Text(text)
-                .font(.caption2.monospacedDigit())
+                .font(.system(size: size).monospacedDigit())
                 .foregroundStyle(.themeComment)
                 .fixedSize()
         }
@@ -1680,26 +1778,28 @@ private struct MacToolElapsedLabel: View {
 }
 
 private struct MacBashCommandBar: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let command: String
 
     var body: some View {
+        let _ = typographyRevision
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text("$")
                 .font(Font(FontPreferenceStore.macCodeFont(weight: .semibold)))
                 .foregroundStyle(.themeGreen)
-            Text(command)
+            Text(MacSyntaxHighlighter.tokenColoredText(command, language: .shell))
                 .font(Font(FontPreferenceStore.macCodeFont()))
                 .foregroundStyle(.themeToolTitle)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 5)
-        .background(.themeBgHighlight, in: RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(.themeBgHighlight, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(.themeBlue.opacity(0.35), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(.themeBlue.opacity(0.30), lineWidth: 1)
         )
     }
 }
@@ -1748,10 +1848,16 @@ private struct MacTerminalOutputPreview: View {
 }
 
 private struct MacToolTimelineDiffPreview: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let diff: ToolContentDescriptor.Diff
     @Environment(\.theme) private var theme
 
+    private var language: SyntaxLanguage? {
+        MacToolDocumentDiffLayout.syntaxLanguage(for: diff)
+    }
+
     var body: some View {
+        let _ = typographyRevision
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(MacToolDocumentDiffLayout.rows(from: diff).enumerated()), id: \.offset) { _, row in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -1763,7 +1869,9 @@ private struct MacToolTimelineDiffPreview: View {
                         .monospacedDigit()
                     Text(row.kind.prefix)
                         .frame(width: 12, alignment: .center)
-                    Text(row.text.isEmpty ? " " : row.text)
+                    Text(row.text.isEmpty
+                        ? AttributedString(" ")
+                        : MacSyntaxHighlighter.tokenColoredText(row.text, language: language))
                 }
                 .font(Font(FontPreferenceStore.macCodeFont()))
                 .foregroundStyle(color(for: row.kind))
@@ -1804,16 +1912,21 @@ private struct MacToolTimelineDiffPreview: View {
 }
 
 struct MacCodeOutputPreview: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let model: MacCodeOutputModel
     var source: MacReviewCommentSource = MacReviewCommentSource(kind: .timelineText)
     @Environment(\.theme) private var theme
 
+    @State private var wrapsLines = false
+    @State private var didCopy = false
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(model.language ?? "Code", systemImage: "curlybraces")
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(theme.markdown.codeBlock)
+        let _ = typographyRevision
+        // Same card as iOS `NativeCodeBlockView`: highlight header, dark body,
+        // one border. A floating language label over a second box reads as a
+        // different control.
+        VStack(alignment: .leading, spacing: 0) {
+            header
             MacReviewCommentTextView(
                 text: model.text,
                 attributedText: MacSyntaxHighlighter.attributedCode(
@@ -1821,15 +1934,80 @@ struct MacCodeOutputPreview: View {
                     language: model.syntaxLanguage
                 ),
                 source: source,
-                fillsColumn: false,
-                heightBehavior: .fitContent(maxHeight: 360)
+                fillsColumn: wrapsLines,
+                heightBehavior: .fitContent(maxHeight: 360),
+                textContainerInset: NSSize(width: 8, height: 4)
             )
+            .accessibilityIdentifier("markdown.codeBlock.text")
             .frame(maxHeight: 360)
-            .background(.themeBgDark, in: RoundedRectangle(cornerRadius: 6))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(theme.markdown.codeBlockBorder, lineWidth: 1)
-            )
+        }
+        .background(.themeBgDark)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(theme.markdown.codeBlockBorder.opacity(0.5), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("markdown.codeBlock")
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Text(model.language ?? "code")
+                // iOS language label is `AppFont.mono` (11 pt). HIG macOS
+                // minimum is 10 pt; this chrome stays at 11 so it does not
+                // grow with message zoom.
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(theme.text.tertiary)
+                .lineLimit(1)
+                .accessibilityIdentifier("markdown.codeBlock.language")
+            Spacer(minLength: 8)
+            headerButton(
+                // Same wrap glyph as iOS `CodeWrapControl`.
+                systemImage: "text.alignleft",
+                label: wrapsLines ? "Scroll" : "Wrap",
+                identifier: "markdown.codeBlock.wrap"
+            ) {
+                wrapsLines.toggle()
+            }
+            headerButton(
+                systemImage: didCopy ? "checkmark" : "doc.on.doc",
+                label: didCopy ? "Copied" : "Copy",
+                identifier: "markdown.codeBlock.copy"
+            ) {
+                copy()
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 2)
+        .background(.themeBgHighlight)
+    }
+
+    private func headerButton(
+        systemImage: String,
+        label: String,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11))
+                .foregroundStyle(theme.text.secondary)
+                .frame(width: 22, height: 22)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
+        .accessibilityLabel(label)
+        .help(label)
+    }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(model.text, forType: .string)
+        didCopy = true
+        Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            didCopy = false
         }
     }
 }
@@ -1884,6 +2062,7 @@ private struct ThinkingFoldLayout: Layout {
 }
 
 struct ThinkingTimelineBubble: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let itemID: String
     let preview: String
     let hasMore: Bool
@@ -1902,24 +2081,27 @@ struct ThinkingTimelineBubble: View {
     }
 
     var body: some View {
+        let _ = typographyRevision
         // Match iOS: no "Thinking" title. Done gets a sparkle; streaming is
         // plain muted callout. WorkingIndicator already shows activity.
-        HStack(alignment: .top, spacing: 6) {
+        let glyphSize = FontPreferenceStore.macMessagePointSize(forTextStyle: .callout)
+        // The fold is a custom Layout with no text baseline; align by top.
+        HStack(alignment: .top, spacing: 8) {
             if isDone, !preview.isEmpty {
                 Image(systemName: "sparkle")
-                    .font(.system(size: 14))
+                    .font(.system(size: glyphSize))
                     .foregroundStyle(theme.accent.purple.opacity(0.7))
-                    .frame(width: 14, height: 14)
-                    .padding(.top, 1)
+                    .padding(.top, glyphSize * 0.15)
                     .accessibilityHidden(true)
             }
             thinkingBody
         }
-        .padding(10)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
+        .macTimelineCard(
             theme.text.tertiary.opacity(isDone ? 0.08 : 0.06),
-            in: RoundedRectangle(cornerRadius: 12)
+            stroke: AnyShapeStyle(theme.text.primary.opacity(0.06))
         )
         .contextMenu {
             if overflowsPaintedCap {
@@ -1941,7 +2123,9 @@ struct ThinkingTimelineBubble: View {
     private var thinkingBody: some View {
         if preview.isEmpty {
             if let hiddenThinkingLabel {
-                Text(hiddenThinkingLabel).font(.callout).foregroundStyle(.themeComment)
+                Text(hiddenThinkingLabel)
+                    .font(Font(FontPreferenceStore.macMessageFont(forTextStyle: .callout)))
+                    .foregroundStyle(.themeComment)
             }
         } else {
             ThinkingFoldLayout(
@@ -2011,83 +2195,128 @@ struct ThinkingTimelineBubble: View {
     }
 }
 
+/// iOS message rows on a desktop column: the user bubble carries the blue
+/// prompt glyph on its own surface; the assistant bubble is a quiet purple
+/// card led by the model's provider mark.
 private struct MarkdownTimelineBubble: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let role: MacTimelineProseRole
-    let title: String
-    let subtitle: String?
+    let timestamp: Date
     let text: String
     var images: [ImageAttachment] = []
     var itemID: String? = nil
-    var workspaceID: String? = nil
-    var sessionID: String? = nil
-    var worktreeId: String? = nil
+    let context: ChatItemRowContext
+    @Environment(\.theme) private var theme
+    @Environment(\.themeID) private var themeID
 
-    private var rowAlignment: Alignment {
-        switch MacTimelineProsePaint.alignment(for: role) {
-        case .leading: .leading
-        case .trailing: .trailing
+    var body: some View {
+        let _ = typographyRevision
+        switch role {
+        case .user:
+            userBubble
+        case .assistant:
+            assistantBubble
         }
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            TimelineBubbleHeader(
-                title: title,
-                subtitle: subtitle,
-                sessionID: sessionID,
-                showsAssistantAvatar: role == .assistant
-            )
-            if !images.isEmpty {
-                MacUserMessageImageStrip(images: images)
+    private var userBubble: some View {
+        let bodySize = FontPreferenceStore.macMessagePointSize(forTextStyle: .body)
+        return HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Text("\u{276F}")
+                .font(Font(FontPreferenceStore.macCodeFont(size: bodySize, weight: .semibold)))
+                .foregroundStyle(theme.accent.blue)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 8) {
+                if !images.isEmpty {
+                    MacUserMessageImageStrip(images: images)
+                }
+                prose
             }
-            if !text.isEmpty {
-                MacMarkdownDocumentView(
-                    markdown: text,
-                    itemID: itemID,
-                    workspaceID: workspaceID,
-                    sessionID: sessionID,
-                    worktreeId: worktreeId,
-                    typography: .message,
-                    proseMaximumWidth: MacTimelineProsePaint.readableMaximumWidth
-                )
-                    .textSelection(.enabled)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(maxWidth: .infinity, alignment: rowAlignment)
-        .padding(.leading, role == .user ? MacTimelineProsePaint.userLeadingInset : 0)
+        .macTimelineCard(themeID.palette.userMessageBg)
+        .help("You \u{00B7} \(timestamp.relativeString())")
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("mac.timeline.userMessage")
+        .accessibilityLabel("You, \(timestamp.relativeString())")
+    }
+
+    private var assistantBubble: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            MacAssistantMessageHeader(model: context.model, timestamp: timestamp)
+            prose
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .macTimelineCard(theme.accent.purple.opacity(0.08))
+        .accessibilityIdentifier("mac.timeline.assistantMessage")
+    }
+
+    @ViewBuilder
+    private var prose: some View {
+        if !text.isEmpty {
+            MacMarkdownDocumentView(
+                markdown: text,
+                itemID: itemID,
+                workspaceID: context.workspaceID,
+                sessionID: context.sessionID,
+                worktreeId: context.worktreeId,
+                typography: .message
+            )
+            .textSelection(.enabled)
+        }
     }
 }
 
-private struct TimelineBubbleHeader: View {
-    let title: String
-    let subtitle: String?
-    var sessionID: String? = nil
-    var showsAssistantAvatar: Bool = false
-    var titleColor: Color? = nil
+/// Model identity for an assistant message, where iOS puts its row badge.
+/// The provider mark follows the session's model; Pi's mark stands in when
+/// the model has no known provider.
+private struct MacAssistantMessageHeader: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
+    let model: String?
+    let timestamp: Date
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(spacing: 6) {
-            if showsAssistantAvatar {
-                MacAssistantAvatarView(size: 18)
-                    .accessibilityIdentifier("mac.timeline.assistantAvatar")
+        let _ = typographyRevision
+        let size = MacTimelineChromeType.labelSize
+        let badge = (size * 1.55).rounded()
+        HStack(spacing: 7) {
+            Group {
+                if let provider = modelProviderKey(model) {
+                    ProviderGlyph(provider: provider, size: (badge * 0.62).rounded(), color: theme.text.primary)
+                        .frame(width: badge, height: badge)
+                        .background(
+                            theme.text.primary.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: badge * 0.32, style: .continuous)
+                        )
+                } else {
+                    MacAssistantAvatarView(size: badge)
+                }
             }
-            Text(title)
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(titleColor ?? theme.text.primary)
-            if let subtitle {
-                Text(subtitle)
-                    .font(.caption2)
-                    .foregroundStyle(theme.text.secondary)
-            }
+            .accessibilityIdentifier("mac.timeline.assistantAvatar")
+            .accessibilityHidden(true)
+
+            Text(MacModelSelection.shortDisplayName(for: model) ?? "Assistant")
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(theme.text.primary)
+                .lineLimit(1)
+            Text(timestamp.relativeString())
+                .font(.system(size: MacTimelineChromeType.captionSize))
+                .foregroundStyle(theme.text.tertiary)
+                .lineLimit(1)
         }
+        .accessibilityElement(children: .combine)
     }
 }
 
 private struct TimelineBubble: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let title: String
     let subtitle: String?
     let text: String
@@ -2095,28 +2324,29 @@ private struct TimelineBubble: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        let _ = typographyRevision
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Text(title)
-                    .font(.caption)
-                    .fontWeight(.semibold)
+                    .font(.system(size: MacTimelineChromeType.labelSize, weight: .semibold))
                     .foregroundStyle(theme.text.primary)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.caption2)
+                        .font(.system(size: MacTimelineChromeType.captionSize))
                         .foregroundStyle(theme.text.secondary)
                 }
             }
             if !text.isEmpty {
                 Text(text)
-                    .font(.body)
+                    .font(Font(FontPreferenceStore.macMessageFont(forTextStyle: .body)))
                     .foregroundStyle(theme.text.primary)
                     .textSelection(.enabled)
                     .lineLimit(12)
             }
         }
-        .padding(10)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(fill, in: RoundedRectangle(cornerRadius: 12))
+        .macTimelineCard(fill)
     }
 }

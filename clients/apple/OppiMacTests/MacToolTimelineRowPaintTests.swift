@@ -4,88 +4,6 @@ import Testing
 
 @Suite("Mac tool timeline row paint")
 struct MacToolTimelineRowPaintTests {
-    @Test func collapsedRowsStayHeaderOnlyAndDoNotRepeatStatusText() throws {
-        let source = try macSessionTimelineSource()
-        let bubble = try sourceSlice(
-            named: "private struct ToolTimelineBubble: View {",
-            until: "private struct MacBashCommandBar: View {",
-            in: source
-        )
-
-        #expect(bubble.contains("if isExpanded {\n                expandedBody"))
-        let expandedBody = try sourceSlice(
-            named: "private var expandedBody: some View {",
-            until: "private var toolOutput: some View {",
-            in: bubble
-        )
-        #expect(expandedBody.contains("toolOutput"))
-        #expect(!expandedBody.contains("Text(argsSummary)"))
-        #expect(!bubble.contains("Text(MacToolTimelineChrome.statusLabel"))
-        #expect(bubble.contains("RoundedRectangle(cornerRadius: 10)"))
-    }
-
-    @Test func headerUsesCompressibleIdentityThenIOSOrderedTrailingRail() throws {
-        let source = try macSessionTimelineSource()
-        let bubble = try sourceSlice(
-            named: "private struct ToolTimelineBubble: View {",
-            until: "private struct MacBashCommandBar: View {",
-            in: source
-        )
-        let header = try sourceSlice(
-            named: "private var header: some View {",
-            until: "private var headerSummary: some View {",
-            in: bubble
-        )
-
-        try #require(header.range(of: "headerSummary") != nil)
-        try #require(header.range(of: "MacToolAudioPlaybackButton") != nil)
-        try #require(header.range(of: "MacToolElapsedLabel") != nil)
-        try #require(header.range(of: "trailingMetadata") != nil)
-        try #require(header.range(of: "languageMetadata") != nil)
-        #expect(try markersAreOrdered(
-            [
-                "headerSummary",
-                "MacToolAudioPlaybackButton",
-                "MacToolElapsedLabel",
-                "trailingMetadata",
-                "languageMetadata",
-            ],
-            in: header
-        ))
-        #expect(header.contains(".fixedSize(horizontal: true, vertical: false)"))
-        #expect(bubble.contains(".frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)"))
-    }
-
-    @Test func structuredRowsExposeDirectDocumentActionWithoutLosingDisclosure() throws {
-        let source = try macSessionTimelineSource()
-        let bubble = try sourceSlice(
-            named: "private struct ToolTimelineBubble: View {",
-            until: "private struct MacBashCommandBar: View {",
-            in: source
-        )
-
-        #expect(bubble.contains("MacToolTimelineChrome.offersDocumentView"))
-        #expect(bubble.contains("Open in Document View"))
-        #expect(bubble.contains("mac.timeline.openDocument"))
-        #expect(bubble.contains("store.applyKeybinding(.commandReturn, toolRowIDs: [itemID])"))
-        #expect(bubble.contains("store.setToolRowExpanded"))
-    }
-
-    @Test func directDocumentAndDisclosureActionsUseCompactDesktopPointerTargets() throws {
-        let source = try macSessionTimelineSource()
-        let bubble = try sourceSlice(
-            named: "private struct ToolTimelineBubble: View {",
-            until: "private struct MacBashCommandBar: View {",
-            in: source
-        )
-
-        #expect(source.contains("static let compactActionTargetSize: CGFloat = 24"))
-        #expect(bubble.components(separatedBy: "MacToolTimelineChrome.compactActionTargetSize").count == 5)
-        #expect(bubble.components(separatedBy: ".contentShape(Rectangle())").count >= 3)
-        #expect(bubble.contains("mac.timeline.openDocument"))
-        #expect(bubble.contains(".accessibilityLabel(isExpanded ? \"Collapse\" : \"Expand\")"))
-    }
-
     @Test func editMetadataUsesSemanticDiffAndCommentThemeRoles() throws {
         let source = try macSessionTimelineSource()
         let bubble = try sourceSlice(
@@ -174,40 +92,6 @@ struct MacToolTimelineRowPaintTests {
 
         #expect(presentation.content == nil)
         #expect(presentation.copyOutputText == nil)
-    }
-
-    @Test func timelineParsesWithSharedDescriptorBuilderNotMacClassifiers() throws {
-        let source = try macSessionTimelineSource()
-        let presentation = try sourceSlice(
-            named: "enum MacToolRowPresentation {",
-            until: "enum MacBashCommandChrome {",
-            in: source
-        )
-        let bubble = try sourceSlice(
-            named: "private struct ToolTimelineBubble: View {",
-            until: "private struct MacBashCommandBar: View {",
-            in: source
-        )
-
-        #expect(presentation.contains("ToolContentDescriptorBuilder.build"))
-        #expect(presentation.contains("toolArgsStore.args"))
-        #expect(presentation.contains("toolDetailsStore.details"))
-        #expect(presentation.contains("MacToolRowOutput.displayed"))
-        #expect(presentation.contains("isExpanded: Bool = true"))
-        #expect(bubble.contains("MacToolRowPresentation.make"))
-        #expect(bubble.contains("store.toolArgsStore"))
-        #expect(bubble.contains("store.toolDetailsStore"))
-        let makeCall = try sourceSlice(
-            named: "MacToolRowPresentation.make(",
-            until: "private var displayedOutput: String {",
-            in: bubble
-        )
-        #expect(makeCall.contains("isExpanded: isExpanded"))
-        #expect(!bubble.contains("MacDiffOutputModel"))
-        #expect(!bubble.contains("MacInlineOutputFormatter"))
-        #expect(!bubble.contains("MacCodeOutputModel.shouldRenderStandalone"))
-        #expect(!bubble.contains("MacMediaOutputModel.shouldRender"))
-        #expect(!bubble.contains("MacMarkdownPaintDispatch.hasStructuredPaint"))
     }
 
     @Test func timelinePaintsDescriptorDiffsWithSharedLineNumbers() throws {

@@ -351,6 +351,7 @@
 		2F7CB7622DB28551C01E9571 /* SourceCodePro-Bold.otf in Resources */ = {isa = PBXBuildFile; fileRef = 46E499425EC3C24982877300 /* SourceCodePro-Bold.otf */; };
 		2FABF26F7816C2E1F1DEFA0B /* TeXMathParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C5FE18EB11C7F2BF511C7B9 /* TeXMathParser.swift */; };
 		2FC58765C8D7FBF430818A95 /* ChatTimelineApplyPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BB450BA16BD4A09C27FC9B7 /* ChatTimelineApplyPlan.swift */; };
+		2FE21F7830EE2733DAC16011 /* MacTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = 593D5E51ABC2E74F80081BFE /* MacTypography.swift */; };
 		2FEE8ED2BFC6D6EBC443A9B3 /* MarkdownNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9A015298DA3CF5F4B9A1489 /* MarkdownNode.swift */; };
 		30032F6FAA7557202BF4BE2E /* ServerTransportAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB45322CC7906C889DDA0B15 /* ServerTransportAPIClient.swift */; };
 		304A4FD176E0842A48F64917 /* FocusedSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A2A545103E4D66062EFD322 /* FocusedSessionStore.swift */; };
@@ -1346,6 +1347,7 @@
 		BC919943F1F5123824FE181E /* DesktopOwnerSocketStillFetchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB6B96F2ACCFA3EB415DC962 /* DesktopOwnerSocketStillFetchTests.swift */; };
 		BC9665FD6C94260E6B08800C /* MessageQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C96CE46A65BF1D70E470A49 /* MessageQueue.swift */; };
 		BC9A0F1C921B877D4134EC0B /* ChatSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E88FF4D6EB5757F327219A22 /* ChatSessionManager.swift */; };
+		BCC877B2D3EE7FF7C765317C /* MacSyntaxTokenText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 168668D984C8681EC49B08EE /* MacSyntaxTokenText.swift */; };
 		BCD0B036C7C4AC1F843A6DFB /* KeybindingCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8DAF5F9422543ED51545D74 /* KeybindingCatalogTests.swift */; };
 		BD124360BA6B8BBD88474811 /* ANSIParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CAF2AA157AA7A10C4E16F15 /* ANSIParserTests.swift */; };
 		BD15E4E10AE6AD0BECE4E6E9 /* MetalOrbScreenshotPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1023DAE7995BE8214EA62437 /* MetalOrbScreenshotPreview.swift */; };
@@ -2084,6 +2086,7 @@
 		1641221B2836B1AA655BF0E0 /* MermaidGitGraphRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidGitGraphRenderer.swift; sourceTree = "<group>"; };
 		1655388D3EB2ACAD4BD1535B /* JSONPrettyPrinter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONPrettyPrinter.swift; sourceTree = "<group>"; };
 		165B4236951807959AF85EA6 /* StatusPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusPill.swift; sourceTree = "<group>"; };
+		168668D984C8681EC49B08EE /* MacSyntaxTokenText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSyntaxTokenText.swift; sourceTree = "<group>"; };
 		16891B95FA5552436ABB600D /* MacMarkdownAudioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMarkdownAudioView.swift; sourceTree = "<group>"; };
 		16B008DE6991A30564DF7701 /* AppEventMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEventMessage.swift; sourceTree = "<group>"; };
 		16BA9DA4A8FC2A1DCCC7258F /* SessionInboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionInboxView.swift; sourceTree = "<group>"; };
@@ -2477,6 +2480,7 @@
 		5917C23928FFB3335BB6A65B /* MacMarkdownStreamingParseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMarkdownStreamingParseTests.swift; sourceTree = "<group>"; };
 		5931CAEAF457E3FB53A93B5A /* OppiActivityExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OppiActivityExtension.entitlements; sourceTree = "<group>"; };
 		593245FF1B59ABEE29E6CCED /* TestTags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestTags.swift; sourceTree = "<group>"; };
+		593D5E51ABC2E74F80081BFE /* MacTypography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacTypography.swift; sourceTree = "<group>"; };
 		593E4516EB2C85F81622BF4F /* MacCaptureRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCaptureRuntime.swift; sourceTree = "<group>"; };
 		595795F1D374DED3DF91AE31 /* SessionListSearchNavigationPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListSearchNavigationPersistenceTests.swift; sourceTree = "<group>"; };
 		59594C86E64189F35000EF86 /* ContinuousClock+Elapsed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ContinuousClock+Elapsed.swift"; sourceTree = "<group>"; };
@@ -3872,8 +3876,10 @@
 				B8B4A0FD4DA34E6267CD77F0 /* MacSessionTimelineViews.swift */,
 				C07023BA43BC84133E2BBFFC /* MacSessionWindowChrome.swift */,
 				FC47EAB4217A96F4AB4A2020 /* MacShellNavigation.swift */,
+				168668D984C8681EC49B08EE /* MacSyntaxTokenText.swift */,
 				EDB1A19208522C50E08970C8 /* MacToolDocumentColumn.swift */,
 				2E317F8E9D223A93B54B1844 /* MacToolDocumentMedia.swift */,
+				593D5E51ABC2E74F80081BFE /* MacTypography.swift */,
 				AFB51C9B31EDB9813506AD28 /* MacWorkspaceFileBrowserView.swift */,
 				AAF6AF784C8B3DAB63134BCC /* MacWorkspaceGitStatusView.swift */,
 				AA29533A62DA87EF07DBEB4A /* MacWorkspaceShellViews.swift */,
@@ -6949,10 +6955,12 @@
 				C05DCB768DFCCF79F9DBD2DF /* MacSessionWindowChrome.swift in Sources */,
 				A6DEAAC09056FA5E7F364FD1 /* MacShellNavigation.swift in Sources */,
 				EE157ACAEF749A48CCE17C28 /* MacSyntaxHighlighter.swift in Sources */,
+				BCC877B2D3EE7FF7C765317C /* MacSyntaxTokenText.swift in Sources */,
 				465E2A0072B764C393476963 /* MacTimelineKeybinding.swift in Sources */,
 				792EB7F96F6DC1D4E1227391 /* MacToolAudioPlaybackController.swift in Sources */,
 				8EECB2E3C97DB150611A4BED /* MacToolDocumentColumn.swift in Sources */,
 				36C3EFDD159BB0DB40F0616E /* MacToolDocumentMedia.swift in Sources */,
+				2FE21F7830EE2733DAC16011 /* MacTypography.swift in Sources */,
 				9EAA40858F79F7942DF562C3 /* MacUnixSocketHTTPClient.swift in Sources */,
 				0416B9F55AF2DBFC18E51086 /* MacUnixSocketRangeAdapter.swift in Sources */,
 				8A2999A6C67F320F5EDD6C1E /* MacUnixWebSocketTransport.swift in Sources */,

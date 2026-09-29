@@ -29,6 +29,7 @@ struct MacReviewCommentTextView: NSViewRepresentable {
     var source: MacReviewCommentSource
     var fillsColumn = true
     var heightBehavior: MacReviewCommentTextHeightBehavior = .fillAvailable
+    var textContainerInset = NSSize(width: 8, height: 8)
     var accessibilityIdentifier: String? = nil
 
     @Environment(\.macReviewCommentStaging) private var staging
@@ -49,7 +50,7 @@ struct MacReviewCommentTextView: NSViewRepresentable {
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.textContainerInset = textContainerInset
         textView.textContainer?.lineFragmentPadding = 4
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -69,6 +70,7 @@ struct MacReviewCommentTextView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? MacReviewCommentTextViewBridge else { return }
+        textView.textContainerInset = textContainerInset
         applyLayout(to: scrollView, textView: textView)
         MacScrollChrome.apply(to: scrollView)
         applyContent(to: textView)

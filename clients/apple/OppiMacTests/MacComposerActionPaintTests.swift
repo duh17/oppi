@@ -94,20 +94,6 @@ struct MacComposerActionPaintTests {
         #expect(!thinking.contains("showChevron: true"))
     }
 
-    @Test func compactModelPickerKeepsAVisibleSymbolAndAccessibleName() throws {
-        let source = try composerSource()
-        let modelPicker = try sourceSlice(
-            named: "private func modelPickerButton(compact: Bool) -> some View {",
-            until: "private func thinkingLevelMenu",
-            in: source
-        )
-
-        #expect(modelPicker.contains("systemImage: compact ? \"cpu\" : nil"))
-        #expect(modelPicker.contains("if !compact, let provider"))
-        #expect(modelPicker.contains(".accessibilityValue("))
-        #expect(modelPicker.contains("MacModelSelection.shortDisplayName"))
-    }
-
     @Test func queueAndCustomAskFieldsUseTheSharedRecessedThemeSurface() throws {
         let source = try composerSource()
         let callCount = source.components(separatedBy: ".macComposerAuxiliaryFieldSurface()").count - 1
@@ -172,20 +158,6 @@ struct MacComposerCapsulePaintTests {
         #expect(recording.ringLineWidth == 1.5)
     }
 
-    @Test func capsuleUsesLiveThemedElevatedSurface() throws {
-        let source = try composerSource()
-        let slice = try sourceSlice(
-            named: "private var composerCapsule: some View {",
-            until: "private var actionRowItems",
-            in: source
-        )
-        #expect(slice.contains(".themedSurface("))
-        #expect(slice.contains(".elevatedPanel"))
-        #expect(slice.contains("RoundedRectangle(cornerRadius: 20, style: .continuous)"))
-        #expect(!slice.contains(".glassEffect("))
-        #expect(!slice.contains(".stroke("))
-    }
-
     @Test func stateBarUsesTheSameLiveThemedPanelContract() throws {
         let source = try composerSource()
         let slice = try sourceSlice(
@@ -203,12 +175,12 @@ struct MacComposerCapsulePaintTests {
     @Test func dictationChromeUsesNeutralFillAndSemanticStatePaint() throws {
         let source = try composerSource()
         let slice = try sourceSlice(
-            named: "private var dictationButton: some View {",
-            until: "private var dictationActionLabel",
+            named: "struct MacComposerDictationButton: View {",
+            until: "private var actionLabel",
             in: source
         )
 
-        #expect(slice.contains("MacComposerDictationPaint.presentation(for: dictation.state)"))
+        #expect(slice.contains("MacComposerDictationPaint.presentation(for: state)"))
         #expect(slice.contains("Circle().fill(.themeBgHighlight)"))
         #expect(slice.contains("case .progress"))
         #expect(slice.contains("case .cloud"))

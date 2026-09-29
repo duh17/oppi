@@ -122,8 +122,19 @@ enum MacPathPaint {
     }
 }
 
+/// Where files, outline, and context are painted.
+///
+/// A window toolbar can belong to one session. A split merges every pane's
+/// toolbar into one row, so those controls stop following a session.
+enum MacSessionChromePlacement: Equatable, Sendable {
+    case windowToolbar
+    case pane
+}
+
 enum MacSessionWindowChrome {
     static let inspectorInitiallyPresented = false
+    static let paneFilesColumnIdealWidth: CGFloat = 300
+    static let paneFilesColumnMinimumWidth: CGFloat = 240
     /// Queue, ask, extension, and completion UI share this total budget so the
     /// composer cannot swallow a short session window.
     static let composerAuxiliaryTotalMaximumHeight: CGFloat = 220
@@ -131,6 +142,24 @@ enum MacSessionWindowChrome {
 
     static func items(in region: MacSessionChromeRegion) -> [MacSessionChromeItem] {
         MacSessionChromeItem.allCases.filter { $0.region == region }
+    }
+
+    /// One pane keeps the window toolbar. Each extra pane owns its files,
+    /// outline, and context so a split cannot mash them into one row.
+    static func chromePlacement(paneCount: Int) -> MacSessionChromePlacement {
+        paneCount > 1 ? .pane : .windowToolbar
+    }
+
+    static func presentsFilesBesideTimeline(availableWidth: CGFloat) -> Bool {
+        availableWidth + 0.001 >= MacSessionShellLayoutPolicy.timelineMinimumWidth
+            + paneFilesColumnMinimumWidth
+    }
+
+    /// Width of a pane-owned files column. Only meaningful when the pane is
+    /// wide enough to keep the timeline at its minimum.
+    static func filesColumnWidth(availableWidth: CGFloat) -> CGFloat {
+        let beside = availableWidth - MacSessionShellLayoutPolicy.timelineMinimumWidth
+        return min(paneFilesColumnIdealWidth, max(paneFilesColumnMinimumWidth, beside))
     }
 
     /// Mic sits left of the send field, matching iOS ChatInputBar.

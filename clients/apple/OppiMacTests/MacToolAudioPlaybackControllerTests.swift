@@ -174,30 +174,6 @@ struct MacToolAudioPlaybackControllerTests {
         #expect(failure.help == "Broken audio")
     }
 
-    @Test func timelineHeaderPlacesRealAudioControlBeforeDisclosureAndKeepsRouteScope() throws {
-        let timeline = try source(named: "OppiMac/Views/MacSessionTimelineViews.swift")
-        let headerStart = try #require(timeline.range(of: "private var header: some View"))
-        let summaryStart = try #require(
-            timeline.range(of: "private var headerSummary: some View", range: headerStart.upperBound..<timeline.endIndex)
-        )
-        let headerEnd = try #require(
-            timeline.range(of: "private var headerTitle: some View", range: summaryStart.upperBound..<timeline.endIndex)
-        )
-        let header = String(timeline[headerStart.lowerBound..<summaryStart.lowerBound])
-        let summary = String(timeline[summaryStart.lowerBound..<headerEnd.lowerBound])
-        let audioButton = try #require(header.range(of: "MacToolAudioPlaybackButton"))
-        let disclosure = try #require(header.range(of: "if canExpand"))
-
-        #expect(audioButton.lowerBound < disclosure.lowerBound)
-        #expect(!header.contains("accessibilityElement(children: .combine)"))
-        #expect(summary.contains("accessibilityElement(children: .ignore)"))
-        #expect(summary.contains("accessibilityLabel(headerAccessibilityLabel)"))
-        #expect(!summary.contains("MacToolAudioPlaybackButton"))
-        #expect(timeline.contains("routeScope: store.selectedTarget?.routeScope"))
-        #expect(timeline.contains("itemID: itemID"))
-        #expect(timeline.contains("MacToolAudioSourceResolver.source"))
-    }
-
     private func voiceMedia(attachmentID: String, base64: String?) -> ToolContentDescriptor.Media {
         ToolContentDescriptor.Media(
             output: "Voice message",

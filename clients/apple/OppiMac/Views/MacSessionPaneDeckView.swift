@@ -126,6 +126,7 @@ private struct MacSessionPaneNodeView: View {
                 },
                 retryRestoration: retryRestoration,
                 centersQuickSession: deck.paneCount == 1,
+                chromePlacement: MacSessionWindowChrome.chromePlacement(paneCount: deck.paneCount),
                 loadsSessionOnMount: loadsSessionsOnMount
             )
             .id(pane.id)
@@ -161,15 +162,25 @@ private struct MacSessionPaneSurface: View {
     let launchQuickSession: (MacQuickSessionLaunchAttempt) async -> Void
     var retryRestoration: ((MacSessionPaneRuntime) async -> Void)? = nil
     let centersQuickSession: Bool
+    let chromePlacement: MacSessionChromePlacement
     let loadsSessionOnMount: Bool
 
     private let catalogStore = MacCatalogStore.shared
     @FocusState private var sessionFocus: KeybindingFocus?
 
+    /// Empty and restoring panes still need a title and close. A live session
+    /// either uses the window toolbar or draws its own pane chrome, so this
+    /// solid strip would be a second row.
+    private var showsDeckHeader: Bool {
+        runtime.isEmpty || runtime.restorationError != nil
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            paneHeader
-            Divider()
+            if showsDeckHeader {
+                paneHeader
+                Divider()
+            }
             paneBody
         }
         .frame(
@@ -236,7 +247,9 @@ private struct MacSessionPaneSurface: View {
                 presentation: runtime.presentation,
                 isActivePane: isActive,
                 activatePane: activate,
-                loadsSessionOnMount: loadsSessionOnMount
+                loadsSessionOnMount: loadsSessionOnMount,
+                chromePlacement: chromePlacement,
+                closePane: close
             )
         }
     }

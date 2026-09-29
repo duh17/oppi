@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Table + source for CSV/TSV files. Not a sheet. Document column stays the reading surface.
 struct MacDelimitedTablePreviewView: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     private enum Mode: String, Hashable {
         case table
         case source
@@ -15,6 +16,7 @@ struct MacDelimitedTablePreviewView: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
+        let _ = typographyRevision
         VStack(alignment: .leading, spacing: 8) {
             header
             truncationBanner

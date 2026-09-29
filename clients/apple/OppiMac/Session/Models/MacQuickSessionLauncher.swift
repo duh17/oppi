@@ -9,7 +9,13 @@ enum MacQuickSessionLauncher {
         case .plainPi:
             let response = try await client.createWorkspaceSession(
                 workspaceId: attempt.plan.workspaceId,
-                prompt: attempt.plan.shouldAutoSend ? attempt.plan.prompt : nil,
+                model: attempt.model,
+                thinking: attempt.thinking,
+                // Files have to upload after the session exists. Keep the draft
+                // in the composer instead of sending a prompt that drops them.
+                prompt: attempt.request.hasAttachments
+                    ? nil
+                    : (attempt.plan.shouldAutoSend ? attempt.plan.prompt : nil),
                 worktreeId: attempt.plan.worktreeId,
                 idempotencyKey: attempt.idempotencyKey
             )

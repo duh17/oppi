@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 @testable import Oppi
 
@@ -18,6 +19,19 @@ struct MacSyntaxHighlighterTests {
 
         #expect(keywordColor == MacSyntaxHighlighter.color(for: .keyword))
         #expect(commentColor == MacSyntaxHighlighter.color(for: .comment))
+    }
+
+    @Test func tokenColoredLineLeavesPlainTextToTheRowInk() throws {
+        // Diff rows and the command bar color tokens only; untokenized text
+        // must inherit the row's added/removed/context ink.
+        let line = MacSyntaxHighlighter.tokenColoredText("let total = count", language: .swift)
+        let keyword = try #require(line.range(of: "let"))
+        let identifier = try #require(line.range(of: "total"))
+
+        #expect(line[keyword].swiftUI.foregroundColor != nil)
+        #expect(line[identifier].swiftUI.foregroundColor == nil)
+        #expect(String(line.characters) == "let total = count")
+        #expect(MacSyntaxHighlighter.tokenColoredText("let x", language: nil).runs.allSatisfy { $0.swiftUI.foregroundColor == nil })
     }
 
     @Test func preservesUnicodeSourceWithoutLineNumbers() throws {
@@ -282,4 +296,65 @@ struct MacEasyGrammarPaintCase: Sendable, CustomTestStringConvertible {
             tokenKind: .type
         ),
     ]
+}
+
+@Suite("Custom theme palette memo", .serialized)
+struct CustomThemePaletteMemoTests {
+    private static let storageKey = "\(AppIdentifiers.subsystem).customThemes"
+
+    @Test func resavedThemeRepaintsWithoutARelaunch() throws {
+        let stored = UserDefaults.standard.data(forKey: Self.storageKey)
+        defer {
+            if let stored {
+                UserDefaults.standard.set(stored, forKey: Self.storageKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.storageKey)
+            }
+        }
+        let name = "memo-\(UUID().uuidString)"
+
+        CustomThemeStore.save(theme(name: name, keyword: "#cba6f7"))
+        let first = try #require(CustomThemeStore.palette(name: name))
+        // A second read is the memoized palette, not a fresh decode.
+        #expect(CustomThemeStore.palette(name: name)?.syntaxKeyword == first.syntaxKeyword)
+
+        CustomThemeStore.save(theme(name: name, keyword: "#f38ba8"))
+        let second = try #require(CustomThemeStore.palette(name: name))
+        #expect(second.syntaxKeyword != first.syntaxKeyword)
+
+        CustomThemeStore.delete(name: name)
+        #expect(CustomThemeStore.palette(name: name) == nil)
+    }
+
+    private func theme(name: String, keyword: String) -> RemoteTheme {
+        RemoteTheme(
+            name: name,
+            colorScheme: "dark",
+            colors: RemoteThemeColors(
+                bg: "#1e1e2e", bgDark: "#181825", bgHighlight: "#313244",
+                fg: "#cdd6f4", fgDim: "#a6adc8", comment: "#6c7086",
+                blue: "#89b4fa", cyan: "#94e2d5", green: "#a6e3a1",
+                orange: "#fab387", purple: "#cba6f7", red: "#f38ba8",
+                yellow: "#f9e2af", thinkingText: "#a6adc8",
+                userMessageBg: "#313244", userMessageText: "#cdd6f4",
+                toolPendingBg: "#313244", toolSuccessBg: "#1e3a2e",
+                toolErrorBg: "#3a1e1e", toolTitle: "#cdd6f4", toolOutput: "#a6adc8",
+                mdHeading: "#89b4fa", mdLink: "#94e2d5", mdLinkUrl: "#6c7086",
+                mdCode: "#94e2d5", mdCodeBlock: "#a6e3a1",
+                mdCodeBlockBorder: "#313244", mdQuote: "#a6adc8",
+                mdQuoteBorder: "#313244", mdHr: "#313244",
+                mdListBullet: "#fab387",
+                toolDiffAdded: "#a6e3a1", toolDiffRemoved: "#f38ba8",
+                toolDiffContext: "#6c7086",
+                syntaxComment: "#6c7086", syntaxKeyword: keyword,
+                syntaxFunction: "#89b4fa", syntaxVariable: "#cdd6f4",
+                syntaxString: "#a6e3a1", syntaxNumber: "#fab387",
+                syntaxType: "#94e2d5", syntaxOperator: "#cdd6f4",
+                syntaxPunctuation: "#a6adc8",
+                thinkingOff: "#313244", thinkingMinimal: "#6c7086",
+                thinkingLow: "#89b4fa", thinkingMedium: "#94e2d5",
+                thinkingHigh: "#cba6f7", thinkingXhigh: "#f38ba8"
+            )
+        )
+    }
 }

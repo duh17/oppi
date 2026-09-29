@@ -119,6 +119,27 @@ struct MacShellNavigationTests {
 
 @Suite("Mac session window chrome")
 struct MacSessionWindowChromeTests {
+    @Test func splitPanesOwnFilesAndContextInsteadOfTheSharedToolbar() {
+        #expect(MacSessionWindowChrome.chromePlacement(paneCount: 1) == .windowToolbar)
+        #expect(MacSessionWindowChrome.chromePlacement(paneCount: 2) == .pane)
+        #expect(MacSessionWindowChrome.chromePlacement(paneCount: 3) == .pane)
+    }
+
+    @Test func paneFilesStayBesideTheTimelineOnlyWhenBothFit() {
+        let minimum = MacSessionShellLayoutPolicy.timelineMinimumWidth
+            + MacSessionWindowChrome.paneFilesColumnMinimumWidth
+        #expect(!MacSessionWindowChrome.presentsFilesBesideTimeline(availableWidth: minimum - 1))
+        #expect(MacSessionWindowChrome.presentsFilesBesideTimeline(availableWidth: minimum))
+        #expect(
+            MacSessionWindowChrome.filesColumnWidth(availableWidth: minimum)
+                == MacSessionWindowChrome.paneFilesColumnMinimumWidth
+        )
+        #expect(
+            MacSessionWindowChrome.filesColumnWidth(availableWidth: minimum + 200)
+                == MacSessionWindowChrome.paneFilesColumnIdealWidth
+        )
+    }
+
     @Test func toolbarKeepsTitleAndSessionActions() {
         #expect(MacSessionWindowChrome.items(in: .toolbar) == [
             .title, .context, .outline,
@@ -256,8 +277,8 @@ struct MacRealWindowSessionToolbarTests {
     @Test func contextControlPaintsTheProgressRingInsteadOfADocumentGlyph() throws {
         let source = try macShellSource("OppiMac/Views/MacSessionShellViews.swift")
         let context = try sourceSlice(
-            from: "private var contextToolbarItem: some View {",
-            to: "@ViewBuilder\n    private var sessionInspector",
+            from: "private var contextButton: some View {",
+            to: "@ViewBuilder\n    private func sessionColumns",
             in: source
         )
 

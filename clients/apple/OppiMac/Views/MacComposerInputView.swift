@@ -8,10 +8,13 @@ struct MacComposerInputView: NSViewRepresentable {
     var isEnabled: Bool
     var accessibilityLabel: String
     var textColor: NSColor
+    var font: NSFont
     var keyboardOwnershipGeneration: UInt = 0
     var wantsKeyboardOwnership = false
     var onFocusChange: (Bool) -> Void
     var onPasteAttachments: (MacComposerPasteboardPayload) -> Void
+    /// Esc with no IME composition. Return true to consume it.
+    var onEscape: () -> Bool = { false }
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -34,7 +37,7 @@ struct MacComposerInputView: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainerInset = .zero
-        textView.font = NSFont.preferredFont(forTextStyle: .body)
+        textView.font = font
         textView.string = text
         textView.setAccessibilityIdentifier("mac.composer.input")
         textView.setAccessibilityLabel(accessibilityLabel)
@@ -103,19 +106,23 @@ struct MacComposerInputView: NSViewRepresentable {
             width: width,
             height: MacComposerInputMetrics.fittedHeight(
                 text: textView.string,
-                font: textView.font ?? NSFont.preferredFont(forTextStyle: .body),
+                font: textView.font ?? font,
                 width: width
             )
         )
     }
 
     private func applyChrome(to textView: MacComposerPasteTextView) {
+        if textView.font != font {
+            textView.font = font
+        }
         textView.isEditable = isEnabled
         textView.isSelectable = true
         textView.textColor = textColor
         textView.insertionPointColor = textColor
         textView.onPasteAttachments = onPasteAttachments
         textView.onFocusChange = onFocusChange
+        textView.onEscape = onEscape
     }
 
     @MainActor
@@ -151,9 +158,28 @@ struct MacComposerInputView: NSViewRepresentable {
     }
 }
 
+/// Input grows line by line up to a fixed number of lines, measured in the
+/// input's own font so ⌘+ zoom keeps the same visible line count.
 enum MacComposerInputMetrics {
-    static let minimumHeight: CGFloat = 21
-    static let maximumHeight: CGFloat = 105
+    static let maximumVisibleLines: CGFloat = 6
+    /// Mic and send/stop circles. iOS uses its 44 pt touch floor; a pointer
+    /// needs less, but the controls must still read at the input's size.
+    static let actionDiameter: CGFloat = 34
+    static let capsuleCornerRadius: CGFloat = 22
+
+    /// Same reading size as timeline prose, in the system face (iOS composes
+    /// in body text, not the code font).
+    @MainActor static var font: NSFont {
+        NSFont.systemFont(ofSize: FontPreferenceStore.macMessagePointSize(forTextStyle: .body))
+    }
+
+    static func minimumHeight(for font: NSFont) -> CGFloat {
+        measuredHeight(" ", font: font, width: .greatestFiniteMagnitude)
+    }
+
+    static func maximumHeight(for font: NSFont) -> CGFloat {
+        ceil(minimumHeight(for: font) * maximumVisibleLines)
+    }
 
     static func fittedHeight(text: String, font: NSFont, width: CGFloat) -> CGFloat {
         let measuredText: String
@@ -164,12 +190,19 @@ enum MacComposerInputMetrics {
         } else {
             measuredText = text
         }
-        let bounds = (measuredText as NSString).boundingRect(
+        return min(
+            max(measuredHeight(measuredText, font: font, width: width), minimumHeight(for: font)),
+            maximumHeight(for: font)
+        )
+    }
+
+    private static func measuredHeight(_ text: String, font: NSFont, width: CGFloat) -> CGFloat {
+        let bounds = (text as NSString).boundingRect(
             with: NSSize(width: max(width, 1), height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [.font: font]
         )
-        return min(max(ceil(bounds.height), minimumHeight), maximumHeight)
+        return ceil(bounds.height)
     }
 }
 
@@ -197,6 +230,7 @@ final class MacComposerInputScrollView: NSScrollView {
 final class MacComposerPasteTextView: NSTextView {
     var onPasteAttachments: ((MacComposerPasteboardPayload) -> Void)?
     var onFocusChange: ((Bool) -> Void)?
+    var onEscape: (() -> Bool)?
 
     /// Hides the macOS "Write with Siri" affordance without turning Writing Tools off.
     /// `allowsWritingToolsAffordance` exists on `NSTextView` at runtime (macOS 15.4+)
@@ -209,6 +243,13 @@ final class MacComposerPasteTextView: NSTextView {
     }
 
     override var acceptsFirstResponder: Bool { true }
+
+    override func cancelOperation(_ sender: Any?) {
+        if !hasMarkedText(), onEscape?() == true {
+            return
+        }
+        super.cancelOperation(sender)
+    }
 
     override func paste(_ sender: Any?) {
         applyPaste(thenTextOnly: { super.paste(sender) })

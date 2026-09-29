@@ -154,6 +154,9 @@ struct MacQuickSessionLaunchAttempt: Equatable, Sendable {
     let request: QuickSessionLaunchRequest
     let plan: QuickSessionLaunchPlan
     let idempotencyKey: String
+    /// Chosen before the session exists. The server create call applies them.
+    var model: String? = nil
+    var thinking: ThinkingLevel? = nil
 }
 
 /// Workspace / worktree / Agent pickers for an empty Quick Session pane.
@@ -169,6 +172,9 @@ final class MacQuickSessionPaneState {
     }
     var worktreeId: String?
     var agentId: String?
+    /// Nil uses the server default model.
+    var modelID: String?
+    var thinkingLevel: ThinkingLevel = .medium
     var errorMessage: String?
     private(set) var pendingLaunchAttempt: MacQuickSessionLaunchAttempt?
     let worktreeListing = MacQuickSessionWorktreeListing()
@@ -177,6 +183,8 @@ final class MacQuickSessionPaneState {
         workspaceId = nil
         worktreeId = nil
         agentId = nil
+        modelID = nil
+        thinkingLevel = .medium
         errorMessage = nil
         pendingLaunchAttempt = nil
         _ = worktreeListing.beginLoad(workspaceId: nil)
@@ -194,7 +202,9 @@ final class MacQuickSessionPaneState {
             let attempt = MacQuickSessionLaunchAttempt(
                 request: request,
                 plan: plan,
-                idempotencyKey: "mac-quick-session-\(UUID().uuidString)"
+                idempotencyKey: "mac-quick-session-\(UUID().uuidString)",
+                model: modelID,
+                thinking: thinkingLevel
             )
             pendingLaunchAttempt = attempt
             return attempt

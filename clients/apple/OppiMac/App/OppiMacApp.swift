@@ -298,6 +298,7 @@ private extension View {
             .environment(\.theme, themeStore.appTheme)
             .environment(\.themeID, themeStore.activeThemeID)
             .tint(.themeBlue)
+            .modifier(MacTypographyRevisionHost())
             .background {
                 MacThemeColorSchemeSyncView(themeStore: themeStore)
             }

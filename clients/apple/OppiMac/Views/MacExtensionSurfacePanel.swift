@@ -228,9 +228,11 @@ private struct MacExtensionWidgetLinesCard: View {
 }
 
 private struct MacExtensionWidgetLinesView: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let lines: [String]
 
     var body: some View {
+        let _ = typographyRevision
         ScrollView(.horizontal, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 3) {
                 ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
@@ -418,9 +420,11 @@ private struct MacExtensionNativeTextSpansView: View {
 }
 
 private struct MacExtensionNativeTerminalLinesView: View {
+    @Environment(\.macTypographyRevision) private var typographyRevision
     let lines: [[ExtensionUITextSpan]]
 
     var body: some View {
+        let _ = typographyRevision
         ScrollView(.horizontal, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 3) {
                 ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
