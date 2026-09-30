@@ -1233,7 +1233,7 @@ export class Server {
       storage: this.storage,
       lifecycle,
       sendPrompt: (sessionId, text) => this.sessions.sendPrompt(sessionId, text),
-      claim: (sessionId, run) => this.sessions.withRestartResumeClaim(sessionId, run),
+      sendFollowUp: (sessionId, text) => this.sessions.sendFollowUp(sessionId, text),
       cancelled: () => state.cancelled,
     }).then(
       () => undefined,

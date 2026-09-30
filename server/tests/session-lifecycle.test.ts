@@ -64,6 +64,7 @@ function makeManagerHarness(
     getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
     getWorkspace: vi.fn(() => options.workspace ?? null),
     getSession: vi.fn((id: string) => (sessionRef && sessionRef.id === id ? sessionRef : null)),
+    clearRestartResume: vi.fn(),
   } as unknown as Storage;
 
   const manager = new SessionManager(storage);

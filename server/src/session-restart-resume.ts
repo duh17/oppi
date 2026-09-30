@@ -14,11 +14,11 @@
  * cleared one by one, so a crash during resume keeps the rest queued; a session
  * already resumed is stored as running and the crash path queues it again.
  *
- * Any other start of a session (a client opening it, a prompt) clears its
- * entry in SessionManager.startSession, and an explicit stop clears it in
- * SessionLifecycleService.stopSession, so a session someone already resumed or
- * stopped is left alone. The resume's own start runs under `claim` and keeps
- * the entry until the continuation is sent.
+ * Input sent to a session (SessionManager.sendPrompt/sendSteer/sendFollowUp)
+ * or an explicit stop (SessionLifecycleService.stopSession) clears its entry:
+ * that person now directs the session, and a stopped session stays stopped.
+ * A client merely opening or reconnecting to it does not, so a session the
+ * app reopens on reconnect still gets its continuation.
  */
 
 import { safeErrorMessage } from "./log-utils.js";
@@ -103,8 +103,7 @@ export interface RestartResumeDeps {
   storage: RestartStorage;
   lifecycle: Pick<SessionLifecycleService, "resumeControlSession" | "resumeWorkspaceSession">;
   sendPrompt: (sessionId: string, text: string) => Promise<void>;
-  /** Marks the resume's own start so it does not clear the entry. */
-  claim: <T>(sessionId: string, run: () => Promise<T>) => Promise<T>;
+  sendFollowUp: (sessionId: string, text: string) => Promise<void>;
   /** Stop before the next entry; server shutdown sets this. */
   cancelled?: () => boolean;
 }
@@ -123,7 +122,7 @@ export async function resumeSessionsAfterRestart(
     if (deps.cancelled?.()) break;
     const [entry] = deps.storage.listRestartResume();
     if (!entry) break;
-    const result = await deps.claim(entry.sessionId, () => resumeOne(deps, entry));
+    const result = await resumeOne(deps, entry);
     // Shutdown mid-resume keeps the entry (and wasBusy) for the next start.
     if (deps.cancelled?.()) break;
     deps.storage.clearRestartResume(entry.sessionId);
@@ -166,21 +165,41 @@ async function resumeOne(
     return { outcome: "failed", reason: safeErrorMessage(error) };
   }
 
-  // Someone may have prompted the session between startup and this resume;
-  // only an idle session gets the continuation. Skip it once shutdown began.
-  if (!entry.wasBusy || resumed.status !== "ready" || deps.cancelled?.()) {
-    return { outcome: "resumed" };
-  }
-  // A client start or an explicit stop while this resume ran cleared the
-  // entry and took over the session. No await separates this check from the
-  // sendPrompt call, so no request can clear the entry in between.
+  if (!entry.wasBusy || deps.cancelled?.()) return { outcome: "resumed" };
+  // Input sent to the session or an explicit stop while this resume ran
+  // cleared the entry: that person now directs it. Opening or reconnecting to
+  // the session does not. No await separates this check from delivery below.
   if (!deps.storage.listRestartResume().some((queued) => queued.sessionId === session.id)) {
     return { outcome: "resumed", reason: "taken over during resume" };
   }
+  return continueAfterRestart(deps, session.id, resumed.status);
+}
+
+/**
+ * Best effort: prompt an idle session; queue a follow-up behind a turn that
+ * started on its own (an extension at startup), and fall back to a follow-up
+ * when the prompt is refused.
+ */
+async function continueAfterRestart(
+  deps: RestartResumeDeps,
+  sessionId: string,
+  status: Session["status"],
+): Promise<{ outcome: RestartResumeOutcome; reason?: string }> {
+  if (status === "ready") {
+    try {
+      await deps.sendPrompt(sessionId, RESTART_CONTINUE_PROMPT);
+      return { outcome: "continued" };
+    } catch (error: unknown) {
+      log.warn("session_restart.continue_prompt_refused", {
+        sessionId,
+        error: safeErrorMessage(error),
+      });
+    }
+  }
   try {
-    await deps.sendPrompt(session.id, RESTART_CONTINUE_PROMPT);
+    await deps.sendFollowUp(sessionId, RESTART_CONTINUE_PROMPT);
+    return { outcome: "continued", reason: "queued as follow-up" };
   } catch (error: unknown) {
     return { outcome: "failed", reason: `continuation: ${safeErrorMessage(error)}` };
   }
-  return { outcome: "continued" };
 }

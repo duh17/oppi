@@ -56,6 +56,7 @@ function makeDeps(
   resumedStatus: (id: string) => Session["status"] = () => "ready",
 ): RestartResumeDeps & {
   sendPrompt: ReturnType<typeof vi.fn>;
+  sendFollowUp: ReturnType<typeof vi.fn>;
   resumed: string[];
 } {
   const resumed: string[] = [];
@@ -71,7 +72,7 @@ function makeDeps(
       resumeControlSession: (session) => resume(session),
     },
     sendPrompt: vi.fn(async () => undefined),
-    claim: (_sessionId, run) => run(),
+    sendFollowUp: vi.fn(async () => undefined),
   };
 }
 
@@ -161,7 +162,7 @@ describe("session restart resume", () => {
     const live = [
       saveSession(storage, "mid-turn", { ...ws, status: "busy" }),
       saveSession(storage, "idle", { ...ws, status: "ready" }),
-      saveSession(storage, "prompted-meanwhile", { ...ws, status: "busy" }),
+      saveSession(storage, "busy-on-its-own", { ...ws, status: "busy" }),
       saveSession(storage, "control", {
         status: "busy",
         control: { domain: "server", intent: "inspect" } as Session["control"],
@@ -171,19 +172,21 @@ describe("session restart resume", () => {
     recordLiveSessionsForRestart(storage, live);
     for (const session of live) saveSession(storage, session.id, { ...session, status: "stopped" });
 
-    const deps = makeDeps(storage, (id) => (id === "prompted-meanwhile" ? "busy" : "ready"));
+    // An extension started a turn at startup before the resume reached it.
+    const deps = makeDeps(storage, (id) => (id === "busy-on-its-own" ? "busy" : "ready"));
     const results = await resumeSessionsAfterRestart(deps);
 
     expect(Object.fromEntries(results.map((r) => [r.sessionId, r.outcome]))).toEqual({
       "mid-turn": "continued",
       idle: "resumed",
-      "prompted-meanwhile": "resumed",
+      "busy-on-its-own": "continued",
       control: "continued",
     });
     expect(deps.sendPrompt.mock.calls.sort()).toEqual([
       ["control", RESTART_CONTINUE_PROMPT],
       ["mid-turn", RESTART_CONTINUE_PROMPT],
     ]);
+    expect(deps.sendFollowUp.mock.calls).toEqual([["busy-on-its-own", RESTART_CONTINUE_PROMPT]]);
     expect(storage.listRestartResume()).toEqual([]);
   });
 
@@ -218,39 +221,39 @@ describe("session restart resume", () => {
     expect(storage.listRestartResume()).toEqual([]);
   });
 
-  it("leaves a session alone once any other start has claimed it", async () => {
+  it("still continues a session the app reopened before its resume", async () => {
     const { storage, workspace } = makeStorage();
-    const ws = { workspaceId: workspace.id, status: "stopped" as const };
-    saveSession(storage, "first", ws);
-    saveSession(storage, "second", ws);
-    storage.queueRestartResume(
-      [
-        { sessionId: "first", wasBusy: true },
-        { sessionId: "second", wasBusy: true },
-      ],
-      1,
-    );
+    saveSession(storage, "s1", { workspaceId: workspace.id, status: "stopped" });
+    storage.queueRestartResume([{ sessionId: "s1", wasBusy: true }], 1);
     const { sdkBackend } = makeSdkBackendStub();
     const create = vi.spyOn(SdkBackend, "create").mockResolvedValue(sdkBackend);
     const manager = new SessionManager(storage);
     try {
+      // The app reconnects and reopens the focused session first.
+      await manager.startSession("s1", workspace);
       const deps = makeDeps(storage);
-      const resumeWorkspaceSession = deps.lifecycle.resumeWorkspaceSession;
-      deps.lifecycle.resumeWorkspaceSession = async (params) => {
-        // While "first" resumes, a client opens "second" (and may stop it again).
-        if (params.session.id === "first") await manager.startSession("second", workspace);
-        return resumeWorkspaceSession(params);
-      };
 
-      const results = await resumeSessionsAfterRestart(deps);
+      const [result] = await resumeSessionsAfterRestart(deps);
 
-      expect(deps.resumed).toEqual(["first"]);
-      expect(deps.sendPrompt.mock.calls).toEqual([["first", RESTART_CONTINUE_PROMPT]]);
-      expect(results.map((r) => r.sessionId)).toEqual(["first"]);
+      expect(result?.outcome).toBe("continued");
+      expect(deps.sendPrompt.mock.calls).toEqual([["s1", RESTART_CONTINUE_PROMPT]]);
     } finally {
       await manager.stopAll().catch(() => {});
       create.mockRestore();
     }
+  });
+
+  it("falls back to a follow-up when the continuation prompt is refused", async () => {
+    const { storage, workspace } = makeStorage();
+    saveSession(storage, "s1", { workspaceId: workspace.id, status: "stopped" });
+    storage.queueRestartResume([{ sessionId: "s1", wasBusy: true }], 1);
+    const deps = makeDeps(storage);
+    deps.sendPrompt.mockRejectedValue(new Error("agent is busy"));
+
+    const [result] = await resumeSessionsAfterRestart(deps);
+
+    expect(result).toMatchObject({ outcome: "continued", reason: "queued as follow-up" });
+    expect(deps.sendFollowUp.mock.calls).toEqual([["s1", RESTART_CONTINUE_PROMPT]]);
   });
 
   it("keeps every entry and skips the continuation when shutdown interrupts a resume", async () => {
@@ -302,7 +305,7 @@ describe("session restart resume", () => {
     expect(deps.sendPrompt).not.toHaveBeenCalled();
   });
 
-  it("keeps the resume's own entry queued until its continuation is sent", async () => {
+  it("keeps the entry queued until its continuation is sent", async () => {
     const { storage, workspace } = makeStorage();
     saveSession(storage, "s1", { workspaceId: workspace.id, status: "stopped" });
     storage.queueRestartResume([{ sessionId: "s1", wasBusy: true }], 1);
@@ -312,18 +315,15 @@ describe("session restart resume", () => {
     try {
       const deps = makeDeps(storage);
       const queuedAtContinuation: unknown[] = [];
-      deps.lifecycle.resumeWorkspaceSession = async ({ session }) => ({
-        session: { ...(await manager.startSession(session.id, workspace)), status: "ready" },
-      }) as never;
+      // The resume's own start goes through the real SessionManager.
+      deps.lifecycle.resumeWorkspaceSession = async ({ session }) =>
+        ({ session: await manager.startSession(session.id, workspace) }) as never;
       deps.sendPrompt.mockImplementation(async () => {
         // A crash here must still find the entry, busy flag included.
         queuedAtContinuation.push(...storage.listRestartResume());
       });
 
-      await resumeSessionsAfterRestart({
-        ...deps,
-        claim: (id, run) => manager.withRestartResumeClaim(id, run),
-      });
+      await resumeSessionsAfterRestart(deps);
 
       expect(queuedAtContinuation).toEqual([{ sessionId: "s1", wasBusy: true }]);
       expect(storage.listRestartResume()).toEqual([]);
@@ -357,37 +357,27 @@ describe("session restart resume", () => {
     expect(deps.sendPrompt).not.toHaveBeenCalled();
   });
 
-  it("sends no continuation when a client opens the session during its resume", async () => {
+  it("sends no continuation when the user messages the session during its resume", async () => {
     const { storage, workspace } = makeStorage();
     saveSession(storage, "s1", { workspaceId: workspace.id, status: "stopped" });
     storage.queueRestartResume([{ sessionId: "s1", wasBusy: true }], 1);
     const { sdkBackend } = makeSdkBackendStub();
     const create = vi.spyOn(SdkBackend, "create").mockResolvedValue(sdkBackend);
     const manager = new SessionManager(storage);
-    let started!: () => void;
-    const resumeStarted = new Promise<void>((resolve) => (started = resolve));
-    let release!: () => void;
-    const clientDone = new Promise<void>((resolve) => (release = resolve));
     try {
       const deps = makeDeps(storage);
       deps.lifecycle.resumeWorkspaceSession = async ({ session }) => {
         const live = await manager.startSession(session.id, workspace);
-        started();
-        await clientDone;
+        // The user sends their own message while the resume is running.
+        await manager.sendPrompt(session.id, "do this instead").catch(() => undefined);
         return { session: { ...live, status: "ready" } } as never;
       };
-      const run = resumeSessionsAfterRestart({
-        ...deps,
-        claim: (id, body) => manager.withRestartResumeClaim(id, body),
-      });
 
-      await resumeStarted;
-      // The client's own request, outside the resume's call chain.
-      await manager.startSession("s1", workspace);
-      release();
-      await run;
+      const [result] = await resumeSessionsAfterRestart(deps);
 
+      expect(result?.reason).toBe("taken over during resume");
       expect(deps.sendPrompt).not.toHaveBeenCalled();
+      expect(deps.sendFollowUp).not.toHaveBeenCalled();
     } finally {
       await manager.stopAll().catch(() => {});
       create.mockRestore();

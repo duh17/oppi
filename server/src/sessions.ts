@@ -10,7 +10,6 @@
  * - SDK command passthrough (model switching, compaction, etc.)
  */
 
-import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
 
 import type { AgentRuntimeTransport, RuntimeClientCommand } from "./agent-runtime-transport.js";
@@ -207,29 +206,10 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   }
 
   /**
-   * The session the post-restart resume is starting in this async call chain.
-   * Scoped to the resume's own calls, so a concurrent client start of the same
-   * session still clears the entry; see startSession.
-   */
-  private readonly restartResumeClaim = new AsyncLocalStorage<string>();
-
-  /** Run the post-restart resume of one session; see startSession. */
-  withRestartResumeClaim<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
-    return this.restartResumeClaim.run(sessionId, run);
-  }
-
-  /**
    * Start a new session — creates an in-process pi SDK session.
    */
   async startSession(sessionId: string, workspace?: Workspace): Promise<Session> {
     const key = this.sessionKey(sessionId);
-    // Any other start supersedes a pending post-restart resume, so that resume
-    // cannot re-open a session a client already opened and stopped again. The
-    // resume's own start keeps the entry until its continuation is sent, so a
-    // crash mid-resume still finds it.
-    if (this.restartResumeClaim.getStore() !== sessionId) {
-      this.storage.clearRestartResume(sessionId);
-    }
     this.ensureMobileRenderersLoaded();
     const startWorkspace = workspace ?? this.resolveStoredWorkspace(sessionId);
     const session = await this.activationCoordinator.startSession(key, sessionId, startWorkspace);
@@ -291,10 +271,20 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     },
   ): Promise<void> {
     const key = this.sessionKey(sessionId);
-
+    this.claimFromRestartResume(sessionId);
     await this.inputCoordinator.sendPrompt(key, message, {
       ...opts,
     });
+  }
+
+  /**
+   * Input to a session supersedes its pending post-restart continuation: the
+   * sender now directs the turn. A client merely opening or reconnecting to the
+   * session does not, so the continuation still goes out. The resume's own
+   * continuation also lands here, after the entry has done its job.
+   */
+  private claimFromRestartResume(sessionId: string): void {
+    this.storage.clearRestartResume(sessionId);
   }
 
   /**
@@ -314,6 +304,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     },
   ): Promise<void> {
     const key = this.sessionKey(sessionId);
+    this.claimFromRestartResume(sessionId);
     await this.inputCoordinator.sendSteer(key, message, opts);
   }
 
@@ -332,6 +323,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     },
   ): Promise<void> {
     const key = this.sessionKey(sessionId);
+    this.claimFromRestartResume(sessionId);
     await this.inputCoordinator.sendFollowUp(key, message, opts);
   }
 

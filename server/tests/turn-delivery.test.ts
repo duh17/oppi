@@ -44,6 +44,7 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
     saveSession: vi.fn(),
     getWorkspace: vi.fn(() => undefined),
     saveWorkspace: vi.fn(),
+    clearRestartResume: vi.fn(),
   } as unknown as Storage;
 
   const manager = new SessionManager(storage);

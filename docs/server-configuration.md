@@ -128,7 +128,8 @@ Sessions that were running when the server stopped come back when it starts agai
 
 - Every running Oppi session is resumed, one at a time, after the server is listening.
 - A session that was in the middle of a turn also gets a short message saying the server restarted and asking the agent to continue. Tool calls and background jobs that were running at the time were stopped, so the agent is told to re-check them.
-- If you open or prompt a session before its resume reaches it, the automatic resume leaves it alone, including if you stop it again.
+- Opening a session, or the app reconnecting to it, does not cancel the continue message. Sending the session a message or stopping it does: your message or stop wins.
+- The continue message is best effort. If the session is already running a turn, or refuses the message, it is queued as a follow-up instead.
 - A session that was being stopped when the server went down stays stopped. Incognito sessions and Pi TUI mirror sessions are not resumed. A session whose workspace was deleted is skipped.
 
 The pending list lives in the `session_restart_resume` table of `session-state.db` until each session is resumed, so a crash during the resume keeps the rest. `server.log` records `session_restart.recorded`, `session_restart.resumed`, `session_restart.resume_failed`, and a `session_restart.resume_complete` summary, which is logged even when nothing was queued.
