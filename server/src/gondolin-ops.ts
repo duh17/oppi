@@ -36,6 +36,8 @@ export interface GondolinVm {
       cwd?: string;
       env?: Record<string, string>;
       signal?: AbortSignal;
+      /** `true` enables `write`/`end` on the process (a long-lived stdio peer). */
+      stdin?: boolean;
       stdout?: "pipe" | "buffer";
       stderr?: "pipe" | "buffer";
     },
@@ -68,6 +70,9 @@ export interface GondolinFs {
  */
 export interface GondolinProcess extends PromiseLike<GondolinExecResult> {
   output(): AsyncIterable<{ stream: "stdout" | "stderr"; data: Buffer }>;
+  /** Available when exec was started with `stdin: true`. */
+  write(data: string | Buffer): void;
+  end(): void;
 }
 
 export interface GondolinExecResult {

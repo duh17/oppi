@@ -2,7 +2,7 @@ import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { existsSync, statSync } from "node:fs";
 
 import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
-import { availableHostMcpBuiltinNames } from "./host-mcp-extensions.js";
+import { availableMcpBuiltinNames } from "./host-mcp-extensions.js";
 import { mintSessionId } from "./id.js";
 import { AgentConfigurationError, type AgentConfigurationFailure } from "./agent-launch-errors.js";
 import {
@@ -555,10 +555,7 @@ export class AgentLaunchService {
       hostCwd,
       agentDir,
       settingsManager,
-      availableHostMcpBuiltinNames({
-        sandbox: request.target.workspace.runtime === "sandbox",
-        managed: true,
-      }),
+      availableMcpBuiltinNames(true),
     );
   }
 

@@ -58,10 +58,11 @@ import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
 import { applyPendingProviderRegistrations } from "./extension-model-discovery.js";
 import { PROJECT_TRUST_TIMEOUT_MS, resolveManagedProjectTrust } from "./project-trust.js";
 import {
-  availableHostMcpBuiltinNames,
-  createHostMcpBuiltinExtensions,
+  availableMcpBuiltinNames,
+  createMcpBuiltinExtensions,
   isBuiltinExtensionPath,
 } from "./host-mcp-extensions.js";
+import { createSandboxMcpOptions, EMPTY_SANDBOX_MCP, loadPiMcpInternals } from "./sandbox-mcp.js";
 import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
 import {
   DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS,
@@ -78,6 +79,7 @@ import { hostMountValidationError, resolveHostPath } from "./host.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
 import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "./oppi-docs.js";
 import type { ReadonlyMount, VmSecretDefinition } from "./gondolin-manager.js";
+import type { GondolinVm } from "./gondolin-ops.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import { resolveWorkspaceSessionCwd, WorkspaceWorktreeError } from "./worktrees.js";
 import { callerSessionIdentityShellPrefix } from "./session-caller-identity.js";
@@ -927,18 +929,36 @@ export class SdkBackend {
         await settingsManager.reload();
       };
       await resolveTrust();
-      // Pi MCP/codemode/tool-search: always on for managed host sessions.
-      const hostMcpBuiltinNames = availableHostMcpBuiltinNames({
-        sandbox: sandboxMode,
-        managed: managedSession,
-      });
+      // Pi MCP/codemode/tool-search: always on for managed sessions.
+      const mcpBuiltinNames = availableMcpBuiltinNames(managedSession);
       const selectedAgentExtensionPaths = await resolveSelectedAgentExtensionPaths(
         selectedAgentExtensionIds,
         hostCwd,
         runtimeAgentDir,
         settingsManager,
-        hostMcpBuiltinNames,
+        mcpBuiltinNames,
       );
+      // A sandbox gets only the global servers its owner picked, with stdio servers
+      // run inside the VM. Servers connect at session_start, after the VM exists below.
+      let sandboxVm: GondolinVm | undefined;
+      const sandboxMcpPicks = sandboxMode ? (workspace?.sandboxConfig?.mcpServers ?? []) : [];
+      const sandboxMcp = !sandboxMode
+        ? undefined
+        : sandboxMcpPicks.length === 0
+          ? EMPTY_SANDBOX_MCP
+          : createSandboxMcpOptions({
+              internals: await loadPiMcpInternals(),
+              agentDir: runtimeAgentDir,
+              selected: sandboxMcpPicks,
+              allowedHosts: workspace?.sandboxConfig?.allowedHosts,
+              guestCwd,
+              // This session's own VM. Re-ensuring could stop a newer session's VM whose
+              // settings differ, and bring back this session's older Allowed Hosts.
+              vm: async () => {
+                if (!sandboxVm) throw new Error("The sandbox VM is not ready");
+                return sandboxVm;
+              },
+            });
 
       // Resource loader: follow Pi's normal cwd/settings/package discovery.
       // Oppi no longer applies a workspace-level skills/extensions policy for
@@ -1035,7 +1055,7 @@ export class SdkBackend {
         appendSystemPromptOverride: (base) => buildCurrentAppendSystemPrompt(base),
         extensionFactories: [
           createLifecycleJournalExtension(sessionManager),
-          ...createHostMcpBuiltinExtensions(hostMcpBuiltinNames),
+          ...createMcpBuiltinExtensions(mcpBuiltinNames, sandboxMcp && { mcp: sandboxMcp }),
         ],
         ...(selectedAgentSkillPaths !== undefined
           ? { noSkills: true, additionalSkillPaths: selectedAgentSkillPaths }
@@ -1241,6 +1261,7 @@ export class SdkBackend {
           extraEnv,
           guestCwd,
         );
+        sandboxVm = vm;
 
         // Authoritative sandbox set. Custom grep/find overwrite host builtins
         // in Pi's registry; do not call createGrepToolDefinition (host rg).
@@ -1290,6 +1311,13 @@ export class SdkBackend {
             keepHostExtensionTools: Boolean(launchToolPolicy?.allowed),
           })
         : { allowed: configuredToolPolicy.allowed, dropped: [] };
+      // Pi admits extension tools by exact name, and MCP tool names are known only after
+      // connecting, so a workspace Tools list leaves picked MCP servers unreachable.
+      if (sandboxMcpPicks.length > 0 && !launchToolPolicy?.allowed && workspaceTools) {
+        const warning =
+          "This sandbox's Tools list hides its MCP servers. Clear the workspace Tools list to use them.";
+        session.warnings = [...new Set([...(session.warnings ?? []), warning])];
+      }
       const effectiveToolPolicy = {
         ...configuredToolPolicy,
         ...(sandboxAllowlist.allowed ? { allowed: sandboxAllowlist.allowed } : {}),

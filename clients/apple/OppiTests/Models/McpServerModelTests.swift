@@ -19,7 +19,7 @@ struct McpServerModelTests {
 
     @Test func decodesServerAuthAndTrustStatesFromServerFixture() throws {
         let catalogs = try fixture().catalogs
-        #expect(catalogs.map(\.scope.id) == ["global", "workspace-one", "workspace-trusted", "workspace-distrusted"])
+        #expect(catalogs.map(\.scope.id) == ["global", "workspace-one", "workspace-trusted", "workspace-distrusted", "workspace-sandbox"])
         let global = try #require(catalogs.first).scope
         #expect(global.servers.map(\.state) == ["connected", "needs-auth", "failed", "disabled"])
         #expect(global.servers[0].tools == ["echo"])
@@ -29,7 +29,11 @@ struct McpServerModelTests {
         #expect(global.servers[1].config.oauth?.clientSecret == "[redacted]")
         #expect(global.servers[1].stateLabel == "Needs sign-in")
         #expect(global.projectTrust == nil && global.inherited == nil)
-        #expect(catalogs.dropFirst().map(\.scope.projectTrust) == [.ask, .trusted, .distrusted])
+        #expect(catalogs.dropFirst().map(\.scope.projectTrust) == [.ask, .trusted, .distrusted, nil])
+        let sandbox = catalogs[4].scope
+        #expect(sandbox.kind == "sandbox")
+        #expect(sandbox.servers.map(\.state) == ["available", "blocked"])
+        #expect(sandbox.servers[1].error?.contains("Allowed Hosts") == true)
         #expect(catalogs[1].scope.servers[0].state == "untrusted")
         #expect(catalogs[1].scope.inherited?.first?.state == "connected")
         #expect(catalogs[2].scope.inherited?.first?.state == "replaced")

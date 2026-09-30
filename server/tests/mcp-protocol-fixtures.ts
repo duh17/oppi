@@ -5,7 +5,7 @@ export const MCP_HTTP_SNAPSHOT_FILE = fileURLToPath(
   new URL("../../protocol/mcp-http.json", import.meta.url),
 );
 export function buildMcpHttpFixture(): {
-  /** One list per scope: global, then projects in each trust state. */
+  /** One list per scope: global, projects in each trust state, then a sandbox. */
   catalogs: McpServersResponse[];
   /** The list served while a sign-in is live: last snapshot plus the flow to resume. */
   signInCatalog: McpServersResponse;
@@ -143,6 +143,35 @@ export function buildMcpHttpFixture(): {
         errors: [],
         servers: [],
         inherited: [],
+      },
+      {
+        id: "workspace-sandbox",
+        title: "Sandbox",
+        kind: "sandbox",
+        errors: [],
+        servers: [
+          {
+            name: "echo",
+            transport: "stdio",
+            config: { command: "node", args: ["echo.cjs"] },
+            enabled: true,
+            exposure: "codemode",
+            state: "available",
+            tools: [],
+            supportsOAuth: false,
+          },
+          {
+            name: "remote",
+            transport: "http",
+            config: { url: "https://example.test/mcp" },
+            enabled: true,
+            exposure: "codemode",
+            state: "blocked",
+            tools: [],
+            error: "example.test is not in this workspace's Allowed Hosts.",
+            supportsOAuth: true,
+          },
+        ],
       },
     ],
     flows: (

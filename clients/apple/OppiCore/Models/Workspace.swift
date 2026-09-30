@@ -38,6 +38,10 @@ enum ProjectTrustState: String, Codable, Sendable, Equatable {
 
 struct SandboxConfig: Codable, Sendable, Equatable, Hashable {
     var allowedHosts: [String]?
+    /// Non-secret guest environment set on the server. Carried through edits unchanged.
+    var env: [String: String]?
+    /// Global MCP servers the owner picked for this sandbox.
+    var mcpServers: [String]?
 }
 
 /// Workspace model matching server's `Workspace` type.

@@ -27,7 +27,9 @@ export interface McpScopeSnapshot {
   /** global, or the owning workspace id. Never a client-provided filesystem path. */
   id: string;
   title: string;
-  kind: "global" | "project";
+  /** `sandbox`: global servers, each `available`, `disabled`, or `blocked` (with `error`)
+   * for this sandbox; which ones load is the workspace's `sandboxConfig.mcpServers`. */
+  kind: "global" | "project" | "sandbox";
   /** Project scopes only: the trust answer Workspace settings show for all project resources. */
   projectTrust?: ProjectTrustState;
   /** This scope's own mcp.json. In an untrusted project, enabled rows are `untrusted`. */

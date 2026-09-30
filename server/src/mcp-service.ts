@@ -22,14 +22,18 @@ import {
 } from "./mcp-config.js";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { projectTrustState } from "./project-trust.js";
+import { sandboxMcpBlockReason } from "./sandbox-mcp.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 
 interface Scope {
   id: string;
   title: string;
-  kind: "global" | "project";
+  kind: "global" | "project" | "sandbox";
   cwd: string;
+  /** The mcp.json this scope edits. A sandbox reads the global file and edits nothing. */
   path: string;
+  /** Sandbox only: the workspace's Allowed Hosts. */
+  allowedHosts?: string[];
 }
 interface PiReport {
   name: string;
@@ -119,9 +123,21 @@ export class McpService {
         path: this.globalPath,
       },
       ...this.options.listWorkspaces().flatMap((workspace): Scope[] => {
-        // Sandbox sessions never load MCP. Every host workspace, folder or not, gets the
-        // cwd its sessions (and its Extensions settings) use, so the project file matches.
-        if (workspace.runtime === "sandbox") return [];
+        // A sandbox loads only global servers its owner picked (sandbox-mcp.ts); its
+        // scope lists which of them may run there.
+        if (workspace.runtime === "sandbox")
+          return [
+            {
+              id: workspace.id,
+              title: workspace.name,
+              kind: "sandbox",
+              cwd: this.cli.globalCwd,
+              path: this.globalPath,
+              allowedHosts: workspace.sandboxConfig?.allowedHosts,
+            },
+          ];
+        // Every host workspace, folder or not, gets the cwd its sessions (and its
+        // Extensions settings) use, so the project file matches.
         const cwd = resolveSdkSessionCwd(workspace);
         return [
           {
@@ -135,10 +151,45 @@ export class McpService {
       }),
     ];
   }
-  private scope(id: string): Scope {
+  /** Changes go to the global list or a host workspace's file, never through a sandbox. */
+  private scope(id: string, access: "list" | "edit" = "edit"): Scope {
     const scope = this.scopes().find((entry) => entry.id === id);
-    if (!scope) throw new McpError(404, "Host workspace scope not found");
+    if (!scope) throw new McpError(404, "Workspace scope not found");
+    if (scope.kind === "sandbox" && access === "edit")
+      throw new McpError(
+        409,
+        "Sandbox workspaces use global servers. Change them from MCP Servers in the sidebar.",
+      );
     return scope;
+  }
+  /** Global servers with whether each may run in this sandbox. No probe: that needs the VM. */
+  private sandboxSnapshot(scope: Scope): McpScopeSnapshot {
+    const snapshot: McpScopeSnapshot = {
+      id: scope.id,
+      title: scope.title,
+      kind: "sandbox",
+      servers: [],
+      errors: [],
+    };
+    let document: Record<string, unknown>;
+    try {
+      document = readMcpDocument(this.globalPath);
+    } catch (error) {
+      snapshot.errors.push(error instanceof McpError ? error.message : "Could not read mcp.json");
+      return snapshot;
+    }
+    const entries = serverEntries(document);
+    const blocked = (name: string): string | undefined =>
+      isRecord(entries[name])
+        ? sandboxMcpBlockReason(entries[name], scope.allowedHosts)
+        : undefined;
+    snapshot.servers = summarize(
+      entries,
+      () => undefined,
+      (name, enabled) => (blocked(name) ? "blocked" : enabled ? "available" : "disabled"),
+      (text) => text,
+    ).map((row) => ({ ...row, ...(blocked(row.name) ? { error: blocked(row.name) } : {}) }));
+    return snapshot;
   }
   private entry(scope: Scope, name: string): Record<string, unknown> {
     const entries = serverEntries(readMcpDocument(scope.path));
@@ -188,7 +239,11 @@ export class McpService {
   }
   /** Lists one scope: the global file, or one host workspace's project file. */
   async list(scopeId: string): Promise<McpServersResponse> {
-    const scope = this.scope(scopeId);
+    const scope = this.scope(scopeId, "list");
+    if (scope.kind === "sandbox") {
+      const activeSignIn = this.auth.active();
+      return { scope: this.sandboxSnapshot(scope), ...(activeSignIn ? { activeSignIn } : {}) };
+    }
     // Pi's login child writes ~/.pi/agent/mcp-auth.json, and a probe may refresh tokens
     // into the same file. Do not run a second writer beside a live sign-in: serve the last
     // live snapshot (config-only rows if never probed) plus the flow to resume. The flow is

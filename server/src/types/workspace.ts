@@ -16,6 +16,11 @@ export interface WorkspaceSandboxConfig {
   allowedHosts?: string[];
   /** Non-secret guest config such as PATH or LANG. Do not put provider credentials here. */
   env?: Record<string, string>;
+  /**
+   * Names of global `~/.pi/agent/mcp.json` servers this sandbox may load, picked by the
+   * owner. Stored here, outside the VM, so the agent cannot add servers.
+   */
+  mcpServers?: string[];
 }
 
 export interface WorkspaceMutableConfig {

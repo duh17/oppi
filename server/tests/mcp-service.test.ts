@@ -456,6 +456,61 @@ describe("MCP configuration boundary", () => {
   ])("redacts %s", (input, expected) => {
     expect(redactMcpValue(input)).toBe(expected);
   });
+  it("lists which global servers a sandbox may run, without probing, and refuses changes there", async () => {
+    const { agentDir, workspace } = fixture();
+    writeFileSync(
+      join(agentDir, "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          allowed: { url: "https://mcp.example.com/mcp" },
+          elsewhere: { url: "https://other.test/mcp" },
+          local: { command: "node", args: ["s.js"], env: { LANG: "C" } },
+          secretive: { command: "node", env: { KEY: "${HOST_KEY}" } },
+          off: { url: "https://mcp.example.com/off", enabled: false },
+        },
+      }),
+    );
+    const service = new McpService({
+      agentDir,
+      listWorkspaces: () => [
+        {
+          ...workspace,
+          id: "sandbox",
+          runtime: "sandbox",
+          sandboxConfig: { allowedHosts: ["*.example.com"] },
+        },
+      ],
+    });
+    services.push(service);
+    const run = vi.spyOn(McpCli.prototype, "run");
+    try {
+      const { scope } = await service.list("sandbox");
+      expect(scope.kind).toBe("sandbox");
+      expect(scope.servers.map(({ name, state, error }) => ({ name, state, error }))).toEqual([
+        { name: "allowed", state: "available", error: undefined },
+        {
+          name: "elsewhere",
+          state: "blocked",
+          error: "other.test is not in this workspace's Allowed Hosts.",
+        },
+        { name: "local", state: "available", error: undefined },
+        { name: "secretive", state: "blocked", error: expect.stringContaining("host secret") },
+        { name: "off", state: "disabled", error: undefined },
+      ]);
+      expect(run).not.toHaveBeenCalled();
+      for (const change of [
+        () => service.add("sandbox", { name: "new", command: "echo" }),
+        () => service.patch("sandbox", "allowed", { enabled: false }),
+        () => service.remove("sandbox", "allowed"),
+        () => service.login("sandbox", "allowed", "phone_browser"),
+        () => service.logout("sandbox", "allowed"),
+      ])
+        await expect(change()).rejects.toMatchObject({ statusCode: 409 });
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      run.mockRestore();
+    }
+  });
   it("leaves malformed config untouched and rejects invalid patches/scopes", async () => {
     const { service, agentDir } = fixture();
     const path = join(agentDir, "mcp.json");
@@ -467,10 +522,10 @@ describe("MCP configuration boundary", () => {
     await expect(
       service.patch("global", "echo", { exposure: "bogus" } as never),
     ).rejects.toMatchObject({ statusCode: 400 });
-    await expect(service.add("sandbox", { name: "bad", command: "echo" })).rejects.toMatchObject({
+    await expect(service.add("missing", { name: "bad", command: "echo" })).rejects.toMatchObject({
       statusCode: 404,
     });
-    await expect(service.list("sandbox")).rejects.toMatchObject({ statusCode: 404 });
+    await expect(service.list("missing")).rejects.toMatchObject({ statusCode: 404 });
     const snapshot = await service.list("global");
     expect(JSON.stringify(snapshot)).not.toContain("private-value");
     expect(snapshot.scope.errors).toHaveLength(1);

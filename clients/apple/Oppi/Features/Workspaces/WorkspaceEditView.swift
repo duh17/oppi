@@ -130,6 +130,8 @@ struct WorkspaceEditView: View {
     @State private var isShowingSystemPromptEditor = false
     @State private var runtime: WorkspaceRuntime?
     @State private var allowedHostsText: String = ""
+    /// Global MCP servers this sandbox may load; saved with the other sandbox settings.
+    @State private var sandboxMcpServers: Set<String> = []
     @State private var loadedWorkspaceID: String?
     @State private var piResourceLoadGeneration = 0
 
@@ -624,6 +626,14 @@ struct WorkspaceEditView: View {
         }
     }
 
+    /// Allowed Hosts as the form would save them.
+    private var draftAllowedHosts: [String] {
+        allowedHostsText
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
     /// Pi ignores a distrusted folder's project settings, so a toggle there would do nothing.
     private var canTogglePiResources: Bool { projectTrust != .distrusted }
 
@@ -641,8 +651,11 @@ struct WorkspaceEditView: View {
     private var mcpServersSection: some View {
         Section {
             if workspaceForEditing.runtime == .sandbox {
-                Text("Sandbox workspaces don\u{2019}t load MCP servers.")
-                    .foregroundStyle(.themeComment)
+                SandboxMcpServerPicker(
+                    workspaceId: workspace.id,
+                    hostsEdited: draftAllowedHosts != (workspaceForEditing.sandboxConfig?.allowedHosts ?? ["*"]),
+                    selection: $sandboxMcpServers
+                )
             } else if piResourceWorkspaceId == nil {
                 // The MCP scope is the saved folder; an unsaved folder edit would show the old one.
                 Text("Save the folder change to manage its MCP servers.")
@@ -658,7 +671,9 @@ struct WorkspaceEditView: View {
         } header: {
             Text("MCP Servers")
         } footer: {
-            if workspaceForEditing.runtime != .sandbox {
+            if workspaceForEditing.runtime == .sandbox {
+                Text("Only ticked servers load here. Web servers are called from your server, only to Allowed Hosts, and their sign-in stays there. Command servers run inside the VM, where the agent can read their settings; ones that use host secrets are blocked. A workspace Tools list hides MCP servers.")
+            } else {
                 Text(hasSavedFolder
                     ? "Servers from this folder\u{2019}s .pi/mcp.json, plus the global servers that also load here."
                     : "This workspace has no folder, so its sessions use the server home folder. Its project servers are in ~/.pi/mcp.json, shared by every workspace without a folder.")
@@ -780,6 +795,7 @@ struct WorkspaceEditView: View {
         gitStatusEnabled = source.gitStatusEnabled ?? true
         runtime = source.runtime
         allowedHostsText = source.sandboxConfig?.allowedHosts?.joined(separator: "\n") ?? "*"
+        sandboxMcpServers = Set(source.sandboxConfig?.mcpServers ?? [])
     }
 
     @MainActor
@@ -951,12 +967,16 @@ struct WorkspaceEditView: View {
         isSaving = true
         error = nil
 
+        // The server replaces sandboxConfig as a whole, so carry every field.
         let sandboxConfigValue: JSONValue? = runtime == .sandbox ? {
-            let hosts = allowedHostsText
-                .split(separator: "\n")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
-            return .object(["allowedHosts": .array(hosts.map { .string($0) })])
+            var config: [String: JSONValue] = [
+                "allowedHosts": .array(draftAllowedHosts.map { .string($0) }),
+                "mcpServers": .array(sandboxMcpServers.sorted().map { .string($0) }),
+            ]
+            if let env = workspaceForEditing.sandboxConfig?.env {
+                config["env"] = .object(env.mapValues { .string($0) })
+            }
+            return .object(config)
         }() : nil
 
         let request = UpdateWorkspaceRequest(

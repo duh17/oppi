@@ -181,6 +181,44 @@
         "servers": [],
         "inherited": []
       }
+    },
+    {
+      "scope": {
+        "id": "workspace-sandbox",
+        "title": "Sandbox",
+        "kind": "sandbox",
+        "errors": [],
+        "servers": [
+          {
+            "name": "echo",
+            "transport": "stdio",
+            "config": {
+              "command": "node",
+              "args": [
+                "echo.cjs"
+              ]
+            },
+            "enabled": true,
+            "exposure": "codemode",
+            "state": "available",
+            "tools": [],
+            "supportsOAuth": false
+          },
+          {
+            "name": "remote",
+            "transport": "http",
+            "config": {
+              "url": "https://example.test/mcp"
+            },
+            "enabled": true,
+            "exposure": "codemode",
+            "state": "blocked",
+            "tools": [],
+            "error": "example.test is not in this workspace's Allowed Hosts.",
+            "supportsOAuth": true
+          }
+        ]
+      }
     }
   ],
   "signInCatalog": {

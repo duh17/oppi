@@ -54,6 +54,8 @@ struct McpServerSummary: Codable, Sendable, Identifiable, Equatable {
         case "disabled": "Disabled"
         case "untrusted": "Needs remembered trust"
         case "replaced": "Replaced by project"
+        case "available": "Available"
+        case "blocked": "Blocked in this sandbox"
         case "failed", "disconnected": "Failed"
         default: state.capitalized
         }

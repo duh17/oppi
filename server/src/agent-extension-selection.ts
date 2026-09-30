@@ -17,7 +17,7 @@ const SELECTABLE_EXTENSION_SCOPES = new Set(["user", "project"]);
  *
  * `builtin:<name>` IDs name Pi built-ins Oppi supplies as named factories. They
  * resolve to themselves only when listed in `availableBuiltinNames` (managed
- * host workspace); otherwise they are unavailable like any stale ID.
+ * session); otherwise they are unavailable like any stale ID.
  */
 export async function resolveSelectedAgentExtensionPaths(
   extensionIds: string[] | undefined,

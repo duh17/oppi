@@ -99,7 +99,7 @@ Provider API keys use `pi auth`, not Oppi config.
 
 ## MCP servers, codemode, and tool search
 
-Pi 0.99 ships built-in MCP, `codemode`, and `tool-search` extensions. Managed sessions in **host** workspaces load all three by default, like a Pi CLI session. There is no Oppi config flag for this. Sessions pick the built-ins up when they start.
+Pi 0.99 ships built-in MCP, `codemode`, and `tool-search` extensions. Managed sessions load all three by default, like a Pi CLI session; sandbox sessions load only the MCP servers you pick for them (see [MCP servers in a sandbox](sandbox.md#mcp-servers-in-a-sandbox)). There is no Oppi config flag for this. Sessions pick the built-ins up when they start.
 
 Oppi follows Pi's own setup:
 
@@ -110,10 +110,10 @@ Oppi follows Pi's own setup:
 
 Limits:
 
-- **Sandbox workspaces never load these extensions.** MCP would connect and spawn host processes before any approval, which is not confinement.
+- **Sandbox workspaces** load only the global servers ticked for them. HTTP servers connect from the host only to Allowed Hosts; stdio servers run inside the VM and never receive host secrets. See [MCP servers in a sandbox](sandbox.md#mcp-servers-in-a-sandbox).
 - Terminal-owned Pi mirror sessions are untouched.
 - For phone MCP sign-in, open **MCP Servers** in the iOS sidebar (global servers) or in **Edit Workspace** (that workspace's servers), select a server, and choose **Sign In**. Open the authorization page in Safari and paste the full loopback callback into Oppi; see [MCP Servers view](#mcp-servers-view). Oppi does not open a host browser for phone sign-in. You can also sign in from a host shell with `pi mcp login <server>`; a running session picks up the new credentials on its next turn. In-session `/mcp login <server>` shows the authorization URL in a phone notification and accepts a pasted redirect URL through an input dialog. It holds that session's prompt while waiting. Pi's five-minute callback timeout ends the wait and aborts the paste dialog; the input itself has no separate timeout and can be dismissed. This fallback has not been tested against a live OAuth provider.
-- A saved Agent with an exact Extension selection loads a built-in only if it selects `builtin:mcp`, `builtin:codemode`, or `builtin:tool-search` in `resources.extensionIds` (for example `oppi agent create --extensions builtin:mcp,builtin:codemode`). In a sandbox workspace, such a selection makes the launch fail as an unavailable Extension.
+- A saved Agent with an exact Extension selection loads a built-in only if it selects `builtin:mcp`, `builtin:codemode`, or `builtin:tool-search` in `resources.extensionIds` (for example `oppi agent create --extensions builtin:mcp,builtin:codemode`).
 
 ### Project trust in managed host sessions
 
@@ -176,7 +176,7 @@ The pending list lives in the `session_restart_resume` table of `session-state.d
 MCP servers are managed where they load, like Pi extensions:
 
 - **MCP Servers** in the iOS workspace sidebar lists Pi's global `~/.pi/agent/mcp.json`. Global servers load in every host workspace.
-- **Edit Workspace → MCP Servers** lists that workspace's own `.pi/mcp.json` in the folder its sessions use, then, read-only under **From Global**, the global servers that also load there. A global server that a same-name project server replaces shows **Replaced by project**. Project servers follow the workspace's [project trust](#project-trust-in-managed-host-sessions); live status and sign-in need a remembered **Trust**. A host workspace without a folder uses the server home folder like its sessions, so its project file is `~/.pi/mcp.json`, shared by every workspace without a folder. Sandbox workspaces never load MCP.
+- **Edit Workspace → MCP Servers** lists that workspace's own `.pi/mcp.json` in the folder its sessions use, then, read-only under **From Global**, the global servers that also load there. A global server that a same-name project server replaces shows **Replaced by project**. Project servers follow the workspace's [project trust](#project-trust-in-managed-host-sessions); live status and sign-in need a remembered **Trust**. A host workspace without a folder uses the server home folder like its sessions, so its project file is `~/.pi/mcp.json`, shared by every workspace without a folder. In a sandbox workspace, this section instead lists the global servers with a tick for each one the sandbox may load and a reason for any that cannot run there; the ticks save with **Save**.
 
 Each list runs one live probe in its own folder (`GET /mcp/scopes/{scopeId}/servers`, where `scopeId` is `global` or a workspace id). Pull to refresh for a live probe.
 

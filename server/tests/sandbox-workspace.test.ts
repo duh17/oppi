@@ -147,6 +147,17 @@ describe("Sandbox workspace CRUD", () => {
     });
   });
 
+  it("keeps only valid, unique MCP server picks, even without other sandbox settings", () => {
+    const ws = storage.createWorkspace({
+      name: "mcp-picks",
+      runtime: "sandbox",
+    } as CreateWorkspaceRequest);
+    storage.updateWorkspace(ws.id, {
+      sandboxConfig: { mcpServers: ["echo", "echo", "bad name", "../x", 5, "kypu-2"] } as never,
+    });
+    expect(storage.getWorkspace(ws.id)!.sandboxConfig).toEqual({ mcpServers: ["echo", "kypu-2"] });
+  });
+
   it("updates runtime from host to sandbox", () => {
     const ws = storage.createWorkspace({
       name: "upgrade-test",

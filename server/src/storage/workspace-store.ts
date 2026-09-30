@@ -101,7 +101,15 @@ function normalizeSandboxConfig(raw: unknown): WorkspaceSandboxConfig | undefine
     }
   }
 
-  return result.allowedHosts || result.env ? result : undefined;
+  if (Array.isArray(obj.mcpServers)) {
+    // Pi server names: letters, digits, `_` and `-`.
+    const names = obj.mcpServers.filter(
+      (name): name is string => typeof name === "string" && /^[A-Za-z0-9_-]+$/.test(name),
+    );
+    if (names.length > 0) result.mcpServers = [...new Set(names)];
+  }
+
+  return result.allowedHosts || result.env || result.mcpServers ? result : undefined;
 }
 
 function normalizeSystemPromptMode(_value: unknown): WorkspaceSystemPromptMode {

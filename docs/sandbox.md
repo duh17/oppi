@@ -126,6 +126,26 @@ File tools are workspace-scoped. A `read`, `edit`, `write`, `ls`, `find`, or `gr
 
 Host-side extensions are different from VM tools. Installed Pi package tools, including an installed `ask` extension, run in the trusted Oppi/Pi host process unless they explicitly delegate work into the sandbox. A sandbox Agent or launch allowlist keeps those selected host-side tools. Enable extensions deliberately.
 
+## MCP servers in a sandbox
+
+A sandbox loads only the global MCP servers (`~/.pi/agent/mcp.json`) you tick under **Edit Workspace → MCP Servers**, saved in the workspace's `sandboxConfig.mcpServers`. The choice lives in Oppi's workspace config, outside the VM, so the agent cannot add servers. The workspace's own `.pi/mcp.json` is never read in a sandbox, and servers that other extensions register with `pi.registerMcpServer` are refused.
+
+| Server | Where it runs | Allowed when |
+| --- | --- | --- |
+| HTTP (`url`) | Pi's normal transport in the host process. OAuth, tokens, and `${NAME}`/`!command` headers resolve on the host; the agent sees tool results only. | The URL's host matches **Allowed Hosts** (same patterns as the VM; unset allows all, empty denies all). A private or local host (loopback, `10/8`, `172.16/12`, `192.168/16`, link-local, `100.64/10` tailnet, IPv6 unique-local and link-local, IPv4 inside IPv6, `localhost`, `*.local`, `*.internal`, `*.home.arpa`, `*.ts.net`) must also be listed exactly, not through a wildcard (IPv6 without brackets, for example `::1`), because the host can reach what the VM cannot. |
+| stdio (`command`) | Inside the VM, started with Gondolin `exec` at the workspace's guest folder, speaking JSON-RPC over its stdin/stdout. The command must exist in the guest image (Alpine with `node` and `python3`); `~` is not expanded. | Its `env` has only literal values. A value with `$NAME`, `${NAME}`, or `!command` is blocked: host secret references never enter the VM. Literal `env` and `args` values do, and the agent can read them. |
+
+A ticked server that is blocked, disabled, or missing from `mcp.json` does not load; the session's `/mcp` lists why. The phone list has no live status for sandbox servers, because probing would need the VM. A stdio server runs in the session's own VM and stops with the session.
+
+Pi's `codemode` and `tool-search` load too. Codemode scripts run in QuickJS/WebAssembly inside the host process and can call only the session's registered tools, including host-side HTTP MCP tools; in sandboxes Oppi turns off codemode's `models` catalog so scripts cannot use host model credentials. A workspace **Tools** list turns MCP off: Pi admits tools by exact name, and MCP tool names are only known after connecting. With picked servers and a Tools list, the session shows a warning; clear the Tools list to use the servers. An Agent or launch allowlist keeps host extension tools but gives no warning: list each `mcp__<server>__<tool>` name there, plus `codemode` for servers left on the default `codemode` exposure. `codemode` alone reaches no MCP tool.
+
+Limits and trust you take on when you pick a server:
+
+- A picked HTTP server acts with your authority on that service (its OAuth grant or header token), even though the token stays on the host.
+- Allowed Hosts is checked against the configured URL only. The host-side client follows redirects, and OAuth discovery and refresh contact the provider's authorization server, without re-checking those hosts; a name that resolves to a private address is not caught.
+- `!command` header values and an OAuth `clientSecret` run host shell commands on each connect, as they do for host sessions.
+- A stdio server the agent can modify inside the VM feeds the host MCP client, and its log lines reach `~/.pi/agent/mcp.log`.
+
 ## Context files in sandbox workspaces
 
 Pi normally loads global and project context files:

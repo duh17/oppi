@@ -25,9 +25,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentConfigurationError } from "../src/agent-launch-errors.js";
 import { resolveSelectedAgentExtensionPaths } from "../src/agent-extension-selection.js";
 import type { AgentDefinition } from "../src/agent-launch-service.js";
-import { availableHostMcpBuiltinNames } from "../src/host-mcp-extensions.js";
+import { availableMcpBuiltinNames } from "../src/host-mcp-extensions.js";
 import * as GondolinManagerModule from "../src/gondolin-manager.js";
-import { SdkBackend } from "../src/sdk-backend.js";
+import { resolveSandboxGuestCwd, SdkBackend } from "../src/sdk-backend.js";
 import { SessionManager as ManagedSessions } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import { serverResourceId } from "../src/server-resource-id.js";
@@ -266,11 +266,33 @@ export default function (pi) {
     expect(existsSync(marker)).toBe(false);
   });
 
-  it("loads no built-ins and spawns no MCP server in a sandbox-runtime session", async () => {
+  it("runs only owner-picked global servers in a sandbox, with stdio inside the VM", async () => {
+    // The agent can write the sandbox's own .pi/mcp.json; it must never load.
     mkdirSync(join(cwd, ".pi"), { recursive: true });
-    writeFileSync(join(cwd, ".pi", "mcp.json"), readFileSync(join(agentDir, "mcp.json")));
+    writeFileSync(
+      join(cwd, ".pi", "mcp.json"),
+      JSON.stringify({ mcpServers: { planted: { command: process.execPath, args: [FIXTURE] } } }),
+    );
+    writeFileSync(
+      join(agentDir, "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          echo: { command: "node", args: ["echo.mjs"], exposure: "direct" },
+          unpicked: { command: "node", args: ["other.mjs"], exposure: "direct" },
+          secretive: {
+            command: "node",
+            args: ["echo.mjs"],
+            env: { TOKEN: "${HOST_TOKEN}" },
+            exposure: "direct",
+          },
+        },
+      }),
+    );
     const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
     const execResult = { exitCode: 0, stdout: "", stdoutBuffer: Buffer.alloc(0), ok: true };
+    const mcpExecs: Array<{ argv: string[]; cwd?: string; env?: Record<string, string> }> = [];
+    const toolCalls: unknown[] = [];
+    // Plays the in-VM echo server over the transport's stdin/stdout pipes.
     const vm = {
       fs: {
         access: vi.fn(async () => undefined),
@@ -278,39 +300,213 @@ export default function (pi) {
         readFile: vi.fn(async () => Buffer.alloc(0)),
         writeFile: vi.fn(async () => undefined),
       },
-      exec: vi.fn(() =>
-        Object.assign(Promise.resolve(execResult), { output: async function* () {} }),
+      exec: vi.fn(
+        (
+          argv: string[] | string,
+          options?: { stdin?: boolean; cwd?: string; env?: Record<string, string> },
+        ) => {
+          if (!options?.stdin)
+            return Object.assign(Promise.resolve(execResult), {
+              output: async function* () {},
+              write: () => {},
+              end: () => {},
+            });
+          mcpExecs.push({ argv: argv as string[], cwd: options.cwd, env: options.env });
+          const queue: Buffer[] = [];
+          let wake: (() => void) | undefined;
+          let ended = false;
+          let exit: (() => void) | undefined;
+          const exited = new Promise<typeof execResult>((resolve) => {
+            exit = () => resolve(execResult);
+          });
+          const push = (message: object): void => {
+            queue.push(Buffer.from(JSON.stringify(message) + "\n"));
+            wake?.();
+          };
+          return Object.assign(exited, {
+            write: (data: string) => {
+              for (const line of data.split("\n").filter(Boolean)) {
+                const message = JSON.parse(line) as {
+                  id?: number;
+                  method: string;
+                  params?: { arguments?: unknown; protocolVersion?: string };
+                };
+                if (message.id === undefined) continue;
+                if (message.method === "tools/call") toolCalls.push(message.params?.arguments);
+                const result =
+                  message.method === "initialize"
+                    ? {
+                        protocolVersion: message.params?.protocolVersion,
+                        capabilities: { tools: {} },
+                        serverInfo: { name: "echo", version: "1" },
+                      }
+                    : message.method === "tools/list"
+                      ? {
+                          tools: [
+                            {
+                              name: "echo",
+                              inputSchema: {
+                                type: "object",
+                                properties: { text: { type: "string" } },
+                              },
+                            },
+                          ],
+                        }
+                      : message.method === "tools/call"
+                        ? { content: [{ type: "text", text: "hi" }] }
+                        : {};
+                push({ jsonrpc: "2.0", id: message.id, result });
+              }
+            },
+            end: () => {
+              ended = true;
+              wake?.();
+              exit?.();
+            },
+            output: async function* () {
+              while (!ended || queue.length) {
+                if (!queue.length) await new Promise<void>((resolve) => (wake = resolve));
+                const data = queue.shift();
+                if (data) yield { stream: "stdout" as const, data };
+              }
+            },
+          });
+        },
       ),
     };
     const sdkBackendType = SdkBackend as unknown as {
       _gondolinManager?: { ensureWorkspaceVm: () => Promise<typeof vm> };
     };
     const previousManager = sdkBackendType._gondolinManager;
-    sdkBackendType._gondolinManager = { ensureWorkspaceVm: vi.fn(async () => vm) };
+    const ensureWorkspaceVm = vi.fn(async () => vm);
+    sdkBackendType._gondolinManager = { ensureWorkspaceVm };
+    const session = makeSession();
     try {
       const backend = await SdkBackend.create({
-        session: makeSession(),
+        session,
         workspace: {
           id: "workspace-1",
           name: "Host MCP Sandbox",
           runtime: "sandbox",
           hostMount: cwd,
-          extensions: [],
+          sandboxConfig: { allowedHosts: [], mcpServers: ["echo", "secretive", "gone"] },
         } as Workspace,
         onEvent: vi.fn(),
         onEnd: vi.fn(),
       });
       backends.push(backend);
-      expect(extensionPaths(backend).filter((path) => path.startsWith("builtin:"))).toEqual([]);
-      expect(
-        sessionOf(backend)
-          .getAllTools()
-          .map((tool) => tool.name),
-      ).not.toContainEqual(expect.stringMatching(/^(mcp__|codemode$|tool_search$)/));
+      expect(extensionPaths(backend)).toEqual(
+        expect.arrayContaining(["builtin:mcp", "builtin:codemode", "builtin:tool-search"]),
+      );
+      await waitFor(
+        () => sessionOf(backend).getActiveToolNames().includes("mcp__echo__echo"),
+        "sandboxed mcp__echo__echo",
+      );
+      // Only the picked, eligible server started, in the VM, at the guest workspace.
+      expect(mcpExecs).toEqual([
+        { argv: ["node", "echo.mjs"], cwd: expect.stringMatching(/^\/workspace/), env: {} },
+      ]);
+      const names = sessionOf(backend)
+        .getAllTools()
+        .map((tool) => tool.name);
+      expect(names).not.toContainEqual(
+        expect.stringMatching(/^mcp__(planted|unpicked|secretive)__/),
+      );
+
+      await backend.prompt("call the echo tool");
+      await waitFor(() => toolCalls.length > 0, "in-VM tools/call");
+      expect(toolCalls).toEqual([{ text: "hi" }]);
+      // MCP uses this session's VM; ensuring another could stop a newer session's VM.
+      expect(ensureWorkspaceVm).toHaveBeenCalledTimes(1);
+      expect(readFileSync(observed, "utf8").split("\n")).toContain("mcp__echo__echo");
+      // No host process ever ran for any server.
       expect(existsSync(marker)).toBe(false);
+      expect(session.warnings ?? []).toEqual([]);
+
+      // A workspace Tools list admits tools by exact name, so MCP tools cannot pass it.
+      const limitedSession = { ...makeSession(), id: "limited" };
+      const limited = SdkBackend.create({
+        session: limitedSession,
+        workspace: {
+          id: "workspace-1",
+          name: "Host MCP Sandbox",
+          runtime: "sandbox",
+          hostMount: cwd,
+          tools: ["read", "bash"],
+          sandboxConfig: { allowedHosts: [], mcpServers: ["echo"] },
+        } as Workspace,
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+      backends.push(await limited);
+      expect(limitedSession.warnings).toEqual([
+        expect.stringContaining("Tools list hides its MCP servers"),
+      ]);
     } finally {
       sdkBackendType._gondolinManager = previousManager;
       qemuSpy.mockRestore();
+    }
+  });
+
+  it("runs a picked stdio MCP server inside a real Gondolin VM", { timeout: 150_000 }, async () => {
+    if (
+      GondolinManagerModule.sandboxUnsupportedNodeMessage() ||
+      !(await GondolinManagerModule.isQemuAvailable())
+    )
+      return; // Like gondolin-live.test.ts: needs QEMU on this host.
+    const workspace = {
+      id: "workspace-1",
+      name: "Sandbox MCP Live",
+      runtime: "sandbox",
+      hostMount: cwd,
+      sandboxConfig: { allowedHosts: [], mcpServers: ["echo"] },
+    } as Workspace;
+    const guest = resolveSandboxGuestCwd(workspace);
+    writeFileSync(join(cwd, "echo-server.mjs"), readFileSync(FIXTURE));
+    writeFileSync(
+      join(agentDir, "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          echo: {
+            command: "node",
+            args: [`${guest}/echo-server.mjs`],
+            env: { MCP_ECHO_MARKER: `${guest}/marker.log` },
+            exposure: "direct",
+          },
+        },
+      }),
+    );
+    const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: unknown };
+    const previousManager = sdkBackendType._gondolinManager;
+    const manager = new GondolinManagerModule.GondolinManager();
+    sdkBackendType._gondolinManager = manager;
+    const inVmMarker = join(cwd, "marker.log");
+    try {
+      const backend = await SdkBackend.create({
+        session: makeSession(),
+        workspace,
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+      backends.push(backend);
+      await waitFor(
+        () => sessionOf(backend).getActiveToolNames().includes("mcp__echo__echo"),
+        "in-VM mcp__echo__echo",
+        60_000,
+      );
+      await backend.prompt("call the echo tool");
+      await waitFor(
+        () => existsSync(inVmMarker) && readFileSync(inVmMarker, "utf8").includes("call echo"),
+        "in-VM tools/call",
+        30_000,
+      );
+      // The server ran in the guest (Linux pid namespace), writing through the mount.
+      expect(readFileSync(inVmMarker, "utf8")).toContain('call echo {"text":"hi"}');
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      for (const backend of backends.splice(0)) await backend.dispose();
+      await manager.stopAll();
+      sdkBackendType._gondolinManager = previousManager;
     }
   });
 
@@ -983,14 +1179,9 @@ export default function (pi) {
 });
 
 describe("builtin extension availability boundaries", () => {
-  it("never offers builtins to sandbox workspaces or terminal-owned mirrors", () => {
-    expect(availableHostMcpBuiltinNames({ sandbox: true, managed: true })).toEqual([]);
-    expect(availableHostMcpBuiltinNames({ sandbox: false, managed: false })).toEqual([]);
-    expect(availableHostMcpBuiltinNames({ sandbox: false, managed: true })).toEqual([
-      "mcp",
-      "codemode",
-      "tool-search",
-    ]);
+  it("never offers builtins to terminal-owned mirrors", () => {
+    expect(availableMcpBuiltinNames(false)).toEqual([]);
+    expect(availableMcpBuiltinNames(true)).toEqual(["mcp", "codemode", "tool-search"]);
   });
 
   it("resolves builtin selections only for available names", async () => {
