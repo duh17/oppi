@@ -8,6 +8,8 @@ struct McpServersView: View {
     @State private var loading = false
     @State private var addContext: McpAddContext?
     @State private var generation = 0
+    @State private var signIn = McpSignInOwner()
+    @Environment(\.scenePhase) private var scenePhase
 
     private var server: PairedServer? {
         serverStore.servers.first { $0.id == coordinator.activeServerId }
@@ -21,6 +23,17 @@ struct McpServersView: View {
             if let server {
                 Section {
                     ServerCatalogServerRow(selectedServer: server) { _ in }
+                }
+            }
+            if let attempt = signIn.attempt, signIn.hasActive {
+                Section("Sign-in on \(attempt.serverName)") {
+                    Text(attempt.providerName)
+                    Button("Continue Sign-in") { signIn.resume() }
+                        .accessibilityIdentifier("mcp.auth.continue")
+                    Button("Cancel Sign-in", role: .destructive) { Task { await signIn.cancel() } }
+                        .disabled(attempt.isCancelling)
+                        .accessibilityIdentifier("mcp.auth.cancel")
+                    if let error = attempt.actionError { Text(error).foregroundStyle(.themeRed) }
                 }
             }
             if let error {
@@ -47,7 +60,7 @@ struct McpServersView: View {
                             NavigationLink {
                                 McpServerDetailView(
                                     scope: scope, entry: entry, client: client,
-                                    serverId: server.id, serverName: server.name
+                                    serverId: server.id, serverName: server.name, signIn: signIn
                                 )
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
@@ -55,7 +68,7 @@ struct McpServersView: View {
                                     Text("\(entry.transport == "http" ? "URL" : "Command") · \(entry.tools.count) tools · \(entry.exposure.rawValue)")
                                         .font(.subheadline).foregroundStyle(.themeComment)
                                     Label(entry.stateLabel, systemImage: entry.state == "connected" ? "checkmark.circle" : "circle")
-                                        .font(.caption).foregroundStyle(entry.state == "connected" ? AnyShapeStyle(.themeGreen) : AnyShapeStyle(.themeOrange))
+                                        .font(.caption).foregroundStyle(statusStyle(entry.state))
                                 }
                             }
                             .accessibilityIdentifier("mcp.server.\(scope.id).\(entry.name)")
@@ -81,12 +94,21 @@ struct McpServersView: View {
                         addContext = McpAddContext(client: client, scopes: snapshot.scopes, serverName: server.name)
                     }
                 }
-                .disabled(snapshot == nil || loading)
+                .disabled(snapshot == nil || loading || signIn.hasActive)
                 .accessibilityIdentifier("mcp.add")
             }
         }
         .refreshable { await refresh() }
         .task(id: coordinator.activeServerId) { snapshot = nil; await refresh() }
+        .sheet(isPresented: $signIn.showingSheet, onDismiss: { signIn.sheetDismissed() }) {
+            if let attempt = signIn.attempt { McpSignInSheet(attempt: attempt, owner: signIn) }
+        }
+        .onChange(of: signIn.attempt?.flow.status) { _, status in
+            if status?.isTerminal == true { Task { await refresh() } }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { signIn.attempt?.startPolling() } else { signIn.attempt?.stopPolling() }
+        }
         .sheet(item: $addContext) { context in
             McpAddServerView(client: context.client, scopes: context.scopes, serverName: context.serverName) {
                 Task { await refresh() }
@@ -94,7 +116,18 @@ struct McpServersView: View {
         }
     }
 
+    private func statusStyle(_ state: String) -> AnyShapeStyle {
+        switch state {
+        case "connected": AnyShapeStyle(.themeGreen)
+        case "disabled": AnyShapeStyle(.secondary)
+        case "failed", "disconnected": AnyShapeStyle(.themeRed)
+        case "needs-auth", "untrusted": AnyShapeStyle(.themeOrange)
+        default: AnyShapeStyle(.themeComment)
+        }
+    }
+
     private func refresh() async {
+        guard !signIn.hasActive else { return }
         generation += 1
         let token = generation
         let serverId = coordinator.activeServerId

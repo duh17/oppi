@@ -10,18 +10,24 @@ import {
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { once } from "node:events";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { McpCli } from "../src/mcp-cli.js";
 import { McpService } from "../src/mcp-service.js";
 import { RouteHandler, type RouteContext } from "../src/routes/index.js";
 import { validateMcpCallback } from "../src/mcp-auth.js";
-import { patchMcpConfig, redactMcpValue } from "../src/mcp-config.js";
+import {
+  patchMcpConfig,
+  redactMcpValue,
+  redactMcpDiagnostic,
+  safeMcpConfig,
+} from "../src/mcp-config.js";
 import type { McpAuthFlowSnapshot, McpServersResponse, Workspace } from "../src/types.js";
 
 const echo = resolve("tests/fixtures/mcp-echo.cjs");
 const services: McpService[] = [];
 const servers: Server[] = [];
 afterEach(async () => {
-  services.splice(0).forEach((service) => service.dispose());
+  await Promise.all(services.splice(0).map((service) => service.dispose()));
   await Promise.all(
     servers.splice(0).map(
       (server) =>
@@ -180,6 +186,73 @@ async function oauthServer(): Promise<string> {
 }
 
 describe("MCP configuration boundary", () => {
+  it("bounds mutation CLIs below the phone deadline and rejects waiting behind another mutation", async () => {
+    const { service, agentDir } = fixture();
+    writeFileSync(
+      join(agentDir, "mcp.json"),
+      JSON.stringify({ mcpServers: { remote: { url: "https://example.test/mcp" } } }),
+    );
+    const run = vi.spyOn(McpCli.prototype, "run").mockResolvedValue({ code: 0, stdout: "" });
+    try {
+      const pending = service.add({ scopeId: "global", name: "new", command: "echo" });
+      await expect(service.remove("global", "remote")).rejects.toMatchObject({ statusCode: 409 });
+      await pending;
+      await service.remove("global", "remote");
+      await service.logout("global", "remote");
+      expect(run).toHaveBeenCalledTimes(3);
+      for (const call of run.mock.calls) expect(call[2]).toEqual({ timeoutMs: 20_000 });
+      // Patch is synchronous file editing, not an unbounded CLI.
+      await service.patch("global", "remote", { enabled: false });
+      expect(run).toHaveBeenCalledTimes(3);
+    } finally {
+      run.mockRestore();
+    }
+  });
+  it("refuses untrusted project login without probing or running project commands", async () => {
+    const { service, project } = fixture();
+    writeFileSync(
+      join(project, ".pi", "mcp.json"),
+      JSON.stringify({ mcpServers: { remote: { url: "https://example.test/mcp" } } }),
+    );
+    await expect(service.login("workspace-one", "remote", "phone_browser")).rejects.toMatchObject({
+      statusCode: 409,
+      message: "Trust this project in Pi on the host before signing in to its MCP servers.",
+    });
+  });
+  it("adds the default exposure without storing an explicit codemode field", async () => {
+    const { service, agentDir } = fixture();
+    await service.add({
+      scopeId: "global",
+      name: "minimal",
+      command: process.execPath,
+      args: [echo],
+      exposure: "codemode",
+    });
+    expect(JSON.parse(readFileSync(join(agentDir, "mcp.json"), "utf8")).mcpServers.minimal).toEqual(
+      { command: process.execPath, args: [echo] },
+    );
+  });
+  it("redacts URL query values while preserving keys, and overlapping literal secrets longest first", () => {
+    const config = safeMcpConfig({
+      url: "https://example.test/mcp?token=secret&mode=private&token=other",
+    });
+    expect(config.url).toBeDefined();
+    const url = new URL(config.url ?? "");
+    expect([...url.searchParams]).toEqual([
+      ["token", "[redacted]"],
+      ["mode", "[redacted]"],
+      ["token", "[redacted]"],
+    ]);
+    expect(
+      redactMcpDiagnostic("abcdef abc", [
+        {
+          mcpServers: {
+            one: { env: { SHORT: "abc", LONG: "abcdef" } },
+          },
+        },
+      ]),
+    ).toBe("[redacted] [redacted]");
+  });
   it("preserves indentation, unknown fields, sibling entries, and deletes Pi defaults", () => {
     const { agentDir } = fixture();
     const path = join(agentDir, "mcp.json");
@@ -289,6 +362,86 @@ describe("MCP callback boundary", () => {
 });
 
 describe("MCP routes through real bundled Pi", () => {
+  it("signs in one trusted project OAuth server without starting a hanging sibling", async () => {
+    const { service, agentDir, project } = fixture();
+    const remote = await oauthServer();
+    const pidFile = join(agentDir, "sibling.pid");
+    writeFileSync(join(agentDir, "trust.json"), JSON.stringify({ [realpathSync(project)]: true }));
+    writeFileSync(
+      join(project, ".pi", "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          remote: { url: remote + "/mcp" },
+          hang: {
+            command: process.execPath,
+            args: [resolve("tests/fixtures/mcp-hang.cjs"), pidFile, "ignore-term"],
+          },
+        },
+      }),
+    );
+    try {
+      const flow = await service.login("workspace-one", "remote", "phone_browser");
+      expect(existsSync(pidFile)).toBe(false);
+      await expect
+        .poll(() => service.auth.get(flow.flowId).status, { timeout: 10_000 })
+        .toBe("awaiting_external");
+      const approval = await fetch(service.auth.get(flow.flowId).auth!.url, { redirect: "manual" });
+      await service.auth.submit(flow.flowId, approval.headers.get("location")!);
+      await expect
+        .poll(() => service.auth.get(flow.flowId).status, { timeout: 10_000 })
+        .toBe("completed");
+      expect(existsSync(pidFile)).toBe(false);
+    } finally {
+      if (existsSync(pidFile)) {
+        try {
+          process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL");
+        } catch {
+          /* stopped */
+        }
+      }
+    }
+  }, 30_000);
+  it("disposes an in-flight list and immediately kills its EOF/TERM-ignoring stdio server", async () => {
+    const { service, agentDir } = fixture();
+    const pidFile = join(agentDir, "list.pid");
+    writeFileSync(
+      join(agentDir, "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          hang: {
+            command: process.execPath,
+            args: [resolve("tests/fixtures/mcp-hang.cjs"), pidFile, "ignore-term"],
+          },
+        },
+      }),
+    );
+    const flight = service.list();
+    let pid: number | undefined;
+    const alive = (): boolean => {
+      if (!pid) return false;
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      await expect.poll(() => existsSync(pidFile), { timeout: 5000 }).toBe(true);
+      pid = Number(readFileSync(pidFile, "utf8"));
+      expect(alive()).toBe(true);
+      const start = performance.now();
+      await service.dispose();
+      expect(performance.now() - start).toBeLessThan(1500);
+      await expect.poll(alive, { timeout: 2000 }).toBe(false);
+      await expect(
+        service.add({ scopeId: "global", name: "late", command: "echo" }),
+      ).rejects.toMatchObject({ statusCode: 503 });
+    } finally {
+      if (pid && alive()) process.kill(pid, "SIGKILL");
+      await flight.catch(() => {});
+    }
+  }, 30_000);
   it("returns healthy trusted scopes when another startup hangs, within the phone deadline", async () => {
     const { service, agentDir, project } = fixture();
     const hanging = await listen(

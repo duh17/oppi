@@ -42,8 +42,13 @@ struct McpAddServerView: View {
                     }.pickerStyle(.segmented)
                         .accessibilityIdentifier("mcp.add.transport")
                     Picker("Exposure", selection: $exposure) {
-                        ForEach(McpExposure.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
+                        ForEach(McpExposure.allCases, id: \.self) { option in
+                            VStack(alignment: .leading) {
+                                Text(option.rawValue)
+                                Text(option.explanation).font(.caption).foregroundStyle(.themeComment)
+                            }.tag(option)
+                        }
+                    }.pickerStyle(.navigationLink)
                 }
                 if mode == "url" {
                     Section("Streamable HTTP") {
@@ -62,7 +67,7 @@ struct McpAddServerView: View {
                     Section("Standard Input / Output") {
                         TextField("Executable (not a shell command)", text: $command)
                             .accessibilityIdentifier("mcp.add.command")
-                        TextField("Arguments: one per line", text: $arguments, axis: .vertical)
+                        TextField("Arguments: one per line (no secrets)", text: $arguments, axis: .vertical)
                             .lineLimit(3...8)
                         TextField("Working directory (optional)", text: $cwd)
                         TextField("Environment: one KEY=VALUE per line", text: $pairs, axis: .vertical)
@@ -110,7 +115,7 @@ struct McpAddServerView: View {
                 guard !key.isEmpty, values[key] == nil else { error = "Keys must be non-empty and unique."; return }
                 values[key] = String(line[line.index(after: separator)...])
             }
-            var input = McpAddServerRequest(scopeId: scopeId, name: name, exposure: exposure)
+            var input = McpAddServerRequest(scopeId: scopeId, name: name, exposure: exposure.configurationValue)
             if mode == "url" {
                 input.url = url
                 input.headers = values.isEmpty ? nil : values

@@ -68,10 +68,24 @@ function stringMap(value: unknown): Record<string, string> | undefined {
     ]),
   );
 }
+function safeMcpUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    url.hash = "";
+    url.search = new URLSearchParams(
+      [...url.searchParams.keys()].map((key) => [key, "[redacted]"]),
+    ).toString();
+    return url.href;
+  } catch {
+    return "[invalid URL]";
+  }
+}
 export function safeMcpConfig(value: Record<string, unknown>): McpServerConfig {
   const oauth = isRecord(value.oauth) ? value.oauth : undefined;
   return {
-    ...(typeof value.url === "string" ? { url: value.url } : {}),
+    ...(typeof value.url === "string" ? { url: safeMcpUrl(value.url) } : {}),
     ...(typeof value.command === "string" ? { command: value.command } : {}),
     ...(Array.isArray(value.args)
       ? { args: value.args.filter((arg): arg is string => typeof arg === "string") }
@@ -94,7 +108,7 @@ export function safeMcpConfig(value: Record<string, unknown>): McpServerConfig {
 }
 /** Subprocess diagnostics can repeat configured secrets. Never send syntax-error excerpts. */
 export function redactMcpDiagnostic(text: string, documents: Record<string, unknown>[]): string {
-  let safe = text;
+  const secrets = new Set<string>();
   for (const document of documents) {
     const servers = isRecord(document.mcpServers) ? document.mcpServers : {};
     for (const server of Object.values(servers)) {
@@ -108,11 +122,14 @@ export function redactMcpDiagnostic(text: string, documents: Record<string, unkn
         if (!isRecord(map)) continue;
         for (const value of Object.values(map)) {
           if (typeof value === "string" && value && redactMcpValue(value) === "[redacted]")
-            safe = safe.split(value).join("[redacted]");
+            secrets.add(value);
         }
       }
     }
   }
+  let safe = text;
+  for (const secret of [...secrets].sort((a, b) => b.length - a.length))
+    safe = safe.split(secret).join("[redacted]");
   // Provider diagnostics must not leak callback codes or OAuth query parameters.
   return safe.replace(/https?:\/\/[^\s]+/g, (value) => {
     try {

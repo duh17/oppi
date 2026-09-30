@@ -6,6 +6,17 @@ enum McpExposure: String, Codable, CaseIterable, Sendable {
     case deferred
     case direct
     case hidden
+
+    var explanation: String {
+        switch self {
+        case .codemode: "Tools are listed for scripts, without model declarations."
+        case .codemodeDeferred: "Scripts discover tools on demand."
+        case .deferred: "Tool search loads tools into the model context."
+        case .direct: "Tools are always declared to the model."
+        case .hidden: "Tools cannot be called."
+        }
+    }
+    var configurationValue: McpExposure? { self == .codemode ? nil : self }
 }
 
 struct McpServerConfig: Codable, Sendable, Equatable {

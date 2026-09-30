@@ -41,12 +41,15 @@ function descendantGroups(pid: number): Set<number> {
 export interface McpCliProcess {
   child: ChildProcess;
   done: Promise<{ code: number; stdout: string }>;
-  stop(): void;
+  stop(immediate?: boolean): void;
 }
 export class McpCli {
   readonly globalCwd: string;
   private readonly phonePath: string;
-  constructor(readonly agentDir: string) {
+  constructor(
+    readonly agentDir: string,
+    private readonly onStart?: (process: McpCliProcess) => void,
+  ) {
     // A neutral cwd prevents global operations from resolving a project's shadowing entry.
     this.globalCwd = mkdtempSync(join(tmpdir(), "oppi-mcp-"));
     const bin = join(this.globalCwd, "bin");
@@ -73,38 +76,49 @@ export class McpCli {
     });
     let exited = false;
     let stopping: Promise<void> | undefined;
-    const stop = (): void => {
-      if (!child.pid || exited || stopping) return;
-      const pid = child.pid;
-      let groups = new Set<number>();
+    let finishStop: (() => void) | undefined;
+    let killTimer: NodeJS.Timeout | undefined;
+    const groups = new Set<number>();
+    const signal = (kind: NodeJS.Signals): void => {
+      for (const group of groups) {
+        try {
+          process.kill(-group, kind);
+        } catch {
+          /* already stopped */
+        }
+      }
+      if (process.platform === "win32" && !exited) {
+        try {
+          child.kill(kind);
+        } catch {
+          /* already stopped */
+        }
+      }
+    };
+    const stop = (immediate = false): void => {
+      if (!child.pid || (exited && !stopping) || (stopping && !immediate)) return;
       if (process.platform !== "win32") {
         try {
-          groups = descendantGroups(pid);
+          // A shutdown can interrupt the grace period. Retain the old snapshot
+          // (orphaned groups) and collect any still-parented new descendants.
+          if (!exited) for (const group of descendantGroups(child.pid)) groups.add(group);
         } catch {
           // Even if process-table access fails, still terminate the CLI's own group.
         }
-        groups.add(pid);
+        groups.add(child.pid);
       }
-      const signal = (kind: NodeJS.Signals): void => {
-        for (const group of groups) {
-          try {
-            process.kill(-group, kind);
-          } catch {
-            /* already stopped */
-          }
-        }
-        if (process.platform === "win32" && !exited) {
-          try {
-            child.kill(kind);
-          } catch {
-            /* already stopped */
-          }
-        }
-      };
+      if (immediate) {
+        clearTimeout(killTimer);
+        signal("SIGKILL");
+        finishStop?.();
+        stopping ??= Promise.resolve();
+        return;
+      }
       signal("SIGTERM");
       stopping = new Promise((resolve) => {
+        finishStop = resolve;
         // CLI close must not cancel escalation for its now-orphaned stdio groups.
-        setTimeout(() => {
+        killTimer = setTimeout(() => {
           signal("SIGKILL");
           resolve();
         }, 1500);
@@ -155,7 +169,9 @@ export class McpCli {
         });
       });
     });
-    return { child, done, stop };
+    const command = { child, done, stop };
+    this.onStart?.(command);
+    return command;
   }
   async run(
     args: string[],

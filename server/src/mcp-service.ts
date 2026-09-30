@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import type { Workspace } from "./types.js";
 import type {
@@ -11,7 +12,7 @@ import type {
 } from "./types/mcp.js";
 import type { ProviderAuthLaunchMode } from "./provider-auth/types.js";
 import { resolveHostPath } from "./host.js";
-import { McpCli } from "./mcp-cli.js";
+import { McpCli, type McpCliProcess } from "./mcp-cli.js";
 import { McpAuthManager } from "./mcp-auth.js";
 import {
   isRecord,
@@ -44,6 +45,9 @@ export class McpService {
   private queue: Promise<unknown> = Promise.resolve();
   private pendingOperations = 0;
   private listFlight?: Promise<McpServersResponse>;
+  private readonly children = new Set<McpCliProcess>();
+  private disposed = false;
+  private disposal?: Promise<void>;
   constructor(
     private readonly options: {
       agentDir: string;
@@ -51,7 +55,13 @@ export class McpService {
       loginTtlMs?: number;
     },
   ) {
-    this.cli = new McpCli(options.agentDir);
+    this.cli = new McpCli(options.agentDir, (child) => {
+      this.children.add(child);
+      const settled = (): void => {
+        this.children.delete(child);
+      };
+      void child.done.then(settled, settled);
+    });
     this.auth = new McpAuthManager(this.cli, options.loginTtlMs);
   }
   private scopes(): Scope[] {
@@ -93,9 +103,14 @@ export class McpService {
   /** Serialize management operations and reject them during login. Scope probes within
    * one refresh run concurrently; independent Pi processes may refresh credentials. */
   private exclusive<T>(operation: () => Promise<T> | T): Promise<T> {
+    if (this.disposed) return Promise.reject(new McpError(503, "MCP management is shutting down"));
+    // A queued mutation could outlive the phone deadline before its CLI even starts.
+    if (this.pendingOperations > 0)
+      return Promise.reject(new McpError(409, "MCP management is busy. Retry when it finishes."));
     this.pendingOperations += 1;
     const result = this.queue
       .then(() => {
+        if (this.disposed) throw new McpError(503, "MCP management is shutting down");
         if (this.auth.hasActive())
           throw new McpError(409, "Finish or cancel the current MCP sign-in first");
         return operation();
@@ -143,7 +158,9 @@ export class McpService {
       title: scope.title,
       kind: scope.kind,
       hasConfig: existsSync(scope.path),
-      trusted: scope.kind === "global",
+      trusted:
+        scope.kind === "global" ||
+        new ProjectTrustStore(this.options.agentDir).get(scope.cwd) === true,
       servers: [],
       errors: [],
     };
@@ -337,13 +354,13 @@ export class McpService {
       }
       if (input.exposure !== undefined && !MCP_EXPOSURES.includes(input.exposure))
         throw new McpError(400, "Invalid exposure");
-      option("--exposure", input.exposure);
+      option("--exposure", input.exposure === "codemode" ? undefined : input.exposure);
       args.push(
         "--",
         input.name,
         ...(input.command === undefined ? [] : [input.command, ...(input.args ?? [])]),
       );
-      const result = await this.cli.run(args, scope.cwd);
+      const result = await this.cli.run(args, scope.cwd, { timeoutMs: 20_000 });
       if (result.code !== 0)
         throw new McpError(
           422,
@@ -375,6 +392,7 @@ export class McpService {
       const result = await this.cli.run(
         ["remove", ...(scope.kind === "project" ? ["--local"] : []), "--", name],
         scope.cwd,
+        { timeoutMs: 20_000 },
       );
       if (result.code !== 0) throw new McpError(422, "Pi could not remove the MCP server");
     });
@@ -384,14 +402,21 @@ export class McpService {
     name: string,
     mode: ProviderAuthLaunchMode,
   ): Promise<ReturnType<McpAuthManager["start"]>> {
-    return this.exclusive(async () => {
+    return this.exclusive(() => {
       if (!["phone_browser", "server_browser", "none"].includes(mode))
         throw new McpError(400, "Invalid launchMode");
       const scope = this.scope(scopeId);
       this.entry(scope, name);
-      const report = await this.probe(scope);
-      if (!report.trusted)
-        throw new McpError(409, report.note ?? "This project could not be probed");
+      // Match pi mcp login: trust is a saved decision for this cwd, not the
+      // outcome of connecting every sibling server in the scope.
+      if (
+        scope.kind === "project" &&
+        new ProjectTrustStore(this.options.agentDir).get(scope.cwd) !== true
+      )
+        throw new McpError(
+          409,
+          "Trust this project in Pi on the host before signing in to its MCP servers.",
+        );
       return this.auth.start(scopeId, name, scope.cwd, mode);
     });
   }
@@ -399,7 +424,7 @@ export class McpService {
     return this.exclusive(async () => {
       const scope = this.scope(scopeId);
       this.entry(scope, name);
-      const result = await this.cli.run(["logout", "--", name], scope.cwd);
+      const result = await this.cli.run(["logout", "--", name], scope.cwd, { timeoutMs: 20_000 });
       if (result.code !== 0)
         throw new McpError(
           422,
@@ -407,7 +432,15 @@ export class McpService {
         );
     });
   }
-  dispose(): void {
+  dispose(): Promise<void> {
+    if (this.disposal) return this.disposal;
+    this.disposed = true;
+    // Shutdown must not depend on a grace timer surviving process exit. This
+    // includes probes/mutations as well as OAuth children from the same CLI.
+    const children = [...this.children];
+    for (const child of children) child.stop(true);
     this.auth.dispose();
+    this.disposal = Promise.allSettled(children.map((child) => child.done)).then(() => {});
+    return this.disposal;
   }
 }

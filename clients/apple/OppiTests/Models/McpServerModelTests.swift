@@ -55,6 +55,14 @@ struct McpServerModelTests {
         #expect(patchObject["enabled"] as? Bool == true)
         #expect(patchObject["exposure"] as? String == "codemode")
     }
+    @Test(arguments: McpExposure.allCases)
+    func addExposureSelectionOmitsOnlyTheDefault(exposure: McpExposure) throws {
+        let add = McpAddServerRequest(scopeId: "global", name: "echo", command: "node", exposure: exposure.configurationValue)
+        let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(add)) as? [String: Any])
+        #expect(object["exposure"] as? String == (exposure == .codemode ? nil : exposure.rawValue))
+        #expect(!exposure.explanation.isEmpty)
+    }
+
     @Test func malformedRequiredFieldsFailDecode() {
         #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(McpServersResponse.self, from: Data("{\"scopes\":[{\"id\":\"global\"}]}".utf8))

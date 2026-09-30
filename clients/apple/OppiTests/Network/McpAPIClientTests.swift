@@ -4,7 +4,7 @@ import Testing
 
 @Suite("MCP API probe deadline", .serialized)
 struct McpAPIClientTests {
-    @Test(arguments: ["list", "login"])
+    @Test(arguments: ["list", "login", "add", "patch", "remove", "logout"])
     func liveProbeRequestsLeaveHeadroomUnderResourceDeadline(operation: String) async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [McpDeadlineURLProtocol.self]
@@ -19,9 +19,16 @@ struct McpAPIClientTests {
             #expect(request.timeoutInterval > 20)
             #expect(request.timeoutInterval < configuration.timeoutIntervalForResource)
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-token")
-            #expect(request.httpMethod == (operation == "list" ? "GET" : "POST"))
-            #expect(request.url?.path == (operation == "list"
-                ? "/mcp/servers" : "/mcp/scopes/global/servers/echo/login"))
+            let routes = [
+                "list": ("GET", "/mcp/servers"),
+                "login": ("POST", "/mcp/scopes/global/servers/echo/login"),
+                "add": ("POST", "/mcp/servers"),
+                "patch": ("PATCH", "/mcp/scopes/global/servers/echo"),
+                "remove": ("DELETE", "/mcp/scopes/global/servers/echo"),
+                "logout": ("POST", "/mcp/scopes/global/servers/echo/logout")
+            ]
+            #expect(request.httpMethod == routes[operation]?.0)
+            #expect(request.url?.path == routes[operation]?.1)
             let response = try #require(HTTPURLResponse(
                 url: baseURL, statusCode: 200, httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"]
@@ -30,10 +37,14 @@ struct McpAPIClientTests {
             return (Data(json.utf8), response)
         }
 
-        if operation == "list" {
-            #expect(try await client.listMcpServers().scopes.isEmpty)
-        } else {
-            #expect(try await client.startMcpAuthFlow(scopeId: "global", name: "echo").flowId == "pa_test")
+        switch operation {
+        case "list": #expect(try await client.listMcpServers().scopes.isEmpty)
+        case "login": #expect(try await client.startMcpAuthFlow(scopeId: "global", name: "echo").flowId == "pa_test")
+        case "add": try await client.addMcpServer(McpAddServerRequest(scopeId: "global", name: "echo", url: "https://example.test/mcp"))
+        case "patch": try await client.patchMcpServer(scopeId: "global", name: "echo", patch: McpPatchServerRequest(enabled: false))
+        case "remove": try await client.removeMcpServer(scopeId: "global", name: "echo")
+        case "logout": try await client.logoutMcpServer(scopeId: "global", name: "echo")
+        default: Issue.record("Unexpected operation")
         }
     }
 }

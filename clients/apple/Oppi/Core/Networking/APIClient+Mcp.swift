@@ -9,17 +9,18 @@ extension APIClient {
         return try JSONDecoder().decode(McpServersResponse.self, from: data)
     }
     func addMcpServer(_ input: McpAddServerRequest) async throws {
-        _ = try await post("/mcp/servers", body: input)
+        let (data, response) = try await request("POST", path: "/mcp/servers", body: input, timeoutInterval: 25)
+        try checkStatus(response, data: data)
     }
     func patchMcpServer(scopeId: String, name: String, patch: McpPatchServerRequest) async throws {
         let (data, response) = try await request(
             "PATCH", path: mcpServerPath(scopeId: scopeId, name: name),
-            body: JSONEncoder().encode(patch), contentType: "application/json"
+            body: patch, timeoutInterval: 25
         )
         try checkStatus(response, data: data)
     }
     func removeMcpServer(scopeId: String, name: String) async throws {
-        let (data, response) = try await request("DELETE", path: mcpServerPath(scopeId: scopeId, name: name))
+        let (data, response) = try await request("DELETE", path: mcpServerPath(scopeId: scopeId, name: name), timeoutInterval: 25)
         try checkStatus(response, data: data)
     }
     func startMcpAuthFlow(scopeId: String, name: String) async throws -> McpAuthFlowSnapshot {
@@ -33,7 +34,11 @@ extension APIClient {
     }
     func logoutMcpServer(scopeId: String, name: String) async throws {
         struct Body: Encodable {}
-        _ = try await post(mcpServerPath(scopeId: scopeId, name: name) + "/logout", body: Body())
+        let (data, response) = try await request(
+            "POST", path: mcpServerPath(scopeId: scopeId, name: name) + "/logout",
+            body: Body(), timeoutInterval: 25
+        )
+        try checkStatus(response, data: data)
     }
     func getMcpAuthFlow(flowId: String) async throws -> McpAuthFlowSnapshot {
         try JSONDecoder().decode(McpFlowResponse.self, from: await get("/mcp/auth/flows/\(flowId)")).flow

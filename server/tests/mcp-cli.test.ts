@@ -20,6 +20,7 @@ describe("MCP CLI subprocess supervision", () => {
     ["cancel", "default-term", "stdio"],
     ["cancel", "ignore-term", "stdio"],
     ["timeout", "ignore-term", "synchronous-reference"],
+    ["shutdown", "ignore-term", "stdio"],
   ])(
     "%s leaves no server helper alive (%s, %s)",
     async (reason, term, transport) => {
@@ -55,14 +56,17 @@ describe("MCP CLI subprocess supervision", () => {
         pid = Number(readFileSync(pidFile, "utf8"));
         expect(Number.isSafeInteger(pid) && pid > 1).toBe(true);
         expect(alive(pid)).toBe(true);
-        if (reason === "cancel") {
+        const stoppingAt = performance.now();
+        if (reason === "cancel" || reason === "shutdown") {
           command.stop();
           command.stop(); // Repeated cancellation must not abandon the original snapshot.
+          if (reason === "shutdown") command.stop(true);
         }
         const settled = await result;
         if (reason === "timeout")
           expect(settled).toMatchObject({ statusCode: 504, message: "Pi MCP command timed out" });
         else expect(settled).toMatchObject({ code: 1 });
+        if (reason === "shutdown") expect(performance.now() - stoppingAt).toBeLessThan(1500);
         // Child close alone is not proof: Pi launches the server in a detached group.
         const fixturePid = pid;
         await expect.poll(() => alive(fixturePid), { timeout: 3000 }).toBe(false);

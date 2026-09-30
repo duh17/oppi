@@ -1086,7 +1086,7 @@ export class Server {
     } finally {
       // A throw above skips closeWebSocketServer; these timers must not keep a
       // stopped Server alive after an update restore replaces it.
-      this.mcp?.dispose();
+      await this.mcp?.dispose();
       for (const timer of this.accessExpiryTimers.values()) clearTimeout(timer);
       this.accessExpiryTimers.clear();
     }

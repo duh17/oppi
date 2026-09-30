@@ -170,9 +170,9 @@ The pending list lives in the `session_restart_resume` table of `session-state.d
 
 Open **MCP Servers** in the iOS workspace sidebar. The list groups Pi's global `~/.pi/agent/mcp.json` and host workspaces' `.pi/mcp.json` files. Pull to refresh for a live probe; project files stay inactive until you trust the project in Pi on the host. Sandbox workspaces are not add targets.
 
-Select a server to see its tools and errors, enable or disable it, change exposure, sign in or out, or remove it. Use **+** to add a URL or command server and choose its scope. Use `${NAME}` references for headers, environment variables, and client secrets; literal values are redacted when read back. Configuration changes apply to new sessions or `/reload`.
+Select a server to see its tools and errors, enable or disable it, change exposure, sign in or out, or remove it. Use **+** to add a URL or command server and choose its scope. Use `${NAME}` references for headers, environment variables, and client secrets; literal values and URL query values are redacted when read back. Command arguments are shown as stored: keep secrets in `${NAME}` environment references, not arguments. Adding an existing name in the same scope is rejected; remove it first to add a replacement. Configuration changes apply to new sessions or `/reload`.
 
-For OAuth, open the sign-in page in Safari. After approval, Safari might fail to load the loopback callback. Copy the full `http://127.0.0.1:<port>/callback?...` URL from Safari and paste it into Oppi. Oppi sends it only to this flow's waiting host listener. **Close** keeps the flow available; **Cancel Sign-in** stops it. A browser on the host can also complete the callback directly. OAuth credentials stay in Pi's host-side credential store.
+For OAuth, open the sign-in page in Safari. After approval, Safari might fail to load the loopback callback. Copy the full `http://127.0.0.1:<port>/callback?...` URL from Safari and paste it into Oppi. Oppi sends it only to this flow's waiting host listener. **Close** and returning from the server detail keep the flow available through **Continue Sign-in** and **Cancel Sign-in** on the MCP Servers list. **Cancel Sign-in** stops it. A browser on the host can also complete the callback directly. OAuth credentials stay in Pi's host-side credential store.
 
 ## Updating the server
 

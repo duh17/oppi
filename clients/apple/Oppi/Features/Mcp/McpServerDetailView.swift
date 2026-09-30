@@ -6,20 +6,25 @@ struct McpServerDetailView: View {
     let serverId: String
     let serverName: String
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.scenePhase) private var scenePhase
     @State var entry: McpServerSummary
     @State private var busy = false
     @State private var error: String?
     @State private var confirmingRemove = false
-    @State private var attempt: ProviderAuthFlowAttempt?
-    @State private var showingAuth = false
+    @State private var confirmingLogout = false
+    let signIn: McpSignInOwner
+    private var attempt: ProviderAuthFlowAttempt? {
+        guard signIn.scopeId == scope.id, signIn.attempt?.serverId == serverId,
+              signIn.attempt?.providerName == entry.name else { return nil }
+        return signIn.attempt
+    }
 
-    init(scope: McpScopeSnapshot, entry: McpServerSummary, client: APIClient, serverId: String, serverName: String) {
+    init(scope: McpScopeSnapshot, entry: McpServerSummary, client: APIClient, serverId: String, serverName: String, signIn: McpSignInOwner) {
         self.scope = scope
         self.entry = entry
         self.client = client
         self.serverId = serverId
         self.serverName = serverName
+        self.signIn = signIn
     }
 
     var body: some View {
@@ -39,14 +44,19 @@ struct McpServerDetailView: View {
                 Toggle("Enabled", isOn: Binding(get: { entry.enabled }, set: { value in
                     perform { try await client.patchMcpServer(scopeId: scope.id, name: entry.name, patch: McpPatchServerRequest(enabled: value)) }
                 }))
-                .disabled(busy || attempt?.isSettled == false)
+                .disabled(busy || signIn.hasActive)
                 .accessibilityIdentifier("mcp.enabled")
                 Picker("Exposure", selection: Binding(get: { entry.exposure }, set: { value in
                     perform { try await client.patchMcpServer(scopeId: scope.id, name: entry.name, patch: McpPatchServerRequest(exposure: value)) }
                 })) {
-                    ForEach(McpExposure.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }
-                .disabled(busy || attempt?.isSettled == false)
+                    ForEach(McpExposure.allCases, id: \.self) { option in
+                        VStack(alignment: .leading) {
+                            Text(option.rawValue)
+                            Text(option.explanation).font(.caption).foregroundStyle(.themeComment)
+                        }.tag(option)
+                    }
+                }.pickerStyle(.navigationLink)
+                .disabled(busy || signIn.hasActive)
                 .accessibilityIdentifier("mcp.exposure")
             } footer: {
                 Text("Saved in this scope's mcp.json. New sessions or /reload pick up configuration changes.")
@@ -54,14 +64,13 @@ struct McpServerDetailView: View {
             if entry.supportsOAuth {
                 Section("OAuth") {
                     if let attempt, !attempt.isSettled {
-                        Button("Continue Sign-in") { showingAuth = true; attempt.startPolling() }
+                        Button("Continue Sign-in") { signIn.resume() }
                     } else {
                         Button(entry.state == "needs-auth" ? "Sign In" : "Sign In Again") { startLogin() }
-                            .disabled(busy || !scope.trusted)
+                            .disabled(busy || !scope.trusted || signIn.hasActive)
                             .accessibilityIdentifier("mcp.login")
-                        Button("Sign Out", role: .destructive) {
-                            perform { try await client.logoutMcpServer(scopeId: scope.id, name: entry.name) }
-                        }.disabled(busy || !scope.trusted)
+                        Button("Sign Out", role: .destructive) { confirmingLogout = true }
+                            .disabled(busy || !scope.trusted || signIn.hasActive)
                     }
                 }
             }
@@ -84,7 +93,7 @@ struct McpServerDetailView: View {
             if let error { Section { Text(error).foregroundStyle(.themeRed) } }
             Section {
                 Button("Remove Server", role: .destructive) { confirmingRemove = true }
-                    .disabled(busy || attempt?.isSettled == false)
+                    .disabled(busy || signIn.hasActive)
                     .accessibilityIdentifier("mcp.remove")
             }
         }
@@ -102,19 +111,14 @@ struct McpServerDetailView: View {
                 }
             }
         } message: { Text("The configuration entry will be removed. Stored OAuth credentials are not deleted; sign out first if needed.") }
-        .sheet(isPresented: $showingAuth, onDismiss: {
-            if let attempt, !attempt.sheetDismissed() { self.attempt = nil }
-        }) {
-            if let attempt { McpSignInSheet(attempt: attempt) { showingAuth = false } }
-        }
+        .confirmationDialog("Sign out of \(entry.name)?", isPresented: $confirmingLogout, titleVisibility: .visible) {
+            Button("Sign Out", role: .destructive) {
+                perform { try await client.logoutMcpServer(scopeId: scope.id, name: entry.name) }
+            }
+        } message: { Text("This removes stored OAuth credentials on the host. You will need to sign in again to use this server.") }
         .onChange(of: attempt?.flow.status) { _, status in
             if status == .completed { Task { await refresh() } }
         }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { attempt?.startPolling() } else { attempt?.stopPolling() }
-        }
-        .onDisappear { attempt?.stopPolling() }
-        .onAppear { attempt?.startPolling() }
     }
 
     private func referencesSection(_ title: String, values: [String: String]) -> some View {
@@ -156,84 +160,8 @@ struct McpServerDetailView: View {
                     flow: flow.providerPresentation, client: McpFlowClient(client: client),
                     serverId: serverId, serverName: serverName, providerName: entry.name
                 )
-                self.attempt = attempt; showingAuth = true; attempt.startPolling()
+                signIn.adopt(attempt, scopeId: scope.id)
             } catch { self.error = error.localizedDescription }
         }
-    }
-}
-
-/// Reuse the provider flow's host-bound poll/retry/cancel owner. MCP's external-wait
-/// state also accepts a pasted callback, so present it as manual input to that owner.
-private extension McpAuthFlowSnapshot {
-    var providerPresentation: ProviderAuthFlowSnapshot {
-        ProviderAuthFlowSnapshot(
-            flowId: flowId, providerId: serverName, flowType: .oauthCallback,
-            launchMode: launchMode, status: status == .awaitingExternal ? .awaitingManualCode : status,
-            auth: auth, prompt: nil, lastProgress: nil, error: error,
-            createdAt: createdAt, updatedAt: updatedAt, expiresAt: expiresAt
-        )
-    }
-}
-private struct McpFlowClient: ProviderAuthFlowClient {
-    let client: APIClient
-    func getProviderAuthFlow(flowId: String) async throws -> ProviderAuthFlowSnapshot {
-        try await client.getMcpAuthFlow(flowId: flowId).providerPresentation
-    }
-    func submitProviderAuthManualCode(flowId: String, input: String) async throws -> ProviderAuthFlowSnapshot {
-        try await client.submitMcpCallback(flowId: flowId, input: input).providerPresentation
-    }
-    func cancelProviderAuthFlow(flowId: String, reason: String?) async throws -> ProviderAuthFlowSnapshot {
-        try await client.cancelMcpAuthFlow(flowId: flowId).providerPresentation
-    }
-    func submitProviderAuthPromptResponse(flowId: String, value: String) async throws -> ProviderAuthFlowSnapshot {
-        throw APIError.server(status: 400, message: "MCP sign-in accepts a callback URL, not a prompt response")
-    }
-}
-private struct McpSignInSheet: View {
-    @Bindable var attempt: ProviderAuthFlowAttempt
-    let close: () -> Void
-    var body: some View {
-        NavigationStack {
-            List {
-                Section(attempt.providerName) {
-                    LabeledContent("Host", value: attempt.serverName)
-                    LabeledContent("Status", value: ProviderAuthFlowPresentation.statusText(attempt.flow.status))
-                }
-                if !attempt.isSettled, let auth = attempt.flow.auth {
-                    Section("Sign In") {
-                        if let url = ProviderAuthFlowPresentation.signInURL(auth.url) {
-                            Link("Open Sign-in Page in Safari", destination: url)
-                                .accessibilityIdentifier("mcp.auth.open")
-                        }
-                        Text("After approval, Safari may fail to load 127.0.0.1. Copy its full callback URL and paste it below. You can also complete sign-in using a browser on the host.")
-                            .font(.footnote).foregroundStyle(.themeComment)
-                        TextField("Paste full callback URL", text: $attempt.input, axis: .vertical)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .accessibilityIdentifier("mcp.auth.callback")
-                        Button("Submit Callback") { Task { await attempt.submitManualCode() } }
-                            .disabled(attempt.isSubmitting || attempt.isCancelling || attempt.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            .accessibilityIdentifier("mcp.auth.submit")
-                    }
-                } else if !attempt.isSettled { ProgressView("Preparing sign-in…") }
-                if let error = attempt.flow.error { Text(error).foregroundStyle(.themeRed) }
-                if let error = attempt.actionError { Text(error).foregroundStyle(.themeRed) }
-                if let error = attempt.refreshError { Text(error).foregroundStyle(.themeOrange) }
-                if attempt.isGone { Text("The host no longer has this flow. Start a new sign-in.") }
-                Section {
-                    if attempt.isSettled { Button("Done", action: close) }
-                    else {
-                        Button("Cancel Sign-in", role: .destructive) {
-                            Task { if await attempt.cancel(reason: "Cancelled from MCP Servers") { close() } }
-                        }.disabled(attempt.isCancelling)
-                    }
-                }
-            }
-            .themedListSurface()
-            .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
-            .navigationTitle("Sign In")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close", action: close) } }
-        }
-        .interactiveDismissDisabled(attempt.isCancelling)
     }
 }
