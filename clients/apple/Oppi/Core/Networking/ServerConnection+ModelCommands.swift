@@ -57,15 +57,49 @@ extension ServerConnection {
     // ── Model ──
 
     func setModel(provider: String, modelId: String, persist: Bool = false) async throws {
-        try await waitForFocusedFullSubscriptionIfNeeded()
-        _ = try await sendCommandAwaitingResult(command: "set_model") { requestId in
-            .setModel(
+        guard let sessionId = focusedSessionId else {
+            throw WebSocketError.notConnected
+        }
+        if await waitForFocusedSessionBootstrap(sessionId: sessionId, timeout: .seconds(3)) {
+            _ = try await sendCommandAwaitingResult(command: "set_model") { requestId in
+                .setModel(
+                    provider: provider,
+                    modelId: modelId,
+                    requestId: requestId,
+                    persist: persist ? true : nil
+                )
+            }
+            return
+        }
+
+        // A session whose runtime cannot start (e.g. its model lost provider auth)
+        // never sends its `connected` bootstrap, so a stream command would be dropped.
+        // Over HTTP the server retargets the stored model for the next open, or returns
+        // the live runtime's result if the session started meanwhile.
+        guard let routeScope = sessionStore.routeScope(for: sessionId), let apiClient else {
+            throw WebSocketError.notConnected
+        }
+        try await apiClient.sendSessionCommand(
+            scope: routeScope,
+            sessionId: sessionId,
+            message: .setModel(
                 provider: provider,
                 modelId: modelId,
-                requestId: requestId,
+                requestId: UUID().uuidString,
                 persist: persist ? true : nil
             )
+        )
+    }
+
+    private func waitForFocusedSessionBootstrap(sessionId: String, timeout: Duration) async -> Bool {
+        let startedAt = ContinuousClock.now
+        while !sessionStreamCoordinator.hasSessionBootstrap(sessionId: sessionId) {
+            if Task.isCancelled || ContinuousClock.now - startedAt >= timeout {
+                return false
+            }
+            try? await Task.sleep(for: .milliseconds(50))
         }
+        return true
     }
 
     // ── Thinking ──

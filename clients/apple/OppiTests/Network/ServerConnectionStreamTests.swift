@@ -716,6 +716,8 @@ struct ServerConnectionStreamTests {
 
         #expect(stream != nil)
         #expect(await conn.waitForFocusedFullSubscription(sessionId: "s1", timeout: .milliseconds(100)))
+        // The server's `connected` bootstrap marks a live runtime; set_model needs it.
+        conn.sessionStreamCoordinator.noteSessionBootstrapped(sessionId: "s1")
 
         try await conn.setModel(provider: "openai", modelId: "gpt-5.4")
         try await conn.setThinkingLevel(.medium)

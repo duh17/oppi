@@ -887,19 +887,20 @@ export class SessionLifecycleService {
         // A focused-session open can target a previously announced shell. Keep
         // that row and its trace metadata intact; only pre-start launch checks
         // may discard a never-announced shell.
-        session.status = "error";
-        if (session.launch) {
-          session.launch = {
-            ...session.launch,
-            status: "failed",
-            completedAt: Date.now(),
-            promptDispatch: session.launch.promptDispatch ?? "not_sent",
-            promptError: error.code,
-            failure: error.toFailure(),
-            lease: undefined,
-          };
-        }
-        this.deps.storage.saveSession(session);
+        this.persistStartFailure(session, (target) => {
+          target.status = "error";
+          if (target.launch) {
+            target.launch = {
+              ...target.launch,
+              status: "failed",
+              completedAt: Date.now(),
+              promptDispatch: target.launch.promptDispatch ?? "not_sent",
+              promptError: error.code,
+              failure: error.toFailure(),
+              lease: undefined,
+            };
+          }
+        });
         throw new SessionLifecycleError(error.message, 422);
       }
       if (session.launch?.modelPolicy !== "required" || !isRequiredModelUnavailableError(error)) {
@@ -908,10 +909,23 @@ export class SessionLifecycleService {
       const message = error instanceof Error ? error.message : String(error);
       // Preserve the immutable launch receipt on restart failures. In particular, do not
       // rewrite a previously delivered prompt as not_sent or make model outages sticky.
-      session.status = "error";
-      this.deps.storage.saveSession(session);
+      this.persistStartFailure(session, (target) => {
+        target.status = "error";
+      });
       throw new SessionLifecycleError(message, 409);
     }
+  }
+
+  /**
+   * Startup releases the session lock before this catch runs, so an offline set_model
+   * can land in between. Apply failure fields to the stored row rather than saving the
+   * pre-start snapshot, which would revert that model switch.
+   */
+  private persistStartFailure(session: Session, apply: (target: Session) => void): void {
+    apply(session);
+    const stored = this.deps.storage.getSession(session.id);
+    if (stored) apply(stored);
+    this.deps.storage.saveSession(stored ?? session);
   }
 
   private inspectWorktreeBinding(session: Session, workspace?: Workspace): WorktreeBindingState {

@@ -43,6 +43,25 @@ final class SessionStreamCoordinator {
     private var nextContinuationGeneration: UInt64 = 0
     private var continuationGenerationBySession: [String: UInt64] = [:]
 
+    /// Session whose server `connected` bootstrap arrived on the current socket.
+    /// Transport readiness alone is not enough: the server sends `stream_connected`
+    /// before it starts the runtime, and a runtime that fails to start never sends
+    /// `connected`, so commands sent meanwhile are dropped.
+    private var bootstrappedSessionId: String?
+
+    func noteSessionBootstrapped(sessionId: String) {
+        bootstrappedSessionId = sessionId
+    }
+
+    /// Call synchronously on `stream_connected`, before the new socket's `connected`.
+    func clearSessionBootstrap() {
+        bootstrappedSessionId = nil
+    }
+
+    func hasSessionBootstrap(sessionId: String) -> Bool {
+        bootstrappedSessionId == sessionId && hasFullSubscription(sessionId: sessionId)
+    }
+
     func hasFullSubscription(sessionId: String) -> Bool {
         switch state {
         case .queueSync(let activeSessionId, _), .streaming(let activeSessionId), .resubscribing(let activeSessionId):
@@ -78,6 +97,7 @@ final class SessionStreamCoordinator {
         }
 
         activeWorkspaceId = routeScope.workspaceId
+        bootstrappedSessionId = nil
         transition(to: .connectingTransport(sessionId: sessionId), event: .beginSession)
         let streamStart = ContinuousClock.now
 
@@ -193,6 +213,7 @@ final class SessionStreamCoordinator {
     }
 
     func noteStreamDisconnected() {
+        bootstrappedSessionId = nil
         transition(to: .idle, event: .disconnected)
     }
 

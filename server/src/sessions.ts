@@ -80,6 +80,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   private storage: Storage;
   private active: Map<string, ActiveSession> = new Map();
   private readonly config: ServerConfig;
+  private readonly runtimeManager: WorkspaceRuntime;
   private readonly startupUI = new Map<string, { bridge: SdkUiBridge; state: ExtensionUIState }>();
   private readonly startupUISubscribers = new Map<string, Set<(message: ServerMessage) => void>>();
 
@@ -118,6 +119,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const config = storage.getConfig();
     this.config = config;
     const runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(config));
+    this.runtimeManager = runtimeManager;
     this.mobileRenderers = new MobileRendererRegistry();
     const eventRingCapacity = parsePositiveIntEnv("OPPI_SESSION_EVENT_RING_CAPACITY", 500);
 
@@ -268,6 +270,26 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const session = await this.activationCoordinator.startSession(key, sessionId, startWorkspace);
 
     return session;
+  }
+
+  /**
+   * Retarget a session without a live runtime so its next start seeds `model`.
+   * Runs under the activation lock: a concurrent start reads either the old or the
+   * new model. Returns undefined when the session went live; callers then forward
+   * set_model to the runtime instead.
+   */
+  async setInactiveSessionModel(sessionId: string, model: string): Promise<Session | undefined> {
+    const key = this.sessionKey(sessionId);
+    return this.runtimeManager.withSessionLock(sessionId, async () => {
+      if (this.active.has(key)) return undefined;
+      const session = this.storage.getSession(sessionId);
+      if (!session) throw new Error(`Session not found: ${sessionId}`);
+      session.model = model;
+      const contextWindow = this.contextWindowResolver?.(model);
+      if (typeof contextWindow === "number") session.contextWindow = contextWindow;
+      this.storage.saveSession(session);
+      return session;
+    });
   }
 
   /** Process a pi agent event from the SDK subscribe callback. */

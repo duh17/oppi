@@ -584,6 +584,9 @@ export class Server {
       sessions: this.sessionRuntimes,
       ensureSessionContextWindow: (targetSession) =>
         this.models.ensureSessionContextWindow(targetSession),
+      getModelCatalog: () => this.models.getAll(),
+      emitSessionSummary: (targetSession) =>
+        this.appEventStreamMux.emitSessionSummary(targetSession),
     });
 
     // Dictation pipeline. Dictation streams create one DictationManager per WebSocket.

@@ -25,6 +25,7 @@ import {
 import { TurnDedupeCache } from "../src/turn-cache.js";
 import type { Storage } from "../src/storage.js";
 import type { ServerConfig, ServerMessage, Session, Workspace } from "../src/types.js";
+import { WsMessageHandler } from "../src/ws-message-handler.js";
 import { makeSdkBackendStub } from "./sdk-backend.helpers.js";
 
 const TEST_CONFIG: ServerConfig = {
@@ -2500,5 +2501,73 @@ describe("SessionLifecycleCoordinator auto-stop settle", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+});
+
+describe("SessionManager setInactiveSessionModel", () => {
+  it("retargets a stopped session so its next start seeds the new model", async () => {
+    const stored = makeSession({
+      status: "error",
+      model: "openai-codex/gpt-6.1-sol",
+      contextWindow: 200_000,
+    });
+    const storage = {
+      getConfig: () => TEST_CONFIG,
+      getDataDir: () => TEST_CONFIG.dataDir,
+      getSession: vi.fn((id: string) => (id === stored.id ? stored : null)),
+      saveSession: vi.fn(),
+    } as unknown as Storage;
+    const manager = new SessionManager(storage);
+    manager.contextWindowResolver = () => 272_000;
+
+    const updated = await manager.setInactiveSessionModel(stored.id, "openai/gpt-6.1-sol");
+
+    expect(updated).toMatchObject({ model: "openai/gpt-6.1-sol", contextWindow: 272_000 });
+    expect(storage.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ id: stored.id, model: "openai/gpt-6.1-sol" }),
+    );
+  });
+
+  it("leaves a live session to its runtime", async () => {
+    const { manager, session, storage } = makeManagerHarness({ model: "anthropic/claude" });
+
+    const updated = await manager.setInactiveSessionModel(session.id, "openai/gpt-6.1-sol");
+
+    expect(updated).toBeUndefined();
+    expect(session.model).toBe("anthropic/claude");
+    expect(storage.saveSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("HTTP session commands on a live runtime", () => {
+  it("returns a runtime-rejected set_model to the HTTP caller instead of an empty success", async () => {
+    const { manager, session, sdkBackend } = makeManagerHarness({ model: "anthropic/claude" });
+    vi.mocked(sdkBackend.setModel).mockResolvedValueOnce({
+      success: false,
+      error: 'Model "openai/gpt-6.1-sol" is not available.',
+    });
+    const handler = new WsMessageHandler({
+      sessions: manager,
+      ensureSessionContextWindow: (value) => value,
+      getModelCatalog: () => [],
+    });
+    const sent: ServerMessage[] = [];
+
+    await handler.handleClientMessage(
+      session,
+      { type: "set_model", provider: "openai", modelId: "gpt-6.1-sol", requestId: "http-1" },
+      (message) => sent.push(message),
+      { connId: "http-session-command", captureRuntimeResult: true },
+    );
+
+    expect(sent).toEqual([
+      expect.objectContaining({
+        type: "command_result",
+        command: "set_model",
+        requestId: "http-1",
+        success: false,
+      }),
+    ]);
+    expect(session.model).toBe("anthropic/claude");
   });
 });

@@ -23,8 +23,11 @@ interface HandlerHarness {
     getActiveSession: ReturnType<typeof vi.fn>;
     respondToUIRequest: ReturnType<typeof vi.fn>;
     forwardClientCommand: ReturnType<typeof vi.fn>;
+    isSessionConnected: ReturnType<typeof vi.fn>;
+    setInactiveSessionModel: ReturnType<typeof vi.fn>;
   };
   ensureSessionContextWindow: ReturnType<typeof vi.fn>;
+  emitSessionSummary: ReturnType<typeof vi.fn>;
 }
 
 function makeSession(id = "s1"): Session {
@@ -56,14 +59,21 @@ function makeHarness(): HandlerHarness {
     getActiveSession: vi.fn(() => undefined as Session | undefined),
     respondToUIRequest: vi.fn(() => true),
     forwardClientCommand: vi.fn(async () => {}),
+    isSessionConnected: vi.fn(() => true),
+    setInactiveSessionModel: vi.fn(async (_id: string, model: string) => ({ ...session, model })),
   };
 
   const ensureSessionContextWindow = vi.fn((value: Session) => value);
+  const emitSessionSummary = vi.fn();
 
-  const deps: WsMessageHandlerDeps = {
+  const deps = {
     sessions,
     ensureSessionContextWindow,
-  };
+    getModelCatalog: () => [
+      { id: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol", provider: "openai", contextWindow: 272_000 },
+    ],
+    emitSessionSummary,
+  } as unknown as WsMessageHandlerDeps;
 
   const handler = new WsMessageHandler(deps);
 
@@ -73,6 +83,7 @@ function makeHarness(): HandlerHarness {
     sent,
     sessions,
     ensureSessionContextWindow,
+    emitSessionSummary,
   };
 }
 
@@ -318,6 +329,76 @@ describe("WsMessageHandler", () => {
       },
       "req-5",
     );
+  });
+
+  it("retargets a session without a live runtime instead of failing set_model", async () => {
+    const harness = makeHarness();
+    harness.sessions.isSessionConnected.mockReturnValue(false);
+
+    await dispatch(harness, {
+      type: "set_model",
+      provider: "openai",
+      modelId: "gpt-6.1-sol",
+      requestId: "req-offline",
+    });
+
+    expect(harness.sessions.setInactiveSessionModel).toHaveBeenCalledWith(
+      "s1",
+      "openai/gpt-6.1-sol",
+    );
+    expect(harness.sessions.forwardClientCommand).not.toHaveBeenCalled();
+    expect(harness.emitSessionSummary).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1", model: "openai/gpt-6.1-sol" }),
+    );
+    expect(harness.sent).toEqual([
+      {
+        type: "command_result",
+        command: "set_model",
+        requestId: "req-offline",
+        success: true,
+        data: { provider: "openai", id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
+      },
+    ]);
+  });
+
+  it("rejects an offline set_model outside the picker catalog without touching the session", async () => {
+    const harness = makeHarness();
+    harness.sessions.isSessionConnected.mockReturnValue(false);
+
+    await dispatch(harness, {
+      type: "set_model",
+      provider: "openai-codex",
+      modelId: "gpt-6.1-sol",
+      requestId: "req-missing",
+    });
+
+    expect(harness.sessions.setInactiveSessionModel).not.toHaveBeenCalled();
+    expect(harness.sent).toEqual([
+      {
+        type: "command_result",
+        command: "set_model",
+        requestId: "req-missing",
+        success: false,
+        error:
+          'Model "openai-codex/gpt-6.1-sol" is not available. Available models: openai/gpt-6.1-sol',
+      },
+    ]);
+  });
+
+  it("forwards set_model when the session goes live before the offline retarget lands", async () => {
+    const harness = makeHarness();
+    harness.sessions.isSessionConnected.mockReturnValue(false);
+    harness.sessions.setInactiveSessionModel.mockResolvedValueOnce(undefined);
+
+    await dispatch(harness, {
+      type: "set_model",
+      provider: "openai",
+      modelId: "gpt-6.1-sol",
+      requestId: "req-race",
+    });
+
+    expect(harness.sessions.forwardClientCommand).toHaveBeenCalledTimes(1);
+    expect(harness.sent).toEqual([]);
   });
 
   it("forwards get_commands requests", async () => {

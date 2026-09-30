@@ -1392,6 +1392,7 @@ struct ChatActionHandlerTests {
             sessionId: sessionId,
             routeScope: .workspace("w1")
         )
+        connection.sessionStreamCoordinator.noteSessionBootstrapped(sessionId: sessionId)
         defer { connection.streamConsumptionTask?.cancel() }
 
         connection._sendMessageForTesting = { message in

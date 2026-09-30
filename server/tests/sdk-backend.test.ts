@@ -21,6 +21,7 @@ import {
   enforceLaunchModelPolicy,
   normalizeThinkingLevel,
   resolveSandboxGuestCwd,
+  resolveSessionSeedModel,
   resolveSdkSessionCwd,
   resolveSdkSessionDisplayCwd,
   SdkBackend,
@@ -531,7 +532,11 @@ describe("SdkBackend sandbox", () => {
     try {
       const session = makeSession({
         ephemeral: true,
-        launch: { status: "launching", requestedAt: 1, tools: { allowed: ["read", "missing_tool"] } },
+        launch: {
+          status: "launching",
+          requestedAt: 1,
+          tools: { allowed: ["read", "missing_tool"] },
+        },
       });
       backend = await SdkBackend.create({
         session,
@@ -1840,6 +1845,54 @@ describe("SdkBackend session state seeding", () => {
     const session = makeSession({ model: "ds4/deepseek-v4-flash" });
 
     expect(() => enforceLaunchModelPolicy(session, undefined)).not.toThrow();
+  });
+
+  describe("resolveSessionSeedModel", () => {
+    const codex = { provider: "openai-codex", id: "gpt-6.1-sol", name: "GPT-6.1 Sol" };
+    const openai = { provider: "openai", id: "gpt-6.1-sol", name: "GPT-6.1 Sol" };
+    const registry = (available: object[], all: object[] = available) =>
+      ({
+        getAvailable: () => available,
+        getAll: () => all,
+      }) as unknown as Parameters<typeof resolveSessionSeedModel>[0];
+
+    it("keeps an authenticated exact model after enabledModels drops it", () => {
+      const model = resolveSessionSeedModel(registry([codex, openai]), "openai-codex/gpt-6.1-sol", [
+        "openai/*",
+      ]);
+
+      expect(model).toBe(codex);
+    });
+
+    it("refuses the exact model once its provider auth is gone", () => {
+      const model = resolveSessionSeedModel(registry([openai]), "openai-codex/gpt-6.1-sol", [
+        "openai/*",
+      ]);
+
+      expect(model).toBeUndefined();
+    });
+
+    it("does not seed an unauthenticated local model that enabledModels dropped", () => {
+      const local = {
+        provider: "ds4",
+        id: "deepseek-v4-flash",
+        name: "DeepSeek V4 Flash",
+        baseUrl: "http://127.0.0.1:8000/v1",
+      };
+      const model = resolveSessionSeedModel(
+        registry([openai], [openai, local]),
+        "ds4/deepseek-v4-flash",
+        ["openai/*"],
+      );
+
+      expect(model).toBeUndefined();
+    });
+
+    it("keeps fuzzy requests inside enabledModels", () => {
+      const model = resolveSessionSeedModel(registry([codex, openai]), "sol", ["openai/*"]);
+
+      expect(model).toBe(openai);
+    });
   });
 });
 

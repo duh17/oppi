@@ -42,6 +42,9 @@ struct ChatActionHandlerRecoveryTests {
             sessionId: sessionId,
             routeScope: .workspace("w1")
         )
+        // streamSession above restarts focus after the scripted `connected`; restore the
+        // live-runtime bootstrap so set_model stays on the stream.
+        connection.sessionStreamCoordinator.noteSessionBootstrapped(sessionId: sessionId)
 
         var modelRequestId: String?
         var promptAttempts = 0

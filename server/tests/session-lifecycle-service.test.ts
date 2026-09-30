@@ -27,10 +27,7 @@ import {
 import { getPiSessionsRoot } from "../src/local-sessions.js";
 import { buildSessionSummary } from "../src/session-summary.js";
 import type { Session, Workspace } from "../src/types.js";
-import {
-  createWorkspaceWorktree,
-  WorkspaceWorktreeError,
-} from "../src/worktrees.js";
+import { createWorkspaceWorktree, WorkspaceWorktreeError } from "../src/worktrees.js";
 import * as worktrees from "../src/worktrees.js";
 
 const WORKTREE_REBIND_NOTICE = "Resuming on Main checkout. The worktree is gone.";
@@ -114,11 +111,10 @@ function makeService(
   findSessionByLaunchIdempotencyKey: ReturnType<typeof vi.fn>;
   getPersistedSession: (sessionId: string) => Session | undefined;
 } {
-  const createSession = vi.fn(
-    (name?: string, model?: string, createOptions?: { id?: string }) =>
-      options.forkSession
-        ? { ...options.forkSession, name, model }
-        : makeSession({ id: createOptions?.id ?? "fork-1", name, model }),
+  const createSession = vi.fn((name?: string, model?: string, createOptions?: { id?: string }) =>
+    options.forkSession
+      ? { ...options.forkSession, name, model }
+      : makeSession({ id: createOptions?.id ?? "fork-1", name, model }),
   );
   const deleteSession = vi.fn(() => true);
   const deleteSearchIndexSession = vi.fn();
@@ -544,13 +540,8 @@ describe("SessionLifecycleService", () => {
           promptError: "Pi prompt preflight rejected",
         },
       });
-      const {
-        service,
-        createSession,
-        startSession,
-        sendPrompt,
-        claimSessionLaunchRecovery,
-      } = makeService({ storedSession: persisted });
+      const { service, createSession, startSession, sendPrompt, claimSessionLaunchRecovery } =
+        makeService({ storedSession: persisted });
 
       const result = await service.createControlSession({
         control: { domain: "skills", intent: "revise", targetId: "skill-1" },
@@ -561,14 +552,10 @@ describe("SessionLifecycleService", () => {
       expect(createSession).not.toHaveBeenCalled();
       expect(claimSessionLaunchRecovery).toHaveBeenCalledOnce();
       expect(startSession).toHaveBeenCalledWith("control-retry-1", undefined);
-      expect(sendPrompt).toHaveBeenCalledWith(
-        "control-retry-1",
-        "Complete atomic initial prompt",
-        {
-          clientTurnId: "control-launch:control-launch-1",
-          requestId: "control-launch:control-launch-1",
-        },
-      );
+      expect(sendPrompt).toHaveBeenCalledWith("control-retry-1", "Complete atomic initial prompt", {
+        clientTurnId: "control-launch:control-launch-1",
+        requestId: "control-launch:control-launch-1",
+      });
       expect(result).toMatchObject({
         launchKind: "existing",
         prompted: true,
@@ -1247,6 +1234,47 @@ describe("SessionLifecycleService", () => {
         service.resumeWorkspaceSession({ session, workspace: makeWorkspace() }),
       ).resolves.toMatchObject({ startedSession: true, session: { status: "ready" } });
       expect(startSession).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps a model switch that lands while a required-model start is failing", async () => {
+      const session = makeSession({
+        runtime: "oppi",
+        status: "ready",
+        model: "openai-codex/gpt-6.1-sol",
+        contextWindow: 200_000,
+        launch: {
+          model: "openai-codex/gpt-6.1-sol",
+          modelPolicy: "required",
+          status: "accepted",
+          requestedAt: 1,
+        },
+      });
+      // The offline set_model takes the session lock that startup just released,
+      // before the lifecycle catch persists the failure.
+      let persistSwitch = (): void => {};
+      const harness = makeService({
+        storedSession: session,
+        onStartSession: () => persistSwitch(),
+        startSessionError: new Error(
+          'Required model "openai-codex/gpt-6.1-sol" is not available; refusing model fallback',
+        ),
+      });
+      persistSwitch = () =>
+        harness.saveSession({
+          ...harness.getPersistedSession(session.id)!,
+          model: "openai/gpt-6.1-sol",
+          contextWindow: 272_000,
+        });
+
+      await expect(
+        harness.service.resumeWorkspaceSession({ session, workspace: makeWorkspace() }),
+      ).rejects.toMatchObject({ statusCode: 409 });
+
+      expect(harness.getPersistedSession(session.id)).toMatchObject({
+        status: "error",
+        model: "openai/gpt-6.1-sol",
+        contextWindow: 272_000,
+      });
     });
 
     it("returns already-live managed sessions without restarting", async () => {

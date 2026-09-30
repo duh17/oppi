@@ -2,15 +2,23 @@ import {
   runtimeCommandFailure,
   runtimeCommandSuccess,
   type AgentRuntimeCommandTransport,
+  type AgentRuntimeEventTransport,
 } from "./agent-runtime-transport.js";
 import { consumeSyntheticE2EUIRequest, recordE2EUIResponse } from "./e2e-ui-harness-state.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
+import {
+  modelCandidatesFromModelInfo,
+  modelUnavailableMessage,
+  resolveModelRequest,
+} from "./model-resolution.js";
 import { runtimeLogTag } from "./session-runtime-capabilities.js";
+import { composeModelId } from "./session-state.js";
 import type {
   ChatAttachmentRef,
   ClientMessage,
   MessageQueueDraftItem,
+  ModelInfo,
   ServerMessage,
   Session,
 } from "./types.js";
@@ -31,15 +39,28 @@ interface SetQueueMessage {
   requestId?: string;
 }
 
-export type WsSessionCommands = AgentRuntimeCommandTransport;
+export type WsSessionCommands = AgentRuntimeCommandTransport &
+  Pick<AgentRuntimeEventTransport, "subscribe"> & {
+    /** Retarget a session with no live runtime; undefined when it is live or terminal-owned. */
+    setInactiveSessionModel(sessionId: string, model: string): Promise<Session | undefined>;
+  };
 
 export interface WsMessageHandlerDeps {
   sessions: WsSessionCommands;
   ensureSessionContextWindow: (session: Session) => Session;
+  /** Picker catalog (GET /models): enabled models whose provider has auth. */
+  getModelCatalog: () => ModelInfo[];
+  emitSessionSummary?: (session: Session) => void;
 }
 
 export interface WsCommandMeta {
   connId?: string;
+  /**
+   * HTTP callers have no session stream, so forwarded commands would otherwise report
+   * nothing: the runtime broadcasts their command_result. When set, the result matching
+   * the request's requestId is also delivered through `send`.
+   */
+  captureRuntimeResult?: boolean;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -169,6 +190,9 @@ export class WsMessageHandler {
       case "set_auto_retry":
       case "abort_retry":
       case "abort_bash": {
+        if (msg.type === "set_model" && (await this.setInactiveSessionModel(session, msg, send))) {
+          return;
+        }
         const commandStart = Date.now();
 
         // Heartbeat pair: received/completed are debug. Failures stay warn.
@@ -180,6 +204,13 @@ export class WsMessageHandler {
           requestId: msg.requestId,
         });
 
+        const requestId = msg.requestId;
+        const stopCapture =
+          meta.captureRuntimeResult && requestId
+            ? this.deps.sessions.subscribe(session.id, (event) => {
+                if (event.type === "command_result" && event.requestId === requestId) send(event);
+              })
+            : undefined;
         try {
           await this.deps.sessions.forwardClientCommand(session.id, msg, msg.requestId);
 
@@ -212,6 +243,8 @@ export class WsMessageHandler {
           }
 
           throw err;
+        } finally {
+          stopCapture?.();
         }
       }
 
@@ -236,6 +269,53 @@ export class WsMessageHandler {
         return;
       }
     }
+  }
+
+  /**
+   * A session whose runtime cannot start (for example, its pinned model lost provider
+   * auth) has no live Pi to switch. Retarget the stored model so the next open starts
+   * on it. Saving a default (persist) still needs the live runtime. Returns false when
+   * a runtime owns the switch; the caller forwards instead.
+   */
+  private async setInactiveSessionModel(
+    session: Session,
+    msg: Extract<ClientMessage, { type: "set_model" }>,
+    send: (msg: ServerMessage) => void,
+  ): Promise<boolean> {
+    if (msg.persist === true || this.deps.sessions.isSessionConnected(session.id)) return false;
+
+    const requested = composeModelId(msg.provider, msg.modelId);
+    const candidates = modelCandidatesFromModelInfo(this.deps.getModelCatalog());
+    const resolved = resolveModelRequest(requested, candidates)?.candidate;
+    if (!resolved) {
+      send(
+        runtimeCommandFailure(
+          "set_model",
+          msg.requestId,
+          modelUnavailableMessage(requested, candidates),
+        ),
+      );
+      return true;
+    }
+
+    const updated = await this.deps.sessions.setInactiveSessionModel(
+      session.id,
+      resolved.canonicalId,
+    );
+    if (!updated) return false;
+    log.info("ws.set_model.inactive_session", {
+      sessionId: session.id,
+      model: resolved.canonicalId,
+    });
+    this.deps.emitSessionSummary?.(updated);
+    send(
+      runtimeCommandSuccess("set_model", msg.requestId, {
+        provider: resolved.provider,
+        id: resolved.modelId,
+        name: resolved.name,
+      }),
+    );
+    return true;
   }
 
   /**

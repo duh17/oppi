@@ -127,11 +127,22 @@ export function normalizeThinkingLevel(level: string | undefined): ThinkingLevel
   return isThinkingLevel(level) ? level : undefined;
 }
 
-function resolveRegistryModel(
-  modelRegistry: ModelRegistry,
+/**
+ * Resolve the model a session starts on. An exact stored `provider/id` keeps working
+ * while its provider still has auth (Pi's available set), even after enabledModels
+ * narrows the picker scope; Pi restores resumed sessions the same way. Everything
+ * else, including unauthenticated local models, stays inside enabledModels.
+ */
+export function resolveSessionSeedModel(
+  modelRegistry: Pick<ModelRegistry, "getAvailable" | "getAll">,
   modelId: string,
   enabledModels?: string[],
 ): ReturnType<ModelRegistry["find"]> {
+  const requested = stripModelThinkingLevel(modelId).model.trim();
+  const exact = modelRegistry
+    .getAvailable()
+    .find((model) => `${model.provider}/${model.id}` === requested);
+  if (exact) return exact;
   const candidates = modelCandidatesFromRegistry(modelRegistry, enabledModels);
   return resolveModelRequest(modelId, candidates)?.candidate.model;
 }
@@ -1154,7 +1165,11 @@ export class SdkBackend {
       const shouldSeedFromSessionState = !sessionStartEvent;
       const model =
         shouldSeedFromSessionState && session.model
-          ? resolveRegistryModel(modelRegistry, session.model, settingsManager.getEnabledModels())
+          ? resolveSessionSeedModel(
+              modelRegistry,
+              session.model,
+              settingsManager.getEnabledModels(),
+            )
           : undefined;
       if (shouldSeedFromSessionState && session.model) {
         if (session.launch?.modelPolicy === "required") {

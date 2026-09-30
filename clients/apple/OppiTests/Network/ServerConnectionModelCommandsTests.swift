@@ -94,6 +94,63 @@ struct ServerConnectionModelCommandsTests {
         }
     }
 
+    /// A reconnect sends `stream_connected`, then the runtime fails to start and
+    /// `connected` never follows. The switch must go over HTTP, not into the dropped stream.
+    @Test func setModelUsesHTTPWhenTheSessionNeverBootstraps() async throws {
+        let (connection, _) = makeTestConnection()
+        await markFocusedSessionFullySubscribed(connection)
+        defer {
+            connection.streamConsumptionTask?.cancel()
+            ModelSwitchURLProtocol.handler = nil
+        }
+        connection.sessionStore.upsert(makeTestSession(workspaceId: "w1"))
+        connection.routeStreamMessage(StreamMessage(
+            sessionId: nil,
+            seq: nil,
+            currentSeq: nil,
+            message: .streamConnected(userName: "test", serverDictationAvailable: false)
+        ))
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ModelSwitchURLProtocol.self]
+        connection.setAPIClientForTesting(APIClient(
+            baseURL: URL(string: "http://localhost:7749")!,
+            token: "sk_test",
+            configuration: config
+        ))
+        let streamSink = CapturedClientMessages()
+        connection._sendMessageForTesting = { message in await streamSink.append(message) }
+        let requests = CapturedRequests()
+        ModelSwitchURLProtocol.handler = { request in
+            requests.append(request)
+            let body = Data(#"{"messages":[{"type":"command_result","command":"set_model","success":true}]}"#.utf8)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (body, response)
+        }
+
+        try await connection.setModel(provider: "openai", modelId: "gpt-6.1-sol")
+
+        let streamedModelSwitches = await streamSink.messages.filter {
+            if case .setModel = $0 { return true }
+            return false
+        }
+        #expect(streamedModelSwitches.isEmpty)
+        let request = try #require(requests.all.first)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/workspaces/w1/sessions/s1/command")
+        let payload = try #require(request.bodyData.flatMap {
+            try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+        })
+        #expect(payload["type"] as? String == "set_model")
+        #expect(payload["provider"] as? String == "openai")
+        #expect(payload["modelId"] as? String == "gpt-6.1-sol")
+        #expect((payload["requestId"] as? String)?.isEmpty == false)
+    }
+
     @Test func thinkingCommandsSendCorrectClientMessages() async throws {
         let (connection, _) = makeTestConnection()
         await markFocusedSessionFullySubscribed(connection)
@@ -667,6 +724,7 @@ struct ServerConnectionModelCommandsTests {
 }
 
 @MainActor
+/// Focused stream is up and the server's `connected` bootstrap arrived (live runtime).
 private func markFocusedSessionFullySubscribed(_ connection: ServerConnection, sessionId: String = "s1") async {
     connection.wsClient?._setStatusForTesting(.connected)
     connection.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
@@ -677,6 +735,61 @@ private func markFocusedSessionFullySubscribed(_ connection: ServerConnection, s
         sessionId: sessionId,
         routeScope: .workspace("w1")
     )
+    connection.sessionStreamCoordinator.noteSessionBootstrapped(sessionId: sessionId)
+}
+
+private final class CapturedRequests: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requests: [URLRequest] = []
+
+    func append(_ request: URLRequest) {
+        lock.withLock { requests.append(request) }
+    }
+
+    var all: [URLRequest] { lock.withLock { requests } }
+}
+
+/// Private handler so this suite never races other suites on `TestURLProtocol.handler`.
+private final class ModelSwitchURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var handler: ((URLRequest) throws -> (Data, HTTPURLResponse))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = Self.handler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        do {
+            let (data, response) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+private extension URLRequest {
+    /// URLProtocol receives POST bodies as a stream, not `httpBody`.
+    var bodyData: Data? {
+        if let httpBody { return httpBody }
+        guard let stream = httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count > 0 else { break }
+            data.append(buffer, count: count)
+        }
+        return data
+    }
 }
 
 private actor CapturedClientMessages {

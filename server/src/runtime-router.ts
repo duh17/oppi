@@ -146,6 +146,12 @@ export class SessionRuntimes implements AgentRuntimeTransport {
   respondToUIRequest: AgentRuntimeTransport["respondToUIRequest"] = (sessionId, response) =>
     this.runtimeFor(sessionId).respondToUIRequest(sessionId, response);
 
+  /** Oppi-owned sessions only; a Pi TUI mirror's model belongs to its terminal. */
+  async setInactiveSessionModel(sessionId: string, model: string): Promise<Session | undefined> {
+    if (this.isPiTui(this.storage.getSession(sessionId))) return undefined;
+    return this.oppi.setInactiveSessionModel(sessionId, model);
+  }
+
   forwardClientCommand: AgentRuntimeTransport["forwardClientCommand"] = (
     sessionId,
     message,

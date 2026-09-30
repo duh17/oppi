@@ -89,6 +89,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   const commandHandler = new WsMessageHandler({
     sessions: ctx.sessionRuntimes,
     ensureSessionContextWindow: ctx.ensureSessionContextWindow,
+    getModelCatalog: ctx.getModelCatalog,
+    emitSessionSummary: (session) => ctx.appEvents?.emitSessionSummary(session),
   });
   const {
     handleSearchSessions,
@@ -463,7 +465,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         session,
         parsed.message,
         (message) => messages.push(message),
-        { connId: "http-session-command" },
+        { connId: "http-session-command", captureRuntimeResult: true },
       );
     } catch (error) {
       helpers.error(res, 500, safeErrorMessage(error));

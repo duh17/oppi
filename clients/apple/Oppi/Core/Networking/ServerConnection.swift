@@ -1416,6 +1416,7 @@ final class ServerConnection {
         // Handle stream-level events (no sessionId)
         if case .streamConnected(_, let available) = message {
             serverDictationAvailable = available
+            sessionStreamCoordinator.clearSessionBootstrap()
             handleStreamReconnected()
             return
         }
