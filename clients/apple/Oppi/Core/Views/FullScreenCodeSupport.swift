@@ -414,7 +414,6 @@ enum NavigationSwipeGesturePolicy {
 /// `onEnded` ordering can never pop a viewer mid-scrub.
 enum HorizontalBackSwipeGesturePolicy {
     static let minimumHorizontalDistance = NavigationSwipeGesturePolicy.minimumDistance
-    static let horizontalDominanceRatio = NavigationSwipeGesturePolicy.dominanceRatio
     static let leadingEdgeWidth: CGFloat = 20
 
     static func isLeadingEdgeStart(location: CGPoint?, in hostView: UIView?) -> Bool {

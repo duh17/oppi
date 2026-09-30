@@ -526,7 +526,6 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
     var debugPickScrollEnabledForTesting: Bool { scrollView.isScrollEnabled }
     var debugPickPinchEnabledForTesting: Bool { scrollView.pinchGestureRecognizer?.isEnabled == true }
     var debugSelectedTargetIDForTesting: String? { selectedTargetID }
-    var debugChooserCountForTesting: Int { chooserStack.arrangedSubviews.count }
     var debugChooserTitlesForTesting: [String] {
         chooserStack.arrangedSubviews.compactMap { ($0 as? UIButton)?.accessibilityLabel }
     }
@@ -552,15 +551,6 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
 
     func debugPanForTesting(to offset: CGPoint) {
         scrollView.setContentOffset(offset, animated: false)
-    }
-
-    func debugChooseForTesting(targetID: String) {
-        guard let target = semanticMap?.target(id: targetID) else { return }
-        choose(target)
-    }
-
-    func debugCommentForTesting() {
-        commentOnSelection()
     }
 #endif
 }

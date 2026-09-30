@@ -1095,9 +1095,6 @@ extension NativeFullScreenThinkingBody {
     var debugTextViewForTesting: UITextView { textView }
     var debugFollowsTailForTesting: Bool { followPolicy.followsTail }
     var debugActiveScrollViewForTesting: UIScrollView { activeScrollView }
-    var debugVisibleChunkTextViewForTesting: UITextView? {
-        chunkCollectionView.visibleCells.compactMap { ($0 as? ChunkCell)?.textView }.first
-    }
 
     var debugVirtualizationDiagnosticsForTesting: VirtualizationDiagnostics? {
         guard isVirtualized else { return nil }

@@ -1365,7 +1365,6 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
 #if DEBUG
     var debugDidTeardownForTesting = false
     var debugIsVisibleForTesting: Bool { ownership.isVisible }
-    var debugIsFullScreenForTesting: Bool { ownership.isFullScreen }
     var debugIsPictureInPictureForTesting: Bool { ownership.isPictureInPicture }
     var debugPlaybackProbeForTesting: String {
         let item = player?.currentItem

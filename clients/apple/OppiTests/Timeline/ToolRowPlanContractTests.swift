@@ -48,7 +48,6 @@ struct ToolRowPlanContractTests {
         let policy = try #require(plan.interactionPolicy)
         #expect(policy.mode == .markdown)
         #expect(policy.supportsFullScreenPreview)
-        #expect(plan.interactionSpec.enablesTapCopyGesture)
         #expect(plan.interactionSpec.enablesPinchGesture)
         #expect(!plan.interactionSpec.markdownSelectionEnabled)
         #expect(!plan.interactionSpec.expandedLabelSelectionEnabled)

@@ -64,9 +64,6 @@ enum FullScreenReaderTextSize: Int, Codable, CaseIterable, Equatable {
         }
     }
 
-    var canDecrease: Bool { self != .small }
-    var canIncrease: Bool { self != .extraLarge }
-
     func adjusted(by delta: Int) -> Self {
         let nextRaw = min(
             Self.extraLarge.rawValue,

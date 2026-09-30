@@ -22,8 +22,6 @@ struct ImagePresentationPolicy: Equatable {
     let placeholderHeight: CGFloat
     let maximumHeight: CGFloat?
     let maxPixelSize: CGFloat
-
-    var allowsNaturalHeight: Bool { maximumHeight == nil || surface == .primaryMedia || surface == .fullscreen }
 }
 
 enum ImageViewportSizing {

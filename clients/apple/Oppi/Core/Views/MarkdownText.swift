@@ -2026,57 +2026,6 @@ enum FlatSegment: Sendable {
         return pieces
     }
 
-    /// Flatten markdown to one attributed string. Tables become ASCII pipes.
-    /// User bubbles with tables should use `renderMarkdownPieces` instead.
-    static func renderMarkdownInline(
-        _ markdown: String,
-        defaultTextColor: UIColor,
-        palette: ThemePalette
-    ) -> NSAttributedString {
-        let pieces = renderMarkdownPieces(
-            markdown,
-            defaultTextColor: defaultTextColor,
-            palette: palette
-        )
-        let result = NSMutableAttributedString()
-        let paragraphSep = NSAttributedString(string: "\n\n")
-        for (index, piece) in pieces.enumerated() {
-            if index > 0 {
-                result.append(paragraphSep)
-            }
-            switch piece {
-            case .attributed(let text):
-                result.append(text)
-            case .table(let headers, let rows):
-                result.append(asciiTableString(
-                    headers: headers,
-                    rows: rows,
-                    defaultTextColor: defaultTextColor
-                ))
-            }
-        }
-        return result
-    }
-
-    private static func asciiTableString(
-        headers: [[MarkdownInline]],
-        rows: [[[MarkdownInline]]],
-        defaultTextColor: UIColor
-    ) -> NSAttributedString {
-        let codeFont = monospacedFont(forTextStyle: .subheadline, baseSize: 12)
-        var lines: [String] = []
-        let headerTexts = headers.map { plainText(from: $0) }
-        lines.append(headerTexts.joined(separator: " | "))
-        lines.append(headerTexts.map { String(repeating: "─", count: max($0.count, 3)) }.joined(separator: " | "))
-        for row in rows {
-            lines.append(row.map { plainText(from: $0) }.joined(separator: " | "))
-        }
-        return NSAttributedString(string: lines.joined(separator: "\n"), attributes: [
-            .font: codeFont,
-            .foregroundColor: defaultTextColor,
-        ])
-    }
-
     // MARK: - Block → AttributedString
 
     private static func attributedString(

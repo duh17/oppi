@@ -1265,10 +1265,6 @@ final class NativeFullScreenCodeBody: UIView, UIScrollViewDelegate, UICollection
     }
 
 #if DEBUG
-    var debugLineAnchorRequestedRangeForTesting: ClosedRange<Int>? {
-        lineAnchorResolution?.requestedRange
-    }
-
     var debugLineAnchorExistingRangeForTesting: ClosedRange<Int>? {
         lineAnchorResolution?.existingRange
     }
@@ -5191,13 +5187,6 @@ extension NativeFullScreenMarkdownBody {
         debugOffsetWriteReasons.removeAll()
         debugVisibleHeightCorrectionDuringInteractionCount = 0
     }
-    func debugQueueAutomaticViewportWritesForTesting(focusY: CGFloat) {
-        viewportOwner.scheduleFollowTail()
-        viewportOwner.scheduleExplicitFocus { focusY }
-    }
-    func debugHandleTouchDownForTesting() {
-        beginViewportInteraction()
-    }
     var debugVisibleCellCountForTesting: Int { collectionView.visibleCells.count }
     var debugParkedHostForTesting: UIView { parkedSegmentHost }
     var debugNeedsLayoutReplaceAfterInteractionForTesting: Bool {
@@ -5296,10 +5285,6 @@ extension NativeFullScreenMarkdownBody {
         ) != nil
     }
 
-    func debugParkedViewCountForTesting(id: MarkdownReaderSegmentID) -> Int {
-        parkedSegmentViews[id]?.count ?? 0
-    }
-
     func debugEvictGraphicalArtifactForTesting(_ item: Int) {
         guard renderedSegmentIDs.indices.contains(item) else { return }
         let id = renderedSegmentIDs[item]
@@ -5359,9 +5344,6 @@ extension NativeFullScreenMarkdownBody {
         return (first.item, frame.minY - collectionView.contentOffset.y)
     }
     var debugSourceTextForTesting: String { latestSnapshot.text }
-    var debugLineAnchorRequestedRangeForTesting: ClosedRange<Int>? {
-        lineAnchorResolution?.requestedRange
-    }
     var debugLineAnchorExistingRangeForTesting: ClosedRange<Int>? {
         lineAnchorResolution?.existingRange
     }
@@ -5792,10 +5774,6 @@ extension NativeFullScreenSourceBody: FullScreenReaderConfigurable {
 
 #if DEBUG
 extension NativeFullScreenSourceBody {
-    var debugLineAnchorRequestedRangeForTesting: ClosedRange<Int>? {
-        lineAnchorResolution?.requestedRange
-    }
-
     var debugLineAnchorExistingRangeForTesting: ClosedRange<Int>? {
         lineAnchorResolution?.existingRange
     }
