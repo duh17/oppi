@@ -86,6 +86,47 @@ enum AppPreferences {
         }
     }
 
+    // MARK: - Session Rows
+
+    /// Device-local session list display: one saved row appearance and the
+    /// remembered thread detail view. Grouping (`Inbox.defaultListMode`) stays
+    /// independent of both.
+    enum SessionRows {
+        static let displayKey = "\(AppIdentifiers.subsystem).sessionRows.display"
+        static let threadDetailModeKey = "\(AppIdentifiers.subsystem).sessionRows.threadDetailMode"
+        static let didChangeNotification = Notification.Name("oppi.sessionRows.displayDidChange")
+
+        /// Missing, malformed, or unrecognized stored values fall back to today's rich rows.
+        static var display: SessionRowDisplay {
+            guard let data = UserDefaults.standard.data(forKey: displayKey),
+                  let stored = try? JSONDecoder().decode(SessionRowDisplay.self, from: data)
+            else {
+                return .standard
+            }
+            return stored
+        }
+
+        static func setDisplay(_ display: SessionRowDisplay) {
+            guard display != Self.display, let data = try? JSONEncoder().encode(display) else { return }
+            UserDefaults.standard.set(data, forKey: displayKey)
+            NotificationCenter.default.post(name: didChangeNotification, object: nil)
+        }
+
+        /// Thread detail view last chosen on this device.
+        static var threadDetailMode: SessionThreadDetailMode {
+            guard let raw = UserDefaults.standard.string(forKey: threadDetailModeKey),
+                  let mode = SessionThreadDetailMode(rawValue: raw)
+            else {
+                return .outline
+            }
+            return mode
+        }
+
+        static func setThreadDetailMode(_ mode: SessionThreadDetailMode) {
+            UserDefaults.standard.set(mode.rawValue, forKey: threadDetailModeKey)
+        }
+    }
+
     // MARK: - Browser
 
     /// User-facing preference for where regular web links open.

@@ -16,6 +16,7 @@ import SwiftUI
 struct SessionRow: View {
     @Environment(\.themeID) private var themeID
     @Environment(\.theme) private var theme
+    @Environment(\.sessionRowDisplay) private var display
 
     let session: Session
     let pendingAskCount: Int
@@ -123,106 +124,40 @@ struct SessionRow: View {
             identityIcon
                 .padding(.top, 1)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: display.isCompact ? 1 : 3) {
                 // Row 1: title + time
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(title)
-                    .font(.body)
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
-                    .layoutPriority(1)
-                    .accessibilityLabel(isUnread ? Text("Unread, \(title)") : Text(verbatim: title))
-
-                Spacer(minLength: 4)
-
-                timeLabel
-            }
-
-            // Row 1.5: lineage hint (stopped sessions only)
-            if let lineageHint, !lineageHint.isEmpty {
-                Text(lineageHint)
-                    .font(.caption)
-                    .foregroundStyle(.themeFgDim)
-                    .lineLimit(1)
-            }
-
-            // Row 1.75: search snippet (when searching)
-            if let searchSnippet {
-                Text(highlightedSearchSnippet(searchSnippet))
-                    .font(.caption)
-                    .foregroundStyle(.themeFgDim)
-                    .lineLimit(2)
-            }
-
-            // Row 2: workspace + model + optional ask prompt
-            HStack(spacing: 6) {
-                if let workspaceContext, !workspaceContext.isEmpty {
-                    workspaceContextView(workspaceContext)
-                }
-
-                if let firstModel = visibleModelSummaries.first {
-                    modelSummaryView(firstModel)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(title)
+                        .font(.body)
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
                         .layoutPriority(1)
+                        .accessibilityLabel(isUnread ? Text("Unread, \(title)") : Text(verbatim: title))
+
+                    Spacer(minLength: 4)
+
+                    if display.showsTime {
+                        timeLabel
+                    }
                 }
 
-                if displayCompactionCount > 0 {
-                    compactionBadgeView(displayCompactionCount)
-                }
-
-                if let worktreeIndicator {
-                    worktreeIndicatorView(worktreeIndicator)
-                }
-
-                if let attentionText, !attentionText.isEmpty {
-                    Text(attentionText)
-                        .font(.caption2)
+                // Row 1.5: lineage hint (stopped sessions only)
+                if let lineageHint, !lineageHint.isEmpty {
+                    Text(lineageHint)
+                        .font(.caption)
                         .foregroundStyle(.themeFgDim)
                         .lineLimit(1)
-                        .truncationMode(.middle)
-                        .accessibilityIdentifier("session.attentionPreview.\(session.id)")
                 }
 
-                Spacer(minLength: 8)
-
-                if let terminalMirrorIndicator {
-                    TerminalMirrorIndicatorView(presentation: terminalMirrorIndicator)
-                }
-            }
-
-            // Row 3: compact metrics on the left, status pinned right.
-            HStack(spacing: 6) {
-                if let pct = contextPercent {
-                    NativeContextGauge(percent: pct)
-                }
-
-                if isIncognito {
-                    incognitoBadge
-                }
-
-                if session.cost > 0 {
-                    Text(costString(session.cost))
-                        .monospacedDigit()
-                }
-
-                if displayFilesChanged > 0 {
-                    fileCountView(displayFilesChanged)
-                }
-
-                Spacer(minLength: 8)
-
-                if pendingAskCount > 0 {
-                    Image(systemName: "questionmark.circle.fill")
+                // Row 1.75: search snippet (when searching)
+                if let searchSnippet {
+                    Text(highlightedSearchSnippet(searchSnippet))
                         .font(.caption)
-                        .foregroundStyle(pillVariant.tint(theme))
-                        .accessibilityIdentifier("session.attentionBadge.\(session.id)")
+                        .foregroundStyle(.themeFgDim)
+                        .lineLimit(2)
                 }
 
-                SessionStatusPill(pillVariant)
-                    .fixedSize()
-            }
-                .font(.caption)
-                .foregroundStyle(.themeFgDim)
-                .lineLimit(1)
+                detailRows
             }
         }
         .padding(.leading, 12)
@@ -239,8 +174,176 @@ struct SessionRow: View {
         .id(themeID)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.trailing, 4)
-        .padding(.vertical, 2)
+        .padding(.vertical, display.isCompact ? 0 : 2)
         .contentShape(Rectangle())
+    }
+
+    // MARK: - Detail rows
+
+    /// Standard stacks the context row above the metrics row. Compact tries one
+    /// line first and otherwise falls back to the same two rows, so density
+    /// never hides or truncates a fact that Standard would show.
+    @ViewBuilder
+    private var detailRows: some View {
+        if display.isCompact {
+            ViewThatFits(in: .horizontal) {
+                joinedDetailRow
+                stackedDetailRows
+            }
+        } else {
+            stackedDetailRows
+        }
+    }
+
+    private var stackedDetailRows: some View {
+        VStack(alignment: .leading, spacing: display.isCompact ? 1 : 3) {
+            if hasContextRow { contextRow }
+            metricsRow
+        }
+    }
+
+    /// Compact's one-line candidate. Each fact cluster is rigid at its full
+    /// width, so `ViewThatFits` rejects the line instead of shrinking or
+    /// truncating text; the single spacer pins the status cluster trailing.
+    private var joinedDetailRow: some View {
+        HStack(spacing: 6) {
+            if hasContextItems {
+                HStack(spacing: 6) { contextItems }
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            if hasMetricItems {
+                HStack(spacing: 6) { metricItems }
+                    .metricsStyle()
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            Spacer(minLength: 8)
+            if let terminalMirrorIndicator {
+                TerminalMirrorIndicatorView(presentation: terminalMirrorIndicator)
+            }
+            HStack(spacing: 6) { statusItems }
+                .metricsStyle()
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    private var shownModelSummary: SessionModelSummary? {
+        display.showsModel ? visibleModelSummaries.first : nil
+    }
+
+    private var shownCompactionCount: Int {
+        display.showsCompactions ? displayCompactionCount : 0
+    }
+
+    private var hasContextItems: Bool {
+        workspaceContext?.isEmpty == false
+            || shownModelSummary != nil
+            || shownCompactionCount > 0
+            || worktreeIndicator != nil
+            || attentionText?.isEmpty == false
+    }
+
+    private var hasContextRow: Bool {
+        hasContextItems || terminalMirrorIndicator != nil
+    }
+
+    private var shownContextPercent: Double? {
+        display.showsContextUsage ? contextPercent : nil
+    }
+
+    private var hasMetricItems: Bool {
+        shownContextPercent != nil
+            || isIncognito
+            || (display.showsCost && session.cost > 0)
+            || (display.showsFilesTouched && displayFilesChanged > 0)
+    }
+
+    /// Workspace, model, compactions, worktree, and the ask prompt.
+    @ViewBuilder
+    private var contextItems: some View {
+        if let workspaceContext, !workspaceContext.isEmpty {
+            workspaceContextView(workspaceContext)
+        }
+
+        if let shownModelSummary {
+            modelSummaryView(shownModelSummary)
+                .layoutPriority(1)
+        }
+
+        if shownCompactionCount > 0 {
+            compactionBadgeView(shownCompactionCount)
+        }
+
+        if let worktreeIndicator {
+            worktreeIndicatorView(worktreeIndicator)
+        }
+
+        if let attentionText, !attentionText.isEmpty {
+            Text(attentionText)
+                .font(.caption2)
+                .foregroundStyle(.themeFgDim)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .accessibilityIdentifier("session.attentionPreview.\(session.id)")
+        }
+    }
+
+    /// Context usage, Incognito, cost, and files touched.
+    @ViewBuilder
+    private var metricItems: some View {
+        if let pct = shownContextPercent {
+            NativeContextGauge(percent: pct)
+        }
+
+        if isIncognito {
+            incognitoBadge
+        }
+
+        if display.showsCost, session.cost > 0 {
+            Text(costString(session.cost))
+                .monospacedDigit()
+        }
+
+        if display.showsFilesTouched, displayFilesChanged > 0 {
+            fileCountView(displayFilesChanged)
+        }
+    }
+
+    /// The question badge and the authoritative status.
+    @ViewBuilder
+    private var statusItems: some View {
+        if pendingAskCount > 0 {
+            Image(systemName: "questionmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(pillVariant.tint(theme))
+                .accessibilityIdentifier("session.attentionBadge.\(session.id)")
+        }
+
+        SessionStatusPill(pillVariant)
+            .fixedSize()
+    }
+
+    private var contextRow: some View {
+        HStack(spacing: 6) {
+            contextItems
+
+            Spacer(minLength: 8)
+
+            if let terminalMirrorIndicator {
+                TerminalMirrorIndicatorView(presentation: terminalMirrorIndicator)
+            }
+        }
+    }
+
+    /// Compact metrics on the left, status pinned right.
+    private var metricsRow: some View {
+        HStack(spacing: 6) {
+            metricItems
+
+            Spacer(minLength: 8)
+
+            statusItems
+        }
+        .metricsStyle()
     }
 
     private var identityIcon: some View {
@@ -440,5 +543,14 @@ struct NativeContextGauge: View {
                 .monospacedDigit()
                 .foregroundStyle(.themeComment)
         }
+    }
+}
+
+private extension View {
+    /// Shared type for the metrics and status cluster.
+    func metricsStyle() -> some View {
+        font(.caption)
+            .foregroundStyle(.themeFgDim)
+            .lineLimit(1)
     }
 }

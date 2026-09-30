@@ -22,6 +22,7 @@ struct SettingsView: View {
     @State private var hapticFeedbackEnabled = AppPreferences.Interaction.isHapticFeedbackEnabled
     @State private var quietModeEnabled = AppPreferences.ChatDisplay.isCompactTurnsEnabled
     @State private var workStripStyle = AppPreferences.ChatDisplay.workStripStyle
+    @State private var presentsRowEditor = false
 
     var body: some View {
         List {
@@ -243,6 +244,17 @@ struct SettingsView: View {
                     .font(.footnote)
                     .foregroundStyle(.themeComment)
 
+                Button {
+                    presentsRowEditor = true
+                } label: {
+                    Label("Customize Rows", systemImage: "slider.horizontal.3")
+                }
+                .accessibilityIdentifier("settings.customizeRows")
+
+                Text("Choose the details Oppi session rows show, in every session list on this device.")
+                    .font(.footnote)
+                    .foregroundStyle(.themeComment)
+
                 Picker("Keep screen awake", selection: $screenAwakePreset) {
                     ForEach(AppPreferences.ScreenAwake.TimeoutPreset.allCases) { preset in
                         Text(preset.label).tag(preset)
@@ -421,6 +433,9 @@ struct SettingsView: View {
         .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
         .themedListSurface()
         .navigationTitle("Settings")
+        .sheet(isPresented: $presentsRowEditor) {
+            SessionRowDisplayEditor()
+        }
     }
 
     @ViewBuilder

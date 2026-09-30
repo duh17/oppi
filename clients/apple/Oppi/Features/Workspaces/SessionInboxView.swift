@@ -234,6 +234,7 @@ struct SessionInboxView: View {
     @State private var providerSetupState: ProviderSetupState = .unknown
     @FocusState private var isSearchFieldFocused: Bool
     @State private var presentsNowPlayingPlayer = false
+    @State private var presentsRowEditor = false
     @State private var composeBarColumnWidth: CGFloat = 0
 
     init(onOpenSidebar: (() -> Void)? = nil) {
@@ -439,6 +440,19 @@ struct SessionInboxView: View {
         .accessibilityIdentifier("workspace.inbox.mode")
     }
 
+    /// Opens Customize Rows. Separate from the Threads/Sessions toggle so that
+    /// one-tap grouping switch keeps its meaning.
+    private var customizeRowsButton: some View {
+        Button {
+            presentsRowEditor = true
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+        }
+        .foregroundStyle(.themeFg)
+        .accessibilityLabel("Customize Rows")
+        .accessibilityIdentifier("workspace.inbox.customizeRows")
+    }
+
     var body: some View {
         let data = viewData
 
@@ -546,6 +560,9 @@ struct SessionInboxView: View {
         .searchPresentationToolbarBehavior(
             sessionListToolbar.avoidsHidingContentWhileSearching ? .avoidHidingContent : .automatic
         )
+        .sheet(isPresented: $presentsRowEditor) {
+            SessionRowDisplayEditor()
+        }
         .fullScreenCover(isPresented: $presentsNowPlayingPlayer) {
             if let player = sessionListAudioPlayer {
                 InAppNowPlayingPlayerScreen(audioPlayer: player)
@@ -763,6 +780,10 @@ struct SessionInboxView: View {
 
         ToolbarItem(placement: .topBarTrailing) {
             listModeButton
+        }
+
+        ToolbarItem(placement: .topBarTrailing) {
+            customizeRowsButton
         }
 
         ToolbarItem(placement: .topBarTrailing) {
@@ -991,6 +1012,15 @@ struct SessionInboxView: View {
     }
 
     private func sessionRow(_ item: SessionInboxItem) -> some View {
+        sessionRowBody(item)
+            .listRowBackground(theme.bg.primary)
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                sessionSwipeActions(for: item)
+            }
+    }
+
+    /// The root/session row and its one-tap open of that session's chat.
+    private func sessionRowBody(_ item: SessionInboxItem) -> some View {
         SessionRow(presentation: rowPresentation(for: item))
             .contentShape(Rectangle())
             // A plain Button can still commit after a horizontal drag loses to
@@ -1006,10 +1036,6 @@ struct SessionInboxView: View {
             }
             .accessibilityIdentifier("session.nav.\(item.session.id)")
             .accessibilityValue(sessionRowAccessibilityValue(for: item))
-            .listRowBackground(theme.bg.primary)
-            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                sessionSwipeActions(for: item)
-            }
     }
 
     private func threadSection(_ title: String, items: [SessionInboxThreadItem]) -> some View {
@@ -1046,41 +1072,38 @@ struct SessionInboxView: View {
         }
     }
 
-    /// Root row plus the thread strip. A thread with children opens the thread
-    /// view; a lone session opens its chat like the flat list.
+    /// Root row plus, for a launch tree, its Thread strip. The root body always
+    /// opens the root's chat; only the labelled strip opens Thread detail. They
+    /// are sibling tap targets (neither wraps the other), each a real tap
+    /// recognizer so a swipe on either cancels navigation.
+    @ViewBuilder
     private func threadRow(_ item: SessionInboxThreadItem) -> some View {
-        let hasChildren = !item.rollup.descendants.isEmpty
-        let attentionMember = item.rollup.descendants.first {
-            pendingAskCount(for: $0.id, connection: item.root.connection) > 0
-        }
-        let rootHasQuestion = pendingAskCount(for: item.rollup.root.id, connection: item.root.connection) > 0
-        let open = {
-            if hasChildren {
+        if item.rollup.descendants.isEmpty {
+            sessionRow(item.root)
+        } else {
+            let attentionMember = item.rollup.descendants.first {
+                pendingAskCount(for: $0.id, connection: item.root.connection) > 0
+            }
+            let openThread = {
                 applySearchNavigation(.willOpenDestination)
                 navigation.openSessionThread(
                     SessionThreadNavTarget(serverId: item.root.serverId, rootSessionId: item.rollup.root.id)
                 )
-            } else {
-                openSession(item.root)
             }
-        }
-        return VStack(alignment: .leading, spacing: 6) {
-            SessionRow(presentation: rowPresentation(for: item.root))
-            if hasChildren {
+            VStack(alignment: .leading, spacing: 6) {
+                sessionRowBody(item.root)
                 SessionThreadStrip(rollup: item.rollup, attentionMember: attentionMember)
-                    .padding(.leading, 30)
+                    .padding(.leading, SessionThreadStrip.rowInset)
+                    .onTapGesture(perform: openThread)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { openThread() }
+                    .accessibilityIdentifier("thread.nav.\(item.rollup.root.id)")
+                    .accessibilityValue(attentionMember != nil ? "Question pending" : "")
             }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: open)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { open() }
-        .accessibilityIdentifier(hasChildren ? "thread.nav.\(item.rollup.root.id)" : "session.nav.\(item.rollup.root.id)")
-        .accessibilityValue(rootHasQuestion || attentionMember != nil ? "Question pending" : "")
-        .listRowBackground(theme.bg.primary)
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            sessionSwipeActions(for: item.root)
+            .listRowBackground(theme.bg.primary)
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                sessionSwipeActions(for: item.root)
+            }
         }
     }
 

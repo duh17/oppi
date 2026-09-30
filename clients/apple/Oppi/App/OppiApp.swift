@@ -398,6 +398,8 @@ struct OppiApp: App {
     @State private var quickCommentTemplateStore = QuickCommentTemplateStore()
     @State private var composerDraftStore = ComposerDraftStore()
     @State private var chatReaderPayloadStore = ChatReaderPayloadStore()
+    /// Saved session row appearance, refreshed when Customize Rows saves.
+    @State private var sessionRowDisplay = AppPreferences.SessionRows.display
 
     /// Convenience accessor — most lifecycle code targets the active connection.
     private var connection: ServerConnection { coordinator.activeConnection }
@@ -493,6 +495,10 @@ struct OppiApp: App {
             .environment(\.composerDraftStore, composerDraftStore)
             .environment(\.theme, themeStore.appTheme)
             .environment(\.themeID, themeStore.activeThemeID)
+            .environment(\.sessionRowDisplay, sessionRowDisplay)
+            .onReceive(NotificationCenter.default.publisher(for: AppPreferences.SessionRows.didChangeNotification)) { _ in
+                sessionRowDisplay = AppPreferences.SessionRows.display
+            }
             .tint(.themeBlue)
             .background {
                 ThemeColorSchemeSyncView(themeStore: themeStore)

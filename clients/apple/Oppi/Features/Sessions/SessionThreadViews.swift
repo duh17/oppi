@@ -2,15 +2,39 @@ import SwiftUI
 
 // MARK: - Inbox thread strip
 
-/// One-line summary under a thread root row: who is working, member dots, totals.
+/// Labelled Thread control under a thread root row: who is working, optional
+/// lane graph and Agent summary, and totals. The caller makes it the tap
+/// target that opens Thread detail; the root row above it opens the root chat.
+///
+/// Display choices only hide the lane graph, the Agent summary, and the cost
+/// total. The Thread label, a child's question, who is working, and the
+/// working/done counts always stay.
 struct SessionThreadStrip: View {
+    @Environment(\.sessionRowDisplay) private var display
+
+    /// Leading inset that lines the strip up under the root row's identity icon.
+    static let rowInset: CGFloat = 30
+
     let rollup: SessionThreadRollup
     /// Member with a pending question, shown so the user knows where to answer.
     var attentionMember: Session?
 
     var body: some View {
         let working = rollup.workingDescendants
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: display.isCompact ? 2 : 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                Text("Thread")
+                Text("· \(rollup.members.count) sessions")
+                    .fontWeight(.regular)
+                    .foregroundStyle(.themeComment)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .foregroundStyle(.themeComment)
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.themeBlue)
+            .lineLimit(1)
             if let attentionMember {
                 Label("Question from \(attentionMember.displayTitle)", systemImage: "questionmark.bubble.fill")
                     .font(.footnote.weight(.semibold))
@@ -22,10 +46,14 @@ struct SessionThreadStrip: View {
                     .foregroundStyle(.themeBlue)
                     .lineLimit(1)
             }
-            SessionThreadLaneGraphView(members: rollup.members, rootId: rollup.root.id)
-                .frame(maxWidth: 260, alignment: .leading)
+            if display.showsThreadLaneGraph {
+                SessionThreadLaneGraphView(members: rollup.members, rootId: rollup.root.id)
+                    .frame(maxWidth: 260, alignment: .leading)
+            }
             HStack(alignment: .center, spacing: 8) {
-                SessionThreadAgentCluster(groups: SessionThreadAgentGroup.groups(Array(rollup.descendants)), maxGroups: 3)
+                if display.showsThreadAgentSummary {
+                    SessionThreadAgentCluster(groups: SessionThreadAgentGroup.groups(Array(rollup.descendants)), maxGroups: 3)
+                }
                 Text(summary)
                     .font(.caption)
                     .foregroundStyle(.themeComment)
@@ -33,6 +61,10 @@ struct SessionThreadStrip: View {
                     .layoutPriority(1)
             }
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, display.isCompact ? 4 : 6)
+        .background(.themeBgHighlight.opacity(0.45), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary)
     }
@@ -42,7 +74,10 @@ struct SessionThreadStrip: View {
         let working = rollup.workingDescendants.count
         if working > 0 { parts.append("\(working) working") }
         parts.append("\(rollup.finishedDescendantCount) done")
-        parts.append(String(format: "$%.2f", rollup.totalCost))
+        // Same rule as a row: unknown or zero cost is absent, never "$0.00".
+        if display.showsCost, rollup.totalCost > 0 {
+            parts.append(String(format: "$%.2f", rollup.totalCost))
+        }
         return parts.joined(separator: " · ")
     }
 
@@ -415,33 +450,34 @@ struct SessionPromptCacheBadge: View {
 
 // MARK: - Thread detail
 
+/// Thread detail views. The last choice is remembered on this device.
+enum SessionThreadDetailMode: String, CaseIterable, Identifiable {
+    case outline
+    case waterfall
+    case timeline
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .outline: "Outline"
+        case .waterfall: "Waterfall"
+        case .timeline: "Timeline"
+        }
+    }
+    var systemImage: String {
+        switch self {
+        case .outline: "list.bullet.indent"
+        case .waterfall: "chart.bar.doc.horizontal"
+        case .timeline: "chart.bar.xaxis"
+        }
+    }
+}
+
 struct SessionThreadDetailView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
     @Environment(\.theme) private var theme
 
     let target: SessionThreadNavTarget
-
-    private enum Mode: String, CaseIterable, Identifiable {
-        case outline
-        case waterfall
-        case timeline
-        var id: String { rawValue }
-        var label: String {
-            switch self {
-            case .outline: "Outline"
-            case .waterfall: "Waterfall"
-            case .timeline: "Timeline"
-            }
-        }
-        var systemImage: String {
-            switch self {
-            case .outline: "list.bullet.indent"
-            case .waterfall: "chart.bar.doc.horizontal"
-            case .timeline: "chart.bar.xaxis"
-            }
-        }
-    }
 
     /// Saved Agent names by id, fetched once per screen for row labels.
     @State private var agentNames: [String: String] = [:]
@@ -453,7 +489,7 @@ struct SessionThreadDetailView: View {
     @State private var refreshError: String?
     /// Member-change key the current snapshot reflects; avoids refetching for it.
     @State private var loadedMemberKey: String?
-    @State private var mode: Mode = .outline
+    @State private var mode = AppPreferences.SessionRows.threadDetailMode
     @State private var filter: SessionThreadTimelineFilter = .all
     @State private var expandedFolds: Set<String> = []
     /// Only the newest load may replace the snapshot.
@@ -499,7 +535,7 @@ struct SessionThreadDetailView: View {
                 header(thread)
                 Section {
                     SessionPillToggle(
-                        options: Mode.allCases,
+                        options: SessionThreadDetailMode.allCases,
                         selection: $mode,
                         label: \.label,
                         systemImage: \.systemImage,
@@ -546,6 +582,9 @@ struct SessionThreadDetailView: View {
         .navigationTitle("Thread")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("thread.detail")
+        .onChange(of: mode) { _, newMode in
+            AppPreferences.SessionRows.setThreadDetailMode(newMode)
+        }
         .task { await load() }
         .onChange(of: memberKey) { _, newKey in
             guard snapshot != nil, newKey != loadedMemberKey else { return }
