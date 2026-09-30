@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -14,6 +14,29 @@ function piCliPath(): string {
     bin: { pi: string };
   };
   return join(root, pkg.bin.pi);
+}
+/** Snapshot before signalling: Pi's detached stdio groups reparent when the CLI dies.
+ * This does not depend on the CLI processing a signal or running JS exit hooks. */
+function descendantGroups(pid: number): Set<number> {
+  const rows = execFileSync("ps", ["-A", "-o", "pid=,ppid=,pgid="], {
+    encoding: "utf8",
+    timeout: 1000,
+    maxBuffer: 4 * 1024 * 1024,
+  })
+    .trim()
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/).map(Number));
+  const descendants = new Set([pid]);
+  const groups = new Set<number>();
+  for (const parent of descendants) {
+    for (const [child, ppid, pgid] of rows) {
+      if (ppid === parent && child > 0 && pgid > 0) {
+        descendants.add(child);
+        groups.add(pgid);
+      }
+    }
+  }
+  return groups;
 }
 export interface McpCliProcess {
   child: ChildProcess;
@@ -49,20 +72,43 @@ export class McpCli {
       },
     });
     let exited = false;
-    let killTimer: NodeJS.Timeout | undefined;
-    const signal = (kind: NodeJS.Signals): void => {
-      if (!child.pid || exited) return;
-      try {
-        if (process.platform === "win32") child.kill(kind);
-        else process.kill(-child.pid, kind);
-      } catch {
-        /* already stopped */
-      }
-    };
+    let stopping: Promise<void> | undefined;
     const stop = (): void => {
+      if (!child.pid || exited || stopping) return;
+      const pid = child.pid;
+      let groups = new Set<number>();
+      if (process.platform !== "win32") {
+        try {
+          groups = descendantGroups(pid);
+        } catch {
+          // Even if process-table access fails, still terminate the CLI's own group.
+        }
+        groups.add(pid);
+      }
+      const signal = (kind: NodeJS.Signals): void => {
+        for (const group of groups) {
+          try {
+            process.kill(-group, kind);
+          } catch {
+            /* already stopped */
+          }
+        }
+        if (process.platform === "win32" && !exited) {
+          try {
+            child.kill(kind);
+          } catch {
+            /* already stopped */
+          }
+        }
+      };
       signal("SIGTERM");
-      killTimer ??= setTimeout(() => signal("SIGKILL"), 1500);
-      killTimer.unref();
+      stopping = new Promise((resolve) => {
+        // CLI close must not cancel escalation for its now-orphaned stdio groups.
+        setTimeout(() => {
+          signal("SIGKILL");
+          resolve();
+        }, 1500);
+      });
     };
     const done = new Promise<{ code: number; stdout: string }>((resolve, reject) => {
       let stdout = "";
@@ -101,10 +147,12 @@ export class McpCli {
       child.once("close", (code) => {
         exited = true;
         clearTimeout(timer);
-        clearTimeout(killTimer);
         if (pending) options.onLine?.(pending.trim());
-        if (failure) reject(failure);
-        else resolve({ code: code ?? 1, stdout });
+        // Management (including login cancel/expiry) stays owned until escalation ends.
+        void (stopping ?? Promise.resolve()).then(() => {
+          if (failure) reject(failure);
+          else resolve({ code: code ?? 1, stdout });
+        });
       });
     });
     return { child, done, stop };
