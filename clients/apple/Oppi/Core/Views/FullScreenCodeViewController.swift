@@ -2050,23 +2050,6 @@ final class FullScreenCodeViewController: UIViewController {
         )
     }
 
-    /// Bridge a review-comment router + source context into HTMLRenderView.
-    private func makeHTMLReviewCommentHandler(
-        router: ReviewCommentSelectionRouter?,
-        sourceContext: ReviewCommentSourceContext?
-    ) -> ((String, UIViewController?) -> Void)? {
-        guard let router, let sourceContext else { return nil }
-        return { text, presentingViewController in
-            router.dispatch(
-                ReviewCommentSelectionRequest(
-                    selectedText: text,
-                    source: sourceContext
-                ),
-                presentingViewController: presentingViewController
-            )
-        }
-    }
-
     private var canAnnotateRenderedHTML: Bool {
         installedBodyView is HTMLRenderView || liveSourceHTMLBodyView != nil
     }

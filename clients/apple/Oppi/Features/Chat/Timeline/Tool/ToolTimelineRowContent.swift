@@ -1831,11 +1831,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedScrollView.alwaysBounceVertical = false
             expandedScrollView.bounces = false
             setExpandedContainerGestureInterceptionEnabled(true)
-        } else if case .document(let traits) = policy.contentKind, traits.suppressesRowScrolling {
-            expandedScrollView.isScrollEnabled = false
-            expandedScrollView.alwaysBounceVertical = false
-            expandedScrollView.bounces = false
-            setExpandedContainerGestureInterceptionEnabled(true)
         }
     }
 
@@ -2180,73 +2175,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 reviewCommentSelectionContext: reviewCommentSelectionContext
             )
         )
-    }
-
-    private func fullScreenSourceContext(for content: FullScreenCodeContent) -> ReviewCommentSourceContext? {
-        guard let reviewCommentSelectionContext else { return nil }
-
-        switch content {
-        case .code(_, let language, let filePath, _):
-            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
-                surface: .fullScreenCode,
-                filePath: filePath,
-                languageHint: language
-            )
-
-        case .plainText(_, let filePath):
-            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
-                surface: .fullScreenSource,
-                filePath: filePath
-            )
-
-        case .diff(let document):
-            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
-                surface: .fullScreenDiff,
-                filePath: document.filePath
-            )
-
-        case .markdown(_, let filePath, _):
-            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
-                surface: .fullScreenMarkdown,
-                filePath: filePath
-            )
-
-        case .terminal(_, let command, _, _):
-            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
-                surface: .fullScreenTerminal,
-                sourceLabel: command ?? currentConfiguration.title
-            )
-
-        case .liveSource(let snapshot, _):
-            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
-                surface: .fullScreenSource,
-                filePath: snapshot.filePath
-            )
-
-        case .html(_, let filePath):
-            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
-                surface: .fullScreenSource,
-                filePath: filePath
-            )
-
-        case .thinking:
-            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
-                surface: .fullScreenThinking,
-                sourceLabel: "Thinking"
-            )
-
-        case .latex(_, let filePath), .orgMode(_, let filePath), .mermaid(_, let filePath), .graphviz(_, let filePath):
-            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
-                surface: .fullScreenCode,
-                filePath: filePath
-            )
-
-        case .document(let family):
-            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
-                surface: .fullScreenSource,
-                filePath: family.filePath
-            )
-        }
     }
 
     func contextMenu(for target: ContextMenuTarget) -> UIMenu? {

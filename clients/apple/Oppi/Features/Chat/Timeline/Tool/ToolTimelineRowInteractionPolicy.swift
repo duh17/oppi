@@ -10,7 +10,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
         case audioMessage
         case status
         case text
-        case document(DocumentFamily.InlineTraits)
+        case document
     }
 
     let mode: ExpandedMode
@@ -24,7 +24,6 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
         isDone: Bool
     ) -> Self {
         let mode = ExpandedMode(content)
-        let supportsFullScreenPreview = supportsFullScreenPreview(mode: mode)
 
         switch mode {
         case .bash(let unwrapped):
@@ -32,7 +31,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
                 mode: mode,
                 enablesTapCopyGesture: true,
                 enablesPinchGesture: true,
-                supportsFullScreenPreview: supportsFullScreenPreview,
+                supportsFullScreenPreview: true,
                 allowsHorizontalScroll: unwrapped && isDone
             )
 
@@ -41,26 +40,8 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
                 mode: mode,
                 enablesTapCopyGesture: true,
                 enablesPinchGesture: true,
-                supportsFullScreenPreview: supportsFullScreenPreview,
+                supportsFullScreenPreview: true,
                 allowsHorizontalScroll: isDone
-            )
-
-        case .markdown:
-            return Self(
-                mode: mode,
-                enablesTapCopyGesture: true,
-                enablesPinchGesture: true,
-                supportsFullScreenPreview: supportsFullScreenPreview,
-                allowsHorizontalScroll: false
-            )
-
-        case .document(let traits):
-            return Self(
-                mode: mode,
-                enablesTapCopyGesture: traits.enablesTapCopyGesture,
-                enablesPinchGesture: traits.enablesPinchGesture,
-                supportsFullScreenPreview: supportsFullScreenPreview,
-                allowsHorizontalScroll: false
             )
 
         case .readMedia, .audioMessage, .status:
@@ -72,25 +53,14 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
                 allowsHorizontalScroll: false
             )
 
-        case .text:
+        case .markdown, .document, .text:
             return Self(
                 mode: mode,
                 enablesTapCopyGesture: true,
                 enablesPinchGesture: true,
-                supportsFullScreenPreview: supportsFullScreenPreview,
+                supportsFullScreenPreview: true,
                 allowsHorizontalScroll: false
             )
-        }
-    }
-
-    private static func supportsFullScreenPreview(mode: ExpandedMode) -> Bool {
-        switch mode {
-        case .diff, .code, .markdown, .bash, .text:
-            return true
-        case .document(let traits):
-            return traits.supportsFullScreenPreview
-        case .readMedia, .audioMessage, .status:
-            return false
         }
     }
 }
@@ -114,8 +84,8 @@ private extension ToolTimelineRowInteractionPolicy.ExpandedMode {
             self = .status
         case .text:
             self = .text
-        case .document(let family):
-            self = .document(family.inline)
+        case .document:
+            self = .document
         }
     }
 }

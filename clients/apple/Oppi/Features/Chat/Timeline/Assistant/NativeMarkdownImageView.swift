@@ -776,14 +776,6 @@ final class NativeMarkdownImageView: UIView {
         return size
     }
 
-    private func reserveHeightIfPixelSizeKnown(in data: Data) {
-        guard let pixelSize = Self.pixelSize(of: data) else { return }
-        applyFittedDisplayHeight(width: pixelSize.width, height: pixelSize.height)
-        #if DEBUG
-        debugPixelReservedHeightForTesting = heightConstraint?.constant
-        #endif
-    }
-
     private func applyFittedDisplayHeight(width: CGFloat, height: CGFloat) {
         let heightToWidthRatio = ImageViewportSizing.validatedHeightToWidthRatio(
             width: width,

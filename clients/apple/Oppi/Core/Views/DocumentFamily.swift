@@ -57,36 +57,20 @@ enum DocumentFamily: Equatable {
 
     // MARK: - Tool row traits
 
-    /// What the expanded tool row needs to know about a hosted document.
+    /// What the expanded tool row needs to know about a hosted document. Every
+    /// family scrolls itself inside the capped viewport, takes tap/pinch
+    /// activation and opens full screen, so only the height floor varies.
     struct InlineTraits: Equatable {
         /// Smallest height the hosted view may measure to inside the capped viewport.
         let minViewportHeight: CGFloat
-        /// The row turns its own expanded scroll view off and intercepts container
-        /// gestures for this document.
-        let suppressesRowScrolling: Bool
-        let enablesTapCopyGesture: Bool
-        let enablesPinchGesture: Bool
-        let supportsFullScreenPreview: Bool
     }
 
     var inline: InlineTraits {
         switch self {
         case .delimitedTable:
-            return InlineTraits(
-                minViewportHeight: 1,
-                suppressesRowScrolling: true,
-                enablesTapCopyGesture: true,
-                enablesPinchGesture: true,
-                supportsFullScreenPreview: true
-            )
+            return InlineTraits(minViewportHeight: 1)
         case .geoJSON:
-            return InlineTraits(
-                minViewportHeight: 180,
-                suppressesRowScrolling: false,
-                enablesTapCopyGesture: true,
-                enablesPinchGesture: true,
-                supportsFullScreenPreview: true
-            )
+            return InlineTraits(minViewportHeight: 180)
         }
     }
 

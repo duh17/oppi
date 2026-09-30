@@ -1,9 +1,4 @@
 enum ToolTimelineRowFullScreenSupport {
-    static func supportsPreview(toolNamePrefix: String?) -> Bool {
-        _ = toolNamePrefix
-        return true
-    }
-
     static func fullScreenContent(
         configuration: ToolTimelineRowConfiguration,
         outputCopyText: String?,
@@ -16,9 +11,7 @@ enum ToolTimelineRowFullScreenSupport {
             return nil
         }
 
-        let supportsPreview = interactionPolicy?.supportsFullScreenPreview
-            ?? supportsPreview(toolNamePrefix: configuration.toolNamePrefix)
-        guard supportsPreview else { return nil }
+        guard interactionPolicy?.supportsFullScreenPreview ?? true else { return nil }
 
         if !configuration.isDone {
             switch content {

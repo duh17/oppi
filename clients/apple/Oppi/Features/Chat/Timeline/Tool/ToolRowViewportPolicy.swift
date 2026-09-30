@@ -11,18 +11,6 @@ struct ToolRowViewportPolicy {
     static let minVoiceReadMediaHeight: CGFloat = 72
     static let maxVoiceReadMediaHeight: CGFloat = 150
 
-    enum ContentKind: Equatable {
-        case bashOutput
-        case diff
-        case code
-        case markdown(isCustomTool: Bool)
-        case readMedia(ReadMediaFacts)
-        case audioMessage(hasTranscript: Bool)
-        case status
-        case text
-        case document(DocumentFamily.InlineTraits)
-    }
-
     enum HeightBehavior: Equatable {
         /// Text/code/diff/bash output viewports measured through the cached/bucketed path.
         case cachedMeasured(mode: ToolRowViewportCalculator.ViewportMode)
@@ -51,7 +39,6 @@ struct ToolRowViewportPolicy {
         }
     }
 
-    let contentKind: ContentKind
     let surface: ExpandedRenderOutput.ExpandedSurface
     let viewportMode: ToolTimelineRowContentView.ExpandedViewportMode
     let heightBehavior: HeightBehavior
@@ -76,7 +63,6 @@ struct ToolRowViewportPolicy {
     }
 
     static let bashOutput = ToolRowViewportPolicy(
-        contentKind: .bashOutput,
         surface: .label,
         viewportMode: .text,
         heightBehavior: .cachedMeasured(mode: .output),
@@ -84,7 +70,6 @@ struct ToolRowViewportPolicy {
     )
 
     static let diff = ToolRowViewportPolicy(
-        contentKind: .diff,
         surface: .label,
         viewportMode: .diff,
         heightBehavior: .cachedMeasured(mode: .expandedDiff),
@@ -92,7 +77,6 @@ struct ToolRowViewportPolicy {
     )
 
     static let code = ToolRowViewportPolicy(
-        contentKind: .code,
         surface: .label,
         viewportMode: .code,
         heightBehavior: .cachedMeasured(mode: .expandedCode),
@@ -100,7 +84,6 @@ struct ToolRowViewportPolicy {
     )
 
     static let text = ToolRowViewportPolicy(
-        contentKind: .text,
         surface: .label,
         viewportMode: .text,
         heightBehavior: .cachedMeasured(mode: .expandedText),
@@ -108,7 +91,6 @@ struct ToolRowViewportPolicy {
     )
 
     static let status = ToolRowViewportPolicy(
-        contentKind: .status,
         surface: .label,
         viewportMode: .text,
         heightBehavior: .cachedMeasured(mode: .expandedText),
@@ -117,7 +99,6 @@ struct ToolRowViewportPolicy {
 
     static func markdown(isCustomTool: Bool) -> ToolRowViewportPolicy {
         ToolRowViewportPolicy(
-            contentKind: .markdown(isCustomTool: isCustomTool),
             surface: .markdownViewport,
             viewportMode: .text,
             heightBehavior: .markdownViewport(
@@ -138,7 +119,6 @@ struct ToolRowViewportPolicy {
 
         if facts.isVoiceMessage {
             return ToolRowViewportPolicy(
-                contentKind: .readMedia(facts),
                 surface: .hostedView,
                 viewportMode: .text,
                 heightBehavior: .voiceReadMedia(
@@ -151,7 +131,6 @@ struct ToolRowViewportPolicy {
 
         if facts.shouldUseCompactVideoLauncher {
             return ToolRowViewportPolicy(
-                contentKind: .readMedia(facts),
                 surface: .compactHostedView,
                 viewportMode: .text,
                 heightBehavior: .compactMeasured(minHeight: 1, maxHeight: nil),
@@ -160,7 +139,6 @@ struct ToolRowViewportPolicy {
         }
 
         return ToolRowViewportPolicy(
-            contentKind: .readMedia(facts),
             surface: .hostedView,
             viewportMode: .text,
             heightBehavior: .naturalReadMedia(
@@ -171,15 +149,12 @@ struct ToolRowViewportPolicy {
         )
     }
 
-    static func audioMessage(hasTranscript: Bool) -> ToolRowViewportPolicy {
-        ToolRowViewportPolicy(
-            contentKind: .audioMessage(hasTranscript: hasTranscript),
-            surface: .compactHostedView,
-            viewportMode: .text,
-            heightBehavior: .compactMeasured(minHeight: 1, maxHeight: nil),
-            constraintPriority: .required
-        )
-    }
+    static let audioMessage = ToolRowViewportPolicy(
+        surface: .compactHostedView,
+        viewportMode: .text,
+        heightBehavior: .compactMeasured(minHeight: 1, maxHeight: nil),
+        constraintPriority: .required
+    )
 
     static func forExpandedContent(
         _ content: ToolPresentationBuilder.ToolExpandedContent,
@@ -196,8 +171,8 @@ struct ToolRowViewportPolicy {
             return .markdown(isCustomTool: isCustomMarkdownToolPrefix(toolNamePrefix))
         case .readMedia(let output, let filePath, _, let attachments):
             return .readMedia(output: output, filePath: filePath, attachments: attachments)
-        case .audioMessage(let text, _, _, _, _):
-            return .audioMessage(hasTranscript: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        case .audioMessage:
+            return .audioMessage
         case .status:
             return .status
         case .text:
@@ -209,7 +184,6 @@ struct ToolRowViewportPolicy {
 
     static func document(_ traits: DocumentFamily.InlineTraits) -> ToolRowViewportPolicy {
         ToolRowViewportPolicy(
-            contentKind: .document(traits),
             surface: .hostedView,
             viewportMode: .text,
             heightBehavior: .compactMeasured(

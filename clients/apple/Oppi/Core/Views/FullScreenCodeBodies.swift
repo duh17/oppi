@@ -4995,32 +4995,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         viewportOwner.preserveAnchor(at: y)
     }
 
-    private static func graphicalHeight<P: DocumentParser, R: GraphicalDocumentRenderer>(
-        parser: P,
-        renderer: R,
-        text: String,
-        fontSize: CGFloat,
-        width: CGFloat,
-        displayMode: RenderDisplayMode,
-        cap: CGFloat
-    ) -> CGFloat where P.Document == R.Document {
-        let layout = DocumentRenderPipeline.layoutGraphical(
-            parser: parser,
-            renderer: renderer,
-            text: text,
-            config: RenderConfiguration(
-                fontSize: fontSize,
-                maxWidth: width,
-                theme: ThemeRuntimeState.currentRenderTheme(),
-                displayMode: displayMode
-            )
-        )
-        let size = layout.size
-        guard size.width > 0, size.height > 0 else { return 120 }
-        let scale = min(1, width / size.width)
-        return min(cap, max(44, ceil(size.height * scale)))
-    }
-
     func collectionView(
         _ collectionView: UICollectionView,
         prefetchItemsAt indexPaths: [IndexPath]
