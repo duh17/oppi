@@ -87,6 +87,280 @@ enum SessionThreadGrouping {
     }
 }
 
+// MARK: - Lanes
+
+/// Lane per session for thread graphs. The root owns lane 0; other sessions,
+/// in launch order, take the lowest lane whose previous session has stopped.
+enum SessionThreadLanes {
+    struct Assignment: Sendable, Equatable {
+        let laneBySessionId: [String: Int]
+        let laneCount: Int
+    }
+
+    static func endDate(_ session: Session) -> Date? {
+        session.status == .stopped ? session.lastActivity : nil
+    }
+
+    static func assign(root: Session, others: [Session]) -> Assignment {
+        var laneBySessionId: [String: Int] = [root.id: 0]
+        var laneFreeAfter: [Date?] = [endDate(root)]
+        for session in others {
+            let lane = laneFreeAfter.indices.dropFirst().first { index in
+                laneFreeAfter[index].map { $0 < session.createdAt } ?? false
+            } ?? laneFreeAfter.count
+            if lane == laneFreeAfter.count { laneFreeAfter.append(nil) }
+            laneFreeAfter[lane] = endDate(session)
+            laneBySessionId[session.id] = lane
+        }
+        return Assignment(laneBySessionId: laneBySessionId, laneCount: laneFreeAfter.count)
+    }
+}
+
+/// Horizontal lane graph for one thread, spaced like a git graph: x steps
+/// by event order (each launch, stop, or idle moment is one step), not by
+/// clock time, so a three-minute child in a two-hour thread still gets a
+/// readable branch. y is the session's lane. Positions are 0...1; sessions
+/// still running extend to the right edge.
+struct SessionThreadLaneGraph: Sendable, Equatable {
+    struct Segment: Sendable, Equatable, Identifiable {
+        let id: String
+        let lane: Int
+        /// Lane it branches from and merges back into; nil for the root.
+        let parentLane: Int?
+        let start: Double
+        let end: Double
+        let isWorking: Bool
+        let isStopped: Bool
+        /// Where an idle root starts waiting (dashed from here); nil otherwise.
+        let idleFrom: Double?
+        let status: SessionRowStatusKind
+    }
+
+    let laneCount: Int
+    /// Lanes folded into the last visible lane.
+    let hiddenLaneCount: Int
+    let segments: [Segment]
+
+    static func layout(
+        members: [Session],
+        rootId: String,
+        now: Date,
+        maxLanes: Int = 4
+    ) -> SessionThreadLaneGraph {
+        guard let root = members.first(where: { $0.id == rootId }) else {
+            return SessionThreadLaneGraph(laneCount: 0, hiddenLaneCount: 0, segments: [])
+        }
+        let others = members
+            .filter { $0.id != rootId }
+            .sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
+        let lanes = SessionThreadLanes.assign(root: root, others: others)
+        let visibleLanes = max(1, min(lanes.laneCount, maxLanes))
+
+        // Ordinal axis: equal steps between distinct event times.
+        let rootIdle = !SessionThreadGrouping.isWorking(root) && root.status != .stopped
+        var eventTimes = Set(members.map(\.createdAt))
+        for member in members where member.status == .stopped { eventTimes.insert(member.lastActivity) }
+        if rootIdle { eventTimes.insert(root.lastActivity) }
+        let steps = eventTimes.sorted()
+        let stepCount = max(steps.count - 1, 1)
+        let rankByTime = Dictionary(uniqueKeysWithValues: steps.enumerated().map { ($1, $0) })
+        func x(_ date: Date) -> Double {
+            Double(rankByTime[date] ?? 0) / Double(stepCount)
+        }
+        func visible(_ lane: Int) -> Int { min(lane, visibleLanes - 1) }
+
+        let segments = ([root] + others).map { session -> Segment in
+            let lane = lanes.laneBySessionId[session.id] ?? 0
+            let parentLane = session.id == rootId
+                ? nil
+                : visible(session.parentSessionId.flatMap { lanes.laneBySessionId[$0] } ?? 0)
+            let working = SessionThreadGrouping.isWorking(session)
+            let stopped = session.status == .stopped
+            let idle = session.id == rootId && rootIdle
+            return Segment(
+                id: session.id,
+                lane: visible(lane),
+                parentLane: parentLane,
+                start: x(session.createdAt),
+                end: stopped ? x(session.lastActivity) : 1,
+                isWorking: working,
+                isStopped: stopped,
+                idleFrom: idle ? x(session.lastActivity) : nil,
+                status: SessionRowStatusKind.from(session: session)
+            )
+        }
+        return SessionThreadLaneGraph(
+            laneCount: visibleLanes,
+            hiddenLaneCount: max(0, lanes.laneCount - visibleLanes),
+            segments: segments
+        )
+    }
+}
+
+// MARK: - Agents
+
+/// Sessions launched by the same saved Agent; `agentId == nil` is plain Pi.
+struct SessionThreadAgentGroup: Sendable, Equatable, Identifiable {
+    let agentId: String?
+    let agentIcon: IconChoice?
+    /// A member's id, for the Pi avatar's per-session rendering.
+    let sampleSessionId: String
+    let count: Int
+
+    var id: String { agentId ?? "pi" }
+
+    /// Largest group first; ties keep first-launch order.
+    static func groups(_ sessions: [Session]) -> [SessionThreadAgentGroup] {
+        var order: [String] = []
+        var byKey: [String: (agentId: String?, icon: IconChoice?, sample: String, count: Int)] = [:]
+        for session in sessions {
+            let agentId = session.launch?.agentId
+            let key = agentId ?? "pi"
+            if var existing = byKey[key] {
+                existing.count += 1
+                byKey[key] = existing
+            } else {
+                order.append(key)
+                byKey[key] = (agentId, session.launch?.agentIcon, session.id, 1)
+            }
+        }
+        return order.enumerated()
+            .compactMap { index, key in byKey[key].map { (index, $0) } }
+            .sorted { $0.1.count != $1.1.count ? $0.1.count > $1.1.count : $0.0 < $1.0 }
+            .map { SessionThreadAgentGroup(agentId: $0.1.agentId, agentIcon: $0.1.icon, sampleSessionId: $0.1.sample, count: $0.1.count) }
+    }
+}
+
+// MARK: - Waterfall
+
+/// Trace-viewer layout: one row per session in tree order (depth first,
+/// children by launch), each a bar on a shared clock-time axis from launch
+/// to last recorded activity. The bar summarizes; it is not an exact
+/// execution span.
+struct SessionThreadWaterfall: Sendable, Equatable {
+    struct Row: Sendable, Equatable, Identifiable {
+        let session: Session
+        let depth: Int
+        /// 0...1 on the time axis.
+        let start: Double
+        let end: Double
+        /// Where an idle root starts waiting; nil otherwise.
+        let idleFrom: Double?
+        let status: SessionRowStatusKind
+
+        var id: String { session.id }
+    }
+
+    struct Message: Sendable, Equatable, Identifiable {
+        let id: Int
+        let at: Double
+        let fromRow: Int?
+        let toRow: Int?
+        let kind: SessionInteractionKind
+    }
+
+    let rows: [Row]
+    let messages: [Message]
+    let startDate: Date
+    let endDate: Date
+
+    static func build(snapshot: SessionThreadSnapshot, now: Date) -> SessionThreadWaterfall {
+        let byId = Dictionary(snapshot.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        guard let root = byId[snapshot.rootSessionId] else {
+            return SessionThreadWaterfall(rows: [], messages: [], startDate: now, endDate: now)
+        }
+        let children = Dictionary(grouping: snapshot.sessions.filter { $0.id != root.id }) {
+            $0.parentSessionId ?? root.id
+        }
+        var ordered: [(Session, Int)] = []
+        var visited: Set<String> = []
+        func visit(_ session: Session, _ depth: Int) {
+            guard visited.insert(session.id).inserted else { return }
+            ordered.append((session, depth))
+            for child in (children[session.id] ?? []).sorted(by: { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }) {
+                visit(child, depth + 1)
+            }
+        }
+        visit(root, 0)
+
+        // End at the latest activity, not `now`: a root idle for hours would
+        // otherwise squeeze the real work into the left edge. Running bars
+        // still reach the right edge.
+        let latest = snapshot.sessions.map(\.lastActivity).max() ?? now
+        let startDate = root.createdAt
+        let endDate = max(latest, startDate.addingTimeInterval(1))
+        let span = endDate.timeIntervalSince(startDate)
+        func x(_ date: Date) -> Double { min(1, max(0, date.timeIntervalSince(startDate) / span)) }
+
+        let rows = ordered.map { session, depth in
+            let stopped = session.status == .stopped
+            let idle = !stopped && !SessionThreadGrouping.isWorking(session)
+            return Row(
+                session: session,
+                depth: depth,
+                start: x(session.createdAt),
+                end: stopped ? x(session.lastActivity) : 1,
+                idleFrom: idle ? x(session.lastActivity) : nil,
+                status: SessionRowStatusKind.from(session: session)
+            )
+        }
+        let rowIndex = Dictionary(uniqueKeysWithValues: rows.enumerated().map { ($1.id, $0) })
+        let messages = snapshot.interactions.map {
+            Message(id: $0.id, at: x($0.at), fromRow: rowIndex[$0.fromSessionId], toRow: rowIndex[$0.toSessionId], kind: $0.kind)
+        }
+        return SessionThreadWaterfall(rows: rows, messages: messages, startDate: startDate, endDate: endDate)
+    }
+}
+
+// MARK: - Prompt cache
+
+extension TokenUsage {
+    /// Share of prompt tokens served from cache: reads over reads + writes + uncached input.
+    var cacheHitRate: Double? {
+        let read = Double(cacheRead ?? 0)
+        let total = Double(input) + read + Double(cacheWrite ?? 0)
+        return total > 0 ? read / total : nil
+    }
+}
+
+enum SessionPromptCacheEstimate: Equatable, Sendable {
+    /// The session is running a turn, so its cache is in use.
+    case inUse
+    /// Pi's warmer is refreshing the entry before it expires.
+    case keptWarm(nextRefresh: Date?)
+    case warm(until: Date)
+    case cold
+    case unknown
+
+    /// Best effort: providers can evict early, so present `.warm` as likely.
+    static func estimate(
+        session: Session,
+        status: SessionPromptCacheStatus?,
+        now: Date
+    ) -> SessionPromptCacheEstimate {
+        if SessionThreadGrouping.isWorking(session) { return .inUse }
+        guard let status else { return .unknown }
+        // Kept warm only while Pi is refreshing now, or has a refresh it
+        // decided to send that is still ahead. Pi arms a timer after every
+        // request even when it has decided to let the cache expire.
+        if let warmer = status.warmer, session.status != .stopped {
+            switch warmer.state {
+            case .refreshing:
+                return .keptWarm(nextRefresh: nil)
+            case .scheduled where warmer.action == .warm && (warmer.nextWarmAt.map { $0 >= now } ?? true):
+                return .keptWarm(nextRefresh: warmer.nextWarmAt)
+            case .scheduled, .inactive:
+                break
+            }
+        }
+        // The live store's reply time can be newer than the fetched snapshot.
+        let lastRequestAt = [status.lastRequestAt, session.lastAgentReplyAt].compactMap { $0 }.max()
+        guard let ttl = status.ttl, let lastRequestAt else { return .unknown }
+        let until = lastRequestAt.addingTimeInterval(ttl)
+        return until > now ? .warm(until: until) : .cold
+    }
+}
+
 // MARK: - Thread timeline
 
 /// Interaction primitives the timeline can show or hide.
@@ -138,6 +412,8 @@ struct SessionThreadTimelineRow: Sendable, Equatable, Identifiable {
     let lanesBelow: Set<Int>
     /// Lanes drawn dashed: the root waiting idle on its children.
     let idleLanes: Set<Int>
+    /// Status of the session drawing each lane on this row; lanes take their session's status color.
+    var laneStatus: [Int: SessionRowStatusKind] = [:]
 }
 
 struct SessionThreadTimeline: Sendable, Equatable {
@@ -162,21 +438,8 @@ struct SessionThreadTimeline: Sendable, Equatable {
             .filter { $0.id != root.id }
             .sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
 
-        func endDate(_ session: Session) -> Date? {
-            session.status == .stopped ? session.lastActivity : nil
-        }
-
-        // Greedy lane reuse: a lane frees once its previous session has ended.
-        var laneBySessionId: [String: Int] = [root.id: 0]
-        var laneFreeAfter: [Date?] = [endDate(root)]
-        for session in others {
-            let lane = laneFreeAfter.indices.dropFirst().first { index in
-                laneFreeAfter[index].map { $0 < session.createdAt } ?? false
-            } ?? laneFreeAfter.count
-            if lane == laneFreeAfter.count { laneFreeAfter.append(nil) }
-            laneFreeAfter[lane] = endDate(session)
-            laneBySessionId[session.id] = lane
-        }
+        let laneAssignment = SessionThreadLanes.assign(root: root, others: others)
+        let laneBySessionId = laneAssignment.laneBySessionId
         let counterpartsById = Dictionary(
             snapshot.counterparts.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
@@ -306,6 +569,18 @@ struct SessionThreadTimeline: Sendable, Equatable {
             return result
         }
 
+        func laneStatus(at index: Int) -> [Int: SessionRowStatusKind] {
+            var result: [Int: SessionRowStatusKind] = [:]
+            for session in snapshot.sessions {
+                guard let start = startIndex[session.id], let lane = laneBySessionId[session.id] else { continue }
+                let end = endIndex[session.id] ?? Int.max
+                if start <= index && index <= end {
+                    result[lane] = SessionRowStatusKind.from(session: session)
+                }
+            }
+            return result
+        }
+
         func idleLanes(at date: Date) -> Set<Int> {
             guard let rootIdleSince, date > rootIdleSince else { return [] }
             return [0]
@@ -313,13 +588,15 @@ struct SessionThreadTimeline: Sendable, Equatable {
 
         var rows: [SessionThreadTimelineRow] = []
         for (index, event) in events.enumerated() where filter.contains(event.category) {
-            rows.append(event.row(lanes(at: index, above: true), lanes(at: index, above: false), idleLanes(at: event.at)))
+            var row = event.row(lanes(at: index, above: true), lanes(at: index, above: false), idleLanes(at: event.at))
+            row.laneStatus = laneStatus(at: index)
+            rows.append(row)
         }
 
         let working = snapshot.sessions.filter(isWorkingLike)
         if !working.isEmpty {
             let workingLanes = working.compactMap { laneBySessionId[$0.id] }.sorted()
-            rows.append(SessionThreadTimelineRow(
+            var nowRow = SessionThreadTimelineRow(
                 id: "now", at: nil, lane: workingLanes.first ?? 0,
                 kind: .working(lanes: workingLanes),
                 sessionId: working[0].id,
@@ -328,11 +605,13 @@ struct SessionThreadTimeline: Sendable, Equatable {
                 lanesAbove: lanes(at: nowIndex, above: true),
                 lanesBelow: [],
                 idleLanes: idleLanes(at: now)
-            ))
+            )
+            nowRow.laneStatus = laneStatus(at: nowIndex)
+            rows.append(nowRow)
         }
 
         return SessionThreadTimeline(
-            laneCount: laneFreeAfter.count,
+            laneCount: laneAssignment.laneCount,
             laneBySessionId: laneBySessionId,
             rows: rows
         )

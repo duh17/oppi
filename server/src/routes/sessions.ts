@@ -1,15 +1,17 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { requiredModelLaunchFailureMessage } from "../agent-launch-service.js";
 import { SessionLifecycleError, SessionLifecycleService } from "../session-lifecycle-service.js";
-import { type ChatAttachmentRef, type ServerMessage, type Session } from "../types.js";
+import {
+  type ChatAttachmentRef,
+  type ServerMessage,
+  type Session,
+  type SessionPromptCacheStatus,
+} from "../types.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
 import { decodeWorkspaceRoutePath } from "../file-serving-policy.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
-import {
-  createSessionListRouteHandlers,
-  sessionsWithLiveStatus,
-} from "./session-list-handlers.js";
+import { createSessionListRouteHandlers, sessionsWithLiveStatus } from "./session-list-handlers.js";
 import { createSessionTraceRouteHandlers } from "./session-trace-handlers.js";
 import { WsMessageHandler } from "../ws-message-handler.js";
 import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktrees.js";
@@ -18,6 +20,7 @@ import { parseClientCommand } from "../session-command-parse.js";
 import { isThinkingLevel } from "../thinking-levels.js";
 import {
   buildSessionThread,
+  promptCacheRetention,
   interactionKindForCommand,
   recordCallerInteraction,
 } from "../session-interactions.js";
@@ -645,9 +648,28 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     await stopKnownSession(session, res, req);
   }
 
+  function promptCacheFor(session: Session): SessionPromptCacheStatus | undefined {
+    const retention = promptCacheRetention();
+    const live = ctx.sessionRuntimes.getPromptCacheRuntime(session.id);
+    const tiers = live?.promptCache ?? ctx.getModelPromptCache?.(session.model);
+    const seconds = tiers?.[retention];
+    if (seconds === undefined && !live?.warmer) return undefined;
+    return {
+      retention,
+      ...(seconds !== undefined ? { ttlMs: seconds * 1000 } : {}),
+      ...(session.lastAgentReplyAt !== undefined
+        ? { lastRequestAt: session.lastAgentReplyAt }
+        : {}),
+      ...(live?.warmer ? { warmer: live.warmer } : {}),
+    };
+  }
+
   function handleGetSessionThread(sessionId: string, res: ServerResponse): void {
-    const thread = buildSessionThread(sessionsWithLiveStatus(ctx), sessionId, (ids) =>
-      ctx.storage.listSessionInteractions(ids),
+    const thread = buildSessionThread(
+      sessionsWithLiveStatus(ctx),
+      sessionId,
+      (ids) => ctx.storage.listSessionInteractions(ids),
+      promptCacheFor,
     );
     if (!thread) {
       helpers.error(res, 404, "Session not found");

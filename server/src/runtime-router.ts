@@ -93,6 +93,12 @@ export class SessionRuntimes implements AgentRuntimeTransport {
     return this.oppi.getEntryRenderers(sessionId);
   }
 
+  /** Oppi-owned live runtimes only; a Pi TUI mirror's warmer lives in the terminal. */
+  getPromptCacheRuntime(sessionId: string): ReturnType<SessionManager["getPromptCacheRuntime"]> {
+    if (this.isPiTui(this.storage.getSession(sessionId))) return undefined;
+    return this.oppi.getPromptCacheRuntime(sessionId);
+  }
+
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {
     return this.runtimeFor(sessionId).getToolFullOutputPath(sessionId, toolCallId);
   }

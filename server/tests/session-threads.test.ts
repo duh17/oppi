@@ -23,6 +23,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -50,7 +51,13 @@ function seed(
   return session;
 }
 
-function routes(sendSteer = vi.fn(async (): Promise<void> => undefined)) {
+function routes(
+  sendSteer = vi.fn(async (): Promise<void> => undefined),
+  cache: {
+    models?: Record<string, { short?: number; long?: number }>;
+    live?: Record<string, ReturnType<RouteContext["sessionRuntimes"]["getPromptCacheRuntime"]>>;
+  } = {},
+) {
   const ctx = {
     storage: store,
     sessionRuntimes: {
@@ -58,8 +65,10 @@ function routes(sendSteer = vi.fn(async (): Promise<void> => undefined)) {
       isSessionConnected: () => false,
       getActiveSessionIds: () => new Set<string>(),
       getActiveSession: () => undefined,
+      getPromptCacheRuntime: (id: string) => cache.live?.[id],
     },
     ensureSessionContextWindow: (session: Session) => session,
+    getModelPromptCache: (model: string | undefined) => (model ? cache.models?.[model] : undefined),
   } as unknown as RouteContext;
   return { dispatch: createSessionRoutes(ctx, createRouteHelpers()), sendSteer };
 }
@@ -264,11 +273,56 @@ describe("GET /sessions/:id/thread", () => {
         id: otherChild.id,
         name: otherChild.name,
         status: "stopped",
+        workspaceId: "ws-1",
         rootSessionId: otherRoot.id,
         rootName: otherRoot.name,
       },
     ]);
   });
+
+  it.each([
+    { retention: "short", rootTtlMs: 300_000, liveTtlMs: 600_000 },
+    { retention: "long", rootTtlMs: 3_600_000, liveTtlMs: 7_200_000 },
+  ] as const)(
+    "reports $retention prompt-cache lifetimes from the live runtime first, then the model catalog",
+    async ({ retention, rootTtlMs, liveTtlMs }) => {
+      // The route reads PI_CACHE_RETENTION from the process; pin it so ambient env cannot change the tier.
+      vi.stubEnv("PI_CACHE_RETENTION", retention);
+      const root = seed("Orchestrator", 1_000, undefined, "ready");
+      const live = seed("Worker", 2_000, root, "busy");
+      const unknown = seed("Local model", 3_000, root);
+      for (const [session, model, repliedAt] of [
+        [root, "anthropic/claude-opus-5-5", 5_000],
+        [live, "anthropic/claude-sonnet-5-5", 6_000],
+        [unknown, "mlx-serve/ddalcu/Qwen3.8", 7_000],
+      ] as const) {
+        session.model = model;
+        session.lastAgentReplyAt = repliedAt;
+        store.saveSession(session);
+      }
+      const { dispatch } = routes(undefined, {
+        models: { "anthropic/claude-opus-5-5": { short: 300, long: 3600 } },
+        live: {
+          [live.id]: {
+            warmer: { state: "scheduled", action: "warm", nextWarmAt: 9_000 },
+            promptCache: { short: 600, long: 7200 },
+          },
+        },
+      });
+
+      const thread = JSON.parse((await getThread(dispatch, root.id)).body) as SessionThreadResponse;
+
+      expect(thread.promptCache).toEqual({
+        [root.id]: { retention, ttlMs: rootTtlMs, lastRequestAt: 5_000 },
+        [live.id]: {
+          retention,
+          ttlMs: liveTtlMs,
+          lastRequestAt: 6_000,
+          warmer: { state: "scheduled", action: "warm", nextWarmAt: 9_000 },
+        },
+      });
+    },
+  );
 
   it("treats a child whose parent is gone as the root", async () => {
     const root = seed("Root", 1_000);

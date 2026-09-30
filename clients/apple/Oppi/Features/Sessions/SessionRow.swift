@@ -15,6 +15,7 @@ import SwiftUI
 /// avoid environment collisions with parallel work.
 struct SessionRow: View {
     @Environment(\.themeID) private var themeID
+    @Environment(\.theme) private var theme
 
     let session: Session
     let pendingAskCount: Int
@@ -212,7 +213,7 @@ struct SessionRow: View {
                 if pendingAskCount > 0 {
                     Image(systemName: "questionmark.circle.fill")
                         .font(.caption)
-                        .foregroundStyle(pillVariant.foregroundColor)
+                        .foregroundStyle(pillVariant.tint(theme))
                         .accessibilityIdentifier("session.attentionBadge.\(session.id)")
                 }
 

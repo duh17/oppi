@@ -16,10 +16,13 @@ import {
   normalizeExtensionUIWidgetNativeSurface,
 } from "../extension-ui-contract.js";
 import { discoverLocalSessions, getPiSessionsRoot } from "../local-sessions.js";
+import { validateIconChoice } from "../icon-choice.js";
+import { safeErrorMessage } from "../log-utils.js";
 import { hasToolMediaDetails } from "../session-agent-event-media.js";
 import { materializeToolMediaDetails } from "../session-attachments.js";
 import type {
   AskQuestion,
+  IconChoice,
   ServerMessage,
   Session,
   SessionInteractionKind,
@@ -598,7 +601,11 @@ async function handleSessionThreadsFixture(
   }
 
   const idsByKey = new Map<string, string>();
-  const pending: Array<{ session: Session; parentKey?: string }> = [];
+  const pending: Array<{
+    session: Session;
+    parentKey?: string;
+    agent?: { agentId: string; agentIcon?: IconChoice };
+  }> = [];
   for (const raw of rawSessions) {
     const item = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
     const key = stringField(item.key)?.trim();
@@ -633,26 +640,53 @@ async function handleSessionThreadsFixture(
     session.lastActivity = nowMs + activityOffset;
     session.messageCount = numberField(item.messageCount) ?? 1;
     session.cost = numberField(item.cost) ?? 0;
+    const tokens =
+      typeof item.tokens === "object" && item.tokens !== null
+        ? (item.tokens as Record<string, unknown>)
+        : {};
+    session.tokens = {
+      input: numberField(tokens.input) ?? 0,
+      output: numberField(tokens.output) ?? 0,
+      cacheRead: numberField(tokens.cacheRead) ?? 0,
+      cacheWrite: numberField(tokens.cacheWrite) ?? 0,
+    };
     const contextTokens = numberField(item.contextTokens);
     const contextWindow = numberField(item.contextWindow);
     if (contextTokens !== undefined) session.contextTokens = contextTokens;
     if (contextWindow !== undefined) session.contextWindow = contextWindow;
     if (status === "busy") session.currentTurnStartedAt = nowMs + activityOffset;
+    else session.lastAgentReplyAt = nowMs + activityOffset;
     idsByKey.set(key, session.id);
     e2eSessionThreadFixtureIds.add(session.id);
-    pending.push({ session, parentKey: stringField(item.parentKey)?.trim() });
+    let agent: { agentId: string; agentIcon?: IconChoice } | undefined;
+    const agentId = stringField(item.agentId)?.trim();
+    if (agentId) {
+      try {
+        agent = {
+          agentId,
+          ...(item.agentIcon !== undefined
+            ? { agentIcon: validateIconChoice(item.agentIcon) }
+            : {}),
+        };
+      } catch (error) {
+        helpers.error(res, 400, `Invalid agentIcon for session ${key}: ${safeErrorMessage(error)}`);
+        return;
+      }
+    }
+    pending.push({ session, parentKey: stringField(item.parentKey)?.trim(), agent });
   }
 
-  for (const { session, parentKey } of pending) {
+  for (const { session, parentKey, agent } of pending) {
     const parentSessionId = parentKey ? idsByKey.get(parentKey) : undefined;
     if (parentKey && !parentSessionId) {
       helpers.error(res, 400, `Unknown parentKey ${parentKey}`);
       return;
     }
-    if (parentSessionId) {
+    if (parentSessionId || agent) {
       session.launch = {
         source: "agent",
-        parentSessionId,
+        ...(parentSessionId ? { parentSessionId } : {}),
+        ...(agent ?? {}),
         status: "created",
         requestedAt: session.createdAt,
         completedAt: session.createdAt,

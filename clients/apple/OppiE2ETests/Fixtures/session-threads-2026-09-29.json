@@ -13,7 +13,14 @@
    "cost": 15.49,
    "messageCount": 312,
    "contextTokens": 248076,
-   "contextWindow": 500000
+   "contextWindow": 500000,
+   "tokens": {
+    "input": 1039478,
+    "output": 50958,
+    "cacheRead": 15529600,
+    "cacheWrite": 0
+   },
+   "agentKey": "rTrBZtZ7"
   },
   {
    "key": "608460ea-1677-4f17-9900-99815dff3766",
@@ -27,7 +34,13 @@
    "cost": 1.83,
    "messageCount": 59,
    "contextTokens": 130883,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 62,
+    "output": 17836,
+    "cacheRead": 2306552,
+    "cacheWrite": 126789
+   }
   },
   {
    "key": "6ba222ec-5d32-4eb4-bed3-1d9dc7ef651b",
@@ -41,7 +54,14 @@
    "cost": 8.98,
    "messageCount": 222,
    "contextTokens": 364911,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 296,
+    "output": 129734,
+    "cacheRead": 31156442,
+    "cacheWrite": 361943
+   },
+   "agentKey": "LHSj_iDJ"
   },
   {
    "key": "868edaec-54de-4cd7-84b3-d2bc07b9ce40",
@@ -54,7 +74,13 @@
    "cost": 0,
    "messageCount": 3,
    "contextTokens": 18412,
-   "contextWindow": 272000
+   "contextWindow": 272000,
+   "tokens": {
+    "input": 17078,
+    "output": 2011,
+    "cacheRead": 13824,
+    "cacheWrite": 0
+   }
   },
   {
    "key": "8bac488b-aa9a-416c-bddd-921a9c51ad8d",
@@ -67,7 +93,13 @@
    "cost": 2.23,
    "messageCount": 53,
    "contextTokens": 149229,
-   "contextWindow": 500000
+   "contextWindow": 500000,
+   "tokens": {
+    "input": 434136,
+    "output": 23324,
+    "cacheRead": 2440704,
+    "cacheWrite": 0
+   }
   },
   {
    "key": "2549460f-9896-478b-a1b5-bff6afce5e01",
@@ -81,7 +113,14 @@
    "cost": 1.28,
    "messageCount": 102,
    "contextTokens": 136281,
-   "contextWindow": 500000
+   "contextWindow": 500000,
+   "tokens": {
+    "input": 139455,
+    "output": 17217,
+    "cacheRead": 1790080,
+    "cacheWrite": 0
+   },
+   "agentKey": "W-BmEinx"
   },
   {
    "key": "a10f7aff-f49e-4ddc-8291-59fc4a6a49c2",
@@ -94,7 +133,13 @@
    "cost": 0.56,
    "messageCount": 48,
    "contextTokens": 59257,
-   "contextWindow": 500000
+   "contextWindow": 500000,
+   "tokens": {
+    "input": 58831,
+    "output": 9456,
+    "cacheRead": 772480,
+    "cacheWrite": 0
+   }
   },
   {
    "key": "d0dd7892-8366-4793-b923-debbc77c7ad3",
@@ -107,7 +152,13 @@
    "cost": 11.06,
    "messageCount": 207,
    "contextTokens": 249660,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 294,
+    "output": 74623,
+    "cacheRead": 18217068,
+    "cacheWrite": 740601
+   }
   },
   {
    "key": "7422b7a7-fe4c-4a8f-a41b-41562a6f2182",
@@ -121,7 +172,14 @@
    "cost": 1.57,
    "messageCount": 64,
    "contextTokens": 117543,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 110,
+    "output": 31788,
+    "cacheRead": 3980506,
+    "cacheWrite": 113655
+   },
+   "agentKey": "LHSj_iDJ"
   },
   {
    "key": "76210426-e574-448c-a92d-800fe94730fb",
@@ -135,7 +193,14 @@
    "cost": 4.62,
    "messageCount": 83,
    "contextTokens": 232441,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 148,
+    "output": 36354,
+    "cacheRead": 10369312,
+    "cacheWrite": 227117
+   },
+   "agentKey": "uvoca2Yr"
   },
   {
    "key": "72862cd5-38b7-4821-a97b-15b37013b17c",
@@ -149,7 +214,14 @@
    "cost": 1.02,
    "messageCount": 29,
    "contextTokens": 64723,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 44,
+    "output": 18729,
+    "cacheRead": 812173,
+    "cacheWrite": 59976
+   },
+   "agentKey": "uvoca2Yr"
   },
   {
    "key": "6ea60fb2-b2f8-4437-ab14-b4414e9dd254",
@@ -163,7 +235,14 @@
    "cost": 0.6,
    "messageCount": 34,
    "contextTokens": 60078,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 58,
+    "output": 15925,
+    "cacheRead": 1064689,
+    "cacheWrite": 56683
+   },
+   "agentKey": "LHSj_iDJ"
   },
   {
    "key": "b81683f0-3953-47be-ad34-1f6dc07bce6d",
@@ -177,7 +256,14 @@
    "cost": 0.4,
    "messageCount": 21,
    "contextTokens": 44623,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 38,
+    "output": 12327,
+    "cacheRead": 564561,
+    "cacheWrite": 41323
+   },
+   "agentKey": "LHSj_iDJ"
   },
   {
    "key": "3e0a33e2-ff27-4bf8-ad0f-2c1795a73eff",
@@ -191,7 +277,14 @@
    "cost": 1.35,
    "messageCount": 33,
    "contextTokens": 77946,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 52,
+    "output": 27637,
+    "cacheRead": 1065438,
+    "cacheWrite": 73296
+   },
+   "agentKey": "uvoca2Yr"
   },
   {
    "key": "4f687033-071b-409c-968a-32adb00f4a96",
@@ -205,7 +298,14 @@
    "cost": 0.29,
    "messageCount": 13,
    "contextTokens": 39661,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 24,
+    "output": 9291,
+    "cacheRead": 266201,
+    "cacheWrite": 36148
+   },
+   "agentKey": "LHSj_iDJ"
   },
   {
    "key": "0562cb98-a36a-432f-8ddd-48eed410ab73",
@@ -219,7 +319,14 @@
    "cost": 2.17,
    "messageCount": 149,
    "contextTokens": 160138,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 522,
+    "output": 99212,
+    "cacheRead": 45249192,
+    "cacheWrite": 780360
+   },
+   "agentKey": "j6j-n3Bn"
   },
   {
    "key": "d14dae33-307c-4bd9-b410-9812de16f328",
@@ -233,7 +340,14 @@
    "cost": 1.69,
    "messageCount": 63,
    "contextTokens": 129059,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 116,
+    "output": 37690,
+    "cacheRead": 4647382,
+    "cacheWrite": 126921
+   },
+   "agentKey": "LHSj_iDJ"
   },
   {
    "key": "058ed8f8-9061-42c3-b6bd-27fb4d2c12e9",
@@ -247,7 +361,14 @@
    "cost": 0.61,
    "messageCount": 35,
    "contextTokens": 64877,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 58,
+    "output": 13786,
+    "cacheRead": 1143031,
+    "cacheWrite": 62164
+   },
+   "agentKey": "uvoca2Yr"
   },
   {
    "key": "f7741ae5-2491-47a3-bb68-c0a0e57d32c0",
@@ -260,7 +381,13 @@
    "cost": 8.91,
    "messageCount": 318,
    "contextTokens": 389058,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 808,
+    "output": 218240,
+    "cacheRead": 92656811,
+    "cacheWrite": 1682096
+   }
   },
   {
    "key": "e29d8c82-0144-4f04-a911-fe6791196cc7",
@@ -274,7 +401,13 @@
    "cost": 0.98,
    "messageCount": 35,
    "contextTokens": 48211,
-   "contextWindow": 272000
+   "contextWindow": 272000,
+   "tokens": {
+    "input": 58573,
+    "output": 3664,
+    "cacheRead": 214912,
+    "cacheWrite": 0
+   }
   },
   {
    "key": "e5a29b1c-e6d8-4b57-b72b-f5b4e38e77f5",
@@ -288,7 +421,13 @@
    "cost": 1.24,
    "messageCount": 33,
    "contextTokens": 87874,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 42,
+    "output": 18124,
+    "cacheRead": 1039899,
+    "cacheWrite": 83592
+   }
   },
   {
    "key": "2751e4ac-14cd-4fc3-bed4-dac9fada2331",
@@ -302,7 +441,14 @@
    "cost": 0.84,
    "messageCount": 32,
    "contextTokens": 54880,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 54,
+    "output": 12029,
+    "cacheRead": 922009,
+    "cacheWrite": 51231
+   },
+   "agentKey": "uvoca2Yr"
   },
   {
    "key": "94389d91-64f4-422e-b421-7c44be7623e1",
@@ -316,7 +462,14 @@
    "cost": 0.68,
    "messageCount": 21,
    "contextTokens": 51531,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 32,
+    "output": 10031,
+    "cacheRead": 496516,
+    "cacheWrite": 47656
+   },
+   "agentKey": "uvoca2Yr"
   },
   {
    "key": "587054a4-6a50-4ce8-80af-cd65a126ec28",
@@ -330,7 +483,14 @@
    "cost": 1.02,
    "messageCount": 31,
    "contextTokens": 69445,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 56,
+    "output": 11199,
+    "cacheRead": 1327960,
+    "cacheWrite": 66169
+   },
+   "agentKey": "uvoca2Yr"
   },
   {
    "key": "bd6a4b35-c58d-4f27-adf4-1fb4098a0f2e",
@@ -344,7 +504,14 @@
    "cost": 1.17,
    "messageCount": 31,
    "contextTokens": 78647,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 46,
+    "output": 18216,
+    "cacheRead": 1086192,
+    "cacheWrite": 73463
+   },
+   "agentKey": "uvoca2Yr"
   },
   {
    "key": "dda384ea-3699-4850-b74a-d2e73618483b",
@@ -358,7 +525,14 @@
    "cost": 0.22,
    "messageCount": 12,
    "contextTokens": 31460,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 20,
+    "output": 7227,
+    "cacheRead": 177699,
+    "cacheWrite": 28987
+   },
+   "agentKey": "LHSj_iDJ"
   },
   {
    "key": "0d8c16ba-0129-4209-a6fb-aef98042592f",
@@ -372,7 +546,14 @@
    "cost": 0.83,
    "messageCount": 25,
    "contextTokens": 55420,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 36,
+    "output": 14653,
+    "cacheRead": 620448,
+    "cacheWrite": 51891
+   },
+   "agentKey": "uvoca2Yr"
   },
   {
    "key": "b05c9f1b-735d-41cd-9d1e-eddfc9165a66",
@@ -386,7 +567,14 @@
    "cost": 2.93,
    "messageCount": 112,
    "contextTokens": 129065,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 180,
+    "output": 40007,
+    "cacheRead": 5529991,
+    "cacheWrite": 127351
+   },
+   "agentKey": "LHSj_iDJ"
   },
   {
    "key": "169e6b16-d5f7-4cda-a8c8-7e30a3a771fe",
@@ -400,7 +588,14 @@
    "cost": 1.58,
    "messageCount": 29,
    "contextTokens": 101271,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 56,
+    "output": 22077,
+    "cacheRead": 1829293,
+    "cacheWrite": 96166
+   },
+   "agentKey": "uvoca2Yr"
   },
   {
    "key": "e299535d-9539-4e16-a634-a516523172f4",
@@ -414,7 +609,14 @@
    "cost": 1.19,
    "messageCount": 33,
    "contextTokens": 78722,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 58,
+    "output": 18168,
+    "cacheRead": 1244666,
+    "cacheWrite": 72141
+   },
+   "agentKey": "uvoca2Yr"
   },
   {
    "key": "d0c38602-afb3-4ed8-9f23-5b95e16b3446",
@@ -428,7 +630,14 @@
    "cost": 0.72,
    "messageCount": 37,
    "contextTokens": 67223,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 68,
+    "output": 21421,
+    "cacheRead": 1216999,
+    "cacheWrite": 64368
+   },
+   "agentKey": "LHSj_iDJ"
   },
   {
    "key": "6dec7761-1fd8-4a13-a2e1-94f7340312e7",
@@ -442,7 +651,14 @@
    "cost": 0.63,
    "messageCount": 40,
    "contextTokens": 62349,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 64,
+    "output": 17410,
+    "cacheRead": 1089752,
+    "cacheWrite": 59288
+   },
+   "agentKey": "LHSj_iDJ"
   },
   {
    "key": "ebf42ff3-38bb-49c4-ac5e-89573897e211",
@@ -456,7 +672,14 @@
    "cost": 0.84,
    "messageCount": 45,
    "contextTokens": 84269,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 78,
+    "output": 22352,
+    "cacheRead": 1450428,
+    "cacheWrite": 81160
+   },
+   "agentKey": "LHSj_iDJ"
   },
   {
    "key": "219fd416-719b-4922-9195-59efca9c9ef2",
@@ -470,7 +693,14 @@
    "cost": 0.5,
    "messageCount": 30,
    "contextTokens": 52537,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 56,
+    "output": 13834,
+    "cacheRead": 811085,
+    "cacheWrite": 49928
+   },
+   "agentKey": "LHSj_iDJ"
   },
   {
    "key": "5be86fcf-9964-49f9-9771-c98a12946b4b",
@@ -484,7 +714,14 @@
    "cost": 0.58,
    "messageCount": 31,
    "contextTokens": 61673,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 54,
+    "output": 14841,
+    "cacheRead": 986717,
+    "cacheWrite": 58534
+   },
+   "agentKey": "LHSj_iDJ"
   },
   {
    "key": "74820f0d-ee27-4991-95cd-7d882afbffd7",
@@ -498,7 +735,14 @@
    "cost": 1.74,
    "messageCount": 43,
    "contextTokens": 107227,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 78,
+    "output": 18704,
+    "cacheRead": 2684500,
+    "cacheWrite": 103081
+   },
+   "agentKey": "uvoca2Yr"
   },
   {
    "key": "acad5fcb-cf2f-4675-8d58-0c4cd7a5ec48",
@@ -511,7 +755,13 @@
    "cost": 1.38,
    "messageCount": 222,
    "contextTokens": 365334,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 1192,
+    "output": 439360,
+    "cacheRead": 227770057,
+    "cacheWrite": 6111327
+   }
   },
   {
    "key": "bc7b041b-c79e-4b97-b451-000409933ddd",
@@ -524,7 +774,13 @@
    "cost": 21.63,
    "messageCount": 160,
    "contextTokens": 235218,
-   "contextWindow": 272000
+   "contextWindow": 272000,
+   "tokens": {
+    "input": 817644,
+    "output": 31175,
+    "cacheRead": 11897344,
+    "cacheWrite": 0
+   }
   },
   {
    "key": "73c1fc40-814a-406d-8feb-1d8476885530",
@@ -538,7 +794,13 @@
    "cost": 1.89,
    "messageCount": 62,
    "contextTokens": 128187,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 76,
+    "output": 21561,
+    "cacheRead": 2457345,
+    "cacheWrite": 120847
+   }
   },
   {
    "key": "2fe63c3f-75e7-4bc4-a677-7757b4aa94f6",
@@ -552,7 +814,14 @@
    "cost": 2.19,
    "messageCount": 73,
    "contextTokens": 155898,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 118,
+    "output": 48722,
+    "cacheRead": 5455843,
+    "cacheWrite": 153219
+   },
+   "agentKey": "LHSj_iDJ"
   },
   {
    "key": "a6e4db71-dbb6-4a9c-8076-9445e62fa5e3",
@@ -566,7 +835,14 @@
    "cost": 47.5,
    "messageCount": 370,
    "contextTokens": 986608,
-   "contextWindow": 1000000
+   "contextWindow": 1000000,
+   "tokens": {
+    "input": 622,
+    "output": 399327,
+    "cacheRead": 178993831,
+    "cacheWrite": 1925904
+   },
+   "agentKey": "LHSj_iDJ"
   }
  ],
  "interactions": [
@@ -617,6 +893,48 @@
    "toKey": "d0c38602-afb3-4ed8-9f23-5b95e16b3446",
    "kind": "prompt",
    "atOffsetMs": -1181040
+  }
+ ],
+ "agents": [
+  {
+   "key": "rTrBZtZ7",
+   "name": "Oppi Simplification Scout",
+   "icon": {
+    "kind": "emoji",
+    "value": "\ud83d\udd0e"
+   }
+  },
+  {
+   "key": "LHSj_iDJ",
+   "name": "Worker",
+   "icon": {
+    "kind": "emoji",
+    "value": "\ud83d\udee0\ufe0f"
+   }
+  },
+  {
+   "key": "W-BmEinx",
+   "name": "Scout",
+   "icon": {
+    "kind": "emoji",
+    "value": "\ud83d\udd0e"
+   }
+  },
+  {
+   "key": "uvoca2Yr",
+   "name": "Reviewer",
+   "icon": {
+    "kind": "emoji",
+    "value": "\ud83d\udd2c"
+   }
+  },
+  {
+   "key": "j6j-n3Bn",
+   "name": "Donkey Master",
+   "icon": {
+    "kind": "emoji",
+    "value": "\ud83e\udecf"
+   }
   }
  ]
 }

@@ -1,46 +1,12 @@
 import SwiftUI
 
-// MARK: - Status glyph
-
-/// Compact status mark shared by thread strips, outline rows, and timeline nodes.
-struct SessionThreadStatusGlyph: View {
-    let session: Session
-
-    var body: some View {
-        Group {
-            if SessionThreadGrouping.isWorking(session) {
-                Image(systemName: "circle.fill")
-                    .foregroundStyle(.themeGreen)
-                    .symbolEffect(.pulse, options: .repeating)
-            } else {
-                switch session.status {
-                case .stopped:
-                    Image(systemName: "checkmark").foregroundStyle(.themeComment)
-                case .error:
-                    Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.themeRed)
-                default:
-                    Image(systemName: "circle.fill").foregroundStyle(.themeOrange)
-                }
-            }
-        }
-        .font(.system(size: 9, weight: .bold))
-        .frame(width: 14, height: 14)
-        .accessibilityHidden(true)
-    }
-}
-
 // MARK: - Inbox thread strip
 
 /// One-line summary under a thread root row: who is working, member dots, totals.
 struct SessionThreadStrip: View {
-    @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     let rollup: SessionThreadRollup
     /// Member with a pending question, shown so the user knows where to answer.
     var attentionMember: Session?
-
-    private static let maxDots = 24
 
     var body: some View {
         let working = rollup.workingDescendants
@@ -53,19 +19,18 @@ struct SessionThreadStrip: View {
             } else if !working.isEmpty {
                 Text(working.map(\.displayTitle).joined(separator: " · ") + " working")
                     .font(.footnote.weight(.medium))
-                    .foregroundStyle(.themeGreen)
+                    .foregroundStyle(.themeBlue)
                     .lineLimit(1)
             }
-            HStack(spacing: 5) {
-                HStack(spacing: 3) {
-                    dot(for: rollup.root)
-                    Rectangle().fill(theme.text.tertiary.opacity(0.5)).frame(width: 5, height: 1.5)
-                    ForEach(Array(rollup.descendants.prefix(Self.maxDots)), id: \.id) { dot(for: $0) }
-                }
+            SessionThreadLaneGraphView(members: rollup.members, rootId: rollup.root.id)
+                .frame(maxWidth: 260, alignment: .leading)
+            HStack(alignment: .center, spacing: 8) {
+                SessionThreadAgentCluster(groups: SessionThreadAgentGroup.groups(Array(rollup.descendants)), maxGroups: 3)
                 Text(summary)
                     .font(.caption)
                     .foregroundStyle(.themeComment)
                     .lineLimit(1)
+                    .layoutPriority(1)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -73,9 +38,7 @@ struct SessionThreadStrip: View {
     }
 
     private var summary: String {
-        let extra = rollup.descendants.count - Self.maxDots
         var parts: [String] = []
-        if extra > 0 { parts.append("+\(extra)") }
         let working = rollup.workingDescendants.count
         if working > 0 { parts.append("\(working) working") }
         parts.append("\(rollup.finishedDescendantCount) done")
@@ -88,23 +51,365 @@ struct SessionThreadStrip: View {
         return question + "Thread with \(rollup.descendants.count) child sessions, \(summary)"
     }
 
-    @ViewBuilder
-    private func dot(for session: Session) -> some View {
-        let circle = Circle().fill(dotColor(session)).frame(width: 7, height: 7)
-        if SessionThreadGrouping.isWorking(session), !reduceMotion {
-            circle.phaseAnimator([1.0, 0.35]) { view, phase in view.opacity(phase) }
-        } else {
-            circle
+}
+
+// MARK: - Agent identity
+
+/// Session's Agent icon (Pi avatar when none) with its status dot.
+struct SessionThreadIdentityBadge: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let session: Session
+    var hasQuestion = false
+    var size: CGFloat = 22
+
+    var body: some View {
+        let status: SessionRowStatusKind = hasQuestion ? .question : SessionRowStatusKind.from(session: session)
+        SessionIdentityIconView(sessionId: session.id, agentId: session.launch?.agentId, agentIcon: session.launch?.agentIcon)
+            .frame(width: size, height: size)
+            .opacity(session.status == .stopped ? 0.6 : 1)
+            .overlay(alignment: .bottomTrailing) {
+                Circle()
+                    .fill(status.tint(theme))
+                    .frame(width: 8, height: 8)
+                    .overlay(Circle().stroke(theme.bg.primary, lineWidth: 1.5))
+                    .phaseAnimator(status == .working && !reduceMotion ? [1.0, 0.4] : [1.0]) { dot, phase in
+                        dot.opacity(phase)
+                    }
+                    .offset(x: 2, y: 2)
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+/// Agents present in a group of sessions, largest first: 🛠️×15 🔬×12 +2.
+struct SessionThreadAgentCluster: View {
+    let groups: [SessionThreadAgentGroup]
+    var maxGroups = 3
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(groups.prefix(maxGroups)) { group in
+                HStack(spacing: 2) {
+                    SessionIdentityIconView(sessionId: group.sampleSessionId, agentId: group.agentId, agentIcon: group.agentIcon)
+                        .frame(width: 14, height: 14)
+                    if group.count > 1 {
+                        Text("×\(group.count)")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.themeComment)
+                    }
+                }
+            }
+            if groups.count > maxGroups {
+                Text("+\(groups.count - maxGroups)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.themeComment)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Waterfall
+
+/// Trace-viewer layout: pinned label column (Agent icon, name, tree depth)
+/// beside a horizontally scrolling clock-time Canvas of status bars and
+/// message arrows. Pinch to zoom; tap a label or bar to open the session.
+struct SessionThreadWaterfallView: View {
+    @Environment(\.theme) private var theme
+
+    let waterfall: SessionThreadWaterfall
+    let agentNames: [String: String]
+    let onOpen: (Session) -> Void
+
+    @State private var zoom: CGFloat = 1
+    @GestureState private var pinch: CGFloat = 1
+    @State private var viewportWidth: CGFloat = 220
+
+    static let rowHeight: CGFloat = 28
+    static let axisHeight: CGFloat = 20
+    static let labelWidth: CGFloat = 132
+
+    var body: some View {
+        let rows = waterfall.rows
+        let height = Self.axisHeight + CGFloat(rows.count) * Self.rowHeight
+        let contentWidth = max(viewportWidth, viewportWidth * zoom * pinch)
+        HStack(alignment: .top, spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                Color.clear.frame(height: Self.axisHeight)
+                ForEach(rows) { row in
+                    Button { onOpen(row.session) } label: {
+                        HStack(spacing: 5) {
+                            SessionIdentityIconView(
+                                sessionId: row.session.id,
+                                agentId: row.session.launch?.agentId,
+                                agentIcon: row.session.launch?.agentIcon
+                            )
+                            .frame(width: 14, height: 14)
+                            Text(row.session.displayTitle)
+                                .font(.caption)
+                                .foregroundStyle(row.session.status == .stopped ? theme.text.secondary : theme.text.primary)
+                                .lineLimit(1)
+                        }
+                        .padding(.leading, CGFloat(min(row.depth, 4)) * 8)
+                        .frame(width: Self.labelWidth, height: Self.rowHeight, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(accessibilityLabel(row))
+                    .accessibilityIdentifier("thread.waterfall.row.\(row.id)")
+                }
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                Canvas { context, size in draw(in: &context, size: size) }
+                    .frame(width: contentWidth, height: height)
+                    .contentShape(Rectangle())
+                    .onTapGesture { location in
+                        let index = Int((location.y - Self.axisHeight) / Self.rowHeight)
+                        if rows.indices.contains(index) { onOpen(rows[index].session) }
+                    }
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { viewportWidth = max($0, 1) }
+            .simultaneousGesture(
+                MagnifyGesture()
+                    .updating($pinch) { value, state, _ in state = value.magnification }
+                    .onEnded { value in zoom = min(12, max(1, zoom * value.magnification)) }
+            )
+        }
+        .frame(height: height)
+        // Contain first: an identifier on a plain container overrides its children's identifiers.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("thread.waterfall")
+    }
+
+    private func accessibilityLabel(_ row: SessionThreadWaterfall.Row) -> String {
+        let agent = row.session.launch?.agentId.map { agentNames[$0] ?? "Agent" } ?? "Pi"
+        return "\(row.session.displayTitle), \(agent), \(row.status.label)"
+    }
+
+    private func draw(in context: inout GraphicsContext, size: CGSize) {
+        let inset: CGFloat = 6
+        let usable = max(size.width - inset * 2, 1)
+        func x(_ value: Double) -> CGFloat { inset + CGFloat(value) * usable }
+        func rowY(_ index: Int) -> CGFloat { Self.axisHeight + CGFloat(index) * Self.rowHeight + Self.rowHeight / 2 }
+
+        // Axis: about one tick per 70 pt, labelled with clock time.
+        let span = waterfall.endDate.timeIntervalSince(waterfall.startDate)
+        let tickCount = max(2, Int(usable / 70))
+        for tick in 0...tickCount {
+            let fraction = Double(tick) / Double(tickCount)
+            let tickX = x(fraction)
+            context.stroke(
+                Path { $0.move(to: CGPoint(x: tickX, y: Self.axisHeight - 4)); $0.addLine(to: CGPoint(x: tickX, y: size.height)) },
+                with: .color(theme.text.tertiary.opacity(0.15)),
+                lineWidth: 1
+            )
+            let date = waterfall.startDate.addingTimeInterval(span * fraction)
+            context.draw(
+                Text(date.formatted(date: .omitted, time: .shortened)).font(.system(size: 9)).foregroundStyle(theme.text.tertiary),
+                at: CGPoint(x: tickX, y: 7),
+                anchor: tick == 0 ? .leading : (tick == tickCount ? .trailing : .center)
+            )
+        }
+
+        for (index, row) in waterfall.rows.enumerated() {
+            let color = row.status.tint(theme)
+            let y = rowY(index)
+            let startX = x(row.start)
+            let activeEnd = row.idleFrom.map { x($0) } ?? x(row.end)
+            let bar = CGRect(x: startX, y: y - 5, width: max(activeEnd - startX, 3), height: 10)
+            context.fill(Path(roundedRect: bar, cornerRadius: 3), with: .color(color.opacity(row.status == .stopped ? 0.55 : 0.9)))
+            if row.idleFrom != nil {
+                context.stroke(
+                    Path { $0.move(to: CGPoint(x: bar.maxX, y: y)); $0.addLine(to: CGPoint(x: x(row.end), y: y)) },
+                    with: .color(color),
+                    style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [2, 3])
+                )
+            }
+        }
+
+        for message in waterfall.messages {
+            let messageX = x(message.at)
+            switch (message.fromRow, message.toRow) {
+            case let (from?, to?):
+                let fromY = rowY(from), toY = rowY(to)
+                context.stroke(
+                    Path { $0.move(to: CGPoint(x: messageX, y: fromY)); $0.addLine(to: CGPoint(x: messageX, y: toY)) },
+                    with: .color(theme.accent.cyan),
+                    lineWidth: 1.2
+                )
+                let direction: CGFloat = toY > fromY ? -1 : 1
+                context.fill(Path { path in
+                    path.move(to: CGPoint(x: messageX, y: toY))
+                    path.addLine(to: CGPoint(x: messageX - 3, y: toY + 5 * direction))
+                    path.addLine(to: CGPoint(x: messageX + 3, y: toY + 5 * direction))
+                    path.closeSubpath()
+                }, with: .color(theme.accent.cyan))
+            case let (from?, nil), let (nil, from?):
+                let markY = rowY(from)
+                context.fill(
+                    Path { path in
+                        path.move(to: CGPoint(x: messageX, y: markY - 5))
+                        path.addLine(to: CGPoint(x: messageX + 4, y: markY))
+                        path.addLine(to: CGPoint(x: messageX, y: markY + 5))
+                        path.addLine(to: CGPoint(x: messageX - 4, y: markY))
+                        path.closeSubpath()
+                    },
+                    with: .color(theme.accent.purple)
+                )
+            case (nil, nil):
+                break
+            }
+        }
+    }
+}
+
+// MARK: - Horizontal lane graph
+
+/// Git-graph style thread overview: event order runs left to right, each
+/// session has a lane from its launch to its last recorded activity, and
+/// children branch from their parent's lane and merge back there. This
+/// summarizes the thread; it is not an exact execution span. Working sessions
+/// end in a pulsing dot at the right edge.
+struct SessionThreadLaneGraphView: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let members: [Session]
+    let rootId: String
+    var maxLanes = 4
+
+    static let laneSpacing: CGFloat = 6
+    static let inset: CGFloat = 4
+
+    var body: some View {
+        let graph = SessionThreadLaneGraph.layout(members: members, rootId: rootId, now: Date(), maxLanes: maxLanes)
+        let height = CGFloat(max(graph.laneCount, 1) - 1) * Self.laneSpacing + Self.inset * 2
+        HStack(spacing: 4) {
+            GeometryReader { proxy in
+                let width = proxy.size.width
+                ZStack(alignment: .topLeading) {
+                    Canvas { context, size in draw(graph, in: &context, size: size) }
+                    ForEach(graph.segments.filter(\.isWorking)) { segment in
+                        pulse(color: segment.status.tint(theme))
+                            .position(
+                                x: width - Self.inset,
+                                y: Self.inset + CGFloat(segment.lane) * Self.laneSpacing
+                            )
+                    }
+                }
+            }
+            .frame(height: height)
+            if graph.hiddenLaneCount > 0 {
+                Text("+\(graph.hiddenLaneCount)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.themeComment)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func draw(_ graph: SessionThreadLaneGraph, in context: inout GraphicsContext, size: CGSize) {
+        let usable = max(size.width - Self.inset * 2, 1)
+        func x(_ value: Double) -> CGFloat { Self.inset + CGFloat(value) * usable }
+        func y(_ lane: Int) -> CGFloat { Self.inset + CGFloat(lane) * Self.laneSpacing }
+        let bend: CGFloat = 5
+        let solid = StrokeStyle(lineWidth: 1.6, lineCap: .round)
+        let dashed = StrokeStyle(lineWidth: 1.6, lineCap: .round, dash: [1.5, 3])
+
+        for segment in graph.segments {
+            let color = segment.status.tint(theme)
+            let startX = x(segment.start)
+            let endX = max(x(segment.end), startX + 2)
+            let laneY = y(segment.lane)
+
+            guard let parentLane = segment.parentLane else {
+                // Root lane: solid while it works, dashed while it waits on children.
+                let idleX = segment.idleFrom.map { max(x($0), startX) } ?? endX
+                context.stroke(Path { $0.move(to: CGPoint(x: startX, y: laneY)); $0.addLine(to: CGPoint(x: idleX, y: laneY)) },
+                               with: .color(color), style: solid)
+                if idleX < endX {
+                    context.stroke(Path { $0.move(to: CGPoint(x: idleX, y: laneY)); $0.addLine(to: CGPoint(x: endX, y: laneY)) },
+                                   with: .color(color), style: dashed)
+                }
+                continue
+            }
+
+            let parentY = y(parentLane)
+            let opacity = segment.isStopped ? 0.55 : 1
+            var path = Path()
+            path.move(to: CGPoint(x: startX, y: parentY))
+            if parentY != laneY {
+                path.addQuadCurve(to: CGPoint(x: startX + bend, y: laneY), control: CGPoint(x: startX, y: laneY))
+            }
+            path.addLine(to: CGPoint(x: endX, y: laneY))
+            if segment.isStopped, parentY != laneY {
+                path.addQuadCurve(to: CGPoint(x: endX + bend, y: parentY), control: CGPoint(x: endX + bend, y: laneY))
+            }
+            context.stroke(path, with: .color(color.opacity(opacity)), style: solid)
         }
     }
 
-    private func dotColor(_ session: Session) -> Color {
-        if SessionThreadGrouping.isWorking(session) { return theme.accent.green }
-        switch session.status {
-        case .stopped: return theme.text.tertiary.opacity(0.55)
-        case .error: return theme.accent.red
-        default: return theme.accent.orange
+    @ViewBuilder
+    private func pulse(color: Color) -> some View {
+        let dot = Circle().fill(color).frame(width: 5, height: 5)
+        if reduceMotion {
+            dot
+        } else {
+            dot.phaseAnimator([1.0, 0.35]) { view, phase in view.opacity(phase) }
         }
+    }
+}
+
+// MARK: - Prompt cache badge
+
+/// Warm/cold estimate. Ticks every 15 seconds only while the estimate can
+/// change on its own (a warm countdown or a scheduled refresh).
+struct SessionPromptCacheBadge: View {
+    let session: Session
+    let status: SessionPromptCacheStatus?
+
+    var body: some View {
+        let now = Date()
+        let estimate = SessionPromptCacheEstimate.estimate(session: session, status: status, now: now)
+        switch estimate {
+        case .warm, .keptWarm:
+            TimelineView(.periodic(from: now, by: 15)) { context in
+                content(
+                    SessionPromptCacheEstimate.estimate(session: session, status: status, now: context.date),
+                    now: context.date
+                )
+            }
+        case .inUse, .cold, .unknown:
+            content(estimate, now: now)
+        }
+    }
+
+    @ViewBuilder
+    private func content(_ estimate: SessionPromptCacheEstimate, now: Date) -> some View {
+        switch estimate {
+        case .unknown:
+            EmptyView()
+        case .inUse:
+            // Only a working session uses its cache, so it shares Working's color.
+            label("in use", systemImage: "flame.fill", style: .themeBlue)
+        case .keptWarm:
+            label("kept warm", systemImage: "flame.fill", style: .themeYellow)
+        case .warm(let until):
+            let minutes = max(1, Int((until.timeIntervalSince(now) / 60).rounded(.up)))
+            label("warm \(minutes)m", systemImage: "flame", style: .themeYellow)
+        case .cold:
+            label("cold", systemImage: "snowflake", style: .themeCyan)
+        }
+    }
+
+    private func label(_ text: String, systemImage: String, style: ThemeShapeStyle) -> some View {
+        Label(text, systemImage: systemImage)
+            .labelStyle(.titleAndIcon)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(style)
+            .accessibilityLabel("Prompt cache \(text)")
     }
 }
 
@@ -119,13 +424,31 @@ struct SessionThreadDetailView: View {
 
     private enum Mode: String, CaseIterable, Identifiable {
         case outline
+        case waterfall
         case timeline
         var id: String { rawValue }
-        var label: String { self == .outline ? "Outline" : "Timeline" }
-        var systemImage: String { self == .outline ? "list.bullet.indent" : "chart.bar.xaxis" }
+        var label: String {
+            switch self {
+            case .outline: "Outline"
+            case .waterfall: "Waterfall"
+            case .timeline: "Timeline"
+            }
+        }
+        var systemImage: String {
+            switch self {
+            case .outline: "list.bullet.indent"
+            case .waterfall: "chart.bar.doc.horizontal"
+            case .timeline: "chart.bar.xaxis"
+            }
+        }
     }
 
+    /// Saved Agent names by id, fetched once per screen for row labels.
+    @State private var agentNames: [String: String] = [:]
+
     @State private var snapshot: SessionThreadSnapshot?
+
+    private var promptCache: [String: SessionPromptCacheStatus] { snapshot?.promptCache ?? [:] }
     @State private var loadError: String?
     @State private var refreshError: String?
     /// Member-change key the current snapshot reflects; avoids refetching for it.
@@ -154,7 +477,8 @@ struct SessionThreadDetailView: View {
                 return live
             },
             interactions: snapshot.interactions,
-            counterparts: snapshot.counterparts
+            counterparts: snapshot.counterparts,
+            promptCache: snapshot.promptCache
         )
     }
 
@@ -188,6 +512,17 @@ struct SessionThreadDetailView: View {
                 switch mode {
                 case .outline:
                     outline(thread)
+                case .waterfall:
+                    Section {
+                        SessionThreadWaterfallView(
+                            waterfall: SessionThreadWaterfall.build(snapshot: thread, now: Date()),
+                            agentNames: agentNames,
+                            onOpen: open
+                        )
+                        .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+                    } footer: {
+                        Text("Bars run from launch to last activity on clock time. Arrows are messages between sessions. Pinch to zoom.")
+                    }
                 case .timeline:
                     timeline(thread)
                 }
@@ -226,6 +561,12 @@ struct SessionThreadDetailView: View {
         }
         loadGeneration += 1
         let generation = loadGeneration
+        if agentNames.isEmpty {
+            // Names are labels only; icons come from each session's launch snapshot.
+            if let agents = try? await api.listAgents(includeArchived: true) {
+                agentNames = Dictionary(agents.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+            }
+        }
         do {
             let fetched = try await api.getSessionThread(sessionId: target.rootSessionId)
             guard generation == loadGeneration else { return }
@@ -258,14 +599,17 @@ struct SessionThreadDetailView: View {
                     .font(.title2.bold())
                     .foregroundStyle(.themeFg)
                     .accessibilityIdentifier("thread.title")
-                Text(headerMeta(root: root, count: thread.sessions.count, cost: cost))
+                Text(headerMeta(root: root, count: thread.sessions.count, cost: cost, sessions: thread.sessions))
                     .font(.subheadline)
                     .foregroundStyle(.themeComment)
                 HStack(spacing: 8) {
-                    if working > 0 { chip("\(working) working", color: theme.accent.green) }
-                    chip("\(done) done", color: theme.text.tertiary)
+                    if working > 0 { chip("\(working) working", color: SessionRowStatusKind.working.tint(theme)) }
+                    chip("\(done) finished", color: SessionRowStatusKind.stopped.tint(theme))
                     if let root, root.status != .stopped, !SessionThreadGrouping.isWorking(root) {
-                        chip("root idle", color: theme.accent.orange)
+                        chip("root idle", color: SessionRowStatusKind.done.tint(theme))
+                    }
+                    if let root {
+                        SessionPromptCacheBadge(session: root, status: thread.promptCache[root.id])
                     }
                 }
                 .accessibilityElement(children: .combine)
@@ -285,7 +629,7 @@ struct SessionThreadDetailView: View {
         }
     }
 
-    private func headerMeta(root: Session?, count: Int, cost: Double) -> String {
+    private func headerMeta(root: Session?, count: Int, cost: Double, sessions: [Session]) -> String {
         var parts: [String] = []
         if let workspace = root?.workspaceName, !workspace.isEmpty { parts.append(workspace) }
         parts.append("\(count) sessions")
@@ -293,6 +637,15 @@ struct SessionThreadDetailView: View {
             parts.append("since \(root.createdAt.formatted(date: .omitted, time: .shortened))")
         }
         parts.append(String(format: "$%.2f", cost))
+        let total = sessions.reduce(TokenUsage(input: 0, output: 0, cacheRead: 0, cacheWrite: 0)) { sum, session in
+            TokenUsage(
+                input: sum.input + session.tokens.input,
+                output: sum.output + session.tokens.output,
+                cacheRead: (sum.cacheRead ?? 0) + (session.tokens.cacheRead ?? 0),
+                cacheWrite: (sum.cacheWrite ?? 0) + (session.tokens.cacheWrite ?? 0)
+            )
+        }
+        if let rate = total.cacheHitRate { parts.append("\(Int((rate * 100).rounded()))% cached") }
         return parts.joined(separator: " · ")
     }
 
@@ -385,24 +738,30 @@ struct SessionThreadDetailView: View {
         return Button {
             open(session)
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                if question {
-                    Image(systemName: "questionmark.bubble.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.themeOrange)
-                        .frame(width: 14, height: 14)
-                } else {
-                    SessionThreadStatusGlyph(session: session)
-                }
+            HStack(alignment: .center, spacing: 8) {
+                SessionThreadIdentityBadge(session: session, hasQuestion: question)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(session.displayTitle)
-                        .font(.body.weight(depth == 0 ? .semibold : .regular))
-                        .foregroundStyle(session.status == .stopped ? theme.text.secondary : theme.text.primary)
-                        .lineLimit(1)
-                    Text(outlineSubtitle(session))
-                        .font(.footnote)
-                        .foregroundStyle(SessionThreadGrouping.isWorking(session) ? theme.accent.green : theme.text.tertiary)
-                        .lineLimit(1)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(session.displayTitle)
+                            .font(.body.weight(depth == 0 ? .semibold : .regular))
+                            .foregroundStyle(session.status == .stopped ? theme.text.secondary : theme.text.primary)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        SessionPromptCacheBadge(session: session, status: promptCache[session.id])
+                    }
+                    HStack(spacing: 4) {
+                        if let model = modelSummary(session) {
+                            if !model.provider.isEmpty { ProviderIcon(provider: model.provider, size: 11) }
+                            Text(model.label)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text("·")
+                        }
+                        Text(outlineSubtitle(session))
+                            .lineLimit(1)
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(SessionThreadGrouping.isWorking(session) ? SessionRowStatusKind.working.tint(theme) : theme.text.tertiary)
                 }
             }
             .padding(.leading, CGFloat(depth) * 18)
@@ -411,13 +770,61 @@ struct SessionThreadDetailView: View {
         .buttonStyle(.plain)
         .accessibilityValue(question ? "Question pending" : "")
         .accessibilityIdentifier("thread.row.\(session.id)")
+        // Same actions and tints as the inbox row: Stop anything not stopped
+        // (idle included), Resume a stopped session.
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) { lifecycleButton(session) }
+        .contextMenu {
+            Button { open(session) } label: { Label("Open", systemImage: "bubble.left.and.text.bubble.right") }
+            lifecycleButton(session)
+        }
+    }
+
+    @ViewBuilder
+    private func lifecycleButton(_ session: Session) -> some View {
+        if session.status == .stopped {
+            Button {
+                Task { await setRunning(session, running: true) }
+            } label: {
+                Label("Resume", systemImage: "play.fill")
+            }
+            .tint(.themeGreen)
+            .accessibilityIdentifier("thread.resume.\(session.id)")
+        } else {
+            Button {
+                Task { await setRunning(session, running: false) }
+            } label: {
+                Label("Stop", systemImage: "stop.fill")
+            }
+            .tint(.themeOrange)
+            .accessibilityIdentifier("thread.stop.\(session.id)")
+        }
+    }
+
+    private func setRunning(_ session: Session, running: Bool) async {
+        guard let connection, let api = connection.apiClient,
+              let scope = SessionInboxSessionRouting.routeScope(for: session) else { return }
+        do {
+            let updated = running
+                ? try await api.resumeSession(scope: scope, sessionId: session.id)
+                : try await api.stopSession(scope: scope, sessionId: session.id)
+            connection.sessionStore.upsert(updated)
+            await load()
+        } catch {
+            refreshError = "\(running ? "Resume" : "Stop") failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func modelSummary(_ session: Session) -> SessionModelSummary? {
+        SessionModelSummaryBuilder.summaries(
+            primaryModel: session.model,
+            catalogModels: connection?.chatState.cachedModels ?? []
+        ).first
     }
 
     private func outlineSubtitle(_ session: Session) -> String {
         var parts: [String] = []
-        if let model = session.model { parts.append(SessionThreadDetailView.shortModel(model)) }
-        parts.append("\(session.messageCount) msgs")
         parts.append(String(format: "$%.2f", session.cost))
+        if let rate = session.tokens.cacheHitRate { parts.append("\(Int((rate * 100).rounded()))% cached") }
         if SessionThreadGrouping.isWorking(session) {
             parts.append("working")
         } else if session.status == .stopped {
@@ -443,10 +850,13 @@ struct SessionThreadDetailView: View {
                     .rotationEffect(.degrees(expanded ? 90 : 0))
                     .frame(width: 14)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(children.count) finished")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                    Text(children.map(\.displayTitle).joined(separator: " · ") + String(format: " · $%.2f", cost))
+                    HStack(spacing: 8) {
+                        Text("\(children.count) finished")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.themeFg)
+                        SessionThreadAgentCluster(groups: SessionThreadAgentGroup.groups(children), maxGroups: 4)
+                    }
+                    Text(agentSummary(children) + String(format: " · $%.2f", cost))
                         .font(.footnote)
                         .foregroundStyle(.themeComment)
                         .lineLimit(1)
@@ -460,28 +870,47 @@ struct SessionThreadDetailView: View {
         .accessibilityValue(expanded ? "Expanded" : "Collapsed")
     }
 
+    /// "Worker ×3 · Reviewer ×2 · Pi ×1"
+    private func agentSummary(_ sessions: [Session]) -> String {
+        SessionThreadAgentGroup.groups(sessions).map { group in
+            let name = group.agentId.map { agentNames[$0] ?? "Agent" } ?? "Pi"
+            return group.count > 1 ? "\(name) ×\(group.count)" : name
+        }.joined(separator: " · ")
+    }
+
     private func counterpartRow(_ counterpart: SessionThreadCounterpart, thread: SessionThreadSnapshot) -> some View {
         let related = thread.interactions.filter {
             $0.fromSessionId == counterpart.id || $0.toSessionId == counterpart.id
         }
         let latest = related.last
-        return HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "arrow.up.right")
-                .font(.footnote.weight(.bold))
-                .foregroundStyle(.themeBlue)
-                .frame(width: 14)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(counterpart.name ?? String(counterpart.id.prefix(8)))
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
-                Text(counterpartSubtitle(counterpart, latest: latest, count: related.count))
-                    .font(.footnote)
+        return Button {
+            Task { await openCounterpart(counterpart) }
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "arrow.up.right")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(.themePurple)
+                    .frame(width: 14)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(counterpart.name ?? String(counterpart.id.prefix(8)))
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                    Text(counterpartSubtitle(counterpart, latest: latest, count: related.count))
+                        .font(.footnote)
+                        .foregroundStyle(.themeComment)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.themeComment)
-                    .lineLimit(1)
             }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("thread.counterpart.\(counterpart.id)")
     }
 
@@ -513,7 +942,9 @@ struct SessionThreadDetailView: View {
         Section {
             ForEach(layout.rows) { row in
                 Button {
-                    if let session = thread.sessions.first(where: { $0.id == row.sessionId }) {
+                    if case .crossThread(_, let counterpart, _) = row.kind {
+                        Task { await openCounterpart(counterpart) }
+                    } else if let session = thread.sessions.first(where: { $0.id == row.sessionId }) {
                         open(session)
                     }
                 } label: {
@@ -574,9 +1005,26 @@ struct SessionThreadDetailView: View {
         )
     }
 
-    static func shortModel(_ model: String) -> String {
-        let last = model.split(separator: "/").last.map(String.init) ?? model
-        return last.replacingOccurrences(of: "claude-", with: "")
+    /// Open a session outside this thread: the live store first, then the
+    /// authoritative server record. Chat needs the real session (its status) in
+    /// the store before it opens, or a stopped session outside the recent list
+    /// would look unknown and its stream would start it.
+    private func openCounterpart(_ counterpart: SessionThreadCounterpart) async {
+        guard let connection else { return }
+        if let known = connection.sessionStore.session(id: counterpart.id) {
+            open(known)
+            return
+        }
+        let name = counterpart.name ?? "session"
+        guard let api = connection.apiClient else {
+            refreshError = "Couldn't open \(name): not connected to the server"
+            return
+        }
+        do {
+            open(try await api.getSessionRecord(sessionId: counterpart.id))
+        } catch {
+            refreshError = "Couldn't open \(name): \(error.localizedDescription)"
+        }
     }
 }
 
@@ -593,12 +1041,9 @@ struct SessionThreadTimelineRowView: View {
     static let laneSpacing: CGFloat = 16
     static let rowHeight: CGFloat = 40
 
+    /// A lane takes the status color of the session drawing it on this row.
     private func laneColor(_ lane: Int) -> Color {
-        let palette = [
-            theme.accent.orange, theme.accent.cyan, theme.accent.purple,
-            theme.accent.red, theme.accent.blue, theme.accent.yellow,
-        ]
-        return palette[lane % palette.count]
+        row.laneStatus[lane]?.tint(theme) ?? theme.text.tertiary
     }
 
     private var graphWidth: CGFloat {
@@ -637,15 +1082,15 @@ struct SessionThreadTimelineRowView: View {
         case .launch: ("launch ", theme.text.tertiary)
         case .end: ("stop ", theme.text.tertiary)
         case .interaction(let kind, _): ("\(SessionThreadTimeline.verb(for: kind)) ", theme.accent.cyan)
-        case .crossThread: ("↗ ", theme.accent.blue)
-        case .working: ("", theme.accent.green)
+        case .crossThread: ("↗ ", theme.accent.purple)
+        case .working: ("", SessionRowStatusKind.working.tint(theme))
         }
         var prefix = AttributedString(verb)
         prefix.foregroundColor = color
         var title = AttributedString(row.title)
         switch row.kind {
-        case .crossThread: title.foregroundColor = theme.accent.blue
-        case .working: title.foregroundColor = theme.accent.green
+        case .crossThread: title.foregroundColor = theme.accent.purple
+        case .working: title.foregroundColor = SessionRowStatusKind.working.tint(theme)
         case .end: title.foregroundColor = theme.text.secondary
         default: title.foregroundColor = theme.text.primary
         }
@@ -728,13 +1173,14 @@ struct SessionThreadTimelineRowView: View {
                 dot(node, color: theme.accent.cyan, radius: 4)
             case .crossThread:
                 context.stroke(Path { $0.move(to: node); $0.addLine(to: CGPoint(x: size.width, y: mid)) },
-                               with: .color(theme.accent.blue),
+                               with: .color(theme.accent.purple),
                                style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
-                dot(node, color: theme.accent.blue, radius: 4)
+                dot(node, color: theme.accent.purple, radius: 4)
             case .working(let lanes):
                 for lane in lanes {
-                    dot(CGPoint(x: x(lane), y: mid), color: theme.accent.green.opacity(0.35), radius: 4 + 4 * pulse)
-                    dot(CGPoint(x: x(lane), y: mid), color: theme.accent.green)
+                    let working = SessionRowStatusKind.working.tint(theme)
+                    dot(CGPoint(x: x(lane), y: mid), color: working.opacity(0.35), radius: 4 + 4 * pulse)
+                    dot(CGPoint(x: x(lane), y: mid), color: working)
                 }
             }
         }

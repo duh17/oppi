@@ -16,9 +16,10 @@ The Workspaces tab opens **All Sessions** for the active server.
 - **Working** — sessions that are busy.
 - Stopped sessions sit below, grouped by day. Each row shows the workspace name.
 
-All Sessions opens in **Threads**: sessions that other sessions launched sit under the session that launched them. A thread with work in progress stays in **Working** even while its root waits. The view button in the top bar, next to the server switcher, flips to the flat **Sessions** list until Oppi next opens; Settings → Sessions → **All Sessions opens in** changes the default. Open a thread and use its pill for two views:
+All Sessions opens in **Threads**: sessions that other sessions launched sit under the session that launched them. Each thread row has a small lane graph: one lane per session from its launch to its last recorded activity, ordered by events rather than clock time. It summarizes the thread; it is not an exact record of when sessions ran. A thread with work in progress stays in **Working** even while its root waits. The view button in the top bar, next to the server switcher, flips to the flat **Sessions** list until Oppi next opens; Settings → Sessions → **All Sessions opens in** changes the default. Open a thread and use its pill for three views:
 
-- **Outline** — the launch tree. Finished children fold into one row under their parent.
+- **Outline** — the launch tree. Finished children fold into one row under their parent. Each row shows its model, cache hit rate, and an estimated prompt-cache state: **in use**, **kept warm** (Pi is refreshing it), **warm** with minutes left, or **cold**. Providers can drop a cache early, so treat warm as likely, not certain. Tap a cross-thread row to open that session. Swipe a row left, or long-press it, to stop it or resume it.
+- **Waterfall** — one row per session in tree order, labelled with its Agent icon and name, with a bar from launch to last recorded activity on clock time (a summary, not exact execution time). Arrows mark messages between sessions. Pinch to zoom; tap a row or bar to open it.
 - **Timeline** — one lane per session, with launches, stops, and messages or control commands sent between sessions with `oppi session`. Filter chips hide or show each kind. Messages to sessions in other threads appear as cross-thread rows.
 
 The sidebar or drawer manages saved Agents and schedules, collapses the workspace list, opens App Settings, or browses a workspace's sessions, files, and settings.

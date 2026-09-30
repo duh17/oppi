@@ -8,6 +8,7 @@ import type {
   Session,
   SessionInteraction,
   SessionInteractionKind,
+  SessionPromptCacheStatus,
   SessionThreadCounterpart,
   SessionThreadResponse,
 } from "./types.js";
@@ -83,6 +84,7 @@ export function buildSessionThread(
   sessions: readonly Session[],
   sessionId: string,
   listInteractions: (sessionIds: readonly string[]) => SessionInteraction[],
+  promptCacheFor: (session: Session) => SessionPromptCacheStatus | undefined = () => undefined,
 ): SessionThreadResponse | undefined {
   const byId = new Map(sessions.map((session) => [session.id, session]));
   const target = byId.get(sessionId);
@@ -124,10 +126,18 @@ export function buildSessionThread(
         id,
         ...(session.name ? { name: session.name } : {}),
         status: session.status,
+        ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
+        ...(session.model ? { model: session.model } : {}),
         rootSessionId: counterpartRoot.id,
         ...(counterpartRoot.name ? { rootName: counterpartRoot.name } : {}),
       });
     }
+  }
+
+  const promptCache: Record<string, SessionPromptCacheStatus> = {};
+  for (const member of members) {
+    const status = promptCacheFor(member);
+    if (status) promptCache[member.id] = status;
   }
 
   return {
@@ -135,5 +145,11 @@ export function buildSessionThread(
     sessions: members.map(buildSessionSummary),
     interactions,
     counterparts,
+    ...(Object.keys(promptCache).length > 0 ? { promptCache } : {}),
   };
+}
+
+/** Pi's default retention tier; `PI_CACHE_RETENTION=long` opts every request into the long tier. */
+export function promptCacheRetention(env: NodeJS.ProcessEnv = process.env): "short" | "long" {
+  return env.PI_CACHE_RETENTION === "long" ? "long" : "short";
 }

@@ -273,8 +273,36 @@ export interface SessionThreadCounterpart {
   id: string;
   name?: string;
   status?: Session["status"];
+  /** Workspace route for opening the counterpart; absent for control sessions. */
+  workspaceId?: string;
+  model?: string;
   rootSessionId: string;
   rootName?: string;
+}
+
+/** Pi's prompt-cache warmer for a live session. */
+export interface SessionPromptCacheWarmer {
+  state: "inactive" | "scheduled" | "refreshing";
+  /**
+   * Pi's pending decision for the scheduled refresh. Pi arms a timer after
+   * every request and decides then; "stop" means the cache will expire.
+   */
+  action?: "warm" | "stop";
+  nextWarmAt?: number;
+  /** Why nothing is scheduled. */
+  reason?: string;
+}
+
+/**
+ * Best-effort prompt-cache freshness. `ttlMs` is the model's lifetime for the
+ * retention tier requests use; `lastRequestAt` is the latest reply. Providers
+ * can evict earlier, so clients present this as an estimate.
+ */
+export interface SessionPromptCacheStatus {
+  retention: "short" | "long";
+  ttlMs?: number;
+  lastRequestAt?: number;
+  warmer?: SessionPromptCacheWarmer;
 }
 
 /** `GET /sessions/:id/thread` response. */
@@ -283,6 +311,8 @@ export interface SessionThreadResponse {
   sessions: SessionSummary[];
   interactions: SessionInteraction[];
   counterparts: SessionThreadCounterpart[];
+  /** Keyed by session id; omitted for sessions without a known cache lifetime. */
+  promptCache?: Record<string, SessionPromptCacheStatus>;
 }
 
 export interface SessionMessage {

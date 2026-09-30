@@ -72,6 +72,7 @@ import type {
 import { ts, safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
+import { splitCanonicalModelId } from "./model-resolution.js";
 import {
   BonjourAdvertiser,
   buildBonjourServiceName,
@@ -860,6 +861,10 @@ export class Server {
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
       refreshModelCatalog: (options) => this.refreshModelCatalog(options),
       getModelCatalog: () => this.models.getAll(),
+      getModelPromptCache: (model) => {
+        const ref = model ? splitCanonicalModelId(model) : undefined;
+        return ref ? this.modelRegistry.find(ref.provider, ref.modelId)?.promptCache : undefined;
+      },
       getProviderQuotasStatus: async () => {
         await this.extensionProviderCatalog.sync();
         return fetchProviderQuotas({

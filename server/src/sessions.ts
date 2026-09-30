@@ -18,6 +18,7 @@ import type {
   MessageQueueDraftItem,
   MessageQueueState,
   Session,
+  SessionPromptCacheWarmer,
   ServerMessage,
   Workspace,
 } from "./types.js";
@@ -629,6 +630,30 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   getEntryRenderers(sessionId: string): LiveEntryRendererSet | undefined {
     return this.active.get(this.sessionKey(sessionId))?.sdkBackend.getEntryRenderers();
+  }
+
+  /** Live prompt-cache warmer state and the running model's cache tiers. */
+  getPromptCacheRuntime(
+    sessionId: string,
+  ):
+    | { warmer?: SessionPromptCacheWarmer; promptCache?: { short?: number; long?: number } }
+    | undefined {
+    const session = this.active.get(this.sessionKey(sessionId))?.sdkBackend.session;
+    if (!session) return undefined;
+    const status = session.cacheWarmingStatus;
+    return {
+      ...(status
+        ? {
+            warmer: {
+              state: status.state,
+              ...(status.decision ? { action: status.decision.action } : {}),
+              ...(status.nextWarmAt !== undefined ? { nextWarmAt: status.nextWarmAt } : {}),
+              ...(status.reason ? { reason: status.reason } : {}),
+            },
+          }
+        : {}),
+      ...(session.model?.promptCache ? { promptCache: session.model.promptCache } : {}),
+    };
   }
 
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {

@@ -177,6 +177,153 @@ struct SessionThreadsTests {
         #expect(timeline.rows.first { $0.id == "interaction:9" }?.lanesBelow.contains(1) == true)
     }
 
+    // MARK: Lane graph
+
+    @Test func laneGraphBranchesFromParentsAndFoldsExtraLanes() {
+        let now = Date(timeIntervalSince1970: 100)
+        let members = [
+            session("root", status: .ready, created: 0, last: 50),
+            session("a", parent: "root", created: 10, last: 90),
+            session("b", parent: "root", status: .busy, created: 20, last: 100),
+            session("c", parent: "a", created: 30, last: 60),
+            session("d", parent: "root", created: 40, last: 70),
+        ]
+
+        let graph = SessionThreadLaneGraph.layout(members: members, rootId: "root", now: now, maxLanes: 3)
+        let byId = Dictionary(uniqueKeysWithValues: graph.segments.map { ($0.id, $0) })
+
+        #expect(graph.laneCount == 3)
+        #expect(graph.hiddenLaneCount == 2)
+        // Nine distinct event times, so each is one eighth of the width.
+        #expect(byId["root"]?.parentLane == nil)
+        #expect(byId["root"]?.idleFrom == 5.0 / 8)
+        #expect(byId["a"]?.parentLane == 0)
+        #expect(byId["a"]?.start == 1.0 / 8)
+        #expect(byId["a"]?.end == 1)
+        // Lanes 3 and 4 fold into the last visible lane, and branch from the right parent.
+        #expect(byId["c"]?.lane == 2)
+        #expect(byId["c"]?.parentLane == byId["a"]?.lane)
+        #expect(byId["d"]?.lane == 2)
+        #expect(byId["b"]?.isWorking == true)
+        #expect(byId["b"]?.end == 1)
+    }
+
+    @Test func laneGraphGivesShortSessionsTheSameWidthAsLongOnes() {
+        // A 2-second child and a 2-hour child, hours after the thread went quiet.
+        let members = [
+            session("root", created: 0, last: 9_000),
+            session("short", parent: "root", created: 10, last: 12),
+            session("long", parent: "root", created: 20, last: 7_220),
+        ]
+
+        let graph = SessionThreadLaneGraph.layout(members: members, rootId: "root", now: Date(timeIntervalSince1970: 90_000))
+        let byId = Dictionary(uniqueKeysWithValues: graph.segments.map { ($0.id, $0) })
+        let short = try? #require(byId["short"])
+        let long = try? #require(byId["long"])
+
+        #expect(byId["root"]?.end == 1)
+        #expect(short.map { abs(($0.end - $0.start) - 1.0 / 5) < 1e-9 } == true)
+        #expect(long.map { abs(($0.end - $0.start) - 1.0 / 5) < 1e-9 } == true)
+    }
+
+    // MARK: Agents and waterfall
+
+    private func withAgent(_ session: Session, _ agentId: String?) -> Session {
+        var copy = session
+        copy.launch = agentId.map { SessionLaunchMetadata(agentId: $0, agentIcon: .emoji("🛠️")) }
+        return copy
+    }
+
+    @Test func agentGroupsCountLargestFirstAndTreatNoAgentAsPi() {
+        let sessions = [
+            withAgent(session("a", created: 1), nil),
+            withAgent(session("b", created: 2), "reviewer"),
+            withAgent(session("c", created: 3), "worker"),
+            withAgent(session("d", created: 4), "worker"),
+            withAgent(session("e", created: 5), "reviewer"),
+            withAgent(session("f", created: 6), "worker"),
+        ]
+
+        let groups = SessionThreadAgentGroup.groups(sessions)
+
+        #expect(groups.map(\.id) == ["worker", "reviewer", "pi"])
+        #expect(groups.map(\.count) == [3, 2, 1])
+        #expect(groups.first?.agentIcon == .emoji("🛠️"))
+    }
+
+    @Test func waterfallOrdersRowsDepthFirstOnClockTime() {
+        let members = [
+            session("root", status: .ready, created: 0, last: 40),
+            session("late", parent: "root", created: 60, last: 80),
+            session("early", parent: "root", created: 10, last: 20),
+            session("grandchild", parent: "early", created: 12, last: 18),
+        ]
+        let thread = snapshot(members, interactions: [
+            SessionInteraction(id: 1, at: Date(timeIntervalSince1970: 15), fromSessionId: "early", toSessionId: "grandchild", kind: .steer),
+        ])
+
+        let waterfall = SessionThreadWaterfall.build(snapshot: thread, now: Date(timeIntervalSince1970: 100))
+
+        #expect(waterfall.rows.map(\.id) == ["root", "early", "grandchild", "late"])
+        #expect(waterfall.rows.map(\.depth) == [0, 1, 2, 1])
+        // Clock time from the root's launch to the latest activity (80), not `now`.
+        #expect(waterfall.rows[1].start == 10.0 / 80)
+        #expect(waterfall.rows[1].end == 20.0 / 80)
+        #expect(waterfall.rows[0].idleFrom == 40.0 / 80)
+        #expect(waterfall.rows[0].end == 1)
+        #expect(waterfall.messages.first.map { [$0.fromRow, $0.toRow] } == [1, 2])
+    }
+
+    // MARK: Prompt cache
+
+    @Test(arguments: [
+        (SessionStatus.busy, nil as SessionPromptCacheWarmer?, 60.0, SessionPromptCacheEstimate.inUse),
+        (.ready, SessionPromptCacheWarmer(state: .scheduled, action: .warm, nextWarmAt: Date(timeIntervalSince1970: 400)), 200.0,
+         .keptWarm(nextRefresh: Date(timeIntervalSince1970: 400))),
+        (.ready, SessionPromptCacheWarmer(state: .refreshing), 1_000.0, .keptWarm(nextRefresh: nil)),
+        // Pi decided to let it expire, or the refresh time passed without a newer snapshot: use the TTL.
+        (.ready, SessionPromptCacheWarmer(state: .scheduled, action: .stop, nextWarmAt: Date(timeIntervalSince1970: 400)), 200.0,
+         .warm(until: Date(timeIntervalSince1970: 400))),
+        (.ready, SessionPromptCacheWarmer(state: .scheduled, action: .warm, nextWarmAt: Date(timeIntervalSince1970: 350)), 1_000.0,
+         .cold),
+        (.ready, nil, 200.0, .warm(until: Date(timeIntervalSince1970: 400))),
+        (.ready, nil, 500.0, .cold),
+        // A stopped session's warmer no longer runs; fall back to the TTL.
+        (.stopped, SessionPromptCacheWarmer(state: .scheduled), 500.0, .cold),
+    ])
+    func cacheEstimateFollowsWarmerThenTTL(
+        status: SessionStatus,
+        warmer: SessionPromptCacheWarmer?,
+        now: TimeInterval,
+        expected: SessionPromptCacheEstimate
+    ) {
+        let target = session("s", status: status, created: 0, last: 100)
+        let cache = SessionPromptCacheStatus(ttl: 300, lastRequestAt: Date(timeIntervalSince1970: 100), warmer: warmer)
+
+        #expect(SessionPromptCacheEstimate.estimate(session: target, status: cache, now: Date(timeIntervalSince1970: now)) == expected)
+    }
+
+    @Test func cacheEstimateUsesTheNewestReplyAndNeedsATTL() {
+        var target = session("s", status: .ready, created: 0, last: 100)
+        target.lastAgentReplyAt = Date(timeIntervalSince1970: 350)
+        let cache = SessionPromptCacheStatus(ttl: 300, lastRequestAt: Date(timeIntervalSince1970: 100))
+        let now = Date(timeIntervalSince1970: 500)
+
+        #expect(SessionPromptCacheEstimate.estimate(session: target, status: cache, now: now)
+            == .warm(until: Date(timeIntervalSince1970: 650)))
+        #expect(SessionPromptCacheEstimate.estimate(
+            session: target,
+            status: SessionPromptCacheStatus(ttl: nil, lastRequestAt: Date(timeIntervalSince1970: 100)),
+            now: now
+        ) == .unknown)
+        #expect(SessionPromptCacheEstimate.estimate(session: target, status: nil, now: now) == .unknown)
+    }
+
+    @Test func cacheHitRateCountsReadsAgainstAllPromptTokens() {
+        #expect(TokenUsage(input: 100, output: 50, cacheRead: 700, cacheWrite: 200).cacheHitRate == 0.7)
+        #expect(TokenUsage(input: 0, output: 10, cacheRead: nil, cacheWrite: nil).cacheHitRate == nil)
+    }
+
     // MARK: Wire
 
     @Test func snapshotDecodesParentLinksAndSkipsUnknownPrimitives() throws {
@@ -193,7 +340,13 @@ struct SessionThreadsTests {
             {"id":1,"at":1600,"fromSessionId":"root","toSessionId":"child","kind":"steer"},
             {"id":2,"at":1700,"fromSessionId":"root","toSessionId":"child","kind":"future_primitive"}
           ],
-          "counterparts": []
+          "counterparts": [
+            {"id":"other","name":"Other","status":"stopped","workspaceId":"ws-2","model":"openai/gpt-6","rootSessionId":"other"}
+          ],
+          "promptCache": {
+            "root": {"retention":"short","ttlMs":300000,"lastRequestAt":2000,"warmer":{"state":"scheduled","action":"warm","nextWarmAt":2270000}},
+            "child": {"retention":"long","ttlMs":3600000,"warmer":{"state":"future_state"}}
+          }
         }
         """
 
@@ -202,5 +355,13 @@ struct SessionThreadsTests {
         #expect(decoded.sessions.map(\.parentSessionId) == [nil, "root"])
         #expect(decoded.interactions.map(\.kind) == [.steer])
         #expect(decoded.interactions.first?.at == Date(timeIntervalSince1970: 1.6))
+        #expect(decoded.counterparts.first?.workspaceId == "ws-2")
+        #expect(decoded.promptCache["root"] == SessionPromptCacheStatus(
+            ttl: 300,
+            lastRequestAt: Date(timeIntervalSince1970: 2),
+            warmer: SessionPromptCacheWarmer(state: .scheduled, action: .warm, nextWarmAt: Date(timeIntervalSince1970: 2_270))
+        ))
+        // An unknown warmer state reads as inactive instead of failing the thread.
+        #expect(decoded.promptCache["child"]?.warmer?.state == .inactive)
     }
 }

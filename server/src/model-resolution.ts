@@ -58,7 +58,9 @@ type RegistryForResolution = Pick<ModelRegistry, "getAvailable" | "getAll"> & {
   isUsingOAuth?: (model: Model<Api>) => boolean;
 };
 
-function splitCanonicalModelId(id: string): { provider: string; modelId: string } | undefined {
+export function splitCanonicalModelId(
+  id: string,
+): { provider: string; modelId: string } | undefined {
   const slash = id.indexOf("/");
   if (slash <= 0 || slash === id.length - 1) return undefined;
   return { provider: id.substring(0, slash), modelId: id.substring(slash + 1) };

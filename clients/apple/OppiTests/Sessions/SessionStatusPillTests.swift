@@ -78,8 +78,12 @@ struct SessionStatusPillTests {
         #expect(SessionPillVariant.error.label == "Error")
     }
 
-    @Test func doneAndIdleStayGreen() {
-        #expect(UIColor(SessionPillVariant.done.foregroundColor) == UIColor(Color.themeGreen))
-        #expect(UIColor(SessionPillVariant.idle.foregroundColor) == UIColor(Color.themeGreen))
+    /// Working and needs-you must never share a color; done and idle always do.
+    @Test func statusPaletteSeparatesWorkingFromNeedsYou() {
+        let theme = ThemeID.dark.appTheme
+        #expect(UIColor(SessionPillVariant.done.tint(theme)) == UIColor(theme.accent.green))
+        #expect(UIColor(SessionPillVariant.idle.tint(theme)) == UIColor(theme.accent.green))
+        #expect(UIColor(SessionPillVariant.working.tint(theme)) == UIColor(theme.accent.blue))
+        #expect(UIColor(SessionPillVariant.question.tint(theme)) == UIColor(theme.accent.orange))
     }
 }

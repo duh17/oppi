@@ -2,28 +2,26 @@ import SwiftUI
 
 typealias SessionPillVariant = SessionRowStatusKind
 
+/// Session-status palette for iOS session rows, pills, and thread graphs:
+/// working = blue, done/idle = green, needs you = orange, stopped = grey,
+/// error = red.
 extension SessionRowStatusKind {
-    var foregroundColor: Color {
+    func tint(_ theme: AppTheme) -> Color {
         switch self {
-        case .idle, .done: .themeGreen
-        case .question, .working: .themeBlue
-        case .stopped: .themeComment
-        case .error: .themeRed
+        case .idle, .done: theme.accent.green
+        case .working: theme.accent.blue
+        case .question: theme.accent.orange
+        case .stopped: theme.text.tertiary
+        case .error: theme.accent.red
         }
     }
 
-    var backgroundColor: Color {
-        switch self {
-        case .idle, .done: .themeGreen.opacity(0.12)
-        case .question, .working: .themeBlue.opacity(0.12)
-        case .stopped: .themeComment.opacity(0.1)
-        case .error: .themeRed.opacity(0.12)
-        }
-    }
 }
 
 /// Compact text status aligned to the row's trailing edge.
 struct SessionStatusPill: View {
+    @Environment(\.theme) private var theme
+
     let variant: SessionPillVariant
 
     init(_ variant: SessionPillVariant) {
@@ -33,7 +31,7 @@ struct SessionStatusPill: View {
     var body: some View {
         Text(variant.label)
             .font(.caption2.weight(.medium))
-            .foregroundStyle(variant.foregroundColor)
+            .foregroundStyle(variant.tint(theme))
             .multilineTextAlignment(.trailing)
     }
 }
