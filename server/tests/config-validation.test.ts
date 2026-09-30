@@ -345,6 +345,32 @@ describe("Storage config validation", () => {
     expect(invalid.errors).toContain("config.oppiCliPrompt.unknownField: unknown key");
   });
 
+  it("defaults the OpenAI Codex plan quota opt-in off and validates it", () => {
+    const defaults = Storage.validateConfig(Storage.getDefaultConfig(dir), dir, true);
+    expect(defaults.valid).toBe(true);
+    expect(defaults.config?.providerQuotas?.openaiUseCodexPlan).toBe(false);
+
+    const enabled = Storage.validateConfig(
+      { ...Storage.getDefaultConfig(dir), providerQuotas: { openaiUseCodexPlan: true } },
+      dir,
+      true,
+    );
+    expect(enabled.valid).toBe(true);
+    expect(enabled.config?.providerQuotas?.openaiUseCodexPlan).toBe(true);
+
+    const invalid = Storage.validateConfig(
+      {
+        ...Storage.getDefaultConfig(dir),
+        providerQuotas: { openaiUseCodexPlan: "yes", other: true },
+      },
+      dir,
+      true,
+    );
+    expect(invalid.valid).toBe(false);
+    expect(invalid.errors).toContain("config.providerQuotas.openaiUseCodexPlan: expected boolean");
+    expect(invalid.errors).toContain("config.providerQuotas.other: unknown key");
+  });
+
   it("rejects unknown transport configuration keys", () => {
     const result = Storage.validateConfig(
       { ...Storage.getDefaultConfig(dir), removedTransport: { enabled: true } },

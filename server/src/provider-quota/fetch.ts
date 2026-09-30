@@ -1,5 +1,6 @@
 import { safeErrorMessage } from "../log-utils.js";
 import { defaultProviderQuotaAdapters } from "./adapters/registry.js";
+import { withLegacyCodexPlanQuota } from "./adapters/openai.js";
 import { emptyProviderQuota, finalizeProviderQuota } from "./shared.js";
 import type {
   FetchProviderQuotasOptions,
@@ -62,7 +63,9 @@ export async function fetchProviderQuotas(
   );
 
   return {
-    providers,
+    providers: options.openaiUseCodexPlan
+      ? withLegacyCodexPlanQuota(providers, adapters, options)
+      : providers,
     fetchedAt,
   };
 }

@@ -121,6 +121,31 @@ describe("config command agent safety", () => {
     expect(set.humanOutput).toContain("7938");
   });
 
+  it("sets the OpenAI Codex plan quota opt-in and hints that the running server needs a restart", async () => {
+    const dataDir = makeDataDir();
+    const key = "providerQuotas.openaiUseCodexPlan";
+    const options = { dataDir, captureHuman: true, forceJson: true } as const;
+
+    const before = await runCli(["config", "get", key], options);
+    expect(before.json).toMatchObject({ ok: true, data: { key, value: false } });
+
+    const set = await runCli(["config", "set", key, "on"], options);
+    expect(set.ok).toBe(true);
+    expect(set.json).toMatchObject({ ok: true, data: { key, value: true } });
+    expect(set.json).toMatchObject({
+      data: { restartHint: "Restart the Oppi server for this change to take effect." },
+    });
+
+    const after = await runCli(["config", "get", key], options);
+    expect(after.json).toMatchObject({ ok: true, data: { key, value: true } });
+    expect(createCliConfigStorage(dataDir).getConfig().providerQuotas).toEqual({
+      openaiUseCodexPlan: true,
+    });
+
+    const bad = await runCli(["config", "set", key, "maybe"], options);
+    expect(bad.ok).toBe(false);
+  });
+
   it("hints restart when publicUrl or proxy trust changes", async () => {
     const dataDir = makeDataDir();
     const restartHint = "Restart the Oppi server for this change to take effect.";

@@ -68,6 +68,11 @@ export interface FetchProviderQuotasOptions {
   now?: () => number;
   /** Override the built-in adapter list (tests / future extension). */
   adapters?: readonly ProviderQuotaAdapter[];
+  /**
+   * Operator opt-in (`providerQuotas.openaiUseCodexPlan`): show the legacy Codex connection's
+   * plan-wide windows on the official `openai` OAuth row. Default false.
+   */
+  openaiUseCodexPlan?: boolean;
 }
 
 /**

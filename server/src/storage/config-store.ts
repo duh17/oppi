@@ -83,6 +83,9 @@ function createDefaultConfig(dataDir: string): ServerConfig {
       enabled: true,
     },
     tls: { mode: "self-signed" },
+    providerQuotas: {
+      openaiUseCodexPlan: false,
+    },
     images: {
       autoResize: false,
     },
@@ -143,6 +146,7 @@ function normalizeConfig(
     "liveActivityToken",
     "autoTitle",
     "asr",
+    "providerQuotas",
     "images",
     "uploadStore",
     "extensions",
@@ -641,6 +645,30 @@ function normalizeConfig(
     // An invalid explicit provider must not silently become the HTTP backend.
     if (Object.keys(asrConfig).length > 0 && (!("provider" in asr) || asrConfig.provider)) {
       config.asr = asrConfig;
+    }
+  }
+
+  if ("providerQuotas" in obj) {
+    if (!isRecord(obj.providerQuotas)) {
+      errors.push("config.providerQuotas: expected object");
+      changed = true;
+    } else {
+      const providerQuotas = obj.providerQuotas;
+      if (strictUnknown) {
+        for (const key of Object.keys(providerQuotas)) {
+          if (key !== "openaiUseCodexPlan") {
+            errors.push(`config.providerQuotas.${key}: unknown key`);
+          }
+        }
+      }
+      if ("openaiUseCodexPlan" in providerQuotas) {
+        if (typeof providerQuotas.openaiUseCodexPlan === "boolean") {
+          config.providerQuotas = { openaiUseCodexPlan: providerQuotas.openaiUseCodexPlan };
+        } else {
+          errors.push("config.providerQuotas.openaiUseCodexPlan: expected boolean");
+          changed = true;
+        }
+      }
     }
   }
 

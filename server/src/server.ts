@@ -876,6 +876,7 @@ export class Server {
         await this.extensionProviderCatalog.sync();
         return fetchProviderQuotas({
           modelRuntime: this.modelRuntime,
+          openaiUseCodexPlan: this.storage.getConfig().providerQuotas?.openaiUseCodexPlan === true,
           adapters: quotaAdaptersForProviders(
             this.extensionProviderCatalog.getRegisteredProviderIds(),
             this.extensionProviderCatalog.getQuotaAdapters(this.modelRuntime),

@@ -332,6 +332,11 @@ const HELP_TOPICS: HelpTopic[] = [
         name: "proxy.trustedPeers",
         summary: "JSON array; immediate proxy peer CIDRs as Oppi sees them",
       },
+      {
+        name: "providerQuotas.openaiUseCodexPlan",
+        summary:
+          "boolean; show legacy Codex plan-wide usage on the OpenAI row (same account; restart)",
+      },
       { name: "asr.backend", summary: "string; http" },
       { name: "asr.provider", summary: "string; http or xai" },
       { name: "asr.sttEndpoint", summary: "string; STT backend base URL" },

@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { extensionQuotaAdapter, parseExtensionQuota } from "../src/provider-quota/extension.js";
 
 import {
+  defaultProviderQuotaAdapters,
   fetchCodexProviderQuota,
+  fetchOpenAIProviderQuota,
   fetchOpenCodeGoProviderQuota,
   fetchProviderQuotas,
   quotaAdaptersForProviders,
@@ -331,6 +333,75 @@ describe("fetchCodexProviderQuota", () => {
       fetchedAt: 456,
       error: "Codex quota fetch failed (429): rate limited",
     });
+  });
+});
+
+// Official OpenAI "Sign in with ChatGPT" documents no usage API and forbids sending its token to
+// chatgpt.com backend-api (developers.openai.com/siwc/token-sharing-open-source/models-and-inference).
+describe("fetchOpenAIProviderQuota", () => {
+  it("reports official ChatGPT OAuth quota as unknown with guidance, without any network or token use", async () => {
+    const fetchImpl = vi.fn();
+    const getAuth = vi.fn();
+    const readCredential = vi.fn(
+      () => ({ type: "oauth", access: "chatgpt-access", refresh: "r", expires: 1 }) as const,
+    );
+
+    const result = await fetchOpenAIProviderQuota({
+      modelRuntime: { getAuth },
+      readCredential,
+      fetchImpl: fetchImpl as never,
+      now: () => 12,
+    });
+
+    expect(result).toEqual({
+      providerId: "openai",
+      displayName: "OpenAI",
+      authenticated: true,
+      planType: null,
+      windows: [],
+      credits: null,
+      prepaidBalanceCents: null,
+      fetchedAt: 12,
+      error: expect.stringContaining("https://chatgpt.com/settings/usage"),
+    });
+    expect(readCredential).toHaveBeenCalledExactlyOnceWith("openai");
+    expect(getAuth).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("returns unauthenticated when no openai credential is stored", async () => {
+    const fetchImpl = vi.fn();
+    const result = await fetchOpenAIProviderQuota({
+      modelRuntime: { getAuth: vi.fn() },
+      readCredential: vi.fn(() => undefined),
+      fetchImpl: fetchImpl as never,
+      now: () => 13,
+    });
+
+    expect(result).toMatchObject({ providerId: "openai", authenticated: false, windows: [] });
+    expect(result.error).toBeUndefined();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not present an OpenAI API key as subscription quota", async () => {
+    const fetchImpl = vi.fn();
+    const getAuth = vi.fn();
+    const result = await fetchOpenAIProviderQuota({
+      modelRuntime: { getAuth },
+      readCredential: vi.fn(() => ({ type: "api_key", key: "sk-test" }) as const),
+      fetchImpl: fetchImpl as never,
+      now: () => 14,
+    });
+
+    expect(result).toMatchObject({
+      providerId: "openai",
+      authenticated: false,
+      planType: null,
+      windows: [],
+    });
+    expect(result.error).toBeUndefined();
+    expect(getAuth).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 
@@ -1268,21 +1339,359 @@ describe("fetchProviderQuotas", () => {
     expect(result.fetchedAt).toBe(50);
     expect(result.providers.map((p) => p.providerId)).toEqual([
       "openai-codex",
+      "openai",
       "opencode-go",
       "xai",
     ]);
     expect(result.providers[0]?.windows).toHaveLength(2);
     expect(result.providers[1]).toMatchObject({
+      providerId: "openai",
+      authenticated: false,
+      windows: [],
+    });
+    expect(result.providers[2]).toMatchObject({
       providerId: "opencode-go",
       planType: "Go",
       authenticated: true,
     });
-    expect(result.providers[1]?.windows.map((w) => w.key)).toEqual([
+    expect(result.providers[2]?.windows.map((w) => w.key)).toEqual([
       "five_hour",
       "weekly",
       "monthly",
     ]);
-    expect(result.providers[2]?.planType).toBe("SuperGrok");
-    expect(result.providers[2]?.windows[0]?.remainingPercent).toBe(60);
+    expect(result.providers[3]?.planType).toBe("SuperGrok");
+    expect(result.providers[3]?.windows[0]?.remainingPercent).toBe(60);
+  });
+
+  it("keeps official OpenAI and legacy Codex quota rows and tokens separate", async () => {
+    const tokens: Record<string, string> = {
+      "openai-codex": "legacy-codex-token",
+      openai: "official-chatgpt-token",
+    };
+    const readCredential = vi.fn((providerId: string) =>
+      providerId === "openai-codex" || providerId === "openai"
+        ? ({
+            type: "oauth",
+            access: tokens[providerId],
+            refresh: "r",
+            expires: 1_800_000_000_000,
+          } as const)
+        : undefined,
+    );
+    const getAuth = vi.fn(async (providerId: string) => ({
+      auth: { apiKey: tokens[providerId] },
+      source: "OAuth",
+    }));
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            plan_type: "plus",
+            rate_limit: {
+              primary_window: { used_percent: 10, limit_window_seconds: 18_000, reset_at: 100 },
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const result = await fetchProviderQuotas({
+      modelRuntime: { getAuth } as never,
+      readCredential,
+      fetchImpl: fetchImpl as never,
+      now: () => 60,
+    });
+
+    // The registry ships exactly one adapter per id, in the order the aggregator reports them.
+    expect(defaultProviderQuotaAdapters.map((a) => a.providerId)).toEqual(
+      result.providers.map((p) => p.providerId),
+    );
+    const [legacy, official] = result.providers;
+    expect(legacy).toMatchObject({
+      providerId: "openai-codex",
+      displayName: "Codex",
+      planType: "plus",
+      windows: [{ key: "five_hour", remainingPercent: 90 }],
+    });
+    expect(official).toMatchObject({
+      providerId: "openai",
+      displayName: "OpenAI",
+      authenticated: true,
+      planType: null,
+      windows: [],
+      error: expect.stringContaining("https://chatgpt.com/settings/usage"),
+    });
+
+    // Only the legacy adapter touched the chatgpt.com endpoint, and only with its own token.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://chatgpt.com/backend-api/wham/usage");
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer legacy-codex-token");
+    expect(getAuth.mock.calls.map(([providerId]) => providerId)).toEqual(["openai-codex"]);
+  });
+});
+
+// Opt-in (`providerQuotas.openaiUseCodexPlan`): the operator confirmed the official `openai`
+// sign-in and the retained legacy `openai-codex` sign-in are the same ChatGPT account/workspace.
+describe("fetchProviderQuotas legacy Codex plan source for official OpenAI", () => {
+  const LEGACY_TOKEN = "legacy-codex-token";
+  const OFFICIAL_TOKEN = "official-chatgpt-token";
+  const NOW_MS = 1_000_000;
+  const RESET_5H = NOW_MS / 1000 + 3_600;
+  const RESET_7D = NOW_MS / 1000 + 86_400;
+  const codexBody = {
+    plan_type: "plus",
+    rate_limit: {
+      primary_window: { used_percent: 10, limit_window_seconds: 18_000, reset_at: RESET_5H },
+      secondary_window: { used_percent: 40, limit_window_seconds: 604_800, reset_at: RESET_7D },
+    },
+    // Non-null on purpose: the plan row must drop credits, and only non-null input proves it.
+    credits: { has_credits: true, unlimited: false, balance: "12.50" },
+  };
+  const legacyCredits = { hasCredits: true, unlimited: false, balance: "12.50" };
+
+  type Creds = Partial<Record<"openai" | "openai-codex", Record<string, unknown>>>;
+
+  function run(
+    creds: Creds,
+    options: {
+      useCodexPlan?: boolean;
+      response?: () => Response;
+      adapters?: readonly ProviderQuotaAdapter[];
+    } = {},
+  ) {
+    const tokens = { openai: OFFICIAL_TOKEN, "openai-codex": LEGACY_TOKEN } as const;
+    const getAuth = vi.fn(async (providerId: keyof typeof tokens) => ({
+      auth: { apiKey: tokens[providerId] },
+      source: "OAuth",
+    }));
+    const fetchImpl = vi.fn(
+      async () => options.response?.() ?? new Response(JSON.stringify(codexBody), { status: 200 }),
+    );
+    const result = fetchProviderQuotas({
+      modelRuntime: { getAuth } as never,
+      readCredential: (providerId) => creds[providerId as keyof Creds] as never,
+      fetchImpl: fetchImpl as never,
+      now: () => NOW_MS,
+      openaiUseCodexPlan: options.useCodexPlan,
+      adapters: options.adapters,
+    });
+    return { result, getAuth, fetchImpl };
+  }
+
+  const oauth = (access: string) => ({
+    type: "oauth",
+    access,
+    refresh: "r",
+    expires: 1_800_000_000_000,
+  });
+  const bothSignedIn: Creds = {
+    openai: oauth(OFFICIAL_TOKEN),
+    "openai-codex": oauth(LEGACY_TOKEN),
+  };
+
+  it("leaves official OAuth quota unknown when the opt-in is off, even with Codex signed in", async () => {
+    for (const useCodexPlan of [undefined, false]) {
+      const { result, fetchImpl } = run(bothSignedIn, { useCodexPlan });
+      const official = (await result).providers.find((p) => p.providerId === "openai");
+      expect(official).toMatchObject({
+        displayName: "OpenAI",
+        authenticated: true,
+        planType: null,
+        windows: [],
+      });
+      expect(official?.error).toContain("no supported quota API was identified");
+      // Only the legacy row's own fetch happens, so the plan is never attributed to `openai`.
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("labels the plan-wide legacy source and fetches upstream once with only the legacy token", async () => {
+    const { result, getAuth, fetchImpl } = run(bothSignedIn, { useCodexPlan: true });
+    const status = await result;
+
+    expect(status.providers.map((p) => p.providerId)).toEqual([
+      "openai-codex",
+      "openai",
+      "opencode-go",
+      "xai",
+    ]);
+    const [legacy, official] = status.providers;
+    // Legacy adapter identity and behavior are unchanged.
+    expect(legacy).toMatchObject({
+      providerId: "openai-codex",
+      displayName: "Codex",
+      planType: "plus",
+      credits: legacyCredits,
+      windows: [
+        { key: "five_hour", shortLabel: "5h", title: "5-hour" },
+        { key: "weekly", shortLabel: "7d", title: "Weekly" },
+      ],
+    });
+    expect(official).toMatchObject({
+      providerId: "openai",
+      displayName: "OpenAI (ChatGPT plan via legacy Codex)",
+      authenticated: true,
+      planType: "plus",
+      credits: null,
+      fetchedAt: NOW_MS,
+      windows: [
+        {
+          key: "five_hour",
+          shortLabel: "Plan 5h",
+          title: "5-hour plan (via legacy Codex)",
+          remainingPercent: 90,
+          resetAt: RESET_5H,
+          pacing: { source: "snapshot" },
+        },
+        {
+          key: "weekly",
+          shortLabel: "Plan 7d",
+          title: "Weekly plan (via legacy Codex)",
+          remainingPercent: 60,
+          resetAt: RESET_7D,
+          pacing: { source: "snapshot" },
+        },
+      ],
+    });
+    expect(official?.error).toBeUndefined();
+    expect(official?.windows.map((w) => w.pacing)).toEqual(legacy?.windows.map((w) => w.pacing));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://chatgpt.com/backend-api/wham/usage");
+    expect(new Headers(init.headers).get("authorization")).toBe(`Bearer ${LEGACY_TOKEN}`);
+    expect(getAuth.mock.calls.map(([providerId]) => providerId)).toEqual(["openai-codex"]);
+  });
+
+  it("never gives subscription quota to an API key or an absent official credential", async () => {
+    for (const openai of [{ type: "api_key", key: "sk-test" }, undefined]) {
+      const { result } = run(
+        { openai, "openai-codex": oauth(LEGACY_TOKEN) },
+        { useCodexPlan: true },
+      );
+      const official = (await result).providers.find((p) => p.providerId === "openai");
+      expect(official).toMatchObject({
+        displayName: "OpenAI",
+        authenticated: false,
+        planType: null,
+        windows: [],
+      });
+      expect(official?.error).toBeUndefined();
+    }
+  });
+
+  it("surfaces a failed legacy source as an error with no quota", async () => {
+    const { result, fetchImpl } = run(bothSignedIn, {
+      useCodexPlan: true,
+      response: () =>
+        new Response(JSON.stringify({ error: { message: "token expired" } }), { status: 401 }),
+    });
+    const official = (await result).providers.find((p) => p.providerId === "openai");
+
+    expect(official).toMatchObject({
+      displayName: "OpenAI (ChatGPT plan via legacy Codex)",
+      authenticated: true,
+      planType: null,
+      windows: [],
+    });
+    expect(official?.error).toContain("via legacy Codex");
+    expect(official?.error).toContain("401");
+    expect(official?.error).toContain("token expired");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a failed official row instead of aliasing Codex quota onto it", async () => {
+    // The aggregator marks a thrown adapter as authenticated; that must not pass the OAuth gate.
+    const readCredential = (providerId: string) => {
+      if (providerId === "openai") throw new Error("auth store unreadable");
+      return bothSignedIn[providerId as keyof Creds] as never;
+    };
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(codexBody), { status: 200 }));
+    const status = await fetchProviderQuotas({
+      modelRuntime: { getAuth: vi.fn(async () => ({ auth: { apiKey: LEGACY_TOKEN } })) } as never,
+      readCredential,
+      fetchImpl: fetchImpl as never,
+      now: () => NOW_MS,
+      openaiUseCodexPlan: true,
+    });
+    const official = status.providers.find((p) => p.providerId === "openai");
+
+    expect(official).toMatchObject({ displayName: "OpenAI", planType: null, windows: [] });
+    expect(official?.error).toContain("quota fetch failed");
+    expect(official?.error).toContain("auth store unreadable");
+  });
+
+  it("surfaces a signed-out legacy source without any upstream request", async () => {
+    const { result, fetchImpl } = run({ openai: oauth(OFFICIAL_TOKEN) }, { useCodexPlan: true });
+    const official = (await result).providers.find((p) => p.providerId === "openai");
+
+    expect(official).toMatchObject({ authenticated: true, planType: null, windows: [] });
+    expect(official?.error).toContain("legacy Codex connection is not signed in");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not show plan quota when the legacy source returns no usable windows", async () => {
+    const { result } = run(bothSignedIn, {
+      useCodexPlan: true,
+      response: () => new Response(JSON.stringify({ plan_type: "plus" }), { status: 200 }),
+    });
+    const official = (await result).providers.find((p) => p.providerId === "openai");
+
+    expect(official?.windows).toEqual([]);
+    expect(official?.error).toContain("no usage windows");
+  });
+
+  it("reports the source missing when the built-in Codex adapter is replaced by a custom provider", async () => {
+    const builtInOpenAI = defaultProviderQuotaAdapters.find((a) => a.providerId === "openai");
+    if (!builtInOpenAI) throw new Error("expected built-in openai adapter");
+    const customCodex: ProviderQuotaAdapter = {
+      providerId: "openai-codex",
+      displayName: "Custom Codex",
+      fetch: vi.fn(async () => ({
+        providerId: "openai-codex",
+        displayName: "Custom Codex",
+        authenticated: true,
+        planType: "custom",
+        windows: [],
+        credits: null,
+        prepaidBalanceCents: null,
+        fetchedAt: NOW_MS,
+      })),
+    };
+    const { result } = run(bothSignedIn, {
+      useCodexPlan: true,
+      adapters: [customCodex, builtInOpenAI],
+    });
+    const official = (await result).providers.find((p) => p.providerId === "openai");
+
+    expect(official?.planType).toBeNull();
+    expect(official?.windows).toEqual([]);
+    expect(official?.error).toContain("quota source is not available");
+  });
+
+  it("does not rewrite a custom provider that owns the openai id", async () => {
+    const customOpenAI: ProviderQuotaAdapter = {
+      providerId: "openai",
+      displayName: "Custom OpenAI",
+      fetch: vi.fn(async () => ({
+        providerId: "openai",
+        displayName: "Custom OpenAI",
+        authenticated: true,
+        planType: "custom",
+        windows: [],
+        credits: null,
+        prepaidBalanceCents: null,
+        fetchedAt: NOW_MS,
+      })),
+    };
+    const { result } = run(bothSignedIn, {
+      useCodexPlan: true,
+      adapters: [customOpenAI],
+    });
+
+    expect((await result).providers).toMatchObject([
+      { providerId: "openai", displayName: "Custom OpenAI", planType: "custom" },
+    ]);
   });
 });

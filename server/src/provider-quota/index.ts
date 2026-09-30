@@ -42,5 +42,6 @@ export {
   xaiProviderQuotaAdapter,
 } from "./adapters/registry.js";
 export { fetchCodexProviderQuota } from "./adapters/codex.js";
+export { fetchOpenAIProviderQuota } from "./adapters/openai.js";
 export { fetchOpenCodeGoProviderQuota } from "./adapters/opencode-go.js";
 export { fetchXaiProviderQuota } from "./adapters/xai.js";

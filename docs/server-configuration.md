@@ -18,7 +18,7 @@ oppi config set --help
 - Paths use dot notation (`tls.mode`, `runtimeEnv.TTS_BASE_URL`).
 - `oppi config set` without enough arguments lists supported keys and current values.
 - Unknown keys are ignored on startup and reported by `oppi config validate`.
-- Many keys need a **server restart** before they take effect (`asr`, `tls`, `port`, `host`, `publicUrl`, `proxy`, `runtimeEnv`). `tls.mode=cloudflare` is not supported; terminate TLS at the reverse proxy and set `publicUrl` plus `proxy.trustedPeers`.
+- Many keys need a **server restart** before they take effect (`asr`, `tls`, `port`, `host`, `publicUrl`, `proxy`, `runtimeEnv`, `providerQuotas`). `tls.mode=cloudflare` is not supported; terminate TLS at the reverse proxy and set `publicUrl` plus `proxy.trustedPeers`.
 
 ## Dictation (ASR / STT)
 
@@ -147,6 +147,7 @@ Pi's host MCP commands (`pi mcp list`, `login`, `logout`), which the MCP Servers
 | `runtimeEnv.<NAME>`                     | Host runtime env, including TTS URLs (restart)                      |
 | `extensions.voice.defaultVoiceId`       | Default voice id                                                    |
 | `images.autoResize`                     | Client image preprocessing preference                               |
+| `providerQuotas.openaiUseCodexPlan`     | Opt in to legacy Codex plan-wide usage on the OpenAI row; same account required (default `false`; restart; see [provider quotas](provider-quotas.md)) |
 | `autoTitle.enabled` / `autoTitle.model` | Automatic session titles                                            |
 
 After config changes that need a restart:

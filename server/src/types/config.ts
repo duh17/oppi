@@ -82,6 +82,16 @@ export interface ServerConfig {
     enabled: boolean;
   };
 
+  /** Provider quota display options. */
+  providerQuotas?: {
+    /**
+     * Show the legacy `openai-codex` connection's plan-wide usage on the official `openai`
+     * (Sign in with ChatGPT) row. The operator confirms both sign-ins are the same ChatGPT
+     * account/workspace; Oppi does not verify it. Default false.
+     */
+    openaiUseCodexPlan?: boolean;
+  };
+
   /** Transport security (HTTPS/WSS). */
   tls?: TlsConfig;
 

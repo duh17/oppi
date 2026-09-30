@@ -57,6 +57,11 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
   autoTitle: { type: "json", desc: "Auto-title config JSON object" },
   "autoTitle.enabled": { type: "boolean", desc: "Enable automatic session titles" },
   "autoTitle.model": { type: "string", desc: "Auto-title model" },
+  providerQuotas: { type: "json", desc: "Provider quota display config JSON object" },
+  "providerQuotas.openaiUseCodexPlan": {
+    type: "boolean",
+    desc: "Show legacy Codex plan-wide usage on the official OpenAI row (same account/workspace; default false; restart)",
+  },
   asr: { type: "json", desc: "ASR config JSON object" },
   "asr.backend": { type: "string", desc: "STT backend: http" },
   "asr.provider": { type: "string", desc: "STT provider: http or xai" },
@@ -226,7 +231,9 @@ export function cmdConfig(
             key === "host" ||
             key === "publicUrl" ||
             key === "proxy" ||
-            key.startsWith("proxy.")
+            key.startsWith("proxy.") ||
+            key === "providerQuotas" ||
+            key.startsWith("providerQuotas.")
               ? "Restart the Oppi server for this change to take effect."
               : undefined,
         },
