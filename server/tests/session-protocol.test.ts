@@ -1145,6 +1145,7 @@ describe("translatePiEvent", () => {
         renderResult: () => [],
       };
       const mockRegistry = {
+        inputPresentation: () => undefined,
         renderCall: (tool: string, args: Record<string, unknown>) =>
           mockRenderer.renderCall(tool, args),
         renderResult: () => undefined,

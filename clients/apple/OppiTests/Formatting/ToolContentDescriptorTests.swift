@@ -71,15 +71,12 @@ struct ToolContentDescriptorTests {
             fullOutput: diffText
         )
 
-        guard case .diff(let diff) = presentation.content else {
-            Issue.record("Expected .diff, got \(String(describing: presentation.content))")
+        guard case .markdown(let document) = presentation.content else {
+            Issue.record("Expected composed Markdown diff")
             return
         }
-        #expect(diff.path == "Sources/App.swift")
-        #expect(diff.lines.contains { $0.kind == .removed && $0.text == "let value = 1" })
-        #expect(diff.lines.contains { $0.kind == .added && $0.text == "let value = 2" })
-        let first = try #require(diff.lines.first)
-        #expect(first.oldLineNumber == 1 || first.newLineNumber == 1)
+        #expect(document.text == "```diff\n" + diffText + "\n```")
+        #expect(presentation.copyOutputText == diffText)
     }
 
     // MARK: - Multi-file diff fallback
@@ -108,22 +105,14 @@ struct ToolContentDescriptorTests {
         )
         let auto = build(tool: "extensions.patch", fullOutput: diffText)
 
-        guard case .terminal(let hintedTerminal) = hinted.content else {
-            Issue.record("Expected terminal/text for hinted multi-file, got \(String(describing: hinted.content))")
+        guard case .markdown(let hintedDocument) = hinted.content,
+              case .markdown(let autoDocument) = auto.content else {
+            Issue.record("Expected composed Markdown diffs")
             return
         }
-        guard case .terminal(let autoTerminal) = auto.content else {
-            Issue.record("Expected terminal/text for auto multi-file, got \(String(describing: auto.content))")
-            return
-        }
-
-        #expect(hintedTerminal.unwrapped == false)
-        #expect(hintedTerminal.language == nil)
-        #expect(hintedTerminal.output == diffText)
-        #expect(autoTerminal.output == diffText)
-        #expect(hintedTerminal.output?.contains("[render note:") == false)
-        #expect(hintedTerminal.output?.contains("--- a/A.swift") == true)
-        #expect(hintedTerminal.output?.contains("--- a/B.swift") == true)
+        #expect(hintedDocument.text == "```diff\n" + diffText + "\n```")
+        #expect(autoDocument.text == hintedDocument.text)
+        #expect(hinted.copyOutputText == diffText)
     }
 
     @Test("text hunk plus binary second file stays unified text")
@@ -145,12 +134,12 @@ struct ToolContentDescriptorTests {
             fullOutput: diffText
         )
 
-        guard case .terminal(let terminal) = presentation.content else {
-            Issue.record("Expected unified text, got \(String(describing: presentation.content))")
+        guard case .markdown(let document) = presentation.content else {
+            Issue.record("Expected composed Markdown diff")
             return
         }
-        #expect(terminal.output == diffText)
-        #expect(terminal.output?.contains("Binary files a/photo.png") == true)
+        #expect(document.text == "```diff\n" + diffText + "\n```")
+        #expect(presentation.copyOutputText == diffText)
     }
 
     // MARK: - Code / Markdown / file metadata
@@ -184,6 +173,7 @@ struct ToolContentDescriptorTests {
         let presentation = build(
             tool: "extensions.codegen",
             details: .object([
+                "expandedText": .string(code),
                 "presentationFormat": .string("code"),
                 "language": .string("swift"),
                 "filePath": .string("Sources/ExtensionMode.swift"),
@@ -192,14 +182,13 @@ struct ToolContentDescriptorTests {
             fullOutput: code
         )
 
-        guard case .code(let descriptor) = presentation.content else {
-            Issue.record("Expected .code, got \(String(describing: presentation.content))")
+        guard case .markdown(let document) = presentation.content else {
+            Issue.record("Expected composed Markdown code fence")
             return
         }
-        #expect(descriptor.text == code)
-        #expect(descriptor.language == .swift)
-        #expect(descriptor.startLine == 42)
-        #expect(descriptor.filePath == "Sources/ExtensionMode.swift")
+        #expect(document.text == "```swift\n" + code + "\n```")
+        #expect(document.filePath == "Sources/ExtensionMode.swift")
+        #expect(presentation.copyOutputText == code)
     }
 
     @Test("markdown file type is resolved from path")
@@ -407,14 +396,13 @@ struct ToolContentDescriptorTests {
             fullOutput: "{\"ok\":true}"
         )
 
-        guard case .terminal(let terminal) = presentation.content else {
-            Issue.record("Expected .terminal, got \(String(describing: presentation.content))")
+        guard case .markdown(let document) = presentation.content else {
+            Issue.record("Expected a generic document, not a media presentation")
             return
         }
-        #expect(terminal.output == formatted)
-        #expect(terminal.unwrapped == false)
-        #expect(terminal.language == nil)
-        #expect(presentation.copyOutputText == ANSIParser.strip(formatted))
+        let blocks = parseCommonMark(document.text)
+        #expect(blocks == [.codeBlock(language: "text", code: ANSIParser.strip(formatted))])
+        #expect(presentation.copyOutputText == "{\"ok\":true}")
     }
 
     @Test("bash is terminal with command and unwrapped output")
@@ -490,27 +478,27 @@ struct ToolContentDescriptorTests {
             fullOutput: "Generated image"
         )
 
-        guard case .terminal(let terminal) = presentation.content else {
-            Issue.record("Expected plaintext fallback, got \(String(describing: presentation.content))")
+        guard case .markdown(let document) = presentation.content else {
+            Issue.record("Expected a generic document without an image presentation")
             return
         }
-        #expect(terminal.output == "Generated image")
-        #expect(terminal.unwrapped == false)
+        #expect(parseCommonMark(document.text) == [.codeBlock(language: "text", code: "Generated image")])
+        #expect(presentation.copyOutputText == "Generated image")
     }
 
-    @Test("invalid explicit diff format notes and stays text")
-    func invalidDiffFormatNotesAndStaysText() {
+    @Test("presentation format without expanded text does not override generic output parsing")
+    func presentationFormatWithoutExpandedTextUsesGenericParsing() {
         let presentation = build(
             tool: "extensions.patch",
             details: .object(["presentationFormat": .string("diff")]),
             fullOutput: "this is not a unified diff"
         )
 
-        guard case .terminal(let terminal) = presentation.content else {
-            Issue.record("Expected text fallback, got \(String(describing: presentation.content))")
+        guard case .markdown(let document) = presentation.content else {
+            Issue.record("Expected generic text output")
             return
         }
-        #expect(terminal.output?.contains("diff preview unavailable") == true)
+        #expect(parseCommonMark(document.text) == [.codeBlock(language: "text", code: "this is not a unified diff")])
         #expect(presentation.copyOutputText == "this is not a unified diff")
     }
 

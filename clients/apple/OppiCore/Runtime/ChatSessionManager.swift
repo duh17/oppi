@@ -1252,16 +1252,16 @@ final class ChatSessionManager {
         case .audioStream(let stream):
             effectsStatePort.handleAudioStream(stream, sessionId: sessionId)
 
-        case .toolStart(let tool, let args, let toolCallId, let callSegments):
+        case .toolStart(let tool, let args, let toolCallId, let callSegments, let inputPresentation):
             coalescer.receive(toolCallCorrelator.start(
                 sessionId: sessionId, tool: tool, args: args,
-                toolCallId: toolCallId, callSegments: callSegments
+                toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation
             ))
 
-        case .toolUpdate(let tool, let args, let toolCallId, let callSegments):
+        case .toolUpdate(let tool, let args, let toolCallId, let callSegments, let inputPresentation):
             coalescer.receive(toolCallCorrelator.update(
                 sessionId: sessionId, tool: tool, args: args,
-                toolCallId: toolCallId, callSegments: callSegments
+                toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation
             ))
 
         case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details):
@@ -1272,14 +1272,14 @@ final class ChatSessionManager {
                 details: details
             ))
 
-        case .toolEnd(let tool, let toolCallId, let details, let isError, let resultSegments):
+        case .toolEnd(let tool, let toolCallId, let details, let isError, let resultSegments, let nestedCalls):
             if tool == "voice_reply_mode" {
                 effectsStatePort.applyVoiceReplyModeDetails(details, sessionId: sessionId)
             }
             coalescer.receive(toolCallCorrelator.end(
                 sessionId: sessionId, toolCallId: toolCallId,
                 details: details, isError: isError,
-                resultSegments: resultSegments
+                resultSegments: resultSegments, nestedCalls: nestedCalls
             ))
 
         case .messageEnd(let role, let content, _, _):

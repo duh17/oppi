@@ -107,6 +107,7 @@ describe("SessionAgentEventCoordinator", () => {
           mobileRenderers: {
             renderCall: vi.fn(),
             renderResult: vi.fn(),
+            inputPresentation: vi.fn(),
           } as never,
           toolNames: active.toolNames,
           toolArgs: active.toolArgs,
@@ -156,6 +157,7 @@ describe("SessionAgentEventCoordinator", () => {
       mobileRenderers: {
         renderCall: vi.fn(),
         renderResult: vi.fn(),
+        inputPresentation: vi.fn(),
       } as never,
       broadcast: vi.fn(),
       persistSessionNow: vi.fn(),
@@ -515,6 +517,7 @@ describe("SessionAgentEventCoordinator", () => {
       mobileRenderers: {
         renderCall: vi.fn(),
         renderResult: vi.fn(),
+        inputPresentation: vi.fn(),
       } as never,
       broadcast: vi.fn(),
       persistSessionNow: vi.fn(),
@@ -562,6 +565,7 @@ describe("SessionAgentEventCoordinator", () => {
       mobileRenderers: {
         renderCall: vi.fn(),
         renderResult: vi.fn(),
+        inputPresentation: vi.fn(),
       } as never,
       broadcast: vi.fn(),
       persistSessionNow: vi.fn(),
@@ -620,6 +624,7 @@ describe("SessionAgentEventCoordinator", () => {
       mobileRenderers: {
         renderCall: vi.fn(),
         renderResult: vi.fn(),
+        inputPresentation: vi.fn(),
       } as never,
       broadcast: vi.fn(),
       persistSessionNow: vi.fn(),
@@ -667,6 +672,7 @@ describe("SessionAgentEventCoordinator", () => {
         mobileRenderers: {
           renderCall: vi.fn(),
           renderResult: vi.fn(),
+          inputPresentation: vi.fn(),
         } as never,
         broadcast: vi.fn(),
         persistSessionNow: vi.fn(),

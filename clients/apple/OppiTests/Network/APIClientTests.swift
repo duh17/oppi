@@ -1689,7 +1689,7 @@ struct APIClientTests {
             sessionId: "session-origin",
             workspaceRuntime: nil
         )
-        guard case .markdown(_, _, let reader) = view.debugFullScreenContentForTesting(text: "# Current", api: client) else {
+        guard case .markdown(_, _, let reader, _) = view.debugFullScreenContentForTesting(text: "# Current", api: client) else {
             Issue.record("Expected current-file Markdown reader context")
             return
         }
@@ -1754,7 +1754,7 @@ struct APIClientTests {
                 filePath: "docs/current.md", fileName: "current.md", source: item.source,
                 sessionId: item.session, controlSessionId: "control-session", workspaceRuntime: item.runtime
             )
-            guard case .markdown(_, _, let reader) = view.debugFullScreenContentForTesting(text: "# Current", api: client) else {
+            guard case .markdown(_, _, let reader, _) = view.debugFullScreenContentForTesting(text: "# Current", api: client) else {
                 Issue.record("Expected Markdown reader context")
                 return
             }

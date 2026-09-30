@@ -54,10 +54,10 @@ enum AgentEvent: Sendable {
     case notice(sessionId: String, id: String, message: String)
 
     /// Tool events carry a client-generated `toolEventId` (v1: sequential assumption).
-    case toolStart(sessionId: String, toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]? = nil)
-    case toolUpdate(sessionId: String, toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]? = nil)
+    case toolStart(sessionId: String, toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil)
+    case toolUpdate(sessionId: String, toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil)
     case toolOutput(ToolOutputEventPayload)
-    case toolEnd(sessionId: String, toolEventId: String, details: JSONValue? = nil, isError: Bool = false, resultSegments: [StyledSegment]? = nil)
+    case toolEnd(sessionId: String, toolEventId: String, details: JSONValue? = nil, isError: Bool = false, resultSegments: [StyledSegment]? = nil, nestedCalls: NestedToolCalls? = nil)
 
     // Compaction
     case compactionStart(sessionId: String, reason: String)

@@ -399,14 +399,32 @@ For tool rows, Oppi uses this order:
 3. server-provided `StyledSegment[]` summaries for the collapsed row
 4. generic rendering from tool `content` and `details`
 
+On iOS, generic expanded tool rows show one Markdown document with **Input**, optional **Calls**, and **Output** sections. Built-in bash/read/write/edit/ask rows and audio/image/media presentations keep their own renderers. Section labels appear only when the document has more than one section.
+
+Input shows non-empty arguments as a form table, source-code fences, or labeled text/JSON blocks. Calls shows Pi's recorded nested calls with status, compact arguments, duration, and errors. An incomplete record shows a notice.
+
 Expanded output uses this order:
 
 1. `details.expandedText` plus `details.presentationFormat`
-2. generic parsing of the tool text as JSON, markdown, diff, or code
-3. sanitized terminal/mobile-renderer snapshot fallback
-4. plain text
+2. the tool's text, parsed as JSON (including a text preamble followed by JSON), a unified diff, Markdown, or fenced plain text
+3. ANSI-stripped `details.tuiRender.expandedText`, only when the first two sources are empty
+4. the waiting status while the tool runs
 
-Sidecars are for short collapsed summaries only. Segment style is a closed semantic set: `bold`, `muted`, `dim`, `accent`, `success`, `warning`, or `error`. Invalid sidecar output is omitted and logged by the server because the Apple protocol mirror decodes this set strictly. Put rich readable output in `details.expandedText` instead of sidecar summary lines.
+JSON objects become form tables in wire key order. Scalar object arrays become tables when they have at most eight columns. Other arrays become lists of forms. JSON strings, MCP content wrappers, and Promise.allSettled results are unwrapped without tool-name checks. Rendered previews are bounded; the full-screen reader's **Raw** toggle retains all arguments, including null/empty fields, and raw output. Double-tap opens the same document with a **Rendered / Raw** toggle. Copy output still copies the tool's raw text.
+
+Sidecars provide short collapsed summaries and optional input hints. Each tool renderer can declare source-code fields:
+
+```typescript
+export default {
+  custom: {
+    inputPresentation: { codeFields: { source: "python" } },
+    renderCall(args) { return [{ text: "custom ", style: "bold" }]; },
+    renderResult(details, isError) { return []; },
+  },
+};
+```
+
+Oppi sends `inputPresentation` on live tool start/update and history tool calls. The built-in codemode hint declares `code` as JavaScript. Invalid hints are omitted and logged. Segment style is a closed semantic set: `bold`, `muted`, `dim`, `accent`, `success`, `warning`, or `error`. Invalid sidecar segments are also omitted and logged. Put rich output in `details.expandedText`, not sidecar summary lines.
 
 Mirror mode uses the same semantic request payloads from an interactive terminal Pi process. Mirror-specific first-wins dialog behavior lives in [`oppi-mirror.md`](oppi-mirror.md#extension-ui-compatibility-matrix).
 

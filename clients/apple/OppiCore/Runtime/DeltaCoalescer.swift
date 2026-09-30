@@ -169,7 +169,7 @@ final class DeltaCoalescer {
         case .textDelta, .thinkingDelta, .toolOutput:
             appendAppendableEvent(event)
 
-        case .toolStart(let sessionId, let toolEventId, _, _, _):
+        case .toolStart(let sessionId, let toolEventId, _, _, _, _):
             let key = ToolStartKey(sessionId: sessionId, toolEventId: toolEventId)
             if activeToolStarts.contains(key) {
                 appendOrReplaceBufferedToolEvent(event, key: key)
@@ -179,7 +179,7 @@ final class DeltaCoalescer {
                 deliverImmediately(event)
             }
 
-        case .toolUpdate(let sessionId, let toolEventId, _, _, _):
+        case .toolUpdate(let sessionId, let toolEventId, _, _, _, _):
             let key = ToolStartKey(sessionId: sessionId, toolEventId: toolEventId)
             if activeToolStarts.contains(key) || previewToolStarts.contains(key) {
                 appendOrReplaceBufferedToolEvent(event, key: key)
@@ -188,7 +188,7 @@ final class DeltaCoalescer {
                 deliverImmediately(event)
             }
 
-        case .toolEnd(let sessionId, let toolEventId, _, _, _):
+        case .toolEnd(let sessionId, let toolEventId, _, _, _, _):
             activeToolStarts.remove(ToolStartKey(sessionId: sessionId, toolEventId: toolEventId))
             previewToolStarts.remove(ToolStartKey(sessionId: sessionId, toolEventId: toolEventId))
             deliverImmediately(event)
@@ -558,12 +558,12 @@ final class DeltaCoalescer {
     }
 
     private func matchesBufferedToolStart(_ event: AgentEvent, key: ToolStartKey) -> Bool {
-        guard case .toolStart(let sessionId, let toolEventId, _, _, _) = event else { return false }
+        guard case .toolStart(let sessionId, let toolEventId, _, _, _, _) = event else { return false }
         return sessionId == key.sessionId && toolEventId == key.toolEventId
     }
 
     private func matchesBufferedToolUpdate(_ event: AgentEvent, key: ToolStartKey) -> Bool {
-        guard case .toolUpdate(let sessionId, let toolEventId, _, _, _) = event else { return false }
+        guard case .toolUpdate(let sessionId, let toolEventId, _, _, _, _) = event else { return false }
         return sessionId == key.sessionId && toolEventId == key.toolEventId
     }
 
@@ -591,19 +591,21 @@ final class DeltaCoalescer {
              .notice(_, let id, let message):
             return id.utf8.count + message.utf8.count
 
-        case .toolStart(_, _, let tool, let args, let callSegments),
-             .toolUpdate(_, _, let tool, let args, let callSegments):
+        case .toolStart(_, _, let tool, let args, let callSegments, let inputPresentation),
+             .toolUpdate(_, _, let tool, let args, let callSegments, let inputPresentation):
             return tool.utf8.count
                 + estimatedPayloadBytes(args)
                 + estimatedPayloadBytes(callSegments)
+                + (inputPresentation?.codeFields.reduce(0) { $0 + $1.key.utf8.count + $1.value.utf8.count } ?? 0)
 
         case .toolOutput(let payload):
             return payload.output.utf8.count
                 + estimatedPayloadBytes(payload.details)
 
-        case .toolEnd(_, _, let details, _, let resultSegments):
+        case .toolEnd(_, _, let details, _, let resultSegments, let nestedCalls):
             return estimatedPayloadBytes(details)
                 + estimatedPayloadBytes(resultSegments)
+                + ((try? JSONEncoder().encode(nestedCalls).count) ?? 0)
 
         case .compactionStart(_, let reason):
             return reason.utf8.count

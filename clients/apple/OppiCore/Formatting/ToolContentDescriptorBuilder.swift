@@ -4,24 +4,28 @@ import Foundation
 /// details, and output. Language, file type, presentationFormat, attachment
 /// identity, and copy text are resolved here so Mac cannot infer them again.
 enum ToolContentDescriptorBuilder {
-    private static let extensionStructuredParseBudgetBytes = 64 * 1024
-
     struct Context: Sendable {
         var args: [String: JSONValue]?
         var details: JSONValue?
         var fullOutput: String
         var isLoadingOutput: Bool
+        var inputPresentation: ToolInputPresentation?
+        var nestedCalls: NestedToolCalls?
 
         init(
             args: [String: JSONValue]? = nil,
             details: JSONValue? = nil,
             fullOutput: String = "",
-            isLoadingOutput: Bool = false
+            isLoadingOutput: Bool = false,
+            inputPresentation: ToolInputPresentation? = nil,
+            nestedCalls: NestedToolCalls? = nil
         ) {
             self.args = args
             self.details = details
             self.fullOutput = fullOutput
             self.isLoadingOutput = isLoadingOutput
+            self.inputPresentation = inputPresentation
+            self.nestedCalls = nestedCalls
         }
     }
 
@@ -202,7 +206,15 @@ enum ToolContentDescriptorBuilder {
             let hasStructuredVoiceContent = audioDetails != nil
             let hasStructuredMediaContent = !mediaAttachments.isEmpty
                 || imageAttachment(from: context.details) != nil
-            if !outputTrimmed.isEmpty || hasStructuredVoiceContent || hasStructuredMediaContent {
+            if !hasStructuredVoiceContent && !hasStructuredMediaContent {
+                content = ToolCallDocumentBuilder.build(
+                    args: context.args, inputPresentation: context.inputPresentation,
+                    nestedCalls: context.nestedCalls,
+                    output: sanitizeGenericExtensionOutput(output, toolName: tool), rawOutput: output,
+                    details: context.details, isDone: isDone
+                ).map { .markdown($0) }
+                copyOutput = output.isEmpty ? nil : output
+            } else if !outputTrimmed.isEmpty || hasStructuredVoiceContent || hasStructuredMediaContent {
                 if !isError,
                    let audioDetails,
                    audioDetails.audio == nil {
@@ -240,7 +252,7 @@ enum ToolContentDescriptorBuilder {
                     )
                     copyOutput = outputTrimmed.isEmpty ? tool : outputTrimmed
                 } else {
-                    let resolved = resolveGenericExtensionExpandedContent(
+                    let resolved = resolveMediaExpandedContent(
                         output: outputTrimmed,
                         toolName: tool,
                         details: context.details,
@@ -362,7 +374,7 @@ enum ToolContentDescriptorBuilder {
 
     // MARK: - Generic extension parsing
 
-    private static func resolveGenericExtensionExpandedContent(
+    private static func resolveMediaExpandedContent(
         output: String,
         toolName: String,
         details: JSONValue?,
@@ -370,22 +382,6 @@ enum ToolContentDescriptorBuilder {
     ) -> (content: ToolContentDescriptor, copyOutput: String) {
         let audioDetails = audioPresentation(from: details)
         let image = imageAttachment(from: details)
-        if audioDetails == nil,
-           image == nil,
-           let tuiExpandedText = toolTuiRenderExpandedText(from: details) {
-            return (
-                .terminal(
-                    ToolContentDescriptor.Terminal(
-                        command: nil,
-                        output: tuiExpandedText,
-                        unwrapped: false,
-                        language: nil
-                    )
-                ),
-                tuiExpandedText
-            )
-        }
-
         let fallbackTextOutput: String
         if let expandedText = extensionDetailString(details, keys: ["expandedText"]),
            !expandedText.isEmpty {
@@ -401,125 +397,7 @@ enum ToolContentDescriptorBuilder {
             return imageExpandedContent(image: image, fallbackText: fallbackTextOutput)
         }
 
-        let textOutput = fallbackTextOutput
-
-        let format = normalizedExtensionPresentationFormat(details)
-        let filePathHint = extensionDetailString(details, keys: ["filePath"])
-        let languageHint = extensionLanguageHint(details: details, filePathHint: filePathHint)
-        let startLineHint = extensionDetailInt(details, keys: ["startLine"])
-        let note: (String) -> ToolContentDescriptor = {
-            .terminal(
-                ToolContentDescriptor.Terminal(
-                    command: nil,
-                    output: textOutput + "\n\n[render note: \($0)]",
-                    unwrapped: false,
-                    language: nil
-                )
-            )
-        }
-
-        if format == "terminal" {
-            return (
-                .terminal(
-                    ToolContentDescriptor.Terminal(
-                        command: nil,
-                        output: textOutput,
-                        unwrapped: false,
-                        language: nil
-                    )
-                ),
-                ANSIParser.strip(textOutput)
-            )
-        }
-
-        if format == "json" || (format != "markdown" && textOutput.utf8.count <= extensionStructuredParseBudgetBytes) {
-            if textOutput.utf8.count > extensionStructuredParseBudgetBytes {
-                let first = textOutput.first(where: { !$0.isWhitespace && !$0.isNewline })
-                if format == "json" || first == "{" || first == "[" {
-                    return (note("json preview skipped (over 64KB). showing text"), textOutput)
-                }
-            } else if let data = textOutput.data(using: .utf8),
-                      let json = try? JSONSerialization.jsonObject(with: data),
-                      json is [String: Any] || json is [Any],
-                      JSONSerialization.isValidJSONObject(json),
-                      let prettyData = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
-                      let pretty = String(data: prettyData, encoding: .utf8) {
-                return (
-                    .terminal(
-                        ToolContentDescriptor.Terminal(
-                            command: nil,
-                            output: pretty,
-                            unwrapped: false,
-                            language: .json
-                        )
-                    ),
-                    pretty
-                )
-            } else if format == "json" {
-                return (note("json preview unavailable (invalid object/array). showing text"), textOutput)
-            }
-        }
-
-        if format == "markdown" {
-            return (.markdown(markdownDescriptor(text: textOutput, filePath: filePathHint)), textOutput)
-        }
-
-        if format == "code" {
-            return (
-                .code(
-                    ToolContentDescriptor.Code(
-                        text: textOutput,
-                        language: languageHint,
-                        startLine: startLineHint,
-                        filePath: filePathHint
-                    )
-                ),
-                textOutput
-            )
-        }
-
-        if format == "diff" {
-            switch genericUnifiedPatchContent(textOutput, filePathHint: filePathHint) {
-            case .some(let content):
-                return (content, textOutput)
-            case .none:
-                return (note("diff preview unavailable (invalid unified diff). showing text"), textOutput)
-            }
-        }
-
-        if let content = genericUnifiedPatchContent(textOutput, filePathHint: filePathHint) {
-            return (content, textOutput)
-        }
-
-        if looksLikeMarkdownContent(textOutput) {
-            return (.markdown(markdownDescriptor(text: textOutput, filePath: filePathHint)), textOutput)
-        }
-
-        if let languageHint {
-            return (
-                .code(
-                    ToolContentDescriptor.Code(
-                        text: textOutput,
-                        language: languageHint,
-                        startLine: startLineHint,
-                        filePath: filePathHint
-                    )
-                ),
-                textOutput
-            )
-        }
-
-        return (
-            .terminal(
-                ToolContentDescriptor.Terminal(
-                    command: nil,
-                    output: textOutput,
-                    unwrapped: false,
-                    language: nil
-                )
-            ),
-            textOutput
-        )
+        return (.terminal(.init(command: nil, output: fallbackTextOutput, unwrapped: false, language: nil)), fallbackTextOutput)
     }
 
     // MARK: - Private
@@ -548,14 +426,6 @@ enum ToolContentDescriptorBuilder {
             return FileType.detect(from: path, content: text)
         }
         return GeographicJSONSniffer.fileType(from: text) ?? fallback
-    }
-
-    private static func markdownDescriptor(text: String, filePath: String?) -> ToolContentDescriptor.Markdown {
-        let trimmed = filePath?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return ToolContentDescriptor.Markdown(
-            text: text,
-            filePath: trimmed?.isEmpty == false ? trimmed : nil
-        )
     }
 
     private static func streamingEditText(from editText: (oldText: String, newText: String)) -> String {
@@ -854,22 +724,6 @@ enum ToolContentDescriptorBuilder {
         }
     }
 
-    private static func normalizedExtensionPresentationFormat(_ details: JSONValue?) -> String? {
-        extensionDetailString(details, keys: ["presentationFormat"])?.lowercased()
-    }
-
-    private static func toolTuiRenderExpandedText(from details: JSONValue?) -> String? {
-        guard let object = details?.objectValue,
-              let tuiRender = object["tuiRender"]?.objectValue,
-              tuiRender["source"]?.stringValue == "renderResult",
-              Int(tuiRender["version"]?.numberValue ?? 0) == 1,
-              let expandedText = tuiRender["expandedText"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !expandedText.isEmpty else {
-            return nil
-        }
-        return expandedText
-    }
-
     private static func extensionDetailString(_ details: JSONValue?, keys: [String]) -> String? {
         guard let object = details?.objectValue else { return nil }
         for key in keys {
@@ -882,57 +736,7 @@ enum ToolContentDescriptorBuilder {
         return nil
     }
 
-    private static func extensionDetailInt(_ details: JSONValue?, keys: [String]) -> Int? {
-        guard let object = details?.objectValue else { return nil }
-        for key in keys {
-            guard let value = object[key] else { continue }
-            if let number = value.numberValue {
-                return Int(number)
-            }
-            if let stringValue = value.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-               let parsed = Int(stringValue) {
-                return parsed
-            }
-        }
-        return nil
-    }
-
-    private static func extensionLanguageHint(details: JSONValue?, filePathHint: String?) -> SyntaxLanguage? {
-        if let explicit = extensionDetailString(details, keys: ["language"]) {
-            let detected = SyntaxLanguage.detect(explicit)
-            if detected != .unknown {
-                return detected
-            }
-        }
-
-        if let filePathHint {
-            return FileType.detect(from: filePathHint).syntaxLanguage
-        }
-
-        return nil
-    }
-
-    private static func genericUnifiedPatchContent(_ text: String, filePathHint: String?) -> ToolContentDescriptor? {
-        guard let document = UnifiedPatchParser.parse(text, options: .lenient) else {
-            return nil
-        }
-        if document.isMultiFile {
-            return .terminal(
-                ToolContentDescriptor.Terminal(
-                    command: nil,
-                    output: text,
-                    unwrapped: false,
-                    language: nil
-                )
-            )
-        }
-        guard let file = document.files.first, !file.lines.isEmpty else {
-            return nil
-        }
-        return .diff(ToolContentDescriptor.Diff(lines: file.lines, path: file.displayPath ?? filePathHint))
-    }
-
-    private static func looksLikeMarkdownContent(_ text: String) -> Bool {
+    static func looksLikeMarkdownContent(_ text: String) -> Bool {
         if text.contains("```") {
             return true
         }

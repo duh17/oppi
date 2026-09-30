@@ -111,7 +111,8 @@ export interface SessionTraceServiceDeps {
     getEntryRenderers?: SessionRuntimes["getEntryRenderers"];
   };
   ensureSessionContextWindow: (session: Session) => Session;
-  mobileRenderers?: Pick<MobileRendererRegistry, "renderCall" | "renderResult">;
+  mobileRenderers?: Pick<MobileRendererRegistry, "renderCall" | "renderResult"> &
+    Partial<Pick<MobileRendererRegistry, "inputPresentation">>;
 }
 
 /**
@@ -122,7 +123,8 @@ export interface SessionTraceServiceDeps {
  * and live runtime refresh metadata.
  */
 export class SessionTraceService {
-  private readonly mobileRenderers: Pick<MobileRendererRegistry, "renderCall" | "renderResult">;
+  private readonly mobileRenderers: Pick<MobileRendererRegistry, "renderCall" | "renderResult"> &
+    Partial<Pick<MobileRendererRegistry, "inputPresentation">>;
 
   constructor(private readonly deps: SessionTraceServiceDeps) {
     this.mobileRenderers = deps.mobileRenderers ?? new MobileRendererRegistry();
@@ -173,9 +175,10 @@ export class SessionTraceService {
     const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
     return {
       session: this.deps.ensureSessionContextWindow(latestSession),
-      trace: params.includePresentationSegments
-        ? this.withMobileRenderSegments(trace || [])
-        : trace || [],
+      trace: this.withMobileRenderSegments(
+        trace || [],
+        params.includePresentationSegments === true,
+      ),
     };
   }
 
@@ -238,9 +241,10 @@ export class SessionTraceService {
     const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
     return {
       session: this.deps.ensureSessionContextWindow(latestSession),
-      trace: params.includePresentationSegments
-        ? this.withMobileRenderSegments(result.trace)
-        : result.trace,
+      trace: this.withMobileRenderSegments(
+        result.trace,
+        params.includePresentationSegments === true,
+      ),
       page: result.page,
       metrics: result.metrics,
     };
@@ -534,16 +538,23 @@ export class SessionTraceService {
     }
   }
 
-  private withMobileRenderSegments(trace: TraceEvent[]): TraceEvent[] {
+  private withMobileRenderSegments(trace: TraceEvent[], includeSegments: boolean): TraceEvent[] {
     const toolNames = new Map<string, string>();
     return trace.map((event) => {
       if (event.type === "toolCall") {
         const tool = event.tool ?? "unknown";
         toolNames.set(event.id, tool);
-        const callSegments = this.mobileRenderers.renderCall(tool, event.args ?? {});
-        return callSegments ? { ...event, callSegments } : event;
+        const callSegments = includeSegments
+          ? this.mobileRenderers.renderCall(tool, event.args ?? {})
+          : undefined;
+        const inputPresentation = this.mobileRenderers.inputPresentation?.(tool);
+        return {
+          ...event,
+          ...(callSegments ? { callSegments } : {}),
+          ...(inputPresentation ? { inputPresentation } : {}),
+        };
       }
-      if (event.type === "toolResult") {
+      if (event.type === "toolResult" && includeSegments) {
         const tool = event.toolName ?? toolNames.get(event.toolCallId ?? "");
         if (!tool) return event;
         const resultSegments = this.mobileRenderers.renderResult(

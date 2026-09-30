@@ -682,7 +682,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .code(let text, _, _, let startLine):
             textAndFirstLine = (text, startLine)
         case .plainText(let text, _),
-             .markdown(let text, _, _),
+             .markdown(let text, _, _, _),
              .html(let text, _),
              .latex(let text, _),
              .orgMode(let text, _),
@@ -748,6 +748,7 @@ final class FullScreenCodeViewController: UIViewController {
                 target: self,
                 action: #selector(toggleSource)
             )
+            toggle.accessibilityIdentifier = "fullscreen-code.source-toggle"
             toggle.tintColor = UIColor(palette.blue)
             rightItems.append(toggle)
         }
@@ -1367,7 +1368,7 @@ final class FullScreenCodeViewController: UIViewController {
                     filePath: document.filePath
                 )
             )
-        case .markdown(let text, let filePath, let resourceAccess):
+        case .markdown(let text, let filePath, let resourceAccess, _):
             let body = NativeFullScreenMarkdownBody(
                 content: text,
                 themeID: themeID,
@@ -1616,7 +1617,7 @@ final class FullScreenCodeViewController: UIViewController {
         themeID: ThemeID
     ) -> UIView {
         switch bodyContent(for: snapshot) {
-        case .markdown(let text, let filePath, let resourceAccess):
+        case .markdown(let text, let filePath, let resourceAccess, _):
             let body = makeLiveSourceMarkdownBody(
                 text: text,
                 filePath: filePath,
@@ -1642,7 +1643,7 @@ final class FullScreenCodeViewController: UIViewController {
     ) {
         let palette = themeID.palette
         switch bodyContent(for: snapshot) {
-        case .markdown(let text, let filePath, let resourceAccess):
+        case .markdown(let text, let filePath, let resourceAccess, _):
             liveSourceBodyView = nil
             liveSourceHTMLBodyView = nil
             if let body = liveSourceMarkdownBodyView, installedBodyView === body {
@@ -1702,7 +1703,7 @@ final class FullScreenCodeViewController: UIViewController {
         let palette = themeID.palette
         if snapshot.isDone {
             let presentation = makePresentation()
-            if case .markdown(let text, let filePath, let resourceAccess) = presentation.bodyContent,
+            if case .markdown(let text, let filePath, let resourceAccess, _) = presentation.bodyContent,
                let body = liveSourceMarkdownBodyView,
                installedBodyView === body {
                 // Flush final bytes and final source context through the shared
@@ -1763,11 +1764,11 @@ final class FullScreenCodeViewController: UIViewController {
         fallbackFilePath: String?
     ) -> FullScreenCodeContent {
         switch content {
-        case .markdown(_, let filePath, let resourceAccess):
+        case .markdown(_, let filePath, let resourceAccess, let rawText):
             return .markdown(
                 content: text,
                 filePath: filePath ?? fallbackFilePath,
-                resourceAccess: resourceAccess
+                resourceAccess: resourceAccess, rawText: rawText
             )
         case .html(_, let filePath):
             return .html(content: text, filePath: filePath ?? fallbackFilePath)
@@ -1782,8 +1783,8 @@ final class FullScreenCodeViewController: UIViewController {
 
     private func bodyContent(for content: FullScreenCodeContent) -> FullScreenCodeContent {
         if showSource {
-            if case .markdown(let text, let filePath, _) = content {
-                return .plainText(content: text, filePath: filePath)
+            if case .markdown(let text, let filePath, _, let rawText) = content {
+                return .plainText(content: rawText ?? text, filePath: filePath)
             }
             if case .html(let text, let filePath) = content {
                 return .code(content: text, language: "html", filePath: filePath, startLine: 1)
@@ -1811,7 +1812,8 @@ final class FullScreenCodeViewController: UIViewController {
 
     private func sourceToggleTitle(for content: FullScreenCodeContent) -> String? {
         switch content {
-        case .markdown:
+        case .markdown(_, _, _, let rawText):
+            if rawText != nil { return showSource ? String(localized: "Rendered") : String(localized: "Raw") }
             return showSource ? String(localized: "Reader") : String(localized: "Source")
         case .html:
             return showSource ? String(localized: "Preview") : String(localized: "Source")
@@ -2017,7 +2019,7 @@ final class FullScreenCodeViewController: UIViewController {
             return text
         case .diff(let document):
             return document.copyText
-        case .markdown(let text, _, _):
+        case .markdown(let text, _, _, _):
             return text
         case .html(let text, _):
             return text
@@ -2141,7 +2143,7 @@ final class FullScreenCodeViewController: UIViewController {
         switch content {
         case .mermaid(let text, let filePath): return .mermaid(text, fileName: filePath)
         case .latex(let text, let filePath): return .latex(text, fileName: filePath)
-        case .markdown(let text, let filePath, _): return .markdown(text, fileName: filePath)
+        case .markdown(let text, let filePath, _, _): return .markdown(text, fileName: filePath)
         case .orgMode(let text, let filePath): return .orgMode(text, fileName: filePath)
         case .html(let text, let filePath): return .html(text, fileName: filePath)
         case .graphviz(let text, let filePath): return .code(text, language: "dot", fileName: filePath)

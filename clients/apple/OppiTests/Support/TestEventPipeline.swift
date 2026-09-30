@@ -83,18 +83,18 @@ final class TestEventPipeline {
         case .thinkingDelta(let delta, let contentIndex):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: delta, contentIndex: contentIndex))
-        case .toolStart(let tool, let args, let toolCallId, let callSegments):
+        case .toolStart(let tool, let args, let toolCallId, let callSegments, let inputPresentation):
             conn.silenceWatchdog.recordEvent()
-            coalescer.receive(toolCallCorrelator.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments))
-        case .toolUpdate(let tool, let args, let toolCallId, let callSegments):
+            coalescer.receive(toolCallCorrelator.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation))
+        case .toolUpdate(let tool, let args, let toolCallId, let callSegments, let inputPresentation):
             conn.silenceWatchdog.recordEvent()
-            coalescer.receive(toolCallCorrelator.update(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments))
+            coalescer.receive(toolCallCorrelator.update(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation))
         case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId, mode: mode, truncated: truncated, totalBytes: totalBytes, details: details))
-        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments):
+        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments, let nestedCalls):
             conn.silenceWatchdog.recordEvent()
-            coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments))
+            coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments, nestedCalls: nestedCalls))
         case .messageEnd(let role, let content, let assistantContent, let entryId):
             if role == "assistant" {
                 coalescer.receive(.messageEnd(

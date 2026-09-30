@@ -18,13 +18,14 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { createLogger } from "./logger.js";
-import type { StyledSegment } from "./types.js";
+import type { StyledSegment, ToolInputPresentation } from "./types.js";
 
 // ─── Types ───
 
 export type { StyledSegment } from "./types.js";
 
 export interface MobileToolRenderer {
+  inputPresentation?: ToolInputPresentation;
   renderCall(args: Record<string, unknown>): StyledSegment[];
   renderResult(details: unknown, isError: boolean): StyledSegment[];
 }
@@ -605,6 +606,10 @@ const BUILTIN_RENDERERS: Record<string, MobileToolRenderer> = {
   log_experiment,
 };
 
+const BUILTIN_INPUT_PRESENTATIONS: Record<string, ToolInputPresentation> = {
+  codemode: { codeFields: { code: "javascript" } },
+};
+
 export class MobileRendererRegistry {
   private readonly log = createLogger();
   private readonly invalidWarnings = new Set<string>();
@@ -633,6 +638,31 @@ export class MobileRendererRegistry {
         this.renderers.set(name, renderer);
       }
     }
+  }
+
+  /** Static producer metadata is shared by live events and trace replay. */
+  inputPresentation(toolName: string): ToolInputPresentation | undefined {
+    const value = this.renderers.get(toolName)?.inputPresentation;
+    if (value === undefined) {
+      return BUILTIN_INPUT_PRESENTATIONS[toolName];
+    }
+    const fields = asRecord(asRecord(value)?.codeFields);
+    if (
+      !fields ||
+      Array.isArray(fields) ||
+      Object.keys(fields).length > 32 ||
+      Object.entries(fields).some(
+        ([key, language]) =>
+          !key ||
+          key.length > 100 ||
+          typeof language !== "string" ||
+          !/^[a-zA-Z0-9_+-]{1,40}$/.test(language),
+      )
+    ) {
+      this.warnInvalidRenderer(toolName, "input", "invalid inputPresentation.codeFields");
+      return undefined;
+    }
+    return { codeFields: { ...fields } as Record<string, string> };
   }
 
   /** Render call segments, returning undefined if no renderer or on error. */
@@ -671,7 +701,11 @@ export class MobileRendererRegistry {
     }
   }
 
-  private warnInvalidRenderer(toolName: string, phase: "call" | "result", reason: string): void {
+  private warnInvalidRenderer(
+    toolName: string,
+    phase: "call" | "result" | "input",
+    reason: string,
+  ): void {
     const key = `${toolName}\u0000${phase}\u0000${reason}`;
     if (this.invalidWarnings.has(key)) return;
     this.invalidWarnings.add(key);
@@ -745,6 +779,9 @@ export class MobileRendererRegistry {
           this.renderers.set(toolName, {
             renderCall: (args) => renderCall(args) as StyledSegment[],
             renderResult: (details, isError) => renderResult(details, isError) as StyledSegment[],
+            ...(candidate?.inputPresentation !== undefined
+              ? { inputPresentation: candidate.inputPresentation as ToolInputPresentation }
+              : {}),
           });
           loaded.push(toolName);
         } else {

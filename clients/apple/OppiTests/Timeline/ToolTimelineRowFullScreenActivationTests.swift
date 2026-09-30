@@ -133,7 +133,7 @@ struct ToolTimelineRowFullScreenActivationTests {
             activate: { $0.performExpandedActivation() }
         )
         #expect(host.presentedViewController == nil)
-        guard case .markdown(let text, _, _) = opened.payload.content else {
+        guard case .markdown(let text, _, _, _) = opened.payload.content else {
             Issue.record("Expected markdown reader payload")
             return
         }
@@ -259,7 +259,7 @@ struct ToolTimelineRowFullScreenActivationTests {
             activate: { $0.performExpandedActivation() }
         )
         #expect(host.presentedViewController == nil)
-        guard case .markdown(let text, _, _) = opened.payload.content else {
+        guard case .markdown(let text, _, _, _) = opened.payload.content else {
             Issue.record("Expected markdown reader payload")
             return
         }
@@ -300,7 +300,7 @@ struct ToolTimelineRowFullScreenActivationTests {
             Issue.record("Expected .liveSource for streaming markdown content")
             return
         }
-        guard case .markdown(let content, _, _)? = snapshot.finalContent else {
+        guard case .markdown(let content, _, _, _)? = snapshot.finalContent else {
             Issue.record("Expected streaming markdown to carry a markdown render hint")
             return
         }
@@ -333,7 +333,7 @@ struct ToolTimelineRowFullScreenActivationTests {
             terminalStream: nil
         )
 
-        guard case .markdown(let text, let filePath, let resourceAccess) = content else {
+        guard case .markdown(let text, let filePath, let resourceAccess, _) = content else {
             Issue.record("Expected done markdown full-screen content, got \(String(describing: content))")
             return
         }

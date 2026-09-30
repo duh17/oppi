@@ -2865,7 +2865,7 @@ struct SessionFileFullScreenContentBuilderTests {
             sessionID: "session-1"
         )
 
-        guard case .markdown(_, let filePath, let resourceAccess) = content else {
+        guard case .markdown(_, let filePath, let resourceAccess, _) = content else {
             Issue.record("Expected markdown full-screen content")
             return
         }
@@ -2888,7 +2888,7 @@ struct SessionFileFullScreenContentBuilderTests {
             sessionID: "session-1"
         )
 
-        guard case .markdown(_, _, let resourceAccess) = content else {
+        guard case .markdown(_, _, let resourceAccess, _) = content else {
             Issue.record("Expected markdown full-screen content")
             return
         }
@@ -2906,7 +2906,7 @@ struct SessionFileFullScreenContentBuilderTests {
             sessionID: "session-1"
         )
 
-        guard case .markdown(_, let filePath, _) = content else {
+        guard case .markdown(_, let filePath, _, _) = content else {
             Issue.record("Expected markdown full-screen content")
             return
         }

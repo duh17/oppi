@@ -28,7 +28,8 @@ import {
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { OPPI_LIFECYCLE_CUSTOM_TYPE } from "./lifecycle-journal-extension.js";
 import { createLogger } from "./logger.js";
-import type { StyledSegment } from "./types.js";
+import type { StyledSegment, ToolInputPresentation, NestedToolCalls } from "./types.js";
+import { validatedNestedCalls } from "./tool-nested-calls.js";
 import {
   sessionAttachmentDetailsForToolCall,
   sessionAttachmentMediaDetailsForToolResult,
@@ -338,6 +339,8 @@ export interface TraceEvent {
   args?: Record<string, unknown>;
   /** Semantic collapsed presentation reconstructed for durable replay. */
   callSegments?: StyledSegment[];
+  inputPresentation?: ToolInputPresentation;
+  nestedCalls?: NestedToolCalls;
   /** For toolResult: the tool's output */
   output?: string;
   /** For paged trace previews: true when output contains only an initial preview. */
@@ -1004,6 +1007,9 @@ function emitMessageEvents(
       output: output || "",
       isError: msg.isError === true,
       ...(details !== undefined ? { details } : {}),
+      ...(validatedNestedCalls(rawMsg.nestedCalls)
+        ? { nestedCalls: validatedNestedCalls(rawMsg.nestedCalls) }
+        : {}),
     });
   }
 }

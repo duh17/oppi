@@ -20,6 +20,7 @@ import type {
 } from "./types.js";
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
+import { validatedNestedCalls } from "./tool-nested-calls.js";
 import type { PiMessage } from "./pi-events.js";
 import { sanitizeToolResultDetails } from "./visual-schema.js";
 import { stripAnsiEscapes } from "./ansi.js";
@@ -942,6 +943,8 @@ export function translatePiEvent(
               toolCallUpdate.callSegments = callSegments;
             }
           }
+          const inputPresentation = ctx.mobileRenderers?.inputPresentation(toolCallUpdate.tool);
+          if (inputPresentation) toolCallUpdate.inputPresentation = inputPresentation;
           messages.push(toolCallUpdate);
         }
 
@@ -956,6 +959,7 @@ export function translatePiEvent(
     case "tool_execution_start": {
       const toolCallId = resolveToolCallId(event);
       const callSegments = ctx.mobileRenderers?.renderCall(event.toolName, event.args || {});
+      const inputPresentation = ctx.mobileRenderers?.inputPresentation(event.toolName);
       // Track tool name for shell preview decisions in subsequent updates.
       if (toolCallId) {
         ctx.toolNames.set(toolCallId, event.toolName);
@@ -970,6 +974,7 @@ export function translatePiEvent(
         args: event.args || {},
         toolCallId,
         ...(callSegments ? { callSegments } : {}),
+        ...(inputPresentation ? { inputPresentation } : {}),
       });
 
       return messages;
@@ -1163,6 +1168,7 @@ export function translatePiEvent(
           Array.isArray(resultContents) ? extractAttachmentMedia(resultContents) : [],
         ),
       );
+      const nestedCalls = validatedNestedCalls(asRecord(event.result)?.nestedCalls);
       const resultSegments = ctx.mobileRenderers?.renderResult(
         event.toolName,
         details,
@@ -1170,6 +1176,7 @@ export function translatePiEvent(
       );
       messages.push({
         type: "tool_end",
+        ...(nestedCalls ? { nestedCalls } : {}),
         tool: event.toolName,
         toolCallId,
         ...(details !== undefined && details !== null ? { details } : {}),
@@ -1228,6 +1235,21 @@ export function translatePiEvent(
     // deltas finalize the live bubble and mint a second row.
     case "message_end": {
       const message = event.message;
+      // Pi attaches nestedCalls to the result message, not tool_execution_end.
+      // A metadata-only end enriches the already-completed row without replaying output.
+      if (message.role === "toolResult") {
+        const nestedCalls = validatedNestedCalls(asRecord(message)?.nestedCalls);
+        if (nestedCalls)
+          return [
+            {
+              type: "tool_end",
+              tool: message.toolName,
+              toolCallId: message.toolCallId,
+              isError: message.isError,
+              nestedCalls,
+            },
+          ];
+      }
       if (message.role !== "assistant") {
         ctx.streamedAssistantText = "";
         ctx.currentThinkingContentIndex = undefined;

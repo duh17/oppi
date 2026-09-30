@@ -23,6 +23,9 @@ final class UIValidateTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments.append("--screenshot-preview")
         app.launchEnvironment["SCREENSHOT_SCREEN"] = resolvedScreen
+        if let fixture = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_FIXTURE"] {
+            app.launchEnvironment["OPPI_UI_VALIDATE_FIXTURE"] = fixture
+        }
         if let colorScheme = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"],
            !colorScheme.isEmpty {
             app.launchEnvironment["SCREENSHOT_COLOR_SCHEME"] = colorScheme
@@ -49,9 +52,12 @@ final class UIValidateTests: XCTestCase {
             if point.count == 2 {
                 app.coordinate(withNormalizedOffset: CGVector(dx: point[0], dy: point[1])).tap()
             } else {
-                let target = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+                let doubleTap = identifier.hasPrefix("doubletap:")
+                let swipeUp = identifier.hasPrefix("swipeup:")
+                let targetID = (doubleTap || swipeUp) ? String(identifier.dropFirst(identifier.firstIndex(of: ":").map { identifier.distance(from: identifier.startIndex, to: $0) + 1 } ?? 0)) : identifier
+                let target = app.descendants(matching: .any).matching(identifier: targetID).firstMatch
                 XCTAssertTrue(target.waitForExistence(timeout: 8), "Missing action: \(identifier)")
-                target.tap()
+                if doubleTap { target.doubleTap() } else if swipeUp { target.swipeUp() } else { target.tap() }
             }
             _ = try app.snapshot() // Wait for the resulting UI state to settle.
             try app.screenshot().pngRepresentation.write(to: outputDir.appendingPathComponent("step-\(index + 1).png"))

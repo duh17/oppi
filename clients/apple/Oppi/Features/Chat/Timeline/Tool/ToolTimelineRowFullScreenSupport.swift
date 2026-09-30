@@ -84,7 +84,8 @@ enum ToolTimelineRowFullScreenSupport {
             return .markdown(
                 content: text,
                 filePath: path,
-                resourceAccess: configuration.resourceAccess
+                resourceAccess: configuration.resourceAccess,
+                rawText: configuration.rawMarkdownText
             )
 
         case .document(let family):
@@ -188,7 +189,8 @@ enum ToolTimelineRowFullScreenSupport {
                 finalContent: .markdown(
                     content: text,
                     filePath: path,
-                    resourceAccess: configuration.resourceAccess
+                    resourceAccess: configuration.resourceAccess,
+                    rawText: configuration.rawMarkdownText
                 )
             )
 

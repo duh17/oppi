@@ -243,6 +243,7 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     tool: "bash",
     args: { command: "npm test" },
     toolCallId: "tc-001",
+    inputPresentation: { codeFields: { command: "bash" } },
   },
   tool_start_with_segments: {
     type: "tool_start",
@@ -260,6 +261,7 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     tool: "write",
     args: { path: "README.md", content: "hello" },
     toolCallId: "tc-update-001",
+    inputPresentation: { codeFields: { content: "markdown" } },
   },
   tool_output: {
     type: "tool_output",
@@ -285,6 +287,18 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     type: "tool_end",
     tool: "remember",
     toolCallId: "tc-ext-001",
+    nestedCalls: {
+      calls: [
+        {
+          id: "tc-ext-001/1",
+          name: "lookup",
+          arguments: { query: "notes" },
+          status: "ok",
+          durationMs: 1528,
+        },
+      ],
+      complete: true,
+    },
     details: { file: "2026-02-18.md", redacted: false },
     isError: false,
     resultSegments: [

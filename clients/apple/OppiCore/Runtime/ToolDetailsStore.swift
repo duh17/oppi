@@ -7,6 +7,10 @@ import Foundation
 @MainActor @Observable
 final class ToolDetailsStore {
     private var store: [String: JSONValue] = [:]
+    private var calls: [String: NestedToolCalls] = [:]
+
+    func setNestedCalls(_ nested: NestedToolCalls, for id: String) { calls[id] = nested }
+    func nestedCalls(for id: String) -> NestedToolCalls? { calls[id] }
 
     func set(_ details: JSONValue, for id: String) {
         store[id] = details
@@ -18,9 +22,11 @@ final class ToolDetailsStore {
 
     func remove(for id: String) {
         store.removeValue(forKey: id)
+        calls.removeValue(forKey: id)
     }
 
     func clearAll() {
         store.removeAll()
+        calls.removeAll()
     }
 }

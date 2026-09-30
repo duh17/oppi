@@ -81,6 +81,7 @@ enum ToolContentDescriptor: Equatable, Sendable {
     struct Markdown: Equatable, Sendable {
         var text: String
         var filePath: String? = nil
+        var rawText: String? = nil
     }
 
     struct File: Equatable, Sendable {

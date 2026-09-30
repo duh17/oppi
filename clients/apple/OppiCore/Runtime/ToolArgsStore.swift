@@ -7,6 +7,10 @@ import Foundation
 @MainActor @Observable
 final class ToolArgsStore {
     private var store: [String: [String: JSONValue]] = [:]
+    private var presentations: [String: ToolInputPresentation] = [:]
+
+    func setInputPresentation(_ presentation: ToolInputPresentation, for id: String) { presentations[id] = presentation }
+    func inputPresentation(for id: String) -> ToolInputPresentation? { presentations[id] }
 
     static let maxPreviewStringBytes = 256 * 1024
 
@@ -24,6 +28,7 @@ final class ToolArgsStore {
 
     func clearAll() {
         store.removeAll()
+        presentations.removeAll()
     }
 
     private static func previewArgs(_ args: [String: JSONValue]) -> [String: JSONValue] {

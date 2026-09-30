@@ -20,6 +20,7 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var expandedContent: ToolPresentationBuilder.ToolExpandedContent?
     let copyCommandText: String?
     let copyOutputText: String?
+    var rawMarkdownText: String? = nil
     let languageBadge: String?
     let trailing: String?
     let titleLineBreakMode: NSLineBreakMode

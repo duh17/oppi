@@ -259,8 +259,8 @@ struct ToolPresentationBuilderTests {
         #expect(delivery == .playNow)
     }
 
-    @Test("voice_speak errors render generic text instead of a voice card")
-    func voiceSpeakErrorsUseTextPresentation() {
+    @Test("voice-named errors without media metadata render a generic document")
+    func voiceSpeakErrorsUseDocumentPresentation() {
         let errorMessage = "voice_speak text has no speakable content after removing URLs/addresses"
 
         let config = ToolPresentationBuilder.build(
@@ -275,12 +275,16 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .text(let text, let language) = config.expandedContent else {
-            Issue.record("Expected voice_speak error output to stay in generic text presentation")
+        guard case .markdown(let text, _) = config.expandedContent else {
+            Issue.record("Expected a generic document, not an audio card")
             return
         }
-        #expect(text == errorMessage)
-        #expect(language == nil)
+        let blocks = parseCommonMark(text)
+        #expect(blocks.contains(.codeBlock(language: "text", code: errorMessage)))
+        #expect(blocks.contains { block in
+            guard case .table(_, let rows) = block else { return false }
+            return rows.contains { $0.map { plainText(from: $0) } == ["text", "https://example.com/private-link"] }
+        })
         #expect(config.copyOutputText == errorMessage)
     }
 
@@ -1087,7 +1091,7 @@ struct ToolPresentationBuilderTests {
 
         #expect(modeName(readCode.expandedContent) == "code")
         #expect(modeName(writeCode.expandedContent) == "code")
-        #expect(modeName(extensionCode.expandedContent) == "code")
+        #expect(modeName(extensionCode.expandedContent) == "markdown")
 
         let editDiff = ToolPresentationBuilder.build(
             itemID: "edit-diff", tool: "edit",
@@ -1121,7 +1125,7 @@ struct ToolPresentationBuilderTests {
         )
 
         #expect(modeName(editDiff.expandedContent) == "diff")
-        #expect(modeName(extensionDiff.expandedContent) == "diff")
+        #expect(modeName(extensionDiff.expandedContent) == "markdown")
     }
 
     @Test("edit diff uses pi patch absolute line numbers")
@@ -1494,7 +1498,8 @@ struct ToolPresentationBuilderTests {
             Issue.record("Expected .markdown content for extension markdown tool")
             return
         }
-        #expect(text == markdown)
+        #expect(text.hasSuffix("## Output\n\n" + markdown))
+        #expect(text.contains("## Input"))
     }
 
     @Test("extension streaming uses markdown pipeline (not plain text downgrade)")
@@ -1567,6 +1572,7 @@ struct ToolPresentationBuilderTests {
                     "presentationFormat": .string("code"),
                     "language": .string("swift"),
                     "filePath": .string("Sources/ExtensionMode.swift"),
+                    "expandedText": .string(code),
                     "startLine": .number(42),
                 ]),
                 expanded: ["ext-code"],
@@ -1574,14 +1580,11 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .code(let text, let language, let startLine, let filePath) = config.expandedContent else {
-            Issue.record("Expected .code content for extension code hint")
+        guard case .markdown(let text, let filePath) = config.expandedContent else {
+            Issue.record("Expected Markdown code fence")
             return
         }
-
-        #expect(text == code)
-        #expect(language == .swift)
-        #expect(startLine == 42)
+        #expect(text == "```swift\n" + code + "\n```")
         #expect(filePath == "Sources/ExtensionMode.swift")
     }
 
@@ -1610,15 +1613,11 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .diff(let lines, let path) = config.expandedContent else {
-            Issue.record("Expected .diff content for extension diff hint")
+        guard case .markdown(let text, _) = config.expandedContent else {
+            Issue.record("Expected Markdown diff fence")
             return
         }
-
-        #expect(path == "Sources/App.swift")
-        #expect(lines.contains { $0.kind == .removed && $0.text == "let value = 1" })
-        #expect(lines.contains { $0.kind == .added && $0.text == "let value = 2" })
-        #expect(lines[0].oldLineNumber == 1 || lines[0].newLineNumber == 1)
+        #expect(text == "```diff\n" + diffText + "\n```")
     }
 
     @Test("extension expanded keeps multi-file generic patches as plain text")
@@ -1658,19 +1657,13 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .text(let hintedText, let hintedLanguage) = hinted.expandedContent else {
-            Issue.record("Expected plain text for multi-file format=diff, got \(String(describing: hinted.expandedContent))")
+        guard case .markdown(let hintedText, _) = hinted.expandedContent,
+              case .markdown(let autoText, _) = auto.expandedContent else {
+            Issue.record("Expected Markdown diff fences")
             return
         }
-        guard case .text(let autoText, let autoLanguage) = auto.expandedContent else {
-            Issue.record("Expected plain text for multi-file auto-detect, got \(String(describing: auto.expandedContent))")
-            return
-        }
-
-        #expect(hintedLanguage == nil)
-        #expect(autoLanguage == nil)
-        #expect(hintedText == diffText)
-        #expect(autoText == diffText)
+        #expect(hintedText == "```diff\n" + diffText + "\n```")
+        #expect(autoText == hintedText)
         #expect(!hintedText.contains("[render note:"))
         #expect(hintedText.contains("--- a/A.swift"))
         #expect(hintedText.contains("--- a/B.swift"))
@@ -1701,12 +1694,11 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .text(let text, let language) = config.expandedContent else {
-            Issue.record("Expected plain unified text for text+binary patch, got \(String(describing: config.expandedContent))")
+        guard case .markdown(let text, _) = config.expandedContent else {
+            Issue.record("Expected Markdown diff fence")
             return
         }
-        #expect(language == nil)
-        #expect(text == diffText)
+        #expect(text == "```diff\n" + diffText + "\n```")
         #expect(!text.contains("[render note:"))
         #expect(text.contains("--- a/A.swift"))
         #expect(text.contains("Binary files a/photo.png and b/photo.png differ"))
@@ -1730,12 +1722,11 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .diff(let lines, _) = config.expandedContent else {
-            Issue.record("Expected rich diff for headerless single-file replacement")
+        guard case .markdown(let text, _) = config.expandedContent else {
+            Issue.record("Expected Markdown diff fence")
             return
         }
-        #expect(lines.map(\.kind) == [.removed, .added])
-        #expect(lines.map(\.text) == ["old line", "new line"])
+        #expect(text == "```diff\n" + diffText + "\n```")
     }
 
     @Test("extension expanded mode routing uses visual/json/markdown/text deterministically")
@@ -1752,12 +1743,11 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .text(let hintedJSONText, let hintedJSONLanguage) = jsonHint.expandedContent else {
-            Issue.record("Expected .text(.json) for explicit json format")
+        guard case .markdown(let hintedJSONText, _) = jsonHint.expandedContent else {
+            Issue.record("Expected JSON form")
             return
         }
-        #expect(hintedJSONLanguage == .json)
-        #expect(hintedJSONText.contains("\n"))
+        #expect(hintedJSONText.contains("| b | 2 |\n| a | 1 |"))
 
         let autoJSON = ToolPresentationBuilder.build(
             itemID: "ext-json-auto", tool: "extensions.lookup",
@@ -1770,12 +1760,14 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .text(let autoJSONText, let autoJSONLanguage) = autoJSON.expandedContent else {
-            Issue.record("Expected .text(.json) for auto-detected json")
+        guard case .markdown(let autoJSONText, _) = autoJSON.expandedContent else {
+            Issue.record("Expected JSON form")
             return
         }
-        #expect(autoJSONLanguage == .json)
-        #expect(autoJSONText.contains("\"EXT-1\""))
+        #expect(parseCommonMark(autoJSONText).contains { block in
+            guard case .table(_, let rows) = block else { return false }
+            return rows.contains { $0.map { plainText(from: $0) }.contains("EXT-1") }
+        })
 
         let markdownHint = ToolPresentationBuilder.build(
             itemID: "ext-md-hint", tool: "extensions.notes",
@@ -1797,7 +1789,7 @@ struct ToolPresentationBuilderTests {
 
     }
 
-    @Test("extension json over budget stays text, markdown stays markdown")
+    @Test("extension oversized output uses bounded document previews and complete raw copy")
     func extensionStructuredBudgetHandling() {
         let oversizedJSON = "{\"payload\":\"" + String(repeating: "x", count: 70_000) + "\"}"
         let jsonFallback = ToolPresentationBuilder.build(
@@ -1812,12 +1804,12 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .text(let jsonText, let jsonLanguage) = jsonFallback.expandedContent else {
-            Issue.record("Expected text fallback for oversized json")
+        guard case .markdown(let jsonText, _) = jsonFallback.expandedContent else {
+            Issue.record("Expected bounded document for oversized JSON")
             return
         }
-        #expect(jsonLanguage == nil)
-        #expect(jsonText.contains("json preview skipped (over 64KB)"))
+        #expect(jsonText.contains("Preview limited to 64 KB"))
+        #expect(jsonText.utf8.count < 66000)
         #expect(jsonFallback.copyOutputText == oversizedJSON)
 
         let oversizedMarkdown = String(repeating: "- row\n", count: 20_000)
@@ -1838,7 +1830,8 @@ struct ToolPresentationBuilderTests {
             return
         }
         #expect(!markdownText.contains("markdown preview skipped"))
-        #expect(markdown.copyOutputText == oversizedMarkdown.trimmingCharacters(in: .whitespacesAndNewlines))
+        #expect(markdownText.contains("Preview limited to 64 KB"))
+        #expect(markdown.copyOutputText == oversizedMarkdown)
     }
 
     @Test("extension expanded strips invocation echo and excessive blank lines")
@@ -1861,14 +1854,12 @@ struct ToolPresentationBuilderTests {
             context: emptyContext(expanded: ["t-remember"], fullOutput: noisyOutput)
         )
 
-        guard case .text(let text, let language) = config.expandedContent else {
-            Issue.record("Expected .text content for remember tool")
+        guard case .markdown(let text, _) = config.expandedContent else {
+            Issue.record("Expected sanitized Markdown text fence")
             return
         }
-
-        #expect(language == nil)
-        #expect(text == "Saved to journal: 2026-02-28-mac-studio.md")
-        #expect(config.copyOutputText == "Saved to journal: 2026-02-28-mac-studio.md")
+        #expect(text == "```text\nSaved to journal: 2026-02-28-mac-studio.md\n```")
+        #expect(config.copyOutputText == noisyOutput)
 
         let namespacedOutput = """
         extensions.remember(tags: [2], text: first line
@@ -1885,12 +1876,11 @@ struct ToolPresentationBuilderTests {
             context: emptyContext(expanded: ["t-remember-ns"], fullOutput: namespacedOutput)
         )
 
-        guard case .text(let namespacedText, _) = namespaced.expandedContent else {
-            Issue.record("Expected .text content for namespaced remember tool")
+        guard case .markdown(let namespacedText, _) = namespaced.expandedContent else {
+            Issue.record("Expected sanitized Markdown text fence")
             return
         }
-
-        #expect(namespacedText == "Saved to journal: 2026-02-28-mac-studio.md")
+        #expect(namespacedText == "```text\nSaved to journal: 2026-02-28-mac-studio.md\n```")
     }
 
     @Test("extension expanded quoted invocation + ansi progress lines reproduces empty-space bug")
@@ -1913,16 +1903,14 @@ struct ToolPresentationBuilderTests {
             context: emptyContext(expanded: ["t-remember-quoted-ansi"], fullOutput: noisyOutput)
         )
 
-        guard case .text(let text, let language) = config.expandedContent else {
-            Issue.record("Expected .text content for remember tool")
+        guard case .markdown(let text, _) = config.expandedContent else {
+            Issue.record("Expected sanitized Markdown text fence")
             return
         }
-
-        #expect(language == nil)
-        #expect(text == "Saved to journal: 2026-02-28-mac-studio.md")
+        #expect(text == "```text\nSaved to journal: 2026-02-28-mac-studio.md\n```")
         #expect(!text.contains("remember \"Compacted"))
         #expect(!text.contains("\u{001B}["))
-        #expect(config.copyOutputText == "Saved to journal: 2026-02-28-mac-studio.md")
+        #expect(config.copyOutputText == noisyOutput)
     }
 
     @Test("extension lookup collapsed uses segments when available")
@@ -1998,7 +1986,7 @@ struct ToolPresentationBuilderTests {
         #expect(!md.contains("Saved to journal"))
     }
 
-    @Test("extension expanded prefers tui render snapshot over expandedText")
+    @Test("extension expandedText takes precedence over the live-only tui snapshot")
     func extensionExpandedTextFromTuiRenderSnapshot() {
         let config = ToolPresentationBuilder.build(
             itemID: "t-tui-expanded", tool: "todo",
@@ -2021,18 +2009,15 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .text(let text, let language) = config.expandedContent else {
-            Issue.record("Expected .text content from details.tuiRender.expandedText")
+        guard case .markdown(let text, _) = config.expandedContent else {
+            Issue.record("Expected Markdown document")
             return
         }
-
-        #expect(text.contains("TODO-123"))
-        #expect(text.contains("Body from TUI"))
-        #expect(!text.contains("markdown fallback"))
-        #expect(language == nil)
+        #expect(text == "markdown fallback")
+        #expect(config.copyOutputText == "raw todo output")
     }
 
-    @Test("extension terminal output uses the CLI human formatter and keeps ANSI for native interpretation")
+    @Test("extension terminal output strips ANSI and preserves layout in a fence")
     func extensionTerminalExpandedText() {
         let formatted = "\u{001B}[1mAgent\u{001B}[0m\n  Name  Reviewer"
         let config = ToolPresentationBuilder.build(
@@ -2051,13 +2036,12 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .text(let text, let language) = config.expandedContent else {
-            Issue.record("Expected terminal-formatted .text content")
+        guard case .markdown(let text, _) = config.expandedContent else {
+            Issue.record("Expected ANSI-stripped terminal fence")
             return
         }
-        #expect(text == formatted)
-        #expect(language == nil)
-        #expect(config.copyOutputText == ANSIParser.strip(formatted))
+        #expect(text == "```text\n" + ANSIParser.strip(formatted) + "\n```")
+        #expect(config.copyOutputText == "{\"ok\":true}")
     }
 
     @Test("terminal presentation stays plain text even when output resembles markdown")
@@ -2078,12 +2062,11 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .text(let text, let language) = config.expandedContent else {
-            Issue.record("Expected terminal-formatted .text content")
+        guard case .markdown(let text, _) = config.expandedContent else {
+            Issue.record("Expected ANSI-stripped terminal fence")
             return
         }
-        #expect(text == formatted)
-        #expect(language == nil)
+        #expect(text == "```text\n" + ANSIParser.strip(formatted) + "\n```")
     }
 
     @Test("extension expanded falls back to raw output when no expandedText")
@@ -2099,11 +2082,11 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .text(let text, _) = config.expandedContent else {
-            Issue.record("Expected .text content when no expandedText")
+        guard case .markdown(let text, _) = config.expandedContent else {
+            Issue.record("Expected Markdown text fence")
             return
         }
-        #expect(text == "plain output text")
+        #expect(text == "```text\nplain output text\n```")
     }
 
     @Test("extension expanded with expandedText and code format renders code")
@@ -2125,12 +2108,11 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .code(let text, let language, _, _) = config.expandedContent else {
-            Issue.record("Expected .code content from expandedText + code format")
+        guard case .markdown(let text, _) = config.expandedContent else {
+            Issue.record("Expected Markdown code fence")
             return
         }
-        #expect(text == code)
-        #expect(language == .swift)
+        #expect(text == "```swift\n" + code + "\n```")
     }
 
     @Test("extension expanded with empty expandedText uses raw output")
@@ -2150,11 +2132,11 @@ struct ToolPresentationBuilderTests {
         )
 
         // Empty expandedText should fall through to raw output
-        guard case .text(let text, _) = config.expandedContent else {
-            Issue.record("Expected .text content for empty expandedText")
+        guard case .markdown(let text, _) = config.expandedContent else {
+            Issue.record("Expected Markdown text fence")
             return
         }
-        #expect(text == "fallback output")
+        #expect(text == "```text\nfallback output\n```")
     }
 
     // MARK: - Unknown Tool
@@ -2183,11 +2165,11 @@ struct ToolPresentationBuilderTests {
             context: emptyContext(expanded: ["t1"], fullOutput: "full tool output")
         )
 
-        guard case .text(let text, _) = config.expandedContent else {
-            Issue.record("Expected .text content for unknown tool")
+        guard case .markdown(let text, _) = config.expandedContent else {
+            Issue.record("Expected Markdown text fence")
             return
         }
-        #expect(text == "full tool output")
+        #expect(text == "```text\nfull tool output\n```")
     }
 
     // MARK: - Title Truncation

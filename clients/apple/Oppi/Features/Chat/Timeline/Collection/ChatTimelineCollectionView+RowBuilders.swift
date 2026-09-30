@@ -327,7 +327,7 @@ extension ChatTimelineCollectionHost.Controller {
         isDone: Bool,
         details: JSONValue?
     ) -> ToolTimelineRowConfiguration {
-        let context = ToolPresentationBuilder.Context(
+        var context = ToolPresentationBuilder.Context(
             args: toolArgsStore?.args(for: itemID),
             details: details,
             expandedItemIDs: reducer?.expandedItemIDs ?? [],
@@ -339,6 +339,8 @@ extension ChatTimelineCollectionHost.Controller {
             elapsedSeconds: reducer?.toolElapsed(for: itemID)
         )
 
+        context.inputPresentation = toolArgsStore?.inputPresentation(for: itemID)
+        context.nestedCalls = toolDetailsStore?.nestedCalls(for: itemID)
         let interactionCtx = self.interactionContext
         let sessionContent = self.sessionContent
         // Stored tool attachments belong to the session, not its workspace path.

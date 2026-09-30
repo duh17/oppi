@@ -14,6 +14,8 @@ enum ToolPresentationBuilder {
     struct Context {
         let args: [String: JSONValue]?
         let details: JSONValue?
+        var inputPresentation: ToolInputPresentation? = nil
+        var nestedCalls: NestedToolCalls? = nil
         let expandedItemIDs: Set<String>
         let fullOutput: String
         let isLoadingOutput: Bool
@@ -96,7 +98,8 @@ enum ToolPresentationBuilder {
                 outputPreview: outputPreview,
                 isError: isError,
                 isDone: isDone,
-                isLoadingOutput: context.isLoadingOutput
+                isLoadingOutput: context.isLoadingOutput,
+                inputPresentation: context.inputPresentation, nestedCalls: context.nestedCalls
             )
         } else {
             expanded = ExpandedPresentation()
@@ -212,6 +215,7 @@ enum ToolPresentationBuilder {
             segmentAttributedTitle: segmentAttributedTitle,
             segmentAttributedTrailing: segmentAttributedTrailing
         )
+        configuration.rawMarkdownText = expanded.rawMarkdownText
         configuration.currentFileOpenIntent = currentFileOpenIntent
         return configuration
     }
@@ -400,6 +404,7 @@ enum ToolPresentationBuilder {
         var content: ToolExpandedContent?
         var copyCommandText: String?
         var copyOutputText: String?
+        var rawMarkdownText: String?
     }
 
     private static func buildExpanded(
@@ -412,7 +417,8 @@ enum ToolPresentationBuilder {
         outputPreview: String,
         isError: Bool,
         isDone: Bool,
-        isLoadingOutput: Bool
+        isLoadingOutput: Bool,
+        inputPresentation: ToolInputPresentation?, nestedCalls: NestedToolCalls?
     ) -> ExpandedPresentation {
         let presentation = ToolContentDescriptorBuilder.build(
             tool: rawToolName,
@@ -424,13 +430,15 @@ enum ToolPresentationBuilder {
                 args: args,
                 details: details,
                 fullOutput: fullOutput,
-                isLoadingOutput: isLoadingOutput
+                isLoadingOutput: isLoadingOutput,
+                inputPresentation: inputPresentation, nestedCalls: nestedCalls
             )
         )
         return ExpandedPresentation(
             content: presentation.content.map(expandedContent(from:)),
             copyCommandText: presentation.copyCommandText,
-            copyOutputText: presentation.copyOutputText
+            copyOutputText: presentation.copyOutputText,
+            rawMarkdownText: { if case .markdown(let markdown) = presentation.content { return markdown.rawText }; return nil }()
         )
     }
 

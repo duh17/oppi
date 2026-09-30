@@ -1,7 +1,16 @@
+import type { NestedToolCalls } from "@earendil-works/pi-ai";
 import type { GitStatus } from "./git.js";
 import type { Session, SessionSummary } from "./session.js";
 import type { StyledSegment } from "./shared.js";
 import type { ThinkingLevel } from "../thinking-levels.js";
+
+export type { NestedToolCallRecord, NestedToolCalls } from "@earendil-works/pi-ai";
+
+/** How clients present a tool call's arguments. */
+export interface ToolInputPresentation {
+  /** Source-code argument field → language id. */
+  codeFields: Record<string, string>;
+}
 
 // ─── WebSocket Messages ───
 
@@ -449,6 +458,7 @@ export type ServerMessage = // ── Connection ──
     // ── Tool execution ──
     | {
         type: "tool_start";
+        inputPresentation?: ToolInputPresentation;
         tool: string;
         args: Record<string, unknown>;
         toolCallId?: string;
@@ -456,6 +466,7 @@ export type ServerMessage = // ── Connection ──
       }
     | {
         type: "tool_update";
+        inputPresentation?: ToolInputPresentation;
         tool: string;
         args: Record<string, unknown>;
         toolCallId?: string;
@@ -477,6 +488,7 @@ export type ServerMessage = // ── Connection ──
       }
     | {
         type: "tool_end";
+        nestedCalls?: NestedToolCalls;
         tool: string;
         toolCallId?: string;
         details?: unknown;

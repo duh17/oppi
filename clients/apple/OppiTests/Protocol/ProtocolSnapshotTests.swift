@@ -249,7 +249,7 @@ struct ProtocolSnapshotTests {
     @Test func toolExecution() throws {
         // tool_start
         let startMsg = try decodeMessage("tool_start")
-        guard case .toolStart(let tool, _, let toolCallId, _) = startMsg else {
+        guard case .toolStart(let tool, _, let toolCallId, _, _) = startMsg else {
             Issue.record("Expected .toolStart")
             return
         }
@@ -258,7 +258,7 @@ struct ProtocolSnapshotTests {
 
         // tool_update
         let updateMsg = try decodeMessage("tool_update")
-        guard case .toolUpdate(let updateTool, _, let updateToolCallId, _) = updateMsg else {
+        guard case .toolUpdate(let updateTool, _, let updateToolCallId, _, _) = updateMsg else {
             Issue.record("Expected .toolUpdate")
             return
         }
@@ -287,7 +287,7 @@ struct ProtocolSnapshotTests {
 
         // tool_end
         let endMsg = try decodeMessage("tool_end")
-        guard case .toolEnd(let endTool, _, _, _, _) = endMsg else {
+        guard case .toolEnd(let endTool, _, _, _, _, _) = endMsg else {
             Issue.record("Expected .toolEnd")
             return
         }
@@ -295,7 +295,7 @@ struct ProtocolSnapshotTests {
 
         // tool_end_with_details
         let detailsMsg = try decodeMessage("tool_end_with_details")
-        guard case .toolEnd(let detTool, _, let details, let isError, let resultSegs) = detailsMsg else {
+        guard case .toolEnd(let detTool, _, let details, let isError, let resultSegs, _) = detailsMsg else {
             Issue.record("Expected .toolEnd with details")
             return
         }
@@ -316,7 +316,7 @@ struct ProtocolSnapshotTests {
 
         // tool_start_with_segments
         let segMsg = try decodeMessage("tool_start_with_segments")
-        guard case .toolStart(let segTool, let segArgs, _, let callSegs) = segMsg else {
+        guard case .toolStart(let segTool, let segArgs, _, let callSegs, _) = segMsg else {
             Issue.record("Expected .toolStart with callSegments")
             return
         }

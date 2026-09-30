@@ -126,6 +126,8 @@ graph TD
 
 `clients/apple/OppiCore/**` is the source-group boundary for Apple client/data code that should compile into both iOS/iPadOS and macOS targets. It holds protocol DTOs, client-environment values, transport identifiers, `ChatSessionManager` and its runtime ports, reducer support state, stream sequence state, focused-session connect/stop policy, extension-surface state/reduction, session-list presentation, ask/message queue state, review-comment state, file-index state, git status state, freshness/health state, media/diff/date/session/error formatting, and other helpers that need no UI or device framework.
 
+`OppiCore/Formatting/OrderedJSON.swift` preserves output JSON key order and number lexemes under byte/depth/node limits. `ToolCallDocumentBuilder.swift` owns generic expanded tool Input/Calls/Output composition, wrapper unwrapping, form tables, escaping, and bounded previews. `ToolContentDescriptorBuilder` calls it only for generic non-media tools. Argument input hints and nested-call records live alongside args/details in their reducer stores; live events and trace replay populate the same policy inputs. The Markdown descriptor carries optional Raw text for the iOS full-screen reader; copy output stays separate.
+
 Files in `OppiCore` must stay platform-neutral. The CommonMark parser, its `MarkdownBlock` / `MarkdownInline` AST, and the tail-only `CommonMarkStreamingParser` cache live under `OppiCore/Formatting`; iOS and macOS paint that shared parse result in their platform UI layers. UI/device work belongs in the iOS app under `clients/apple/Oppi/**` or the Mac app under `clients/apple/OppiMac/**`.
 
 ## Mac adapter path

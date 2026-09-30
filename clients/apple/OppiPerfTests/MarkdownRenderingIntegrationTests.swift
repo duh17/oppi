@@ -447,7 +447,7 @@ struct MarkdownRenderingIntegrationTests {
         let base = FullScreenCodeContent.fromText(text, filePath: filePath)
 
         let result: FullScreenCodeContent
-        if case .markdown(let content, let path, _) = base {
+        if case .markdown(let content, let path, _, _) = base {
             result = .markdown(
                 content: content,
                 filePath: path,

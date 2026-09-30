@@ -51,6 +51,10 @@ struct ScreenshotPreviewView: View {
             AgentIconProofPreview(failsFirstSave: true)
         case "workspace-sidebar-git-status":
             WorkspaceSidebarGitStatusPreview()
+        case "tool-call-document":
+            ToolCallDocumentPreview(direct: false)
+        case "tool-call-document-mcp":
+            ToolCallDocumentPreview(direct: true)
         case "session-timeline":
             SessionTimelinePreview()
         case "quiet-work-strip":

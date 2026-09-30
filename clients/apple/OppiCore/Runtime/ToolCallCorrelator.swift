@@ -10,16 +10,16 @@ import Foundation
 final class ToolCallCorrelator {
     private var currentToolEventID: String?
 
-    func start(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil, callSegments: [StyledSegment]? = nil) -> AgentEvent {
+    func start(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil, callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil) -> AgentEvent {
         let id = toolCallId ?? UUID().uuidString
         currentToolEventID = id
-        return .toolStart(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments)
+        return .toolStart(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments, inputPresentation: inputPresentation)
     }
 
-    func update(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil, callSegments: [StyledSegment]? = nil) -> AgentEvent {
+    func update(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil, callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil) -> AgentEvent {
         let id = toolCallId ?? currentToolEventID ?? UUID().uuidString
         currentToolEventID = id
-        return .toolUpdate(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments)
+        return .toolUpdate(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments, inputPresentation: inputPresentation)
     }
 
     func output(sessionId: String, output: String, isError: Bool, toolCallId: String? = nil, mode: ToolOutputMode = .append, truncated: Bool = false, totalBytes: Int? = nil, details: JSONValue? = nil) -> AgentEvent {
@@ -37,10 +37,10 @@ final class ToolCallCorrelator {
         ))
     }
 
-    func end(sessionId: String, toolCallId: String? = nil, details: JSONValue? = nil, isError: Bool = false, resultSegments: [StyledSegment]? = nil) -> AgentEvent {
+    func end(sessionId: String, toolCallId: String? = nil, details: JSONValue? = nil, isError: Bool = false, resultSegments: [StyledSegment]? = nil, nestedCalls: NestedToolCalls? = nil) -> AgentEvent {
         let id = toolCallId ?? currentToolEventID ?? UUID().uuidString
         currentToolEventID = nil
-        return .toolEnd(sessionId: sessionId, toolEventId: id, details: details, isError: isError, resultSegments: resultSegments)
+        return .toolEnd(sessionId: sessionId, toolEventId: id, details: details, isError: isError, resultSegments: resultSegments, nestedCalls: nestedCalls)
     }
 
     /// Reset state (e.g., on disconnect/reconnect).
