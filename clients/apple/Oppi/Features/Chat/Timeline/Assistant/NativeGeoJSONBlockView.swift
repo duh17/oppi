@@ -114,7 +114,7 @@ final class NativeGeoJSONBlockView: UIView {
     @discardableResult
     private func openMapPreview() -> Bool {
         guard let code = currentCode, isShowingMap else { return false }
-        let content = FullScreenCodeContent.geoJSON(content: code, filePath: nil)
+        let content = FullScreenCodeContent.document(.geoJSON(text: code, filePath: nil))
         ToolTimelineRowPresentationHelpers.presentFullScreenContent(
             content,
             from: self,

@@ -343,11 +343,11 @@ struct GeoJSONDocumentTests {
         let topo = FullScreenCodeContent.fromText(sharedArcTopology, filePath: "pair.topojson")
         let json = FullScreenCodeContent.fromText(#"{"name":"oppi"}"#, filePath: "package.json")
 
-        guard case .geoJSON(let geoText, let geoPath) = geo else {
+        guard case .document(.geoJSON(let geoText, let geoPath)) = geo else {
             Issue.record("GeoJSON still has no map plan, got \(geo)")
             return
         }
-        guard case .geoJSON(let topoText, let topoPath) = topo else {
+        guard case .document(.geoJSON(let topoText, let topoPath)) = topo else {
             Issue.record("TopoJSON still has no map plan, got \(topo)")
             return
         }

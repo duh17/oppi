@@ -47,7 +47,7 @@ struct GeoJSONMountRainierPreview: View {
 
     var body: some View {
         FullScreenCodeView(
-            content: .geoJSON(content: Self.source, filePath: "mount-rainier.geojson")
+            content: .document(.geoJSON(text: Self.source, filePath: "mount-rainier.geojson"))
         )
         .preferredColorScheme(themeID == .light ? .light : .dark)
         .accessibilityIdentifier("screenshot.ready")

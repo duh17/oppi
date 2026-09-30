@@ -10,8 +10,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
         case audioMessage
         case status
         case text
-        case delimitedTable
-        case geoJSON
+        case document(DocumentFamily.InlineTraits)
     }
 
     let mode: ExpandedMode
@@ -46,11 +45,20 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
                 allowsHorizontalScroll: isDone
             )
 
-        case .markdown, .delimitedTable, .geoJSON:
+        case .markdown:
             return Self(
                 mode: mode,
                 enablesTapCopyGesture: true,
                 enablesPinchGesture: true,
+                supportsFullScreenPreview: supportsFullScreenPreview,
+                allowsHorizontalScroll: false
+            )
+
+        case .document(let traits):
+            return Self(
+                mode: mode,
+                enablesTapCopyGesture: traits.enablesTapCopyGesture,
+                enablesPinchGesture: traits.enablesPinchGesture,
                 supportsFullScreenPreview: supportsFullScreenPreview,
                 allowsHorizontalScroll: false
             )
@@ -77,8 +85,10 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
 
     private static func supportsFullScreenPreview(mode: ExpandedMode) -> Bool {
         switch mode {
-        case .diff, .code, .markdown, .bash, .text, .delimitedTable, .geoJSON:
+        case .diff, .code, .markdown, .bash, .text:
             return true
+        case .document(let traits):
+            return traits.supportsFullScreenPreview
         case .readMedia, .audioMessage, .status:
             return false
         }
@@ -104,10 +114,8 @@ private extension ToolTimelineRowInteractionPolicy.ExpandedMode {
             self = .status
         case .text:
             self = .text
-        case .delimitedTable:
-            self = .delimitedTable
-        case .geoJSON:
-            self = .geoJSON
+        case .document(let family):
+            self = .document(family.inline)
         }
     }
 }

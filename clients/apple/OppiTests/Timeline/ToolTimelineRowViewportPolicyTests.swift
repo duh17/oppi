@@ -134,12 +134,24 @@ struct ToolTimelineRowViewportPolicyTests {
             ),
             PolicyCase(
                 name: "delimited table",
-                content: .delimitedTable(text: "date,route\n2026-09-01,Lake", filePath: "rides.csv"),
+                content: .document(.delimitedTable(text: "date,route\n2026-09-01,Lake", filePath: "rides.csv")),
                 toolNamePrefix: "write",
                 expectedSurface: .hostedView,
                 expectedMode: .text,
                 expectedHeightBehavior: .compactMeasured(
                     minHeight: 1,
+                    maxHeight: ToolTimelineRowContentView.maxOutputViewportHeight
+                ),
+                expectedPriority: .required
+            ),
+            PolicyCase(
+                name: "geojson map",
+                content: .document(.geoJSON(text: "{}", filePath: "park.geojson")),
+                toolNamePrefix: "read",
+                expectedSurface: .hostedView,
+                expectedMode: .text,
+                expectedHeightBehavior: .compactMeasured(
+                    minHeight: 180,
                     maxHeight: ToolTimelineRowContentView.maxOutputViewportHeight
                 ),
                 expectedPriority: .required
@@ -510,7 +522,7 @@ struct ToolTimelineRowViewportPolicyTests {
     @Test func expandedDelimitedTableFitsContentWithoutDocumentChrome() throws {
         let csv = "date,route\n2026-09-01,Lake\n2026-09-02,Ship"
         let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
-            expandedContent: .delimitedTable(text: csv, filePath: "rides.csv"),
+            expandedContent: .document(.delimitedTable(text: csv, filePath: "rides.csv")),
             copyOutputText: csv,
             toolNamePrefix: "write",
             isExpanded: true,
@@ -537,7 +549,7 @@ struct ToolTimelineRowViewportPolicyTests {
         let rows = (0..<80).map { "Warmup \($0)\t8:4\($0 % 10)" }.joined(separator: "\n")
         let tsv = header + "\n" + rows
         let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
-            expandedContent: .delimitedTable(text: tsv, filePath: "splits.tsv"),
+            expandedContent: .document(.delimitedTable(text: tsv, filePath: "splits.tsv")),
             copyOutputText: tsv,
             toolNamePrefix: "write",
             isExpanded: true,

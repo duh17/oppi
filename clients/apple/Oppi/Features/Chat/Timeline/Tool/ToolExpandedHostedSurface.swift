@@ -165,35 +165,16 @@ final class ToolExpandedHostedSurface {
         return true
     }
 
-    /// CSV/TSV table. Returns true when a new content view was mounted.
+    /// CSV/TSV table or GeoJSON/TopoJSON map. The family builds the view and says
+    /// whether the mounted one already shows the document. Returns true when a
+    /// new content view was mounted.
     @discardableResult
-    func installDelimitedTable(itemID: String, text: String, filePath: String?) -> Bool {
-        let plan = DelimitedTableViewerPlan.resolved(path: filePath, text: text)
-        if let existing = contentView as? DelimitedTableRenderView,
-           existing.displays(plan) {
+    func installDocument(itemID: String, family: DocumentFamily) -> Bool {
+        guard let view = family.makeInlineView(itemID: itemID, reusing: contentView) else {
             return false
         }
 
         clearContent()
-        let view = DelimitedTableRenderView(plan: plan)
-        view.accessibilityIdentifier = "chat.timeline.row.\(itemID).delimitedTable"
-        mountContentView(view)
-        pinHeightToViewport()
-        return true
-    }
-
-    /// GeoJSON/TopoJSON map. Returns true when a new content view was mounted.
-    @discardableResult
-    func installGeoJSON(itemID: String, text: String, filePath: String?) -> Bool {
-        let plan = GeoJSONViewerPlan.resolved(path: filePath, text: text)
-        if let existing = contentView as? GeoJSONMapView,
-           existing.displays(plan) {
-            return false
-        }
-
-        clearContent()
-        let view = GeoJSONMapView(plan: plan)
-        view.accessibilityIdentifier = "chat.timeline.row.\(itemID).geojson"
         mountContentView(view)
         pinHeightToViewport()
         return true

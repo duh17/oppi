@@ -30,7 +30,7 @@ enum ToolRowPlanBuilder {
         let expandedLabelSelectionEligible = switch expandedContent {
         case .code, .diff, .text:
             true
-        case .bash, .markdown, .readMedia, .audioMessage, .status, .delimitedTable, .geoJSON:
+        case .bash, .markdown, .readMedia, .audioMessage, .status, .document:
             false
         }
         let markdownSelectionEligible = if case .markdown = expandedContent { true } else { false }
@@ -81,8 +81,10 @@ enum ToolRowPlanBuilder {
             return !(output?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         case .diff(let lines, _):
             return !lines.isEmpty
-        case .code(let text, _, _, _), .markdown(let text, _), .text(let text, _), .audioMessage(let text, _, _, _, _), .delimitedTable(let text, _), .geoJSON(let text, _):
+        case .code(let text, _, _, _), .markdown(let text, _), .text(let text, _), .audioMessage(let text, _, _, _, _):
             return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .document(let family):
+            return !family.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .readMedia(let text, _, _, let attachments):
             return !attachments.isEmpty || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .status:
@@ -104,8 +106,11 @@ enum ToolRowPlanBuilder {
         case .diff(let lines, _):
             return !lines.isEmpty
 
-        case .markdown(let text, _), .delimitedTable(let text, _), .geoJSON(let text, _):
+        case .markdown(let text, _):
             return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        case .document(let family):
+            return !family.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         case .code(let text, _, _, _), .text(let text, _):
             let copyText = configuration.copyOutputText ?? text

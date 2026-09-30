@@ -209,26 +209,26 @@ struct ToolExpandedHostedSurfaceTests {
         let surface = harness.surface
         let csv = "date,route\n2026-09-01,Lake"
 
-        #expect(surface.installDelimitedTable(itemID: "row", text: csv, filePath: "rides.csv"), "First install mounts a view")
+        #expect(surface.installDocument(itemID: "row", family: .delimitedTable(text: csv, filePath: "rides.csv")), "First install mounts a view")
         let table = try #require(surface.contentView as? DelimitedTableRenderView)
-        #expect(!surface.installDelimitedTable(itemID: "row", text: csv, filePath: "rides.csv"), "Identical content reuses the view")
+        #expect(!surface.installDocument(itemID: "row", family: .delimitedTable(text: csv, filePath: "rides.csv")), "Identical content reuses the view")
         #expect(surface.contentView === table)
 
-        #expect(surface.installDelimitedTable(itemID: "row", text: csv + "\n2026-09-02,Ship", filePath: "rides.csv"))
+        #expect(surface.installDocument(itemID: "row", family: .delimitedTable(text: csv + "\n2026-09-02,Ship", filePath: "rides.csv")))
         #expect(surface.contentView !== table)
         #expect(table.superview == nil)
         #expect(surface.container.subviews.count == 1)
 
-        #expect(surface.installGeoJSON(itemID: "row", text: Self.point, filePath: "p.geojson"))
+        #expect(surface.installDocument(itemID: "row", family: .geoJSON(text: Self.point, filePath: "p.geojson")))
         #expect(surface.contentView is GeoJSONMapView)
         #expect(surface.container.subviews.count == 1, "A new kind replaces the old view")
-        #expect(!surface.installGeoJSON(itemID: "row", text: Self.point, filePath: "p.geojson"))
+        #expect(!surface.installDocument(itemID: "row", family: .geoJSON(text: Self.point, filePath: "p.geojson")))
     }
 
     @Test func retiringDropsContentAndLeavesTheExpandedLayout() throws {
         let harness = HostedSurfaceHarness()
         let surface = harness.surface
-        surface.installGeoJSON(itemID: "row", text: Self.point, filePath: "p.geojson")
+        surface.installDocument(itemID: "row", family: .geoJSON(text: Self.point, filePath: "p.geojson"))
         harness.activate()
         #expect(surface.isActive)
         #expect(!surface.container.isHidden)
@@ -240,14 +240,14 @@ struct ToolExpandedHostedSurfaceTests {
         #expect(surface.contentView == nil)
         #expect(map.superview == nil)
 
-        #expect(surface.installGeoJSON(itemID: "row", text: Self.point, filePath: "p.geojson"), "A retired surface mounts a fresh view")
+        #expect(surface.installDocument(itemID: "row", family: .geoJSON(text: Self.point, filePath: "p.geojson")), "A retired surface mounts a fresh view")
         #expect(surface.contentView !== map)
     }
 
     @Test func tablesFollowTheViewportHeightButOtherHostedContentDoesNot() throws {
         let harness = HostedSurfaceHarness(viewportHeight: 30)
         let surface = harness.surface
-        surface.installDelimitedTable(itemID: "row", text: "a,b\n1,2\n3,4\n5,6", filePath: "t.csv")
+        surface.installDocument(itemID: "row", family: .delimitedTable(text: "a,b\n1,2\n3,4\n5,6", filePath: "t.csv"))
         harness.activate()
         harness.layout()
         #expect(abs(surface.container.bounds.height - 30) < 0.5, "A table is pinned to the capped viewport")
@@ -285,7 +285,7 @@ struct ToolExpandedHostedSurfaceTests {
         csv: String = "date,route\n2026-09-01,Lake\n2026-09-02,Ship"
     ) -> ToolTimelineRowConfiguration {
         makeTimelineToolConfiguration(
-            expandedContent: .delimitedTable(text: csv, filePath: "rides.csv"),
+            expandedContent: .document(.delimitedTable(text: csv, filePath: "rides.csv")),
             copyOutputText: csv,
             toolNamePrefix: "read",
             isExpanded: true
@@ -297,7 +297,7 @@ struct ToolExpandedHostedSurfaceTests {
         {"type":"Feature","properties":{"name":"Rainier"},"geometry":{"type":"Point","coordinates":[-121.7603,46.8523]}}
         """
         return makeTimelineToolConfiguration(
-            expandedContent: .geoJSON(text: geoJSON, filePath: "rainier.geojson"),
+            expandedContent: .document(.geoJSON(text: geoJSON, filePath: "rainier.geojson")),
             copyOutputText: geoJSON,
             toolNamePrefix: "read",
             isExpanded: true

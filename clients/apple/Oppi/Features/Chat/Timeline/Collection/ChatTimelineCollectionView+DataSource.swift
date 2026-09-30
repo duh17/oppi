@@ -591,8 +591,7 @@ extension ChatTimelineCollectionHost.Controller {
         case .diff: return "diff"
         case .code: return "code"
         case .markdown: return "markdown"
-        case .delimitedTable: return "delimitedTable"
-        case .geoJSON: return "geoJSON"
+        case .document(let family): return family.kindName
         case .readMedia: return "readMedia"
         case .audioMessage: return "audioMessage"
         case .status: return "status"

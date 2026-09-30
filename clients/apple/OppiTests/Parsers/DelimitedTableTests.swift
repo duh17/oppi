@@ -199,11 +199,11 @@ struct DelimitedTableViewerPlanTests {
         let tsv = FullScreenCodeContent.fromText("a\tb\n1\t2\n", filePath: "export.tsv")
         let txt = FullScreenCodeContent.fromText("hello\n", filePath: "notes.txt")
 
-        guard case .delimitedTable(let csvText, let csvPath) = csv else {
+        guard case .document(.delimitedTable(let csvText, let csvPath)) = csv else {
             Issue.record("CSV still has no table plan, got \(csv)")
             return
         }
-        guard case .delimitedTable(let tsvText, let tsvPath) = tsv else {
+        guard case .document(.delimitedTable(let tsvText, let tsvPath)) = tsv else {
             Issue.record("TSV still has no table plan, got \(tsv)")
             return
         }

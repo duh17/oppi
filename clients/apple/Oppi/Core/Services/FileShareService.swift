@@ -101,6 +101,9 @@ enum FileShareService {
         static func fromText(_ text: String, filePath: String?) -> ShareableContent {
             let fileType = FileType.detect(from: filePath, content: text)
             let fileName = FileShareService.fileName(fromPath: filePath)
+            if let document = DocumentFamily(fileType: fileType, text: text, filePath: filePath) {
+                return document.shareableContent(fileName: fileName)
+            }
             switch fileType {
             case .markdown: return .markdown(text, fileName: fileName)
             case .html: return .html(text, fileName: fileName)
@@ -108,7 +111,6 @@ enum FileShareService {
             case .latex: return .latex(text, fileName: fileName)
             case .orgMode: return .orgMode(text, fileName: fileName)
             case .mermaid: return .mermaid(text, fileName: fileName)
-            case .geojson, .topojson: return .json(text, fileName: fileName)
             case .graphviz: return .code(text, language: "dot", fileName: fileName)
             case .code(let lang): return .code(text, language: lang.displayName, fileName: fileName)
             case .plain: return .plainText(text, fileName: fileName)

@@ -43,14 +43,14 @@ struct ToolMarkdownRowPerfProbe {
             startLine: 1,
             attachments: []
         )
-        let table = ToolPresentationBuilder.ToolExpandedContent.delimitedTable(
+        let table = ToolPresentationBuilder.ToolExpandedContent.document(.delimitedTable(
             text: Self.csv(rows: 200),
             filePath: "rides.csv"
-        )
-        let map = ToolPresentationBuilder.ToolExpandedContent.geoJSON(
+        ))
+        let map = ToolPresentationBuilder.ToolExpandedContent.document(.geoJSON(
             text: Self.geoJSON,
             filePath: "park.geojson"
-        )
+        ))
         try measureHostedColdInstall(name: "hosted_read_svg_cold_install", content: readMedia, prefix: "read")
         try measureHostedColdInstall(name: "hosted_csv_cold_install_200", content: table, prefix: "read")
         try measureHostedColdInstall(name: "hosted_geojson_cold_install", content: map, prefix: "read")

@@ -389,7 +389,7 @@ struct ToolTimelineRowFullScreenActivationTests {
     func doneDelimitedTableFullScreenContentUsesTableViewer() throws {
         let csv = "date,route\n2026-09-01,Lake"
         let configuration = makeTimelineToolConfiguration(
-            expandedContent: .delimitedTable(text: csv, filePath: "rides.csv"),
+            expandedContent: .document(.delimitedTable(text: csv, filePath: "rides.csv")),
             copyOutputText: csv,
             toolNamePrefix: "write",
             isExpanded: true,
@@ -402,7 +402,7 @@ struct ToolTimelineRowFullScreenActivationTests {
             terminalStream: nil
         )
 
-        guard case .delimitedTable(let text, let filePath) = content else {
+        guard case .document(.delimitedTable(let text, let filePath)) = content else {
             Issue.record("Expected delimited-table full-screen content, got \(String(describing: content))")
             return
         }
@@ -417,7 +417,7 @@ struct ToolTimelineRowFullScreenActivationTests {
         let host = harness.host
         let opened = try activateReader(
             configuration: makeTimelineToolConfiguration(
-                expandedContent: .delimitedTable(text: csv, filePath: "rides.csv"),
+                expandedContent: .document(.delimitedTable(text: csv, filePath: "rides.csv")),
                 copyOutputText: csv,
                 toolNamePrefix: "write",
                 isExpanded: true
@@ -429,7 +429,7 @@ struct ToolTimelineRowFullScreenActivationTests {
             }
         )
         #expect(host.presentedViewController == nil)
-        guard case .delimitedTable(let text, let filePath) = opened.payload.content else {
+        guard case .document(.delimitedTable(let text, let filePath)) = opened.payload.content else {
             Issue.record("Expected delimited-table reader payload")
             return
         }

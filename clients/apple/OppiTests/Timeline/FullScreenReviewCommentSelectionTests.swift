@@ -2050,7 +2050,7 @@ struct FullScreenReviewCommentSelectionTests {
         {"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"Mount Rainier"},"geometry":{"type":"Point","coordinates":[-121.7603,46.8523]}}]}
         """
         let controller = makeController(
-            content: .geoJSON(content: rainier, filePath: "mount-rainier.geojson")
+            content: .document(.geoJSON(text: rainier, filePath: "mount-rainier.geojson"))
         )
 
         #expect(controller.installedBodyViewForTesting is GeoJSONMapView)

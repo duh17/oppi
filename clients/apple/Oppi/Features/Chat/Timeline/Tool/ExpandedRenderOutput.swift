@@ -49,7 +49,6 @@ struct ExpandedRenderOutput {
             reviewCommentSourceContext: ReviewCommentSourceContext?,
             textSelectionEnabled: Bool
         )
-        case delimitedTable(text: String, filePath: String?)
-        case geoJSON(text: String, filePath: String?)
+        case document(DocumentFamily)
     }
 }

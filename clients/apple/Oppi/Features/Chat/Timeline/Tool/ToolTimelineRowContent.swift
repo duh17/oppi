@@ -1402,7 +1402,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         switch content {
         case .audioMessage(let text, let attachmentId, _, _, _):
             return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachmentId.isEmpty
-        case .bash, .diff, .code, .markdown, .delimitedTable, .geoJSON, .readMedia, .status, .text:
+        case .bash, .diff, .code, .markdown, .document, .readMedia, .status, .text:
             return true
         }
     }
@@ -1696,14 +1696,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 viewportPolicy: viewportPolicy
             )
 
-        case .delimitedTable(let text, let filePath):
+        case .document(let family):
             var hasher = Hasher()
-            hasher.combine(text)
-            hasher.combine(filePath ?? "")
+            hasher.combine(family.text)
+            hasher.combine(family.filePath ?? "")
             hasher.combine(ThemeRuntimeState.currentThemeID())
             return ExpandedRenderOutput(
                 renderSignature: hasher.finalize(),
-                renderedText: text,
+                renderedText: family.text,
                 shouldAutoFollow: false,
                 viewportPolicy: viewportPolicy,
                 verticalLock: false,
@@ -1712,26 +1712,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 horizontalScroll: false,
                 deferredHighlight: nil,
                 invalidateLayout: true,
-                installAction: .delimitedTable(text: text, filePath: filePath)
-            )
-
-        case .geoJSON(let text, let filePath):
-            var hasher = Hasher()
-            hasher.combine(text)
-            hasher.combine(filePath ?? "")
-            hasher.combine(ThemeRuntimeState.currentThemeID())
-            return ExpandedRenderOutput(
-                renderSignature: hasher.finalize(),
-                renderedText: text,
-                shouldAutoFollow: false,
-                viewportPolicy: viewportPolicy,
-                verticalLock: false,
-                scrollBehavior: .preserve,
-                lineBreakMode: .byWordWrapping,
-                horizontalScroll: false,
-                deferredHighlight: nil,
-                invalidateLayout: true,
-                installAction: .geoJSON(text: text, filePath: filePath)
+                installAction: .document(family)
             )
         }
     }
@@ -1785,20 +1766,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 wasVisible: wasMarkdownViewport,
                 shouldRerender: output.scrollBehavior != .preserve
             )
-        case .delimitedTable(let text, let filePath):
-            if hostedSurface.installDelimitedTable(
-                itemID: currentConfiguration.itemID,
-                text: text,
-                filePath: filePath
-            ) {
-                scheduleHostedRemeasure()
-            }
-        case .geoJSON(let text, let filePath):
-            if hostedSurface.installGeoJSON(
-                itemID: currentConfiguration.itemID,
-                text: text,
-                filePath: filePath
-            ) {
+        case .document(let family):
+            if hostedSurface.installDocument(itemID: currentConfiguration.itemID, family: family) {
                 scheduleHostedRemeasure()
             }
         }
@@ -1862,7 +1831,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedScrollView.alwaysBounceVertical = false
             expandedScrollView.bounces = false
             setExpandedContainerGestureInterceptionEnabled(true)
-        } else if policy.contentKind == .delimitedTable {
+        } else if case .document(let traits) = policy.contentKind, traits.suppressesRowScrolling {
             expandedScrollView.isScrollEnabled = false
             expandedScrollView.alwaysBounceVertical = false
             expandedScrollView.bounces = false
@@ -2272,16 +2241,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 filePath: filePath
             )
 
-        case .delimitedTable(_, let filePath):
+        case .document(let family):
             return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
                 surface: .fullScreenSource,
-                filePath: filePath
-            )
-
-        case .geoJSON(_, let filePath):
-            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
-                surface: .fullScreenSource,
-                filePath: filePath
+                filePath: family.filePath
             )
         }
     }

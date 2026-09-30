@@ -20,8 +20,7 @@ struct ToolRowViewportPolicy {
         case audioMessage(hasTranscript: Bool)
         case status
         case text
-        case delimitedTable
-        case geoJSON
+        case document(DocumentFamily.InlineTraits)
     }
 
     enum HeightBehavior: Equatable {
@@ -203,34 +202,23 @@ struct ToolRowViewportPolicy {
             return .status
         case .text:
             return .text
-        case .delimitedTable:
-            return .delimitedTable
-        case .geoJSON:
-            return .geoJSON
+        case .document(let family):
+            return .document(family.inline)
         }
     }
 
-    static let delimitedTable = ToolRowViewportPolicy(
-        contentKind: .delimitedTable,
-        surface: .hostedView,
-        viewportMode: .text,
-        heightBehavior: .compactMeasured(
-            minHeight: 1,
-            maxHeight: ToolTimelineRowContentView.maxOutputViewportHeight
-        ),
-        constraintPriority: .required
-    )
-
-    static let geoJSON = ToolRowViewportPolicy(
-        contentKind: .geoJSON,
-        surface: .hostedView,
-        viewportMode: .text,
-        heightBehavior: .compactMeasured(
-            minHeight: 180,
-            maxHeight: ToolTimelineRowContentView.maxOutputViewportHeight
-        ),
-        constraintPriority: .required
-    )
+    static func document(_ traits: DocumentFamily.InlineTraits) -> ToolRowViewportPolicy {
+        ToolRowViewportPolicy(
+            contentKind: .document(traits),
+            surface: .hostedView,
+            viewportMode: .text,
+            heightBehavior: .compactMeasured(
+                minHeight: traits.minViewportHeight,
+                maxHeight: ToolTimelineRowContentView.maxOutputViewportHeight
+            ),
+            constraintPriority: .required
+        )
+    }
 
     static func readMediaFacts(
         output: String,

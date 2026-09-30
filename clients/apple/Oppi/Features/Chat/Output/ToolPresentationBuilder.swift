@@ -382,10 +382,10 @@ enum ToolPresentationBuilder {
         case code(text: String, language: SyntaxLanguage?, startLine: Int?, filePath: String?)
         /// Rendered markdown (read .md)
         case markdown(text: String, filePath: String? = nil)
-        /// Rendered CSV/TSV table in the expanded tool row (full-screen keeps Table/Source).
-        case delimitedTable(text: String, filePath: String?)
-        /// Rendered GeoJSON/TopoJSON map in the expanded tool row (full-screen keeps Rendered/Source).
-        case geoJSON(text: String, filePath: String?)
+        /// Rendered CSV/TSV table or GeoJSON/TopoJSON map in the expanded tool row.
+        /// `DocumentFamily` owns the per-kind behavior, including the full-screen
+        /// Source toggle (`DocumentFamily.sourceToggleTitle`).
+        case document(DocumentFamily)
         /// Media renderer for images/audio in read output
         case readMedia(output: String, filePath: String?, startLine: Int, attachments: [ToolMediaAttachment])
         /// Audio message card with server-owned session attachment replay.
@@ -534,6 +534,10 @@ enum ToolPresentationBuilder {
         attachments: [ToolMediaAttachment]
     ) -> ToolExpandedContent {
         let fileType = resolvedExpandedFileType(metadata: metadata, text: text)
+        if let fileType,
+           let document = DocumentFamily(fileType: fileType, text: text, filePath: metadata.filePath) {
+            return .document(document)
+        }
         switch fileType {
         case .markdown:
             return .markdown(text: text, filePath: metadata.filePath)
@@ -546,13 +550,10 @@ enum ToolPresentationBuilder {
                 startLine: startLine,
                 attachments: attachments
             )
-        case .csv, .tsv:
-            return .delimitedTable(text: text, filePath: metadata.filePath)
-        case .geojson, .topojson:
-            return .geoJSON(text: text, filePath: metadata.filePath)
         case .json:
-            if GeographicJSONSniffer.fileType(from: text) != nil {
-                return .geoJSON(text: text, filePath: metadata.filePath)
+            if let sniffed = GeographicJSONSniffer.fileType(from: text),
+               let document = DocumentFamily(fileType: sniffed, text: text, filePath: metadata.filePath) {
+                return .document(document)
             }
             return .code(
                 text: text,
@@ -561,7 +562,9 @@ enum ToolPresentationBuilder {
                 filePath: metadata.filePath
             )
         case .html, .plain, .code, .pdf, .usdz, .binary,
-             .latex, .mermaid, .graphviz, .none:
+             .latex, .mermaid, .graphviz, .none,
+             // Classified above by `DocumentFamily`; listed so the switch stays exhaustive.
+             .csv, .tsv, .geojson, .topojson:
             return .code(
                 text: text,
                 language: metadata.language,

@@ -1230,28 +1230,28 @@ struct ToolPresentationBuilderTests {
         #expect(modeName(readTSV.expandedContent) == "delimitedTable")
         #expect(modeName(writeTSV.expandedContent) == "delimitedTable")
 
-        guard case .delimitedTable(let readTSVText, let readTSVPath) = readTSV.expandedContent else {
+        guard case .document(.delimitedTable(let readTSVText, let readTSVPath)) = readTSV.expandedContent else {
             Issue.record("Expected read TSV table")
             return
         }
         #expect(readTSVText == tsv)
         #expect(readTSVPath == "splits.tsv")
 
-        guard case .delimitedTable(let readText, let readPath) = readCSV.expandedContent else {
+        guard case .document(.delimitedTable(let readText, let readPath)) = readCSV.expandedContent else {
             Issue.record("Expected read CSV table")
             return
         }
         #expect(readText == csv)
         #expect(readPath == "rides.csv")
 
-        guard case .delimitedTable(let writeText, let writePath) = writeCSV.expandedContent else {
+        guard case .document(.delimitedTable(let writeText, let writePath)) = writeCSV.expandedContent else {
             Issue.record("Expected write CSV table")
             return
         }
         #expect(writeText == csv)
         #expect(writePath == "rides.csv")
 
-        guard case .delimitedTable(let writeTSVText, let writeTSVPath) = writeTSV.expandedContent else {
+        guard case .document(.delimitedTable(let writeTSVText, let writeTSVPath)) = writeTSV.expandedContent else {
             Issue.record("Expected write TSV table")
             return
         }
@@ -1322,28 +1322,28 @@ struct ToolPresentationBuilderTests {
         #expect(modeName(readPlaces.expandedContent) == "geoJSON")
         #expect(modeName(writePlaces.expandedContent) == "geoJSON")
 
-        guard case .geoJSON(let readParkText, let readParkPath) = readPark.expandedContent else {
+        guard case .document(.geoJSON(let readParkText, let readParkPath)) = readPark.expandedContent else {
             Issue.record("Expected read park.geojson map")
             return
         }
         #expect(readParkText == park)
         #expect(readParkPath == "park.geojson")
 
-        guard case .geoJSON(let writeParkText, let writeParkPath) = writePark.expandedContent else {
+        guard case .document(.geoJSON(let writeParkText, let writeParkPath)) = writePark.expandedContent else {
             Issue.record("Expected write park.geojson map")
             return
         }
         #expect(writeParkText == park)
         #expect(writeParkPath == "park.geojson")
 
-        guard case .geoJSON(let readPlacesText, let readPlacesPath) = readPlaces.expandedContent else {
+        guard case .document(.geoJSON(let readPlacesText, let readPlacesPath)) = readPlaces.expandedContent else {
             Issue.record("Expected sniffed places.json FeatureCollection map")
             return
         }
         #expect(readPlacesText == places)
         #expect(readPlacesPath == "places.json")
 
-        guard case .geoJSON(let writePlacesText, let writePlacesPath) = writePlaces.expandedContent else {
+        guard case .document(.geoJSON(let writePlacesText, let writePlacesPath)) = writePlaces.expandedContent else {
             Issue.record("Expected write places.json FeatureCollection map")
             return
         }
@@ -2596,10 +2596,8 @@ private func modeName(_ content: ToolPresentationBuilder.ToolExpandedContent?) -
         return "status"
     case .text:
         return "text"
-    case .delimitedTable:
-        return "delimitedTable"
-    case .geoJSON:
-        return "geoJSON"
+    case .document(let family):
+        return family.kindName
     case nil:
         return "nil"
     }
