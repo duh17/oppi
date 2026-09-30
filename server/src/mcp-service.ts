@@ -42,6 +42,8 @@ export class McpService {
   private readonly cli: McpCli;
   readonly auth: McpAuthManager;
   private queue: Promise<unknown> = Promise.resolve();
+  private pendingOperations = 0;
+  private listFlight?: Promise<McpServersResponse>;
   constructor(
     private readonly options: {
       agentDir: string;
@@ -61,19 +63,19 @@ export class McpService {
         cwd: this.cli.globalCwd,
         path: join(this.options.agentDir, "mcp.json"),
       },
-      ...this.options
-        .listWorkspaces()
-        .filter((workspace) => workspace.runtime !== "sandbox" && workspace.hostMount)
-        .map((workspace): Scope => {
-          const cwd = resolveHostPath(workspace.hostMount!);
-          return {
+      ...this.options.listWorkspaces().flatMap((workspace): Scope[] => {
+        if (workspace.runtime === "sandbox" || !workspace.hostMount) return [];
+        const cwd = resolveHostPath(workspace.hostMount);
+        return [
+          {
             id: workspace.id,
             title: workspace.name,
             kind: "project",
             cwd,
             path: join(cwd, ".pi", "mcp.json"),
-          };
-        }),
+          },
+        ];
+      }),
     ];
   }
   private scope(id: string): Scope {
@@ -88,38 +90,52 @@ export class McpService {
       throw new McpError(404, "MCP server not found in this scope");
     return entries[name];
   }
-  /** Pi refreshes credentials while probing. Serialize all CLI/file writers and reject
-   * probes/edits during login, rather than racing the shared mcp-auth.json writer. */
+  /** Serialize management operations and reject them during login. Scope probes within
+   * one refresh run concurrently; independent Pi processes may refresh credentials. */
   private exclusive<T>(operation: () => Promise<T> | T): Promise<T> {
-    const result = this.queue.then(() => {
-      if (this.auth.hasActive())
-        throw new McpError(409, "Finish or cancel the current MCP sign-in first");
-      return operation();
-    });
+    this.pendingOperations += 1;
+    const result = this.queue
+      .then(() => {
+        if (this.auth.hasActive())
+          throw new McpError(409, "Finish or cancel the current MCP sign-in first");
+        return operation();
+      })
+      .finally(() => {
+        this.pendingOperations -= 1;
+      });
     this.queue = result.catch(() => undefined);
     return result;
   }
   list(): Promise<McpServersResponse> {
-    return this.exclusive(async () => {
-      const scopes: McpScopeSnapshot[] = [];
-      for (const scope of this.scopes()) {
-        // Include every host scope as an add target, but the list UI hides absent project files.
-        if (scope.kind === "project" && !existsSync(scope.path)) {
-          scopes.push({
-            id: scope.id,
-            title: scope.title,
-            kind: scope.kind,
-            hasConfig: false,
-            trusted: false,
-            servers: [],
-            errors: [],
-          });
-          continue;
-        }
-        scopes.push(await this.probe(scope));
-      }
+    // Coalesce simultaneous refreshes instead of queuing another 20-second probe.
+    // Do not spend the phone's deadline waiting behind an unrelated management operation.
+    if (this.listFlight) return this.listFlight;
+    if (this.pendingOperations > 0)
+      return Promise.reject(
+        new McpError(409, "MCP management is busy. Retry refresh when it finishes."),
+      );
+    this.listFlight = this.exclusive(async () => {
+      const scopes = await Promise.all(
+        this.scopes().map(async (scope): Promise<McpScopeSnapshot> => {
+          // Missing project files remain cheap add targets, never subprocess probes.
+          if (scope.kind === "project" && !existsSync(scope.path))
+            return {
+              id: scope.id,
+              title: scope.title,
+              kind: scope.kind,
+              hasConfig: false,
+              trusted: false,
+              servers: [],
+              errors: [],
+            };
+          return this.probe(scope);
+        }),
+      );
       return { scopes };
+    }).finally(() => {
+      this.listFlight = undefined;
     });
+    return this.listFlight;
   }
   private async probe(scope: Scope): Promise<McpScopeSnapshot> {
     const snapshot: McpScopeSnapshot = {
@@ -151,7 +167,8 @@ export class McpService {
     const entries = isRecord(document.mcpServers) ? document.mcpServers : {};
     let reports: PiReport[] = [];
     try {
-      const result = await this.cli.run(["list", "--json"], scope.cwd);
+      // Leave room below the iOS 30-second resource deadline for termination and transport.
+      const result = await this.cli.run(["list", "--json"], scope.cwd, { timeoutMs: 20_000 });
       const report: unknown = JSON.parse(result.stdout);
       if (!isRecord(report) || !Array.isArray(report.servers) || !Array.isArray(report.errors))
         throw new Error("Invalid Pi response");
@@ -173,9 +190,11 @@ export class McpService {
           ? redactMcpDiagnostic(error, [document, globalDocument])
           : "Invalid mcp.json. Check the config on the host.",
       );
-    } catch {
+    } catch (error) {
       snapshot.errors.push(
-        "Pi could not probe this scope. Check its path and MCP configuration on the host.",
+        error instanceof McpError && error.statusCode === 504
+          ? "This scope's live probe timed out after 20 seconds. Other scopes still refreshed."
+          : "Pi could not probe this scope. Check its path and MCP configuration on the host.",
       );
     }
     snapshot.servers = Object.entries(entries).flatMap(([name, config]): McpServerSummary[] => {

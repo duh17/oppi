@@ -5,7 +5,7 @@ import {
   type ProviderAuthLaunchMode,
 } from "./provider-auth/types.js";
 import type { McpAuthFlowSnapshot } from "./types/mcp.js";
-import { McpCli, type McpCliProcess } from "./mcp-cli.js";
+import type { McpCli, McpCliProcess } from "./mcp-cli.js";
 import { McpError } from "./mcp-config.js";
 
 function loopback(value: string): URL {
@@ -178,8 +178,9 @@ export class McpAuthManager {
   }
   async submit(id: string, input: string): Promise<McpAuthFlowSnapshot> {
     const flow = this.get(id);
-    const record = this.store.get(id)!;
-    const attempt = this.attempts.get(id)!;
+    const record = this.store.get(id);
+    const attempt = this.attempts.get(id);
+    if (!record || !attempt) throw new McpError(404, "MCP sign-in flow not found");
     if (isTerminalProviderAuthStatus(flow.status) || !flow.auth)
       throw new McpError(409, "This flow is not waiting for a callback");
     if (attempt.relaying) throw new McpError(409, "A callback is already being submitted");

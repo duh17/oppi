@@ -169,6 +169,18 @@ const settingsOperationIds = [
 ];
 
 describe("api route registry", () => {
+  it("registers MCP management as owner-only and normalizes scope/server/flow identities", () => {
+    const routes = apiRouteSpecs.filter((route) => route.path.startsWith("/mcp/"));
+    expect(routes).toHaveLength(9);
+    expect(routes.every((route) => route.auth === "owner" && route.surface === "admin")).toBe(true);
+    expect(normalizeRegisteredPathPattern("/mcp/scopes/workspace-123/servers/echo/login")).toBe(
+      "/mcp/scopes/:scopeId/servers/:name/login",
+    );
+    expect(normalizeRegisteredPathPattern("/mcp/auth/flows/pa_test/manual-code")).toBe(
+      "/mcp/auth/flows/:flowId/manual-code",
+    );
+  });
+
   it("keeps operation ids unique", () => {
     const ids = apiRouteSpecs.map((route) => route.operationId);
     expect(new Set(ids).size).toBe(ids.length);

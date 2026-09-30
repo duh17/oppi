@@ -109,7 +109,11 @@ export class McpCli {
     });
     return { child, done, stop };
   }
-  async run(args: string[], cwd: string): Promise<{ code: number; stdout: string }> {
-    return this.start(args, cwd).done;
+  async run(
+    args: string[],
+    cwd: string,
+    options: { timeoutMs?: number } = {},
+  ): Promise<{ code: number; stdout: string }> {
+    return this.start(args, cwd, options).done;
   }
 }

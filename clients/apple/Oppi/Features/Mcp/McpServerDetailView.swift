@@ -186,7 +186,7 @@ private struct McpFlowClient: ProviderAuthFlowClient {
         try await client.cancelMcpAuthFlow(flowId: flowId).providerPresentation
     }
     func submitProviderAuthPromptResponse(flowId: String, value: String) async throws -> ProviderAuthFlowSnapshot {
-        throw APIError.server(400, "MCP sign-in accepts a callback URL, not a prompt response")
+        throw APIError.server(status: 400, message: "MCP sign-in accepts a callback URL, not a prompt response")
     }
 }
 private struct McpSignInSheet: View {

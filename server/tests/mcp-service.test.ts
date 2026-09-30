@@ -1,5 +1,12 @@
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  realpathSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { once } from "node:events";
@@ -282,6 +289,123 @@ describe("MCP callback boundary", () => {
 });
 
 describe("MCP routes through real bundled Pi", () => {
+  it("returns healthy trusted scopes when another startup hangs, within the phone deadline", async () => {
+    const { service, agentDir, project } = fixture();
+    const hanging = await listen(
+      createServer(() => {
+        /* deliberately never answers initialize */
+      }),
+    );
+    writeFileSync(join(agentDir, "trust.json"), JSON.stringify({ [realpathSync(project)]: true }));
+    await service.add({ scopeId: "global", name: "shared", url: hanging + "/mcp" });
+    // Project replacement avoids probing the hanging global entry in this scope.
+    await service.add({
+      scopeId: "workspace-one",
+      name: "shared",
+      command: process.execPath,
+      args: [echo],
+    });
+    const base = await routes(service);
+    const started = performance.now();
+    const first = api<McpServersResponse>(base, "/mcp/servers");
+    const second = api<McpServersResponse>(base, "/mcp/servers");
+    const [snapshot, coalesced] = await Promise.all([first, second]);
+    expect(performance.now() - started).toBeLessThan(25_000);
+    expect(snapshot).toEqual(coalesced);
+    expect(snapshot.scopes[0].errors).toEqual([
+      "This scope's live probe timed out after 20 seconds. Other scopes still refreshed.",
+    ]);
+    expect(snapshot.scopes[1]).toMatchObject({
+      trusted: true,
+      errors: [],
+      servers: [{ name: "shared", state: "connected", tools: ["echo"] }],
+    });
+  }, 30_000);
+  it("connects trusted project tools and keeps same-name globals owned by their scope", async () => {
+    const { service, agentDir, project } = fixture();
+    writeFileSync(join(agentDir, "trust.json"), JSON.stringify({ [realpathSync(project)]: true }));
+    await service.add({
+      scopeId: "global",
+      name: "shared",
+      command: "not-a-real-executable",
+      exposure: "hidden",
+    });
+    await service.add({
+      scopeId: "workspace-one",
+      name: "shared",
+      command: process.execPath,
+      args: [echo],
+    });
+    const base = await routes(service);
+    const snapshot = await api<McpServersResponse>(base, "/mcp/servers");
+    expect(snapshot.scopes[0].servers[0]).toMatchObject({
+      name: "shared",
+      state: "failed",
+      exposure: "hidden",
+    });
+    expect(snapshot.scopes[1]).toMatchObject({
+      trusted: true,
+      errors: [],
+      servers: [{ name: "shared", state: "connected", tools: ["echo"] }],
+    });
+    await api(base, "/mcp/scopes/workspace-one/servers/shared", "PATCH", {
+      enabled: false,
+      exposure: "direct",
+    });
+    expect(
+      JSON.parse(readFileSync(join(project, ".pi", "mcp.json"), "utf8")).mcpServers.shared,
+    ).toMatchObject({ enabled: false, exposure: "direct" });
+    expect(JSON.parse(readFileSync(join(agentDir, "mcp.json"), "utf8")).mcpServers.shared).toEqual({
+      command: "not-a-real-executable",
+      exposure: "hidden",
+    });
+  }, 30_000);
+  it("signs in a project-only OAuth server using its trusted workspace cwd", async () => {
+    const { service, agentDir, project } = fixture();
+    const remote = await oauthServer();
+    const base = await routes(service);
+    writeFileSync(join(agentDir, "trust.json"), JSON.stringify({ [realpathSync(project)]: true }));
+    await api(base, "/mcp/servers", "POST", {
+      scopeId: "workspace-one",
+      name: "project-oauth",
+      url: remote + "/mcp",
+    });
+    const initial = await api<McpServersResponse>(base, "/mcp/servers");
+    expect(initial.scopes[0].servers).toEqual([]);
+    expect(initial.scopes[1]).toMatchObject({
+      trusted: true,
+      servers: [{ name: "project-oauth", state: "needs-auth" }],
+    });
+    let flow = (
+      await api<{ flow: McpAuthFlowSnapshot }>(
+        base,
+        "/mcp/scopes/workspace-one/servers/project-oauth/login",
+        "POST",
+        {},
+      )
+    ).flow;
+    await expect
+      .poll(
+        async () => {
+          flow = (await api<{ flow: McpAuthFlowSnapshot }>(base, `/mcp/auth/flows/${flow.flowId}`))
+            .flow;
+          return flow.status;
+        },
+        { timeout: 10_000 },
+      )
+      .toBe("awaiting_external");
+    expect(flow.scopeId).toBe("workspace-one");
+    const approval = await fetch(flow.auth!.url, { redirect: "manual" });
+    await api(base, `/mcp/auth/flows/${flow.flowId}/manual-code`, "POST", {
+      input: approval.headers.get("location"),
+    });
+    await expect
+      .poll(() => service.auth.get(flow.flowId).status, { timeout: 10_000 })
+      .toBe("completed");
+    const connected = await api<McpServersResponse>(base, "/mcp/servers");
+    expect(connected.scopes[1].servers[0]).toMatchObject({ state: "connected", tools: ["echo"] });
+    expect(existsSync(join(agentDir, "mcp.json"))).toBe(false);
+  }, 30_000);
   it("adds/probes/patches/removes command and URL entries in the right scope without revealing secrets or executing untrusted projects", async () => {
     const { service, agentDir, project } = fixture();
     const base = await routes(service);

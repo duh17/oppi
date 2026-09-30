@@ -2575,10 +2575,11 @@ actor APIClient: ClientLogUploading {
         return data
     }
 
-    func request(_ method: String, path: String) async throws -> (Data, URLResponse) {
+    func request(_ method: String, path: String, timeoutInterval: TimeInterval? = nil) async throws -> (Data, URLResponse) {
         try await performAuthorized {
             var req = try URLRequest(url: self.makeURL(path: path))
             req.httpMethod = method
+            if let timeoutInterval { req.timeoutInterval = timeoutInterval }
             logger.debug("\(method) \(path)")
             return req
         }
@@ -2613,11 +2614,13 @@ actor APIClient: ClientLogUploading {
         _ method: String,
         path: String,
         body: T,
-        encoder: JSONEncoder? = nil
+        encoder: JSONEncoder? = nil,
+        timeoutInterval: TimeInterval? = nil
     ) async throws -> (Data, URLResponse) {
         try await performAuthorized {
             var req = try URLRequest(url: self.makeURL(path: path))
             req.httpMethod = method
+            if let timeoutInterval { req.timeoutInterval = timeoutInterval }
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = try (encoder ?? JSONEncoder()).encode(body)
             logger.debug("\(method) \(path)")
