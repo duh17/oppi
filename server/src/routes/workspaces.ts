@@ -442,12 +442,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
   }
 
-  function handleRemoveWorkspaceWorktree(
+  async function handleRemoveWorkspaceWorktree(
     wsId: string,
     worktreeId: string,
     url: URL,
     res: ServerResponse,
-  ): void {
+  ): Promise<void> {
     const workspace = ctx.storage.getWorkspace(wsId);
     if (!workspace) {
       helpers.error(res, 404, "Workspace not found");
@@ -457,7 +457,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const normalizedWorktreeId = worktreeId.trim();
     const activeSessionCounts = workspaceWorktreeActiveSessionCounts(wsId);
     try {
-      const worktree = removeWorkspaceWorktree(workspace, {
+      const worktree = await removeWorkspaceWorktree(workspace, {
         dataDir: ctx.storage.getDataDir(),
         worktreeId: normalizedWorktreeId,
         force: url.searchParams.get("force") === "true",
@@ -1023,7 +1023,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     const wsWorktreeMatch = path.match(/^\/workspaces\/([^/]+)\/worktrees\/([^/]+)$/);
     if (wsWorktreeMatch && method === "DELETE") {
-      handleRemoveWorkspaceWorktree(
+      await handleRemoveWorkspaceWorktree(
         wsWorktreeMatch[1],
         decodeURIComponent(wsWorktreeMatch[2]),
         url,

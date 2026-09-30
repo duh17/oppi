@@ -194,13 +194,13 @@ describe("workspace worktrees", () => {
     ).toThrow("path must be a string");
   });
 
-  it("rejects managed worktree ids reserved by retained session history", () => {
+  it("rejects managed worktree ids reserved by retained session history", async () => {
     const { workspace } = makeGitWorkspace();
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-reserved-history-"));
     roots.push(dataDir);
     const branch = "feature/retained-history";
     const created = createWorkspaceWorktree(workspace, { branch }, { dataDir });
-    removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id });
+    await removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id });
 
     expect(() =>
       createWorkspaceWorktree(
@@ -297,7 +297,7 @@ describe("workspace worktrees", () => {
     ).toThrow("reserved worktree id");
   });
 
-  it("removes only Oppi-managed data-dir worktrees", () => {
+  it("removes only Oppi-managed data-dir worktrees", async () => {
     const { workspace } = makeGitWorkspace();
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-remove-"));
     roots.push(dataDir);
@@ -308,15 +308,15 @@ describe("workspace worktrees", () => {
       { dataDir },
     );
 
-    expect(() =>
+    await expect(
       removeWorkspaceWorktree(workspace, {
         dataDir,
         worktreeId: projectLinked.id,
         force: true,
       }),
-    ).toThrow("Only Oppi-managed data-dir worktrees can be removed");
+    ).rejects.toThrow("Only Oppi-managed data-dir worktrees can be removed");
 
-    const removed = removeWorkspaceWorktree(workspace, {
+    const removed = await removeWorkspaceWorktree(workspace, {
       dataDir,
       worktreeId: created.id,
     });
@@ -328,22 +328,26 @@ describe("workspace worktrees", () => {
     ).toBe(false);
   });
 
-  it("still requires force to remove dirty managed worktrees", () => {
+  it("still requires force to remove dirty managed worktrees", async () => {
     const { workspace } = makeGitWorkspace();
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-dirty-"));
     roots.push(dataDir);
     const created = createWorkspaceWorktree(workspace, { branch: "feature/dirty" }, { dataDir });
     writeFileSync(join(created.path, "dirty.txt"), "uncommitted\n");
 
-    expect(() =>
+    await expect(
       removeWorkspaceWorktree(workspace, {
         dataDir,
         worktreeId: created.id,
       }),
-    ).toThrow("Worktree has uncommitted or untracked changes");
+    ).rejects.toThrow("Worktree has uncommitted or untracked changes");
     expect(existsSync(created.path)).toBe(true);
+    // A refused removal leaves the tree in the catalog.
+    expect(
+      listWorkspaceWorktrees(workspace, { dataDir }).some((worktree) => worktree.id === created.id),
+    ).toBe(true);
 
-    removeWorkspaceWorktree(workspace, {
+    await removeWorkspaceWorktree(workspace, {
       dataDir,
       worktreeId: created.id,
       force: true,
@@ -351,19 +355,35 @@ describe("workspace worktrees", () => {
     expect(existsSync(created.path)).toBe(false);
   });
 
-  it("refuses to remove managed worktrees with active sessions", () => {
+  it("refuses to remove managed worktrees with active sessions", async () => {
     const { workspace } = makeGitWorkspace();
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-active-"));
     roots.push(dataDir);
     const created = createWorkspaceWorktree(workspace, { branch: "feature/active" }, { dataDir });
 
-    expect(() =>
+    await expect(
       removeWorkspaceWorktree(workspace, {
         dataDir,
         worktreeId: created.id,
         force: true,
         activeSessionCount: 1,
       }),
-    ).toThrow("Cannot remove a worktree with active sessions");
+    ).rejects.toThrow("Cannot remove a worktree with active sessions");
+  });
+
+  it("hides a worktree from the catalog while its removal runs and rejects a second removal", async () => {
+    const { workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-pending-"));
+    roots.push(dataDir);
+    const created = createWorkspaceWorktree(workspace, { branch: "feature/pending" }, { dataDir });
+
+    const removal = removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id });
+    expect(resolveWorkspaceWorktree(workspace, created.id, { dataDir })).toBeUndefined();
+    await expect(
+      removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id }),
+    ).rejects.toThrow("Worktree not found");
+
+    expect((await removal).id).toBe(created.id);
+    expect(existsSync(created.path)).toBe(false);
   });
 });

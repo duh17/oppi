@@ -91,6 +91,7 @@ Example:
 
 ### Fixed
 
+- **Server:** Removing a large worktree no longer freezes the server. `git worktree remove` used to block every request and session stream for the whole delete (about a minute for a 23 GB tree) and was killed after 60 seconds, which could leave a half-deleted checkout. Removal now runs in the background with a 30-minute bound. A worktree being removed is hidden from worktree lists so no session can start in it, and it reappears if removal fails.
 - **Server:** Sessions that were running when the server stopped, restarted, updated, or crashed now resume on the next start, instead of all showing Stopped. A session that was mid-turn also gets a message asking the agent to continue. See [Running sessions across a restart](docs/server-configuration.md#running-sessions-across-a-restart).
 - **Server:** A second `oppi serve` for the same data directory that fails to start no longer marks the running server's sessions stopped. Startup now touches session state only after it owns the data directory.
 - **Server:** `oppi session get|send|wait|…` and `oppi schedule --session` no longer download every stored session to resolve one id. The CLI asks `GET /sessions?idPrefix=<target>` for matching ids only. With about 10,000 stored sessions, each lookup had cost the server roughly 0.4 s of CPU, and a handful of parallel subagent calls could push its memory up by 500 MB.

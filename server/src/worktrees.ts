@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, realpathSync } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
@@ -327,6 +327,9 @@ export function listWorkspaceWorktrees(
   const records = parseWorktreePorcelain(raw);
   const withIds: WorkspaceWorktree[] = records.flatMap((record) => {
     const path = safeRealpath(record.path);
+    // A worktree whose removal is underway is already gone to callers, so no
+    // session or file read can bind to a tree that is being deleted.
+    if (pendingWorktreeRemovals.has(path)) return [];
     const isMain = path === workspaceRoot;
     const dataDirWorktreeId = dataDirManagedWorktreeId(options.dataDir, workspace.id, path);
     const isProjectManaged = isPathWithin(projectManagedRoot, path);
@@ -655,10 +658,19 @@ export function previewWorkspaceWorktree(
   };
 }
 
-export function removeWorkspaceWorktree(
+// Paths of managed worktrees whose async removal has passed validation.
+const pendingWorktreeRemovals = new Set<string>();
+
+// Deleting a multi-GB tree takes minutes; killing git midway leaves a half-deleted
+// checkout. The bound only guards against a wedged git.
+const WORKTREE_REMOVE_TIMEOUT_MS = 30 * 60_000;
+
+// Removal runs git asynchronously: `git worktree remove` deletes every file, and
+// a synchronous child would block the server's event loop for the whole delete.
+export async function removeWorkspaceWorktree(
   workspace: Workspace,
   options: RemoveWorkspaceWorktreeOptions,
-): WorkspaceWorktree {
+): Promise<WorkspaceWorktree> {
   const worktreeId = options.worktreeId.trim();
   if (!worktreeId) {
     throw new WorkspaceWorktreeError(400, "worktree id required");
@@ -678,20 +690,49 @@ export function removeWorkspaceWorktree(
   if ((options.activeSessionCount ?? 0) > 0) {
     throw new WorkspaceWorktreeError(409, "Cannot remove a worktree with active sessions");
   }
-  if (options.force !== true && isWorktreeDirty(worktree.path)) {
-    throw new WorkspaceWorktreeError(409, "Worktree has uncommitted or untracked changes");
-  }
+  // Mark pending before the first await so a concurrent request cannot resolve it.
+  pendingWorktreeRemovals.add(worktree.path);
+  try {
+    if (options.force !== true) {
+      const status = await runGitAsync(worktree.path, ["status", "--porcelain=v1"], 60_000);
+      if (status.status !== 0 || status.stdout.trim().length > 0) {
+        throw new WorkspaceWorktreeError(409, "Worktree has uncommitted or untracked changes");
+      }
+    }
 
-  runGitOrThrow(
-    workspaceRoot,
-    ["worktree", "remove", ...(options.force ? ["--force"] : []), worktree.path],
-    409,
-  );
-  return worktree;
+    const removed = await runGitAsync(
+      workspaceRoot,
+      ["worktree", "remove", ...(options.force ? ["--force"] : []), worktree.path],
+      WORKTREE_REMOVE_TIMEOUT_MS,
+    );
+    if (removed.status !== 0) {
+      throw new WorkspaceWorktreeError(
+        409,
+        removed.stderr.trim() || removed.stdout.trim() || "git worktree remove failed",
+      );
+    }
+    return worktree;
+  } finally {
+    pendingWorktreeRemovals.delete(worktree.path);
+  }
 }
 
-function isWorktreeDirty(path: string): boolean {
-  return (runGit(path, ["status", "--porcelain=v1"])?.trim().length ?? 0) > 0;
+function runGitAsync(cwd: string, args: string[], timeout: number): Promise<GitResult> {
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      args,
+      { cwd, encoding: "utf8", timeout, maxBuffer: 16 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        const code = (error as { code?: unknown } | null)?.code;
+        resolve({
+          status: error ? (typeof code === "number" ? code : 1) : 0,
+          stdout,
+          stderr,
+        });
+      },
+    );
+  });
 }
 
 export function resolveWorkspaceWorktree(
