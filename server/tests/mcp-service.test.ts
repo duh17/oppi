@@ -710,6 +710,29 @@ describe("MCP routes through real bundled Pi", () => {
       exposure: "hidden",
     });
   }, 30_000);
+  // Pi still accepts `codemode-deferred` in hand-written mcp.json, but the app only decodes
+  // Pi's four exposures; one unknown value would fail the whole server list on the phone.
+  it("lists Pi's legacy codemode-deferred alias as codemode", async () => {
+    const { service, agentDir } = fixture();
+    writeFileSync(
+      join(agentDir, "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          echo: {
+            command: process.execPath,
+            args: [echo],
+            exposure: "codemode-deferred",
+            toolExposure: { echo: "codemode-deferred" },
+          },
+        },
+      }),
+    );
+    const snapshot = await service.list("global");
+    expect(snapshot.scope.servers).toMatchObject([
+      { name: "echo", state: "connected", exposure: "codemode" },
+    ]);
+    expect(JSON.stringify(snapshot)).not.toContain("codemode-deferred");
+  }, 30_000);
   it("signs in a project-only OAuth server using its trusted workspace cwd", async () => {
     const { service, agentDir, project } = fixture();
     const remote = await oauthServer();

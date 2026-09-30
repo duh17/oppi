@@ -48,7 +48,7 @@
               }
             },
             "enabled": true,
-            "exposure": "codemode-deferred",
+            "exposure": "codemode",
             "state": "needs-auth",
             "tools": [],
             "error": "Sign-in required",
@@ -269,7 +269,7 @@
             }
           },
           "enabled": true,
-          "exposure": "codemode-deferred",
+          "exposure": "codemode",
           "state": "needs-auth",
           "tools": [],
           "error": "Sign-in required",

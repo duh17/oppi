@@ -1,7 +1,7 @@
 import type { ProviderAuthFlowStatus, ProviderAuthLaunchMode } from "../provider-auth/types.js";
 import type { ProjectTrustState } from "./workspace.js";
 
-export type McpExposure = "codemode" | "codemode-deferred" | "deferred" | "direct" | "hidden";
+export type McpExposure = "codemode" | "deferred" | "direct" | "hidden";
 export interface McpServerConfig {
   url?: string;
   command?: string;

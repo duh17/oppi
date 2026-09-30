@@ -44,7 +44,7 @@ export function buildMcpHttpFixture(): {
               oauth: { clientId: "client", clientSecret: "[redacted]", callbackPort: 8765 },
             },
             enabled: true,
-            exposure: "codemode-deferred",
+            exposure: "codemode",
             state: "needs-auth",
             tools: [],
             error: "Sign-in required",

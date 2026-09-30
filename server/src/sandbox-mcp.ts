@@ -392,13 +392,11 @@ export type SandboxMcpOptions = Pick<
  * Sandboxes have no codemode (its scripts are model-written code running on the host).
  * Pi registers `codemode` and `deferred` tools identically and differs only in which
  * tool reaches them, so `deferred` keeps every tool reachable through `tool_search`.
- * `codemode-deferred` is Pi's alias for `codemode`.
+ * Pi's config loader has already resolved the `codemode-deferred` alias to `codemode`.
  */
 export function withoutCodemode(entry: McpServerEntry): McpServerEntry {
   const toDeferred = (exposure: unknown): unknown =>
-    exposure === undefined || exposure === "codemode" || exposure === "codemode-deferred"
-      ? "deferred"
-      : exposure;
+    exposure === undefined || exposure === "codemode" ? "deferred" : exposure;
   const config = { ...entry.config } as Record<string, unknown>;
   config.exposure = toDeferred(config.exposure);
   if (config.toolExposure && typeof config.toolExposure === "object")

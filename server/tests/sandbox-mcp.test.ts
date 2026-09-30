@@ -355,10 +355,9 @@ describe("sandbox MCP exposure", () => {
     expect(withoutCodemode(entry({ command: "node" })).config).toMatchObject({
       exposure: "deferred",
     });
-    for (const exposure of ["codemode", "codemode-deferred"])
-      expect(withoutCodemode(entry({ command: "node", exposure })).config).toMatchObject({
-        exposure: "deferred",
-      });
+    expect(withoutCodemode(entry({ command: "node", exposure: "codemode" })).config).toMatchObject({
+      exposure: "deferred",
+    });
     const mixed = withoutCodemode(
       entry({
         command: "node",

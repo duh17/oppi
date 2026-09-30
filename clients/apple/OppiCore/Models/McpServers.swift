@@ -2,16 +2,14 @@ import Foundation
 
 enum McpExposure: String, Codable, CaseIterable, Sendable {
     case codemode
-    case codemodeDeferred = "codemode-deferred"
     case deferred
     case direct
     case hidden
 
     var explanation: String {
         switch self {
-        case .codemode: "Tools are listed for scripts, without model declarations."
-        case .codemodeDeferred: "Scripts discover tools on demand."
-        case .deferred: "Tool search loads tools into the model context."
+        case .codemode: "Scripts find and call tools; the model doesn't see them."
+        case .deferred: "Tool search loads matching tools into the model context."
         case .direct: "Tools are always declared to the model."
         case .hidden: "Tools cannot be called."
         }

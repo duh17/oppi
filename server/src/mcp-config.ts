@@ -9,13 +9,7 @@ export class McpError extends Error {
     super(message);
   }
 }
-export const MCP_EXPOSURES = [
-  "codemode",
-  "codemode-deferred",
-  "deferred",
-  "direct",
-  "hidden",
-] as const;
+export const MCP_EXPOSURES = ["codemode", "deferred", "direct", "hidden"] as const;
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
