@@ -4,9 +4,34 @@ import {
   ProjectTrustStore,
   type ProjectTrustContext,
   type ProjectTrustEventResult,
-  type SettingsManager,
+  SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { serverResourceId } from "./server-resource-id.js";
+import type { ProjectTrustState } from "./types.js";
+
+/**
+ * The decision `resolveManagedProjectTrust` would reach for `cwd` without asking: Pi's saved
+ * decision, else the global `defaultProjectTrust`, else `ask`. The one trust answer every
+ * workspace resource list shows. A project_trust extension handler can still decide first
+ * when a session starts; that is runtime code this read cannot predict.
+ */
+export function projectTrustState(cwd: string, agentDir: string): ProjectTrustState {
+  // defaultProjectTrust is a global setting; never read the untrusted project's settings.
+  return decidedTrust(
+    new ProjectTrustStore(agentDir).get(cwd),
+    SettingsManager.create(cwd, agentDir, { projectTrusted: false }).getDefaultProjectTrust(),
+  );
+}
+
+function decidedTrust(
+  saved: boolean | null,
+  defaultTrust: ReturnType<SettingsManager["getDefaultProjectTrust"]>,
+): ProjectTrustState {
+  if (saved !== null) return saved ? "trusted" : "distrusted";
+  if (defaultTrust === "always") return "trusted";
+  if (defaultTrust === "never") return "distrusted";
+  return "ask";
+}
 
 /** Bounds phone startup dialogs; unanswered decisions deliberately preserve default allow. */
 export const PROJECT_TRUST_TIMEOUT_MS = 15_000;
@@ -77,14 +102,8 @@ export async function resolveManagedProjectTrust(
       return trusted;
     }
   }
-  const saved = store.get(cwd);
-  if (saved !== null) return saved;
-  switch (settingsManager.getDefaultProjectTrust()) {
-    case "always":
-      return true;
-    case "never":
-      return false;
-  }
+  const decided = decidedTrust(store.get(cwd), settingsManager.getDefaultProjectTrust());
+  if (decided !== "ask") return decided === "trusted";
   if (!context.hasUI) return true;
   const selected = await context.ui.select(
     `Trust project folder?\n${cwd}\n\nTrust allows Pi to load project settings, MCP servers, extensions, skills, prompts, themes and system prompts, and install project packages. Project extensions and MCP servers can run host processes.\n\nNo answer within 15 seconds allows this session without remembering a decision.`,

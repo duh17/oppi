@@ -378,6 +378,9 @@ The picker response:
 - includes settings-declared extension paths
 - allows host/project/package extensions named `ask`
 - deduplicates by extension name using pi resource-loader precedence
+- for a host folder, adds `projectTrust` (`trusted`, `ask`, or `distrusted`), the answer a session would reach without prompting ([project trust](server-configuration.md#project-trust-in-managed-host-sessions))
+- omits project-local extensions and project settings when `projectTrust` is `distrusted`; `ask` lists them, because an unanswered session prompt allows them
+- `POST /pi/resources/enabled` returns `409` for a `distrusted` folder, because Pi ignores the project settings a toggle would write
 
 ## Native extension UI contract
 

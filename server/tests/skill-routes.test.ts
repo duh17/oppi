@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -114,6 +115,74 @@ describe("skills module", () => {
       expect(body.extensions).toContainEqual(
         expect.objectContaining({ name: "review", enabled: true }),
       );
+    } finally {
+      if (previousAgentDir === undefined) {
+        delete process.env.PI_CODING_AGENT_DIR;
+      } else {
+        process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lists and toggles project resources by the project's trust decision", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-extension-route-trust-"));
+    const cwd = join(root, "workspace");
+    const agentDir = join(root, "agent");
+    mkdirSync(join(cwd, ".pi", "extensions"), { recursive: true });
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(join(cwd, ".pi", "extensions", "local.ts"), "export default function () {}\n");
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    const dispatch = createSkillRoutes(
+      { skillRegistry: { list: vi.fn(() => []) } } as unknown as RouteContext,
+      createRouteHelpers(),
+    );
+    const list = async () => {
+      const res = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: "/extensions",
+        url: new URL(`http://localhost/extensions?cwd=${encodeURIComponent(cwd)}`),
+        req: {} as never,
+        res: res as never,
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        extensions: Array<{ name: string }>;
+        projectTrust: string;
+      };
+      return { names: body.extensions.map((ext) => ext.name), projectTrust: body.projectTrust };
+    };
+    const trust = (decision: boolean) =>
+      writeFileSync(
+        join(agentDir, "trust.json"),
+        JSON.stringify({ [realpathSync(cwd)]: decision }),
+      );
+
+    try {
+      // Undecided: the session asks and allows when unanswered, so project items load.
+      expect(await list()).toEqual({ names: ["local"], projectTrust: "ask" });
+      trust(true);
+      expect(await list()).toEqual({ names: ["local"], projectTrust: "trusted" });
+      trust(false);
+      expect(await list()).toEqual({ names: [], projectTrust: "distrusted" });
+
+      const res = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: "/pi/resources/enabled",
+        url: new URL("http://localhost/pi/resources/enabled"),
+        req: makeRequest({
+          cwd,
+          type: "extensions",
+          path: join(cwd, ".pi", "extensions", "local.ts"),
+          enabled: false,
+        }) as never,
+        res: res as never,
+      });
+      expect(res.statusCode).toBe(409);
+      expect(existsSync(join(cwd, ".pi", "settings.json"))).toBe(false);
     } finally {
       if (previousAgentDir === undefined) {
         delete process.env.PI_CODING_AGENT_DIR;
@@ -835,9 +904,7 @@ describe("skills module", () => {
       await dispatch({
         method: "GET",
         path: "/skills/linked-route-skill",
-        url: new URL(
-          `http://localhost/skills/linked-route-skill?cwd=${encodeURIComponent(cwd)}`,
-        ),
+        url: new URL(`http://localhost/skills/linked-route-skill?cwd=${encodeURIComponent(cwd)}`),
         req: {} as never,
         res: detailRes as never,
       });

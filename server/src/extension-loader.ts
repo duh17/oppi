@@ -66,6 +66,8 @@ export interface ListConfiguredHostExtensionsOptions {
   cwd?: string;
   /** Override pi agent dir for tests. */
   agentDir?: string;
+  /** False when Pi ignores the cwd's project resources. Default true. */
+  projectTrusted?: boolean;
 }
 
 /** Validate extension name accepted by workspace API. */
@@ -253,7 +255,9 @@ async function resolveConfiguredHostExtensionResources(
   const cwd = resolveWorkspaceCwd(options.cwd, homedir()) ?? homedir();
   const agentDir = options.agentDir ?? DEFAULT_AGENT_DIR;
 
-  const settingsManager = SettingsManager.create(cwd, agentDir);
+  const settingsManager = SettingsManager.create(cwd, agentDir, {
+    projectTrusted: options.projectTrusted ?? true,
+  });
   throwIfSettingsErrors(settingsManager, "load");
   const packageManager = new DefaultPackageManager({
     cwd,

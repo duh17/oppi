@@ -23,7 +23,9 @@ import {
   scanDirectories,
 } from "../host.js";
 import { listConfiguredHostExtensionResources } from "../extension-loader.js";
+import { projectTrustState } from "../project-trust.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
+import type { ProjectTrustState } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const MAX_SKILL_FILE_BYTES = 1024 * 1024;
@@ -103,13 +105,16 @@ function skillMatchesResource(skill: Skill, resource: ResolvedResource): boolean
   );
 }
 
-async function resolvePiResources(cwd: string): Promise<{
+async function resolvePiResources(
+  cwd: string,
+  projectTrusted = true,
+): Promise<{
   agentDir: string;
   settingsManager: SettingsManager;
   resolved: Awaited<ReturnType<DefaultPackageManager["resolve"]>>;
 }> {
   const agentDir = getAgentDir();
-  const settingsManager = SettingsManager.create(cwd, agentDir);
+  const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
   throwIfPiSettingsErrors(settingsManager, "load");
   const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
   const resolved = await packageManager.resolve(async () => "skip");
@@ -127,8 +132,11 @@ function throwIfPiSettingsErrors(settingsManager: SettingsManager, operation: st
   throw new PiSettingsOperationError(operation, detail);
 }
 
-async function listConfiguredHostSkills(cwd: string): Promise<SkillRouteInfo[]> {
-  const { agentDir, resolved } = await resolvePiResources(cwd);
+async function listConfiguredHostSkills(
+  cwd: string,
+  projectTrusted = true,
+): Promise<SkillRouteInfo[]> {
+  const { agentDir, resolved } = await resolvePiResources(cwd, projectTrusted);
   const skillPaths = resolved.skills.map((resource) => resource.path);
   const result = loadSkills({
     cwd,
@@ -636,9 +644,16 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
   function resolveScopedResourceCwd(options: { workspaceId?: string; cwd?: string }): {
     cwd?: string;
     workspaceScoped: boolean;
+    /** Present for a host folder; sandbox sessions and the unscoped catalog have no gate. */
+    projectTrust?: ProjectTrustState;
   } {
     if (options.workspaceId === undefined) {
-      return { cwd: options.cwd, workspaceScoped: false };
+      const cwd = options.cwd?.trim() ? options.cwd : undefined;
+      return {
+        cwd,
+        workspaceScoped: false,
+        projectTrust: cwd ? projectTrustState(resolveResourceCwd(cwd), getAgentDir()) : undefined,
+      };
     }
 
     const workspaceId = options.workspaceId.trim();
@@ -651,20 +666,25 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       throw new WorkspaceResourceScopeError("Workspace not found", 404);
     }
 
+    const cwd = resolveSdkSessionCwd(workspace, undefined, { dataDir: ctx.storage.getDataDir() });
     return {
-      cwd: resolveSdkSessionCwd(workspace, undefined, { dataDir: ctx.storage.getDataDir() }),
+      cwd,
       workspaceScoped: true,
+      projectTrust:
+        workspace.runtime === "sandbox" ? undefined : projectTrustState(cwd, getAgentDir()),
     };
   }
 
   async function handleListSkills(url: URL, res: ServerResponse): Promise<void> {
     try {
-      const { cwd } = resolveScopedResourceCwd({
+      const { cwd, projectTrust } = resolveScopedResourceCwd({
         workspaceId: url.searchParams.get("workspaceId") ?? undefined,
         cwd: url.searchParams.get("cwd") ?? undefined,
       });
       if (cwd) {
-        helpers.json(res, { skills: await listConfiguredHostSkills(cwd) });
+        helpers.json(res, {
+          skills: await listConfiguredHostSkills(cwd, projectTrust !== "distrusted"),
+        });
         return;
       }
       helpers.json(res, { skills: ctx.skillRegistry.list() });
@@ -679,20 +699,25 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
 
   async function handleListExtensions(url: URL, res: ServerResponse): Promise<void> {
     try {
-      const { cwd } = resolveScopedResourceCwd({
+      const { cwd, projectTrust } = resolveScopedResourceCwd({
         workspaceId: url.searchParams.get("workspaceId") ?? undefined,
         cwd: url.searchParams.get("cwd") ?? undefined,
       });
       // listFromResolvedResources already dedupes by extension name.
       const extensions = (
-        await listConfiguredHostExtensionResources({ cwd, agentDir: getAgentDir() })
+        await listConfiguredHostExtensionResources({
+          cwd,
+          agentDir: getAgentDir(),
+          projectTrusted: projectTrust !== "distrusted",
+        })
       ).map((ext) => ({
         ...ext,
         enabled: ext.enabled ?? true,
         source: "pi" as const,
       }));
 
-      helpers.json(res, { extensions });
+      // Workspace settings show this once for skills, extensions, and MCP servers.
+      helpers.json(res, projectTrust ? { extensions, projectTrust } : { extensions });
     } catch (err: unknown) {
       helpers.error(
         res,
@@ -834,12 +859,17 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         workspaceId: typeof body.workspaceId === "string" ? body.workspaceId : undefined,
         cwd: typeof body.cwd === "string" ? body.cwd : undefined,
       });
+      // Toggles write project settings, which Pi ignores for a distrusted project.
+      if (scope.projectTrust === "distrusted") {
+        helpers.error(res, 409, "Pi ignores this project's settings because it is not trusted");
+        return;
+      }
       await setPiResourceEnabled({
         cwd: resolveResourceCwd(scope.cwd),
         type,
         path: body.path,
         enabled: body.enabled,
-        preferProjectScope: scope.workspaceScoped || Boolean(scope.cwd?.trim().length),
+        preferProjectScope: scope.workspaceScoped || scope.cwd !== undefined,
       });
       helpers.json(res, { ok: true });
     } catch (err: unknown) {

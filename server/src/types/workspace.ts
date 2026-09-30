@@ -3,6 +3,12 @@ import type { IconChoice } from "./icon.js";
 // ─── Workspaces ───
 
 export type WorkspaceSystemPromptMode = "append";
+/**
+ * What a managed host session will do with a folder's project resources (`.pi/settings.json`,
+ * `.pi/mcp.json`, `.pi/extensions`, `.pi/skills`, ...). `ask` prompts on the phone at session
+ * start and allows the session when unanswered. Sandbox sessions have no trust gate.
+ */
+export type ProjectTrustState = "trusted" | "ask" | "distrusted";
 export type WorkspaceRuntimeMode = "host" | "sandbox";
 
 export interface WorkspaceSandboxConfig {
