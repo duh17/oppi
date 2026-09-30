@@ -3,12 +3,8 @@ import SwiftUI
 struct McpServersView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
-    @State private var snapshot: McpServersResponse?
-    @State private var error: String?
-    @State private var loading = false
+    @State private var model = McpServersModel()
     @State private var addContext: McpAddContext?
-    @State private var generation = 0
-    @State private var signIn = McpSignInOwner()
     @Environment(\.scenePhase) private var scenePhase
 
     private var server: PairedServer? {
@@ -17,6 +13,11 @@ struct McpServersView: View {
     private var client: APIClient? {
         coordinator.activeServerId.flatMap { coordinator.connection(for: $0)?.apiClient }
     }
+
+    private var signIn: McpSignInOwner { model.signIn }
+    private var snapshot: McpServersResponse? { model.snapshot }
+    private var error: String? { model.error }
+    private var loading: Bool { model.loading }
 
     var body: some View {
         List {
@@ -99,8 +100,8 @@ struct McpServersView: View {
             }
         }
         .refreshable { await refresh() }
-        .task(id: coordinator.activeServerId) { snapshot = nil; await refresh() }
-        .sheet(isPresented: $signIn.showingSheet, onDismiss: { signIn.sheetDismissed() }) {
+        .task(id: coordinator.activeServerId) { await refresh() }
+        .sheet(isPresented: Binding(get: { model.signIn.showingSheet }, set: { model.signIn.showingSheet = $0 }), onDismiss: { signIn.sheetDismissed() }) {
             if let attempt = signIn.attempt { McpSignInSheet(attempt: attempt, owner: signIn) }
         }
         .onChange(of: signIn.attempt?.flow.status) { _, status in
@@ -127,21 +128,11 @@ struct McpServersView: View {
     }
 
     private func refresh() async {
-        guard !signIn.hasActive else { return }
-        generation += 1
-        let token = generation
-        let serverId = coordinator.activeServerId
-        guard let client else { loading = false; return }
-        loading = true
-        defer { if token == generation { loading = false } }
-        do {
-            let result = try await client.listMcpServers()
-            guard token == generation, serverId == coordinator.activeServerId else { return }
-            snapshot = result; error = nil
-        } catch {
-            guard token == generation, serverId == coordinator.activeServerId else { return }
-            self.error = error.localizedDescription
-        }
+        guard let server, let client else { return }
+        await model.refresh(
+            hostId: server.id, hostName: server.name,
+            flowClient: McpFlowClient(client: client)
+        ) { try await client.listMcpServers() }
     }
 }
 private struct McpAddContext: Identifiable {

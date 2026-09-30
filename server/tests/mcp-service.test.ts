@@ -704,4 +704,87 @@ describe("MCP routes through real bundled Pi", () => {
       .toBe("failed");
     expect(service.auth.get(flow.flowId).error).toContain("Pi MCP sign-in failed");
   }, 30_000);
+  it("lists during a live sign-in without a second credential writer, reports the flow, and keeps mutations exclusive", async () => {
+    const { service } = fixture();
+    const remote = await oauthServer();
+    const base = await routes(service);
+    await service.add({ scopeId: "global", name: "remote", url: remote + "/mcp" });
+    const before = await api<McpServersResponse>(base, "/mcp/servers");
+    expect(before.activeSignIn).toBeUndefined();
+    expect(before.scopes[0].servers[0]).toMatchObject({ name: "remote", state: "needs-auth" });
+
+    const flow = await service.login("global", "remote", "phone_browser");
+    await expect
+      .poll(() => service.auth.get(flow.flowId).status, { timeout: 10_000 })
+      .toBe("awaiting_external");
+    const run = vi.spyOn(McpCli.prototype, "run");
+    try {
+      const during = await api<McpServersResponse>(base, "/mcp/servers");
+      expect(run).not.toHaveBeenCalled(); // No probe beside the login's credential writer.
+      expect(during.scopes[0].servers[0]).toMatchObject({ name: "remote", state: "needs-auth" });
+      expect(during.activeSignIn).toMatchObject({
+        flowId: flow.flowId,
+        scopeId: "global",
+        serverName: "remote",
+        status: "awaiting_external",
+      });
+      expect(during.activeSignIn?.auth?.url).toContain("redirect_uri=");
+    } finally {
+      run.mockRestore();
+    }
+    for (const [path, method, body] of [
+      ["/mcp/servers", "POST", { scopeId: "global", name: "other", url: remote + "/mcp" }],
+      ["/mcp/scopes/global/servers/remote", "PATCH", { enabled: false }],
+      ["/mcp/scopes/global/servers/remote", "DELETE", {}],
+      ["/mcp/scopes/global/servers/remote/login", "POST", {}],
+      ["/mcp/scopes/global/servers/remote/logout", "POST", {}],
+    ] as const) {
+      const response = await fetch(base + path, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect(response.status, `${method} ${path}`).toBe(409);
+    }
+
+    // Cancel: the list keeps answering while Pi's child is reaped, then goes live again.
+    await api(base, `/mcp/auth/flows/${flow.flowId}/cancel`, "POST", {});
+    const cancelled = await api<McpServersResponse>(base, "/mcp/servers");
+    if (cancelled.activeSignIn)
+      expect(cancelled.activeSignIn).toMatchObject({ flowId: flow.flowId, status: "cancelled" });
+    await expect
+      .poll(async () => (await api<McpServersResponse>(base, "/mcp/servers")).activeSignIn, {
+        timeout: 5000,
+      })
+      .toBeUndefined();
+    await service.patch("global", "remote", { enabled: false });
+  }, 30_000);
+  it("serves config-only rows when a sign-in starts before any probe", async () => {
+    const { service } = fixture();
+    const remote = await oauthServer();
+    await service.add({ scopeId: "global", name: "remote", url: remote + "/mcp" });
+    const flow = await service.login("global", "remote", "phone_browser");
+    const during = await service.list();
+    expect(during.activeSignIn?.flowId).toBe(flow.flowId);
+    expect(during.scopes[0].servers[0]).toMatchObject({ name: "remote", state: "unknown" });
+    expect(during.scopes[0].errors).toEqual([
+      "Live status is paused while a sign-in is in progress.",
+    ]);
+    service.auth.cancel(flow.flowId);
+  }, 30_000);
+  it("bounds dispose by a deadline when a killed child never settles", async () => {
+    const { agentDir } = fixture();
+    const stop = vi.fn();
+    const deadline = new McpService({ agentDir, listWorkspaces: () => [], disposeDeadlineMs: 200 });
+    services.push(deadline);
+    (deadline as unknown as { children: Set<unknown> }).children.add({
+      stop,
+      done: new Promise(() => {}),
+    });
+    const start = performance.now();
+    await deadline.dispose();
+    expect(stop).toHaveBeenCalledWith(true);
+    expect(performance.now() - start).toBeGreaterThanOrEqual(150);
+    expect(performance.now() - start).toBeLessThan(1500);
+  });
 });

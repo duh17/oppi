@@ -45,6 +45,8 @@ export class McpService {
   private queue: Promise<unknown> = Promise.resolve();
   private pendingOperations = 0;
   private listFlight?: Promise<McpServersResponse>;
+  /** Last live probe per scope, served while a sign-in owns Pi's credential store. */
+  private readonly lastProbe = new Map<string, McpScopeSnapshot>();
   private readonly children = new Set<McpCliProcess>();
   private disposed = false;
   private disposal?: Promise<void>;
@@ -53,6 +55,8 @@ export class McpService {
       agentDir: string;
       listWorkspaces: () => Workspace[];
       loginTtlMs?: number;
+      /** Upper bound on waiting for killed children during dispose. */
+      disposeDeadlineMs?: number;
     },
   ) {
     this.cli = new McpCli(options.agentDir, (child) => {
@@ -122,6 +126,14 @@ export class McpService {
     return result;
   }
   list(): Promise<McpServersResponse> {
+    // Pi's login child writes ~/.pi/agent/mcp-auth.json, and a probe may refresh tokens
+    // into the same file. Do not run a second writer beside a live sign-in: serve the last
+    // live snapshot (config-only rows for scopes never probed) plus the flow to resume.
+    const activeSignIn = this.auth.active();
+    if (activeSignIn && !this.disposed)
+      return Promise.all(
+        this.scopes().map((scope) => this.lastProbe.get(scope.id) ?? this.probe(scope, false)),
+      ).then((scopes) => ({ scopes, activeSignIn }));
     // Coalesce simultaneous refreshes instead of queuing another 20-second probe.
     // Do not spend the phone's deadline waiting behind an unrelated management operation.
     if (this.listFlight) return this.listFlight;
@@ -143,7 +155,9 @@ export class McpService {
               servers: [],
               errors: [],
             };
-          return this.probe(scope);
+          const live = await this.probe(scope, true);
+          this.lastProbe.set(scope.id, live);
+          return live;
         }),
       );
       return { scopes };
@@ -152,7 +166,7 @@ export class McpService {
     });
     return this.listFlight;
   }
-  private async probe(scope: Scope): Promise<McpScopeSnapshot> {
+  private async probe(scope: Scope, live: boolean): Promise<McpScopeSnapshot> {
     const snapshot: McpScopeSnapshot = {
       id: scope.id,
       title: scope.title,
@@ -183,37 +197,40 @@ export class McpService {
           })();
     const entries = isRecord(document.mcpServers) ? document.mcpServers : {};
     let reports: PiReport[] = [];
-    try {
-      // Leave room below the iOS 30-second resource deadline for termination and transport.
-      const result = await this.cli.run(["list", "--json"], scope.cwd, { timeoutMs: 20_000 });
-      const report: unknown = JSON.parse(result.stdout);
-      if (!isRecord(report) || !Array.isArray(report.servers) || !Array.isArray(report.errors))
-        throw new Error("Invalid Pi response");
-      reports = report.servers.filter(
-        (item): item is PiReport =>
-          isRecord(item) &&
-          item.scope === scope.kind &&
-          typeof item.name === "string" &&
-          typeof item.state === "string" &&
-          Array.isArray(item.tools),
-      );
-      snapshot.trusted = !report.note;
-      if (typeof report.note === "string")
-        snapshot.note =
-          "This project's mcp.json is ignored by Pi until you trust the project on the host. No project commands were run.";
-      // JSON parser excerpts can contain credentials; never echo them to the phone.
-      snapshot.errors = report.errors.map((error) =>
-        typeof error === "string" && !/JSON|Unexpected token|position|line \d+ column/i.test(error)
-          ? redactMcpDiagnostic(error, [document, globalDocument])
-          : "Invalid mcp.json. Check the config on the host.",
-      );
-    } catch (error) {
-      snapshot.errors.push(
-        error instanceof McpError && error.statusCode === 504
-          ? "This scope's live probe timed out after 20 seconds. Other scopes still refreshed."
-          : "Pi could not probe this scope. Check its path and MCP configuration on the host.",
-      );
-    }
+    if (!live) snapshot.errors.push("Live status is paused while a sign-in is in progress.");
+    else
+      try {
+        // Leave room below the iOS 30-second resource deadline for termination and transport.
+        const result = await this.cli.run(["list", "--json"], scope.cwd, { timeoutMs: 20_000 });
+        const report: unknown = JSON.parse(result.stdout);
+        if (!isRecord(report) || !Array.isArray(report.servers) || !Array.isArray(report.errors))
+          throw new Error("Invalid Pi response");
+        reports = report.servers.filter(
+          (item): item is PiReport =>
+            isRecord(item) &&
+            item.scope === scope.kind &&
+            typeof item.name === "string" &&
+            typeof item.state === "string" &&
+            Array.isArray(item.tools),
+        );
+        snapshot.trusted = !report.note;
+        if (typeof report.note === "string")
+          snapshot.note =
+            "This project's mcp.json is ignored by Pi until you trust the project on the host. No project commands were run.";
+        // JSON parser excerpts can contain credentials; never echo them to the phone.
+        snapshot.errors = report.errors.map((error) =>
+          typeof error === "string" &&
+          !/JSON|Unexpected token|position|line \d+ column/i.test(error)
+            ? redactMcpDiagnostic(error, [document, globalDocument])
+            : "Invalid mcp.json. Check the config on the host.",
+        );
+      } catch (error) {
+        snapshot.errors.push(
+          error instanceof McpError && error.statusCode === 504
+            ? "This scope's live probe timed out after 20 seconds. Other scopes still refreshed."
+            : "Pi could not probe this scope. Check its path and MCP configuration on the host.",
+        );
+      }
     snapshot.servers = Object.entries(entries).flatMap(([name, config]): McpServerSummary[] => {
       if (!isRecord(config)) return [];
       const report = reports.find((item) => item.name === name);
@@ -228,7 +245,9 @@ export class McpService {
           config: safeMcpConfig(config),
           enabled,
           exposure,
-          state: report?.state ?? (!enabled ? "disabled" : snapshot.note ? "untrusted" : "failed"),
+          state:
+            report?.state ??
+            (!enabled ? "disabled" : snapshot.note ? "untrusted" : live ? "failed" : "unknown"),
           tools: report?.tools ?? [],
           toolExposure: report?.toolExposure,
           error: report?.error
@@ -440,7 +459,13 @@ export class McpService {
     const children = [...this.children];
     for (const child of children) child.stop(true);
     this.auth.dispose();
-    this.disposal = Promise.allSettled(children.map((child) => child.done)).then(() => {});
+    // SIGKILL is already sent; a child that cannot be reaped must not stall shutdown.
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, this.options.disposeDeadlineMs ?? 3000);
+    });
+    const settled = Promise.allSettled(children.map((child) => child.done)).then(() => {});
+    this.disposal = Promise.race([settled, deadline]).finally(() => clearTimeout(timer));
     return this.disposal;
   }
 }

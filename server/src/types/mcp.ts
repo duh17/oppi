@@ -35,6 +35,10 @@ export interface McpScopeSnapshot {
 }
 export interface McpServersResponse {
   scopes: McpScopeSnapshot[];
+  /** The sign-in that still blocks MCP mutations (live, or terminal with its child not yet
+   * reaped). While present, scopes are the last live probe, not a fresh one, so a phone that
+   * opened this view mid-flow can resume or cancel it. Absent once the host is idle. */
+  activeSignIn?: McpAuthFlowSnapshot;
 }
 export interface McpAddServerRequest extends McpServerConfig {
   scopeId: string;

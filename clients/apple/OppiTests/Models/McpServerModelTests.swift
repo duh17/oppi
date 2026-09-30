@@ -6,6 +6,7 @@ import Testing
 struct McpServerModelTests {
     private struct Fixture: Codable {
         let catalog: McpServersResponse
+        let signInCatalog: McpServersResponse
         let flows: [McpAuthFlowSnapshot]
     }
     private func fixture() throws -> Fixture {
@@ -30,6 +31,16 @@ struct McpServerModelTests {
         #expect(catalog.scopes[1].trusted == false)
         #expect(catalog.scopes[1].servers[0].stateLabel == "Untrusted project")
         #expect(catalog.scopes[2].hasConfig == false)
+    }
+    @Test func decodesTheListServedDuringASignIn() throws {
+        let data = try fixture()
+        #expect(data.catalog.activeSignIn == nil)
+        let flow = try #require(data.signInCatalog.activeSignIn)
+        #expect(flow.flowId == "flow-awaiting_external")
+        #expect(flow.status == .awaitingExternal)
+        #expect(flow.scopeId == "global")
+        #expect(flow.serverName == "remote")
+        #expect(data.signInCatalog.scopes.map(\.id) == ["global"])
     }
     @Test func decodesAndRoundTripsAllMcpFlowStates() throws {
         let data = try fixture()

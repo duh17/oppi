@@ -91,7 +91,9 @@ export class McpAuthManager {
   ) {
     this.store = new ProviderAuthFlowStore({ ttlMs });
   }
-  hasActive(): boolean {
+  /** The one flow that still blocks mutations: live, or terminal with its child not yet
+   * reaped. The list endpoint reports it so a fresh phone view can resume or cancel it. */
+  active(): McpAuthFlowSnapshot | undefined {
     for (const id of this.attempts.keys()) {
       const flow = this.store.get(id);
       if (!flow) {
@@ -102,9 +104,12 @@ export class McpAuthManager {
         !isTerminalProviderAuthStatus(flow.snapshot.status) ||
         !this.attempts.get(id)?.childSettled
       )
-        return true;
+        return this.get(id);
     }
-    return false;
+    return undefined;
+  }
+  hasActive(): boolean {
+    return this.active() !== undefined;
   }
   start(
     scopeId: string,

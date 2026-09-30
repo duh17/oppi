@@ -6,9 +6,11 @@ export const MCP_HTTP_SNAPSHOT_FILE = fileURLToPath(
 );
 export function buildMcpHttpFixture(): {
   catalog: McpServersResponse;
+  /** The list served while a sign-in is live: last snapshot plus the flow to resume. */
+  signInCatalog: McpServersResponse;
   flows: McpAuthFlowSnapshot[];
 } {
-  return {
+  const fixture: { catalog: McpServersResponse; flows: McpAuthFlowSnapshot[] } = {
     catalog: {
       scopes: [
         {
@@ -130,6 +132,11 @@ export function buildMcpHttpFixture(): {
         expiresAt: 1739750700000,
       }),
     ),
+  };
+  return {
+    catalog: fixture.catalog,
+    signInCatalog: { scopes: fixture.catalog.scopes.slice(0, 1), activeSignIn: fixture.flows[1] },
+    flows: fixture.flows,
   };
 }
 export function serializeMcpHttpFixture(): string {

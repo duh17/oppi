@@ -24,6 +24,21 @@ final class McpSignInOwner {
         resume()
     }
 
+    /// Adopt the host's live flow when this view has no handle for it (a fresh list view,
+    /// another sidebar destination, a switched host). Continue/Cancel appear; the sheet does not.
+    func reconcile(_ flow: McpAuthFlowSnapshot, client: any ProviderAuthFlowClient, serverId: String, serverName: String) {
+        guard !flow.status.isTerminal, attempt?.flow.flowId != flow.flowId || attempt?.isSettled == true else { return }
+        attempt?.stopPolling()
+        let adopted = ProviderAuthFlowAttempt(
+            flow: flow.providerPresentation, client: client,
+            serverId: serverId, serverName: serverName, providerName: flow.serverName
+        )
+        attempt = adopted
+        scopeId = flow.scopeId
+        callbackAccepted = false
+        adopted.startPolling()
+    }
+
     func resume() {
         showingSheet = true
         attempt?.startPolling()

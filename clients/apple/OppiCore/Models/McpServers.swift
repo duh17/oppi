@@ -69,7 +69,12 @@ struct McpScopeSnapshot: Codable, Sendable, Identifiable, Equatable {
     let errors: [String]
     let note: String?
 }
-struct McpServersResponse: Codable, Sendable, Equatable { let scopes: [McpScopeSnapshot] }
+struct McpServersResponse: Codable, Sendable, Equatable {
+    let scopes: [McpScopeSnapshot]
+    /// The sign-in still blocking MCP changes on the host. While present, `scopes` is the
+    /// host's last live probe, not a fresh one.
+    let activeSignIn: McpAuthFlowSnapshot?
+}
 struct McpPatchServerRequest: Encodable, Sendable {
     var enabled: Bool?
     var exposure: McpExposure?
