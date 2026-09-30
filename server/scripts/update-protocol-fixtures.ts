@@ -1,4 +1,5 @@
 import { writeFileSync } from "node:fs";
+import { MCP_HTTP_SNAPSHOT_FILE, serializeMcpHttpFixture } from "../tests/mcp-protocol-fixtures.js";
 
 import {
   APP_EVENT_MESSAGES_FIXTURE_DESCRIPTION,
@@ -11,6 +12,7 @@ import {
 } from "../tests/protocol-fixtures.js";
 
 const fixtures = [
+  { path: MCP_HTTP_SNAPSHOT_FILE, content: serializeMcpHttpFixture() },
   {
     path: SERVER_MESSAGES_SNAPSHOT_FILE,
     content: serializeProtocolFixture(

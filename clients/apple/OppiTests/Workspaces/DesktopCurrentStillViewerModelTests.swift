@@ -283,10 +283,10 @@ struct DesktopCurrentStillViewerModelTests {
         #expect(!ReleaseFeatures.desktopStillEnabled)
 
         let shared = WorkspaceSidebarPrimaryUtilities.items
-        #expect(shared.map(\.target) == [.agents, .schedules, .skills, .extensions])
+        #expect(shared.map(\.target) == [.agents, .schedules, .skills, .extensions, .mcpServers])
 
         let phone = WorkspaceSidebarPrimaryUtilities.items(for: .phone)
-        #expect(phone.map(\.target) == [.agents, .schedules, .skills, .extensions, .desktopStill])
+        #expect(phone.map(\.target) == [.agents, .schedules, .skills, .extensions, .mcpServers, .desktopStill])
         #expect(phone.last?.title == "Remote Screen")
         #expect(phone.last?.systemImage == "macwindow")
         #expect(phone.last?.accessibilityIdentifier == "workspace.desktopStill.open")
@@ -297,7 +297,7 @@ struct DesktopCurrentStillViewerModelTests {
         )
 
         let pad = WorkspaceSidebarPrimaryUtilities.items(for: .pad)
-        #expect(pad.map(\.target) == [.agents, .schedules, .skills, .extensions])
+        #expect(pad.map(\.target) == [.agents, .schedules, .skills, .extensions, .mcpServers])
         #expect(!pad.map(\.target).contains(.desktopStill))
     }
 

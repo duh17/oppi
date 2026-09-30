@@ -223,6 +223,8 @@ private struct WorkspaceUtilityDestinationView: View {
                 ServerSkillsView()
             case .extensions:
                 ServerExtensionsView()
+            case .mcpServers:
+                McpServersView()
             case .desktopStill:
                 DesktopCurrentStillViewerView()
             case .manageServers:

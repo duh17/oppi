@@ -15,6 +15,7 @@ import type { DesktopCompanionViewSession } from "../desktop-companion-view-sess
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ServerResourceService } from "../server-resource-service.js";
 import type { ServerUpdateService } from "../server-update.js";
+import type { McpService } from "../mcp-service.js";
 
 /** Services needed by route handlers — injected by Server. */
 export interface RouteContext {
@@ -24,6 +25,7 @@ export interface RouteContext {
   skillRegistry: SkillRegistry;
   serverResources: ServerResourceService;
   providerAuth: ProviderAuthManager;
+  mcp?: McpService;
   ensureSessionContextWindow: (session: Session) => Session;
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;
   refreshModelCatalog: (options?: { force?: boolean }) => Promise<void>;

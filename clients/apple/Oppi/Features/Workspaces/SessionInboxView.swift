@@ -154,6 +154,15 @@ enum WorkspaceSidebarPrimaryUtilities {
             minimumHitHeight: 44,
             accessibilityHint: nil
         ),
+        .init(
+            target: .mcpServers,
+            title: "MCP Servers",
+            systemImage: "network",
+            accessibilityLabel: "Open MCP Servers",
+            accessibilityIdentifier: "workspace.mcpServers.open",
+            minimumHitHeight: 44,
+            accessibilityHint: nil
+        ),
     ]
 
     static let desktopStill = WorkspaceSidebarPrimaryUtilityItem(
@@ -685,6 +694,8 @@ struct SessionInboxView: View {
                     ServerSkillsView()
                 case .extensions:
                     ServerExtensionsView()
+                case .mcpServers:
+                    McpServersView()
                 case .desktopStill:
                     DesktopCurrentStillViewerView()
                 case .manageServers:

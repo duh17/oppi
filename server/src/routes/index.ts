@@ -17,6 +17,7 @@ import { createTelemetryRoutes } from "./telemetry.js";
 import { createWorkspaceFileRoutes } from "./workspace-files.js";
 import { createHostFileRoutes } from "./host-files.js";
 import { createProviderAuthRoutes } from "./provider-auth.js";
+import { createMcpRoutes } from "./mcp.js";
 import { createScheduleRoutes } from "./schedules.js";
 import { createE2EUIHarnessRoutes } from "./e2e-ui-harness.js";
 import { createServerResourceRoutes } from "./server-resources.js";
@@ -46,6 +47,7 @@ export class RouteHandler {
       createWorkspaceFileRoutes(this.ctx, this.helpers),
       createHostFileRoutes(this.ctx, this.helpers),
       createProviderAuthRoutes(this.ctx, this.helpers),
+      createMcpRoutes(this.ctx, this.helpers),
       createScheduleRoutes(this.ctx, this.helpers),
       createE2EUIHarnessRoutes(this.ctx, this.helpers),
       createDesktopStillRoutes(this.ctx, this.helpers),

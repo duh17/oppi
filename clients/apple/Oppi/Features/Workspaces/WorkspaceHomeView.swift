@@ -221,6 +221,7 @@ enum WorkspaceUtilityNavTarget: Hashable {
     /// Placeholder roots; dedicated navigation destinations land with the catalog views.
     case skills
     case extensions
+    case mcpServers
     /// iPhone-only current remote screen. Hidden until `ReleaseFeatures.desktopStillEnabled`.
     case desktopStill
     case manageServers
@@ -232,7 +233,7 @@ enum WorkspaceUtilityNavTarget: Hashable {
             ReleaseFeatures.agentAndScheduleManagementEnabled
         case .desktopStill:
             ReleaseFeatures.desktopStillEnabled
-        case .skills, .extensions, .manageServers, .appSettings:
+        case .skills, .extensions, .mcpServers, .manageServers, .appSettings:
             true
         }
     }

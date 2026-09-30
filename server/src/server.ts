@@ -122,6 +122,7 @@ import {
 import { createSttProvider } from "./create-stt-provider.js";
 import { DEFAULT_XAI_STT_MODEL } from "./xai-stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
+import { McpService } from "./mcp-service.js";
 import { fetchProviderQuotas, quotaAdaptersForProviders } from "./provider-quota.js";
 import {
   garbageCollectUploadStore,
@@ -475,6 +476,7 @@ export class Server {
   private models!: ModelCatalog;
   private extensionProviderCatalog!: ExtensionProviderCatalog;
   private providerAuth!: ProviderAuthManager;
+  private mcp!: McpService;
   private titleGenerator!: SessionTitleGenerator;
 
   // Track all WebSocket connections for lifecycle/resource accounting.
@@ -786,6 +788,7 @@ export class Server {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+    this.mcp = new McpService({ agentDir, listWorkspaces: () => this.storage.listWorkspaces() });
     this.providerAuth = new ProviderAuthManager({
       modelRuntime: this.modelRuntime,
       // Same global-settings id the Pi CLI uses, so both share one ChatGPT agent host.
@@ -857,6 +860,7 @@ export class Server {
       skillRegistry: this.skillRegistry,
       serverResources: this.serverResources,
       providerAuth: this.providerAuth,
+      mcp: this.mcp,
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
       refreshModelCatalog: (options) => this.refreshModelCatalog(options),
@@ -1082,6 +1086,7 @@ export class Server {
     } finally {
       // A throw above skips closeWebSocketServer; these timers must not keep a
       // stopped Server alive after an update restore replaces it.
+      this.mcp?.dispose();
       for (const timer of this.accessExpiryTimers.values()) clearTimeout(timer);
       this.accessExpiryTimers.clear();
     }
