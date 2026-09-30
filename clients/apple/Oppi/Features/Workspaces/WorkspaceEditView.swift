@@ -112,6 +112,8 @@ struct WorkspaceEditView: View {
     @State private var isCreatingHostDirectory = false
     @State private var hostPathPendingCreation: String?
     @State private var availableExtensions: [ExtensionInfo] = []
+    /// From the extensions list: one answer for this folder's skills, extensions, and MCP.
+    @State private var projectTrust: ProjectTrustState?
     @State private var availableSkills: [SkillInfo] = []
     @State private var isLoadingExtensions = false
     @State private var isLoadingSkills = false
@@ -352,6 +354,18 @@ struct WorkspaceEditView: View {
             }
             .selectionDisabled()
 
+            if let projectTrust {
+                Section {
+                    LabeledContent("Project resources", value: projectTrust.title)
+                        .accessibilityIdentifier("workspace.edit.projectTrust")
+                } header: {
+                    Text("Project Trust")
+                } footer: {
+                    Text(projectTrust.explanation)
+                }
+                .selectionDisabled()
+            }
+
             Section {
                 if isLoadingSkills && skills.isEmpty {
                     Text("Loading skills…")
@@ -379,10 +393,12 @@ struct WorkspaceEditView: View {
             } header: {
                 Text("Pi Skills")
             } footer: {
-                Text("Toggles write Pi user/project settings for this folder. Use reload in an active session to apply changes immediately.")
+                Text(piResourceFooter)
             }
 
             extensionsSection
+
+            mcpServersSection
 
             if runtime == .sandbox {
                 Section {
@@ -482,6 +498,8 @@ struct WorkspaceEditView: View {
             schedulePiResourceLoad()
         }
         .onChange(of: trimmedHostMount) { _, _ in
+            // A folder change must not keep gating toggles with the previous folder's trust.
+            projectTrust = nil
             schedulePiResourceLoad()
         }
         .onDisappear {
@@ -601,7 +619,49 @@ struct WorkspaceEditView: View {
             } header: {
                 Text("Pi Extensions")
             } footer: {
-                Text("Toggles write Pi user/project settings for this folder. Use reload in an active session to apply changes immediately.")
+                Text(piResourceFooter)
+            }
+        }
+    }
+
+    /// Pi ignores a distrusted folder's project settings, so a toggle there would do nothing.
+    private var canTogglePiResources: Bool { projectTrust != .distrusted }
+
+    private var piResourceFooter: String {
+        canTogglePiResources
+            ? "Toggles write Pi user/project settings for this folder. Use reload in an active session to apply changes immediately."
+            : "Pi ignores this folder\u{2019}s project settings while it isn\u{2019}t trusted, so toggles are off."
+    }
+
+    /// Like its sessions, a host workspace without a folder uses the server home folder.
+    private var hasSavedFolder: Bool {
+        !(workspaceForEditing.hostMount?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+
+    private var mcpServersSection: some View {
+        Section {
+            if workspaceForEditing.runtime == .sandbox {
+                Text("Sandbox workspaces don\u{2019}t load MCP servers.")
+                    .foregroundStyle(.themeComment)
+            } else if piResourceWorkspaceId == nil {
+                // The MCP scope is the saved folder; an unsaved folder edit would show the old one.
+                Text("Save the folder change to manage its MCP servers.")
+                    .foregroundStyle(.themeComment)
+            } else {
+                NavigationLink {
+                    McpServersView(scopeId: workspace.id)
+                } label: {
+                    Label("MCP Servers", systemImage: "network")
+                }
+                .accessibilityIdentifier("workspace.edit.mcpServers")
+            }
+        } header: {
+            Text("MCP Servers")
+        } footer: {
+            if workspaceForEditing.runtime != .sandbox {
+                Text(hasSavedFolder
+                    ? "Servers from this folder\u{2019}s .pi/mcp.json, plus the global servers that also load here."
+                    : "This workspace has no folder, so its sessions use the server home folder. Its project servers are in ~/.pi/mcp.json, shared by every workspace without a folder.")
             }
         }
     }
@@ -613,6 +673,7 @@ struct WorkspaceEditView: View {
             isToggling: togglingResourceKeys.contains(resourceKey(type: "extensions", path: ext.path)),
             onToggle: { togglePiResource(type: "extensions", path: ext.path, enabled: !ext.enabled) }
         )
+        .disabled(!canTogglePiResources)
     }
 
     @ViewBuilder
@@ -620,6 +681,7 @@ struct WorkspaceEditView: View {
         SkillSettingsRow(
             skill: skill,
             isToggling: togglingResourceKeys.contains(resourceKey(type: "skills", path: skill.path)),
+            canToggle: canTogglePiResources,
             onToggle: { togglePiResource(type: "skills", path: skill.path, enabled: !skill.enabled) },
             onShowDetail: {
                 selectedSkillDetail = SkillDetailDestination(skillName: skill.name, cwd: trimmedHostMount.isEmpty ? nil : trimmedHostMount)
@@ -864,9 +926,11 @@ struct WorkspaceEditView: View {
                 workspaceId: explicitWorkspaceId ?? piResourceWorkspaceId
             )
             guard isCurrentPiResourceLoad(generation) else { return }
-            availableExtensions = loaded
+            availableExtensions = loaded.extensions
+            projectTrust = loaded.projectTrust
         } catch {
             guard isCurrentPiResourceLoad(generation) else { return }
+            projectTrust = nil
             guard WorkspacePiResourceErrorPolicy.shouldPresent(error) else { return }
             extensionsError = error.localizedDescription
         }
@@ -1093,6 +1157,7 @@ private struct ExtensionSettingsRow: View {
 private struct SkillSettingsRow: View {
     let skill: SkillInfo
     let isToggling: Bool
+    let canToggle: Bool
     let onToggle: () -> Void
     let onShowDetail: () -> Void
 
@@ -1122,6 +1187,7 @@ private struct SkillSettingsRow: View {
                         : "Enable \(skill.name) skill in Pi settings",
                     action: onToggle
                 )
+                .disabled(!canToggle)
             }
 
             Button(action: onShowDetail) {

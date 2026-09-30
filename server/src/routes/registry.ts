@@ -1229,14 +1229,14 @@ const rawApiRouteSpecs = [
 
   {
     method: "GET",
-    path: "/mcp/servers",
+    path: "/mcp/scopes/{scopeId}/servers",
     operationId: "listMcpServers",
     surface: "admin",
     auth: "owner",
   },
   {
     method: "POST",
-    path: "/mcp/servers",
+    path: "/mcp/scopes/{scopeId}/servers",
     operationId: "addMcpServer",
     surface: "admin",
     auth: "owner",

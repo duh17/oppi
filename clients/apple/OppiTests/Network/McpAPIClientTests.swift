@@ -20,9 +20,9 @@ struct McpAPIClientTests {
             #expect(request.timeoutInterval < configuration.timeoutIntervalForResource)
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-token")
             let routes = [
-                "list": ("GET", "/mcp/servers"),
+                "list": ("GET", "/mcp/scopes/workspace-one/servers"),
                 "login": ("POST", "/mcp/scopes/global/servers/echo/login"),
-                "add": ("POST", "/mcp/servers"),
+                "add": ("POST", "/mcp/scopes/workspace-one/servers"),
                 "patch": ("PATCH", "/mcp/scopes/global/servers/echo"),
                 "remove": ("DELETE", "/mcp/scopes/global/servers/echo"),
                 "logout": ("POST", "/mcp/scopes/global/servers/echo/logout")
@@ -33,14 +33,14 @@ struct McpAPIClientTests {
                 url: baseURL, statusCode: 200, httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"]
             ))
-            let json = operation == "list" ? #"{"scopes":[]}"# : #"{"flow":{"flowId":"pa_test","scopeId":"global","serverName":"echo","launchMode":"phone_browser","status":"pending","createdAt":1,"updatedAt":1,"expiresAt":2}}"#
+            let json = operation == "list" ? #"{"scope":{"id":"workspace-one","title":"One","kind":"project","projectTrust":"ask","servers":[],"inherited":[],"errors":[]}}"# : #"{"flow":{"flowId":"pa_test","scopeId":"global","serverName":"echo","launchMode":"phone_browser","status":"pending","createdAt":1,"updatedAt":1,"expiresAt":2}}"#
             return (Data(json.utf8), response)
         }
 
         switch operation {
-        case "list": #expect(try await client.listMcpServers().scopes.isEmpty)
+        case "list": #expect(try await client.listMcpServers(scopeId: "workspace-one").scope.id == "workspace-one")
         case "login": #expect(try await client.startMcpAuthFlow(scopeId: "global", name: "echo").flowId == "pa_test")
-        case "add": try await client.addMcpServer(McpAddServerRequest(scopeId: "global", name: "echo", url: "https://example.test/mcp"))
+        case "add": try await client.addMcpServer(scopeId: "workspace-one", McpAddServerRequest(name: "echo", url: "https://example.test/mcp"))
         case "patch": try await client.patchMcpServer(scopeId: "global", name: "echo", patch: McpPatchServerRequest(enabled: false))
         case "remove": try await client.removeMcpServer(scopeId: "global", name: "echo")
         case "logout": try await client.logoutMcpServer(scopeId: "global", name: "echo")

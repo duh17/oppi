@@ -5,7 +5,7 @@ import Testing
 @Suite("MCP server wire contract")
 struct McpServerModelTests {
     private struct Fixture: Codable {
-        let catalog: McpServersResponse
+        let catalogs: [McpServersResponse]
         let signInCatalog: McpServersResponse
         let flows: [McpAuthFlowSnapshot]
     }
@@ -18,9 +18,9 @@ struct McpServerModelTests {
     }
 
     @Test func decodesServerAuthAndTrustStatesFromServerFixture() throws {
-        let catalog = try fixture().catalog
-        #expect(catalog.scopes.map(\.id) == ["global", "workspace-one", "workspace-empty"])
-        let global = try #require(catalog.scopes.first)
+        let catalogs = try fixture().catalogs
+        #expect(catalogs.map(\.scope.id) == ["global", "workspace-one", "workspace-trusted", "workspace-distrusted"])
+        let global = try #require(catalogs.first).scope
         #expect(global.servers.map(\.state) == ["connected", "needs-auth", "failed", "disabled"])
         #expect(global.servers[0].tools == ["echo"])
         #expect(global.servers[0].toolExposure?["echo"] == .direct)
@@ -28,19 +28,21 @@ struct McpServerModelTests {
         #expect(global.servers[0].config.env?["REF"] == "${TOKEN}")
         #expect(global.servers[1].config.oauth?.clientSecret == "[redacted]")
         #expect(global.servers[1].stateLabel == "Needs sign-in")
-        #expect(catalog.scopes[1].trusted == false)
-        #expect(catalog.scopes[1].servers[0].stateLabel == "Untrusted project")
-        #expect(catalog.scopes[2].hasConfig == false)
+        #expect(global.projectTrust == nil && global.inherited == nil)
+        #expect(catalogs.dropFirst().map(\.scope.projectTrust) == [.ask, .trusted, .distrusted])
+        #expect(catalogs[1].scope.servers[0].state == "untrusted")
+        #expect(catalogs[1].scope.inherited?.first?.state == "connected")
+        #expect(catalogs[2].scope.inherited?.first?.state == "replaced")
     }
     @Test func decodesTheListServedDuringASignIn() throws {
         let data = try fixture()
-        #expect(data.catalog.activeSignIn == nil)
+        #expect(data.catalogs.allSatisfy { $0.activeSignIn == nil })
         let flow = try #require(data.signInCatalog.activeSignIn)
         #expect(flow.flowId == "flow-awaiting_external")
         #expect(flow.status == .awaitingExternal)
         #expect(flow.scopeId == "global")
         #expect(flow.serverName == "remote")
-        #expect(data.signInCatalog.scopes.map(\.id) == ["global"])
+        #expect(data.signInCatalog.scope.id == "global")
     }
     @Test func decodesAndRoundTripsAllMcpFlowStates() throws {
         let data = try fixture()
@@ -50,15 +52,15 @@ struct McpServerModelTests {
         #expect(data.flows[1].launchMode == .phoneBrowser)
         #expect(data.flows.filter { $0.status.isTerminal }.count == 4)
         let decoded = try JSONDecoder().decode(Fixture.self, from: JSONEncoder().encode(data))
-        #expect(decoded.catalog == data.catalog)
+        #expect(decoded.catalogs == data.catalogs)
         #expect(decoded.flows == data.flows)
     }
     @Test func addAndPatchEncodeOnlyRequestedFields() throws {
-        let add = McpAddServerRequest(scopeId: "global", name: "echo", command: "node", args: ["echo.cjs"], env: ["KEY": "${TOOLS_KEY}"])
+        let add = McpAddServerRequest(name: "echo", command: "node", args: ["echo.cjs"], env: ["KEY": "${TOOLS_KEY}"])
         let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(add)) as? [String: Any])
         #expect(object["url"] == nil)
         #expect(object["oauth"] == nil)
-        #expect(object["scopeId"] as? String == "global")
+        #expect(object["scopeId"] == nil)
         #expect(object["env"] as? [String: String] == ["KEY": "${TOOLS_KEY}"])
         let patch = McpPatchServerRequest(enabled: true, exposure: .codemode)
         let patchObject = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(patch)) as? [String: Any])
@@ -68,7 +70,7 @@ struct McpServerModelTests {
     }
     @Test(arguments: McpExposure.allCases)
     func addExposureSelectionOmitsOnlyTheDefault(exposure: McpExposure) throws {
-        let add = McpAddServerRequest(scopeId: "global", name: "echo", command: "node", exposure: exposure.configurationValue)
+        let add = McpAddServerRequest(name: "echo", command: "node", exposure: exposure.configurationValue)
         let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(add)) as? [String: Any])
         #expect(object["exposure"] as? String == (exposure == .codemode ? nil : exposure.rawValue))
         #expect(!exposure.explanation.isEmpty)
@@ -76,7 +78,7 @@ struct McpServerModelTests {
 
     @Test func malformedRequiredFieldsFailDecode() {
         #expect(throws: DecodingError.self) {
-            try JSONDecoder().decode(McpServersResponse.self, from: Data("{\"scopes\":[{\"id\":\"global\"}]}".utf8))
+            try JSONDecoder().decode(McpServersResponse.self, from: Data("{\"scope\":{\"id\":\"global\"}}".utf8))
         }
     }
 }

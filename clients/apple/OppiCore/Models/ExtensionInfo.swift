@@ -1,5 +1,12 @@
 import Foundation
 
+/// `GET /extensions` for a folder or workspace.
+struct WorkspaceExtensionList: Decodable, Sendable, Equatable {
+    let extensions: [ExtensionInfo]
+    /// Present for a host folder. Pi resolves `extensions` with this trust answer.
+    let projectTrust: ProjectTrustState?
+}
+
 /// Host extension metadata from `GET /extensions`.
 ///
 /// The server returns Oppi first-party extensions and Pi extensions resolved

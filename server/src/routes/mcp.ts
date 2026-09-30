@@ -23,12 +23,14 @@ export function createMcpRoutes(ctx: RouteContext, helpers: RouteHelpers): Route
       }
     };
     try {
-      if (path === "/mcp/servers" && method === "GET") {
-        helpers.json(res, await ctx.mcp.list());
+      const scopeServers = path.match(/^\/mcp\/scopes\/([^/]+)\/servers$/);
+      if (scopeServers && method === "GET") {
+        helpers.json(res, await ctx.mcp.list(decodeURIComponent(scopeServers[1])));
         return true;
       }
-      if (path === "/mcp/servers" && method === "POST") {
-        await ctx.mcp.add(parseMcpAddRequest(await body()));
+      if (scopeServers && method === "POST") {
+        const scopeId = decodeURIComponent(scopeServers[1]);
+        await ctx.mcp.add(scopeId, parseMcpAddRequest(await body()));
         helpers.json(res, { ok: true }, 201);
         return true;
       }

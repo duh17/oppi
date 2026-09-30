@@ -1,12 +1,10 @@
 {
-  "catalog": {
-    "scopes": [
-      {
+  "catalogs": [
+    {
+      "scope": {
         "id": "global",
         "title": "Global",
         "kind": "global",
-        "hasConfig": true,
-        "trusted": true,
         "errors": [],
         "servers": [
           {
@@ -82,14 +80,14 @@
             "supportsOAuth": true
           }
         ]
-      },
-      {
+      }
+    },
+    {
+      "scope": {
         "id": "workspace-one",
         "title": "Project One",
         "kind": "project",
-        "hasConfig": true,
-        "trusted": false,
-        "note": "Trust this project on the host.",
+        "projectTrust": "ask",
         "errors": [
           "Invalid MCP entry"
         ],
@@ -106,27 +104,34 @@
             "tools": [],
             "supportsOAuth": false
           }
+        ],
+        "inherited": [
+          {
+            "name": "echo",
+            "transport": "stdio",
+            "config": {
+              "command": "node",
+              "args": [
+                "echo.cjs"
+              ]
+            },
+            "enabled": true,
+            "exposure": "codemode",
+            "state": "connected",
+            "tools": [
+              "echo"
+            ],
+            "supportsOAuth": false
+          }
         ]
-      },
-      {
-        "id": "workspace-empty",
-        "title": "Project Empty",
-        "kind": "project",
-        "hasConfig": false,
-        "trusted": false,
-        "errors": [],
-        "servers": []
       }
-    ]
-  },
-  "signInCatalog": {
-    "scopes": [
-      {
-        "id": "global",
-        "title": "Global",
-        "kind": "global",
-        "hasConfig": true,
-        "trusted": true,
+    },
+    {
+      "scope": {
+        "id": "workspace-trusted",
+        "title": "Project Trusted",
+        "kind": "project",
+        "projectTrust": "trusted",
         "errors": [],
         "servers": [
           {
@@ -135,13 +140,8 @@
             "config": {
               "command": "node",
               "args": [
-                "echo.cjs"
-              ],
-              "cwd": "/tmp/project",
-              "env": {
-                "KEY": "[redacted]",
-                "REF": "${TOKEN}"
-              }
+                "project-echo.cjs"
+              ]
             },
             "enabled": true,
             "exposure": "codemode",
@@ -149,61 +149,121 @@
             "tools": [
               "echo"
             ],
-            "toolExposure": {
-              "echo": "direct"
-            },
             "supportsOAuth": false
-          },
+          }
+        ],
+        "inherited": [
           {
-            "name": "remote",
-            "transport": "http",
-            "config": {
-              "url": "https://example.test/mcp",
-              "headers": {
-                "X-Key": "[redacted]",
-                "X-Reference": "!get-key"
-              },
-              "oauth": {
-                "clientId": "client",
-                "clientSecret": "[redacted]",
-                "callbackPort": 8765
-              }
-            },
-            "enabled": true,
-            "exposure": "codemode-deferred",
-            "state": "needs-auth",
-            "tools": [],
-            "error": "Sign-in required",
-            "supportsOAuth": true
-          },
-          {
-            "name": "failed",
+            "name": "echo",
             "transport": "stdio",
             "config": {
-              "command": "missing-command"
+              "command": "node",
+              "args": [
+                "echo.cjs"
+              ]
             },
             "enabled": true,
-            "exposure": "deferred",
-            "state": "failed",
+            "exposure": "codemode",
+            "state": "replaced",
             "tools": [],
-            "error": "Could not start command",
             "supportsOAuth": false
-          },
-          {
-            "name": "disabled",
-            "transport": "http",
-            "config": {
-              "url": "https://example.test/disabled"
-            },
-            "enabled": false,
-            "exposure": "hidden",
-            "state": "disabled",
-            "tools": [],
-            "supportsOAuth": true
           }
         ]
       }
-    ],
+    },
+    {
+      "scope": {
+        "id": "workspace-distrusted",
+        "title": "Project Distrusted",
+        "kind": "project",
+        "projectTrust": "distrusted",
+        "errors": [],
+        "servers": [],
+        "inherited": []
+      }
+    }
+  ],
+  "signInCatalog": {
+    "scope": {
+      "id": "global",
+      "title": "Global",
+      "kind": "global",
+      "errors": [],
+      "servers": [
+        {
+          "name": "echo",
+          "transport": "stdio",
+          "config": {
+            "command": "node",
+            "args": [
+              "echo.cjs"
+            ],
+            "cwd": "/tmp/project",
+            "env": {
+              "KEY": "[redacted]",
+              "REF": "${TOKEN}"
+            }
+          },
+          "enabled": true,
+          "exposure": "codemode",
+          "state": "connected",
+          "tools": [
+            "echo"
+          ],
+          "toolExposure": {
+            "echo": "direct"
+          },
+          "supportsOAuth": false
+        },
+        {
+          "name": "remote",
+          "transport": "http",
+          "config": {
+            "url": "https://example.test/mcp",
+            "headers": {
+              "X-Key": "[redacted]",
+              "X-Reference": "!get-key"
+            },
+            "oauth": {
+              "clientId": "client",
+              "clientSecret": "[redacted]",
+              "callbackPort": 8765
+            }
+          },
+          "enabled": true,
+          "exposure": "codemode-deferred",
+          "state": "needs-auth",
+          "tools": [],
+          "error": "Sign-in required",
+          "supportsOAuth": true
+        },
+        {
+          "name": "failed",
+          "transport": "stdio",
+          "config": {
+            "command": "missing-command"
+          },
+          "enabled": true,
+          "exposure": "deferred",
+          "state": "failed",
+          "tools": [],
+          "error": "Could not start command",
+          "supportsOAuth": false
+        },
+        {
+          "name": "disabled",
+          "transport": "http",
+          "config": {
+            "url": "https://example.test/disabled"
+          },
+          "enabled": false,
+          "exposure": "hidden",
+          "state": "disabled",
+          "tools": [],
+          "supportsOAuth": true
+        }
+      ]
+    },
     "activeSignIn": {
       "flowId": "flow-awaiting_external",
       "scopeId": "global",

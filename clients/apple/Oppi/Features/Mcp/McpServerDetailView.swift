@@ -18,6 +18,16 @@ struct McpServerDetailView: View {
         return signIn.attempt
     }
 
+    /// `untrusted`: Pi's host MCP commands (status, sign-in, sign-out) skip this project file
+    /// until a trust decision is remembered, even when sessions load it.
+    private var needsRememberedTrust: Bool { entry.state == "untrusted" }
+
+    private var trustNote: String? {
+        if scope.projectTrust == .distrusted { return scope.projectTrust?.explanation }
+        guard needsRememberedTrust else { return nil }
+        return "Status and sign-in need a remembered trust for this folder. Choose Trust (remember) when a session here asks, or trust the project in Pi on the host."
+    }
+
     init(scope: McpScopeSnapshot, entry: McpServerSummary, client: APIClient, serverId: String, serverName: String, signIn: McpSignInOwner) {
         self.scope = scope
         self.entry = entry
@@ -38,7 +48,7 @@ struct McpServerDetailView: View {
                         .font(.system(.body, design: .monospaced)).textSelection(.enabled)
                 }
                 if let cwd = entry.config.cwd { LabeledContent("Working directory", value: cwd) }
-                if let note = scope.note { Text(note).foregroundStyle(.themeOrange) }
+                if let trustNote { Text(trustNote).foregroundStyle(.themeOrange) }
             }
             Section {
                 Toggle("Enabled", isOn: Binding(get: { entry.enabled }, set: { value in
@@ -67,10 +77,10 @@ struct McpServerDetailView: View {
                         Button("Continue Sign-in") { signIn.resume() }
                     } else {
                         Button(entry.state == "needs-auth" ? "Sign In" : "Sign In Again") { startLogin() }
-                            .disabled(busy || !scope.trusted || signIn.hasActive)
+                            .disabled(busy || needsRememberedTrust || signIn.hasActive)
                             .accessibilityIdentifier("mcp.login")
                         Button("Sign Out", role: .destructive) { confirmingLogout = true }
-                            .disabled(busy || !scope.trusted || signIn.hasActive)
+                            .disabled(busy || needsRememberedTrust || signIn.hasActive)
                     }
                 }
             }
@@ -132,11 +142,9 @@ struct McpServerDetailView: View {
     private func refresh() async {
         guard attempt?.isSettled != false else { return }
         do {
-            let snapshot = try await client.listMcpServers()
-            if let currentScope = snapshot.scopes.first(where: { $0.id == scope.id }) {
-                scope = currentScope
-                if let current = currentScope.servers.first(where: { $0.name == entry.name }) { entry = current }
-            }
+            let currentScope = try await client.listMcpServers(scopeId: scope.id).scope
+            scope = currentScope
+            if let current = currentScope.servers.first(where: { $0.name == entry.name }) { entry = current }
             error = nil
         } catch { self.error = error.localizedDescription }
     }

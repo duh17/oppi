@@ -24,6 +24,8 @@ import {
 import type { McpAuthFlowSnapshot, McpServersResponse, Workspace } from "../src/types.js";
 
 const echo = resolve("tests/fixtures/mcp-echo.cjs");
+const GLOBAL = "/mcp/scopes/global/servers";
+const PROJECT = "/mcp/scopes/workspace-one/servers";
 const services: McpService[] = [];
 const servers: Server[] = [];
 afterEach(async () => {
@@ -186,6 +188,39 @@ async function oauthServer(): Promise<string> {
 }
 
 describe("MCP configuration boundary", () => {
+  it("overlaps probes of different scopes, shares one per scope, and keeps mutations exclusive of probes", async () => {
+    const { service } = fixture();
+    const gates: Array<() => void> = [];
+    const run = vi.spyOn(McpCli.prototype, "run").mockImplementation(
+      (args) =>
+        new Promise((resolve) => {
+          const done = () => resolve({ code: 0, stdout: '{"servers":[],"errors":[]}' });
+          if (args[0] === "list") gates.push(done);
+          else done();
+        }),
+    );
+    try {
+      const global = service.list("global");
+      const shared = service.list("global");
+      const project = service.list("workspace-one");
+      await expect.poll(() => gates.length).toBe(2);
+      await expect(service.add("global", { name: "new", command: "echo" })).rejects.toMatchObject({
+        statusCode: 409,
+      });
+      for (const open of gates.splice(0)) open();
+      expect(await global).toBe(await shared);
+      expect((await project).scope.id).toBe("workspace-one");
+      const mutation = service.add("global", { name: "new", command: "echo" });
+      await expect(service.list("global")).rejects.toMatchObject({ statusCode: 409 });
+      await mutation;
+      const next = service.list("global");
+      await expect.poll(() => gates.length).toBe(1);
+      gates[0]();
+      await next;
+    } finally {
+      run.mockRestore();
+    }
+  });
   it("bounds mutation CLIs below the phone deadline and rejects waiting behind another mutation", async () => {
     const { service, agentDir } = fixture();
     writeFileSync(
@@ -194,7 +229,7 @@ describe("MCP configuration boundary", () => {
     );
     const run = vi.spyOn(McpCli.prototype, "run").mockResolvedValue({ code: 0, stdout: "" });
     try {
-      const pending = service.add({ scopeId: "global", name: "new", command: "echo" });
+      const pending = service.add("global", { name: "new", command: "echo" });
       await expect(service.remove("global", "remote")).rejects.toMatchObject({ statusCode: 409 });
       await pending;
       await service.remove("global", "remote");
@@ -208,21 +243,138 @@ describe("MCP configuration boundary", () => {
       run.mockRestore();
     }
   });
-  it("refuses untrusted project login without probing or running project commands", async () => {
-    const { service, project } = fixture();
+  it("refuses project sign-in/out without a remembered trust, even when defaultProjectTrust is always", async () => {
+    const { service, project, agentDir } = fixture();
     writeFileSync(
       join(project, ".pi", "mcp.json"),
-      JSON.stringify({ mcpServers: { remote: { url: "https://example.test/mcp" } } }),
+      JSON.stringify({
+        mcpServers: {
+          remote: { url: "https://example.test/mcp" },
+          off: { url: "https://example.test/off", enabled: false },
+        },
+      }),
     );
-    await expect(service.login("workspace-one", "remote", "phone_browser")).rejects.toMatchObject({
-      statusCode: 409,
-      message: "Trust this project in Pi on the host before signing in to its MCP servers.",
+    // Sessions trust by this default, but `pi mcp login/logout` read only a saved decision,
+    // so they would miss the project entry (or reach a same-name global one).
+    writeFileSync(
+      join(agentDir, "settings.json"),
+      JSON.stringify({ defaultProjectTrust: "always" }),
+    );
+    const run = vi.spyOn(McpCli.prototype, "run");
+    try {
+      for (const action of [
+        () => service.login("workspace-one", "remote", "phone_browser"),
+        () => service.logout("workspace-one", "remote"),
+      ])
+        await expect(action()).rejects.toMatchObject({
+          statusCode: 409,
+          message: expect.stringContaining("Trust (remember)"),
+        });
+      expect(run).not.toHaveBeenCalled();
+      // Sessions load the file, so trust reads Trusted; the probe skipped it, so the row
+      // says why it has no status instead of Failed.
+      expect((await service.list("workspace-one")).scope).toMatchObject({
+        projectTrust: "trusted",
+        // A disabled entry is just as unreadable to sign-in, so it says the same.
+        servers: [
+          { name: "remote", state: "untrusted" },
+          { name: "off", enabled: false, state: "untrusted" },
+        ],
+      });
+      writeFileSync(
+        join(agentDir, "trust.json"),
+        JSON.stringify({ [realpathSync(project)]: false }),
+      );
+      await expect(service.login("workspace-one", "remote", "phone_browser")).rejects.toMatchObject(
+        { statusCode: 409, message: expect.stringContaining("not trusted") },
+      );
+    } finally {
+      run.mockRestore();
+    }
+  });
+  it("does not mark a global replaced when Pi read the project file and rejected the entry", async () => {
+    const { service, agentDir, project } = fixture();
+    writeFileSync(join(agentDir, "trust.json"), JSON.stringify({ [realpathSync(project)]: true }));
+    writeFileSync(
+      join(agentDir, "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          shared: { url: "https://example.test/global" },
+          other: { url: "https://example.test/other" },
+        },
+      }),
+    );
+    writeFileSync(
+      join(project, ".pi", "mcp.json"),
+      JSON.stringify({
+        mcpServers: { shared: { url: "ftp://invalid" }, other: { command: "echo" } },
+      }),
+    );
+    // Pi kept the global `shared` (invalid project entry) and loaded the project `other`.
+    const servers = [
+      { name: "shared", scope: "global", state: "connected", tools: ["t"] },
+      { name: "other", scope: "project", state: "connected", tools: [] },
+    ];
+    const run = vi
+      .spyOn(McpCli.prototype, "run")
+      .mockResolvedValue({ code: 0, stdout: JSON.stringify({ servers, errors: [] }) });
+    try {
+      expect((await service.list("workspace-one")).scope.inherited).toMatchObject([
+        { name: "shared", state: "connected", tools: ["t"] },
+        { name: "other", state: "replaced" },
+      ]);
+    } finally {
+      run.mockRestore();
+    }
+  });
+  it("ignores a distrusted project's file: its servers are untrusted and globals are not replaced", async () => {
+    const { service, agentDir, project } = fixture();
+    writeFileSync(join(agentDir, "trust.json"), JSON.stringify({ [realpathSync(project)]: false }));
+    writeFileSync(
+      join(agentDir, "mcp.json"),
+      JSON.stringify({ mcpServers: { shared: { url: "https://example.test/global" } } }),
+    );
+    writeFileSync(
+      join(project, ".pi", "mcp.json"),
+      JSON.stringify({ mcpServers: { shared: { command: "echo" } } }),
+    );
+    const report = { name: "shared", scope: "global", state: "connected", tools: ["t"] };
+    const run = vi
+      .spyOn(McpCli.prototype, "run")
+      .mockResolvedValue({ code: 0, stdout: JSON.stringify({ servers: [report], errors: [] }) });
+    try {
+      expect((await service.list("workspace-one")).scope).toMatchObject({
+        projectTrust: "distrusted",
+        servers: [{ name: "shared", state: "untrusted", tools: [] }],
+        inherited: [{ name: "shared", state: "connected", tools: ["t"] }],
+      });
+    } finally {
+      run.mockRestore();
+    }
+  });
+  it("gives a folderless host workspace the project file in its sessions' home cwd", async () => {
+    const { agentDir, dir } = fixture();
+    const home = join(dir, "home");
+    mkdirSync(home);
+    vi.stubEnv("HOME", home);
+    const run = vi.spyOn(McpCli.prototype, "run").mockResolvedValue({ code: 0, stdout: "" });
+    const service = new McpService({
+      agentDir,
+      listWorkspaces: () => [{ id: "loose", name: "Loose", runtime: "host" } as Workspace],
     });
+    services.push(service);
+    try {
+      await service.add("loose", { name: "echo", command: "echo" });
+      expect(run.mock.calls[0]?.[0].slice(0, 2)).toEqual(["add", "--local"]);
+      expect(run.mock.calls[0]?.[1]).toBe(home);
+    } finally {
+      run.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
   it("adds the default exposure without storing an explicit codemode field", async () => {
     const { service, agentDir } = fixture();
-    await service.add({
-      scopeId: "global",
+    await service.add("global", {
       name: "minimal",
       command: process.execPath,
       args: [echo],
@@ -315,12 +467,13 @@ describe("MCP configuration boundary", () => {
     await expect(
       service.patch("global", "echo", { exposure: "bogus" } as never),
     ).rejects.toMatchObject({ statusCode: 400 });
-    await expect(
-      service.add({ scopeId: "sandbox", name: "bad", command: "echo" }),
-    ).rejects.toMatchObject({ statusCode: 404 });
-    const snapshot = await service.list();
+    await expect(service.add("sandbox", { name: "bad", command: "echo" })).rejects.toMatchObject({
+      statusCode: 404,
+    });
+    await expect(service.list("sandbox")).rejects.toMatchObject({ statusCode: 404 });
+    const snapshot = await service.list("global");
     expect(JSON.stringify(snapshot)).not.toContain("private-value");
-    expect(snapshot.scopes[0].errors).toHaveLength(1);
+    expect(snapshot.scope.errors).toHaveLength(1);
   });
 });
 const authorization =
@@ -415,7 +568,7 @@ describe("MCP routes through real bundled Pi", () => {
         },
       }),
     );
-    const flight = service.list();
+    const flight = service.list("global");
     let pid: number | undefined;
     const alive = (): boolean => {
       if (!pid) return false;
@@ -434,15 +587,15 @@ describe("MCP routes through real bundled Pi", () => {
       await service.dispose();
       expect(performance.now() - start).toBeLessThan(1500);
       await expect.poll(alive, { timeout: 2000 }).toBe(false);
-      await expect(
-        service.add({ scopeId: "global", name: "late", command: "echo" }),
-      ).rejects.toMatchObject({ statusCode: 503 });
+      await expect(service.add("global", { name: "late", command: "echo" })).rejects.toMatchObject({
+        statusCode: 503,
+      });
     } finally {
       if (pid && alive()) process.kill(pid, "SIGKILL");
       await flight.catch(() => {});
     }
   }, 30_000);
-  it("returns healthy trusted scopes when another startup hangs, within the phone deadline", async () => {
+  it("lists a healthy scope while another scope's probe hangs, within the phone deadline", async () => {
     const { service, agentDir, project } = fixture();
     const hanging = await listen(
       createServer(() => {
@@ -450,56 +603,45 @@ describe("MCP routes through real bundled Pi", () => {
       }),
     );
     writeFileSync(join(agentDir, "trust.json"), JSON.stringify({ [realpathSync(project)]: true }));
-    await service.add({ scopeId: "global", name: "shared", url: hanging + "/mcp" });
+    await service.add("global", { name: "shared", url: hanging + "/mcp" });
     // Project replacement avoids probing the hanging global entry in this scope.
-    await service.add({
-      scopeId: "workspace-one",
-      name: "shared",
-      command: process.execPath,
-      args: [echo],
-    });
+    await service.add("workspace-one", { name: "shared", command: process.execPath, args: [echo] });
     const base = await routes(service);
     const started = performance.now();
-    const first = api<McpServersResponse>(base, "/mcp/servers");
-    const second = api<McpServersResponse>(base, "/mcp/servers");
-    const [snapshot, coalesced] = await Promise.all([first, second]);
+    const first = api<McpServersResponse>(base, GLOBAL);
+    const second = api<McpServersResponse>(base, GLOBAL);
+    const other = api<McpServersResponse>(base, PROJECT);
+    const [snapshot, coalesced, projectSnapshot] = await Promise.all([first, second, other]);
     expect(performance.now() - started).toBeLessThan(25_000);
     expect(snapshot).toEqual(coalesced);
-    expect(snapshot.scopes[0].errors).toEqual([
-      "This scope's live probe timed out after 20 seconds. Other scopes still refreshed.",
-    ]);
-    expect(snapshot.scopes[1]).toMatchObject({
-      trusted: true,
+    expect(snapshot.scope.errors).toEqual(["This scope's live probe timed out after 20 seconds."]);
+    expect(projectSnapshot.scope).toMatchObject({
+      projectTrust: "trusted",
       errors: [],
       servers: [{ name: "shared", state: "connected", tools: ["echo"] }],
     });
   }, 30_000);
-  it("connects trusted project tools and keeps same-name globals owned by their scope", async () => {
+  it("connects trusted project tools and shows the same-name global as replaced there", async () => {
     const { service, agentDir, project } = fixture();
     writeFileSync(join(agentDir, "trust.json"), JSON.stringify({ [realpathSync(project)]: true }));
-    await service.add({
-      scopeId: "global",
+    await service.add("global", {
       name: "shared",
       command: "not-a-real-executable",
       exposure: "hidden",
     });
-    await service.add({
-      scopeId: "workspace-one",
-      name: "shared",
-      command: process.execPath,
-      args: [echo],
-    });
+    await service.add("workspace-one", { name: "shared", command: process.execPath, args: [echo] });
     const base = await routes(service);
-    const snapshot = await api<McpServersResponse>(base, "/mcp/servers");
-    expect(snapshot.scopes[0].servers[0]).toMatchObject({
+    const global = await api<McpServersResponse>(base, GLOBAL);
+    expect(global.scope.servers[0]).toMatchObject({
       name: "shared",
       state: "failed",
       exposure: "hidden",
     });
-    expect(snapshot.scopes[1]).toMatchObject({
-      trusted: true,
+    expect((await api<McpServersResponse>(base, PROJECT)).scope).toMatchObject({
+      projectTrust: "trusted",
       errors: [],
       servers: [{ name: "shared", state: "connected", tools: ["echo"] }],
+      inherited: [{ name: "shared", state: "replaced", tools: [], exposure: "hidden" }],
     });
     await api(base, "/mcp/scopes/workspace-one/servers/shared", "PATCH", {
       enabled: false,
@@ -518,15 +660,10 @@ describe("MCP routes through real bundled Pi", () => {
     const remote = await oauthServer();
     const base = await routes(service);
     writeFileSync(join(agentDir, "trust.json"), JSON.stringify({ [realpathSync(project)]: true }));
-    await api(base, "/mcp/servers", "POST", {
-      scopeId: "workspace-one",
-      name: "project-oauth",
-      url: remote + "/mcp",
-    });
-    const initial = await api<McpServersResponse>(base, "/mcp/servers");
-    expect(initial.scopes[0].servers).toEqual([]);
-    expect(initial.scopes[1]).toMatchObject({
-      trusted: true,
+    await api(base, PROJECT, "POST", { name: "project-oauth", url: remote + "/mcp" });
+    expect((await api<McpServersResponse>(base, GLOBAL)).scope.servers).toEqual([]);
+    expect((await api<McpServersResponse>(base, PROJECT)).scope).toMatchObject({
+      projectTrust: "trusted",
       servers: [{ name: "project-oauth", state: "needs-auth" }],
     });
     let flow = (
@@ -555,37 +692,41 @@ describe("MCP routes through real bundled Pi", () => {
     await expect
       .poll(() => service.auth.get(flow.flowId).status, { timeout: 10_000 })
       .toBe("completed");
-    const connected = await api<McpServersResponse>(base, "/mcp/servers");
-    expect(connected.scopes[1].servers[0]).toMatchObject({ state: "connected", tools: ["echo"] });
+    const connected = await api<McpServersResponse>(base, PROJECT);
+    expect(connected.scope.servers[0]).toMatchObject({ state: "connected", tools: ["echo"] });
     expect(existsSync(join(agentDir, "mcp.json"))).toBe(false);
   }, 30_000);
   it("adds/probes/patches/removes command and URL entries in the right scope without revealing secrets or executing untrusted projects", async () => {
     const { service, agentDir, project } = fixture();
     const base = await routes(service);
-    await api(base, "/mcp/servers", "POST", {
-      scopeId: "global",
+    await api(base, GLOBAL, "POST", {
       name: "echo",
       command: process.execPath,
       args: [echo],
       env: { PRIVATE: "literal-secret", REF: "${PATH}" },
     });
-    await api(base, "/mcp/servers", "POST", {
-      scopeId: "workspace-one",
+    await api(base, PROJECT, "POST", {
       name: "remote",
       url: "https://example.test/mcp",
       headers: { Authorization: "Bearer literal-private" },
       oauth: { clientId: "client", clientSecret: "literal-client-secret", callbackPort: 8765 },
     });
-    let snapshot = await api<McpServersResponse>(base, "/mcp/servers");
-    expect(snapshot.scopes.map((scope) => scope.id)).toEqual(["global", "workspace-one"]);
-    expect(snapshot.scopes[0].servers[0]).toMatchObject({
+    let snapshot = await api<McpServersResponse>(base, GLOBAL);
+    const projectSnapshot = await api<McpServersResponse>(base, PROJECT);
+    expect(snapshot.scope.id).toBe("global");
+    expect(snapshot.scope.servers.map((entry) => entry.name)).toEqual(["echo"]);
+    expect(snapshot.scope.servers[0]).toMatchObject({
       name: "echo",
       state: "connected",
       tools: ["echo"],
       config: { env: { PRIVATE: "[redacted]", REF: "${PATH}" } },
     });
-    expect(snapshot.scopes[1]).toMatchObject({
-      trusted: false,
+    // An undecided project asks at session start; Pi's non-interactive probe does not trust
+    // it, yet the global server still loads (and probes) in the project's cwd.
+    expect(projectSnapshot.scope).toMatchObject({
+      id: "workspace-one",
+      projectTrust: "ask",
+      inherited: [{ name: "echo", state: "connected", tools: ["echo"] }],
       servers: [
         {
           name: "remote",
@@ -597,13 +738,13 @@ describe("MCP routes through real bundled Pi", () => {
         },
       ],
     });
-    expect(JSON.stringify(snapshot)).not.toContain("literal-");
+    expect(JSON.stringify([snapshot, projectSnapshot])).not.toContain("literal-");
     await api(base, "/mcp/scopes/global/servers/echo", "PATCH", {
       enabled: false,
       exposure: "direct",
     });
-    snapshot = await api<McpServersResponse>(base, "/mcp/servers");
-    expect(snapshot.scopes[0].servers[0]).toMatchObject({ state: "disabled", exposure: "direct" });
+    snapshot = await api<McpServersResponse>(base, GLOBAL);
+    expect(snapshot.scope.servers[0]).toMatchObject({ state: "disabled", exposure: "direct" });
     await api(base, "/mcp/scopes/global/servers/echo", "PATCH", {
       enabled: true,
       exposure: "codemode",
@@ -614,7 +755,7 @@ describe("MCP routes through real bundled Pi", () => {
     await api(base, "/mcp/scopes/workspace-one/servers/remote", "DELETE");
     expect(JSON.parse(readFileSync(join(project, ".pi/mcp.json"), "utf8")).mcpServers).toEqual({});
     await api(base, "/mcp/scopes/global/servers/echo", "DELETE");
-    expect((await service.list()).scopes[0].servers).toEqual([]);
+    expect((await service.list("global")).scope.servers).toEqual([]);
     console.log(
       "MCP proof: command add → connected (echo tool) → disabled/direct → enabled/default → remove; project URL add → untrusted/redacted → remove",
     );
@@ -625,12 +766,8 @@ describe("MCP routes through real bundled Pi", () => {
       const { service, agentDir } = fixture();
       const remote = await oauthServer();
       const base = await routes(service);
-      await api(base, "/mcp/servers", "POST", {
-        scopeId: "global",
-        name: "remote",
-        url: remote + "/mcp",
-      });
-      expect((await api<McpServersResponse>(base, "/mcp/servers")).scopes[0].servers[0].state).toBe(
+      await api(base, GLOBAL, "POST", { name: "remote", url: remote + "/mcp" });
+      expect((await api<McpServersResponse>(base, GLOBAL)).scope.servers[0].state).toBe(
         "needs-auth",
       );
       let flow = (
@@ -660,12 +797,12 @@ describe("MCP routes through real bundled Pi", () => {
       await expect
         .poll(() => service.auth.get(flow.flowId).status, { timeout: 10_000 })
         .toBe("completed");
-      const snapshot = await api<McpServersResponse>(base, "/mcp/servers");
-      expect(snapshot.scopes[0].servers[0]).toMatchObject({ state: "connected", tools: ["echo"] });
+      const snapshot = await api<McpServersResponse>(base, GLOBAL);
+      expect(snapshot.scope.servers[0]).toMatchObject({ state: "connected", tools: ["echo"] });
       expect(JSON.stringify(snapshot)).not.toMatch(/fixture-token|fixture-refresh/);
       expect(existsSync(join(agentDir, "mcp-auth.json"))).toBe(true);
       await api(base, "/mcp/scopes/global/servers/remote/logout", "POST", {});
-      expect((await service.list()).scopes[0].servers[0].state).toBe("needs-auth");
+      expect((await service.list("global")).scope.servers[0].state).toBe("needs-auth");
       console.log(
         `MCP proof (${mode}): needs-auth → authorization URL → callback → completed → connected (echo tool) → logout → needs-auth`,
       );
@@ -675,7 +812,7 @@ describe("MCP routes through real bundled Pi", () => {
   it("cancel/expiry are terminal despite late child exit; duplicate and post-terminal submissions are rejected", async () => {
     const { service } = fixture(1500);
     const remote = await oauthServer();
-    await service.add({ scopeId: "global", name: "remote", url: remote + "/mcp" });
+    await service.add("global", { name: "remote", url: remote + "/mcp" });
     const flow = await service.login("global", "remote", "phone_browser");
     await expect
       .poll(() => service.auth.get(flow.flowId).status, { timeout: 10_000 })
@@ -697,7 +834,7 @@ describe("MCP routes through real bundled Pi", () => {
   }, 30_000);
   it("child connection failure settles a failed flow without exposing subprocess output", async () => {
     const { service } = fixture();
-    await service.add({ scopeId: "global", name: "dead", url: "http://127.0.0.1:1/mcp" });
+    await service.add("global", { name: "dead", url: "http://127.0.0.1:1/mcp" });
     const flow = await service.login("global", "dead", "phone_browser");
     await expect
       .poll(() => service.auth.get(flow.flowId).status, { timeout: 10_000 })
@@ -708,10 +845,10 @@ describe("MCP routes through real bundled Pi", () => {
     const { service } = fixture();
     const remote = await oauthServer();
     const base = await routes(service);
-    await service.add({ scopeId: "global", name: "remote", url: remote + "/mcp" });
-    const before = await api<McpServersResponse>(base, "/mcp/servers");
+    await service.add("global", { name: "remote", url: remote + "/mcp" });
+    const before = await api<McpServersResponse>(base, GLOBAL);
     expect(before.activeSignIn).toBeUndefined();
-    expect(before.scopes[0].servers[0]).toMatchObject({ name: "remote", state: "needs-auth" });
+    expect(before.scope.servers[0]).toMatchObject({ name: "remote", state: "needs-auth" });
 
     const flow = await service.login("global", "remote", "phone_browser");
     await expect
@@ -719,9 +856,12 @@ describe("MCP routes through real bundled Pi", () => {
       .toBe("awaiting_external");
     const run = vi.spyOn(McpCli.prototype, "run");
     try {
-      const during = await api<McpServersResponse>(base, "/mcp/servers");
+      const during = await api<McpServersResponse>(base, GLOBAL);
+      // A workspace list also reports the host-wide flow so it can be resumed or cancelled.
+      const project = await api<McpServersResponse>(base, PROJECT);
       expect(run).not.toHaveBeenCalled(); // No probe beside the login's credential writer.
-      expect(during.scopes[0].servers[0]).toMatchObject({ name: "remote", state: "needs-auth" });
+      expect(project.activeSignIn?.flowId).toBe(flow.flowId);
+      expect(during.scope.servers[0]).toMatchObject({ name: "remote", state: "needs-auth" });
       expect(during.activeSignIn).toMatchObject({
         flowId: flow.flowId,
         scopeId: "global",
@@ -733,7 +873,7 @@ describe("MCP routes through real bundled Pi", () => {
       run.mockRestore();
     }
     for (const [path, method, body] of [
-      ["/mcp/servers", "POST", { scopeId: "global", name: "other", url: remote + "/mcp" }],
+      [GLOBAL, "POST", { name: "other", url: remote + "/mcp" }],
       ["/mcp/scopes/global/servers/remote", "PATCH", { enabled: false }],
       ["/mcp/scopes/global/servers/remote", "DELETE", {}],
       ["/mcp/scopes/global/servers/remote/login", "POST", {}],
@@ -749,11 +889,11 @@ describe("MCP routes through real bundled Pi", () => {
 
     // Cancel: the list keeps answering while Pi's child is reaped, then goes live again.
     await api(base, `/mcp/auth/flows/${flow.flowId}/cancel`, "POST", {});
-    const cancelled = await api<McpServersResponse>(base, "/mcp/servers");
+    const cancelled = await api<McpServersResponse>(base, GLOBAL);
     if (cancelled.activeSignIn)
       expect(cancelled.activeSignIn).toMatchObject({ flowId: flow.flowId, status: "cancelled" });
     await expect
-      .poll(async () => (await api<McpServersResponse>(base, "/mcp/servers")).activeSignIn, {
+      .poll(async () => (await api<McpServersResponse>(base, GLOBAL)).activeSignIn, {
         timeout: 5000,
       })
       .toBeUndefined();
@@ -762,14 +902,12 @@ describe("MCP routes through real bundled Pi", () => {
   it("serves config-only rows when a sign-in starts before any probe", async () => {
     const { service } = fixture();
     const remote = await oauthServer();
-    await service.add({ scopeId: "global", name: "remote", url: remote + "/mcp" });
+    await service.add("global", { name: "remote", url: remote + "/mcp" });
     const flow = await service.login("global", "remote", "phone_browser");
-    const during = await service.list();
+    const during = await service.list("global");
     expect(during.activeSignIn?.flowId).toBe(flow.flowId);
-    expect(during.scopes[0].servers[0]).toMatchObject({ name: "remote", state: "unknown" });
-    expect(during.scopes[0].errors).toEqual([
-      "Live status is paused while a sign-in is in progress.",
-    ]);
+    expect(during.scope.servers[0]).toMatchObject({ name: "remote", state: "unknown" });
+    expect(during.scope.errors).toEqual(["Live status is paused while a sign-in is in progress."]);
     service.auth.cancel(flow.flowId);
   }, 30_000);
   it("bounds dispose by a deadline when a killed child never settles", async () => {

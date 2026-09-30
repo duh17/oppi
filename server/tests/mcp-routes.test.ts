@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { RouteHandler, type RouteContext } from "../src/routes/index.js";
 
 const targets = [
-  ["POST", "/mcp/servers"],
+  ["POST", "/mcp/scopes/global/servers"],
   ["PATCH", "/mcp/scopes/global/servers/echo"],
   ["POST", "/mcp/scopes/global/servers/echo/login"],
   ["POST", "/mcp/auth/flows/flow-one/manual-code"],
@@ -61,27 +61,21 @@ describe("MCP HTTP request validation", () => {
     });
   }
   it.each([
-    { scopeId: 5, name: "echo", command: "node" },
-    { scopeId: "global", name: 5, command: "node" },
-    { scopeId: "global", name: "echo", url: 5 },
-    { scopeId: "global", name: "echo", command: true },
-    { scopeId: "global", name: "echo", command: "node", args: [5] },
-    { scopeId: "global", name: "echo", command: "node", cwd: false },
-    { scopeId: "global", name: "echo", command: "node", env: { KEY: 5 } },
-    { scopeId: "global", name: "echo", url: "https://example.test", headers: null },
-    { scopeId: "global", name: "echo", url: "https://example.test", oauth: null },
-    { scopeId: "global", name: "echo", url: "https://example.test", oauth: { clientId: 5 } },
-    { scopeId: "global", name: "echo", url: "https://example.test", oauth: { clientSecret: 5 } },
-    {
-      scopeId: "global",
-      name: "echo",
-      url: "https://example.test",
-      oauth: { callbackPort: "8765" },
-    },
-    { scopeId: "global", name: "echo", command: "node", exposure: 5 },
+    { name: 5, command: "node" },
+    { name: "echo", url: 5 },
+    { name: "echo", command: true },
+    { name: "echo", command: "node", args: [5] },
+    { name: "echo", command: "node", cwd: false },
+    { name: "echo", command: "node", env: { KEY: 5 } },
+    { name: "echo", url: "https://example.test", headers: null },
+    { name: "echo", url: "https://example.test", oauth: null },
+    { name: "echo", url: "https://example.test", oauth: { clientId: 5 } },
+    { name: "echo", url: "https://example.test", oauth: { clientSecret: 5 } },
+    { name: "echo", url: "https://example.test", oauth: { callbackPort: "8765" } },
+    { name: "echo", command: "node", exposure: 5 },
   ])("add rejects wrong field types: %j", async (value) => {
     const { mcp, send } = harness();
-    expect((await send("POST", "/mcp/servers", value)).statusCode).toBe(400);
+    expect((await send("POST", "/mcp/scopes/global/servers", value)).statusCode).toBe(400);
     expect(mcp.add).not.toHaveBeenCalled();
   });
   it.each([{ enabled: "yes" }, { exposure: 5 }, { enabled: null }, { exposure: "bogus" }, {}])(
@@ -114,20 +108,14 @@ describe("MCP HTTP request validation", () => {
   );
   it("malformed JSON is a 400, not an unhandled server error", async () => {
     const { mcp, send } = harness();
-    expect((await send("POST", "/mcp/servers", "{", true)).statusCode).toBe(400);
+    expect((await send("POST", "/mcp/scopes/global/servers", "{", true)).statusCode).toBe(400);
     expect(mcp.add).not.toHaveBeenCalled();
   });
   it("validates before forwarding typed add/patch/login/manual requests", async () => {
     const { mcp, send } = harness();
-    const add = {
-      scopeId: "global",
-      name: "echo",
-      command: "node",
-      args: ["echo.cjs"],
-      env: { KEY: "${TOKEN}" },
-    };
-    expect((await send("POST", "/mcp/servers", add)).statusCode).toBe(201);
-    expect(mcp.add).toHaveBeenCalledWith(add);
+    const add = { name: "echo", command: "node", args: ["echo.cjs"], env: { KEY: "${TOKEN}" } };
+    expect((await send("POST", "/mcp/scopes/workspace-one/servers", add)).statusCode).toBe(201);
+    expect(mcp.add).toHaveBeenCalledWith("workspace-one", add);
     expect(
       (await send("PATCH", "/mcp/scopes/global/servers/echo", { enabled: false })).statusCode,
     ).toBe(200);

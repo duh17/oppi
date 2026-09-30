@@ -52,7 +52,8 @@ struct McpServerSummary: Codable, Sendable, Identifiable, Equatable {
         case "needs-auth": "Needs sign-in"
         case "connected": "Connected"
         case "disabled": "Disabled"
-        case "untrusted": "Untrusted project"
+        case "untrusted": "Needs remembered trust"
+        case "replaced": "Replaced by project"
         case "failed", "disconnected": "Failed"
         default: state.capitalized
         }
@@ -60,27 +61,32 @@ struct McpServerSummary: Codable, Sendable, Identifiable, Equatable {
 }
 
 struct McpScopeSnapshot: Codable, Sendable, Identifiable, Equatable {
+    /// Pi's global `~/.pi/agent/mcp.json`. Any other id is a host workspace's `.pi/mcp.json`.
+    static let globalId = "global"
+
     let id: String
     let title: String
     let kind: String
-    let hasConfig: Bool
-    let trusted: Bool
+    /// Project scopes only: the trust answer Workspace settings show for all project resources.
+    let projectTrust: ProjectTrustState?
+    /// This scope's own mcp.json.
     let servers: [McpServerSummary]
+    /// Project scopes only: global servers that also load here, read-only.
+    let inherited: [McpServerSummary]?
     let errors: [String]
-    let note: String?
 }
 struct McpServersResponse: Codable, Sendable, Equatable {
-    let scopes: [McpScopeSnapshot]
-    /// The sign-in still blocking MCP changes on the host. While present, `scopes` is the
-    /// host's last live probe, not a fresh one.
+    let scope: McpScopeSnapshot
+    /// The host-wide sign-in still blocking MCP changes, whichever scope started it. While
+    /// present, `scope` is the host's last live probe, not a fresh one.
     let activeSignIn: McpAuthFlowSnapshot?
 }
 struct McpPatchServerRequest: Encodable, Sendable {
     var enabled: Bool?
     var exposure: McpExposure?
 }
+/// Body of `POST /mcp/scopes/{scopeId}/servers`.
 struct McpAddServerRequest: Encodable, Sendable {
-    let scopeId: String
     let name: String
     var url: String?
     var command: String?

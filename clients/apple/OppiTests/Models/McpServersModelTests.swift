@@ -16,7 +16,7 @@ struct McpServersModelTests {
         #expect(model.signIn.attempt?.providerName == "remote")
         #expect(model.signIn.scopeId == "global")
         #expect(!model.signIn.showingSheet)
-        #expect(model.snapshot?.scopes.first?.servers.first?.name == "remote")
+        #expect(model.snapshot?.scope.servers.first?.name == "remote")
         #expect(model.error == nil)
     }
 
@@ -84,8 +84,8 @@ private func response(flow: McpAuthFlowSnapshot?) -> McpServersResponse {
         error: nil, supportsOAuth: true
     )
     return McpServersResponse(
-        scopes: [McpScopeSnapshot(id: "global", title: "Global", kind: "global", hasConfig: true,
-                                  trusted: true, servers: [server], errors: [], note: nil)],
+        scope: McpScopeSnapshot(id: "global", title: "Global", kind: "global", projectTrust: nil,
+                                servers: [server], inherited: nil, errors: []),
         activeSignIn: flow
     )
 }

@@ -1,4 +1,5 @@
 import type { ProviderAuthFlowStatus, ProviderAuthLaunchMode } from "../provider-auth/types.js";
+import type { ProjectTrustState } from "./workspace.js";
 
 export type McpExposure = "codemode" | "codemode-deferred" | "deferred" | "direct" | "hidden";
 export interface McpServerConfig {
@@ -27,21 +28,25 @@ export interface McpScopeSnapshot {
   id: string;
   title: string;
   kind: "global" | "project";
-  hasConfig: boolean;
-  trusted: boolean;
+  /** Project scopes only: the trust answer Workspace settings show for all project resources. */
+  projectTrust?: ProjectTrustState;
+  /** This scope's own mcp.json. In an untrusted project, enabled rows are `untrusted`. */
   servers: McpServerSummary[];
+  /** Project scopes only: global servers that also load here, read-only. A global server
+   * that a same-name project server replaces has state `replaced`. */
+  inherited?: McpServerSummary[];
   errors: string[];
-  note?: string;
 }
 export interface McpServersResponse {
-  scopes: McpScopeSnapshot[];
-  /** The sign-in that still blocks MCP mutations (live, or terminal with its child not yet
-   * reaped). While present, scopes are the last live probe, not a fresh one, so a phone that
-   * opened this view mid-flow can resume or cancel it. Absent once the host is idle. */
+  scope: McpScopeSnapshot;
+  /** The host-wide sign-in that still blocks MCP mutations (live, or terminal with its child
+   * not yet reaped), in any scope. While present, `scope` is the last live probe, not a fresh
+   * one, so a phone that opened this view mid-flow can resume or cancel it. Absent once the
+   * host is idle. */
   activeSignIn?: McpAuthFlowSnapshot;
 }
+/** Body of POST /mcp/scopes/{scopeId}/servers. */
 export interface McpAddServerRequest extends McpServerConfig {
-  scopeId: string;
   name: string;
   exposure?: McpExposure;
 }

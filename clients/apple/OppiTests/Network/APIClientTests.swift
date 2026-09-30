@@ -1268,7 +1268,9 @@ struct APIClientTests {
             """)
         }
 
-        let extensions = try await client.listExtensions()
+        let list = try await client.listExtensions()
+        #expect(list.projectTrust == nil)
+        let extensions = list.extensions
         #expect(extensions.count == 1)
         #expect(extensions[0].name == "memory")
         #expect(extensions[0].kind == "file")
@@ -1285,12 +1287,13 @@ struct APIClientTests {
             let cwd = components?.queryItems?.first(where: { $0.name == "cwd" })?.value
             #expect(cwd == "~/workspace/oppi")
             return self.mockResponse(json: """
-            {"extensions":[]}
+            {"extensions":[],"projectTrust":"distrusted"}
             """)
         }
 
-        let extensions = try await client.listExtensions(cwd: "~/workspace/oppi")
-        #expect(extensions.isEmpty)
+        let list = try await client.listExtensions(cwd: "~/workspace/oppi")
+        #expect(list.extensions.isEmpty)
+        #expect(list.projectTrust == .distrusted)
     }
 
     @Test func getHostPathStatusUsesQueryString() async throws {

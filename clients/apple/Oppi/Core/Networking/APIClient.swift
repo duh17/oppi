@@ -1231,7 +1231,7 @@ actor APIClient: ClientLogUploading {
     ///
     /// The server resolves extensions using pi's resource resolver, including
     /// auto-discovered dirs, settings paths, and installed package extensions.
-    func listExtensions(cwd: String? = nil, workspaceId: String? = nil) async throws -> [ExtensionInfo] {
+    func listExtensions(cwd: String? = nil, workspaceId: String? = nil) async throws -> WorkspaceExtensionList {
         var path = "/extensions"
         var queryItems: [URLQueryItem] = []
         if let workspaceId, !workspaceId.isEmpty {
@@ -1247,9 +1247,7 @@ actor APIClient: ClientLogUploading {
             }
         }
 
-        let data = try await get(path)
-        struct Response: Decodable { let extensions: [ExtensionInfo] }
-        return try JSONDecoder().decode(Response.self, from: data).extensions
+        return try JSONDecoder().decode(WorkspaceExtensionList.self, from: try await get(path))
     }
 
     /// Discover project directories on the host.

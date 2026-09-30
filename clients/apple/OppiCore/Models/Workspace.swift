@@ -9,6 +9,33 @@ enum WorkspaceRuntime: String, Codable, Sendable {
     case sandbox
 }
 
+/// What a host session does with a folder's project resources: `.pi` settings, skills,
+/// extensions, and MCP servers. The server derives it from Pi's saved trust decision.
+enum ProjectTrustState: String, Codable, Sendable, Equatable {
+    case trusted
+    case ask
+    case distrusted
+
+    var title: String {
+        switch self {
+        case .trusted: "Trusted"
+        case .ask: "Asks at session start"
+        case .distrusted: "Not trusted"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .trusted:
+            "Sessions load this folder\u{2019}s project settings, skills, extensions, and MCP servers."
+        case .ask:
+            "A session asks on your phone before loading this folder\u{2019}s project settings, skills, extensions, and MCP servers. No answer within 15 seconds allows that session."
+        case .distrusted:
+            "Sessions ignore this folder\u{2019}s project settings, skills, extensions, and MCP servers. Change this in Pi on the host."
+        }
+    }
+}
+
 struct SandboxConfig: Codable, Sendable, Equatable, Hashable {
     var allowedHosts: [String]?
 }

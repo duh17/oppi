@@ -1,6 +1,11 @@
 import SwiftUI
 
+/// One MCP scope on the active host. The sidebar shows the global scope; each host
+/// workspace shows its own `.pi/mcp.json` from Workspace settings, like Pi extensions.
 struct McpServersView: View {
+    /// `McpScopeSnapshot.globalId`, or a host workspace id.
+    let scopeId: String
+
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @State private var model = McpServersModel()
@@ -18,10 +23,12 @@ struct McpServersView: View {
     private var snapshot: McpServersResponse? { model.snapshot }
     private var error: String? { model.error }
     private var loading: Bool { model.loading }
+    private var isGlobal: Bool { scopeId == McpScopeSnapshot.globalId }
 
     var body: some View {
         List {
-            if let server {
+            // A workspace belongs to one host; only the global list can switch hosts.
+            if isGlobal, let server {
                 Section {
                     ServerCatalogServerRow(selectedServer: server) { _ in }
                 }
@@ -46,34 +53,41 @@ struct McpServersView: View {
             if loading {
                 Section { ProgressView("Probing MCP servers…") }
             }
-            if let snapshot, let client, let server {
-                ForEach(snapshot.scopes.filter { $0.kind == "global" || $0.hasConfig }) { scope in
-                    Section(scope.title) {
-                        if let note = scope.note {
-                            Label(note, systemImage: "lock.shield")
-                                .font(.subheadline).foregroundStyle(.themeOrange)
+            if let scope = snapshot?.scope, let client, let server {
+                // Project trust is shown once, in Edit Workspace above this list.
+                Section {
+                    ForEach(scope.errors, id: \.self) { Text($0).foregroundStyle(.themeRed) }
+                    if scope.servers.isEmpty {
+                        Text("No MCP servers configured").foregroundStyle(.themeComment)
+                    }
+                    ForEach(scope.servers) { entry in
+                        NavigationLink {
+                            McpServerDetailView(
+                                scope: scope, entry: entry, client: client,
+                                serverId: server.id, serverName: server.name, signIn: signIn
+                            )
+                        } label: {
+                            serverRow(entry)
                         }
-                        ForEach(scope.errors, id: \.self) { Text($0).foregroundStyle(.themeRed) }
-                        if scope.servers.isEmpty {
-                            Text("No MCP servers configured").foregroundStyle(.themeComment)
+                        .accessibilityIdentifier("mcp.server.\(scope.id).\(entry.name)")
+                    }
+                } header: {
+                    if !isGlobal { Text("This Workspace") }
+                } footer: {
+                    Text(isGlobal
+                        ? "Global servers from ~/.pi/agent/mcp.json load in every host workspace. Each workspace\u{2019}s own servers are in its Workspace settings."
+                        : "Servers from this workspace\u{2019}s .pi/mcp.json. A server here replaces a global server with the same name.")
+                }
+                if let inherited = scope.inherited, !inherited.isEmpty {
+                    Section {
+                        ForEach(inherited) { entry in
+                            serverRow(entry)
+                                .accessibilityIdentifier("mcp.inherited.\(scope.id).\(entry.name)")
                         }
-                        ForEach(scope.servers) { entry in
-                            NavigationLink {
-                                McpServerDetailView(
-                                    scope: scope, entry: entry, client: client,
-                                    serverId: server.id, serverName: server.name, signIn: signIn
-                                )
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(entry.name).font(.headline)
-                                    Text("\(entry.transport == "http" ? "URL" : "Command") · \(entry.tools.count) tools · \(entry.exposure.rawValue)")
-                                        .font(.subheadline).foregroundStyle(.themeComment)
-                                    Label(entry.stateLabel, systemImage: entry.state == "connected" ? "checkmark.circle" : "circle")
-                                        .font(.caption).foregroundStyle(statusStyle(entry.state))
-                                }
-                            }
-                            .accessibilityIdentifier("mcp.server.\(scope.id).\(entry.name)")
-                        }
+                    } header: {
+                        Text("From Global")
+                    } footer: {
+                        Text("Global servers that also load in this workspace. Change them from MCP Servers in the sidebar.")
                     }
                 }
             } else if !loading, error == nil {
@@ -92,7 +106,7 @@ struct McpServersView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button("Add MCP Server", systemImage: "plus") {
                     if let client, let snapshot, let server {
-                        addContext = McpAddContext(client: client, scopes: snapshot.scopes, serverName: server.name)
+                        addContext = McpAddContext(client: client, scope: snapshot.scope, serverName: server.name)
                     }
                 }
                 .disabled(snapshot == nil || loading || signIn.hasActive)
@@ -111,16 +125,26 @@ struct McpServersView: View {
             if phase == .active { signIn.attempt?.startPolling() } else { signIn.attempt?.stopPolling() }
         }
         .sheet(item: $addContext) { context in
-            McpAddServerView(client: context.client, scopes: context.scopes, serverName: context.serverName) {
+            McpAddServerView(client: context.client, scope: context.scope, serverName: context.serverName) {
                 Task { await refresh() }
             }
+        }
+    }
+
+    private func serverRow(_ entry: McpServerSummary) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(entry.name).font(.headline)
+            Text("\(entry.transport == "http" ? "URL" : "Command") · \(entry.tools.count) tools · \(entry.exposure.rawValue)")
+                .font(.subheadline).foregroundStyle(.themeComment)
+            Label(entry.stateLabel, systemImage: entry.state == "connected" ? "checkmark.circle" : "circle")
+                .font(.caption).foregroundStyle(statusStyle(entry.state))
         }
     }
 
     private func statusStyle(_ state: String) -> AnyShapeStyle {
         switch state {
         case "connected": AnyShapeStyle(.themeGreen)
-        case "disabled": AnyShapeStyle(.secondary)
+        case "disabled", "replaced": AnyShapeStyle(.secondary)
         case "failed", "disconnected": AnyShapeStyle(.themeRed)
         case "needs-auth", "untrusted": AnyShapeStyle(.themeOrange)
         default: AnyShapeStyle(.themeComment)
@@ -132,12 +156,12 @@ struct McpServersView: View {
         await model.refresh(
             hostId: server.id, hostName: server.name,
             flowClient: McpFlowClient(client: client)
-        ) { try await client.listMcpServers() }
+        ) { try await client.listMcpServers(scopeId: scopeId) }
     }
 }
 private struct McpAddContext: Identifiable {
     let id = UUID()
     let client: APIClient
-    let scopes: [McpScopeSnapshot]
+    let scope: McpScopeSnapshot
     let serverName: String
 }

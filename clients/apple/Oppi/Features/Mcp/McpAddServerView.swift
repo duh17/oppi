@@ -2,11 +2,12 @@ import SwiftUI
 
 struct McpAddServerView: View {
     let client: APIClient
-    let scopes: [McpScopeSnapshot]
+    /// The list this sheet was opened from. The global list and each workspace list add
+    /// only to their own `mcp.json`.
+    let scope: McpScopeSnapshot
     let serverName: String
     let onAdded: () -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var scopeId = "global"
     @State private var mode = "url"
     @State private var name = ""
     @State private var url = ""
@@ -28,12 +29,10 @@ struct McpAddServerView: View {
                     LabeledContent("Host", value: serverName)
                     TextField("Server name", text: $name)
                         .accessibilityIdentifier("mcp.add.name")
-                    Picker("Scope", selection: $scopeId) {
-                        ForEach(scopes) { Text($0.title).tag($0.id) }
-                    }
-                    .accessibilityIdentifier("mcp.add.scope")
-                    if scopes.first(where: { $0.id == scopeId })?.kind == "project" {
-                        Text("Saved to this workspace's .pi/mcp.json. Pi only loads project servers after you trust the project on the host.")
+                    LabeledContent("Scope", value: scope.title)
+                        .accessibilityIdentifier("mcp.add.scope")
+                    if let trust = scope.projectTrust {
+                        Text("Saved to this workspace\u{2019}s .pi/mcp.json. Project trust: \(trust.title.lowercased()).")
                             .font(.footnote).foregroundStyle(.themeComment)
                     }
                     Picker("Transport", selection: $mode) {
@@ -115,7 +114,7 @@ struct McpAddServerView: View {
                 guard !key.isEmpty, values[key] == nil else { error = "Keys must be non-empty and unique."; return }
                 values[key] = String(line[line.index(after: separator)...])
             }
-            var input = McpAddServerRequest(scopeId: scopeId, name: name, exposure: exposure.configurationValue)
+            var input = McpAddServerRequest(name: name, exposure: exposure.configurationValue)
             if mode == "url" {
                 input.url = url
                 input.headers = values.isEmpty ? nil : values
@@ -136,7 +135,7 @@ struct McpAddServerView: View {
             saving = true; error = nil
             Task {
                 defer { saving = false }
-                do { try await client.addMcpServer(input); onAdded(); dismiss() }
+                do { try await client.addMcpServer(scopeId: scope.id, input); onAdded(); dismiss() }
                 catch { self.error = error.localizedDescription }
             }
         }

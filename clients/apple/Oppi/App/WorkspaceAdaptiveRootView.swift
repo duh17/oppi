@@ -224,7 +224,7 @@ private struct WorkspaceUtilityDestinationView: View {
             case .extensions:
                 ServerExtensionsView()
             case .mcpServers:
-                McpServersView()
+                McpServersView(scopeId: McpScopeSnapshot.globalId)
             case .desktopStill:
                 DesktopCurrentStillViewerView()
             case .manageServers:

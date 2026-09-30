@@ -23,7 +23,6 @@ function exposure(value: unknown): void {
 }
 export function parseMcpAddRequest(value: unknown): McpAddServerRequest {
   const body = object(value, [
-    "scopeId",
     "name",
     "url",
     "command",
@@ -34,13 +33,8 @@ export function parseMcpAddRequest(value: unknown): McpAddServerRequest {
     "oauth",
     "exposure",
   ]);
-  if (
-    typeof body.scopeId !== "string" ||
-    !body.scopeId ||
-    typeof body.name !== "string" ||
-    !body.name
-  )
-    throw new McpError(400, "scopeId and name must be non-empty strings");
+  if (typeof body.name !== "string" || !body.name)
+    throw new McpError(400, "name must be a non-empty string");
   optionalStrings(body, ["url", "command", "cwd"]);
   if ((body.url === undefined) === (body.command === undefined))
     throw new McpError(400, "Choose a URL or command");
