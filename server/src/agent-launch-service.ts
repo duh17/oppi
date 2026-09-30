@@ -555,7 +555,10 @@ export class AgentLaunchService {
       hostCwd,
       agentDir,
       settingsManager,
-      availableMcpBuiltinNames(true),
+      availableMcpBuiltinNames({
+        managed: true,
+        sandbox: request.target.workspace.runtime === "sandbox",
+      }),
     );
   }
 

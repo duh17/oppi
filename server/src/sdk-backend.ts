@@ -62,7 +62,7 @@ import {
   createMcpBuiltinExtensions,
   isBuiltinExtensionPath,
 } from "./host-mcp-extensions.js";
-import { createSandboxMcpOptions, EMPTY_SANDBOX_MCP, loadPiMcpInternals } from "./sandbox-mcp.js";
+import { createSandboxMcpOptions, emptySandboxMcp, loadPiMcpInternals } from "./sandbox-mcp.js";
 import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
 import {
   DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS,
@@ -929,8 +929,11 @@ export class SdkBackend {
         await settingsManager.reload();
       };
       await resolveTrust();
-      // Pi MCP/codemode/tool-search: always on for managed sessions.
-      const mcpBuiltinNames = availableMcpBuiltinNames(managedSession);
+      // Pi MCP/codemode/tool-search: on for managed sessions; sandboxes get no codemode.
+      const mcpBuiltinNames = availableMcpBuiltinNames({
+        managed: managedSession,
+        sandbox: sandboxMode,
+      });
       const selectedAgentExtensionPaths = await resolveSelectedAgentExtensionPaths(
         selectedAgentExtensionIds,
         hostCwd,
@@ -942,13 +945,20 @@ export class SdkBackend {
       // run inside the VM. Servers connect at session_start, after the VM exists below.
       let sandboxVm: GondolinVm | undefined;
       const sandboxMcpPicks = sandboxMode ? (workspace?.sandboxConfig?.mcpServers ?? []) : [];
+      // Each sandbox's own log, away from `~/.pi/agent/mcp.log` that host agents read.
+      const sandboxMcpLog = join(
+        config.dataDir ?? join(runtimeAgentDir, "oppi"),
+        "sandbox-mcp-logs",
+        `${workspace?.id ?? "sandbox"}.log`,
+      );
       const sandboxMcp = !sandboxMode
         ? undefined
         : sandboxMcpPicks.length === 0
-          ? EMPTY_SANDBOX_MCP
+          ? emptySandboxMcp(sandboxMcpLog)
           : createSandboxMcpOptions({
               internals: await loadPiMcpInternals(),
               agentDir: runtimeAgentDir,
+              logPath: sandboxMcpLog,
               selected: sandboxMcpPicks,
               allowedHosts: workspace?.sandboxConfig?.allowedHosts,
               guestCwd,
@@ -1055,7 +1065,7 @@ export class SdkBackend {
         appendSystemPromptOverride: (base) => buildCurrentAppendSystemPrompt(base),
         extensionFactories: [
           createLifecycleJournalExtension(sessionManager),
-          ...createMcpBuiltinExtensions(mcpBuiltinNames, sandboxMcp && { mcp: sandboxMcp }),
+          ...createMcpBuiltinExtensions(mcpBuiltinNames, sandboxMcp),
         ],
         ...(selectedAgentSkillPaths !== undefined
           ? { noSkills: true, additionalSkillPaths: selectedAgentSkillPaths }

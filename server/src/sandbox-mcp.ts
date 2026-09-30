@@ -122,7 +122,10 @@ export function sandboxMcpBlockReason(
   config: Record<string, unknown>,
   allowedHosts: string[] | undefined,
 ): string | undefined {
-  if (typeof config.url === "string") {
+  // Pi treats any entry with a `url` key as HTTP (`"url" in config`), even one it validated
+  // as stdio; classify the same way so no HTTP path skips these checks.
+  if (config.url !== undefined) {
+    if (typeof config.url !== "string") return "Its URL is not valid.";
     let host: string;
     try {
       // IPv6 hostnames come bracketed (`[::1]`); Allowed Hosts lists them bare.
@@ -138,6 +141,26 @@ export function sandboxMcpBlockReason(
       !allowedHosts?.some((pattern) => pattern.trim().toLowerCase() === host.toLowerCase())
     )
       return `${host} is a private or local address. List it exactly in Allowed Hosts to allow it.`;
+    // Pi runs a `!command` value as a host shell command on every connect, and the
+    // sandboxed agent can make it reconnect. `${NAME}` references stay allowed.
+    const headers =
+      config.headers && typeof config.headers === "object" && !Array.isArray(config.headers)
+        ? Object.values(config.headers)
+        : [];
+    const oauth =
+      config.oauth && typeof config.oauth === "object" && !Array.isArray(config.oauth)
+        ? (config.oauth as Record<string, unknown>)
+        : {};
+    if (
+      [...headers, oauth.clientSecret].some(
+        (value) => typeof value === "string" && value.startsWith("!"),
+      )
+    )
+      return "Its headers or OAuth client secret run a host command (!command), which sandboxes never trigger.";
+    // `auth.provider` fetches a model login on every request; that lookup can run a
+    // provider's `!command` key or extension code on the host. Use MCP OAuth instead.
+    if (config.auth !== undefined)
+      return "It signs in with a host model login (auth.provider), which sandboxes never use. Use MCP OAuth or a header with a $NAME reference.";
     return undefined;
   }
   const env =
@@ -359,23 +382,52 @@ export class VmStdioTransport implements McpTransport {
   }
 }
 
-type SandboxMcpOptions = Pick<McpExtensionOptions, "loadConfig" | "createTransport">;
-
-/** No picks: load nothing, so Pi's default loader never reads host or project config. */
-export const EMPTY_SANDBOX_MCP: SandboxMcpOptions = {
-  loadConfig: () => ({ servers: [], errors: [] }),
-  createTransport: (entry) => {
-    throw new Error(`MCP server "${entry.name}" is not picked for this sandbox`);
-  },
-};
+/** A sandbox session's MCP config loading, transports, and own log. */
+export type SandboxMcpOptions = Pick<
+  McpExtensionOptions,
+  "loadConfig" | "createTransport" | "logPath"
+>;
 
 /**
- * `loadConfig` and `createTransport` for Pi's MCP extension in a sandbox session.
- * `vm` returns this session's VM; it never re-creates one with other settings.
+ * Sandboxes have no codemode (its scripts are model-written code running on the host).
+ * Pi registers `codemode` and `deferred` tools identically and differs only in which
+ * tool reaches them, so `deferred` keeps every tool reachable through `tool_search`.
+ * `codemode-deferred` is Pi's alias for `codemode`.
+ */
+export function withoutCodemode(entry: McpServerEntry): McpServerEntry {
+  const toDeferred = (exposure: unknown): unknown =>
+    exposure === undefined || exposure === "codemode" || exposure === "codemode-deferred"
+      ? "deferred"
+      : exposure;
+  const config = { ...entry.config } as Record<string, unknown>;
+  config.exposure = toDeferred(config.exposure);
+  if (config.toolExposure && typeof config.toolExposure === "object")
+    config.toolExposure = Object.fromEntries(
+      Object.entries(config.toolExposure).map(([tool, exposure]) => [tool, toDeferred(exposure)]),
+    );
+  return { ...entry, config: config as unknown as McpServerEntry["config"] };
+}
+
+/** No picks: load nothing, so Pi's default loader never reads host or project config. */
+export function emptySandboxMcp(logPath: string): SandboxMcpOptions {
+  return {
+    logPath,
+    loadConfig: () => ({ servers: [], errors: [] }),
+    createTransport: (entry) => {
+      throw new Error(`MCP server "${entry.name}" is not picked for this sandbox`);
+    },
+  };
+}
+
+/**
+ * Pi's MCP extension options for a sandbox session. `vm` returns this session's VM; it
+ * never re-creates one with other settings. `logPath` is this sandbox's own log, so an
+ * agent-controlled server never writes into the shared `~/.pi/agent/mcp.log`.
  */
 export function createSandboxMcpOptions(input: {
   internals: PiMcpInternals;
   agentDir: string;
+  logPath: string;
   selected: readonly string[];
   allowedHosts: string[] | undefined;
   guestCwd: string;
@@ -385,6 +437,7 @@ export function createSandboxMcpOptions(input: {
   const blockReason = (entry: McpServerEntry): string | undefined =>
     sandboxMcpBlockReason({ ...entry.config }, input.allowedHosts);
   return {
+    logPath: input.logPath,
     loadConfig: (ctx) => {
       // Global file only: the project file lives in the workspace.
       const loaded = input.internals.loadMcpConfig({
@@ -393,12 +446,15 @@ export function createSandboxMcpOptions(input: {
         projectTrusted: false,
       });
       const errors = [...loaded.errors];
-      const servers = loaded.servers.filter((entry) => {
-        if (!selected.has(entry.name)) return false;
-        const reason = blockReason(entry);
-        if (reason) errors.push(`MCP server "${entry.name}" is blocked in this sandbox: ${reason}`);
-        return !reason;
-      });
+      const servers = loaded.servers
+        .filter((entry) => {
+          if (!selected.has(entry.name)) return false;
+          const reason = blockReason(entry);
+          if (reason)
+            errors.push(`MCP server "${entry.name}" is blocked in this sandbox: ${reason}`);
+          return !reason;
+        })
+        .map(withoutCodemode);
       for (const name of selected)
         if (!loaded.servers.some((entry) => entry.name === name))
           errors.push(`MCP server "${name}" is selected for this sandbox but not in mcp.json.`);
@@ -418,7 +474,7 @@ export function createSandboxMcpOptions(input: {
         cwd?: string;
         env?: Record<string, string>;
       };
-      if (typeof config.url === "string")
+      if (config.url !== undefined)
         return input.internals.createDefaultTransport(entry, cwd, authProvider);
       return new VmStdioTransport(input.vm, [config.command ?? "", ...(config.args ?? [])], {
         cwd: posix.resolve(input.guestCwd, config.cwd ?? "."),

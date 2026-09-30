@@ -278,6 +278,9 @@ export default function (pi) {
       JSON.stringify({
         mcpServers: {
           echo: { command: "node", args: ["echo.mjs"], exposure: "direct" },
+          // Default (codemode) exposure: reached through tool_search, since sandboxes
+          // run no model-written codemode scripts on the host.
+          searchable: { command: "node", args: ["search.mjs"] },
           unpicked: { command: "node", args: ["other.mjs"], exposure: "direct" },
           secretive: {
             command: "node",
@@ -333,6 +336,12 @@ export default function (pi) {
                 };
                 if (message.id === undefined) continue;
                 if (message.method === "tools/call") toolCalls.push(message.params?.arguments);
+                if (message.method === "initialize")
+                  push({
+                    jsonrpc: "2.0",
+                    method: "notifications/message",
+                    params: { level: "info", data: "hello from the VM" },
+                  });
                 const result =
                   message.method === "initialize"
                     ? {
@@ -389,23 +398,46 @@ export default function (pi) {
           name: "Host MCP Sandbox",
           runtime: "sandbox",
           hostMount: cwd,
-          sandboxConfig: { allowedHosts: [], mcpServers: ["echo", "secretive", "gone"] },
+          sandboxConfig: {
+            allowedHosts: [],
+            mcpServers: ["echo", "searchable", "secretive", "gone"],
+          },
         } as Workspace,
         onEvent: vi.fn(),
         onEnd: vi.fn(),
       });
       backends.push(backend);
-      expect(extensionPaths(backend)).toEqual(
-        expect.arrayContaining(["builtin:mcp", "builtin:codemode", "builtin:tool-search"]),
-      );
+      const builtins = extensionPaths(backend).filter((path) => path.startsWith("builtin:"));
+      expect(builtins.sort()).toEqual(["builtin:mcp", "builtin:tool-search"]);
       await waitFor(
         () => sessionOf(backend).getActiveToolNames().includes("mcp__echo__echo"),
         "sandboxed mcp__echo__echo",
       );
-      // Only the picked, eligible server started, in the VM, at the guest workspace.
-      expect(mcpExecs).toEqual([
-        { argv: ["node", "echo.mjs"], cwd: expect.stringMatching(/^\/workspace/), env: {} },
+      // The default-exposure server is reachable through tool_search, never codemode.
+      const active = sessionOf(backend).getActiveToolNames();
+      expect(active).toContain("tool_search");
+      expect(active).not.toContain("codemode");
+      await waitFor(
+        () =>
+          sessionOf(backend)
+            .getAllTools()
+            .some((tool) => tool.name === "mcp__searchable__echo"),
+        "searchable server tools",
+      );
+      // Only the picked, eligible servers started, in the VM, at the guest workspace.
+      expect(mcpExecs.map(({ argv }) => argv).sort()).toEqual([
+        ["node", "echo.mjs"],
+        ["node", "search.mjs"],
       ]);
+      for (const exec of mcpExecs) {
+        expect(exec.cwd).toMatch(/^\/workspace/);
+        expect(exec.env).toEqual({});
+      }
+      // An in-VM server logs to this sandbox's own file, not the shared host mcp.log.
+      const sandboxLog = join(agentDir, "oppi", "sandbox-mcp-logs", "workspace-1.log");
+      await waitFor(() => existsSync(sandboxLog), "sandbox MCP log");
+      expect(readFileSync(sandboxLog, "utf8")).toContain("hello from the VM");
+      expect(existsSync(join(agentDir, "mcp.log"))).toBe(false);
       const names = sessionOf(backend)
         .getAllTools()
         .map((tool) => tool.name);
@@ -1179,9 +1211,17 @@ export default function (pi) {
 });
 
 describe("builtin extension availability boundaries", () => {
-  it("never offers builtins to terminal-owned mirrors", () => {
-    expect(availableMcpBuiltinNames(false)).toEqual([]);
-    expect(availableMcpBuiltinNames(true)).toEqual(["mcp", "codemode", "tool-search"]);
+  it("never offers builtins to terminal-owned mirrors, nor codemode to sandboxes", () => {
+    expect(availableMcpBuiltinNames({ managed: false, sandbox: false })).toEqual([]);
+    expect(availableMcpBuiltinNames({ managed: true, sandbox: false })).toEqual([
+      "mcp",
+      "codemode",
+      "tool-search",
+    ]);
+    expect(availableMcpBuiltinNames({ managed: true, sandbox: true })).toEqual([
+      "mcp",
+      "tool-search",
+    ]);
   });
 
   it("resolves builtin selections only for available names", async () => {

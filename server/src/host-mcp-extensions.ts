@@ -3,8 +3,8 @@ import {
   createMcpExtension,
   createToolSearchExtension,
   type InlineExtension,
-  type McpExtensionOptions,
 } from "@earendil-works/pi-coding-agent";
+import type { SandboxMcpOptions } from "./sandbox-mcp.js";
 
 import { createLogger } from "./logger.js";
 
@@ -24,18 +24,25 @@ export function isBuiltinExtensionPath(path: string): boolean {
   return path.startsWith(BUILTIN_EXTENSION_PATH_PREFIX);
 }
 
+/** Sandboxes run no agent-written code on the host, so they never get codemode. */
+const SANDBOX_MCP_BUILTIN_NAMES: readonly McpBuiltinName[] = ["mcp", "tool-search"];
+
 /**
- * Built-in extensions a session may load: all three for managed sessions, none
+ * Built-in extensions a session may load: all three for managed host sessions, none
  * otherwise. `-builtin:<name>` in Pi's `extensions` setting still disables one.
  *
- * Sandbox sessions get them too, but their MCP extension is built with the
- * sandbox options from `sandbox-mcp.ts` (owner-picked servers, stdio in the VM).
- * Codemode scripts run in QuickJS/WASM in this host process and reach only the
- * session's registered tools. Pi TUI mirror sessions are terminal-owned, so their
+ * Managed sandbox sessions get `mcp` (built with `sandbox-mcp.ts`: owner-picked
+ * servers, stdio in the VM) and `tool-search`, but not `codemode`: its scripts are
+ * model-written code running in this host process. Sandbox servers reach their tools
+ * through `tool_search` instead. Pi TUI mirror sessions are terminal-owned, so their
  * runtime is left to the terminal's own Pi.
  */
-export function availableMcpBuiltinNames(managed: boolean): readonly McpBuiltinName[] {
-  return managed ? MCP_BUILTIN_NAMES : [];
+export function availableMcpBuiltinNames(input: {
+  managed: boolean;
+  sandbox: boolean;
+}): readonly McpBuiltinName[] {
+  if (!input.managed) return [];
+  return input.sandbox ? SANDBOX_MCP_BUILTIN_NAMES : MCP_BUILTIN_NAMES;
 }
 
 /**
@@ -59,25 +66,18 @@ function suppressHostBrowser(url: string): void {
   });
 }
 
-/** A sandbox session's MCP config loading and transports (`sandbox-mcp.ts`). */
-export interface SandboxMcpBuiltins {
-  mcp: Pick<McpExtensionOptions, "loadConfig" | "createTransport">;
-}
-
-const FACTORIES: Record<McpBuiltinName, (sandbox?: SandboxMcpBuiltins) => InlineExtension> = {
+const FACTORIES: Record<McpBuiltinName, (sandbox?: SandboxMcpOptions) => InlineExtension> = {
   mcp: (sandbox) => ({
     name: "mcp",
     builtin: true,
     replaceable: true,
-    factory: createMcpExtension({ ...sandbox?.mcp, openUrl: suppressHostBrowser }),
+    factory: createMcpExtension({ ...sandbox, openUrl: suppressHostBrowser }),
   }),
-  codemode: (sandbox) => ({
+  codemode: () => ({
     name: "codemode",
     builtin: true,
     replaceable: true,
-    // Scripts run in this host process; in a sandbox they get no `models` catalog or
-    // classifier calls with host credentials.
-    factory: createCodemodeExtension(sandbox ? { models: false } : undefined),
+    factory: createCodemodeExtension(),
   }),
   "tool-search": () => ({
     name: "tool-search",
@@ -90,7 +90,7 @@ const FACTORIES: Record<McpBuiltinName, (sandbox?: SandboxMcpBuiltins) => Inline
 /** Sandbox sessions must pass `sandbox`: it replaces Pi's MCP config loading and transports. */
 export function createMcpBuiltinExtensions(
   names: readonly McpBuiltinName[],
-  sandbox?: SandboxMcpBuiltins,
+  sandbox?: SandboxMcpOptions,
 ): InlineExtension[] {
   return names.map((name) => FACTORIES[name](sandbox));
 }

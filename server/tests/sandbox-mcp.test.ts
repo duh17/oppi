@@ -3,6 +3,7 @@ import type { McpServerEntry } from "@earendil-works/pi-coding-agent";
 import type { GondolinProcess, GondolinVm } from "../src/gondolin-ops.js";
 import {
   createSandboxMcpOptions,
+  withoutCodemode,
   matchesAllowedHost,
   sandboxMcpBlockReason,
   VmStdioTransport,
@@ -55,6 +56,28 @@ describe("sandbox MCP eligibility", () => {
     "http://[::ffff:8.8.8.8]/mcp",
   ])("does not flag public %s", (url) => {
     expect(sandboxMcpBlockReason({ url }, undefined)).toBeUndefined();
+  });
+
+  it.each([
+    [{ headers: { Authorization: "!security find-generic-password -w -s mcp" } }],
+    [{ oauth: { clientSecret: "!op read op://vault/mcp/secret" } }],
+    [{ auth: { provider: "github-copilot" } }],
+  ])("blocks HTTP values that could run host commands: %j", (extra) => {
+    const url = "https://mcp.example.com/mcp";
+    expect(sandboxMcpBlockReason({ url, ...extra }, ["mcp.example.com"])).toMatch(
+      /!command|auth\.provider/,
+    );
+    // `${NAME}` references resolve on the host without running anything.
+    expect(
+      sandboxMcpBlockReason({ url, headers: { Authorization: "Bearer ${TOKEN}" } }, [
+        "mcp.example.com",
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("treats any url key as HTTP, like Pi, so a stdio-typed entry cannot skip the HTTP checks", () => {
+    const confused = { type: "stdio", command: "node", url: 1, oauth: { clientSecret: "!cmd" } };
+    expect(sandboxMcpBlockReason(confused, undefined)).toBe("Its URL is not valid.");
   });
 
   it("admits an HTTP server only when its URL host is allowed, whatever its headers", () => {
@@ -294,6 +317,7 @@ describe("sandbox MCP transports", () => {
     const options = createSandboxMcpOptions({
       internals: { loadMcpConfig: vi.fn(), createDefaultTransport },
       agentDir: "/agent",
+      logPath: "/data/sandbox-mcp-logs/w.log",
       selected: ["picked", "remote"],
       allowedHosts: ["mcp.example.com"],
       guestCwd: "/workspace/w",
@@ -321,5 +345,30 @@ describe("sandbox MCP transports", () => {
     connect(entry("remote", "global", { url: "https://mcp.example.com/mcp" } as never));
     expect(createDefaultTransport).toHaveBeenCalledTimes(1);
     expect(vmCalls).not.toHaveBeenCalled();
+  });
+});
+
+describe("sandbox MCP exposure", () => {
+  it("moves codemode exposure to deferred so tool_search reaches every tool", () => {
+    const entry = (config: Record<string, unknown>): McpServerEntry =>
+      ({ name: "s", scope: "global", source: "x", config }) as unknown as McpServerEntry;
+    expect(withoutCodemode(entry({ command: "node" })).config).toMatchObject({
+      exposure: "deferred",
+    });
+    for (const exposure of ["codemode", "codemode-deferred"])
+      expect(withoutCodemode(entry({ command: "node", exposure })).config).toMatchObject({
+        exposure: "deferred",
+      });
+    const mixed = withoutCodemode(
+      entry({
+        command: "node",
+        exposure: "direct",
+        toolExposure: { a: "codemode", b: "hidden", c: "direct" },
+      }),
+    ).config;
+    expect(mixed).toMatchObject({
+      exposure: "direct",
+      toolExposure: { a: "deferred", b: "hidden", c: "direct" },
+    });
   });
 });
