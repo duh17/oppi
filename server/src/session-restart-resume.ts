@@ -114,8 +114,7 @@ export type RestartResumeOutcome = "continued" | "resumed" | "skipped" | "failed
 export async function resumeSessionsAfterRestart(
   deps: RestartResumeDeps,
 ): Promise<Array<{ sessionId: string; outcome: RestartResumeOutcome; reason?: string }>> {
-  const results: Array<{ sessionId: string; outcome: RestartResumeOutcome; reason?: string }> =
-    [];
+  const results: Array<{ sessionId: string; outcome: RestartResumeOutcome; reason?: string }> = [];
   // Re-read the queue each time: a client start while earlier entries were
   // resuming removes that session's entry.
   for (;;) {
