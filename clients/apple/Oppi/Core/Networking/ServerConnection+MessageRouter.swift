@@ -218,7 +218,6 @@ extension ServerConnection {
     // MARK: - Connected / State
 
     func handleConnected(_ session: Session) {
-        sessionStreamCoordinator.noteSessionBootstrapped(sessionId: session.id)
         sessionStore.upsert(session)
         emitSessionUsageMetricsIfNeeded(session)
         syncThinkingLevel(from: session)

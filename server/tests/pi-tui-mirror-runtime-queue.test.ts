@@ -9,6 +9,7 @@ import { WebSocket } from "ws";
 import { PiTuiMirrorRuntime } from "../src/pi-tui-mirror-runtime.js";
 import type { Storage } from "../src/storage.js";
 import type { ServerMessage, Session, Workspace } from "../src/types.js";
+import { WsMessageHandler, type WsSessionCommands } from "../src/ws-message-handler.js";
 
 class FakeBridgeWebSocket extends EventEmitter {
   readyState = WebSocket.OPEN;
@@ -1728,6 +1729,41 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       data: { provider: "anthropic", id: "claude-sonnet-4" },
     });
     await expect(commandPromise).resolves.toBeUndefined();
+  });
+
+  it("returns the terminal's set_model rejection to an HTTP caller", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const handler = new WsMessageHandler({
+      sessions: runtime as unknown as WsSessionCommands,
+      ensureSessionContextWindow: (value) => value,
+      getModelCatalog: () => [],
+    });
+    const replies: ServerMessage[] = [];
+
+    const dispatch = handler.handleClientMessage(
+      { id: sessionId, runtime: "pi-tui" } as Session,
+      { type: "set_model", provider: "openai", modelId: "gpt-6.1-sol", requestId: "http-tui" },
+      (message) => replies.push(message),
+      { connId: "http-session-command", captureRuntimeResult: true },
+    );
+    await vi.waitFor(() => expect(latestCommand(ws).command).toMatchObject({ type: "set_model" }));
+    ws.receive({
+      type: "command_result",
+      id: latestCommand(ws).id,
+      success: false,
+      error: "Model openai/gpt-6.1-sol not found",
+    });
+    await dispatch;
+
+    expect(replies).toEqual([
+      expect.objectContaining({
+        type: "command_result",
+        command: "set_model",
+        requestId: "http-tui",
+        success: false,
+      }),
+    ]);
   });
 
   it("rejects persist on set_model without forwarding it to pi-tui", async () => {

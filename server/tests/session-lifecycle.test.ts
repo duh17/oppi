@@ -2570,4 +2570,29 @@ describe("HTTP session commands on a live runtime", () => {
     ]);
     expect(session.model).toBe("anthropic/claude");
   });
+
+  it("returns the rejection when the HTTP caller sent no requestId", async () => {
+    const { manager, session, sdkBackend } = makeManagerHarness({ model: "anthropic/claude" });
+    vi.mocked(sdkBackend.setModel).mockResolvedValueOnce({
+      success: false,
+      error: 'Model "openai/gpt-6.1-sol" is not available.',
+    });
+    const handler = new WsMessageHandler({
+      sessions: manager,
+      ensureSessionContextWindow: (value) => value,
+      getModelCatalog: () => [],
+    });
+    const sent: ServerMessage[] = [];
+
+    await handler.handleClientMessage(
+      session,
+      { type: "set_model", provider: "openai", modelId: "gpt-6.1-sol" },
+      (message) => sent.push(message),
+      { connId: "http-session-command", captureRuntimeResult: true },
+    );
+
+    expect(sent).toEqual([
+      expect.objectContaining({ type: "command_result", command: "set_model", success: false }),
+    ]);
+  });
 });

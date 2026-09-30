@@ -151,6 +151,33 @@ struct ServerConnectionModelCommandsTests {
         #expect((payload["requestId"] as? String)?.isEmpty == false)
     }
 
+    /// Socket N's `connected` can finish downstream handling after socket N+1's
+    /// `stream_connected`. Only the new socket's own `connected` may mark readiness.
+    @Test func lateConnectedHandlingDoesNotRestoreBootstrapAfterReconnect() async {
+        let (connection, _) = makeTestConnection()
+        await markFocusedSessionFullySubscribed(connection)
+        defer { connection.streamConsumptionTask?.cancel() }
+        let session = makeTestSession(workspaceId: "w1")
+        let streamConnected = StreamMessage(
+            sessionId: nil,
+            seq: nil,
+            currentSeq: nil,
+            message: .streamConnected(userName: "test", serverDictationAvailable: false)
+        )
+
+        connection.routeStreamMessage(streamConnected)
+        connection.handleConnected(session)
+        #expect(!connection.sessionStreamCoordinator.hasSessionBootstrap(sessionId: "s1"))
+
+        connection.routeStreamMessage(StreamMessage(
+            sessionId: "s1",
+            seq: nil,
+            currentSeq: nil,
+            message: .connected(session: session)
+        ))
+        #expect(connection.sessionStreamCoordinator.hasSessionBootstrap(sessionId: "s1"))
+    }
+
     @Test func thinkingCommandsSendCorrectClientMessages() async throws {
         let (connection, _) = makeTestConnection()
         await markFocusedSessionFullySubscribed(connection)

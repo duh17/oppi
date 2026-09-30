@@ -25,6 +25,7 @@ interface HandlerHarness {
     forwardClientCommand: ReturnType<typeof vi.fn>;
     isSessionConnected: ReturnType<typeof vi.fn>;
     setInactiveSessionModel: ReturnType<typeof vi.fn>;
+    subscribe: ReturnType<typeof vi.fn>;
   };
   ensureSessionContextWindow: ReturnType<typeof vi.fn>;
   emitSessionSummary: ReturnType<typeof vi.fn>;
@@ -60,6 +61,7 @@ function makeHarness(): HandlerHarness {
     respondToUIRequest: vi.fn(() => true),
     forwardClientCommand: vi.fn(async () => {}),
     isSessionConnected: vi.fn(() => true),
+    subscribe: vi.fn(() => () => {}),
     setInactiveSessionModel: vi.fn(async (_id: string, model: string) => ({ ...session, model })),
   };
 
@@ -399,6 +401,26 @@ describe("WsMessageHandler", () => {
 
     expect(harness.sessions.forwardClientCommand).toHaveBeenCalledTimes(1);
     expect(harness.sent).toEqual([]);
+  });
+
+  it("tells an HTTP caller when the runtime returned without a result instead of an empty success", async () => {
+    const harness = makeHarness();
+
+    await harness.handler.handleClientMessage(
+      harness.session,
+      { type: "compact", requestId: "http-compact" },
+      (outbound) => harness.sent.push(outbound),
+      { captureRuntimeResult: true },
+    );
+
+    expect(harness.sent).toEqual([
+      expect.objectContaining({
+        type: "command_result",
+        command: "compact",
+        requestId: "http-compact",
+        success: false,
+      }),
+    ]);
   });
 
   it("forwards get_commands requests", async () => {

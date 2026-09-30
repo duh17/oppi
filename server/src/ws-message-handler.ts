@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   runtimeCommandFailure,
   runtimeCommandSuccess,
@@ -194,6 +196,11 @@ export class WsMessageHandler {
           return;
         }
         const commandStart = Date.now();
+        // HTTP callers read results only from the response, so a requestless command gets
+        // a server-side correlation id; otherwise its broadcast result could not be matched.
+        const requestId =
+          msg.requestId ?? (meta.captureRuntimeResult ? `http-${randomUUID()}` : undefined);
+        const command = requestId === msg.requestId ? msg : { ...msg, requestId };
 
         // Heartbeat pair: received/completed are debug. Failures stay warn.
         log.debug("ws.command.received", {
@@ -201,25 +208,31 @@ export class WsMessageHandler {
           sessionId: session.id,
           runtime: runtimeLogTag(session),
           command: msg.type,
-          requestId: msg.requestId,
+          requestId,
         });
 
-        const requestId = msg.requestId;
-        const stopCapture =
+        const capture =
           meta.captureRuntimeResult && requestId
-            ? this.deps.sessions.subscribe(session.id, (event) => {
-                if (event.type === "command_result" && event.requestId === requestId) send(event);
-              })
+            ? this.captureRuntimeResult(session.id, requestId, send)
             : undefined;
         try {
-          await this.deps.sessions.forwardClientCommand(session.id, msg, msg.requestId);
+          await this.deps.sessions.forwardClientCommand(session.id, command, requestId);
+          if (capture && !capture.delivered()) {
+            send(
+              runtimeCommandFailure(
+                msg.type,
+                requestId,
+                "The session runtime has not reported a result for this command yet",
+              ),
+            );
+          }
 
           log.debug("ws.command.completed", {
             connId: meta.connId,
             sessionId: session.id,
             runtime: runtimeLogTag(session),
             command: msg.type,
-            requestId: msg.requestId,
+            requestId,
             durationMs: Date.now() - commandStart,
           });
 
@@ -232,19 +245,19 @@ export class WsMessageHandler {
             sessionId: session.id,
             runtime: runtimeLogTag(session),
             command: msg.type,
-            requestId: msg.requestId,
+            requestId,
             durationMs: Date.now() - commandStart,
             error: message,
           });
 
-          if (msg.requestId) {
-            send(runtimeCommandFailure(msg.type, msg.requestId, message));
+          if (requestId) {
+            send(runtimeCommandFailure(msg.type, requestId, message));
             return;
           }
 
           throw err;
         } finally {
-          stopCapture?.();
+          capture?.stop();
         }
       }
 
@@ -269,6 +282,27 @@ export class WsMessageHandler {
         return;
       }
     }
+  }
+
+  /**
+   * Deliver the runtime's broadcast command_result for `requestId` through `send`.
+   * Both runtimes broadcast it before forwardClientCommand resolves (the Pi TUI mirror
+   * awaits its bridge reply). No delivery means the runtime returned without a result
+   * yet (a compact queued behind the current turn); the caller reports that instead of
+   * an empty success.
+   */
+  private captureRuntimeResult(
+    sessionId: string,
+    requestId: string,
+    send: (msg: ServerMessage) => void,
+  ): { delivered(): boolean; stop(): void } {
+    let delivered = false;
+    const stop = this.deps.sessions.subscribe(sessionId, (event) => {
+      if (delivered || event.type !== "command_result" || event.requestId !== requestId) return;
+      delivered = true;
+      send(event);
+    });
+    return { delivered: () => delivered, stop };
   }
 
   /**

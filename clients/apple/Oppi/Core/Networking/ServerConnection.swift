@@ -1421,6 +1421,13 @@ final class ServerConnection {
             return
         }
 
+        // Record bootstrap here, in socket order next to the clear above. Downstream
+        // `connected` handling can be delayed by catch-up past a newer socket's
+        // `stream_connected`, and must not re-mark a session whose new runtime failed.
+        if case .connected(let session) = message, isFocusedSession(session.id) {
+            sessionStreamCoordinator.noteSessionBootstrapped(sessionId: session.id)
+        }
+
         // Resolve pending command waiters directly at the stream boundary,
         // BEFORE yielding to the per-session stream. Semantic effects still
         // flow downstream, but request waiters do not depend on a session
