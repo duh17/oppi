@@ -268,6 +268,7 @@ exec /usr/bin/pgrep "$@"
 set -euo pipefail
 case "$1 $2" in
 'simctl list') /bin/cat "$OPPI_FAKE_ROOT/devices.json" ;;
+'simctl spawn') exit 0 ;; # device environment probe: clean
 'simctl bootstatus')
   n=0
   [[ ! -f "$OPPI_FAKE_ROOT/attempts" ]] || n=$(<"$OPPI_FAKE_ROOT/attempts")

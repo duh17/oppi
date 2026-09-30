@@ -53,6 +53,13 @@ case "$sub" in
     ;;
   bootstatus|boot|shutdown|erase|delete|create|spawn|io)
     printf '%s\\n' "$sub \${1:-}" >> "$dir/simctl.log"
+    # Model CoreSimulator: boot bakes the caller's SIMCTL_CHILD_* into the
+    # device environment until shutdown; spawn env prints that environment.
+    if [[ "$sub" == "boot" ]]; then
+      env | sed -n 's/^SIMCTL_CHILD_//p' >> "$dir/device.env" || true
+    fi
+    if [[ "$sub" == "shutdown" ]]; then rm -f "$dir/device.env"; fi
+    if [[ "$sub" == "spawn" && "\${2:-}" == "/usr/bin/env" && -f "$dir/device.env" ]]; then cat "$dir/device.env"; fi
     if [[ "$sub" == "create" ]]; then echo UDID-CREATED; fi
     if [[ "$sub" == "io" ]]; then echo "Recording started" >&2; fi
     exit 0
@@ -596,6 +603,93 @@ exit 0
     expect(simctl).not.toMatch(/^shutdown /m);
     const state = readSlotState(join(root, "locks"), 0);
     expect(state === "unreadable" ? undefined : state?.status).toBe("reusable");
+  });
+
+  function runPoolWithFakeSimulator(
+    label: string,
+    options: { deviceState: "Booted" | "Shutdown"; deviceEnv?: string; callerEnv?: NodeJS.ProcessEnv },
+  ): { status: number | null; fake: string; simctl: string; deviceEnv: string; stderr: string } {
+    const root = tempDir(label);
+    const fake = join(root, "fake");
+    const bin = join(root, "bin");
+    mkdirSync(fake, { recursive: true });
+    mkdirSync(join(root, "home"), { recursive: true });
+    initCheckout(root);
+    writeFileSync(
+      join(fake, "devices.json"),
+      devicesJson().replace('"state": "Booted"', `"state": "${options.deviceState}"`),
+    );
+    writeFileSync(join(fake, "runtimes.json"), runtimesJson());
+    if (options.deviceEnv) {
+      writeFileSync(join(fake, "device.env"), options.deviceEnv);
+    }
+    writeFakeXcrun(bin, fake);
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      HOME: join(root, "home"),
+      OPPI_ROOT: root,
+      OPPI_SIM_POOL_LOCK_DIR: join(root, "locks"),
+      OPPI_SIM_POOL_COUNT: "1",
+      OPPI_SIM_POOL_WAIT: "0",
+      OPPI_SIM_SLIM: "0",
+      OPPI_SIM_POOL_BOOT_TIMEOUT: "1",
+      OPPI_SIM_POOL_PROGRESS_POLL: "0.05",
+      OPPI_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-18-5",
+      ...options.callerEnv,
+    };
+    delete env.PIOS_ROOT;
+    const result = spawnSync(
+      "bun",
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
+    );
+    const read = (name: string) => (existsSync(join(fake, name)) ? readFileSync(join(fake, name), "utf8") : "");
+    return {
+      status: result.status,
+      fake,
+      simctl: read("simctl.log"),
+      deviceEnv: read("device.env"),
+      stderr: result.stderr,
+    };
+  }
+
+  test("an E2E lane that boots the slot does not bake its SIMCTL_CHILD_ env into the device", () => {
+    const run = runPoolWithFakeSimulator("e2e-boot", {
+      deviceState: "Shutdown",
+      callerEnv: {
+        SIMCTL_CHILD_PI_E2E_INVITE_URL: "oppi://connect?v=3&invite=secret",
+        SIMCTL_CHILD_OPPI_E2E_DEVICE_TOKEN: "secret-token",
+      },
+    });
+    expect(run.status).toBe(0);
+    expect(run.simctl).toContain("boot ");
+    expect(run.deviceEnv).toBe("");
+  });
+
+  test("a booted slot carrying leaked E2E device env is recycled before the run", () => {
+    const run = runPoolWithFakeSimulator("leaked-device-env", {
+      deviceState: "Booted",
+      deviceEnv: "PI_E2E_INVITE_URL=oppi://connect?v=3&invite=stale\nSOME_OTHER=1\n",
+    });
+    expect(run.status).toBe(0);
+    expect(run.simctl).toMatch(/^shutdown /m);
+    expect(run.simctl).toMatch(/^boot /m);
+    expect(run.simctl).not.toContain("erase");
+    expect(run.deviceEnv).toBe("");
+    expect(run.stderr).toContain("PI_E2E_INVITE_URL");
+    expect(run.stderr).not.toContain("stale");
+  });
+
+  test("a booted slot with a clean device environment is reused, even when the caller exports SIMCTL_CHILD_ E2E env", () => {
+    const run = runPoolWithFakeSimulator("clean-reuse", {
+      deviceState: "Booted",
+      callerEnv: { SIMCTL_CHILD_PI_E2E_INVITE_URL: "oppi://connect?v=3&invite=lane" },
+    });
+    expect(run.status).toBe(0);
+    expect(run.simctl).not.toMatch(/^shutdown /m);
+    expect(run.simctl).not.toMatch(/^boot /m);
+    expect(run.deviceEnv).toBe("");
   });
 
   test("FORCE_CLEAN_BOOT shuts down before boot and does not erase", () => {

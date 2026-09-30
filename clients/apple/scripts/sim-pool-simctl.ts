@@ -181,3 +181,40 @@ export function buildAttemptCommand(attemptIndex: number, args: string[]): strin
   }
   return output;
 }
+
+/**
+ * `simctl boot` (and `spawn`) turn the caller's `SIMCTL_CHILD_*` variables into
+ * device-level launchd environment that survives until the next shutdown. E2E
+ * lanes export `SIMCTL_CHILD_PI_E2E_INVITE_URL` and friends for the app they
+ * launch; if such a lane is the one that boots the pooled device, every later
+ * run on that slot, unit tests included, inherits them and the app starts in
+ * E2E mode. Pool-managed simctl processes never receive the caller's
+ * `SIMCTL_CHILD_*`; xcodebuild still gets them through the run command itself.
+ */
+export function simctlDeviceEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const clean: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (!key.startsWith("SIMCTL_CHILD_")) {
+      clean[key] = value;
+    }
+  }
+  return clean;
+}
+
+const E2E_ENV_NAME = /^(?:PI_E2E_|OPPI_E2E_|E2E_|SECOND_E2E_)/;
+
+/**
+ * Names in `env` output (one `NAME=value` per line, as printed by
+ * `simctl spawn <udid> /usr/bin/env`) that only an E2E lane sets. Values are
+ * not returned: invite URLs and device tokens are secrets.
+ */
+export function leakedE2EEnvNames(envOutput: string): string[] {
+  const names = new Set<string>();
+  for (const line of envOutput.split("\n")) {
+    const name = line.split("=", 1)[0] ?? "";
+    if (line.includes("=") && E2E_ENV_NAME.test(name)) {
+      names.add(name);
+    }
+  }
+  return [...names].sort();
+}

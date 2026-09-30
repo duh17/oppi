@@ -406,7 +406,31 @@ struct AssistantMarkdownLayoutTests {
     /// Closed mermaid reserves layout height before the raster arrives, so the
     /// following row is already clear of the diagram box. The image swap must
     /// not require a second user-driven reflow.
-    @Test func asyncMermaidRenderReflowsTimelineWithoutUserTouch() async throws {
+    ///
+    /// The live raster is held back until the initial layout has settled, then
+    /// released, and the test waits for the view's own "diagram installed"
+    /// signal. Without that ordering the baseline raced the raster: when the
+    /// raster landed mid-way through the first layout, the baseline captured a
+    /// transient row height and the test blamed the swap for it.
+    @Test(.timeLimit(.minutes(1))) func asyncMermaidRenderReflowsTimelineWithoutUserTouch() async throws {
+        // The label makes this source unique so the process-wide hooks never
+        // hold or report another test's diagram.
+        let isFixture: @Sendable (String) -> Bool = { $0.contains("N[Async reflow]") }
+        let rasterGate = AsyncOneShotGate()
+        let installed = AsyncOneShotGate()
+        NativeMermaidBlockView.testHooks = .init(
+            beforeAsyncRaster: { code in
+                if isFixture(code) { await rasterGate.wait() }
+            },
+            didShowDiagram: { code in
+                if isFixture(code) { installed.open() }
+            }
+        )
+        defer {
+            NativeMermaidBlockView.testHooks = .init()
+            rasterGate.open()
+        }
+
         let wh = makeWindowedTimelineHarness(
             sessionId: "assistant-mermaid-async-relayout",
             useAnchoredCollectionView: true
@@ -429,7 +453,7 @@ struct AssistantMarkdownLayoutTests {
             J --> K[Rank]
             K --> L[Answer]
             L --> M[Audit]
-            M --> N[Feedback]
+            M --> N[Async reflow]
         ```
 
         Tail prose under the diagram.
@@ -451,42 +475,28 @@ struct AssistantMarkdownLayoutTests {
         let initialFirstHeight = try #require(wh.collectionView.layoutAttributesForItem(at: firstIP)?.frame.height)
         let initialSecondMinY = try #require(wh.collectionView.layoutAttributesForItem(at: secondIP)?.frame.minY)
         #expect(initialFirstHeight > 80, "closed mermaid must reserve layout height before raster")
+        let firstCell = try #require(wh.collectionView.cellForItem(at: firstIP))
+        let mermaidView = try #require(timelineFirstView(ofType: NativeMermaidBlockView.self, in: firstCell.contentView))
+        #expect(!installed.isOpen, "raster must still be pending when the reserved layout is measured")
 
-        let diagramRendered = await waitForTimelineCondition(timeoutMs: 1_400) {
-            await MainActor.run {
-                guard let firstCell = wh.collectionView.cellForItem(at: firstIP),
-                      let mermaidView = timelineFirstView(ofType: NativeMermaidBlockView.self, in: firstCell.contentView) else {
-                    return false
-                }
-                return timelineAllImageViews(in: mermaidView).contains { !$0.isHidden && $0.image != nil }
-            }
-        }
-
-        #expect(diagramRendered, "Mermaid fixture did not render image in time")
-
-        let layoutStableWithoutTouch = await waitForTimelineCondition(timeoutMs: 1_400) {
-            await MainActor.run {
-                guard let firstFrame = wh.collectionView.layoutAttributesForItem(at: firstIP)?.frame,
-                      let secondFrame = wh.collectionView.layoutAttributesForItem(at: secondIP)?.frame else {
-                    return false
-                }
-
-                let rowsSeparated = secondFrame.minY >= firstFrame.maxY - 0.5
-                let noSecondJump = abs(secondFrame.minY - initialSecondMinY) <= 1
-                return rowsSeparated && noSecondJump
-            }
-        }
-
-        let finalFrames = await MainActor.run {
-            (
-                wh.collectionView.layoutAttributesForItem(at: firstIP)?.frame,
-                wh.collectionView.layoutAttributesForItem(at: secondIP)?.frame
-            )
-        }
+        rasterGate.open()
+        await installed.wait()
+        wh.window.layoutIfNeeded()
+        wh.collectionView.layoutIfNeeded()
 
         #expect(
-            layoutStableWithoutTouch,
-            "Timeline jumped or overlapped after mermaid image swap (initial second.minY=\(initialSecondMinY), final first=\(String(describing: finalFrames.0)), final second=\(String(describing: finalFrames.1)))"
+            timelineAllImageViews(in: mermaidView).contains { !$0.isHidden && $0.image != nil },
+            "Mermaid fixture did not install its image"
+        )
+        let finalFrames = (
+            wh.collectionView.layoutAttributesForItem(at: firstIP)?.frame,
+            wh.collectionView.layoutAttributesForItem(at: secondIP)?.frame
+        )
+        let firstFrame = try #require(finalFrames.0)
+        let secondFrame = try #require(finalFrames.1)
+        #expect(
+            secondFrame.minY >= firstFrame.maxY - 0.5 && abs(secondFrame.minY - initialSecondMinY) <= 1,
+            "Timeline jumped or overlapped after mermaid image swap (initial second.minY=\(initialSecondMinY), final first=\(firstFrame), final second=\(secondFrame))"
         )
     }
 
@@ -1240,4 +1250,35 @@ private func assistantMarkdownTextView(containing needle: String, in root: UIVie
     }
 
     return nil
+}
+
+/// Opens once; every `wait()` before or after `open()` returns after it.
+final class AsyncOneShotGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var opened = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    var isOpen: Bool { lock.withLock { opened } }
+
+    func wait() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            if opened {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                waiters.append(continuation)
+                lock.unlock()
+            }
+        }
+    }
+
+    func open() {
+        lock.lock()
+        opened = true
+        let pending = waiters
+        waiters = []
+        lock.unlock()
+        pending.forEach { $0.resume() }
+    }
 }

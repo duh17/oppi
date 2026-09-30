@@ -28,11 +28,13 @@ import {
   buildAttemptCommand,
   deviceState,
   findMatchingPoolDevice,
+  leakedE2EEnvNames,
   parseDevicesJson,
   parseRuntimesJson,
   poolDeviceName,
   preferredAcquireSlots,
   selectIosRuntime,
+  simctlDeviceEnv,
   type SimulatorDevice,
 } from "./sim-pool-simctl";
 import {
@@ -597,6 +599,26 @@ export async function ensureSim(session: CommandSession, config: PoolConfig, slo
   return created.stdout.trim();
 }
 
+/**
+ * Names of E2E-only variables in the booted device's launchd environment.
+ * `simctl getenv` cannot enumerate, so run `env` inside the device. Fail
+ * closed: if the probe itself fails the slot is treated as contaminated and
+ * recycled rather than trusted.
+ */
+async function leakedDeviceE2EEnv(session: CommandSession, udid: string): Promise<string[]> {
+  const result = requireQuiescent(
+    await runXcrun(session, ["simctl", "spawn", udid, "/usr/bin/env"], { env: simctlDeviceEnv(process.env) }),
+    "simctl spawn env",
+  );
+  if (session.canceled) {
+    die("canceled while probing simulator environment");
+  }
+  if (result.code !== 0) {
+    return ["<env probe failed>"];
+  }
+  return leakedE2EEnvNames(result.stdout);
+}
+
 async function waitForBootReady(
   session: CommandSession,
   config: PoolConfig,
@@ -651,8 +673,9 @@ async function slimSimulator(session: CommandSession, config: PoolConfig, udid: 
     "apply",
     udid,
   ], {
+    // sim-slim.sh reboots the device; keep the caller's SIMCTL_CHILD_* out of it.
     env: {
-      ...process.env,
+      ...simctlDeviceEnv(process.env),
       OPPI_SIM_POOL_BOOT_TIMEOUT: String(config.bootTimeout),
       OPPI_SIM_POOL_BOOT_RETRIES: String(config.bootRetries),
     },
@@ -691,7 +714,10 @@ async function runSimctl(session: CommandSession, args: string[], action: string
   if (session.canceled) {
     die(`canceled before ${action}`);
   }
-  const result = requireQuiescent(await runXcrun(session, ["simctl", ...args]), action);
+  const result = requireQuiescent(
+    await runXcrun(session, ["simctl", ...args], { env: simctlDeviceEnv(process.env) }),
+    action,
+  );
   if (session.canceled) {
     die(`canceled during ${action}`);
   }
@@ -719,13 +745,20 @@ export async function prepareSimulator(
     if (deviceState(devices, udid) === "Booted") {
       log(`[sim-pool] Reusing already-booted simulator ${udid}`);
       if (await waitForBootReadyWithRetries(session, config, udid)) {
-        const slim = await slimSimulator(session, config, udid);
-        if (!slim.quiescent) {
-          die(slim.note ?? "slim did not reach quiescence");
+        const leaked = await leakedDeviceE2EEnv(session, udid);
+        if (leaked.length === 0) {
+          const slim = await slimSimulator(session, config, udid);
+          if (!slim.quiescent) {
+            die(slim.note ?? "slim did not reach quiescence");
+          }
+          return;
         }
-        return;
+        log(
+          `[sim-pool] Simulator ${udid} carries leaked E2E device environment (${leaked.join(", ")}); recycling it so this run does not start the app in E2E mode`,
+        );
+      } else {
+        log(`[sim-pool] Booted simulator was not ready; recycling ${udid}`);
       }
-      log(`[sim-pool] Booted simulator was not ready; recycling ${udid}`);
       await runSimctl(session, ["shutdown", udid], "simctl shutdown");
     } else {
       log(`[sim-pool] Preparing simulator boot for ${udid}`);

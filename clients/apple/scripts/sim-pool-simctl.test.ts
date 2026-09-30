@@ -2,14 +2,45 @@ import { describe, expect, test } from "bun:test";
 import {
   buildAttemptCommand,
   findMatchingPoolDevice,
+  leakedE2EEnvNames,
   parseDevicesJson,
   preferredAcquireSlots,
   resultBundlePathForAttempt,
   selectIosRuntime,
   shouldSkipPoolSlot,
+  simctlDeviceEnv,
 } from "./sim-pool-simctl";
 
 describe("sim-pool-simctl", () => {
+  test("simctlDeviceEnv drops only SIMCTL_CHILD_ variables", () => {
+    expect(
+      simctlDeviceEnv({
+        PATH: "/usr/bin",
+        SIMCTL_CHILD_PI_E2E_INVITE_URL: "x",
+        SIMCTL_CHILD_E2E_PORT: "1",
+        OPPI_E2E_UI_HARNESS: "1",
+      }),
+    ).toEqual({ PATH: "/usr/bin", OPPI_E2E_UI_HARNESS: "1" });
+  });
+
+  test("leakedE2EEnvNames reports E2E variable names and never their values", () => {
+    const output = [
+      "PATH=/usr/bin",
+      "SIMULATOR_DEVICE_NAME=Oppi-Pool-0",
+      "PI_E2E_INVITE_URL=oppi://connect?v=3&invite=secret",
+      "OPPI_E2E_DEVICE_TOKEN=tok",
+      "E2E_PORT=17760",
+      "SECOND_E2E_INVITE=x",
+      "PI_E2E_INVITE_URL=dup",
+      "NOT_E2E_PI_E2E_=1",
+      "no-equals-line",
+    ].join("\n");
+    const names = leakedE2EEnvNames(output);
+    expect(names).toEqual(["E2E_PORT", "OPPI_E2E_DEVICE_TOKEN", "PI_E2E_INVITE_URL", "SECOND_E2E_INVITE"]);
+    expect(names.join(" ")).not.toContain("secret");
+    expect(leakedE2EEnvNames("PATH=/usr/bin\nSIMULATOR_DEVICE_NAME=x\n")).toEqual([]);
+  });
+
   test("retry result bundle paths stay unique", () => {
     expect(resultBundlePathForAttempt("/tmp/OppiTests.xcresult", 0)).toBe("/tmp/OppiTests.xcresult");
     expect(resultBundlePathForAttempt("/tmp/OppiTests.xcresult", 1)).toBe(

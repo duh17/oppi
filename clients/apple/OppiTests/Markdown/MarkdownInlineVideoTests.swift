@@ -1453,17 +1453,37 @@ struct MarkdownInlineVideoTests {
         #expect(video.debugPlaybackModelForTesting.player == nil)
     }
 
+    // The retain-self decision and the loader's release are read from a per-loader
+    // record (set at the moment `cancelAll()` decides, signalled from `deinit`), not
+    // sampled after the fact: CFNetwork completes the cancelled task on its own
+    // queue, so by the time `teardown()` returns the loader may already be idle,
+    // and the session's `deinit` calls `cancelAll()` a second time on it. The time
+    // limit only bounds a genuine leak (release never signalled).
+    //
+    // The session's own source points at the hanging server, like the injected
+    // request. A `file://` source made AVFoundation issue a `LocalDataTask` on the
+    // same URLSession; its task identifier can equal the network task's, and the
+    // loader tracks live tasks by identifier, so the loader could see itself idle
+    // while the network task was still in flight and then never be released.
     @MainActor
-    @Test("cancel keeps the resource loader alive until an in-flight CFNetwork session becomes idle")
+    @Test(
+        "cancel keeps the resource loader alive until an in-flight CFNetwork session becomes idle",
+        .timeLimit(.minutes(1))
+    )
     func cancelKeepsResourceLoaderAliveUntilInFlightCallbacksFinish() async throws {
         let server = try HangingHTTPServer()
         defer { server.stop() }
 
-        AuthenticatedMediaResourceLoaderTesting.lastCancelRetainedSelfForInFlightCallbacks = false
         var session: AuthenticatedMediaPlaybackSession? = AuthenticatedMediaPlaybackSession(
-            source: dummyMediaSource()
+            source: AuthenticatedMediaSource(
+                url: server.url,
+                authorizationHeaderValue: "Bearer test",
+                tlsCertFingerprint: nil,
+                contentTypeHint: "video/mp4",
+                sourceFileExtension: "mp4"
+            )
         )
-        let probe = try #require(session).debugResourceLoaderLifetimeProbe()
+        let record = try #require(session).debugResourceLoaderLifetimeProbe().record
         try #require(session).debugStartInFlightResourceRequest(url: server.url)
         try await server.waitUntilAccepted()
 
@@ -1471,16 +1491,12 @@ struct MarkdownInlineVideoTests {
         session = nil
 
         #expect(
-            AuthenticatedMediaResourceLoaderTesting.lastCancelRetainedSelfForInFlightCallbacks,
-            "secondary: cancelAll took the in-flight retain-self path"
+            record.didRetainSelfOnCancel,
+            "cancelAll took the in-flight retain-self path"
         )
-        if probe.isAlive {
-            #expect(probe.retainsSelfUntilNetworkIdle)
-        }
 
         server.stop()
-        let released = await waitUntil(timeout: .seconds(2)) { !probe.isAlive }
-        #expect(released)
+        await record.waitUntilReleased()
     }
 
     @MainActor

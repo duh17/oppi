@@ -32,7 +32,10 @@ final class NativeMermaidBlockView: UIView {
                 ).map { RasterResult(image: $0.image, size: $0.size) }
             },
             renderAsync: { code, _, theme in
-                await Task.detached(priority: .userInitiated) {
+                #if DEBUG
+                await NativeMermaidBlockView.testHooks.beforeAsyncRaster?(code)
+                #endif
+                return await Task.detached(priority: .userInitiated) {
                     DocumentRenderPipeline.renderInlineGraphicalImage(
                         parser: MermaidParser(),
                         renderer: MermaidRenderer(),
@@ -104,6 +107,23 @@ final class NativeMermaidBlockView: UIView {
     private static let exactReaderRasterWidthSlop: CGFloat = 0.5
 
     #if DEBUG
+    /// Ordering seams for tests that must control when the live async raster
+    /// runs and observe when it lands. Both receive the diagram source so a test
+    /// can act on its own fixture only; other views rendering concurrently are
+    /// not held or reported.
+    struct TestHooks: Sendable {
+        /// Awaited before the live async rasterizer starts.
+        var beforeAsyncRaster: (@Sendable (String) async -> Void)?
+        /// Called on the main actor after a rendered diagram has been installed.
+        var didShowDiagram: (@Sendable @MainActor (String) -> Void)?
+    }
+
+    nonisolated private static let testHooksLock = NSLock()
+    nonisolated(unsafe) private static var installedTestHooks = TestHooks()
+    nonisolated static var testHooks: TestHooks {
+        get { testHooksLock.withLock { installedTestHooks } }
+        set { testHooksLock.withLock { installedTestHooks = newValue } }
+    }
     private var debugRenderCount = 0
     private var debugApplyAsDiagramCallCount = 0
     private var debugInvalidateTimelineLayoutCount = 0
@@ -475,6 +495,11 @@ final class NativeMermaidBlockView: UIView {
         if invalidateHostLayout && heightOrRevealChanged {
             invalidateTimelineLayout()
         }
+        #if DEBUG
+        if let code = currentCode {
+            Self.testHooks.didShowDiagram?(code)
+        }
+        #endif
     }
 
     @discardableResult

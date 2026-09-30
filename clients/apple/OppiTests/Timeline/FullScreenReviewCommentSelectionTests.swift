@@ -833,6 +833,13 @@ struct FullScreenReviewCommentSelectionTests {
     }
 
     @Test func largeCompletedCodeMountsBoundedHighlightedChunks() async throws {
+        // Highlighting reads the runtime theme while the assertions compare against
+        // the dark palette, so pin the runtime theme instead of inheriting whatever
+        // an earlier test or persisted app state left behind.
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+        ThemeRuntimeState.setThemeID(.dark)
+
         let content = (1...4_730).map { line in
             "public let row\(line): String = \"value-\(line)\""
         }.joined(separator: "\n")

@@ -319,6 +319,10 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
     private var isInvalidated = false
     private var liveTaskIds: Set<Int> = []
     private var networkLifetime: AuthenticatedMediaResourceLoader?
+#if DEBUG
+    /// Outlives the loader so tests can await its real lifetime events.
+    let lifetimeRecord = AuthenticatedMediaResourceLoaderLifetimeRecord()
+#endif
 
     let delegateQueue = DispatchQueue(label: "dev.chenda.oppi.authenticated-media.resource-loader")
     private lazy var session: URLSession = {
@@ -349,6 +353,9 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
         // cancelAll() may retain self while CFNetwork still has callbacks.
         // Do not do that from deinit. Idle loaders only need session invalidation.
         session.invalidateAndCancel()
+#if DEBUG
+        lifetimeRecord.noteReleased()
+#endif
     }
 
     func cancelAll() {
@@ -363,10 +370,10 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
             // Keep the URLSession delegate alive until didComplete / invalidation.
             // Dropping it here UAFs under in-flight CFNetwork callbacks.
             networkLifetime = self
-        }
 #if DEBUG
-        AuthenticatedMediaResourceLoaderTesting.lastCancelRetainedSelfForInFlightCallbacks = shouldRetain
+            lifetimeRecord.noteCancelRetainedSelf()
 #endif
+        }
         contextsByTaskId.removeAll()
         tasksByRequestId.removeAll()
         lock.unlock()
@@ -2382,30 +2389,49 @@ enum AuthenticatedMediaPlayerTesting {
     }
 }
 
-enum AuthenticatedMediaResourceLoaderTesting {
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var lastCancelRetained = false
+/// Per-loader lifetime events for tests. Kept per loader (not process-wide) so
+/// other sessions' `cancelAll()` calls, including the second one `deinit` makes
+/// on an already-invalidated loader, cannot overwrite what this loader did.
+final class AuthenticatedMediaResourceLoaderLifetimeRecord: @unchecked Sendable {
+    private let lock = NSLock()
+    private var retainedSelfOnCancel = false
+    private var released = false
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
 
-    /// Set when `cancelAll()` keeps the URLSession delegate alive because a
-    /// CFNetwork task is still outstanding. Tests read this instead of racing
-    /// `didComplete` on the session queue.
-    static var lastCancelRetainedSelfForInFlightCallbacks: Bool {
-        get { lock.withLock { lastCancelRetained } }
-        set { lock.withLock { lastCancelRetained = newValue } }
+    /// True once any `cancelAll()` kept the URLSession delegate alive because a
+    /// CFNetwork task was still outstanding. Sticky: it is not reset by later calls.
+    var didRetainSelfOnCancel: Bool { lock.withLock { retainedSelfOnCancel } }
+
+    func noteCancelRetainedSelf() {
+        lock.withLock { retainedSelfOnCancel = true }
+    }
+
+    func noteReleased() {
+        let waiters = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            released = true
+            defer { releaseWaiters = [] }
+            return releaseWaiters
+        }
+        waiters.forEach { $0.resume() }
+    }
+
+    /// Returns once the loader has been deallocated (after network idle).
+    func waitUntilReleased() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let alreadyReleased = lock.withLock { () -> Bool in
+                if !released { releaseWaiters.append(continuation) }
+                return released
+            }
+            if alreadyReleased { continuation.resume() }
+        }
     }
 }
 
 final class AuthenticatedMediaResourceLoaderLifetimeProbe: @unchecked Sendable {
-    private weak var loader: AuthenticatedMediaResourceLoader?
+    let record: AuthenticatedMediaResourceLoaderLifetimeRecord
 
     fileprivate init(loader: AuthenticatedMediaResourceLoader) {
-        self.loader = loader
-    }
-
-    var isAlive: Bool { loader != nil }
-
-    var retainsSelfUntilNetworkIdle: Bool {
-        loader?.debugRetainsSelfUntilNetworkIdle ?? false
+        record = loader.lifetimeRecord
     }
 }
 
