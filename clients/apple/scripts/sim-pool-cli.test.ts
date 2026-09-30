@@ -501,7 +501,13 @@ exit 0
       [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
       { cwd: join(mainRoot, "clients", "apple"), env, encoding: "utf8" },
     );
-    expect(result.status).toBe(0);
+    // Status 0 is required; signal and spawn error are included so a child that
+    // dies before reaching pool logic (status null) is diagnosable from the failure.
+    expect({ status: result.status, signal: result.signal, error: result.error?.message }).toEqual({
+      status: 0,
+      signal: null,
+      error: undefined,
+    });
     const appleDir = realpathSync.native(join(worktree, "clients", "apple"));
     expect(result.stdout + result.stderr).toContain(`Apple checkout ${appleDir}`);
     expect(readFileSync(join(fake, "xcodebuild.cwd"), "utf8").trim()).toBe(appleDir);
@@ -763,7 +769,11 @@ case "$sub" in
     ;;
   shutdown)
     printf '%s\\n' "$sub \${1:-}" >> "$dir/simctl.log"
-    if [[ -f "$dir/xcodebuild.started" ]]; then
+    # The warm-reuse probe (simctl spawn ... env) is the last simctl call before
+    # the build starts, so any shutdown after it is the hang-recovery shutdown.
+    # Keyed on the call log, not on the fake xcodebuild having started, so the
+    # outcome does not depend on how fast that script gets scheduled.
+    if grep -q '^spawn ' "$dir/simctl.log"; then
       echo "Unable to shutdown device in current state: Booted" >&2
       exit 1
     fi
@@ -812,6 +822,9 @@ sleep 30
       { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
     );
     expect(result.status).not.toBe(0);
+    // Prove the failure came from the hang-recovery path, not from an earlier step.
+    expect(result.stderr).toContain("hang detected");
+    expect(result.stderr).toContain("Recovery: shutting down + erasing");
     const simctl = existsSync(join(fake, "simctl.log")) ? readFileSync(join(fake, "simctl.log"), "utf8") : "";
     expect(simctl).toContain("shutdown");
     expect(simctl).not.toContain("erase");

@@ -468,6 +468,7 @@ export function extractBuildTimingSummary(logText: string): string[] {
   return output;
 }
 
+/** Newest mtime among the progress paths, in milliseconds since the epoch (0 if none exist). */
 export function progressMtime(logFile: string, derivedData?: string): number {
   const paths = [logFile];
   if (derivedData) {
@@ -478,7 +479,7 @@ export function progressMtime(logFile: string, derivedData?: string): number {
     if (!existsSync(path)) {
       continue;
     }
-    const mtime = Math.floor(statSync(path).mtimeMs / 1000);
+    const mtime = statSync(path).mtimeMs;
     if (mtime > latest) {
       latest = mtime;
     }
@@ -492,6 +493,17 @@ function log(message: string): void {
 
 function nowEpoch(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+/**
+ * True once the build has shown no progress for `timeoutSeconds`.
+ *
+ * Compared in milliseconds on purpose: with whole-second timestamps a
+ * 1s timeout fires as soon as a second boundary passes, i.e. anywhere from one
+ * poll tick to 1s after the last progress instead of after a full second.
+ */
+export function silenceTimedOut(nowMs: number, lastProgressMs: number, timeoutSeconds: number): boolean {
+  return timeoutSeconds > 0 && nowMs - lastProgressMs >= timeoutSeconds * 1000;
 }
 
 function iso8601(epoch: number): string {
@@ -1011,6 +1023,7 @@ async function runXcodebuildAttempt(input: {
   }
   const start = nowEpoch();
   let lastProgress = start;
+  let lastProgressMs = Date.now();
   let lastHeartbeat = start;
   let lastMtime = 0;
   let hung = false;
@@ -1028,11 +1041,13 @@ async function runXcodebuildAttempt(input: {
     if (winner === "exit") {
       break;
     }
-    const now = nowEpoch();
+    const nowMs = Date.now();
+    const now = Math.floor(nowMs / 1000);
     const current = progressMtime(input.logFile, input.derivedData);
     if (current > lastMtime) {
       lastMtime = current;
       lastProgress = now;
+      lastProgressMs = nowMs;
     }
     if (
       input.config.heartbeatInterval > 0 &&
@@ -1043,7 +1058,7 @@ async function runXcodebuildAttempt(input: {
       );
       lastHeartbeat = now;
     }
-    if (input.config.silenceTimeout > 0 && now - lastProgress >= input.config.silenceTimeout) {
+    if (silenceTimedOut(nowMs, lastProgressMs, input.config.silenceTimeout)) {
       log(
         `[sim-pool] hang detected: no log or DerivedData growth for ${input.config.silenceTimeout}s (pid ${spawned.owned.pid})`,
       );

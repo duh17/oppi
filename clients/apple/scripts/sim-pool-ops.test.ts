@@ -17,6 +17,7 @@ import {
   PoolError,
   prepareSimulator,
   pruneBuildKind,
+  silenceTimedOut,
   validateCommandGuardrails,
 } from "./sim-pool-ops";
 import { CommandSession } from "./sim-pool-supervise";
@@ -24,6 +25,14 @@ import { CommandSession } from "./sim-pool-supervise";
 const scriptDir = import.meta.dir;
 
 describe("sim-pool-ops helpers", () => {
+  test("silence timeout needs the full interval, not just a second boundary", () => {
+    // 100ms of silence straddling a whole-second boundary is not 1s of silence.
+    expect(silenceTimedOut(11_050, 10_950, 1)).toBe(false);
+    expect(silenceTimedOut(11_949, 10_950, 1)).toBe(false);
+    expect(silenceTimedOut(11_950, 10_950, 1)).toBe(true);
+    expect(silenceTimedOut(1_000_000, 0, 0)).toBe(false);
+  });
+
   test("compiler diagnostics are kept and rebuild logs are not", () => {
     const log = `--- xcodebuild: WARNING: Using the first of multiple matching destinations:
 2026-08-01 10:19:05.934244+0000 Oppi[46329:117234] [LoadSession] full rebuild: 2 events → 2 items
