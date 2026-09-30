@@ -69,11 +69,12 @@ enum AppPreferences {
     // MARK: - Inbox
 
     enum Inbox {
-        private static let defaultListModeKey = "\(AppIdentifiers.subsystem).inbox.defaultListMode"
+        /// Key predates the Settings-only layout, when it held a next-launch default; kept so saved choices carry over.
+        private static let listModeKey = "\(AppIdentifiers.subsystem).inbox.defaultListMode"
 
-        /// View All Sessions opens in. The inbox view button switches for the current launch only.
-        static var defaultListMode: SessionInboxListMode {
-            guard let raw = UserDefaults.standard.string(forKey: defaultListModeKey),
+        /// All Sessions layout, set in Settings → Session List.
+        static var listMode: SessionInboxListMode {
+            guard let raw = UserDefaults.standard.string(forKey: listModeKey),
                   let mode = SessionInboxListMode(rawValue: raw)
             else {
                 return .threads
@@ -81,15 +82,15 @@ enum AppPreferences {
             return mode
         }
 
-        static func setDefaultListMode(_ mode: SessionInboxListMode) {
-            UserDefaults.standard.set(mode.rawValue, forKey: defaultListModeKey)
+        static func setListMode(_ mode: SessionInboxListMode) {
+            UserDefaults.standard.set(mode.rawValue, forKey: listModeKey)
         }
     }
 
     // MARK: - Session Rows
 
     /// Device-local session list display: one saved row appearance and the
-    /// remembered thread detail view. Grouping (`Inbox.defaultListMode`) stays
+    /// remembered thread detail view. Grouping (`Inbox.listMode`) stays
     /// independent of both.
     enum SessionRows {
         static let displayKey = "\(AppIdentifiers.subsystem).sessionRows.display"

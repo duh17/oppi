@@ -39,7 +39,7 @@ enum SessionInboxListMode: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .threads: "Threads"
-        case .sessions: "Sessions"
+        case .sessions: "Flat List"
         }
     }
 
@@ -220,7 +220,6 @@ enum SessionInboxSessionRouting {
 /// content focused on session rows and uses small row context instead of a
 /// workspace header card.
 struct SessionInboxView: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
@@ -243,7 +242,6 @@ struct SessionInboxView: View {
     @State private var providerSetupState: ProviderSetupState = .unknown
     @FocusState private var isSearchFieldFocused: Bool
     @State private var presentsNowPlayingPlayer = false
-    @State private var presentsRowEditor = false
     @State private var composeBarColumnWidth: CGFloat = 0
 
     init(onOpenSidebar: (() -> Void)? = nil) {
@@ -427,39 +425,9 @@ struct SessionInboxView: View {
         )
     }
 
+    /// Layout lives in Settings → Session List; the top bar stays free of view controls.
     private var listMode: SessionInboxListMode {
         navigation.inboxListMode
-    }
-
-    /// One tap flips Threads and Sessions; the icon shows the current view.
-    private var listModeButton: some View {
-        let next: SessionInboxListMode = listMode == .threads ? .sessions : .threads
-        return Button {
-            withAnimation(ThemeMotion.animation(.snappy(duration: 0.25), reduceMotion: reduceMotion)) {
-                navigation.inboxListMode = next
-            }
-        } label: {
-            Image(systemName: listMode.systemImage)
-                .contentTransition(.symbolEffect(.replace))
-        }
-        .foregroundStyle(.themeFg)
-        .accessibilityLabel("Inbox view")
-        .accessibilityValue(listMode.label)
-        .accessibilityHint("Shows \(next.label)")
-        .accessibilityIdentifier("workspace.inbox.mode")
-    }
-
-    /// Opens Customize Rows. Separate from the Threads/Sessions toggle so that
-    /// one-tap grouping switch keeps its meaning.
-    private var customizeRowsButton: some View {
-        Button {
-            presentsRowEditor = true
-        } label: {
-            Image(systemName: "slider.horizontal.3")
-        }
-        .foregroundStyle(.themeFg)
-        .accessibilityLabel("Customize Rows")
-        .accessibilityIdentifier("workspace.inbox.customizeRows")
     }
 
     var body: some View {
@@ -569,9 +537,6 @@ struct SessionInboxView: View {
         .searchPresentationToolbarBehavior(
             sessionListToolbar.avoidsHidingContentWhileSearching ? .avoidHidingContent : .automatic
         )
-        .sheet(isPresented: $presentsRowEditor) {
-            SessionRowDisplayEditor()
-        }
         .fullScreenCover(isPresented: $presentsNowPlayingPlayer) {
             if let player = sessionListAudioPlayer {
                 InAppNowPlayingPlayerScreen(audioPlayer: player)
@@ -787,14 +752,6 @@ struct SessionInboxView: View {
                 .accessibilityLabel("Show workspaces")
                 .accessibilityIdentifier("workspace.sidebar.open")
             }
-        }
-
-        ToolbarItem(placement: .topBarTrailing) {
-            listModeButton
-        }
-
-        ToolbarItem(placement: .topBarTrailing) {
-            customizeRowsButton
         }
 
         ToolbarItem(placement: .topBarTrailing) {

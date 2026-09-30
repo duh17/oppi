@@ -190,9 +190,11 @@ final class AppNavigation {
     /// Session-list search lives on navigation so it survives compact inbox
     /// remount after Back and split detail replacement on iPad.
     var inboxSessionSearch = SessionListSearchNavigationPersistence.State()
-    /// Threads or Sessions for this launch; starts at the Settings default and
-    /// survives inbox remounts.
-    var inboxListMode: SessionInboxListMode = AppPreferences.Inbox.defaultListMode
+    /// All Sessions layout (Threads or Flat List), chosen in Settings → Session List.
+    /// Held here so a change reaches the mounted inbox; saved for this device.
+    var inboxListMode: SessionInboxListMode = AppPreferences.Inbox.listMode {
+        didSet { AppPreferences.Inbox.setListMode(inboxListMode) }
+    }
     var workspaceSessionSearchByID: [String: SessionListSearchNavigationPersistence.State] = [:]
 
     /// Launch phase gate. While `.resolving`, ContentView shows a blank

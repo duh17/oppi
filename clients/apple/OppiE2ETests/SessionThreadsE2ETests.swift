@@ -151,26 +151,21 @@ final class SessionThreadsE2ETests: E2ETestCase {
         let donkeyMaster = try id(Self.donkeyMasterKey)
         let reviewCleanup = try id(Self.reviewCleanupKey)
 
-        // Threads is the default view.
-        let modeButton = app.buttons["workspace.inbox.mode"]
-        XCTAssertTrue(modeButton.waitForExistence(timeout: 20), "Inbox view button missing")
-        XCTAssertEqual(modeButton.value as? String, "Threads", "All Sessions should open in Threads by default")
+        let inbox = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
         beat(1)
 
-        // Flat list: children appear as their own rows.
-        modeButton.tap()
-        XCTAssertEqual(modeButton.value as? String, "Sessions")
-        let inbox = app.collectionViews["workspace.sessionList"]
+        // Flat List (Settings, Session List): children appear as their own rows.
+        try setInboxLayout("Flat List")
         XCTAssertTrue(
             reveal(app.buttons["session.nav.\(donkeyMaster)"], in: inbox),
-            "Flat Sessions list should list the Donkey Master child row"
+            "Flat List should list the Donkey Master child row"
         )
         beat(2)
         for _ in 0..<3 { inbox.swipeDown(velocity: .fast) }
 
         // Threads: children fold under their root.
-        modeButton.tap()
-        XCTAssertEqual(modeButton.value as? String, "Threads")
+        try setInboxLayout("Threads")
         let threadRow = app.buttons["thread.nav.\(orchestrator)"]
         XCTAssertTrue(reveal(threadRow, in: inbox), "Orchestrator thread row missing")
         XCTAssertFalse(
@@ -397,33 +392,26 @@ final class SessionThreadsE2ETests: E2ETestCase {
 
     // MARK: - Customize Rows
 
-    /// Customize Rows: the draft repaints an inert preview from the production row; Cancel and
-    /// dismissal discard; Done saves and applies to the inbox and workspace lists; the saved
-    /// choice and the remembered thread view survive a relaunch while grouping keeps its
-    /// next-launch default.
+    /// Customize Rows (Settings, Session List): the draft repaints an inert preview from the
+    /// production row; Cancel and dismissal discard; Done returns to Settings and applies to the
+    /// mounted inbox and workspace lists; the saved choice, the remembered thread view, and the
+    /// saved layout survive a relaunch.
     func testCustomizeRowsPreviewDiscardsSavesAndAppliesAcrossListsAndRelaunch() throws {
         XCUIDevice.shared.orientation = .portrait
         let orchestrator = try id(Self.orchestratorKey)
+        let donkeyMaster = try id(Self.donkeyMasterKey)
         let inbox = app.collectionViews["workspace.sessionList"]
         let rootBody = app.buttons["session.nav.\(orchestrator)"]
         let strip = app.buttons["thread.nav.\(orchestrator)"]
         XCTAssertTrue(reveal(strip, in: inbox, timeout: 20), "Thread strip missing")
 
-        // Known start: earlier runs on this simulator may have saved a customization.
-        openRowEditor()
-        if restoreButton.isEnabled {
-            restoreButton.tap()
-            app.buttons["sessionRows.done"].tap()
-        } else {
-            app.buttons["sessionRows.cancel"].tap()
-        }
-        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10))
+        try resetRowDisplayToDefaults()
         XCTAssertTrue(reveal(rootBody, in: inbox))
         let rootCost = try costText(in: rootBody.label)
         XCTAssertTrue(strip.label.contains("$"), "Default strip should total cost: \(strip.label)")
 
         // Preview: sample data, every fact on, and the production strip.
-        openRowEditor()
+        try openRowEditor()
         XCTAssertEqual(app.staticTexts["sessionRows.preview.label"].label, "PREVIEW \u{00B7} SAMPLE DATA")
         let facts = previewFacts
         for (name, element) in facts { XCTAssertTrue(element.exists, "Default preview lacks \(name)") }
@@ -492,12 +480,11 @@ final class SessionThreadsE2ETests: E2ETestCase {
 
         // Cancel discards.
         setToggle("cost", on: false)
-        app.buttons["sessionRows.cancel"].tap()
-        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10))
+        try closeRowEditor("cancel")
         XCTAssertTrue(reveal(rootBody, in: inbox))
         XCTAssertTrue(rootBody.label.contains(rootCost), "Cancel changed saved rows: \(rootBody.label)")
         XCTAssertTrue(strip.label.contains("$"), "Cancel changed the saved strip: \(strip.label)")
-        openRowEditor()
+        try openRowEditor()
         XCTAssertEqual(toggle("cost").value as? String, "1", "Cancelled draft was kept")
 
         // Swiping the sheet away discards too.
@@ -505,16 +492,16 @@ final class SessionThreadsE2ETests: E2ETestCase {
         let grabber = app.navigationBars["Customize Rows"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         grabber.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98)))
         XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10), "Sheet did not dismiss")
+        try returnToInbox()
         XCTAssertTrue(reveal(rootBody, in: inbox))
         XCTAssertTrue(rootBody.label.contains(rootCost), "Dismissal saved the draft: \(rootBody.label)")
 
         // Done saves exactly what the preview showed and applies to the mounted inbox.
-        openRowEditor()
+        try openRowEditor()
         setToggle("cost", on: false)
         setToggle("laneGraph", on: false)
         setDensity("Compact")
-        app.buttons["sessionRows.done"].tap()
-        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10))
+        try closeRowEditor("done")
         XCTAssertTrue(reveal(rootBody, in: inbox))
         XCTAssertFalse(rootBody.label.contains(rootCost), "Saved Cost off still shows on the row: \(rootBody.label)")
         XCTAssertFalse(strip.label.contains("$"), "Hidden cost leaked into the strip: \(strip.label)")
@@ -529,7 +516,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertFalse(workspaceRow.label.contains(rootCost), "Workspace list ignored the saved choice: \(workspaceRow.label)")
         try returnToInbox()
 
-        // Thread view memory and grouping default, then relaunch.
+        // Thread view memory and the saved layout, then relaunch.
         strip.tap()
         XCTAssertTrue(app.staticTexts["thread.title"].waitForExistence(timeout: 15))
         app.buttons["thread.mode.timeline"].tap()
@@ -539,16 +526,17 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(app.buttons["thread.mode.timeline"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.buttons["thread.mode.timeline"].isSelected, "Thread view was not remembered on reopen")
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        app.buttons["workspace.inbox.mode"].tap()
-        XCTAssertEqual(app.buttons["workspace.inbox.mode"].value as? String, "Sessions")
+        try setInboxLayout("Flat List")
+        let childRow = app.buttons["session.nav.\(donkeyMaster)"]
+        XCTAssertTrue(reveal(childRow, in: inbox), "Flat List should list the child session as its own row")
 
         app.terminate()
         app.launch()
         XCTAssertTrue(inbox.waitForExistence(timeout: 30), "Inbox did not return after relaunch")
-        XCTAssertEqual(
-            app.buttons["workspace.inbox.mode"].value as? String, "Threads",
-            "The current-launch grouping toggle must not become the next-launch default"
-        )
+        XCTAssertTrue(reveal(childRow, in: inbox, timeout: 30), "Saved Flat List layout did not survive relaunch")
+        try setInboxLayout("Threads")
+        XCTAssertTrue(reveal(strip, in: inbox, timeout: 30), "Threads layout did not return")
+        XCTAssertFalse(childRow.exists, "Threads should fold the child session under its root")
         XCTAssertTrue(reveal(rootBody, in: inbox, timeout: 30))
         XCTAssertFalse(rootBody.label.contains(rootCost), "Saved row appearance did not survive relaunch: \(rootBody.label)")
         XCTAssertFalse(strip.label.contains("$"), strip.label)
@@ -559,11 +547,10 @@ final class SessionThreadsE2ETests: E2ETestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
 
         // Leave the simulator's saved appearance at the defaults.
-        openRowEditor()
+        try openRowEditor()
         XCTAssertEqual(toggle("cost").value as? String, "0", "Editor did not open on the saved choice")
         restoreButton.tap()
-        app.buttons["sessionRows.done"].tap()
-        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10))
+        try closeRowEditor("done")
         XCTAssertTrue(reveal(rootBody, in: inbox))
         XCTAssertTrue(rootBody.label.contains(rootCost), "Restored defaults did not return Cost: \(rootBody.label)")
     }
@@ -573,7 +560,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCUIDevice.shared.orientation = .portrait
         let stoppedRoot = try id(Self.stoppedRootKey)
         XCTAssertTrue(app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 20), "Inbox missing")
-        resetRowDisplayToDefaults()
+        try resetRowDisplayToDefaults()
 
         // Control: with defaults the stopped history row shows its cost (15.49 in the replayed data).
         let before = try workspaceStoppedRowLabel(stoppedRoot)
@@ -581,56 +568,16 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(before.contains("Stopped"), "Row should be the stopped session: \(before)")
         try returnToInbox()
 
-        openRowEditor()
+        try openRowEditor()
         setToggle("cost", on: false)
-        app.buttons["sessionRows.done"].tap()
-        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10))
+        try closeRowEditor("done")
 
         let after = try workspaceStoppedRowLabel(stoppedRoot)
         XCTAssertFalse(after.contains("$15.49"), "Saved Cost off must apply to workspace history rows: \(after)")
         XCTAssertTrue(after.contains("Stopped"), "History row lost its status: \(after)")
         try assertStopped(stoppedRoot, "after only viewing its workspace history row")
         try returnToInbox()
-        resetRowDisplayToDefaults()
-    }
-
-    /// Settings → Sessions → Customize Rows opens the same editor and its Done reaches the mounted inbox.
-    func testSettingsEntryOpensTheSameEditorAndSavesToTheMountedInbox() throws {
-        XCUIDevice.shared.orientation = .portrait
-        let orchestrator = try id(Self.orchestratorKey)
-        let inbox = app.collectionViews["workspace.sessionList"]
-        let rootBody = app.buttons["session.nav.\(orchestrator)"]
-        let strip = app.buttons["thread.nav.\(orchestrator)"]
-        XCTAssertTrue(reveal(strip, in: inbox, timeout: 20), "Thread strip missing")
-        resetRowDisplayToDefaults()
-        XCTAssertTrue(reveal(rootBody, in: inbox))
-        let rootCost = try costText(in: rootBody.label)
-
-        try openRowEditorFromSettings()
-        XCTAssertEqual(app.staticTexts["sessionRows.preview.label"].label, "PREVIEW \u{00B7} SAMPLE DATA")
-        XCTAssertTrue(
-            app.segmentedControls["sessionRows.density"].exists && toggle("cost").exists,
-            "Settings opened a different editor"
-        )
-        revealInForm(toggle("laneGraph"))
-        setToggle("cost", on: false)
-        app.buttons["sessionRows.done"].tap()
-        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10))
-        XCTAssertTrue(app.buttons["settings.customizeRows"].exists, "Done should return to Settings")
-        try returnToInbox()
-        XCTAssertTrue(reveal(rootBody, in: inbox))
-        XCTAssertFalse(rootBody.label.contains(rootCost), "Settings save did not reach the mounted inbox: \(rootBody.label)")
-        XCTAssertFalse(strip.label.contains("$"), strip.label)
-
-        // Reopened from Settings the editor starts from the saved choice; restore it.
-        try openRowEditorFromSettings()
-        XCTAssertEqual(toggle("cost").value as? String, "0", "Settings editor did not open on the saved choice")
-        restoreButton.tap()
-        app.buttons["sessionRows.done"].tap()
-        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10))
-        try returnToInbox()
-        XCTAssertTrue(reveal(rootBody, in: inbox))
-        XCTAssertTrue(rootBody.label.contains(rootCost), "Restored defaults did not return Cost: \(rootBody.label)")
+        try resetRowDisplayToDefaults()
     }
 
     /// Opening the editor and discarding or saving leaves the inbox's own state alone: the
@@ -640,7 +587,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         let donkey = try id(Self.donkeyMasterKey)
         let inbox = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
-        resetRowDisplayToDefaults()
+        try resetRowDisplayToDefaults()
 
         // A stopped-day group in a state the user chose (the opposite of its default).
         let header = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "workspace.sessionList.")).firstMatch
@@ -650,23 +597,20 @@ final class SessionThreadsE2ETests: E2ETestCase {
         let chosen = defaultState == "Expanded" ? "Collapsed" : "Expanded"
         XCTAssertTrue(waitForValue(header, chosen), "Header did not toggle to \(chosen)")
 
-        openRowEditor()
+        try openRowEditor()
         setToggle("cost", on: false)
-        app.buttons["sessionRows.cancel"].tap()
-        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10))
+        try closeRowEditor("cancel")
         XCTAssertTrue(reveal(header, in: inbox))
         XCTAssertTrue(waitForValue(header, chosen), "Cancelling the editor changed the stopped-day group")
 
-        openRowEditor()
+        try openRowEditor()
         setToggle("cost", on: false)
-        app.buttons["sessionRows.done"].tap()
-        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10))
+        try closeRowEditor("done")
         XCTAssertTrue(reveal(header, in: inbox))
         XCTAssertTrue(waitForValue(header, chosen), "Saving the editor changed the stopped-day group")
-        openRowEditor()
+        try openRowEditor()
         restoreButton.tap()
-        app.buttons["sessionRows.done"].tap()
-        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10))
+        try closeRowEditor("done")
 
         // Active search: the query and its result rows survive discard and save, and results take the saved look.
         // The search field lives in the navigation drawer, which hides while the list is scrolled.
@@ -680,33 +624,26 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(result.label.contains("$2.17"), "Default search row should show its cost: \(result.label)")
         if app.keyboards.buttons["Search"].exists { app.keyboards.buttons["Search"].tap() }
 
-        // While a search is active iOS hides the inbox top-bar buttons, so the editor is reached the
-        // other supported way: the sidebar edge gesture, then Settings.
-        XCTAssertFalse(app.buttons["workspace.inbox.customizeRows"].exists, "Control: top bar is hidden during search")
-        try openRowEditorFromSettings(viaEdgeSwipe: true)
+        // While a search is active iOS hides the inbox top bar, so Settings is reached through the
+        // sidebar edge gesture.
+        try openRowEditor(viaEdgeSwipe: true)
         setToggle("cost", on: false)
-        app.buttons["sessionRows.cancel"].tap()
-        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10))
-        try returnToInbox(until: search)
+        try closeRowEditor("cancel", returningUntil: search)
         XCTAssertEqual(search.value as? String, "Donkey", "Cancelling the editor changed the search query")
         XCTAssertTrue(result.waitForExistence(timeout: 10), "Search results vanished after Cancel")
         XCTAssertTrue(result.label.contains("$2.17"), "Cancel changed the saved look: \(result.label)")
 
-        try openRowEditorFromSettings(viaEdgeSwipe: true)
+        try openRowEditor(viaEdgeSwipe: true)
         XCTAssertEqual(toggle("cost").value as? String, "1", "Cancelled draft was kept")
         setToggle("cost", on: false)
-        app.buttons["sessionRows.done"].tap()
-        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10))
-        try returnToInbox(until: search)
+        try closeRowEditor("done", returningUntil: search)
         XCTAssertEqual(search.value as? String, "Donkey", "Saving the editor changed the search query")
         XCTAssertTrue(result.waitForExistence(timeout: 10), "Search results vanished after Done")
         XCTAssertFalse(result.label.contains("$2.17"), "Search results ignored the saved choice: \(result.label)")
 
-        try openRowEditorFromSettings(viaEdgeSwipe: true)
+        try openRowEditor(viaEdgeSwipe: true)
         restoreButton.tap()
-        app.buttons["sessionRows.done"].tap()
-        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10))
-        try returnToInbox(until: search)
+        try closeRowEditor("done", returningUntil: search)
         XCTAssertEqual(search.value as? String, "Donkey")
         XCTAssertTrue(result.waitForExistence(timeout: 10))
         XCTAssertTrue(result.label.contains("$2.17"), "Restored defaults did not return Cost: \(result.label)")
@@ -749,12 +686,56 @@ final class SessionThreadsE2ETests: E2ETestCase {
 
     private func toggle(_ id: String) -> XCUIElement { app.switches["sessionRows.toggle.\(id)"] }
 
-    private func openRowEditor() {
-        let button = app.buttons["workspace.inbox.customizeRows"]
-        XCTAssertTrue(button.waitForExistence(timeout: 10), "Customize Rows button missing from the inbox")
-        button.tap()
-        XCTAssertTrue(rowEditor.waitForExistence(timeout: 10), "Customize Rows did not open")
+    /// Opens Settings from the sidebar and its Customize Rows entry under Session List.
+    private func openRowEditor(viaEdgeSwipe: Bool = false) throws {
+        openSettings(viaEdgeSwipe: viaEdgeSwipe)
+        let entry = settingsRow("settings.customizeRows")
+        XCTAssertTrue(entry.isHittable, "Customize Rows missing from Settings")
+        entry.tap()
+        XCTAssertTrue(rowEditor.waitForExistence(timeout: 10), "Customize Rows did not open from Settings")
         XCTAssertTrue(previewBox.waitForExistence(timeout: 10), "Preview missing")
+    }
+
+    /// Taps the editor's Cancel or Done, which returns to Settings, then pops back to All Sessions.
+    private func closeRowEditor(_ action: String, returningUntil marker: XCUIElement? = nil) throws {
+        app.buttons["sessionRows.\(action)"].tap()
+        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10), "Editor did not close")
+        XCTAssertTrue(app.buttons["settings.customizeRows"].exists, "Closing the editor should return to Settings")
+        try returnToInbox(until: marker)
+    }
+
+    /// Picks the All Sessions layout under Settings' Session List, then returns to All Sessions.
+    private func setInboxLayout(_ name: String) throws {
+        openSettings()
+        let picker = settingsRow("settings.inboxListMode")
+        XCTAssertTrue(picker.isHittable, "Layout picker missing from Settings")
+        picker.tap()
+        let option = app.buttons[name].firstMatch
+        XCTAssertTrue(option.waitForExistence(timeout: 5), "\(name) missing from the Layout menu")
+        option.tap()
+        XCTAssertTrue(waitForNonExistence(option, timeout: 5), "Layout menu did not close")
+        try returnToInbox()
+    }
+
+    private func openSettings(viaEdgeSwipe: Bool = false) {
+        if viaEdgeSwipe {
+            let list = app.collectionViews["workspace.sessionList"]
+            list.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5))
+                .press(forDuration: 0.05, thenDragTo: list.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        } else {
+            app.buttons["workspace.sidebar.open"].tap()
+        }
+        let settings = app.buttons["workspace.settings.open"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 10), "App Settings missing from the sidebar")
+        settings.tap()
+    }
+
+    /// Scrolls Settings until the row is on screen.
+    private func settingsRow(_ identifier: String) -> XCUIElement {
+        let row = app.buttons[identifier]
+        _ = row.waitForExistence(timeout: 5)
+        for _ in 0..<8 where !row.exists || !row.isHittable { app.swipeUp() }
+        return row
     }
 
     /// Scrolls the editor form until `element` can be tapped.
@@ -816,35 +797,14 @@ final class SessionThreadsE2ETests: E2ETestCase {
     }
 
     /// Known start: earlier runs on this simulator may have saved a customization.
-    private func resetRowDisplayToDefaults() {
-        openRowEditor()
+    private func resetRowDisplayToDefaults() throws {
+        try openRowEditor()
         if restoreButton.isEnabled {
             restoreButton.tap()
-            app.buttons["sessionRows.done"].tap()
+            try closeRowEditor("done")
         } else {
-            app.buttons["sessionRows.cancel"].tap()
+            try closeRowEditor("cancel")
         }
-        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10), "Editor did not close")
-    }
-
-    /// Opens Settings from the sidebar and its Customize Rows entry.
-    private func openRowEditorFromSettings(viaEdgeSwipe: Bool = false) throws {
-        if viaEdgeSwipe {
-            let list = app.collectionViews["workspace.sessionList"]
-            list.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5))
-                .press(forDuration: 0.05, thenDragTo: list.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
-        } else {
-            app.buttons["workspace.sidebar.open"].tap()
-        }
-        let settings = app.buttons["workspace.settings.open"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 10), "App Settings missing from the sidebar")
-        settings.tap()
-        let entry = app.buttons["settings.customizeRows"]
-        for _ in 0..<8 where !entry.exists || !entry.isHittable { app.swipeUp() }
-        XCTAssertTrue(entry.isHittable, "Customize Rows missing from Settings")
-        entry.tap()
-        XCTAssertTrue(rowEditor.waitForExistence(timeout: 10), "Customize Rows did not open from Settings")
-        XCTAssertTrue(previewBox.waitForExistence(timeout: 10), "Preview missing")
     }
 
     /// Opens the "oppi" workspace list, opens its stopped groups, and returns a stopped row's label.
@@ -904,10 +864,11 @@ final class SessionThreadsE2ETests: E2ETestCase {
         }
     }
 
-    /// Pops back to All Sessions, recognised by `marker` (the top-bar Customize Rows button by default).
+    /// Pops back to All Sessions, recognised by `marker` (the top-bar workspaces button by default;
+    /// workspace lists do not show it).
     private func returnToInbox(until marker: XCUIElement? = nil) throws {
         let inbox = app.collectionViews["workspace.sessionList"]
-        let marker = marker ?? app.buttons["workspace.inbox.customizeRows"]
+        let marker = marker ?? app.buttons["workspace.sidebar.open"]
         for _ in 0..<4 {
             if marker.exists { return }
             if app.buttons["workspace.sidebar.showWorkspaces"].exists {

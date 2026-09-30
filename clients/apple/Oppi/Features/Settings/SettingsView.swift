@@ -3,6 +3,7 @@ import UIKit
 
 struct SettingsView: View {
     @Environment(ThemeStore.self) private var themeStore
+    @Environment(AppNavigation.self) private var navigation
 
     @State private var spinnerStyle = AppPreferences.Appearance.spinnerStyle
     @State private var dictationIndicatorStyle = AppPreferences.Appearance.dictationIndicatorStyle
@@ -16,7 +17,6 @@ struct SettingsView: View {
     @State private var selectedMessageTextScale = FontPreferences.messageTextScale
     @State private var useMonoMessages = FontPreferences.useMonoForMessages
     @State private var linkOpeningMode = AppPreferences.Browser.linkOpeningMode
-    @State private var inboxDefaultListMode = AppPreferences.Inbox.defaultListMode
     @State private var voiceEngineMode = AppPreferences.Voice.engineMode
     @State private var voiceReplyMode = AppPreferences.Voice.replyMode
     @State private var hapticFeedbackEnabled = AppPreferences.Interaction.isHapticFeedbackEnabled
@@ -221,26 +221,17 @@ struct SettingsView: View {
             }
 
             Section {
-                NavigationLink {
-                    AutoTitleSettingsView()
-                } label: {
-                    LabeledContent("Auto-name Sessions") {
-                        Text(autoTitleProviderLabel)
-                            .foregroundStyle(.themeComment)
-                    }
-                }
-
-                Picker("All Sessions opens in", selection: $inboxDefaultListMode) {
+                Picker("Layout", selection: Binding(
+                    get: { navigation.inboxListMode },
+                    set: { navigation.inboxListMode = $0 }
+                )) {
                     ForEach(SessionInboxListMode.allCases) { mode in
                         Label(mode.label, systemImage: mode.systemImage).tag(mode)
                     }
                 }
-                .onChange(of: inboxDefaultListMode) { _, newValue in
-                    AppPreferences.Inbox.setDefaultListMode(newValue)
-                }
-                .accessibilityIdentifier("settings.inboxDefaultListMode")
+                .accessibilityIdentifier("settings.inboxListMode")
 
-                Text("Threads groups sessions under the session that launched them. The view button in All Sessions switches until Oppi next opens.")
+                Text("Threads groups sessions under the session that launched them. Flat List shows every session as its own row.")
                     .font(.footnote)
                     .foregroundStyle(.themeComment)
 
@@ -251,9 +242,24 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings.customizeRows")
 
-                Text("Choose the details Oppi session rows show, in every session list on this device.")
+                Text("Choose the details session rows and Thread strips show, in every session list.")
                     .font(.footnote)
                     .foregroundStyle(.themeComment)
+            } header: {
+                Text("Session List")
+            } footer: {
+                Text("Session list settings are saved on this device.")
+            }
+
+            Section {
+                NavigationLink {
+                    AutoTitleSettingsView()
+                } label: {
+                    LabeledContent("Auto-name Sessions") {
+                        Text(autoTitleProviderLabel)
+                            .foregroundStyle(.themeComment)
+                    }
+                }
 
                 Picker("Keep screen awake", selection: $screenAwakePreset) {
                     ForEach(AppPreferences.ScreenAwake.TimeoutPreset.allCases) { preset in
