@@ -13,6 +13,8 @@ struct SessionThreadRollup: Sendable, Equatable {
     var totalCost: Double { members.reduce(0) { $0 + $1.cost } }
     var workingDescendants: [Session] { descendants.filter(SessionThreadGrouping.isWorking) }
     var finishedDescendantCount: Int { descendants.count { $0.status == .stopped } }
+    /// Distinct workspaces the loaded members run in; above 1 marks a cross-workspace thread.
+    var workspaceCount: Int { Set(members.compactMap(\.workspaceId)).count }
 }
 
 enum SessionThreadGrouping {
@@ -84,6 +86,88 @@ enum SessionThreadGrouping {
         }
         if sawWorking { return .working }
         return sawYourTurn ? .yourTurn : nil
+    }
+}
+
+// MARK: - List entries
+
+/// One row of a session list, the same in All Sessions and a workspace list.
+/// In Threads layout a launch tree is listed once, at its root; a session whose
+/// root belongs to another list links to that root instead of folding away.
+struct SessionListEntry: Sendable, Equatable, Identifiable {
+    let session: Session
+    /// Loaded launch tree this session roots; nil when it has no loaded children or in Flat List.
+    let thread: SessionThreadRollup?
+    /// Root of this session's thread when that root is not in this list.
+    let outsideRoot: Session?
+
+    var id: String { session.id }
+    /// `ForEach` id for stopped sections; see `SessionListPresentation.stoppedRowID`.
+    var stoppedListID: String { SessionListPresentation.stoppedRowID(id) }
+
+    /// Session that dates and orders the row: a thread sorts by its latest member.
+    var representative: Session {
+        guard let thread else { return session }
+        var representative = session
+        representative.lastActivity = thread.latestActivity
+        return representative
+    }
+
+    /// Attention that orders the row: a thread asks when any member asks.
+    func attention(_ attention: (Session) -> SessionListAttentionCounts) -> SessionListAttentionCounts {
+        guard let thread else { return attention(session) }
+        return SessionListAttentionCounts(askCount: thread.members.reduce(0) { $0 + attention($1).askCount })
+    }
+
+    /// A thread sits where its most urgent member would; a plain row by its own state.
+    func sectionKind(attention: (Session) -> SessionListAttentionCounts) -> SessionListActiveSectionKind? {
+        if let thread {
+            return SessionThreadGrouping.sectionKind(for: thread, attention: attention)
+        }
+        return SessionListPresentation.activeSectionKind(for: session, attention: attention(session))
+    }
+}
+
+enum SessionListEntries {
+    static func flat(_ sessions: [Session]) -> [SessionListEntry] {
+        sessions.map { SessionListEntry(session: $0, thread: nil, outsideRoot: nil) }
+    }
+
+    /// Threads layout for the sessions a list shows (`listed`). Launch trees are
+    /// built over every loaded session (`loaded`), so a thread keeps members
+    /// that run in another workspace or worktree. A listed root carries its
+    /// whole tree; a listed descendant of a listed root folds away; a listed
+    /// session whose root is not listed stays a row linked to that root.
+    /// Output keeps `listed` order.
+    static func threads(listed: [Session], loaded: [Session]) -> [SessionListEntry] {
+        let listedIds = Set(listed.map(\.id))
+        var pool = listed
+        var seen = listedIds
+        for session in loaded where seen.insert(session.id).inserted {
+            pool.append(session)
+        }
+
+        var rollupByMember: [String: SessionThreadRollup] = [:]
+        for rollup in SessionThreadGrouping.rollups(from: pool) {
+            for member in rollup.members {
+                rollupByMember[member.id] = rollup
+            }
+        }
+
+        return listed.compactMap { session in
+            guard let rollup = rollupByMember[session.id] else {
+                return SessionListEntry(session: session, thread: nil, outsideRoot: nil)
+            }
+            if rollup.root.id == session.id {
+                return SessionListEntry(
+                    session: session,
+                    thread: rollup.descendants.isEmpty ? nil : rollup,
+                    outsideRoot: nil
+                )
+            }
+            if listedIds.contains(rollup.root.id) { return nil }
+            return SessionListEntry(session: session, thread: nil, outsideRoot: rollup.root)
+        }
     }
 }
 

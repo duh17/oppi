@@ -17,34 +17,34 @@ enum WorkspaceStoppedSessionExpansionPolicy {
     }
 }
 
-struct WorkspaceStoppedSessionsSection: View {
-    let stoppedSessions: [Session]
+/// A workspace's stopped history: recent days, then months, then older months
+/// loaded on demand, with importable host Pi sessions mixed in by date. Rows
+/// are drawn by the caller so they match every other session list.
+struct WorkspaceStoppedSessionsSection<EntryRow: View>: View {
+    let stoppedEntries: [SessionListEntry]
     let localSessions: [LocalSession]
     let hasSearchQuery: Bool
     let isImportingLocal: Bool
-    let sessionPresentation: (Session) -> SessionRowPresentation
-    let onOpenSession: (Session) -> Void
-    let onResumeSession: (Session) -> Void
-    let onDeleteSession: (Session) -> Void
     let onImportLocal: (LocalSession) -> Void
 
     @Binding var expandedGroupIDs: Set<String>
     @Binding var collapsedGroupIDs: Set<String>
 
     let archiveBuckets: [WorkspaceSessionArchiveBucket]
-    let archiveStoppedSessions: (WorkspaceSessionArchiveBucket) -> [Session]
+    let archiveStoppedEntries: (WorkspaceSessionArchiveBucket) -> [SessionListEntry]
     let archiveLocalSessions: (WorkspaceSessionArchiveBucket) -> [LocalSession]
     let loadingArchiveBucketIDs: Set<String>
     let onExpandArchiveBucket: (WorkspaceSessionArchiveBucket) -> Void
+    let entryRow: (SessionListEntry) -> EntryRow
 
     private enum StoppedItem: Identifiable {
-        case session(Session)
+        case entry(SessionListEntry)
         case local(LocalSession)
 
         var id: String {
             switch self {
-            case .session(let session):
-                return SessionListPresentation.stoppedRowID(session.id)
+            case .entry(let entry):
+                return entry.stoppedListID
             case .local(let local):
                 return "local-\(local.id)"
             }
@@ -52,8 +52,8 @@ struct WorkspaceStoppedSessionsSection: View {
 
         var sortDate: Date {
             switch self {
-            case .session(let session):
-                return session.lastActivity
+            case .entry(let entry):
+                return entry.representative.lastActivity
             case .local(let local):
                 return local.lastModified
             }
@@ -81,7 +81,7 @@ struct WorkspaceStoppedSessionsSection: View {
 
     private var stoppedSessionGroups: [StoppedSessionGroup] {
         // Merge and sort all items by date descending (single pass)
-        let stoppedItems = stoppedSessions.map { StoppedItem.session($0) }
+        let stoppedItems = stoppedEntries.map { StoppedItem.entry($0) }
         let localItems = localSessions.map { StoppedItem.local($0) }
         var allItems = stoppedItems + localItems
         guard !allItems.isEmpty else { return [] }
@@ -229,34 +229,8 @@ struct WorkspaceStoppedSessionsSection: View {
     @ViewBuilder
     private func stoppedItemRow(for item: StoppedItem) -> some View {
         switch item {
-        case .session(let session):
-            Button {
-                onOpenSession(session)
-            } label: {
-                SessionRow(presentation: sessionPresentation(session))
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("session.nav.\(session.id)")
-            .themedListRowBackground()
-            .swipeActions(edge: .leading) {
-                if session.ephemeral != true {
-                    Button {
-                        onResumeSession(session)
-                    } label: {
-                        Label("Resume", systemImage: "play.fill")
-                    }
-                    .tint(.themeGreen)
-                }
-            }
-            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                Button(role: SessionDeleteConfirmationPolicy.swipeButtonRole) {
-                    onDeleteSession(session)
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-                .accessibilityIdentifier("session.delete.\(session.id)")
-                .tint(.themeRed)
-            }
+        case .entry(let entry):
+            entryRow(entry)
 
         case .local(let local):
             Button {
@@ -271,7 +245,7 @@ struct WorkspaceStoppedSessionsSection: View {
     }
 
     private func archiveItems(for bucket: WorkspaceSessionArchiveBucket) -> [StoppedItem] {
-        let managed = archiveStoppedSessions(bucket).map(StoppedItem.session)
+        let managed = archiveStoppedEntries(bucket).map(StoppedItem.entry)
         let local = archiveLocalSessions(bucket).map(StoppedItem.local)
         return (managed + local).sorted { $0.sortDate > $1.sortDate }
     }

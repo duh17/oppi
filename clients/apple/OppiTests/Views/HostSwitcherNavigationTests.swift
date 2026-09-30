@@ -160,14 +160,6 @@ struct SessionInboxHostChangeTests {
             end: ".toolbar { toolbarContent }"
         )
         #expect(hostChange.contains("resetLocalHostState"))
-        let taskSlice = try sourceSlice(
-            source,
-            start: ".task(id: activeServerId) {",
-            end: ".task(id: selectedWorkspace?.workspace.id)"
-        )
-        #expect(!taskSlice.contains("resetLocalHostState"))
-        #expect(!taskSlice.contains("SessionInboxHostChange.reset"))
-        #expect(!taskSlice.contains("showAllWorkspaceSessions"))
     }
 
     @Test func sessionListsRevealSearchFromNavigationBarDrawer() throws {

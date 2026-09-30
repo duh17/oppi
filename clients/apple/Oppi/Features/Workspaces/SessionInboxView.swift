@@ -7,29 +7,12 @@ private struct SessionInboxItem: Identifiable {
     let workspace: Workspace?
 
     var id: String { "\(serverId):\(session.id)" }
-    var stoppedListID: String { SessionListPresentation.stoppedRowID(id) }
 }
 
-private typealias SessionInboxStoppedGroup = SessionInboxStoppedDayGroup<SessionInboxItem>
+private typealias SessionInboxStoppedGroup = SessionInboxStoppedDayGroup<SessionListEntry>
 
-/// Thread-mode row: the root's inbox item plus its loaded launch tree.
-private struct SessionInboxThreadItem: Identifiable {
-    let root: SessionInboxItem
-    let rollup: SessionThreadRollup
-
-    var id: String { root.id }
-    var stoppedListID: String { root.stoppedListID }
-}
-
-private typealias SessionInboxThreadStoppedGroup = SessionInboxStoppedDayGroup<SessionInboxThreadItem>
-
-private struct SessionInboxThreadSections {
-    let yourTurn: [SessionInboxThreadItem]
-    let working: [SessionInboxThreadItem]
-    let stoppedGroups: [SessionInboxThreadStoppedGroup]
-}
-
-/// All Sessions presentation: launch-tree threads or the flat session list.
+/// Session list layout, shared by All Sessions and workspace lists: launch-tree
+/// threads or the flat session list.
 enum SessionInboxListMode: String, CaseIterable, Identifiable {
     case threads
     case sessions
@@ -52,10 +35,12 @@ enum SessionInboxListMode: String, CaseIterable, Identifiable {
 }
 
 private struct SessionInboxViewData {
-    let yourTurn: [SessionInboxItem]
-    let working: [SessionInboxItem]
+    let yourTurn: [SessionListEntry]
+    let working: [SessionListEntry]
     let stoppedGroups: [SessionInboxStoppedGroup]
-    let searchMatches: [SessionInboxItem]
+    let searchMatches: [SessionListEntry]
+    /// Inbox items by session id, for row context and routing.
+    let itemsById: [String: SessionInboxItem]
     let isSearching: Bool
     let isEmpty: Bool
 }
@@ -232,12 +217,10 @@ struct SessionInboxView: View {
     @State private var searchStore = SessionSearchStore()
     @State private var error: String?
     @State private var failedRetryServerId: String?
-    @State private var isCreating = false
     @State private var pendingDelete: SessionInboxPendingDelete?
     @State private var expandedStoppedGroupIDs: Set<String> = []
     @State private var collapsedStoppedGroupIDs: Set<String> = []
     @State private var hasAutoOpenedE2EWorkspace = false
-    @State private var hasAutoCreatedE2ESession = false
     @State private var hasAutoOpenedE2ESession = false
     @State private var providerSetupState: ProviderSetupState = .unknown
     @FocusState private var isSearchFieldFocused: Bool
@@ -271,14 +254,6 @@ struct SessionInboxView: View {
         )
     }
 
-    private var selectedWorkspace: WorkspaceNavTarget? {
-        guard navigation.workspaceNavigationPresentation == .split,
-              let activeServerId,
-              let filter = navigation.selectedWorkspaceFilter,
-              filter.serverId == activeServerId else { return nil }
-        return filter
-    }
-
     private var servers: [PairedServer] {
         serverStore.servers
     }
@@ -294,9 +269,7 @@ struct SessionInboxView: View {
     private func refreshSearch() {
         searchStore.search(
             query: searchText,
-            workspaceId: SessionInboxSearchScope.workspaceId(
-                scopedTo: selectedWorkspace?.workspace.id
-            ),
+            workspaceId: nil,
             apiClient: activeConnection?.apiClient
         )
     }
@@ -350,12 +323,12 @@ struct SessionInboxView: View {
 
     private var viewData: SessionInboxViewData {
         let items = sessionItems()
-        let itemsByID = Dictionary(uniqueKeysWithValues: items.map { ($0.session.id, $0) })
+        var itemsById = Dictionary(uniqueKeysWithValues: items.map { ($0.session.id, $0) })
         if let matches = SessionListSearchPresentation.flattenedMatches(
             localSessions: items.map(\.session),
             query: searchText,
             extraCandidates: { session in
-                [itemsByID[session.id]?.workspace?.name]
+                [itemsById[session.id]?.workspace?.name]
             },
             serverResults: searchStore.results,
             completedServerQuery: searchStore.completedServerQuery,
@@ -363,65 +336,41 @@ struct SessionInboxView: View {
             snippetsBySessionId: searchStore.snippetsBySessionId
         ) {
             let searchItems = matches.compactMap { match in
-                inboxItem(for: match.session, existing: itemsByID[match.session.id])
+                inboxItem(for: match.session, existing: itemsById[match.session.id])
             }
+            for item in searchItems { itemsById[item.session.id] = item }
             return SessionInboxViewData(
                 yourTurn: [],
                 working: [],
                 stoppedGroups: [],
-                searchMatches: searchItems,
+                searchMatches: SessionListEntries.flat(searchItems.map(\.session)),
+                itemsById: itemsById,
                 isSearching: searchStore.isSearching,
                 isEmpty: searchItems.isEmpty && !searchStore.isSearching
             )
         }
 
+        // All Sessions lists every loaded session, so every thread root is here.
+        let sessions = items.map(\.session)
+        let entries = listMode == .threads
+            ? SessionListEntries.threads(listed: sessions, loaded: sessions)
+            : SessionListEntries.flat(sessions)
         let grouped = SessionInboxGrouping.make(
-            items: items,
+            items: entries,
             now: Date(),
             calendar: Calendar.current,
-            session: { $0.session },
-            attention: attentionCounts(for:)
+            session: \.representative,
+            attention: { $0.attention(attentionCounts(for:)) },
+            sectionKind: { $0.sectionKind(attention: attentionCounts(for:)) }
         )
         return SessionInboxViewData(
             yourTurn: grouped.yourTurn,
             working: grouped.working,
             stoppedGroups: grouped.stoppedGroups,
             searchMatches: [],
+            itemsById: itemsById,
             isSearching: false,
             isEmpty: grouped.isEmpty
-        )
-    }
-
-    /// Launch trees among the loaded sessions, sectioned by every member's state.
-    private func threadSections(_ items: [SessionInboxItem]) -> SessionInboxThreadSections {
-        let itemsById = Dictionary(items.map { ($0.session.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let threadItems = SessionThreadGrouping.rollups(from: items.map(\.session)).compactMap { rollup in
-            itemsById[rollup.root.id].map { SessionInboxThreadItem(root: $0, rollup: rollup) }
-        }
-        let grouped = SessionInboxGrouping.make(
-            items: threadItems,
-            now: Date(),
-            calendar: Calendar.current,
-            session: { thread in
-                // Sort and bucket by the thread's latest activity, not the root's.
-                var representative = thread.rollup.root
-                representative.lastActivity = thread.rollup.latestActivity
-                return representative
-            },
-            attention: { attentionCounts(for: $0.root) },
-            sectionKind: { thread in
-                SessionThreadGrouping.sectionKind(for: thread.rollup) { member in
-                    SessionRowPresentationBuilder.attentionCounts(
-                        sessionId: member.id,
-                        pendingAskCountForSession: { pendingAskCount(for: $0, connection: thread.root.connection) }
-                    )
-                }
-            }
-        )
-        return SessionInboxThreadSections(
-            yourTurn: grouped.yourTurn,
-            working: grouped.working,
-            stoppedGroups: grouped.stoppedGroups
         )
     }
 
@@ -483,32 +432,17 @@ struct SessionInboxView: View {
                         .listRowBackground(theme.bg.primary)
                     }
                 } else {
-                    sessionSection("Results", items: data.searchMatches)
+                    entrySection("Results", entries: data.searchMatches, itemsById: data.itemsById)
                 }
             } else {
-                if listMode == .threads {
-                    let threads = threadSections(sessionItems())
-                    if !threads.yourTurn.isEmpty {
-                        threadSection(SessionInboxSectionTitle.yourTurn, items: threads.yourTurn)
-                    }
-                    if !threads.working.isEmpty {
-                        threadSection(SessionInboxSectionTitle.working, items: threads.working)
-                    }
-                    ForEach(threads.stoppedGroups) { group in
-                        stoppedThreadSection(group)
-                    }
-                } else {
-                    if !data.yourTurn.isEmpty {
-                        sessionSection(SessionInboxSectionTitle.yourTurn, items: data.yourTurn)
-                    }
-
-                    if !data.working.isEmpty {
-                        sessionSection(SessionInboxSectionTitle.working, items: data.working)
-                    }
-
-                    ForEach(data.stoppedGroups) { group in
-                        stoppedSessionSection(group)
-                    }
+                if !data.yourTurn.isEmpty {
+                    entrySection(SessionInboxSectionTitle.yourTurn, entries: data.yourTurn, itemsById: data.itemsById)
+                }
+                if !data.working.isEmpty {
+                    entrySection(SessionInboxSectionTitle.working, entries: data.working, itemsById: data.itemsById)
+                }
+                ForEach(data.stoppedGroups) { group in
+                    stoppedSection(group, itemsById: data.itemsById)
                 }
 
                 if ProviderSetupPromptPolicy.shouldShowInboxEmptyState(
@@ -525,7 +459,7 @@ struct SessionInboxView: View {
         .accessibilityIdentifier("workspace.sessionList")
         .listStyle(.plain)
         .themedListSurface()
-        .navigationTitle(inboxNavigationTitle)
+        .navigationTitle("All Sessions")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(
             text: searchTextBinding,
@@ -552,11 +486,6 @@ struct SessionInboxView: View {
                 isSearchFieldFocused = false
             }
         }
-        .onChange(of: selectedWorkspace?.workspace.id) { _, _ in
-            // Same query, different result domain. Search cancels the old task
-            // and clears completed results before starting the scoped request.
-            refreshSearch()
-        }
         .onChange(of: searchCoverageSignature) { _, _ in
             restoreSearchAfterCoverageChange()
         }
@@ -578,10 +507,7 @@ struct SessionInboxView: View {
             async let refresh: () = refreshVisibleServer()
             async let providers: () = loadProviderSetupState()
             _ = await (refresh, providers)
-            await applyE2ELaunchHintsIfNeeded()
-        }
-        .task(id: selectedWorkspace?.workspace.id) {
-            await applyE2ELaunchHintsIfNeeded()
+            applyE2ELaunchHintsIfNeeded()
         }
         .onChange(of: navigation.workspacePath.count) { oldCount, newCount in
             guard newCount < oldCount else { return }
@@ -590,15 +516,6 @@ struct SessionInboxView: View {
         .onChange(of: navigation.splitDetailPath.count) { oldCount, newCount in
             guard newCount < oldCount else { return }
             Task { await loadProviderSetupState() }
-        }
-        .overlay {
-            if isCreating {
-                ProgressView("Creating session…")
-                    .tint(.themeCyan)
-                    .foregroundStyle(.themeFg)
-                    .padding()
-                    .themedFloatingPanel()
-            }
         }
         .alert("Error", isPresented: Binding(
             get: { error != nil },
@@ -693,46 +610,25 @@ struct SessionInboxView: View {
     }
 
     private var showsMinimumServerVersionNotice: Bool {
-        selectedWorkspace == nil
-            && selectedServer != nil
+        selectedServer != nil
             && ServerReleaseVersion.isBelowMinimum(activeConnection?.connectedServerVersion)
     }
 
     private var showsProviderSetupPrompt: Bool {
-        selectedWorkspace == nil
-            && ProviderSetupPromptPolicy.shouldShow(for: providerSetupState)
+        ProviderSetupPromptPolicy.shouldShow(for: providerSetupState)
             && selectedServer != nil
             && !showsMinimumServerVersionNotice
     }
 
-    private var inboxNavigationTitle: String {
-        selectedWorkspace?.workspace.name ?? "All Sessions"
-    }
-
-    @ViewBuilder
     private var inboxTitle: some View {
-        if let selectedWorkspace {
-            HStack(spacing: 7) {
-                WorkspaceRuntimeIcon(workspace: selectedWorkspace.workspace, size: 17, frameSize: 22)
-                Text(selectedWorkspace.workspace.name)
-                    .font(.headline.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-            }
+        Text("All Sessions")
+            .font(.headline.weight(.semibold))
             .foregroundStyle(.themeFg)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Workspace sessions: \(selectedWorkspace.workspace.name)")
+            .accessibilityLabel("All Sessions")
             .accessibilityIdentifier("workspace.inbox.title")
-        } else {
-            Text("All Sessions")
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(.themeFg)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("All Sessions")
-                .accessibilityIdentifier("workspace.inbox.title")
-        }
     }
 
     @ToolbarContentBuilder
@@ -742,7 +638,7 @@ struct SessionInboxView: View {
         }
 
         ToolbarItem(placement: .topBarLeading) {
-            if selectedWorkspace == nil, let onOpenSidebar {
+            if let onOpenSidebar {
                 Button {
                     onOpenSidebar()
                 } label: {
@@ -755,9 +651,7 @@ struct SessionInboxView: View {
         }
 
         ToolbarItem(placement: .topBarTrailing) {
-            if let selectedWorkspace {
-                workspaceConfigurationButton(selectedWorkspace)
-            } else if let selectedServer {
+            if let selectedServer {
                 serverSwitcher(selectedServer)
             }
         }
@@ -930,12 +824,6 @@ struct SessionInboxView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
-        } else if let selectedWorkspace {
-            ContentUnavailableView(
-                "No Sessions",
-                systemImage: "terminal",
-                description: Text("Start a new session in \(selectedWorkspace.workspace.name).")
-            )
         } else {
             ContentUnavailableView(
                 "No Active Sessions",
@@ -945,80 +833,26 @@ struct SessionInboxView: View {
         }
     }
 
-    private func sessionSection(_ title: String, items: [SessionInboxItem]) -> some View {
+    private func entrySection(
+        _ title: String,
+        entries: [SessionListEntry],
+        itemsById: [String: SessionInboxItem]
+    ) -> some View {
         Section(title) {
-            ForEach(items) { item in
-                sessionRow(item)
+            ForEach(entries) { entry in
+                entryRow(entry, itemsById: itemsById)
             }
         }
     }
 
-    private func stoppedSessionSection(_ group: SessionInboxStoppedGroup) -> some View {
-        Section {
-            if isStoppedGroupExpanded(group) {
-                ForEach(group.items, id: \.stoppedListID) { item in
-                    sessionRow(item)
-                }
-            }
-        } header: {
-            Button {
-                toggleStoppedGroupExpansion(group)
-            } label: {
-                HStack(spacing: 8) {
-                    Text(stoppedGroupTitle(group))
-                    Spacer()
-                    Image(systemName: isStoppedGroupExpanded(group) ? "chevron.down" : "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.themeComment)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("workspace.sessionList.\(group.id)")
-            .accessibilityValue(isStoppedGroupExpanded(group) ? "Expanded" : "Collapsed")
-        }
-    }
-
-    private func sessionRow(_ item: SessionInboxItem) -> some View {
-        sessionRowBody(item)
-            .listRowBackground(theme.bg.primary)
-            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                sessionSwipeActions(for: item)
-            }
-    }
-
-    /// The root/session row and its one-tap open of that session's chat.
-    private func sessionRowBody(_ item: SessionInboxItem) -> some View {
-        SessionRow(presentation: rowPresentation(for: item))
-            .contentShape(Rectangle())
-            // A plain Button can still commit after a horizontal drag loses to
-            // the List's swipe recognizer. Use an actual tap recognizer so row
-            // navigation fails as soon as either swipe direction becomes a drag.
-            .onTapGesture {
-                openSession(item)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction {
-                openSession(item)
-            }
-            .accessibilityIdentifier("session.nav.\(item.session.id)")
-            .accessibilityValue(sessionRowAccessibilityValue(for: item))
-    }
-
-    private func threadSection(_ title: String, items: [SessionInboxThreadItem]) -> some View {
-        Section(title) {
-            ForEach(items) { item in
-                threadRow(item)
-            }
-        }
-    }
-
-    private func stoppedThreadSection(_ group: SessionInboxThreadStoppedGroup) -> some View {
+    private func stoppedSection(
+        _ group: SessionInboxStoppedGroup,
+        itemsById: [String: SessionInboxItem]
+    ) -> some View {
         Section {
             if isStoppedDayExpanded(group.id, day: group.day) {
-                ForEach(group.items, id: \.stoppedListID) { item in
-                    threadRow(item)
+                ForEach(group.items, id: \.stoppedListID) { entry in
+                    entryRow(entry, itemsById: itemsById)
                 }
             }
         } header: {
@@ -1040,55 +874,51 @@ struct SessionInboxView: View {
         }
     }
 
-    /// Root row plus, for a launch tree, its Thread strip. The root body always
-    /// opens the root's chat; only the labelled strip opens Thread detail. They
-    /// are sibling tap targets (neither wraps the other), each a real tap
-    /// recognizer so a swipe on either cancels navigation.
-    @ViewBuilder
-    private func threadRow(_ item: SessionInboxThreadItem) -> some View {
-        if item.rollup.descendants.isEmpty {
-            sessionRow(item.root)
-        } else {
-            let attentionMember = item.rollup.descendants.first {
-                pendingAskCount(for: $0.id, connection: item.root.connection) > 0
-            }
-            let openThread = {
-                applySearchNavigation(.willOpenDestination)
-                navigation.openSessionThread(
-                    SessionThreadNavTarget(serverId: item.root.serverId, rootSessionId: item.rollup.root.id)
-                )
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                sessionRowBody(item.root)
-                SessionThreadStrip(rollup: item.rollup, attentionMember: attentionMember)
-                    .padding(.leading, SessionThreadStrip.rowInset)
-                    .onTapGesture(perform: openThread)
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityAction { openThread() }
-                    .accessibilityIdentifier("thread.nav.\(item.rollup.root.id)")
-                    .accessibilityValue(attentionMember != nil ? "Question pending" : "")
-            }
-            .listRowBackground(theme.bg.primary)
-            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                sessionSwipeActions(for: item.root)
-            }
-        }
-    }
-
-    private func stoppedGroupTitle(_ group: SessionInboxStoppedGroup) -> String {
-        SessionInboxSectionTitle.stopped(
-            day: group.day,
-            now: Date(),
-            calendar: Calendar.current
+    private func entryRow(_ entry: SessionListEntry, itemsById: [String: SessionInboxItem]) -> some View {
+        SessionListEntryRow(
+            entry: entry,
+            presentation: { session in
+                guard let item = itemsById[session.id] ?? inboxItem(for: session, existing: nil) else {
+                    return SessionRowPresentationBuilder.make(session: session)
+                }
+                return rowPresentation(for: item)
+            },
+            hasPendingAsk: { pendingAskCount(for: $0.id) > 0 },
+            // Every All Sessions row already names its workspace.
+            foreignWorkspaceName: { _ in nil },
+            actions: rowActions(itemsById: itemsById)
         )
+        .listRowBackground(theme.bg.primary)
     }
 
-    private func isStoppedGroupExpanded(_ group: SessionInboxStoppedGroup) -> Bool {
-        isStoppedDayExpanded(group.id, day: group.day)
-    }
-
-    private func toggleStoppedGroupExpansion(_ group: SessionInboxStoppedGroup) {
-        toggleStoppedDayExpansion(group.id, day: group.day)
+    private func rowActions(itemsById: [String: SessionInboxItem]) -> SessionListRowActions {
+        let item = { (session: Session) in itemsById[session.id] ?? inboxItem(for: session, existing: nil) }
+        return SessionListRowActions(
+            open: { session in item(session).map(openSession) },
+            openThread: { root in
+                guard let activeServerId else { return }
+                applySearchNavigation(.willOpenDestination)
+                navigation.openSessionThread(SessionThreadNavTarget(serverId: activeServerId, rootSessionId: root.id))
+            },
+            stop: { session in
+                guard let item = item(session) else { return }
+                Task { await stopSession(item) }
+            },
+            resume: { session in
+                guard let item = item(session) else { return }
+                Task { await resumeSession(item) }
+            },
+            delete: { session in
+                guard let item = item(session), let routeScope = routeScope(for: session) else { return nil }
+                return {
+                    pendingDelete = SessionInboxPendingDelete(
+                        serverId: item.serverId,
+                        routeScope: routeScope,
+                        session: session
+                    )
+                }
+            }
+        )
     }
 
     private func isStoppedDayExpanded(_ groupID: String, day: Date) -> Bool {
@@ -1115,51 +945,11 @@ struct SessionInboxView: View {
         }
     }
 
-    @ViewBuilder
-    private func sessionSwipeActions(for item: SessionInboxItem) -> some View {
-        if item.session.status == .stopped {
-            Button {
-                Task { await resumeSession(item) }
-            } label: {
-                Label("Resume", systemImage: "play.fill")
-            }
-            .tint(.themeGreen)
-            .accessibilityIdentifier("session.resume.\(item.session.id)")
-
-            if let routeScope = routeScope(for: item.session) {
-                Button(role: SessionDeleteConfirmationPolicy.swipeButtonRole) {
-                    pendingDelete = SessionInboxPendingDelete(
-                        serverId: item.serverId,
-                        routeScope: routeScope,
-                        session: item.session
-                    )
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-                .tint(.themeRed)
-                .accessibilityIdentifier("session.delete.\(item.session.id)")
-            }
-        } else {
-            Button {
-                Task { await stopSession(item) }
-            } label: {
-                Label("Stop", systemImage: "stop.fill")
-            }
-            .tint(.themeOrange)
-            .accessibilityIdentifier("session.stop.\(item.session.id)")
-        }
-    }
-
     private func sessionItems() -> [SessionInboxItem] {
         guard let activeServerId,
               let connection = activeConnection else { return [] }
 
-        let workspaceFilterId = selectedWorkspace?.workspace.id
-        return connection.sessionStore.listProjectionSessions.compactMap { session in
-            if let workspaceFilterId, session.workspaceId != workspaceFilterId {
-                return nil
-            }
-
+        return connection.sessionStore.listProjectionSessions.map { session in
             let workspace = session.workspaceId.flatMap { workspaceId in
                 connection.workspaceStore.workspaces.first { $0.id == workspaceId }
             }
@@ -1188,15 +978,17 @@ struct SessionInboxView: View {
         )
     }
 
-    private func attentionCounts(for item: SessionInboxItem) -> SessionListAttentionCounts {
+    private func attentionCounts(for session: Session) -> SessionListAttentionCounts {
         SessionRowPresentationBuilder.attentionCounts(
-            sessionId: item.session.id,
-            pendingAskCountForSession: { pendingAskCount(for: $0, connection: item.connection) }
+            sessionId: session.id,
+            pendingAskCountForSession: { pendingAskCount(for: $0) }
         )
     }
 
-    private func pendingAskCount(for sessionId: String, connection: ServerConnection) -> Int {
-        SessionListAttentionMerger.askCount(
+    /// All Sessions shows one server, so every row reads the active connection.
+    private func pendingAskCount(for sessionId: String) -> Int {
+        guard let connection = activeConnection else { return 0 }
+        return SessionListAttentionMerger.askCount(
             listCount: connection.sessionStore.listPendingAskCount(for: sessionId),
             hasPendingAsk: connection.askRequestStore.hasPending(for: sessionId),
             hasPendingExtensionDialog: connection.hasPendingExtensionDialog(for: sessionId)
@@ -1204,38 +996,29 @@ struct SessionInboxView: View {
     }
 
     private func rowPresentation(for item: SessionInboxItem) -> SessionRowPresentation {
-        let attention = attentionCounts(for: item)
+        let attention = attentionCounts(for: item.session)
         return SessionRowPresentationBuilder.make(
             session: item.session,
             pendingAskCount: attention.askCount,
             pendingAsk: item.connection.askRequestStore.pending(for: item.session.id),
-            workspaceContext: workspaceContext(for: item),
+            workspaceContext: SessionInboxSessionRouting.allSessionsContext(
+                for: item.session,
+                workspaceName: item.workspace?.name
+            ),
             unreadCompletionAt: item.connection.sessionStore.unreadCompletionDate(for: item.session.id),
             searchSnippet: searchStore.snippetsBySessionId[item.session.id],
             catalogModels: item.connection.chatState.cachedModels
         )
     }
 
-    private func workspaceContext(for item: SessionInboxItem) -> String? {
-        guard selectedWorkspace == nil else { return nil }
-        return SessionInboxSessionRouting.allSessionsContext(
-            for: item.session,
-            workspaceName: item.workspace?.name
-        )
-    }
-
-    private func sessionRowAccessibilityValue(for item: SessionInboxItem) -> String {
-        pendingAskCount(for: item.session.id, connection: item.connection) > 0 ? "Question pending" : ""
-    }
-
     private func openSession(_ item: SessionInboxItem) {
         var normalized = item.session
         if normalized.control == nil,
            normalized.workspaceId == nil || normalized.workspaceId?.isEmpty == true {
-            normalized.workspaceId = item.workspace?.id ?? selectedWorkspace?.workspace.id
+            normalized.workspaceId = item.workspace?.id
         }
         if normalized.workspaceName == nil || normalized.workspaceName?.isEmpty == true {
-            normalized.workspaceName = item.workspace?.name ?? selectedWorkspace?.workspace.name
+            normalized.workspaceName = item.workspace?.name
         }
         guard let routeScope = SessionInboxSessionRouting.routeScope(for: normalized) else {
             error = "Session route is unavailable"
@@ -1245,7 +1028,6 @@ struct SessionInboxView: View {
         item.connection.sessionStore.cacheSessionForNavigation(normalized)
 
         let workspaceTarget = item.workspace.map { WorkspaceNavTarget(serverId: item.serverId, workspace: $0) }
-            ?? selectedWorkspace
         navigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(
                 serverId: item.serverId,
@@ -1317,7 +1099,7 @@ struct SessionInboxView: View {
             ),
             hasActivePlayback: sessionListHasActivePlayback,
             columnWidth: composeBarColumnWidth,
-            onIncognito: inboxIncognitoAction,
+            onIncognito: nil,
             onStart: {
                 startQuickSession(dictate: false)
             },
@@ -1325,36 +1107,18 @@ struct SessionInboxView: View {
                 startQuickSession(dictate: true)
             }
         )
-        .disabled(isCreating)
-        .opacity(isCreating ? 0.55 : 1)
-    }
-
-    private var inboxIncognitoAction: (() -> Void)? {
-        guard selectedWorkspace != nil else { return nil }
-        return {
-            guard let selectedWorkspace else { return }
-            Task { await createSession(in: selectedWorkspace, ephemeral: true) }
-        }
     }
 
     private func startQuickSession(dictate: Bool) {
         if dictate {
             navigation.pendingQuickSessionStartDictation = true
         }
-        if let selectedWorkspace {
-            navigation.pendingQuickSessionLaunchContext = QuickSessionLaunchContext(
-                serverId: selectedWorkspace.serverId,
-                workspaceId: selectedWorkspace.workspace.id,
-                worktreeId: nil
-            )
-        }
         navigation.showQuickSession = true
     }
 
-    private func applyE2ELaunchHintsIfNeeded() async {
+    private func applyE2ELaunchHintsIfNeeded() {
         autoOpenE2EWorkspaceIfRequested()
         autoOpenE2ESessionIfRequested()
-        await autoCreateE2ESessionIfRequested()
     }
 
     private func autoOpenE2EWorkspaceIfRequested() {
@@ -1375,7 +1139,8 @@ struct SessionInboxView: View {
         guard !hasAutoOpenedE2ESession,
               let sessionId = ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_SESSION_ID"],
               !sessionId.isEmpty,
-              selectedWorkspace?.workspace.name == ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_WORKSPACE"],
+              // A requested workspace opens the session from its own list instead.
+              ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] == nil,
               let item = sessionItems().first(where: { $0.session.id == sessionId })
         else { return }
 
@@ -1383,83 +1148,17 @@ struct SessionInboxView: View {
         openSession(item)
     }
 
-    private func autoCreateE2ESessionIfRequested() async {
-        guard !hasAutoCreatedE2ESession,
-              (ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_SESSION_ID"] ?? "").isEmpty,
-              ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_CREATE_SESSION"] == "1",
-              selectedWorkspace?.workspace.name == ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_WORKSPACE"],
-              let selectedWorkspace
-        else { return }
-
-        hasAutoCreatedE2ESession = true
-        await createSession(in: selectedWorkspace)
-    }
-
-    private func createSession(in workspaceTarget: WorkspaceNavTarget, ephemeral: Bool = false) async {
-        guard let connection = coordinator.connection(for: workspaceTarget.serverId),
-              let api = connection.apiClient else {
-            error = "Server is offline — reconnecting in background"
-            return
-        }
-
-        isCreating = true
-        error = nil
-        do {
-            let response = try await api.createWorkspaceSession(
-                workspaceId: workspaceTarget.workspace.id,
-                ephemeral: ephemeral ? true : nil
-            )
-            connection.sessionStore.upsert(response.session)
-            isCreating = false
-            navigation.openWorkspaceSession(
-                WorkspaceSessionNavTarget(
-                    serverId: workspaceTarget.serverId,
-                    sessionId: response.session.id,
-                    workspaceId: workspaceTarget.workspace.id
-                ),
-                workspace: workspaceTarget
-            )
-        } catch {
-            isCreating = false
-            self.error = error.localizedDescription
-        }
-    }
-
     private var inboxFolderButton: some View {
-        let workspaceTarget = selectedWorkspace
-        return SessionInboxFolderToolbarButton(
+        SessionInboxFolderToolbarButton(
             isEnabled: SessionInboxComposeChrome.canOpenFiles(hasServer: activeServerId != nil),
-            accessibilityLabel: workspaceTarget == nil
-                ? "Open server files"
-                : "Open workspace files",
+            accessibilityLabel: "Open server files",
             onOpen: openInboxFiles
         )
     }
 
     private func openInboxFiles() {
-        if let workspaceTarget = selectedWorkspace {
-            let target = FileBrowserNavTarget(
-                serverId: workspaceTarget.serverId,
-                workspaceId: workspaceTarget.workspace.id,
-                path: ""
-            )
-            navigation.openWorkspaceFileBrowser(target, workspace: workspaceTarget)
-            return
-        }
         guard let activeServerId else { return }
         navigation.openWorkspaceFileBrowser(FileBrowserNavTarget.hostHome(serverId: activeServerId))
-    }
-
-    private func workspaceConfigurationButton(_ workspaceTarget: WorkspaceNavTarget) -> some View {
-        Button {
-            navigation.openWorkspaceConfiguration(workspaceTarget)
-        } label: {
-            Image(systemName: "slider.horizontal.3")
-                .symbolRenderingMode(.monochrome)
-        }
-        .foregroundStyle(.themeFg)
-        .accessibilityLabel("Edit workspace")
-        .accessibilityIdentifier("workspace.edit.open")
     }
 }
 

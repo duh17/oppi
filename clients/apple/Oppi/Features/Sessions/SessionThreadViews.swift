@@ -25,7 +25,7 @@ struct SessionThreadStrip: View {
             HStack(spacing: 6) {
                 Image(systemName: "point.3.connected.trianglepath.dotted")
                 Text("Thread")
-                Text("· \(rollup.members.count) sessions")
+                Text(sizeLabel)
                     .fontWeight(.regular)
                     .foregroundStyle(.themeComment)
                 Spacer(minLength: 4)
@@ -81,9 +81,16 @@ struct SessionThreadStrip: View {
         return parts.joined(separator: " · ")
     }
 
+    /// Session count, plus the workspace count when members run in more than one.
+    private var sizeLabel: String {
+        let workspaces = rollup.workspaceCount
+        return "· \(rollup.members.count) sessions" + (workspaces > 1 ? " · \(workspaces) workspaces" : "")
+    }
+
     private var accessibilitySummary: String {
         let question = attentionMember.map { "Question from \($0.displayTitle). " } ?? ""
-        return question + "Thread with \(rollup.descendants.count) child sessions, \(summary)"
+        let workspaces = rollup.workspaceCount > 1 ? " across \(rollup.workspaceCount) workspaces" : ""
+        return question + "Thread with \(rollup.descendants.count) child sessions\(workspaces), \(summary)"
     }
 
 }
@@ -860,8 +867,17 @@ struct SessionThreadDetailView: View {
         ).first
     }
 
+    /// Workspace name for a member that runs outside the root's workspace; nil otherwise.
+    private func foreignWorkspaceName(_ session: Session) -> String? {
+        guard let snapshot, let workspaceId = session.workspaceId,
+              let root = snapshot.sessions.first(where: { $0.id == snapshot.rootSessionId }),
+              let rootWorkspaceId = root.workspaceId, workspaceId != rootWorkspaceId else { return nil }
+        return connection?.workspaceStore.workspaces.first { $0.id == workspaceId }?.name ?? session.workspaceName
+    }
+
     private func outlineSubtitle(_ session: Session) -> String {
         var parts: [String] = []
+        if let workspace = foreignWorkspaceName(session) { parts.append(workspace) }
         parts.append(String(format: "$%.2f", session.cost))
         if let rate = session.tokens.cacheHitRate { parts.append("\(Int((rate * 100).rounded()))% cached") }
         if SessionThreadGrouping.isWorking(session) {

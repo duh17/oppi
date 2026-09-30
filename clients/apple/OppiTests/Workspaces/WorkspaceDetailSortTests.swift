@@ -3,18 +3,52 @@ import SwiftUI
 import Testing
 @testable import Oppi
 
-@Suite("Workspace Detail Your Turn Sorting")
+@Suite("Session list Your Turn sorting")
 struct WorkspaceDetailSortTests {
     private let baseTime = Date(timeIntervalSince1970: 1_700_000_000)
 
+    /// Your Turn rows as every session list sections them.
+    private func yourTurn(
+        _ entries: [SessionListEntry],
+        hasAskInQueue: @escaping (String) -> Bool
+    ) -> [SessionListEntry] {
+        let attention = { (session: Session) in SessionListAttentionCounts(askCount: hasAskInQueue(session.id) ? 1 : 0) }
+        return SessionInboxGrouping.split(
+            items: entries,
+            session: \.representative,
+            attention: { $0.attention(attention) },
+            sectionKind: { $0.sectionKind(attention: attention) }
+        ).yourTurn
+    }
+
+    private func yourTurnSorted(_ sessions: [Session], hasAskInQueue: @escaping (String) -> Bool) -> [Session] {
+        yourTurn(SessionListEntries.flat(sessions), hasAskInQueue: hasAskInQueue).map(\.session)
+    }
+
+    /// A question from a folded child ranks the whole thread like a question on its own row.
+    @Test func threadWithAskingChildSortsAboveOlderPlainRow() {
+        let plain = makeSession(id: "plain", lastActivity: baseTime)
+        let root = makeSession(id: "root", lastActivity: baseTime.addingTimeInterval(60))
+        let child = makeSession(id: "child", parent: "root", lastActivity: baseTime.addingTimeInterval(120))
+        let sessions = [plain, root, child]
+
+        let rows = yourTurn(
+            SessionListEntries.threads(listed: sessions, loaded: sessions),
+            hasAskInQueue: { $0 == "child" }
+        )
+
+        #expect(rows.map(\.id) == ["root", "plain"])
+    }
+
     private func makeSession(
         id: String,
+        parent: String? = nil,
         status: SessionStatus = .ready,
         createdAt: Date? = nil,
         lastActivity: Date? = nil
     ) -> Session {
         let created = createdAt ?? baseTime
-        return Session(
+        var session = Session(
             id: id,
             workspaceId: "ws1",
             workspaceName: "Test",
@@ -27,13 +61,15 @@ struct WorkspaceDetailSortTests {
             tokens: TokenUsage(input: 0, output: 0),
             cost: 0
         )
+        session.parentSessionId = parent
+        return session
     }
 
     @Test func sameTier_olderVisibleActivityComesFirst() {
         let older = makeSession(id: "older", lastActivity: baseTime)
         let newer = makeSession(id: "newer", lastActivity: baseTime.addingTimeInterval(60))
 
-        let sorted = workspaceYourTurnSorted(
+        let sorted = yourTurnSorted(
             [newer, older],
             hasAskInQueue: { _ in false }
         )
@@ -53,7 +89,7 @@ struct WorkspaceDetailSortTests {
             lastActivity: baseTime.addingTimeInterval(30)
         )
 
-        let sorted = workspaceYourTurnSorted(
+        let sorted = yourTurnSorted(
             [createdEarlierButNewerActivity, createdLaterButOlderActivity],
             hasAskInQueue: { _ in false }
         )
@@ -65,7 +101,7 @@ struct WorkspaceDetailSortTests {
         let ask = makeSession(id: "ask", lastActivity: baseTime)
         let plain = makeSession(id: "plain", lastActivity: baseTime.addingTimeInterval(-120))
 
-        let sorted = workspaceYourTurnSorted(
+        let sorted = yourTurnSorted(
             [plain, ask],
             hasAskInQueue: { $0 == "ask" }
         )
@@ -85,7 +121,7 @@ struct WorkspaceDetailSortTests {
             lastActivity: baseTime.addingTimeInterval(30)
         )
 
-        let sorted = workspaceYourTurnSorted(
+        let sorted = yourTurnSorted(
             [newer, older],
             hasAskInQueue: { _ in false }
         )

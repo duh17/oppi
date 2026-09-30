@@ -7,6 +7,7 @@ struct SessionThreadsTests {
     private func session(
         _ id: String,
         parent: String? = nil,
+        workspace: String = "ws",
         status: SessionStatus = .stopped,
         created: TimeInterval,
         last: TimeInterval? = nil,
@@ -14,7 +15,7 @@ struct SessionThreadsTests {
     ) -> Session {
         Session(
             id: id,
-            workspaceId: "ws",
+            workspaceId: workspace,
             name: id,
             status: status,
             createdAt: Date(timeIntervalSince1970: created),
@@ -42,6 +43,53 @@ struct SessionThreadsTests {
         #expect(rollups.map(\.root.id) == ["root", "orphan"])
         #expect(rollups[0].members.map(\.id) == ["root", "child", "grandchild"])
         #expect(rollups[1].members.map(\.id) == ["orphan"])
+    }
+
+    // MARK: List entries
+
+    /// A workspace list: its own sessions are listed, every loaded session feeds the trees.
+    @Test func workspaceListShowsThreadsAtTheirRootAndLinksMembersRootedElsewhere() {
+        let root = session("root", workspace: "a", status: .ready, created: 10)
+        let localChild = session("local-child", parent: "root", workspace: "a", created: 20)
+        let remoteChild = session("remote-child", parent: "root", workspace: "b", status: .busy, created: 30)
+        let remoteGrandchild = session("remote-grandchild", parent: "remote-child", workspace: "b", created: 40)
+        let solo = session("solo", workspace: "b", created: 5)
+        let loaded = [root, localChild, remoteChild, remoteGrandchild, solo]
+
+        let inA = SessionListEntries.threads(listed: [root, localChild], loaded: loaded)
+        #expect(inA.map(\.id) == ["root"], "A listed child folds under its listed root")
+        #expect(inA[0].thread?.members.map(\.id) == ["root", "local-child", "remote-child", "remote-grandchild"])
+        #expect(inA[0].thread?.workspaceCount == 2)
+        #expect(inA[0].outsideRoot == nil)
+
+        let inB = SessionListEntries.threads(listed: [solo, remoteChild, remoteGrandchild], loaded: loaded)
+        #expect(inB.map(\.id) == ["solo", "remote-child", "remote-grandchild"], "Rows keep list order and nothing is hidden")
+        #expect(inB[0].thread == nil && inB[0].outsideRoot == nil)
+        #expect(inB[1].outsideRoot?.id == "root" && inB[1].thread == nil)
+        #expect(inB[2].outsideRoot?.id == "root")
+    }
+
+    @Test func flatListAndAllSessionsNeverLinkOutward() {
+        let root = session("root", workspace: "a", created: 10)
+        let child = session("child", parent: "root", workspace: "b", created: 20)
+
+        let flat = SessionListEntries.flat([root, child])
+        #expect(flat.map(\.id) == ["root", "child"])
+        #expect(flat.allSatisfy { $0.thread == nil && $0.outsideRoot == nil })
+
+        // All Sessions lists every loaded session, so each thread appears once at its root.
+        let all = SessionListEntries.threads(listed: [child, root], loaded: [child, root])
+        #expect(all.map(\.id) == ["root"])
+        #expect(all[0].thread?.workspaceCount == 2)
+    }
+
+    @Test func threadRowSortsByItsLatestMember() {
+        let root = session("root", created: 10, last: 11)
+        let child = session("child", parent: "root", created: 20, last: 90)
+        let entry = SessionListEntries.threads(listed: [root, child], loaded: [])[0]
+
+        #expect(entry.representative.lastActivity == Date(timeIntervalSince1970: 90))
+        #expect(entry.session.lastActivity == Date(timeIntervalSince1970: 11), "The row still shows the root itself")
     }
 
     @Test func parentCycleStillYieldsOneThread() {

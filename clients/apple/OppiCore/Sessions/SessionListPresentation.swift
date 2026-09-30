@@ -88,28 +88,8 @@ enum SessionListPresentation {
         }
     }
 
-    static func sortYourTurn(
-        _ sessions: [Session],
-        attention: (String) -> SessionListAttentionCounts
-    ) -> [Session] {
-        sessions.sorted { lhs, rhs in
-            compareYourTurn(lhs, rhs, attention: attention)
-        }
-    }
-
-    static func compareYourTurn(
-        _ lhs: Session,
-        _ rhs: Session,
-        attention: (String) -> SessionListAttentionCounts
-    ) -> Bool {
-        compareYourTurn(
-            lhs,
-            lhsAttention: attention(lhs.id),
-            rhs,
-            rhsAttention: attention(rhs.id)
-        )
-    }
-
+    /// Your Turn order: questions first, then the oldest visible activity, the
+    /// same timestamp the row shows.
     static func compareYourTurn(
         _ lhs: Session,
         lhsAttention: SessionListAttentionCounts,
@@ -129,10 +109,6 @@ enum SessionListPresentation {
     /// live row id, or Stop flies the same cell from Your Turn / Working.
     static func stoppedRowID(_ rowID: String) -> String {
         "stopped:\(rowID)"
-    }
-
-    static func sortWorking(_ sessions: [Session]) -> [Session] {
-        sessions.sorted(by: compareWorking)
     }
 
     static func compareWorking(_ lhs: Session, _ rhs: Session) -> Bool {

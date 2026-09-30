@@ -190,12 +190,6 @@ struct SessionListSearchNavigationPersistenceTests {
         #expect(inbox.contains("inboxSessionSearch"))
         #expect(workspace.contains("workspaceSessionSearchByID"))
         #expect(inbox.contains(".onChange(of: activeServerId)"))
-        let hostTask = try sourceSlice(
-            inbox,
-            start: ".task(id: activeServerId) {",
-            end: ".task(id: selectedWorkspace?.workspace.id)"
-        )
-        #expect(!hostTask.contains("resetLocalHostState"))
         #expect(inbox.contains("applySearchNavigation(.searchTextChanged"))
         #expect(inbox.contains("applySearchNavigation(.searchPresentationChanged"))
         #expect(inbox.contains("restoreSearchAfterCoverageChange()"))

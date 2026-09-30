@@ -286,16 +286,6 @@ struct SessionInboxComposeChromeTests {
         let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
         let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
         let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
-        let inboxBar = try sourceSlice(
-            inbox,
-            start: "private var compactQuickSessionBar: some View {",
-            end: "private var inboxIncognitoAction"
-        )
-        let workspaceBar = try sourceSlice(
-            workspace,
-            start: "private var compactQuickSessionBar: some View {",
-            end: "private func startQuickSession(dictate: Bool)"
-        )
 
         #expect(chrome.contains("static func expandsMessageCapsule("))
         #expect(chrome.contains("static func messageCapsuleMinWidth("))
@@ -305,10 +295,6 @@ struct SessionInboxComposeChromeTests {
         #expect(chrome.contains("width: minWidth"))
         #expect(!chrome.contains("Spacer(minLength:"))
         #expect(!chrome.contains(".infinity"))
-        #expect(inboxBar.contains("hasActivePlayback: sessionListHasActivePlayback"))
-        #expect(inboxBar.contains("columnWidth: composeBarColumnWidth"))
-        #expect(workspaceBar.contains("hasActivePlayback: connection.audioPlayer.hasActivePlayback"))
-        #expect(workspaceBar.contains("columnWidth: composeBarColumnWidth"))
         #expect(inbox.contains("ToolbarSpacer(.flexible, placement: .bottomBar)"))
         #expect(workspace.contains("ToolbarSpacer(.flexible, placement: .bottomBar)"))
         #expect(!inbox.contains("ToolbarSpacer(.fixed, placement: .bottomBar)"))
@@ -373,27 +359,6 @@ struct SessionInboxSearchScopeTests {
     @Test func workspaceListSearchKeepsWorkspaceId() {
         #expect(SessionInboxSearchScope.workspaceId(scopedTo: "ws-1") == "ws-1")
         #expect(SessionInboxSearchScope.workspaceId(scopedTo: "  ws-1  ") == "ws-1")
-    }
-
-    @Test func workspaceScopeChangeRefreshesTheCurrentSearch() throws {
-        let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
-        let observer = try sourceSlice(
-            inbox,
-            start: ".onChange(of: selectedWorkspace?.workspace.id)",
-            end: ".toolbar { toolbarContent }"
-        )
-        #expect(observer.contains("refreshSearch()"))
-        let refresh = try sourceSlice(inbox, start: "private func refreshSearch()", end: "private var")
-        #expect(refresh.contains("query: searchText"))
-        #expect(refresh.contains("scopedTo: selectedWorkspace?.workspace.id"))
-    }
-
-    @Test func listsPassSearchScopeIntoTheStore() throws {
-        let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
-        let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
-        #expect(inbox.contains("SessionInboxSearchScope.workspaceId("))
-        #expect(inbox.contains("scopedTo: selectedWorkspace?.workspace.id"))
-        #expect(workspace.contains("SessionInboxSearchScope.workspaceId(scopedTo: workspace.id)"))
     }
 }
 

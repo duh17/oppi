@@ -1,21 +1,5 @@
 import SwiftUI
 
-/// Sort "Your Turn" sessions so the user sees the oldest waiting item first.
-///
-/// Priority remains ask/input requests before plain ready/error sessions.
-/// Within the same priority tier, use the same timestamp shown in the row
-/// (`lastActivity`) so the visual order matches the visible "xh ago" label.
-func workspaceYourTurnSorted(
-    _ sessions: [Session],
-    hasAskInQueue: (String) -> Bool
-) -> [Session] {
-    SessionListPresentation.sortYourTurn(sessions) { sessionId in
-        SessionListAttentionCounts(
-            askCount: hasAskInQueue(sessionId) ? 1 : 0
-        )
-    }
-}
-
 typealias WorkspaceRefreshPollingPolicy = SessionListRefreshPollingPolicy
 
 /// Detail view for a workspace — shows its sessions with management actions.
@@ -270,25 +254,35 @@ struct WorkspaceDetailView: View {
     // MARK: - Body
 
     private struct ViewData {
-        let yourTurnRoots: [Session]
-        let workingRoots: [Session]
-        let stoppedRoots: [Session]
+        let yourTurn: [SessionListEntry]
+        let working: [SessionListEntry]
+        let stopped: [SessionListEntry]
         let localFiltered: [LocalSession]
-        let searchMatches: [Session]
+        let searchMatches: [SessionListEntry]
         let wsEmpty: Bool
     }
 
-    /// Classify a session into Your Turn / Working / Stopped.
-    ///
-    /// Shared with workspace overview previews so attention, idle drafts,
-    /// and terminal states move through the same rules.
-    private func classifySession(_ session: Session) -> SessionListActiveSectionKind? {
-        let attention = SessionRowPresentationBuilder.attentionCounts(
+    private func attentionCounts(for session: Session) -> SessionListAttentionCounts {
+        SessionRowPresentationBuilder.attentionCounts(
             sessionId: session.id,
             pendingAskCountForSession: { pendingAskCount(for: $0) }
         )
+    }
 
-        return SessionListPresentation.activeSectionKind(for: session, attention: attention)
+    /// An older-history bucket threads only within itself, so a thread never
+    /// claims recent sessions that already have their own rows above.
+    private func archiveEntries(for bucket: WorkspaceSessionArchiveBucket) -> [SessionListEntry] {
+        let sessions = archiveStoppedSessions(for: bucket)
+        guard navigation.inboxListMode == .threads else { return SessionListEntries.flat(sessions) }
+        return SessionListEntries.threads(listed: sessions, loaded: sessions)
+    }
+
+    /// This list's sessions in the Settings layout. Threads are built over every
+    /// loaded session so a thread keeps members from other workspaces and
+    /// worktrees; a session whose root is elsewhere links to it.
+    private func entries(for listed: [Session]) -> [SessionListEntry] {
+        guard navigation.inboxListMode == .threads else { return SessionListEntries.flat(listed) }
+        return SessionListEntries.threads(listed: listed, loaded: sessionStore.listProjectionSessions)
     }
 
     private var selectedWorktree: WorkspaceWorktree? {
@@ -389,18 +383,6 @@ struct WorkspaceDetailView: View {
     private var viewData: ViewData {
         let startNs = SessionListPerf.timestampNs()
 
-        var yourTurnUnfiltered: [Session] = []
-        var workingUnfiltered: [Session] = []
-        var stoppedUnfiltered: [Session] = []
-
-        for session in workspaceSessions {
-            switch classifySession(session) {
-            case .yourTurn: yourTurnUnfiltered.append(session)
-            case .working: workingUnfiltered.append(session)
-            case nil: stoppedUnfiltered.append(session)
-            }
-        }
-
         if let matches = SessionListSearchPresentation.flattenedMatches(
             localSessions: workspaceSessions,
             query: sessionSearchText,
@@ -418,39 +400,34 @@ struct WorkspaceDetailView: View {
                 workspaceId: workspace.id
             )
             return ViewData(
-                yourTurnRoots: [],
-                workingRoots: [],
-                stoppedRoots: [],
+                yourTurn: [],
+                working: [],
+                stopped: [],
                 localFiltered: filteredLocalSessions,
-                searchMatches: searchMatches,
+                searchMatches: SessionListEntries.flat(searchMatches),
                 wsEmpty: workspaceSessions.isEmpty && filteredLocalSessions.isEmpty && searchMatches.isEmpty
             )
         }
 
-        // Your Turn: keep user-input priorities, then oldest visible activity first.
-        let yourTurnRoots = workspaceYourTurnSorted(
-            yourTurnUnfiltered,
-            hasAskInQueue: { pendingAskCount(for: $0) > 0 }
+        // Same sections and order as All Sessions; stopped history keeps this list's day/month grouping.
+        let split = SessionInboxGrouping.split(
+            items: entries(for: workspaceSessions),
+            session: \.representative,
+            attention: { $0.attention(attentionCounts(for:)) },
+            sectionKind: { $0.sectionKind(attention: attentionCounts(for:)) }
         )
 
-        // Working: sort newest first
-        let workingRoots = SessionListPresentation.sortWorking(workingUnfiltered)
-
-        // Stopped: most recently stopped first
-        let stoppedRoots = stoppedUnfiltered.sorted { $0.lastActivity > $1.lastActivity }
-
-        let activeCount = yourTurnRoots.count + workingRoots.count
         SessionListPerf.recordViewDataCompute(
             startNs: startNs,
-            activeCount: activeCount,
-            stoppedCount: stoppedRoots.count,
+            activeCount: split.yourTurn.count + split.working.count,
+            stoppedCount: split.stopped.count,
             workspaceId: workspace.id
         )
 
         return ViewData(
-            yourTurnRoots: yourTurnRoots,
-            workingRoots: workingRoots,
-            stoppedRoots: stoppedRoots,
+            yourTurn: split.yourTurn,
+            working: split.working,
+            stopped: split.stopped,
             localFiltered: filteredLocalSessions,
             searchMatches: [],
             wsEmpty: workspaceSessions.isEmpty
@@ -491,8 +468,8 @@ struct WorkspaceDetailView: View {
                 } else {
                     if !data.searchMatches.isEmpty {
                         Section("Results") {
-                            ForEach(data.searchMatches) { session in
-                                searchResultRow(for: session)
+                            ForEach(data.searchMatches) { entry in
+                                entryRow(entry)
                             }
                         }
                     }
@@ -512,55 +489,40 @@ struct WorkspaceDetailView: View {
                     }
                 }
             } else {
-                if !data.yourTurnRoots.isEmpty {
-                    Section("Your Turn") {
-                        ForEach(data.yourTurnRoots) { session in
-                            liveSessionNavigationRow(for: session) {
-                                sessionSwipeActions(for: session)
-                            }
+                if !data.yourTurn.isEmpty {
+                    Section(SessionInboxSectionTitle.yourTurn) {
+                        ForEach(data.yourTurn) { entry in
+                            entryRow(entry)
                         }
                     }
                 }
 
-                if !data.workingRoots.isEmpty {
-                    Section("Working") {
-                        ForEach(data.workingRoots) { session in
-                            liveSessionNavigationRow(for: session) {
-                                sessionSwipeActions(for: session)
-                            }
+                if !data.working.isEmpty {
+                    Section(SessionInboxSectionTitle.working) {
+                        ForEach(data.working) { entry in
+                            entryRow(entry)
                         }
                     }
                 }
 
                 WorkspaceStoppedSessionsSection(
-                    stoppedSessions: data.stoppedRoots,
+                    stoppedEntries: data.stopped,
                     localSessions: data.localFiltered,
                     hasSearchQuery: false,
                     isImportingLocal: isImportingLocal,
-                    sessionPresentation: { session in
-                        rowPresentation(for: session)
-                    },
-                    onOpenSession: { session in
-                        openSession(session)
-                    },
-                    onResumeSession: { session in
-                        Task { await resumeSession(session) }
-                    },
-                    onDeleteSession: { session in
-                        pendingDeleteSession = session
-                    },
                     onImportLocal: { local in
                         Task { await importAndResumeLocal(local) }
                     },
                     expandedGroupIDs: $expandedStoppedGroupIDs,
                     collapsedGroupIDs: $collapsedStoppedGroupIDs,
                     archiveBuckets: archiveBuckets,
-                    archiveStoppedSessions: archiveStoppedSessions(for:),
+                    archiveStoppedEntries: archiveEntries(for:),
                     archiveLocalSessions: archiveLocalSessions(for:),
                     loadingArchiveBucketIDs: loadingArchiveBucketIDs,
                     onExpandArchiveBucket: { bucket in
                         Task { await ensureArchiveBucketLoaded(bucket) }
-                    }
+                    },
+                    entryRow: entryRow
                 )
 
                 if data.wsEmpty {
@@ -741,105 +703,54 @@ struct WorkspaceDetailView: View {
         })
     }
 
-    @ViewBuilder
-    private func searchResultRow(for session: Session) -> some View {
-        liveSessionNavigationRow(for: session) {
-            sessionSwipeActions(for: session)
-        }
+    private func entryRow(_ entry: SessionListEntry) -> some View {
+        SessionListEntryRow(
+            entry: entry,
+            presentation: rowPresentation(for:),
+            hasPendingAsk: { pendingAskCount(for: $0.id) > 0 },
+            foreignWorkspaceName: foreignWorkspaceName(for:),
+            actions: rowActions
+        )
+        .themedListRowBackground()
     }
 
-    /// Live/search rows use a tap recognizer instead of Button so a trailing
-    /// Stop swipe does not also open the session. Stopped rows stay as Button.
-    @ViewBuilder
-    private func liveSessionNavigationRow<Trailing: View>(
-        for session: Session,
-        @ViewBuilder trailingSwipeActions: () -> Trailing
-    ) -> some View {
-        sessionRow(for: session)
-            .contentShape(Rectangle())
-            // A plain Button can still commit after a horizontal drag loses to
-            // the List's swipe recognizer. Use an actual tap recognizer so row
-            // navigation fails as soon as either swipe direction becomes a drag.
-            .onTapGesture {
-                openSession(session)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction {
-                openSession(session)
-            }
-            .accessibilityIdentifier("session.nav.\(session.id)")
-            .accessibilityValue(sessionRowAccessibilityValue(for: session))
-            .themedListRowBackground()
-            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                trailingSwipeActions()
-            }
+    private var rowActions: SessionListRowActions {
+        SessionListRowActions(
+            open: openSession,
+            openThread: { root in
+                guard let currentServerId else { return }
+                applySearchNavigation(.willOpenDestination)
+                navigation.openSessionThread(SessionThreadNavTarget(serverId: currentServerId, rootSessionId: root.id))
+            },
+            stop: { session in Task { await stopSession(session) } },
+            resume: { session in Task { await resumeSession(session) } },
+            delete: { session in { pendingDeleteSession = session } }
+        )
     }
 
-    @ViewBuilder
-    private func sessionSwipeActions(for session: Session) -> some View {
-        if session.status == .stopped {
-            Button {
-                Task { await resumeSession(session) }
-            } label: {
-                Label("Resume", systemImage: "play.fill")
-            }
-            .tint(.themeGreen)
-            .accessibilityIdentifier("session.resume.\(session.id)")
-
-            Button(role: SessionDeleteConfirmationPolicy.swipeButtonRole) {
-                pendingDeleteSession = session
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-            .tint(.themeRed)
-            .accessibilityIdentifier("session.delete.\(session.id)")
-        } else {
-            Button {
-                Task { await stopSession(session) }
-            } label: {
-                Label("Stop", systemImage: "stop.fill")
-            }
-            .accessibilityIdentifier("session.stop.\(session.id)")
-            .tint(.themeOrange)
-        }
+    /// Workspace name for a session that runs in another workspace; this list's own workspace is implied.
+    private func foreignWorkspaceName(for session: Session) -> String? {
+        guard let workspaceId = session.workspaceId, workspaceId != workspace.id else { return nil }
+        return workspaceStore.workspaces.first { $0.id == workspaceId }?.name ?? session.workspaceName
     }
 
-    /// Build a SessionRow with shared presentation inputs for the given session.
-    @ViewBuilder
-    private func sessionRow(for session: Session) -> some View {
+    private func rowPresentation(for session: Session) -> SessionRowPresentation {
         let rowStartNs = SessionListPerf.timestampNs()
-        let presentation = rowPresentation(for: session)
-        let rowMs = Int((SessionListPerf.timestampNs() &- rowStartNs) / 1_000_000)
-        let _ = SessionListPerf.recordRowCompute(
-            durationMs: rowMs,
-            rowCount: 1,
-            workspaceId: workspace.id
-        )
-        SessionRow(presentation: presentation)
-    }
-
-    private func rowPresentation(
-        for session: Session,
-        lineageHint: String? = nil
-    ) -> SessionRowPresentation {
-        let attention = SessionRowPresentationBuilder.attentionCounts(
-            sessionId: session.id,
-            pendingAskCountForSession: { pendingAskCount(for: $0) }
-        )
-        return SessionRowPresentationBuilder.make(
+        let attention = attentionCounts(for: session)
+        let presentation = SessionRowPresentationBuilder.make(
             session: session,
             pendingAskCount: attention.askCount,
             pendingAsk: askRequestStore.pending(for: session.id),
-            lineageHint: lineageHint,
             unreadCompletionAt: sessionStore.unreadCompletionDate(for: session.id),
             searchSnippet: searchStore.snippetsBySessionId[session.id],
             catalogModels: connection.chatState.cachedModels
         )
-    }
-
-    private func sessionRowAccessibilityValue(for session: Session) -> String {
-        pendingAskCount(for: session.id) > 0 ? "Question pending" : ""
+        SessionListPerf.recordRowCompute(
+            durationMs: Int((SessionListPerf.timestampNs() &- rowStartNs) / 1_000_000),
+            rowCount: 1,
+            workspaceId: workspace.id
+        )
+        return presentation
     }
 
     private func pendingAskCount(for sessionId: String) -> Int {

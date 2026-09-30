@@ -21,7 +21,6 @@ struct SessionRow: View {
     let session: Session
     let pendingAskCount: Int
     let attentionText: String?
-    let lineageHint: String?
     let workspaceContext: String?
     let modelSummaries: [SessionModelSummary]
     let unreadCompletionAt: Date?
@@ -31,7 +30,6 @@ struct SessionRow: View {
         session: Session,
         pendingAskCount: Int = 0,
         attentionText: String? = nil,
-        lineageHint: String? = nil,
         workspaceContext: String? = nil,
         modelSummaries: [SessionModelSummary] = [],
         unreadCompletionAt: Date? = nil,
@@ -40,7 +38,6 @@ struct SessionRow: View {
         self.session = session
         self.pendingAskCount = pendingAskCount
         self.attentionText = attentionText
-        self.lineageHint = lineageHint
         self.workspaceContext = workspaceContext
         self.modelSummaries = modelSummaries
         self.unreadCompletionAt = unreadCompletionAt
@@ -52,7 +49,6 @@ struct SessionRow: View {
             session: presentation.session,
             pendingAskCount: presentation.pendingAskCount,
             attentionText: presentation.attentionText,
-            lineageHint: presentation.lineageHint,
             workspaceContext: presentation.workspaceContext,
             modelSummaries: presentation.modelSummaries,
             unreadCompletionAt: presentation.unreadCompletionAt,
@@ -139,14 +135,6 @@ struct SessionRow: View {
                     if display.showsTime {
                         timeLabel
                     }
-                }
-
-                // Row 1.5: lineage hint (stopped sessions only)
-                if let lineageHint, !lineageHint.isEmpty {
-                    Text(lineageHint)
-                        .font(.caption)
-                        .foregroundStyle(.themeFgDim)
-                        .lineLimit(1)
                 }
 
                 // Row 1.75: search snippet (when searching)

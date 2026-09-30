@@ -85,7 +85,17 @@ struct SessionInboxSections<Item> {
     }
 }
 
-/// Shared inbox sectioning for iOS and Mac home lists.
+/// Your Turn, Working, and every stopped item, each sorted. Lists group the
+/// stopped items their own way: the inbox by recent day, a workspace by day
+/// and month.
+struct SessionListSplit<Item> {
+    var yourTurn: [Item]
+    var working: [Item]
+    /// Most recent first.
+    var stopped: [Item]
+}
+
+/// Shared session-list sectioning for iOS and Mac lists.
 enum SessionInboxGrouping {
     static func make<Item>(
         items: [Item],
@@ -95,24 +105,40 @@ enum SessionInboxGrouping {
         attention: (Item) -> SessionListAttentionCounts,
         sectionKind: ((Item) -> SessionListActiveSectionKind?)? = nil
     ) -> SessionInboxSections<Item> {
+        let split = split(items: items, session: session, attention: attention, sectionKind: sectionKind)
+        return SessionInboxSections(
+            yourTurn: split.yourTurn,
+            working: split.working,
+            stoppedGroups: SessionInboxStoppedDayPolicy.groups(
+                split.stopped.filter { SessionInboxStoppedDayPolicy.includesStoppedSession(session($0)) },
+                now: now,
+                calendar: calendar,
+                activityDate: { session($0).lastActivity }
+            )
+        )
+    }
+
+    static func split<Item>(
+        items: [Item],
+        session: (Item) -> Session,
+        attention: (Item) -> SessionListAttentionCounts,
+        sectionKind: ((Item) -> SessionListActiveSectionKind?)? = nil
+    ) -> SessionListSplit<Item> {
         var yourTurn: [Item] = []
         var working: [Item] = []
         var stopped: [Item] = []
 
         for item in items {
-            let sessionValue = session(item)
             // Threads classify by every member; plain rows by their own session.
             let kind = sectionKind.map { $0(item) }
-                ?? SessionListPresentation.activeSectionKind(for: sessionValue, attention: attention(item))
+                ?? SessionListPresentation.activeSectionKind(for: session(item), attention: attention(item))
             switch kind {
             case .yourTurn:
                 yourTurn.append(item)
             case .working:
                 working.append(item)
             case nil:
-                if SessionInboxStoppedDayPolicy.includesStoppedSession(sessionValue) {
-                    stopped.append(item)
-                }
+                stopped.append(item)
             }
         }
 
@@ -134,15 +160,6 @@ enum SessionInboxGrouping {
             return lhs.id < rhs.id
         }
 
-        return SessionInboxSections(
-            yourTurn: yourTurn,
-            working: working,
-            stoppedGroups: SessionInboxStoppedDayPolicy.groups(
-                stopped,
-                now: now,
-                calendar: calendar,
-                activityDate: { session($0).lastActivity }
-            )
-        )
+        return SessionListSplit(yourTurn: yourTurn, working: working, stopped: stopped)
     }
 }

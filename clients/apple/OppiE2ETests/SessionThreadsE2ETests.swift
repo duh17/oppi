@@ -26,6 +26,13 @@ final class SessionThreadsE2ETests: E2ETestCase {
     /// prompt would have refreshed its activity.
     nonisolated private static let archivedCounterpartKey = "synthetic-archived-counterpart"
     nonisolated private static let archivedCounterpartName = "Archived Markdown resource review"
+    /// Root of a stopped two-session thread in "oppi" (Daily upstream mirror sync).
+    nonisolated private static let mirrorRootKey = "8bac488b-aa9a-416c-bddd-921a9c51ad8d"
+    private static let mirrorChildKey = "2549460f-9896-478b-a1b5-bff6afce5e01"
+    /// Synthetic: an idle child of the mirror thread launched into another workspace,
+    /// so the thread spans two workspaces. Idle keeps it out of Outline's finished fold.
+    nonisolated private static let crossWorkspaceChildKey = "synthetic-cross-workspace-child"
+    nonisolated private static let crossWorkspaceName = "kypu"
 
     override var e2eLaunchesSessionsInboxOnly: Bool { true }
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
@@ -54,6 +61,20 @@ final class SessionThreadsE2ETests: E2ETestCase {
             "cost": 3.2,
             "messageCount": 40,
         ])
+        // Only the cross-workspace test gets the extra workspace and session, so
+        // every other test replays the captured snapshot unchanged.
+        if name.contains("testWorkspaceListsShareLayoutAndMarkCrossWorkspaceThreads") { sessions.append([
+            "key": Self.crossWorkspaceChildKey,
+            "parentKey": Self.mirrorRootKey,
+            "name": "Kypu mirror follow-up",
+            "status": "ready",
+            "workspaceName": Self.crossWorkspaceName,
+            "createdAtOffsetMs": -9_000_000,
+            "lastActivityOffsetMs": -8_600_000,
+            "model": "xai/grok-4.6",
+            "cost": 0.42,
+            "messageCount": 12,
+        ]) }
         interactions.append([
             "fromKey": Self.orchestratorKey,
             "toKey": Self.archivedCounterpartKey,
@@ -553,6 +574,83 @@ final class SessionThreadsE2ETests: E2ETestCase {
         try closeRowEditor("done")
         XCTAssertTrue(reveal(rootBody, in: inbox))
         XCTAssertTrue(rootBody.label.contains(rootCost), "Restored defaults did not return Cost: \(rootBody.label)")
+    }
+
+    /// Workspace lists follow the same Layout as All Sessions. A thread is listed once, in its
+    /// root's workspace, and says how many workspaces it spans; its member in another workspace
+    /// stays a row there with an In thread link that opens the same thread, whose Outline names
+    /// that workspace. Flat List lists the child in the root's workspace again.
+    func testWorkspaceListsShareLayoutAndMarkCrossWorkspaceThreads() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let root = try id(Self.mirrorRootKey)
+        let localChild = try id(Self.mirrorChildKey)
+        let remoteChild = try id(Self.crossWorkspaceChildKey)
+        let inbox = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
+        try setInboxLayout("Threads")
+
+        // All Sessions: one thread row that names both workspaces.
+        let inboxStrip = app.buttons["thread.nav.\(root)"]
+        XCTAssertTrue(reveal(inboxStrip, in: inbox, timeout: 20), "Mirror thread strip missing from All Sessions")
+        XCTAssertTrue(inboxStrip.label.contains("across 2 workspaces"), inboxStrip.label)
+        XCTAssertFalse(app.buttons["session.nav.\(remoteChild)"].exists, "All Sessions must fold the remote child")
+
+        // Root's workspace: the same thread row; its local child folds under it.
+        let oppiList = try openWorkspaceList("oppi")
+        let workspaceStrip = app.buttons["thread.nav.\(root)"]
+        XCTAssertTrue(reveal(workspaceStrip, in: oppiList, timeout: 20), "Workspace list did not draw the Thread strip")
+        XCTAssertTrue(workspaceStrip.label.contains("across 2 workspaces"), workspaceStrip.label)
+        XCTAssertFalse(
+            reveal(app.buttons["session.nav.\(localChild)"], in: oppiList, timeout: 3),
+            "Threads layout must fold the child in its root's workspace"
+        )
+        try returnToInbox()
+
+        // Other workspace: the child stays a row, linked to the thread by name and workspace.
+        let kypuList = try openWorkspaceList(Self.crossWorkspaceName)
+        let remoteRow = app.buttons["session.nav.\(remoteChild)"]
+        XCTAssertTrue(reveal(remoteRow, in: kypuList, timeout: 20), "Remote child row missing from its own workspace")
+        let link = app.buttons["thread.link.\(remoteChild)"]
+        XCTAssertTrue(link.exists, "Remote child has no In thread link")
+        XCTAssertTrue(link.label.contains("Daily upstream mirror sync") && link.label.contains("oppi"), link.label)
+        XCTAssertFalse(app.buttons["thread.nav.\(root)"].exists, "The thread must not be drawn twice")
+
+        link.tap()
+        XCTAssertTrue(app.staticTexts["thread.title"].waitForExistence(timeout: 15), "In thread link did not open Thread detail")
+        showOutline()
+        let detail = app.collectionViews["thread.detail"]
+        let outlineRow = app.buttons["thread.row.\(remoteChild)"]
+        XCTAssertTrue(reveal(outlineRow, in: detail), "Remote child missing from the Outline")
+        XCTAssertTrue(outlineRow.label.contains(Self.crossWorkspaceName), "Outline should name the other workspace: \(outlineRow.label)")
+        let rootRow = app.buttons["thread.row.\(root)"]
+        XCTAssertTrue(reveal(rootRow, in: detail))
+        XCTAssertFalse(rootRow.label.contains("oppi"), "The root's own workspace is not repeated: \(rootRow.label)")
+        try returnToInbox()
+
+        // Flat List reaches workspace lists too.
+        try setInboxLayout("Flat List")
+        let flatList = try openWorkspaceList("oppi")
+        XCTAssertTrue(
+            reveal(app.buttons["session.nav.\(localChild)"], in: flatList, timeout: 20),
+            "Flat List should list the child in the workspace list"
+        )
+        XCTAssertFalse(app.buttons["thread.nav.\(root)"].exists, "Flat List draws no Thread strip")
+        try returnToInbox()
+        try setInboxLayout("Threads")
+    }
+
+    /// Opens a workspace's session list from the sidebar with its stopped groups expanded.
+    private func openWorkspaceList(_ name: String) throws -> XCUIElement {
+        app.buttons["workspace.sidebar.open"].tap()
+        XCTAssertTrue(revealWorkspace(named: name), "Workspace \(name) missing from the sidebar")
+        app.buttons["workspace.open.\(name)"].coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.50)).tap()
+        let list = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(
+            app.buttons["workspace.edit.open"].waitForExistence(timeout: 20) && list.waitForExistence(timeout: 20),
+            "Workspace \(name) list did not open"
+        )
+        expandStoppedGroups(in: list, headerPrefix: "workspace.stoppedGroup.")
+        return list
     }
 
     /// Row appearance saved in the editor also drives the workspace list's stopped-history rows.
