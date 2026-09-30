@@ -179,20 +179,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     /// Owns the expanded Markdown viewport (live and completed); the row mounts
     /// it through `expandedSurfaceHostView` and forwards layout and scroll events.
     let markdownSurface: ToolExpandedMarkdownSurface
-    private let expandedReadMediaContainer = UIView()
+    /// Owns the hosted media and document viewport (read-media, voice message,
+    /// CSV/TSV table, GeoJSON/TopoJSON map); mounted through whichever host
+    /// view the surface policy selects.
+    let hostedSurface: ToolExpandedHostedSurface
     private let imagePreviewContainer = UIView()
     private let imagePreviewImageView = UIImageView()
     private let borderView = UIView()
-
-    // MARK: - Mirror-reflection forwarding for test compatibility
-    // These lazy stored properties alias BashToolRowView's internal surfaces.
-    // Stored (not computed) so Mirror(reflecting: self).children finds them by name.
-
-    private lazy var commandContainer: UIView = bashToolRowView.commandContainer
-    private lazy var outputContainer: UIView = bashToolRowView.outputContainer
-    private lazy var outputScrollView: HorizontalPanPassthroughScrollView = bashToolRowView.outputScrollView
-    private lazy var commandLabel: UITextView = bashToolRowView.commandLabel
-    private lazy var outputLabel: UITextView = bashToolRowView.outputLabel
 
     private var currentConfiguration: ToolTimelineRowConfiguration
     private var currentInteractionPolicy: ToolTimelineRowInteractionPolicy?
@@ -201,7 +194,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var expandedViewportHeightConstraint: NSLayoutConstraint?
     private var expandedLabelWidthConstraint: NSLayoutConstraint?
     private var expandedLabelHeightLockConstraint: NSLayoutConstraint?
-    private var expandedReadMediaWidthConstraint: NSLayoutConstraint?
     private var imagePreviewHeightConstraint: NSLayoutConstraint?
     private var toolLeadingConstraint: NSLayoutConstraint?
     private var toolWidthConstraint: NSLayoutConstraint?
@@ -210,10 +202,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     var expandedShouldAutoFollow = true
     var expandedRenderSignature: Int?
     private var expandedUsesViewport = false
-    var expandedUsesReadMediaLayout = false
-    private var expandedReadMediaContentView: UIView?
     private var activeExpandedViewportPolicy: ToolRowViewportPolicy?
-    private var expandedReadMediaViewportHeightConstraint: NSLayoutConstraint?
     /// Tracks which base64 image is currently being decoded / displayed.
     private var imagePreviewDecodedKey: String?
     private var imagePreviewDecodeTask: Task<Void, Never>?
@@ -267,6 +256,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     init(configuration: ToolTimelineRowConfiguration) {
         self.currentConfiguration = configuration
         self.markdownSurface = ToolExpandedMarkdownSurface(viewport: expandedScrollView)
+        self.hostedSurface = ToolExpandedHostedSurface(viewport: expandedScrollView)
         self.fullScreenTerminalStream = TerminalTraceStream(
             output: configuration.copyOutputText ?? "",
             command: configuration.copyCommandText,
@@ -361,7 +351,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     override func updateConstraints() {
-        updateExpandedReadMediaWidthIfNeeded()
+        hostedSurface.updateWidthPriority()
         markdownSurface.updateCompletedWidthPriority()
         super.updateConstraints()
     }
@@ -378,24 +368,19 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         bashToolRowView.updateOutputLabelWidthIfNeeded()
         updateExpandedLabelWidthIfNeeded()
         updateExpandedMarkdownWidthIfNeeded()
-        updateExpandedReadMediaWidthIfNeeded()
+        hostedSurface.updateWidthPriority()
         updateViewportHeightsIfNeeded()
-        ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(outputScrollView)
+        ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(bashToolRowView.outputScrollView)
         ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(expandedScrollView)
-        if expandedUsesReadMediaLayout {
-            let pinnedX = -expandedScrollView.adjustedContentInset.left
-            if abs(expandedScrollView.contentOffset.x - pinnedX) > 0.5 {
-                expandedScrollView.contentOffset.x = pinnedX
-            }
-        }
+        hostedSurface.pinViewportHorizontalOffset()
 
         // Deferred follow-tail: settle the inner scroll view's content size,
         // then scroll to the bottom. A plain scrollToBottom() here can lag one
         // update behind because UITextView contentSize has not necessarily
         // caught up to the newly assigned text yet.
         if expandedPendingScrollToBottom {
-            let contentView: UIView = expandedUsesReadMediaLayout
-                ? expandedReadMediaContainer
+            let contentView: UIView = hostedSurface.isActive
+                ? hostedSurface.container
                 : (markdownSurface.followTailTarget ?? expandedLabel)
             expandedPendingScrollToBottom = false
             ToolTimelineRowUIHelpers.followTail(
@@ -449,7 +434,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                         mode: mode,
                         expandedScrollView: self.expandedScrollView,
                         expandedLabelWidthConstraint: self.expandedLabelWidthConstraint,
-                        outputScrollView: self.outputScrollView,
+                        outputScrollView: self.bashToolRowView.outputScrollView,
                         outputUsesUnwrappedLayout: self.bashToolRowView.outputUsesUnwrappedLayout,
                         outputLabelWidthConstraint: self.bashToolRowView.outputLabelWidthConstraint,
                         geometry: geometry
@@ -546,12 +531,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func measuredHostedReadMediaHeight(minHeight: CGFloat, maxHeight: CGFloat) -> CGFloat {
-        let measurementView = expandedReadMediaContentView ?? expandedReadMediaContainer
-        let width = max(100, expandedContainer.bounds.width)
-        let measured = ToolRowViewportCalculator.measuredExpandedContentHeight(
-            for: measurementView,
-            width: width
-        )
+        let measured = hostedSurface.measuredHeight(width: max(100, expandedContainer.bounds.width))
         return min(maxHeight, max(minHeight, measured))
     }
 
@@ -561,10 +541,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
         let fallbackWidth = window?.windowScene?.screen.bounds.width ?? superview?.bounds.width ?? 375
         let width = max(1, bounds.width > 0 ? bounds.width - 16 : fallbackWidth - 48)
-        let measured = ToolRowViewportCalculator.measuredExpandedContentHeight(
-            for: expandedReadMediaContentView ?? expandedReadMediaContainer,
-            width: width
-        )
+        let measured = hostedSurface.measuredHeight(width: width)
         let lowerBounded = max(minHeight, ceil(measured))
         guard let maxHeight else { return lowerBounded }
         return min(maxHeight, lowerBounded)
@@ -596,7 +573,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 mode: mode,
                 expandedScrollView: self.expandedScrollView,
                 expandedLabelWidthConstraint: self.expandedLabelWidthConstraint,
-                outputScrollView: self.outputScrollView,
+                outputScrollView: self.bashToolRowView.outputScrollView,
                 outputUsesUnwrappedLayout: self.bashToolRowView.outputUsesUnwrappedLayout,
                 outputLabelWidthConstraint: self.bashToolRowView.outputLabelWidthConstraint,
                 geometry: geometry
@@ -657,20 +634,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         markdownSurface.updateCompletedWidthPriority()
     }
 
-    private func updateExpandedReadMediaWidthIfNeeded() {
-        guard let expandedReadMediaWidthConstraint else { return }
-        expandedReadMediaWidthConstraint.constant = 0
-        // Frame layout guides can report 0 during the first fitting pass, so
-        // the constraint starts at `.defaultHigh`. Once the scroll view has a
-        // real width it must win over a descendant's compression resistance
-        // (also 750 by default) or the image host stays too wide and clips.
-        if expandedUsesReadMediaLayout, expandedScrollView.bounds.width > 1 {
-            expandedReadMediaWidthConstraint.priority = .required
-        } else {
-            expandedReadMediaWidthConstraint.priority = .defaultHigh
-        }
-    }
-
     func setExpandedVerticalLockEnabled(_ enabled: Bool) {
         expandedLabelHeightLockConstraint?.isActive = enabled
     }
@@ -686,7 +649,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let kind: ToolTimelineRowViewportKind
         if markdownSurface.isLiveLayoutActive {
             kind = .markdown
-        } else if expandedUsesReadMediaLayout {
+        } else if hostedSurface.isActive {
             kind = .readMedia
         } else {
             kind = switch expandedViewportMode {
@@ -729,55 +692,22 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return CGSize(width: width, height: height)
     }
 
-    private func installExpandedAudioMessageView(
-        text: String,
-        attachmentId: String,
-        mimeType: String,
-        playbackBehavior: AudioPlaybackBehavior?,
-        suppressAutoplay: Bool,
-        durationSeconds: TimeInterval?
-    ) {
-        let native: NativeAudioMessageView
-        if let existing = expandedReadMediaContentView as? NativeAudioMessageView {
-            native = existing
-        } else {
-            clearExpandedReadMediaView()
-            native = NativeAudioMessageView()
-            installExpandedEmbeddedView(native)
-        }
+    /// The row's media providers, handed to the hosted surface as values.
+    private var hostedMediaResources: ToolExpandedHostedSurface.MediaResources {
+        ToolExpandedHostedSurface.MediaResources(
+            audioPlayer: currentConfiguration.audioPlayer,
+            sessionId: perfSessionId,
+            attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
+            attachmentMediaSourceProvider: currentConfiguration.sessionAttachmentMediaSourceProvider,
+            sessionFileDataFetcher: currentConfiguration.sessionFileDataFetcher,
+            sessionFileMediaSourceProvider: currentConfiguration.sessionFileMediaSourceProvider
+        )
+    }
 
-        if attachmentId.isEmpty {
-            native.apply(
-                id: currentConfiguration.itemID,
-                message: text,
-                attachmentId: attachmentId,
-                mimeType: mimeType,
-                playbackBehavior: playbackBehavior,
-                sessionId: currentConfiguration.reviewCommentSessionId,
-                audioPlayer: currentConfiguration.audioPlayer,
-                attachmentFetcher: nil,
-                attachmentMediaSourceProvider: nil,
-                palette: ThemeRuntimeState.currentPalette(),
-                suppressAutoplay: suppressAutoplay,
-                durationSeconds: durationSeconds
-            )
-        } else {
-            native.apply(
-                id: currentConfiguration.itemID,
-                message: text,
-                attachmentId: attachmentId,
-                mimeType: mimeType,
-                playbackBehavior: playbackBehavior,
-                sessionId: currentConfiguration.reviewCommentSessionId,
-                audioPlayer: currentConfiguration.audioPlayer,
-                attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
-                attachmentMediaSourceProvider: currentConfiguration.sessionAttachmentMediaSourceProvider,
-                palette: ThemeRuntimeState.currentPalette(),
-                suppressAutoplay: suppressAutoplay,
-                durationSeconds: durationSeconds
-            )
-        }
-        native.setNeedsLayout()
+    /// A hosted install changed the mounted content: measure the row again.
+    /// The invalidation is coalesced to the end of the runloop tick, so all
+    /// synchronous changes from the enclosing apply() settle first.
+    private func scheduleHostedRemeasure() {
         setNeedsLayout()
         ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
@@ -794,7 +724,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         shouldRerender: Bool
     ) {
         // The Markdown viewport replaces whatever hosted content the row showed.
-        clearExpandedReadMediaView()
+        hostedSurface.retire()
         let outcome = markdownSurface.apply(ToolExpandedMarkdownSurface.Input(
             itemID: currentConfiguration.itemID,
             text: text,
@@ -824,99 +754,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
         let fallback = currentConfiguration.sourceFilePath?.trimmingCharacters(in: .whitespacesAndNewlines)
         return fallback?.isEmpty == false ? fallback : nil
-    }
-
-    private func installExpandedReadMediaView(
-        output: String,
-        isError: Bool,
-        filePath: String?,
-        startLine: Int,
-        attachments: [ToolPresentationBuilder.ToolMediaAttachment]
-    ) {
-        let native: NativeExpandedReadMediaView
-        if let existing = expandedReadMediaContentView as? NativeExpandedReadMediaView {
-            native = existing
-        } else {
-            clearExpandedReadMediaView()
-            native = NativeExpandedReadMediaView()
-            installExpandedEmbeddedView(native)
-        }
-
-        native.apply(
-            output: output,
-            isError: isError,
-            filePath: filePath,
-            startLine: startLine,
-            attachments: attachments,
-            themeID: ThemeRuntimeState.currentThemeID(),
-            audioPlayer: currentConfiguration.audioPlayer,
-            sessionId: perfSessionId,
-            attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
-            attachmentMediaSourceProvider: currentConfiguration.sessionAttachmentMediaSourceProvider,
-            sessionFileDataFetcher: currentConfiguration.sessionFileDataFetcher,
-            sessionFileMediaSourceProvider: currentConfiguration.sessionFileMediaSourceProvider
-        )
-    }
-
-    private func installExpandedDelimitedTableView(text: String, filePath: String?) {
-        let plan = DelimitedTableViewerPlan.resolved(path: filePath, text: text)
-        if let existing = expandedReadMediaContentView as? DelimitedTableRenderView,
-           existing.displays(plan) {
-            return
-        }
-
-        clearExpandedReadMediaView()
-        let view = DelimitedTableRenderView(plan: plan)
-        view.accessibilityIdentifier = "chat.timeline.row.\(currentConfiguration.itemID).delimitedTable"
-        installExpandedEmbeddedView(view)
-        // Same frame pin as completed markdown: the table's bounds follow the
-        // capped viewport, not systemLayoutSizeFitting's full grid height.
-        expandedReadMediaViewportHeightConstraint?.isActive = false
-        let heightConstraint = expandedReadMediaContainer.heightAnchor.constraint(
-            equalTo: expandedScrollView.frameLayoutGuide.heightAnchor
-        )
-        heightConstraint.priority = .required
-        heightConstraint.isActive = true
-        expandedReadMediaViewportHeightConstraint = heightConstraint
-    }
-
-    private func installExpandedGeoJSONView(text: String, filePath: String?) {
-        let plan = GeoJSONViewerPlan.resolved(path: filePath, text: text)
-        if let existing = expandedReadMediaContentView as? GeoJSONMapView,
-           existing.displays(plan) {
-            return
-        }
-
-        clearExpandedReadMediaView()
-        let view = GeoJSONMapView(plan: plan)
-        view.accessibilityIdentifier = "chat.timeline.row.\(currentConfiguration.itemID).geojson"
-        installExpandedEmbeddedView(view)
-        expandedReadMediaViewportHeightConstraint?.isActive = false
-        let heightConstraint = expandedReadMediaContainer.heightAnchor.constraint(
-            equalTo: expandedScrollView.frameLayoutGuide.heightAnchor
-        )
-        heightConstraint.priority = .required
-        heightConstraint.isActive = true
-        expandedReadMediaViewportHeightConstraint = heightConstraint
-    }
-
-    private func installExpandedEmbeddedView(_ view: UIView) {
-        view.translatesAutoresizingMaskIntoConstraints = false
-        expandedReadMediaContainer.addSubview(view)
-        NSLayoutConstraint.activate([
-            view.leadingAnchor.constraint(equalTo: expandedReadMediaContainer.leadingAnchor),
-            view.trailingAnchor.constraint(equalTo: expandedReadMediaContainer.trailingAnchor),
-            view.topAnchor.constraint(equalTo: expandedReadMediaContainer.topAnchor),
-            view.bottomAnchor.constraint(equalTo: expandedReadMediaContainer.bottomAnchor),
-        ])
-
-        expandedReadMediaContentView = view
-
-        // Coalesced invalidation defers the layout pass to the end of the
-        // current runloop tick, so all synchronous changes from the enclosing
-        // apply() settle before one single layoutIfNeeded fires.
-        setNeedsLayout()
-        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     // MARK: - Collapsed Image Preview
@@ -984,13 +821,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         ) + 12
     }
 
-    private func clearExpandedReadMediaView() {
-        expandedReadMediaViewportHeightConstraint?.isActive = false
-        expandedReadMediaViewportHeightConstraint = nil
-        expandedReadMediaContentView?.removeFromSuperview()
-        expandedReadMediaContentView = nil
-    }
-
     // MARK: - Expanded Content Helpers
 
     /// Prepare for label-based expanded content (diff, code, plain text).
@@ -1000,9 +830,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedScrollView.isHidden = false
         expandedSurfaceHostView.activateSurfaceView(expandedLabel)
         expandedLabel.isHidden = false
-        expandedReadMediaContainer.isHidden = true
-        expandedUsesReadMediaLayout = false
-        clearExpandedReadMediaView()
+        hostedSurface.retire()
         // The label owns the viewport now; the Markdown surface drops its
         // parsed content and completed reader.
         markdownSurface.retire(.replaced)
@@ -1021,8 +849,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
         expandedLabel.isHidden = true
-        expandedReadMediaContainer.isHidden = true
-        expandedUsesReadMediaLayout = false
+        // The Markdown install action already retired the hosted surface; this
+        // repeat is defensive and idempotent.
+        hostedSurface.retire()
         markdownSurface.didActivate()
         expandedLabelWidthConstraint?.priority = .defaultHigh
         expandedLabelWidthConstraint?.constant = -12
@@ -1034,18 +863,17 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         compactHostedSurfaceHostView.clearActiveSurface()
         compactHostedSurfaceHostView.isHidden = true
         expandedScrollView.isHidden = false
-        expandedSurfaceHostView.activateSurfaceView(expandedReadMediaContainer, contentInsets: .zero)
+        expandedSurfaceHostView.activateSurfaceView(hostedSurface.container, contentInsets: .zero)
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
         expandedLabel.isHidden = true
-        expandedReadMediaContainer.isHidden = false
-        expandedUsesReadMediaLayout = true
+        hostedSurface.didActivate()
         markdownSurface.retire(.replaced)
         // Reset the label width constraint from code/diff mode to prevent
         // the hidden label from dominating contentLayoutGuide width.
         expandedLabelWidthConstraint?.priority = .defaultHigh
         expandedLabelWidthConstraint?.constant = -12
-        updateExpandedReadMediaWidthIfNeeded()
+        hostedSurface.updateWidthPriority()
         setExpandedContainerGestureInterceptionEnabled(false)
     }
 
@@ -1053,12 +881,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedSurfaceHostView.clearActiveSurface()
         expandedScrollView.isHidden = true
         compactHostedSurfaceHostView.isHidden = false
-        compactHostedSurfaceHostView.activateSurfaceView(expandedReadMediaContainer, contentInsets: .zero)
+        compactHostedSurfaceHostView.activateSurfaceView(hostedSurface.container, contentInsets: .zero)
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
         expandedLabel.isHidden = true
-        expandedReadMediaContainer.isHidden = false
-        expandedUsesReadMediaLayout = true
+        hostedSurface.didActivate()
         markdownSurface.retire(.replaced)
         expandedLabelWidthConstraint?.priority = .defaultHigh
         expandedLabelWidthConstraint?.constant = -12
@@ -1083,9 +910,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedLabel.textColor = outputColor
         expandedLabel.textContainer.lineBreakMode = .byCharWrapping
         expandedLabel.isHidden = true
-        expandedReadMediaContainer.isHidden = true
-        expandedUsesReadMediaLayout = false
-        clearExpandedReadMediaView()
+        hostedSurface.retire()
         markdownSurface.retire(.collapsed)
         expandedScrollView.isHidden = false
         compactHostedSurfaceHostView.isHidden = true
@@ -1127,14 +952,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedContainer: expandedContainer,
             expandedScrollView: expandedScrollView,
             expandedLabel: expandedLabel,
-            expandedReadMediaContainer: expandedReadMediaContainer,
             delegate: self
         )
 
         // Bash views (commandLabel/outputLabel) are styled by BashToolRowView.
         // Set UITextViewDelegate here for selected-text edit-menu integration.
-        commandLabel.delegate = self
-        outputLabel.delegate = self
+        bashToolRowView.commandLabel.delegate = self
+        bashToolRowView.outputLabel.delegate = self
         expandedLabel.delegate = self
 
         ToolTimelineRowViewStyler.styleImagePreview(
@@ -1179,14 +1003,16 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedScrollView.addSubview(expandedSurfaceHostView)
         expandedSurfaceHostView.prepareSurfaceView(expandedLabel)
         markdownSurface.mount(in: expandedSurfaceHostView)
-        expandedSurfaceHostView.prepareSurfaceView(expandedReadMediaContainer)
+        hostedSurface.mount(in: expandedSurfaceHostView)
         compactHostedSurfaceHostView.isHidden = true
         bodyStack.addArrangedSubview(previewLabel)
         bodyStack.addArrangedSubview(imagePreviewContainer)
         bodyStack.addArrangedSubview(bashToolRowView)
         bodyStack.addArrangedSubview(expandedContainer)
 
-        // Gesture recognizers for bash containers (accessed via lazy vars).
+        // Gesture recognizers for the bash containers owned by BashToolRowView.
+        let commandContainer = bashToolRowView.commandContainer
+        let outputContainer = bashToolRowView.outputContainer
         commandContainer.isUserInteractionEnabled = true
         outputContainer.isUserInteractionEnabled = true
         expandedContainer.isUserInteractionEnabled = true
@@ -1225,7 +1051,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedScrollView: expandedScrollView,
             expandedSurfaceHostView: expandedSurfaceHostView,
             expandedLabel: expandedLabel,
-            expandedReadMediaContainer: expandedReadMediaContainer,
             imagePreviewContainer: imagePreviewContainer,
             imagePreviewImageView: imagePreviewImageView,
             minDiffViewportHeight: Self.minDiffViewportHeight,
@@ -1238,16 +1063,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         titleLeadingToToolConstraint = layout.titleLeadingToTool
         expandedLabelWidthConstraint = layout.expandedLabelWidth
         expandedLabelHeightLockConstraint = layout.expandedLabelHeightLock
-        expandedReadMediaWidthConstraint = layout.expandedReadMediaWidth
         imagePreviewHeightConstraint = layout.imagePreviewHeight
         expandedViewportHeightConstraint = layout.expandedViewportHeight
-
-        // During the first self-sizing measurement pass, scroll view frame
-        // layout guides can still report width=0. Keep the hosted width
-        // constraint below required priority so systemLayoutSizeFitting can
-        // provide a temporary fitting width instead of measuring at 0px.
-        // (The Markdown surface does the same for its own width constraints.)
-        expandedReadMediaWidthConstraint?.priority = .defaultHigh
 
         NSLayoutConstraint.activate(layout.all)
     }
@@ -1297,8 +1114,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let outputColor = configuration.isError ? UIColor(Color.themeRed) : UIColor(Color.themeFg)
         let renderPlan = ToolRowPlanBuilder.build(configuration: configuration)
         let wasExpandedVisible = !expandedContainer.isHidden
-        let wasCommandVisible = !commandContainer.isHidden
-        let wasOutputVisible = !outputContainer.isHidden
+        let wasCommandVisible = !bashToolRowView.commandContainer.isHidden
+        let wasOutputVisible = !bashToolRowView.outputContainer.isHidden
 
         expandedNeedsFollowTail = false
         setExpandedContainerGestureInterceptionEnabled(true)
@@ -1615,7 +1432,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             bashToolRowView.resetCommandState()
         }
         ToolTimelineRowDisplayState.applyContainerVisibility(
-            commandContainer,
+            bashToolRowView.commandContainer,
             shouldShow: showCommand,
             isExpandingTransition: isExpandingTransition,
             wasVisible: wasCommandVisible
@@ -1624,12 +1441,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         if !showOutput {
             bashToolRowView.resetOutputState(outputColor: outputColor)
             bashToolRowView.updateOutputLabelWidthIfNeeded()
-            outputScrollView.isScrollEnabled = false
+            bashToolRowView.outputScrollView.isScrollEnabled = false
             bashToolRowView.setOutputVerticalLockEnabled(false)
         }
         bashToolRowView.isHidden = !showCommand && !showOutput
         ToolTimelineRowDisplayState.applyContainerVisibility(
-            outputContainer,
+            bashToolRowView.outputContainer,
             shouldShow: showOutput,
             isExpandingTransition: isExpandingTransition,
             wasVisible: wasOutputVisible
@@ -1664,7 +1481,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         } else {
             setExpandedContainerGestureInterceptionEnabled(true)
             expandedScrollView.isScrollEnabled = false
-            outputScrollView.isScrollEnabled = false
+            bashToolRowView.outputScrollView.isScrollEnabled = false
         }
 
         updateReviewCommentSelectionIntegration(
@@ -1807,8 +1624,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 hasSessionFileDataFetcher: configuration.sessionFileDataFetcher != nil,
                 hasSessionFileMediaSourceProvider: configuration.sessionFileMediaSourceProvider != nil,
                 previousSignature: expandedRenderSignature,
-                isUsingReadMediaLayout: expandedUsesReadMediaLayout,
-                hasExpandedReadMediaContentView: expandedReadMediaContentView != nil,
+                isUsingReadMediaLayout: hostedSurface.isActive,
+                hasExpandedReadMediaContentView: hostedSurface.contentView != nil,
                 viewportPolicy: viewportPolicy
             )
 
@@ -1854,7 +1671,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 wasExpandedVisible: wasExpandedVisible,
                 isCurrentModeText: expandedViewportMode == .text,
                 isUsingMarkdownLayout: markdownSurface.isLiveLayoutActive,
-                isUsingReadMediaLayout: expandedUsesReadMediaLayout,
+                isUsingReadMediaLayout: hostedSurface.isActive,
                 sessionId: perfSessionId,
                 viewportPolicy: viewportPolicy
             )
@@ -1874,7 +1691,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 wasExpandedVisible: wasExpandedVisible,
                 isCurrentModeText: expandedViewportMode == .text,
                 isUsingMarkdownLayout: markdownSurface.isLiveLayoutActive,
-                isUsingReadMediaLayout: expandedUsesReadMediaLayout,
+                isUsingReadMediaLayout: hostedSurface.isActive,
                 sessionId: perfSessionId,
                 viewportPolicy: viewportPolicy
             )
@@ -1928,17 +1745,30 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         case .none:
             break
         case .readMedia(let mediaOutput, let isError, let filePath, let startLine, let attachments):
-            installExpandedReadMediaView(output: mediaOutput, isError: isError, filePath: filePath, startLine: startLine, attachments: attachments)
+            if hostedSurface.installReadMedia(
+                output: mediaOutput,
+                isError: isError,
+                filePath: filePath,
+                startLine: startLine,
+                attachments: attachments,
+                resources: hostedMediaResources
+            ) {
+                scheduleHostedRemeasure()
+            }
         case .audioMessage(let text, let attachmentId, let mimeType, let durationSeconds, let playbackBehavior):
             let suppressVoiceAutoplay = isExpandingTransition || playbackBehavior == .playNow
-            installExpandedAudioMessageView(
+            if hostedSurface.installAudioMessage(
+                itemID: currentConfiguration.itemID,
                 text: text,
                 attachmentId: attachmentId,
                 mimeType: mimeType,
                 playbackBehavior: playbackBehavior,
                 suppressAutoplay: suppressVoiceAutoplay,
-                durationSeconds: durationSeconds
-            )
+                durationSeconds: durationSeconds,
+                resources: hostedMediaResources
+            ) {
+                scheduleHostedRemeasure()
+            }
         case .markdownViewport(
             let text,
             let isStreaming,
@@ -1956,9 +1786,21 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 shouldRerender: output.scrollBehavior != .preserve
             )
         case .delimitedTable(let text, let filePath):
-            installExpandedDelimitedTableView(text: text, filePath: filePath)
+            if hostedSurface.installDelimitedTable(
+                itemID: currentConfiguration.itemID,
+                text: text,
+                filePath: filePath
+            ) {
+                scheduleHostedRemeasure()
+            }
         case .geoJSON(let text, let filePath):
-            installExpandedGeoJSONView(text: text, filePath: filePath)
+            if hostedSurface.installGeoJSON(
+                itemID: currentConfiguration.itemID,
+                text: text,
+                filePath: filePath
+            ) {
+                scheduleHostedRemeasure()
+            }
         }
 
         switch output.surface {
@@ -2058,14 +1900,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             hasExpandedContext: hasExpandedContext,
             hasMarkdownContext: hasSession,
             isMarkdownLayout: markdownSurface.isLiveLayoutActive,
-            isReadMediaLayout: expandedUsesReadMediaLayout
+            isReadMediaLayout: hostedSurface.isActive
         )
 
-        commandLabel.isSelectable = flags.commandSelectable
+        bashToolRowView.commandLabel.isSelectable = flags.commandSelectable
         commandDoubleTapGesture.isEnabled = !flags.commandSelectable
         commandSingleTapBlocker.isEnabled = !flags.commandSelectable
 
-        outputLabel.isSelectable = flags.outputSelectable
+        bashToolRowView.outputLabel.isSelectable = flags.outputSelectable
         outputDoubleTapGesture.isEnabled = !flags.outputSelectable
         outputSingleTapBlocker.isEnabled = !flags.outputSelectable
 
@@ -2083,7 +1925,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             return nil
         }
         let surface: ToolTimelineRowReviewCommentSelectionSupport.Surface
-        if textView === commandLabel { surface = .command } else if textView === outputLabel { surface = .output } else if textView === expandedLabel { surface = .expandedLabel } else { return nil }
+        if textView === bashToolRowView.commandLabel { surface = .command } else if textView === bashToolRowView.outputLabel { surface = .output } else if textView === expandedLabel { surface = .expandedLabel } else { return nil }
         return toolReviewCommentSourceContext(
             surface: surface,
             expandedContent: currentConfiguration.expandedContent,
@@ -2121,12 +1963,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedScrollView.isScrollEnabled = policy.allowsHorizontalScroll
 
         if showOutputContainer, case .bash(let unwrapped) = policy.mode {
-            outputScrollView.alwaysBounceHorizontal = spec.allowsHorizontalScroll
-            outputScrollView.showsHorizontalScrollIndicator = spec.allowsHorizontalScroll
-            outputScrollView.isScrollEnabled = unwrapped
+            bashToolRowView.outputScrollView.alwaysBounceHorizontal = spec.allowsHorizontalScroll
+            bashToolRowView.outputScrollView.showsHorizontalScrollIndicator = spec.allowsHorizontalScroll
+            bashToolRowView.outputScrollView.isScrollEnabled = unwrapped
             bashToolRowView.setOutputVerticalLockEnabled(unwrapped)
         } else {
-            outputScrollView.isScrollEnabled = false
+            bashToolRowView.outputScrollView.isScrollEnabled = false
             bashToolRowView.setOutputVerticalLockEnabled(false)
         }
     }
@@ -2164,7 +2006,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             .label
         case markdownSurface.liveView, markdownSurface.completedContainer:
             .markdown
-        case expandedReadMediaContainer:
+        case hostedSurface.container:
             .hosted
         default:
             .none
@@ -2459,8 +2301,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 guard let self, let command else { return }
                 let feedbackView = ToolTimelineRowContextMenuTargeting.feedbackView(
                     for: copyTarget,
-                    commandContainer: self.commandContainer,
-                    outputContainer: self.outputContainer,
+                    commandContainer: self.bashToolRowView.commandContainer,
+                    outputContainer: self.bashToolRowView.outputContainer,
                     expandedContainer: self.expandedContainer,
                     imagePreviewContainer: self.imagePreviewContainer
                 )
@@ -2470,8 +2312,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 guard let self else { return }
                 let feedbackView = ToolTimelineRowContextMenuTargeting.feedbackView(
                     for: copyTarget,
-                    commandContainer: self.commandContainer,
-                    outputContainer: self.outputContainer,
+                    commandContainer: self.bashToolRowView.commandContainer,
+                    outputContainer: self.bashToolRowView.outputContainer,
                     expandedContainer: self.expandedContainer,
                     imagePreviewContainer: self.imagePreviewContainer
                 )
@@ -2653,8 +2495,8 @@ extension ToolTimelineRowContentView: UIContextMenuInteractionDelegate {
     ) -> UIContextMenuConfiguration? {
         guard let target = ToolTimelineRowContextMenuTargeting.target(
             for: interaction.view,
-            commandContainer: commandContainer,
-            outputContainer: outputContainer,
+            commandContainer: bashToolRowView.commandContainer,
+            outputContainer: bashToolRowView.outputContainer,
             expandedContainer: expandedContainer,
             imagePreviewContainer: imagePreviewContainer
         ),

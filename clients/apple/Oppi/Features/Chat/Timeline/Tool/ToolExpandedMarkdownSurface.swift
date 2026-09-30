@@ -52,7 +52,9 @@ final class ToolExpandedMarkdownSurface {
     }
 
     enum Retirement {
-        /// The row collapsed. The same document can come back, so the live
+        /// The row leaves the Markdown viewport without another surface taking
+        /// it over: it collapsed, a Bash body took over the row, or its content
+        /// is not rendered. The same document can come back, so the live
         /// viewport keeps its parsed content.
         case collapsed
         /// Another surface took over the expanded viewport; parsed content goes.

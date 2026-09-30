@@ -142,7 +142,6 @@ enum ToolTimelineRowViewStyler {
         expandedContainer: UIView,
         expandedScrollView: UIScrollView,
         expandedLabel: UITextView,
-        expandedReadMediaContainer: UIView,
         delegate: UIScrollViewDelegate
     ) {
         expandedContainer.layer.cornerRadius = 6
@@ -179,10 +178,6 @@ enum ToolTimelineRowViewStyler {
         expandedLabel.textContainer.lineFragmentPadding = 0
         expandedLabel.textContainer.lineBreakMode = .byCharWrapping
         expandedLabel.backgroundColor = .clear
-
-        expandedReadMediaContainer.translatesAutoresizingMaskIntoConstraints = false
-        expandedReadMediaContainer.backgroundColor = .clear
-        expandedReadMediaContainer.isHidden = true
     }
 
     static func styleImagePreview(

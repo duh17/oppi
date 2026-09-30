@@ -319,7 +319,7 @@ enum ToolTimelineRowPresentationHelpers {
     /// Multiple calls targeting the same collection view within a single
     /// runloop tick are coalesced into one `invalidateLayout + layoutIfNeeded`
     /// pass.  This avoids redundant full-layout cascades when several async
-    /// blocks (e.g. from `installExpandedEmbeddedView` and the end-of-`apply`
+    /// blocks (e.g. from `scheduleHostedRemeasure` and the end-of-`apply`
     /// expanding-transition path) land in the same dispatch drain.
     static func invalidateEnclosingCollectionViewLayout(startingAt sourceView: UIView) {
 #if DEBUG

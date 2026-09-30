@@ -13,6 +13,11 @@ import UIKit
 /// `configuration =` and `layoutIfNeeded()` only, so compare runs across changes
 /// to how the row owns its Markdown viewport on the same simulator slot.
 ///
+/// `tool_hosted_row_matrix` covers the hosted media and document surfaces that
+/// share the same row: read-media (SVG), CSV table and GeoJSON map installs,
+/// re-applying identical hosted content, collapse and re-expand, and cell reuse
+/// hosted -> Markdown -> hosted.
+///
 /// Output format: `METRIC name=number` microseconds (median of `medianRuns`).
 @Suite("ToolMarkdownRowPerfProbe", .tags(.perf))
 struct ToolMarkdownRowPerfProbe {
@@ -28,6 +33,172 @@ struct ToolMarkdownRowPerfProbe {
         try measureCollapseExpandLive(name: "collapse_expand_live_200", paragraphs: 200)
         try measureKindReuseCycle(name: "reuse_md_code_md_100", paragraphs: 100)
         try measureCollapsedApplyLoop(name: "collapsed_apply_x200", applies: 200)
+    }
+
+    @MainActor
+    @Test func tool_hosted_row_matrix() throws {
+        let readMedia = ToolPresentationBuilder.ToolExpandedContent.readMedia(
+            output: Self.svg,
+            filePath: "fixtures/portrait.svg",
+            startLine: 1,
+            attachments: []
+        )
+        let table = ToolPresentationBuilder.ToolExpandedContent.delimitedTable(
+            text: Self.csv(rows: 200),
+            filePath: "rides.csv"
+        )
+        let map = ToolPresentationBuilder.ToolExpandedContent.geoJSON(
+            text: Self.geoJSON,
+            filePath: "park.geojson"
+        )
+        try measureHostedColdInstall(name: "hosted_read_svg_cold_install", content: readMedia, prefix: "read")
+        try measureHostedColdInstall(name: "hosted_csv_cold_install_200", content: table, prefix: "read")
+        try measureHostedColdInstall(name: "hosted_geojson_cold_install", content: map, prefix: "read")
+        try measureHostedReapply(name: "hosted_read_svg_reapply", content: readMedia, prefix: "read")
+        try measureHostedReapply(name: "hosted_csv_reapply_200", content: table, prefix: "read")
+        try measureHostedCollapseExpand(name: "hosted_csv_collapse_expand_200", content: table, prefix: "read")
+        try measureHostedCollapseExpand(name: "hosted_geojson_collapse_expand", content: map, prefix: "read")
+        try measureHostedMarkdownReuse(name: "reuse_read_svg_md_svg", content: readMedia)
+        try measureHostedMarkdownReuse(name: "reuse_csv_md_csv_200", content: table)
+        try measureHostedMarkdownReuse(name: "reuse_geojson_md_geojson", content: map)
+    }
+
+    // MARK: - Hosted cases
+
+    /// A fresh row whose first configuration is the hosted content.
+    @MainActor
+    private func measureHostedColdInstall(
+        name: String,
+        content: ToolPresentationBuilder.ToolExpandedContent,
+        prefix: String
+    ) throws {
+        for _ in 0 ..< Self.warmupRuns {
+            let harness = try makeWindowedHostedView(content: content, prefix: prefix)
+            harness.window.isHidden = true
+        }
+        var times: [Int] = []
+        for _ in 0 ..< Self.medianRuns {
+            var harness: WindowedToolHarness?
+            times.append(try microseconds {
+                harness = try makeWindowedHostedView(content: content, prefix: prefix)
+            })
+            harness?.window.isHidden = true
+        }
+        print("METRIC \(name)_us=\(median(times))")
+    }
+
+    /// Re-applying identical hosted content (what a scrolling timeline does).
+    @MainActor
+    private func measureHostedReapply(
+        name: String,
+        content: ToolPresentationBuilder.ToolExpandedContent,
+        prefix: String
+    ) throws {
+        let harness = try makeWindowedHostedView(content: content, prefix: prefix)
+        let view = harness.view
+        let configuration = makeHostedConfiguration(content: content, prefix: prefix, isExpanded: true)
+        for _ in 0 ..< Self.warmupRuns {
+            view.configuration = configuration
+            forceLayout(view)
+        }
+        var times: [Int] = []
+        for _ in 0 ..< Self.medianRuns {
+            times.append(microseconds {
+                for _ in 0 ..< 50 { view.configuration = configuration }
+                view.layoutIfNeeded()
+            })
+        }
+        print("METRIC \(name)_x50_us=\(median(times))")
+        harness.window.isHidden = true
+    }
+
+    /// Collapse and re-expand hosted content (retire + reinstall).
+    @MainActor
+    private func measureHostedCollapseExpand(
+        name: String,
+        content: ToolPresentationBuilder.ToolExpandedContent,
+        prefix: String
+    ) throws {
+        let harness = try makeWindowedHostedView(content: content, prefix: prefix)
+        let view = harness.view
+        let collapsed = makeHostedConfiguration(content: content, prefix: prefix, isExpanded: false)
+        let expanded = makeHostedConfiguration(content: content, prefix: prefix, isExpanded: true)
+        func cycle() {
+            view.configuration = collapsed
+            view.layoutIfNeeded()
+            view.configuration = expanded
+            view.layoutIfNeeded()
+        }
+        for _ in 0 ..< Self.warmupRuns { cycle() }
+        var times: [Int] = []
+        for _ in 0 ..< Self.medianRuns {
+            times.append(microseconds { cycle() })
+        }
+        print("METRIC \(name)_us=\(median(times))")
+        harness.window.isHidden = true
+    }
+
+    /// Cell reuse: hosted content -> completed Markdown -> hosted content.
+    @MainActor
+    private func measureHostedMarkdownReuse(
+        name: String,
+        content: ToolPresentationBuilder.ToolExpandedContent
+    ) throws {
+        let text = makeMarkdown(paragraphs: 40)
+        let harness = try makeWindowedHostedView(content: content, prefix: "read")
+        let view = harness.view
+        func cycle() {
+            apply(view, text: text, isDone: true)
+            view.layoutIfNeeded()
+            view.configuration = makeHostedConfiguration(content: content, prefix: "read", isExpanded: true)
+            view.layoutIfNeeded()
+        }
+        for _ in 0 ..< Self.warmupRuns { cycle() }
+        var times: [Int] = []
+        for _ in 0 ..< Self.medianRuns {
+            times.append(microseconds { cycle() })
+        }
+        print("METRIC \(name)_us=\(median(times))")
+        harness.window.isHidden = true
+    }
+
+    private static let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 600\"><rect width=\"200\" height=\"600\" fill=\"red\"/></svg>"
+
+    private static func csv(rows: Int) -> String {
+        let body = (1 ... rows).map { "2026-09-\($0 % 28 + 1),Route \($0),\($0 * 3).5,Lake Washington loop" }
+        return (["date,route,miles,notes"] + body).joined(separator: "\n")
+    }
+
+    private static let geoJSON = """
+    {"type":"FeatureCollection","features":[
+    {"type":"Feature","properties":{"name":"Rainier"},"geometry":{"type":"Point","coordinates":[-121.7603,46.8523]}},
+    {"type":"Feature","properties":{"name":"Loop"},"geometry":{"type":"LineString","coordinates":[[-122.34,47.62],[-122.33,47.63],[-122.31,47.62]]}}
+    ]}
+    """
+
+    @MainActor
+    private func makeHostedConfiguration(
+        content: ToolPresentationBuilder.ToolExpandedContent,
+        prefix: String,
+        isExpanded: Bool
+    ) -> ToolTimelineRowConfiguration {
+        makeTimelineToolConfiguration(
+            title: "hosted",
+            expandedContent: content,
+            toolNamePrefix: prefix,
+            isExpanded: isExpanded,
+            isDone: true
+        )
+    }
+
+    @MainActor
+    private func makeWindowedHostedView(
+        content: ToolPresentationBuilder.ToolExpandedContent,
+        prefix: String
+    ) throws -> WindowedToolHarness {
+        try makeWindowedView(
+            configuration: makeHostedConfiguration(content: content, prefix: prefix, isExpanded: true)
+        )
     }
 
     // MARK: - Cases
@@ -241,9 +412,12 @@ struct ToolMarkdownRowPerfProbe {
 
     @MainActor
     private func makeWindowedView(text: String, isDone: Bool) throws -> WindowedToolHarness {
-        let view = ToolTimelineRowContentView(
-            configuration: makeConfiguration(text: text, isDone: isDone)
-        )
+        try makeWindowedView(configuration: makeConfiguration(text: text, isDone: isDone))
+    }
+
+    @MainActor
+    private func makeWindowedView(configuration: ToolTimelineRowConfiguration) throws -> WindowedToolHarness {
+        let view = ToolTimelineRowContentView(configuration: configuration)
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .first else {

@@ -9,7 +9,6 @@ enum ToolTimelineRowLayoutBuilder {
         let titleLeadingToTool: NSLayoutConstraint
         let expandedLabelWidth: NSLayoutConstraint
         let expandedLabelHeightLock: NSLayoutConstraint
-        let expandedReadMediaWidth: NSLayoutConstraint
         let imagePreviewHeight: NSLayoutConstraint
         let expandedViewportHeight: NSLayoutConstraint
         let all: [NSLayoutConstraint]
@@ -96,7 +95,6 @@ enum ToolTimelineRowLayoutBuilder {
         expandedScrollView: UIScrollView,
         expandedSurfaceHostView: UIView,
         expandedLabel: UITextView,
-        expandedReadMediaContainer: UIView,
         imagePreviewContainer: UIView,
         imagePreviewImageView: UIImageView,
         minDiffViewportHeight: CGFloat,
@@ -114,10 +112,6 @@ enum ToolTimelineRowLayoutBuilder {
         let expandedLabelHeightLock = expandedLabel.heightAnchor.constraint(
             equalTo: expandedScrollView.frameLayoutGuide.heightAnchor,
             constant: -10
-        )
-        let expandedReadMediaWidth = expandedReadMediaContainer.widthAnchor.constraint(
-            equalTo: expandedScrollView.frameLayoutGuide.widthAnchor,
-            constant: 0
         )
         let imagePreviewHeight = imagePreviewContainer.heightAnchor.constraint(
             equalToConstant: collapsedImagePreviewHeight
@@ -169,7 +163,6 @@ enum ToolTimelineRowLayoutBuilder {
             expandedSurfaceHostView.bottomAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.bottomAnchor),
 
             expandedLabelWidth,
-            expandedReadMediaWidth,
 
             imagePreviewImageView.leadingAnchor.constraint(equalTo: imagePreviewContainer.leadingAnchor, constant: 6),
             imagePreviewImageView.trailingAnchor.constraint(equalTo: imagePreviewContainer.trailingAnchor, constant: -6),
@@ -185,7 +178,6 @@ enum ToolTimelineRowLayoutBuilder {
             titleLeadingToTool: titleLeadingToTool,
             expandedLabelWidth: expandedLabelWidth,
             expandedLabelHeightLock: expandedLabelHeightLock,
-            expandedReadMediaWidth: expandedReadMediaWidth,
             imagePreviewHeight: imagePreviewHeight,
             expandedViewportHeight: expandedViewportHeight,
             all: all

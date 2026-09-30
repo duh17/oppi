@@ -71,7 +71,7 @@ extension ToolTimelineRowContentView {
                 guard self.expandedRenderSignature == deferredHighlight.signature,
                       self.expandedViewportMode == .code,
                       !self.markdownSurface.isLiveLayoutActive,
-                      !self.expandedUsesReadMediaLayout else {
+                      !self.hostedSurface.isActive else {
                     return
                 }
 
