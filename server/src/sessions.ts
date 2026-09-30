@@ -10,6 +10,7 @@
  * - SDK command passthrough (model switching, compaction, etc.)
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
 
 import type { AgentRuntimeTransport, RuntimeClientCommand } from "./agent-runtime-transport.js";
@@ -134,6 +135,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       markSessionDirty: (key) => this.markSessionDirty(key),
       resetIdleTimer: (key) => this.resetIdleTimer(key),
       bootstrapSessionState: (key) => this.bootstrapSessionState(key),
+      isClosed: () => this.closed,
       sendCommand: (key, command, permit, onPreflightAccepted) =>
         this.sendCommand(key, command, permit, onPreflightAccepted),
       sendCommandAsync: (key, command) => this.sendCommandAsync(key, command),
@@ -204,17 +206,16 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return sessionId;
   }
 
-  /** Sessions the post-restart resume is starting right now. */
-  private readonly restartResumeClaims = new Set<string>();
+  /**
+   * The session the post-restart resume is starting in this async call chain.
+   * Scoped to the resume's own calls, so a concurrent client start of the same
+   * session still clears the entry; see startSession.
+   */
+  private readonly restartResumeClaim = new AsyncLocalStorage<string>();
 
   /** Run the post-restart resume of one session; see startSession. */
-  async withRestartResumeClaim<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
-    this.restartResumeClaims.add(sessionId);
-    try {
-      return await run();
-    } finally {
-      this.restartResumeClaims.delete(sessionId);
-    }
+  withRestartResumeClaim<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
+    return this.restartResumeClaim.run(sessionId, run);
   }
 
   /**
@@ -226,7 +227,9 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     // cannot re-open a session a client already opened and stopped again. The
     // resume's own start keeps the entry until its continuation is sent, so a
     // crash mid-resume still finds it.
-    if (!this.restartResumeClaims.has(sessionId)) this.storage.clearRestartResume(sessionId);
+    if (this.restartResumeClaim.getStore() !== sessionId) {
+      this.storage.clearRestartResume(sessionId);
+    }
     this.ensureMobileRenderersLoaded();
     const startWorkspace = workspace ?? this.resolveStoredWorkspace(sessionId);
     const session = await this.activationCoordinator.startSession(key, sessionId, startWorkspace);
@@ -548,6 +551,18 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     await this.stopFlowCoordinator.stopSession(key, sessionId, () => {
       this.cancelPendingAsk(sessionId);
     });
+  }
+
+  /** Set by close(); no session starts or registers afterward. */
+  private closed = false;
+
+  /**
+   * Server shutdown: refuse new starts, drop starts still in flight, and stop
+   * every running session. A SessionManager is not reopened after this.
+   */
+  async close(): Promise<void> {
+    this.closed = true;
+    await this.stopAll();
   }
 
   async stopAll(): Promise<void> {

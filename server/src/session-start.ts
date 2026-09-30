@@ -28,6 +28,8 @@ export interface SessionStartCoordinatorDeps {
   persistSessionNow: (key: string, session: Session) => void;
   resetIdleTimer: (key: string) => void;
   bootstrapSessionState: (key: string) => Promise<void>;
+  /** True once the owning SessionManager is closed for server shutdown. */
+  isClosed?: () => boolean;
   metrics?: ServerMetricCollector;
 }
 
@@ -42,13 +44,18 @@ export class SessionStartCoordinator {
 
     const identity = this.buildWorkspaceIdentity(session, workspace);
     const previousStatus = session.status === "starting" ? "ready" : session.status;
+    const assertOpen = (): void => {
+      if (this.deps.isClosed?.()) throw new Error("Server is stopping; session not started");
+    };
 
     return this.deps.runtimeManager.withWorkspaceLock(identity.workspaceId, async () => {
+      assertOpen();
       this.deps.runtimeManager.reserveSessionStart(identity);
       session.status = "starting";
       session.lastActivity = Date.now();
       this.deps.persistSessionNow(key, session);
 
+      let abandoned = false;
       try {
         const createStart = Date.now();
         const agentDefinition = this.resolveAgentDefinition(session);
@@ -64,6 +71,15 @@ export class SessionStartCoordinator {
           serverConfig: this.deps.config,
         });
         this.deps.metrics?.record("server.session_create_ms", Date.now() - createStart);
+
+        // Shutdown already ran stopAll() and cannot see this runtime. Drop it
+        // without registering or persisting: after an in-process update
+        // restart, a replacement server shares this storage and owns the row.
+        if (this.deps.isClosed?.()) {
+          abandoned = true;
+          await sdkBackend.dispose().catch(() => undefined);
+          assertOpen();
+        }
 
         const activeSession: SessionStartActiveSession = {
           ...createRuntimeSessionStateScaffold<SessionMessageQueueStore>(
@@ -87,10 +103,12 @@ export class SessionStartCoordinator {
 
         return session;
       } catch (err) {
-        session.status = previousStatus;
-        session.currentTurnStartedAt = undefined;
-        session.lastActivity = Date.now();
-        this.deps.persistSessionNow(key, session);
+        if (!abandoned) {
+          session.status = previousStatus;
+          session.currentTurnStartedAt = undefined;
+          session.lastActivity = Date.now();
+          this.deps.persistSessionNow(key, session);
+        }
         this.deps.runtimeManager.releaseSession(identity);
         throw err;
       }

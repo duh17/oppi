@@ -171,6 +171,12 @@ async function resumeOne(
   if (!entry.wasBusy || resumed.status !== "ready" || deps.cancelled?.()) {
     return { outcome: "resumed" };
   }
+  // A client start or an explicit stop while this resume ran cleared the
+  // entry and took over the session. No await separates this check from the
+  // sendPrompt call, so no request can clear the entry in between.
+  if (!deps.storage.listRestartResume().some((queued) => queued.sessionId === session.id)) {
+    return { outcome: "resumed", reason: "taken over during resume" };
+  }
   try {
     await deps.sendPrompt(session.id, RESTART_CONTINUE_PROMPT);
   } catch (error: unknown) {

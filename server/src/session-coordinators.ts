@@ -81,6 +81,7 @@ export interface SessionCoordinatorBundleDeps {
   markSessionDirty: (key: string) => void;
   resetIdleTimer: (key: string) => void;
   bootstrapSessionState: (key: string) => Promise<void>;
+  isClosed: () => boolean;
   sendCommand: (
     key: string,
     command: Record<string, unknown>,
@@ -157,6 +158,7 @@ export function createSessionCoordinatorBundle(
     persistSessionNow: (key, session) => deps.persistSessionNow(key, session),
     resetIdleTimer: (key) => deps.resetIdleTimer(key),
     bootstrapSessionState: (key) => deps.bootstrapSessionState(key),
+    isClosed: deps.isClosed,
     metrics: deps.metrics,
   });
 

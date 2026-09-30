@@ -1066,7 +1066,7 @@ export class Server {
         // Losing the resume record must not keep sessions running past shutdown.
         log.error("session_restart.record_failed", { error: safeErrorMessage(error) });
       }
-      await this.sessions.stopAll();
+      await this.sessions.close();
       await SdkBackend.stopAllWorkspaceVms();
       this.liveActivity.shutdown();
       this.push.shutdown();

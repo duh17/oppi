@@ -333,6 +333,94 @@ describe("session restart resume", () => {
     }
   });
 
+  it("sends no continuation when the user stops the session while it resumes", async () => {
+    const { storage, workspace } = makeStorage();
+    const session = saveSession(storage, "s1", { workspaceId: workspace.id, status: "stopped" });
+    storage.queueRestartResume([{ sessionId: "s1", wasBusy: true }], 1);
+    const lifecycle = new SessionLifecycleService({
+      storage,
+      sessions: {} as never,
+      sessionRuntimes: { isSessionConnected: () => false } as never,
+      ensureSessionContextWindow: (s) => s,
+    });
+    const deps = makeDeps(storage);
+    const resumeWorkspaceSession = deps.lifecycle.resumeWorkspaceSession;
+    deps.lifecycle.resumeWorkspaceSession = async (params) => {
+      const result = await resumeWorkspaceSession(params);
+      await lifecycle.stopSession(session);
+      return result;
+    };
+
+    const [result] = await resumeSessionsAfterRestart(deps);
+
+    expect(result?.reason).toBe("taken over during resume");
+    expect(deps.sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("sends no continuation when a client opens the session during its resume", async () => {
+    const { storage, workspace } = makeStorage();
+    saveSession(storage, "s1", { workspaceId: workspace.id, status: "stopped" });
+    storage.queueRestartResume([{ sessionId: "s1", wasBusy: true }], 1);
+    const { sdkBackend } = makeSdkBackendStub();
+    const create = vi.spyOn(SdkBackend, "create").mockResolvedValue(sdkBackend);
+    const manager = new SessionManager(storage);
+    let started!: () => void;
+    const resumeStarted = new Promise<void>((resolve) => (started = resolve));
+    let release!: () => void;
+    const clientDone = new Promise<void>((resolve) => (release = resolve));
+    try {
+      const deps = makeDeps(storage);
+      deps.lifecycle.resumeWorkspaceSession = async ({ session }) => {
+        const live = await manager.startSession(session.id, workspace);
+        started();
+        await clientDone;
+        return { session: { ...live, status: "ready" } } as never;
+      };
+      const run = resumeSessionsAfterRestart({
+        ...deps,
+        claim: (id, body) => manager.withRestartResumeClaim(id, body),
+      });
+
+      await resumeStarted;
+      // The client's own request, outside the resume's call chain.
+      await manager.startSession("s1", workspace);
+      release();
+      await run;
+
+      expect(deps.sendPrompt).not.toHaveBeenCalled();
+    } finally {
+      await manager.stopAll().catch(() => {});
+      create.mockRestore();
+    }
+  });
+
+  it("drops a session start that finishes after the manager closed", async () => {
+    const { storage, workspace } = makeStorage();
+    saveSession(storage, "s1", { workspaceId: workspace.id, status: "stopped" });
+    const { sdkBackend, dispose } = makeSdkBackendStub();
+    let finishCreate!: () => void;
+    const create = vi.spyOn(SdkBackend, "create").mockImplementation(
+      () => new Promise((resolve) => (finishCreate = () => resolve(sdkBackend))),
+    );
+    const manager = new SessionManager(storage);
+    try {
+      const start = manager.startSession("s1", workspace);
+      await vi.waitFor(() => expect(create).toHaveBeenCalled());
+      await manager.close();
+      // A replacement server sharing this storage owns the row now.
+      saveSession(storage, "s1", { workspaceId: workspace.id, status: "busy" });
+      finishCreate();
+
+      await expect(start).rejects.toThrow(/stopping/);
+      expect(manager.isActive("s1")).toBe(false);
+      expect(dispose).toHaveBeenCalled();
+      expect(storage.getSession("s1")?.status).toBe("busy");
+      await expect(manager.startSession("s1", workspace)).rejects.toThrow(/stopping/);
+    } finally {
+      create.mockRestore();
+    }
+  });
+
   it("keeps later entries queued while an earlier one is resuming", async () => {
     const { storage, workspace } = makeStorage();
     const ws = { workspaceId: workspace.id, status: "stopped" as const };
