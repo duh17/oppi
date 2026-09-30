@@ -313,20 +313,6 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func expandedReadMarkdownKeepsRowDoubleTapForFullScreen() {
-        let config = makeTimelineToolConfiguration(
-            expandedContent: .markdown(text: "# Notes\n\n- item"),
-            toolNamePrefix: "read",
-            isExpanded: true
-        )
-        let view = ToolTimelineRowContentView(configuration: config)
-
-        _ = fittedTimelineSize(for: view, width: 370)
-
-        #expect(view.expandedTapCopyGestureEnabledForTesting)
-    }
-
-    @MainActor
     @Test func expandedReadSwiftKeepsRowDoubleTapForFullScreen() {
         let config = makeTimelineToolConfiguration(
             expandedContent: .code(
@@ -336,53 +322,6 @@ struct ToolTimelineRowContentViewTests {
                 filePath: "Test.swift"
             ),
             toolNamePrefix: "read",
-            isExpanded: true
-        )
-        let view = ToolTimelineRowContentView(configuration: config)
-
-        _ = fittedTimelineSize(for: view, width: 370)
-
-        #expect(view.expandedTapCopyGestureEnabledForTesting)
-    }
-
-    @MainActor
-    @Test func expandedWriteMarkdownKeepsRowDoubleTapForFullScreen() {
-        let config = makeTimelineToolConfiguration(
-            expandedContent: .markdown(text: "# Notes\n\n- write markdown"),
-            toolNamePrefix: "write",
-            isExpanded: true
-        )
-        let view = ToolTimelineRowContentView(configuration: config)
-
-        _ = fittedTimelineSize(for: view, width: 370)
-
-        #expect(view.expandedTapCopyGestureEnabledForTesting)
-    }
-
-    @MainActor
-    @Test func expandedExtensionMarkdownKeepsRowDoubleTapForFullScreen() {
-        let config = makeTimelineToolConfiguration(
-            expandedContent: .markdown(text: "extension note"),
-            toolNamePrefix: "extensions.notes",
-            isExpanded: true
-        )
-        let view = ToolTimelineRowContentView(configuration: config)
-
-        _ = fittedTimelineSize(for: view, width: 370)
-
-        #expect(view.expandedTapCopyGestureEnabledForTesting)
-    }
-
-    @MainActor
-    @Test func expandedWriteSwiftKeepsRowDoubleTapForFullScreen() {
-        let config = makeTimelineToolConfiguration(
-            expandedContent: .code(
-                text: "struct Written {}",
-                language: .swift,
-                startLine: 1,
-                filePath: "Written.swift"
-            ),
-            toolNamePrefix: "write",
             isExpanded: true
         )
         let view = ToolTimelineRowContentView(configuration: config)

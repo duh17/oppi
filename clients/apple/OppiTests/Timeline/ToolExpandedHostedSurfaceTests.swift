@@ -50,6 +50,10 @@ struct ToolExpandedHostedSurfaceTests {
         let second = try #require(timelineFirstView(ofType: NativeExpandedReadMediaView.self, in: view))
         #expect(second !== first)
         #expect(view.activeExpandedSurfaceKindForTesting == .hosted)
+        #expect(
+            timelineFirstView(ofType: NativeFullScreenMarkdownBody.self, in: view) == nil,
+            "The completed Markdown reader must not outlive the switch to a hosted media view"
+        )
     }
 
     @Test func hostedKindsReplaceEachOtherWithoutLeavingTheOldView() throws {

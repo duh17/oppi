@@ -1,66 +1,6 @@
 import Foundation
-import Testing
 import UIKit
 @testable import Oppi
-
-@MainActor
-func timelineAllLabels(in root: UIView) -> [UILabel] {
-    var labels: [UILabel] = []
-    if let label = root as? UILabel {
-        labels.append(label)
-    }
-
-    for child in root.subviews {
-        labels.append(contentsOf: timelineAllLabels(in: child))
-    }
-
-    return labels
-}
-
-@MainActor
-func timelineAllViews(in root: UIView) -> [UIView] {
-    var views: [UIView] = [root]
-    for child in root.subviews {
-        views.append(contentsOf: timelineAllViews(in: child))
-    }
-    return views
-}
-
-@MainActor
-func timelineAllTextViews(in root: UIView) -> [UITextView] {
-    var textViews: [UITextView] = []
-    if let textView = root as? UITextView {
-        textViews.append(textView)
-    }
-
-    for child in root.subviews {
-        textViews.append(contentsOf: timelineAllTextViews(in: child))
-    }
-
-    return textViews
-}
-
-/// Find all text-rendering views (UILabel + UITextView) in depth-first order.
-@MainActor
-func timelineAllTextRenderViews(in root: UIView) -> [UIView] {
-    var textViews: [UIView] = []
-
-    if root is UILabel || root is UITextView {
-        textViews.append(root)
-    }
-
-    for child in root.subviews {
-        textViews.append(contentsOf: timelineAllTextRenderViews(in: child))
-    }
-
-    return textViews
-}
-
-/// Find the first UITextView anywhere in the view hierarchy.
-@MainActor
-func timelineFirstTextView(in root: UIView) -> UITextView? {
-    timelineAllTextViews(in: root).first
-}
 
 /// Find the first view of a specific type anywhere in the view hierarchy.
 @MainActor
@@ -70,135 +10,6 @@ func timelineFirstView<T: UIView>(ofType type: T.Type, in root: UIView) -> T? {
         if let found = timelineFirstView(ofType: type, in: child) { return found }
     }
     return nil
-}
-
-@MainActor
-func timelineAllImageViews(in root: UIView) -> [UIImageView] {
-    var views: [UIImageView] = []
-    if let iv = root as? UIImageView { views.append(iv) }
-    for child in root.subviews { views.append(contentsOf: timelineAllImageViews(in: child)) }
-    return views
-}
-
-@MainActor
-func timelineAllGestureRecognizers(in root: UIView) -> [UIGestureRecognizer] {
-    var recognizers: [UIGestureRecognizer] = root.gestureRecognizers ?? []
-    for child in root.subviews {
-        recognizers.append(contentsOf: timelineAllGestureRecognizers(in: child))
-    }
-    return recognizers
-}
-
-@MainActor
-func assertHasDoubleTapGesture(in root: UIView) {
-    let recognizers = timelineAllGestureRecognizers(in: root)
-    let hasDoubleTap = recognizers.contains {
-        guard let tap = $0 as? UITapGestureRecognizer else { return false }
-        return tap.numberOfTapsRequired == 2
-    }
-    #expect(hasDoubleTap)
-}
-
-@MainActor
-func timelineAllScrollViews(in root: UIView) -> [UIScrollView] {
-    var views: [UIScrollView] = []
-    if let scrollView = root as? UIScrollView { views.append(scrollView) }
-    for child in root.subviews { views.append(contentsOf: timelineAllScrollViews(in: child)) }
-    return views
-}
-
-@MainActor
-func timelineRenderedText(of label: UILabel) -> String {
-    label.attributedText?.string ?? label.text ?? ""
-}
-
-@MainActor
-func timelineRenderedText(of textView: UITextView) -> String {
-    textView.attributedText?.string ?? textView.text ?? ""
-}
-
-@MainActor
-func timelineRenderedText(of view: UIView) -> String {
-    if let label = view as? UILabel {
-        return timelineRenderedText(of: label)
-    }
-    if let textView = view as? UITextView {
-        return timelineRenderedText(of: textView)
-    }
-    return ""
-}
-
-@MainActor
-func timelineActionTitles(in menu: UIMenu) -> [String] {
-    menu.children.compactMap { ($0 as? UIAction)?.title }
-}
-
-actor TimelineFetchProbe {
-    private var startedCount = 0
-    private var canceledCount = 0
-
-    func markStarted() {
-        startedCount += 1
-    }
-
-    func markCanceled() {
-        canceledCount += 1
-    }
-
-    func snapshot() -> (started: Int, canceled: Int) {
-        (startedCount, canceledCount)
-    }
-}
-
-@MainActor
-final class TimelineScrollMetricsCollectionView: UICollectionView {
-    var testContentSize: CGSize = .zero
-    var testAdjustedContentInset: UIEdgeInsets = .zero
-    var testVisibleIndexPaths: [IndexPath] = []
-    var testIsTracking = false
-    var testIsDragging = false
-    var testIsDecelerating = false
-
-    override var contentSize: CGSize {
-        get { testContentSize }
-        set { testContentSize = newValue }
-    }
-
-    override var adjustedContentInset: UIEdgeInsets {
-        testAdjustedContentInset
-    }
-
-    override var indexPathsForVisibleItems: [IndexPath] {
-        testVisibleIndexPaths
-    }
-
-    override var isTracking: Bool {
-        testIsTracking
-    }
-
-    override var isDragging: Bool {
-        testIsDragging
-    }
-
-    override var isDecelerating: Bool {
-        testIsDecelerating
-    }
-
-    init(frame: CGRect) {
-        super.init(frame: frame, collectionViewLayout: UICollectionViewFlowLayout())
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        nil
-    }
-}
-
-@MainActor
-func timelineOffsetY(forDistanceFromBottom distance: CGFloat, in collectionView: TimelineScrollMetricsCollectionView) -> CGFloat {
-    let insets = collectionView.adjustedContentInset
-    let visibleHeight = collectionView.bounds.height - insets.top - insets.bottom
-    return max(-insets.top, collectionView.contentSize.height - visibleHeight - distance)
 }
 
 @MainActor
@@ -254,38 +65,6 @@ extension TimelineTestHarness {
         coordinator.apply(configuration: config, to: collectionView)
         collectionView.layoutIfNeeded()
     }
-
-    /// Apply the reducer's current state using reducer-owned tool stores.
-    ///
-    /// Use this when tests drive `TimelineReducer.processBatch(...)` and want
-    /// collection rendering to reflect the same authoritative tool args/output.
-    func applyReducerState(
-        hiddenCount: Int = 0,
-        renderWindowStep: Int = 50,
-        isBusy: Bool = false,
-        onShowEarlier: @escaping () -> Void = {},
-        scrollCommand: ChatTimelineScrollCommand? = nil
-    ) {
-        let config = makeTimelineConfiguration(
-            items: reducer.items,
-            hiddenCount: hiddenCount,
-            renderWindowStep: renderWindowStep,
-            isBusy: isBusy,
-            streamingAssistantID: reducer.streamingAssistantID,
-            onShowEarlier: onShowEarlier,
-            scrollCommand: scrollCommand,
-            sessionId: sessionId,
-            reducer: reducer,
-            toolOutputStore: reducer.toolOutputStore,
-            toolArgsStore: reducer.toolArgsStore,
-            toolSegmentStore: reducer.toolSegmentStore,
-            connection: connection,
-            scrollController: scrollController,
-            audioPlayer: audioPlayer
-        )
-        coordinator.apply(configuration: config, to: collectionView)
-        collectionView.layoutIfNeeded()
-    }
 }
 
 @MainActor
@@ -299,10 +78,7 @@ struct WindowedTimelineHarness {
     var reducer: TimelineReducer { harness.reducer }
     var toolOutputStore: ToolOutputStore { harness.toolOutputStore }
     var toolArgsStore: ToolArgsStore { harness.toolArgsStore }
-    var toolSegmentStore: ToolSegmentStore { harness.toolSegmentStore }
-    var connection: ServerConnection { harness.connection }
     var scrollController: ChatScrollController { harness.scrollController }
-    var audioPlayer: AudioPlayerService { harness.audioPlayer }
 
     func applyItems(
         _ items: [ChatItem],
@@ -322,31 +98,6 @@ struct WindowedTimelineHarness {
         )
     }
 
-    func applyReducerState(
-        hiddenCount: Int = 0,
-        renderWindowStep: Int = 50,
-        isBusy: Bool = false,
-        onShowEarlier: @escaping () -> Void = {},
-        scrollCommand: ChatTimelineScrollCommand? = nil
-    ) {
-        harness.applyReducerState(
-            hiddenCount: hiddenCount,
-            renderWindowStep: renderWindowStep,
-            isBusy: isBusy,
-            onShowEarlier: onShowEarlier,
-            scrollCommand: scrollCommand
-        )
-    }
-}
-
-@MainActor
-func makeTimelineHarness(sessionId: String) -> TimelineTestHarness {
-    let collectionView = UICollectionView(
-        frame: CGRect(x: 0, y: 0, width: 390, height: 844),
-        collectionViewLayout: UICollectionViewFlowLayout()
-    )
-
-    return makeTimelineHarness(sessionId: sessionId, collectionView: collectionView)
 }
 
 @MainActor
@@ -467,87 +218,6 @@ func makeTimelineConfiguration(
     )
 }
 
-@MainActor
-func configuredTimelineCell(
-    in collectionView: UICollectionView,
-    item: Int,
-    section: Int = 0
-) throws -> UICollectionViewCell {
-    let indexPath = IndexPath(item: item, section: section)
-
-    // Never call dataSource.collectionView(_:cellForItemAt:) directly in tests.
-    // UIKit expects dequeued cells to flow through its normal display pipeline;
-    // bypassing that can trip diffable snapshot assertions on reconfigure.
-    collectionView.layoutIfNeeded()
-    if let cell = collectionView.cellForItem(at: indexPath) {
-        return cell
-    }
-
-    collectionView.scrollToItem(at: indexPath, at: .centeredVertically, animated: false)
-    collectionView.layoutIfNeeded()
-
-    return try #require(collectionView.cellForItem(at: indexPath))
-}
-
-@MainActor
-func expectTimelineRowsUseConfigurationType<T>(
-    in collectionView: UICollectionView,
-    items: [Int],
-    section: Int = 0,
-    as type: T.Type
-) throws {
-    for item in items {
-        let cell = try configuredTimelineCell(in: collectionView, item: item, section: section)
-        #expect(cell.contentConfiguration is T, "Expected \(type) at item \(item)")
-    }
-}
-
-@MainActor
-func settleTimelineLayout(_ collectionView: UICollectionView, passes: Int = 2) {
-    for _ in 0..<max(1, passes) {
-        collectionView.setNeedsLayout()
-        collectionView.layoutIfNeeded()
-    }
-}
-
-func timelineDuplicateIDs(in items: [ChatItem]) -> [String] {
-    var counts: [String: Int] = [:]
-    for id in items.map(\.id) {
-        counts[id, default: 0] += 1
-    }
-    return counts
-        .filter { $0.value > 1 }
-        .map(\.key)
-        .sorted()
-}
-
-func timelineToolRowCount(for itemID: String, in items: [ChatItem]) -> Int {
-    items.reduce(into: 0) { count, item in
-        guard case .toolCall(let id, _, _, _, _, _, _) = item,
-              id == itemID else {
-            return
-        }
-        count += 1
-    }
-}
-
-func waitForTimelineCondition(
-    timeoutMs: Int,
-    pollMs: Int = 10,
-    _ condition: @escaping @Sendable () async -> Bool
-) async -> Bool {
-    let deadline = ContinuousClock.now.advanced(by: .milliseconds(timeoutMs))
-
-    while ContinuousClock.now < deadline {
-        if await condition() {
-            return true
-        }
-        try? await Task.sleep(for: .milliseconds(pollMs))
-    }
-
-    return await condition()
-}
-
 func makeTimelineToolConfiguration(
     itemID: String = "tool-test",
     title: String = "$ bash",
@@ -591,19 +261,6 @@ func makeTimelineToolConfiguration(
     )
 }
 
-func makeTimelineAssistantConfiguration(
-    text: String = "Assistant response with https://example.com",
-    canFork: Bool = false,
-    onFork: (() -> Void)? = nil
-) -> AssistantTimelineRowConfiguration {
-    AssistantTimelineRowConfiguration(
-        text: text,
-        isStreaming: false,
-        canFork: canFork,
-        onFork: onFork
-    )
-}
-
 @MainActor
 func fittedTimelineSize(for view: UIView, width: CGFloat) -> CGSize {
     let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 800))
@@ -619,27 +276,6 @@ func fittedTimelineSize(for view: UIView, width: CGFloat) -> CGSize {
     container.setNeedsLayout()
     container.layoutIfNeeded()
 
-    return view.systemLayoutSizeFitting(
-        CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
-        withHorizontalFittingPriority: .required,
-        verticalFittingPriority: .fittingSizeLevel
-    )
-}
-
-@MainActor
-func fittedTimelineSizeWithoutPrelayout(for view: UIView, width: CGFloat) -> CGSize {
-    let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 800))
-    view.translatesAutoresizingMaskIntoConstraints = false
-    container.addSubview(view)
-
-    NSLayoutConstraint.activate([
-        view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-        view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-        view.topAnchor.constraint(equalTo: container.topAnchor),
-    ])
-
-    // Intentionally skip layoutIfNeeded to mirror the first self-sizing pass,
-    // where scrollView.frameLayoutGuide widths can still be zero.
     return view.systemLayoutSizeFitting(
         CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
         withHorizontalFittingPriority: .required,

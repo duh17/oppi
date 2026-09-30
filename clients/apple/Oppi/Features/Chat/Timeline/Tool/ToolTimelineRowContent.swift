@@ -2280,24 +2280,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     /// Whether a deferred scroll-to-bottom is pending for the expanded content.
     private var expandedPendingScrollToBottom = false
 
-    #if DEBUG
-    // Whether the tail of the expanded content is visible in the viewport.
-    //
-    // Used by tests to assert auto-follow behavior without coupling to
-    // internal scroll offsets or dispatch timing.
-    // periphery:ignore - used by StreamingAutoFollowTests via @testable import
-    var isShowingExpandedTailForTesting: Bool {
-        guard expandedShouldAutoFollow,
-              !expandedContainer.isHidden,
-              expandedScrollView.bounds.height > 0 else {
-            return expandedContainer.isHidden || expandedShouldAutoFollow
-        }
-
-        expandedScrollView.layoutIfNeeded()
-        return ToolTimelineRowUIHelpers.isNearBottom(expandedScrollView)
-    }
-    #endif
-
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         guard scrollView === expandedScrollView, markdownSurface.isLiveLayoutActive else { return }
         markdownSurface.viewportInteractionBegan()

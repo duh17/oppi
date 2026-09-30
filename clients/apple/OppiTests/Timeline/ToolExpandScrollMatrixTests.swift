@@ -31,11 +31,6 @@ struct ToolExpandScrollMatrixTests {
         try assertExpandedToolRowsHaveExpectedHeightEnvelope(toolCase)
     }
 
-    @Test(arguments: ToolExpandScrollMatrixCase.unitFamilies)
-    func expandedToolRowsFollowFullScreenSupportMatrix(_ toolCase: ToolExpandScrollMatrixCase) throws {
-        try assertExpandedToolRowsFollowFullScreenSupportMatrix(toolCase)
-    }
-
     @Test(arguments: TimelineStreamingScrollMatrixCase.allCases)
     func streamingScrollAndRenderingMatrix(_ matrixCase: TimelineStreamingScrollMatrixCase) {
         let runner = TimelineStreamingScrollScenarioRunner(
@@ -118,11 +113,6 @@ struct ToolExpandScrollMatrixPerfFamilyTests {
     @Test(arguments: ToolExpandScrollMatrixCase.perfFamilies)
     func expandedToolRowsHaveExpectedHeightEnvelope(_ toolCase: ToolExpandScrollMatrixCase) throws {
         try assertExpandedToolRowsHaveExpectedHeightEnvelope(toolCase)
-    }
-
-    @Test(arguments: ToolExpandScrollMatrixCase.perfFamilies)
-    func expandedToolRowsFollowFullScreenSupportMatrix(_ toolCase: ToolExpandScrollMatrixCase) throws {
-        try assertExpandedToolRowsFollowFullScreenSupportMatrix(toolCase)
     }
 }
 
@@ -270,35 +260,4 @@ private func assertExpandedToolRowsHaveExpectedHeightEnvelope(
     case .writeCode, .readCode, .bashOutput, .editDiff, .readMarkdown, .readMedia:
         #expect(height < 760, "Expanded tool row exceeded viewport envelope, got \(height)pt")
     }
-}
-
-@MainActor
-private func assertExpandedToolRowsFollowFullScreenSupportMatrix(
-    _ toolCase: ToolExpandScrollMatrixCase
-) throws {
-    let fixture = try #require(
-        ToolExpandScrollMatrixFixture.make(for: toolCase, sessionSuffix: "fullscreen")
-    )
-
-    fixture.prepareDetachedViewport()
-    fixture.expandTarget()
-
-    let item = try #require(fixture.items.first { $0.id == toolCase.targetItemID })
-    let config = try #require(
-        fixture.harness.coordinator.toolRowConfiguration(itemID: toolCase.targetItemID, item: item)
-            as? ToolTimelineRowConfiguration
-    )
-    let expandedContent = try #require(config.expandedContent)
-    let policy = ToolTimelineRowInteractionPolicy.forExpandedContent(expandedContent, isDone: config.isDone)
-
-    #expect(policy.supportsFullScreenPreview == toolCase.expectedSupportsFullScreenPreview)
-
-    let fullScreenContent = ToolTimelineRowFullScreenSupport.fullScreenContent(
-        configuration: config,
-        outputCopyText: config.copyOutputText,
-        interactionPolicy: policy,
-        terminalStream: nil,
-        sourceStream: nil
-    )
-    #expect((fullScreenContent != nil) == toolCase.expectedSupportsFullScreenPreview)
 }

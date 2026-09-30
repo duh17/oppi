@@ -121,15 +121,23 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(codePolicy.allowsHorizontalScroll)
         #expect(codePolicy.supportsFullScreenPreview)
 
+        let diffPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .diff(lines: [DiffLine(kind: .added, text: "x")], path: "a.swift"), isDone: true
+        )
+        #expect(diffPolicy.allowsHorizontalScroll)
+        #expect(diffPolicy.supportsFullScreenPreview)
+
         let wrappedBashPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
             .bash(command: "echo hi", output: "hi", unwrapped: false), isDone: true
         )
         #expect(!wrappedBashPolicy.allowsHorizontalScroll)
+        #expect(wrappedBashPolicy.supportsFullScreenPreview)
 
         let unwrappedBashPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
             .bash(command: "echo hi", output: "hi", unwrapped: true), isDone: true
         )
         #expect(unwrappedBashPolicy.allowsHorizontalScroll)
+        #expect(unwrappedBashPolicy.supportsFullScreenPreview)
 
         let extensionTextPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
             .text(text: "Extension result", language: nil), isDone: true
@@ -154,35 +162,13 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(!hostedPolicy.enablesPinchGesture)
         #expect(!hostedPolicy.allowsHorizontalScroll)
         #expect(!hostedPolicy.supportsFullScreenPreview)
-    }
 
-    @Test func expandedModeRouterAndInteractionPolicyStayInLockstep() {
-        struct PolicyCase {
-            let content: ToolPresentationBuilder.ToolExpandedContent
-            let expectedMode: RoutedExpandedMode
-            let expectsFullScreen: Bool
-            let expectsHorizontalScroll: Bool
-        }
-
-        let cases: [PolicyCase] = [
-            .init(content: .bash(command: "echo hi", output: "hi", unwrapped: false), expectedMode: .bash, expectsFullScreen: true, expectsHorizontalScroll: false),
-            .init(content: .bash(command: "echo hi", output: "hi", unwrapped: true), expectedMode: .bash, expectsFullScreen: true, expectsHorizontalScroll: true),
-            .init(content: .diff(lines: [DiffLine(kind: .added, text: "x")], path: "a.swift"), expectedMode: .diff, expectsFullScreen: true, expectsHorizontalScroll: true),
-            .init(content: .code(text: "let x = 1", language: .swift, startLine: 1, filePath: "A.swift"), expectedMode: .code, expectsFullScreen: true, expectsHorizontalScroll: true),
-            .init(content: .markdown(text: "# H"), expectedMode: .markdown, expectsFullScreen: true, expectsHorizontalScroll: false),
-            .init(content: .readMedia(output: "data:image/png;base64,abc", filePath: "a.png", startLine: 1, attachments: []), expectedMode: .readMedia, expectsFullScreen: false, expectsHorizontalScroll: false),
-            .init(content: .audioMessage(text: "hi", attachmentId: "att-1", mimeType: "audio/wav", durationSeconds: 1.2, playbackBehavior: nil), expectedMode: .readMedia, expectsFullScreen: false, expectsHorizontalScroll: false),
-            .init(content: .text(text: "extension output", language: nil), expectedMode: .text, expectsFullScreen: true, expectsHorizontalScroll: false),
-        ]
-
-        for testCase in cases {
-            let routed = route(testCase.content)
-            #expect(routed == testCase.expectedMode)
-
-            let policy = ToolTimelineRowInteractionPolicy.forExpandedContent(testCase.content, isDone: true)
-            #expect(policy.supportsFullScreenPreview == testCase.expectsFullScreen)
-            #expect(policy.allowsHorizontalScroll == testCase.expectsHorizontalScroll)
-        }
+        let audioPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .audioMessage(text: "hi", attachmentId: "att-1", mimeType: "audio/wav", durationSeconds: 1.2, playbackBehavior: nil),
+            isDone: true
+        )
+        #expect(!audioPolicy.allowsHorizontalScroll)
+        #expect(!audioPolicy.supportsFullScreenPreview)
     }
 
     @Test func scrollAxisOwnershipUsesHorizontalOnlyInnerScrolls() throws {
@@ -267,25 +253,6 @@ struct ToolTimelineRowModeDispatchTests {
             $0.numberOfTapsRequired == 2
         })
         #expect(!mediaDoubleTap.isEnabled)
-    }
-
-    @Test func expandedMarkdownUsesHostedViewportWhenFullScreenIsPreferred() throws {
-        let markdownConfig = makeToolConfiguration(
-            toolNamePrefix: "read",
-            expandedContent: .markdown(text: "# Header\n\nBody with [link](https://example.com)"),
-            isExpanded: true
-        )
-
-        let view = ToolTimelineRowContentView(configuration: markdownConfig)
-        _ = fittedSize(for: view, width: 360)
-
-        let inlineMarkdownView = view.markdownSurface.liveView
-        #expect(inlineMarkdownView.isHidden, "Tool markdown should use the hosted viewport, not the inline stack")
-        let inlineMarkdownStack = try #require(markdownStackView(in: inlineMarkdownView))
-        #expect(inlineMarkdownStack.arrangedSubviews.isEmpty)
-
-        let hostedMarkdown = try #require(view.markdownSurface.completedBody)
-        #expect(hostedMarkdown.debugRenderedSegmentCountForTesting > 0)
     }
 
     @Test func markdownInvalidationUsesContentSignatureForCompletedRows() {
@@ -637,85 +604,6 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(
             view.markdownSurface.completedBody == nil,
             "The hosted markdown viewport must be released when switching to diff mode"
-        )
-    }
-
-    // Same invariant for markdown → code mode (read .md → read .swift reuse)
-    @Test func cellReuseFromMarkdownToCodeClearsStaleMarkdownContent() throws {
-        let markdownConfig = makeToolConfiguration(
-            toolNamePrefix: "read",
-            expandedContent: .markdown(text: "# Title\n\nBody paragraph."),
-            isExpanded: true
-        )
-
-        let view = ToolTimelineRowContentView(configuration: markdownConfig)
-        _ = fittedSize(for: view, width: 360)
-
-        let markdownView = view.markdownSurface.liveView
-        let markdownStack = try #require(markdownStackView(in: markdownView))
-        #expect(markdownStack.arrangedSubviews.isEmpty)
-        #expect(view.markdownSurface.completedBody != nil)
-
-        let codeConfig = makeToolConfiguration(
-            toolNamePrefix: "read",
-            expandedContent: .code(
-                text: "struct App {\n    var name: String\n}",
-                language: .swift,
-                startLine: 1,
-                filePath: "App.swift"
-            ),
-            isExpanded: true
-        )
-
-        view.configuration = codeConfig
-        _ = fittedSize(for: view, width: 360)
-
-        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
-        let attributedText = try #require(expandedLabel.attributedText)
-        #expect(attributedText.string.contains("struct App"))
-
-        #expect(
-            markdownStack.arrangedSubviews.isEmpty,
-            "Stale markdown content must be cleared when switching to code mode"
-        )
-        #expect(
-            view.markdownSurface.completedBody == nil,
-            "The hosted markdown viewport must be released when switching to code mode"
-        )
-    }
-
-    // Verify the hosted view path also clears stale markdown
-    @Test func cellReuseFromMarkdownToHostedViewClearsStaleMarkdownContent() throws {
-        let markdownConfig = makeToolConfiguration(
-            toolNamePrefix: "read",
-            expandedContent: .markdown(text: "# Docs\n\nExplanation here."),
-            isExpanded: true
-        )
-
-        let view = ToolTimelineRowContentView(configuration: markdownConfig)
-        _ = fittedSize(for: view, width: 360)
-
-        let markdownView = view.markdownSurface.liveView
-        let markdownStack = try #require(markdownStackView(in: markdownView))
-        #expect(markdownStack.arrangedSubviews.isEmpty)
-        #expect(view.markdownSurface.completedBody != nil)
-
-        let mediaConfig = makeToolConfiguration(
-            toolNamePrefix: "read",
-            expandedContent: .readMedia(output: "data:image/png;base64,abc", filePath: "icon.png", startLine: 1, attachments: []),
-            isExpanded: true
-        )
-
-        view.configuration = mediaConfig
-        _ = fittedSize(for: view, width: 360)
-
-        #expect(
-            markdownStack.arrangedSubviews.isEmpty,
-            "Stale markdown content must be cleared when switching to hosted view mode"
-        )
-        #expect(
-            view.markdownSurface.completedBody == nil,
-            "The hosted markdown viewport must be released when switching to another hosted view"
         )
     }
 
@@ -1514,34 +1402,6 @@ struct ToolTimelineRowModeDispatchTests {
         )
     }
 
-    // Write tool that is already done when first rendered (catch-up / session load)
-    // should render as markdown directly, not as plain text.
-    @Test func writeToolDoneMarkdownRendersDirectly() throws {
-        let markdownContent = "# Guide\n\nSome **bold** and `code`."
-
-        let config = makeToolConfiguration(
-            toolNamePrefix: "write",
-            expandedContent: .markdown(text: markdownContent),
-            isExpanded: true,
-            isDone: true
-        )
-
-        let view = ToolTimelineRowContentView(configuration: config)
-        _ = fittedSize(for: view, width: 360)
-
-        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
-        let markdownView = view.markdownSurface.liveView
-
-        #expect(expandedLabel.isHidden, "Done markdown write should hide expandedLabel")
-        #expect(markdownView.isHidden, "Done markdown write should hide the inline markdown stack")
-
-        let markdownViewport = try #require(view.markdownSurface.completedBody)
-        #expect(
-            markdownViewport.debugRenderedSegmentCountForTesting > 0,
-            "Done markdown write should have rendered content"
-        )
-    }
-
     // MARK: - Streaming guard: code mode
 
     // During streaming, code mode should use plain text (no syntax
@@ -1706,42 +1566,9 @@ struct ToolTimelineRowModeDispatchTests {
 
     // MARK: - Streaming guard: auto-follow behavior
 
-    // Code mode should auto-follow during streaming and stop on done.
-    @Test func expandedCodeStreamingEnablesAutoFollow() throws {
-        let code = (1...200).map { "let line\($0) = \($0)" }.joined(separator: "\n")
-
-        let streaming = makeToolConfiguration(
-            toolNamePrefix: "write",
-            expandedContent: .code(text: code, language: .swift, startLine: 1, filePath: "Big.swift"),
-            isExpanded: true,
-            isDone: false
-        )
-
-        let view = ToolTimelineRowContentView(configuration: streaming)
-        _ = fittedSize(for: view, width: 360)
-
-        let autoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view))
-        #expect(autoFollow, "Streaming code should enable auto-follow")
-    }
-
-    @Test func expandedCodeDoneDisablesAutoFollow() throws {
-        let code = (1...200).map { "let line\($0) = \($0)" }.joined(separator: "\n")
-
-        let done = makeToolConfiguration(
-            toolNamePrefix: "write",
-            expandedContent: .code(text: code, language: .swift, startLine: 1, filePath: "Big.swift"),
-            isExpanded: true,
-            isDone: true
-        )
-
-        let view = ToolTimelineRowContentView(configuration: done)
-        _ = fittedSize(for: view, width: 360)
-
-        let autoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view))
-        #expect(!autoFollow, "Done code should disable auto-follow")
-    }
-
-    // Diff mode should auto-follow during streaming and stop on done.
+    // Diff mode should auto-follow during streaming and stop on done. Code rows
+    // are covered by WriteToolViewAutoFollowTests; no other suite drives the
+    // diff row through the view.
     @Test func expandedDiffStreamingEnablesAutoFollow() throws {
         let lines = (1...200).map { DiffLine(kind: .added, text: "line \($0)") }
 
@@ -1920,28 +1747,6 @@ private final class ModeDispatchInvalidationCountingLayout: UICollectionViewFlow
     override func invalidateLayout() {
         invalidationCount += 1
         super.invalidateLayout()
-    }
-}
-
-private enum RoutedExpandedMode: Equatable {
-    case bash
-    case diff
-    case code
-    case markdown
-    case readMedia
-    case text
-}
-
-@MainActor
-private func route(_ content: ToolPresentationBuilder.ToolExpandedContent) -> RoutedExpandedMode {
-    switch content {
-    case .bash:                   return .bash
-    case .diff:                   return .diff
-    case .code:                   return .code
-    case .markdown:               return .markdown
-    case .readMedia, .audioMessage: return .readMedia
-    case .status, .text:          return .text
-    case .document:               return .readMedia
     }
 }
 

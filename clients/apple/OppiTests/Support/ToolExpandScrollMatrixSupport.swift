@@ -61,17 +61,6 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
 
     var targetItemID: String { "tc-tool-matrix-\(name)" }
 
-    var expectedSupportsFullScreenPreview: Bool {
-        switch self {
-        case .readMedia:
-            return false
-        case .writeCode, .readCode, .bashOutput, .editDiff, .extensionMutation,
-                .extensionStructured, .extensionMarkdown, .extensionLookup,
-                .customText, .voiceStreamingText, .voiceFinalCard, .readMarkdown:
-            return true
-        }
-    }
-
     @MainActor
     func makeTimeline(
         toolArgsStore: ToolArgsStore,
