@@ -880,6 +880,7 @@ export class Server {
           adapters: quotaAdaptersForProviders(
             this.extensionProviderCatalog.getRegisteredProviderIds(),
             this.extensionProviderCatalog.getQuotaAdapters(this.modelRuntime),
+            this.modelRuntime,
           ),
         });
       },

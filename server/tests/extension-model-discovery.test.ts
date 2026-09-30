@@ -518,6 +518,94 @@ export default function (pi) {
     ).toHaveLength(1);
   });
 
+  describe("built-in quota ownership of registered providers", () => {
+    const stream = "streamSimple: () => { throw new Error('unused'); }";
+    const model = `{ id: "m", name: "m", reasoning: false, input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 1000, maxTokens: 100 }`;
+    const oauth = `{ name: "Other", login: async () => ({}), refreshToken: async (c) => c,
+      getApiKey: () => "k" }`;
+    const register = (config: string): string =>
+      `export default function (pi) { pi.registerProvider("xai", ${config}); }`;
+
+    async function builtinXaiRows(extension: string): Promise<number> {
+      const { catalog, runtime } = await setupCatalog(extension);
+      const result = await catalog.sync();
+      expect(result.diagnostics).toEqual([]);
+      expect(result.registeredProviderIds).toContain("xai");
+      return quotaAdaptersForProviders(
+        catalog.getRegisteredProviderIds(),
+        catalog.getQuotaAdapters(runtime),
+        runtime,
+      ).filter((adapter) => adapter.providerId === "xai").length;
+    }
+
+    it.each([
+      ["api and streamSimple", `{ api: "openai-responses", ${stream} }`],
+      ["name, api and streamSimple", `{ name: "Wrapped", api: "openai-responses", ${stream} }`],
+    ])("keeps the built-in adapter for a stream-only registration (%s)", async (_label, config) => {
+      expect(await builtinXaiRows(register(config))).toBe(1);
+    });
+
+    it.each([
+      ["a custom endpoint", `{ api: "openai-responses", ${stream}, baseUrl: "https://x.test/v1" }`],
+      ["an API key", `{ api: "openai-responses", ${stream}, apiKey: "k" }`],
+      ["custom headers", `{ api: "openai-responses", ${stream}, headers: { "x-a": "b" } }`],
+      ["custom OAuth", `{ api: "openai-responses", ${stream}, oauth: ${oauth} }`],
+      ["a model list", `{ api: "openai-responses", ${stream}, models: [${model}] }`],
+      [
+        "a model refresh hook",
+        `{ api: "openai-responses", ${stream}, refreshModels: async () => [] }`,
+      ],
+      ["a media override", `{ api: "openai-responses", ${stream}, images: {} }`],
+      ["no stream implementation", `{ name: "Renamed" }`],
+    ])("keeps the extension as quota owner with %s", async (_label, config) => {
+      expect(await builtinXaiRows(register(config))).toBe(0);
+    });
+
+    it("keeps a native provider as quota owner", async () => {
+      const native = `export default function (pi) {
+        pi.registerProvider({ id: "xai", name: "Native", getModels: () => [],
+          auth: { apiKey: { name: "k", resolve: async () => undefined } } });
+      }`;
+      expect(await builtinXaiRows(native)).toBe(0);
+    });
+
+    it("stays conservative without registration metadata", async () => {
+      const { catalog, runtime } = await setupCatalog(
+        register(`{ api: "openai-responses", ${stream} }`),
+      );
+      await catalog.sync();
+      expect(
+        quotaAdaptersForProviders(
+          catalog.getRegisteredProviderIds(),
+          catalog.getQuotaAdapters(runtime),
+        ).some((adapter) => adapter.providerId === "xai"),
+      ).toBe(false);
+    });
+
+    it("replaces the built-in adapter when a stream wrapper declares its own quota source", async () => {
+      const { catalog, runtime } = await setupCatalog(
+        `export default function (pi) {
+          pi.registerProvider("xai", { api: "openai-responses", ${stream} });
+          pi.events.emit("oppi:provider-quota:v1", {
+            providerId: "xai", displayName: "Extension xAI",
+            fetch: async () => ({ authenticated: false, windows: [] }),
+          });
+        }`,
+      );
+      await catalog.sync();
+      expect(
+        quotaAdaptersForProviders(
+          catalog.getRegisteredProviderIds(),
+          catalog.getQuotaAdapters(runtime),
+          runtime,
+        )
+          .filter((adapter) => adapter.providerId === "xai")
+          .map((adapter) => adapter.displayName),
+      ).toEqual(["Extension xAI"]);
+    });
+  });
+
   it("skips a second sync when provider sources are unchanged", async () => {
     const { catalog } = await setupCatalog(staticProviderExtension("hotprov", "hot-model"));
 
