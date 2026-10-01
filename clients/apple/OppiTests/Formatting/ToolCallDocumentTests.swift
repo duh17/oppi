@@ -89,6 +89,11 @@ struct ToolCallDocumentTests {
         let partial = try #require(ToolCallDocumentBuilder.build(args: [:], inputPresentation: nil, nestedCalls: nil,
             output: output, rawOutput: output, details: nil, isDone: true, previewOnly: true, totalBytes: 300000))
         #expect(partial.rawText?.contains("Output preview only (168000 of 300000 bytes)") == true)
+        #expect(partial.text.contains("Output preview only (168000 of 300000 bytes)"))
+        let tail = try #require(ToolCallDocumentBuilder.build(args: [:], inputPresentation: nil, nestedCalls: nil,
+            output: "tail\n", rawOutput: "tail\n", details: nil, isDone: true, previewOnly: true, totalBytes: 4096))
+        #expect(tail.text.contains("Output preview only (5 of 4096 bytes)"))
+        #expect(tail.rawText?.contains("Output preview only (5 of 4096 bytes)") == true)
         let fallback = ToolContentDescriptorBuilder.build(tool: "find", argsSummary: "", outputPreview: "trace preview",
             isError: false, isDone: true, context: .init())
         guard case .markdown(let d) = fallback.content else { Issue.record("Generic document"); return }
@@ -188,14 +193,21 @@ struct ToolCallDocumentTests {
         controller.toggleSourceForTesting()
         guard case .plainText(let rawBody, _) = controller.presentationBodyContentForTesting else { Issue.record("Raw body"); return }
         #expect(rawBody == raw)
+        #expect(controller.presentationCopyTextForTesting == rawBody)
+        guard case .plainText(let sharedRaw, _) = controller.shareableContentForTesting else { Issue.record("Raw share"); return }
+        #expect(sharedRaw == rawBody)
         #expect(rawBody.contains("\"unused\": null"))
         #expect(rawBody.hasSuffix("{\"z\":1}"))
         controller.toggleSourceForTesting()
         guard case .markdown(let rendered, _, _, _, _) = controller.presentationBodyContentForTesting else { Issue.record("Rendered body"); return }
         #expect(rendered == inline)
+        #expect(controller.presentationCopyTextForTesting == inline)
+        guard case .markdown(let sharedRendered, _) = controller.shareableContentForTesting else { Issue.record("Rendered share"); return }
+        #expect(sharedRendered == inline)
+        #expect(config.copyOutputText == "{\"z\":1}")
     }
 
-    @Test @MainActor func rawReaderLoadsAllSidecarWindowsAndKeepsPreviewWhenUnavailable() async throws {
+    @Test(arguments: [false, true]) @MainActor func rawReaderLoadsAllSidecarWindowsAndKeepsPreviewWhenUnavailable(_ embeddedBoundary: Bool) async throws {
         let output = String(repeating: "match\n", count: 30000) + "LAST MATCH\n"
         let split = 128 * 1024
         let first = String(decoding: output.utf8.prefix(split), as: UTF8.self)
@@ -208,7 +220,11 @@ struct ToolCallDocumentTests {
         })
         var context = ToolPresentationBuilder.Context(args: ["pattern": "match"], expandedItemIDs: ["t"], fullOutput: first, isLoadingOutput: false)
         context.previewOnly = true; context.totalBytes = output.utf8.count
-        var config = ToolPresentationBuilder.build(itemID: "t", tool: "grep", argsSummary: "", outputPreview: "", isError: false, isDone: true, context: context)
+        let tool = embeddedBoundary ? "tool\n\nOutput\n\nidentity" : "grep"
+        if embeddedBoundary { context.display = .init(title: "search") }
+        var config = ToolPresentationBuilder.build(itemID: "t", tool: tool, argsSummary: "", outputPreview: "", isError: false, isDone: true, context: context)
+        guard case .markdown(let rendered, _) = config.expandedContent else { Issue.record("Rendered preview"); return }
+        #expect(rendered.contains("Output preview only (\(first.utf8.count) of \(output.utf8.count) bytes)"))
         config.toolOutputSidecarSource = source
         func controller(_ config: ToolTimelineRowConfiguration) throws -> FullScreenCodeViewController {
             let content = try #require(ToolTimelineRowFullScreenSupport.staticFullScreenContent(configuration: config, outputCopyText: nil, terminalStream: nil))
@@ -217,19 +233,31 @@ struct ToolCallDocumentTests {
             return vc
         }
         let active = try controller(config)
+        #expect(active.presentationCopyTextForTesting == config.rawMarkdownText)
+        guard case .plainText(let initialShare, _) = active.shareableContentForTesting else { Issue.record("Preview Raw share"); return }
+        #expect(initialShare == config.rawMarkdownText)
         let deadline = ContinuousClock.now + .seconds(3)
         var raw = ""
         repeat {
             await Task.yield()
             if case .plainText(let text, _) = active.presentationBodyContentForTesting { raw = text }
         } while !raw.hasSuffix("LAST MATCH\n") && ContinuousClock.now < deadline
-        #expect(raw == "Input\n\n{\n  \"pattern\": \"match\"\n}\n\nOutput\n\n" + output)
+        let identity = embeddedBoundary ? "Tool\n\n" + tool + "\n\n" : ""
+        let expectedPrefix = identity + "Input\n\n{\n  \"pattern\": \"match\"\n}\n\nOutput\n\n"
+        #expect(config.rawMarkdownOutputPrefix == expectedPrefix)
+        #expect(raw == expectedPrefix + output)
+        #expect(active.presentationCopyTextForTesting == raw)
+        guard case .plainText(let completeShare, _) = active.shareableContentForTesting else { Issue.record("Complete Raw share"); return }
+        #expect(completeShare == raw)
         config.toolOutputSidecarSource = .init(loadFirst: { nil }, loadNext: { _ in nil })
         let stopped = try controller(config)
         await Task.yield()
         guard case .plainText(let preview, _) = stopped.presentationBodyContentForTesting else { Issue.record("Raw preview"); return }
         #expect(preview.contains("Output preview only"))
         #expect(!preview.contains("LAST MATCH"))
+        #expect(stopped.presentationCopyTextForTesting == preview)
+        guard case .plainText(let stoppedShare, _) = stopped.shareableContentForTesting else { Issue.record("Unavailable Raw share"); return }
+        #expect(stoppedShare == preview)
     }
 
     @Test func displayHumanizerIsUniversalAndVerbatimTitlesArePreserved() {

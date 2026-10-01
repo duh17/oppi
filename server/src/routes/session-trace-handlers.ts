@@ -133,6 +133,7 @@ export function createSessionTraceRouteHandlers(
     sessionRuntimes: ctx.sessionRuntimes,
     ensureSessionContextWindow: ctx.ensureSessionContextWindow,
     mobileRenderers: ctx.sessions?.mobileRenderer,
+    getMcpServerNames: (session) => ctx.mcp?.configuredServerNames(session.workspaceId) ?? [],
   });
   const sessionFileHandlers = createSessionFileHandlers(ctx, helpers, traceService);
 

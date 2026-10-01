@@ -28,6 +28,7 @@ export function resolveToolDisplay(
   name: string,
   definition?: { label?: string; namespace?: { name: string } },
   details?: unknown,
+  configuredServerNames: readonly string[] = [],
 ): ToolDisplay | undefined {
   let title: string | undefined;
   let group: string | undefined;
@@ -47,6 +48,12 @@ export function resolveToolDisplay(
     const separator = name.indexOf("__", 5);
     if (separator > 5 && separator + 2 < name.length) {
       group = name.slice(5, separator);
+      // Pi replaces each non-identifier character with `_`. Restore a configured
+      // spelling only for a unique match; never guess across colliding names.
+      const matches = configuredServerNames.filter(
+        (server) => server.replace(/[^A-Za-z0-9_]/g, "_") === group,
+      );
+      if (matches.length === 1) group = matches[0];
       title = name.slice(separator + 2);
     }
   }

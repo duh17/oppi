@@ -15,7 +15,9 @@ export interface ToolDisplay {
   verbatim?: boolean;
 }
 
-export interface NestedToolCallRecord extends PiNestedToolCallRecord {
+export interface NestedToolCallRecord extends Omit<PiNestedToolCallRecord, "status"> {
+  /** Future Pi statuses remain inspectable rather than dropping the call. */
+  status: string;
   display?: ToolDisplay;
 }
 export interface NestedToolCalls extends Omit<PiNestedToolCalls, "calls"> {

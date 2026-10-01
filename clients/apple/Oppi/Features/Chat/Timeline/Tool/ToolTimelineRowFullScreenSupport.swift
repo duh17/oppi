@@ -86,7 +86,11 @@ enum ToolTimelineRowFullScreenSupport {
                 filePath: path,
                 resourceAccess: configuration.resourceAccess,
                 rawText: configuration.rawMarkdownText,
-                sidecarSource: configuration.toolOutputSidecarSource
+                sidecarSource: configuration.toolOutputSidecarSource.map { source in
+                    var bound = source
+                    bound.rawDocumentPrefix = configuration.rawMarkdownOutputPrefix
+                    return bound
+                }
             )
 
         case .document(let family):
@@ -192,7 +196,11 @@ enum ToolTimelineRowFullScreenSupport {
                     filePath: path,
                     resourceAccess: configuration.resourceAccess,
                     rawText: configuration.rawMarkdownText,
-                    sidecarSource: configuration.toolOutputSidecarSource
+                    sidecarSource: configuration.toolOutputSidecarSource.map { source in
+                        var bound = source
+                        bound.rawDocumentPrefix = configuration.rawMarkdownOutputPrefix
+                        return bound
+                    }
                 )
             )
 

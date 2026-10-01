@@ -9,27 +9,18 @@ export function validatedNestedCalls(
   if (!value || typeof value !== "object") return undefined;
   const record = value as Record<string, unknown>;
   if (!Array.isArray(record.calls) || typeof record.complete !== "boolean") return undefined;
-  let complete = record.complete && record.calls.length <= 256;
+  const complete = record.complete;
   let totalBytes = 0;
   const calls: NestedToolCallRecord[] = [];
   for (const raw of record.calls.slice(0, 256)) {
-    if (!raw || typeof raw !== "object") {
-      complete = false;
-      continue;
-    }
+    if (!raw || typeof raw !== "object") continue;
     const c = raw as Record<string, unknown>;
-    if (
-      typeof c.id !== "string" ||
-      typeof c.name !== "string" ||
-      !["ok", "error", "unfinished"].includes(String(c.status))
-    ) {
-      complete = false;
+    if (typeof c.id !== "string" || typeof c.name !== "string" || typeof c.status !== "string")
       continue;
-    }
     const call: NestedToolCallRecord = {
       id: c.id,
       name: c.name,
-      status: c.status as NestedToolCallRecord["status"],
+      status: c.status,
     };
     const display = displayFor(call.name);
     if (display) call.display = display;
@@ -42,10 +33,9 @@ export function validatedNestedCalls(
           totalBytes += bytes;
         } else {
           call.argumentsBytes = bytes;
-          complete = false;
         }
       } catch {
-        complete = false;
+        // Invalid arguments are omitted; completeness belongs to Pi's recorder.
       }
     } else if (
       typeof c.argumentsBytes === "number" &&

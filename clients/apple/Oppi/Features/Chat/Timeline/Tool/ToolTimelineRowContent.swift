@@ -21,6 +21,7 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     let copyCommandText: String?
     let copyOutputText: String?
     var rawMarkdownText: String? = nil
+    var rawMarkdownOutputPrefix: String? = nil
     let languageBadge: String?
     let trailing: String?
     let titleLineBreakMode: NSLineBreakMode

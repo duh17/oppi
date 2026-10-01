@@ -151,6 +151,31 @@ export class McpService {
       }),
     ];
   }
+  /** Display-only identity lookup: read keys, never expand credentials or probe a server.
+   * Host project names are scoped to the session's workspace; sandbox names are
+   * limited to its owner-selected global servers. This does not grant execution trust.
+   */
+  configuredServerNames(workspaceId?: string): string[] {
+    const workspace = this.options.listWorkspaces().find((w) => w.id === workspaceId);
+    const scopes = this.scopes().filter(
+      (scope) => scope.kind === "global" || (scope.kind === "project" && scope.id === workspaceId),
+    );
+    const names = new Set<string>();
+    for (const scope of scopes) {
+      try {
+        for (const [name, config] of Object.entries(serverEntries(readMcpDocument(scope.path)))) {
+          if (isRecord(config)) names.add(name);
+        }
+      } catch {
+        // Missing/malformed config must not make an otherwise readable trace fail.
+      }
+    }
+    return [...names].filter(
+      (name) =>
+        workspace?.runtime !== "sandbox" || workspace.sandboxConfig?.mcpServers?.includes(name),
+    );
+  }
+
   /** Changes go to the global list or a host workspace's file, never through a sandbox. */
   private scope(id: string, access: "list" | "edit" = "edit"): Scope {
     const scope = this.scopes().find((entry) => entry.id === id);

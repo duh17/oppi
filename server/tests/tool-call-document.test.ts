@@ -6,6 +6,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { MobileRendererRegistry, resolveToolDisplay } from "../src/mobile-renderer.js";
 import { translatePiEvent, type TranslationContext } from "../src/session-protocol.js";
 import { SessionTraceService } from "../src/session-trace-service.js";
+import { McpService } from "../src/mcp-service.js";
 import { validatedNestedCalls } from "../src/tool-nested-calls.js";
 import type { Session } from "../src/types.js";
 
@@ -53,6 +54,12 @@ describe("tool call document producer", () => {
     expect(resolveToolDisplay("plain")).toBeUndefined();
     expect(resolveToolDisplay("mcp__incomplete")).toBeUndefined();
     expect(resolveToolDisplay("mcp____tool")).toBeUndefined();
+    expect(
+      resolveToolDisplay("mcp__dev_radius__getActivityDetail", undefined, undefined, [
+        "dev-radius",
+        "dev_radius",
+      ]),
+    ).toEqual({ title: "getActivityDetail", group: "dev_radius" });
   });
   it("emits matching display facts on live, streamed and nested calls without changing raw names", () => {
     const ctx = context();
@@ -222,11 +229,17 @@ describe("tool call document producer", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+  it("forwards unknown Pi statuses without changing completeness", () => {
+    const calls = [{ id: "future", name: "tool", status: "queued" }];
+    for (const complete of [true, false]) {
+      expect(validatedNestedCalls({ calls, complete })).toEqual({ calls, complete });
+    }
+  });
   it("drops malformed records and retains Pi argument/count bounds", () => {
     const result = validatedNestedCalls({
       calls: [
         null,
-        { id: "bad", name: "tool", status: "unknown" },
+        { id: "bad", name: "tool", status: 42 },
         ...nested.calls,
         {
           id: "big",
@@ -238,20 +251,53 @@ describe("tool call document producer", () => {
       ],
       complete: true,
     });
-    expect(result?.complete).toBe(false);
+    expect(result?.complete).toBe(true);
     expect(result?.calls).toHaveLength(2);
     expect(result?.calls[0]).toEqual(nested.calls[0]);
     expect(result?.calls[1].arguments).toBeUndefined();
     expect(result?.calls[1].argumentsBytes).toBeGreaterThan(8192);
     expect(result?.calls[1].error).toHaveLength(500);
-    expect(
-      validatedNestedCalls({ calls: Array(300).fill(nested.calls[0]), complete: true })?.calls,
-    ).toHaveLength(256);
+    const bounded = validatedNestedCalls({
+      calls: Array(300).fill(nested.calls[0]),
+      complete: true,
+    });
+    expect(bounded?.calls).toHaveLength(256);
+    expect(bounded?.complete).toBe(true);
   });
   it("produces identical live and raw/mobile trace metadata", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-document-trace-"));
     try {
       const path = join(dir, "session.jsonl");
+      writeFileSync(
+        join(dir, "mcp.json"),
+        JSON.stringify({ mcpServers: { "dev-radius": { command: "unused" } } }),
+      );
+      const mcp = new McpService({ agentDir: dir, listWorkspaces: () => [] });
+      const nestedHyphenated = {
+        calls: [{ ...nested.calls[0], name: "mcp__dev_radius__getActivityDetail" }],
+        complete: true,
+      };
+      const liveContext = context();
+      liveContext.getToolDefinition = () => ({
+        label: "dev-radius/getActivityDetail",
+        namespace: { name: "mcp__dev-radius" },
+      });
+      const live = translate(
+        {
+          type: "message_end",
+          message: {
+            role: "toolResult",
+            toolName: "codemode",
+            toolCallId: "t",
+            content: [],
+            nestedCalls: nestedHyphenated,
+          },
+        },
+        liveContext,
+      )[0];
+      expect(live).toMatchObject({
+        nestedCalls: { calls: [{ display: { title: "getActivityDetail", group: "dev-radius" } }] },
+      });
       writeFileSync(
         path,
         [
@@ -283,7 +329,7 @@ describe("tool call document producer", () => {
               toolCallId: "t",
               toolName: "codemode",
               content: [{ type: "text", text: "ok" }],
-              nestedCalls: nested,
+              nestedCalls: nestedHyphenated,
             },
           },
           {
@@ -319,6 +365,7 @@ describe("tool call document producer", () => {
           refreshSessionState: async () => null,
           getToolFullOutputPath: () => null,
         },
+        getMcpServerNames: (s) => mcp.configuredServerNames(s.workspaceId),
         ensureSessionContextWindow: (s) => s,
       });
       const raw = await service.getSessionWithTrace({ session });
@@ -330,7 +377,9 @@ describe("tool call document producer", () => {
         expect(trace.find((e) => e.type === "toolCall")?.inputPresentation).toEqual({
           fields: { code: { role: "code", language: "javascript" } },
         });
-        expect(trace.find((e) => e.type === "toolResult")?.nestedCalls).toEqual(nested);
+        expect(trace.find((e) => e.type === "toolResult")?.nestedCalls).toEqual(
+          live.type === "tool_end" ? live.nestedCalls : undefined,
+        );
         expect(trace.find((e) => e.id === "direct")?.display).toEqual(
           resolveToolDisplay("mcp__coros__getActivityDetail", {
             label: "coros/getActivityDetail",

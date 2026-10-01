@@ -15,6 +15,8 @@ struct ToolOutputSidecarWindow: Sendable, Equatable {
 struct ToolOutputSidecarWindowSource: Sendable {
     let loadFirst: @Sendable () async throws -> ToolOutputSidecarWindow?
     let loadNext: @Sendable (_ startByte: Int) async throws -> ToolOutputSidecarWindow?
+    /// Bound by the tool document adapter; never infer a boundary from source text.
+    var rawDocumentPrefix: String? = nil
 }
 
 /// Expand vs copy fetch policy for tool-output sidecars.

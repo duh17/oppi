@@ -222,6 +222,7 @@ enum ToolPresentationBuilder {
             segmentAttributedTrailing: segmentAttributedTrailing
         )
         configuration.rawMarkdownText = expanded.rawMarkdownText
+        configuration.rawMarkdownOutputPrefix = expanded.rawMarkdownOutputPrefix
         configuration.currentFileOpenIntent = currentFileOpenIntent
         return configuration
     }
@@ -415,6 +416,7 @@ enum ToolPresentationBuilder {
         var copyCommandText: String?
         var copyOutputText: String?
         var rawMarkdownText: String?
+        var rawMarkdownOutputPrefix: String?
     }
 
     private static func buildExpanded(
@@ -451,7 +453,8 @@ enum ToolPresentationBuilder {
             content: presentation.content.map(expandedContent(from:)),
             copyCommandText: presentation.copyCommandText,
             copyOutputText: presentation.copyOutputText,
-            rawMarkdownText: { if case .markdown(let markdown) = presentation.content { return markdown.rawText }; return nil }()
+            rawMarkdownText: { if case .markdown(let markdown) = presentation.content { return markdown.rawText }; return nil }(),
+            rawMarkdownOutputPrefix: { if case .markdown(let markdown) = presentation.content { return markdown.rawOutputPrefix }; return nil }()
         )
     }
 

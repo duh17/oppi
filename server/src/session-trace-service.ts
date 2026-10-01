@@ -111,6 +111,7 @@ export interface SessionTraceServiceDeps {
     getEntryRenderers?: SessionRuntimes["getEntryRenderers"];
   };
   ensureSessionContextWindow: (session: Session) => Session;
+  getMcpServerNames?: (session: Session) => readonly string[];
   mobileRenderers?: Pick<MobileRendererRegistry, "renderCall" | "renderResult"> &
     Partial<Pick<MobileRendererRegistry, "inputPresentation">>;
 }
@@ -178,6 +179,7 @@ export class SessionTraceService {
       trace: this.withMobileRenderSegments(
         trace || [],
         params.includePresentationSegments === true,
+        this.deps.getMcpServerNames?.(latestSession) ?? [],
       ),
     };
   }
@@ -244,6 +246,7 @@ export class SessionTraceService {
       trace: this.withMobileRenderSegments(
         result.trace,
         params.includePresentationSegments === true,
+        this.deps.getMcpServerNames?.(latestSession) ?? [],
       ),
       page: result.page,
       metrics: result.metrics,
@@ -538,7 +541,11 @@ export class SessionTraceService {
     }
   }
 
-  private withMobileRenderSegments(trace: TraceEvent[], includeSegments: boolean): TraceEvent[] {
+  private withMobileRenderSegments(
+    trace: TraceEvent[],
+    includeSegments: boolean,
+    serverNames: readonly string[],
+  ): TraceEvent[] {
     const toolNames = new Map<string, string>();
     // Results can follow their calls (or lie on a later trace event). Resolve
     // identity before mapping, not from whatever happened to be seen so far.
@@ -560,8 +567,12 @@ export class SessionTraceService {
               ...original.nestedCalls,
               calls: original.nestedCalls.calls.map((call) => {
                 const display =
-                  resolveToolDisplay(call.name, undefined, nestedDetails.get(call.name)) ??
-                  call.display;
+                  resolveToolDisplay(
+                    call.name,
+                    undefined,
+                    nestedDetails.get(call.name),
+                    serverNames,
+                  ) ?? call.display;
                 return { ...call, ...(display ? { display } : {}) };
               }),
             },
@@ -575,7 +586,8 @@ export class SessionTraceService {
           : undefined;
         const inputPresentation = this.mobileRenderers.inputPresentation?.(tool);
         const display =
-          event.display ?? resolveToolDisplay(tool, undefined, resultDetails.get(event.id));
+          event.display ??
+          resolveToolDisplay(tool, undefined, resultDetails.get(event.id), serverNames);
         return {
           ...event,
           ...(callSegments ? { callSegments } : {}),

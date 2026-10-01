@@ -11,21 +11,22 @@ enum ToolCallDocumentBuilder {
         let input = (toolName.map { "**Tool**\n\n" + inlineCode($0) + "\n\n" } ?? "") + input(args ?? [:], hints: hints)
         if !input.isEmpty { sections.append(("Input", input)) }
         if let nestedCalls { sections.append(("Calls", calls(nestedCalls))) }
-        let body = outputBody(output, details: details)
+        let availability = previewOnly
+            ? "Output preview only" + (totalBytes.map { " (\(rawOutput.utf8.count) of \($0) bytes)" } ?? "") + ". Full output may be unavailable for a stopped session.\n\n"
+            : ""
+        let body = availability + outputBody(output, details: details)
         if !body.isEmpty { sections.append(("Output", body)) }
         else if !isDone && !sections.isEmpty { sections.append(("Output", "Waiting for output…")) }
         guard !sections.isEmpty else { return nil }
         let text = sections.map { sections.count > 1 ? "## \($0.0)\n\n\($0.1)" : $0.1 }.joined(separator: "\n\n")
         let rawArgs = OrderedJSON.from(.object(args ?? [:])).json(pretty: true)
-        let availability = previewOnly
-            ? "Output preview only" + (totalBytes.map { " (\(rawOutput.utf8.count) of \($0) bytes)" } ?? "") + ". Full output may be unavailable for a stopped session.\n\n"
-            : ""
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let rawCalls = nestedCalls.flatMap { try? encoder.encode($0) }.flatMap { String(data: $0, encoding: .utf8) }
         let identity = toolName.map { "Tool\n\n" + $0 + "\n\n" } ?? ""
+        let rawPrefix = identity + "Input\n\n" + rawArgs + (rawCalls.map { "\n\nCalls\n\n" + $0 } ?? "") + "\n\nOutput\n\n"
         return .init(text: text, filePath: details?.objectValue?["filePath"]?.stringValue,
-                     rawText: identity + "Input\n\n" + rawArgs + (rawCalls.map { "\n\nCalls\n\n" + $0 } ?? "") + "\n\nOutput\n\n" + availability + rawOutput)
+                     rawText: rawPrefix + availability + rawOutput, rawOutputPrefix: rawPrefix)
     }
 
     private static func input(_ args: [String: JSONValue], hints: [String: String]) -> String {

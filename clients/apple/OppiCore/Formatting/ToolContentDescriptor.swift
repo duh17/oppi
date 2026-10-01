@@ -82,6 +82,8 @@ enum ToolContentDescriptor: Equatable, Sendable {
         var text: String
         var filePath: String? = nil
         var rawText: String? = nil
+        /// Exact prefix through the Raw Output boundary, before availability/output.
+        var rawOutputPrefix: String? = nil
     }
 
     struct File: Equatable, Sendable {

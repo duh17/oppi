@@ -2022,8 +2022,8 @@ final class FullScreenCodeViewController: UIViewController {
             return text
         case .diff(let document):
             return document.copyText
-        case .markdown(let text, _, _, _, _):
-            return text
+        case .markdown(let text, _, _, let rawText, _):
+            return showSource ? (completeRawText ?? rawText ?? text) : text
         case .html(let text, _):
             return text
         case .thinking(let text, let stream):
@@ -2146,7 +2146,9 @@ final class FullScreenCodeViewController: UIViewController {
         switch content {
         case .mermaid(let text, let filePath): return .mermaid(text, fileName: filePath)
         case .latex(let text, let filePath): return .latex(text, fileName: filePath)
-        case .markdown(let text, let filePath, _, _, _): return .markdown(text, fileName: filePath)
+        case .markdown(let text, let filePath, _, let rawText, _):
+            if showSource, let raw = completeRawText ?? rawText { return .plainText(raw, fileName: filePath) }
+            return .markdown(text, fileName: filePath)
         case .orgMode(let text, let filePath): return .orgMode(text, fileName: filePath)
         case .html(let text, let filePath): return .html(text, fileName: filePath)
         case .graphviz(let text, let filePath): return .code(text, language: "dot", fileName: filePath)
@@ -2177,9 +2179,8 @@ final class FullScreenCodeViewController: UIViewController {
     private func loadRawSidecarIfNeeded() {
         guard rawSidecarTask == nil, completeRawText == nil,
               case .markdown(_, _, _, let rawText, let source) = currentSemanticContent(),
-              let rawText, let source,
-              let outputMarker = rawText.range(of: "\n\nOutput\n\n") else { return }
-        let inputPrefix = String(rawText[..<outputMarker.upperBound])
+              rawText != nil, let source,
+              let inputPrefix = source.rawDocumentPrefix else { return }
         // Publish complete Raw only after every byte arrives. Missing windows,
         // cancellation and stopped-session 404s retain the explicit preview.
         rawSidecarTask = Task { [weak self] in
