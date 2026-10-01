@@ -1,0 +1,46 @@
+# Oppi server architecture: Session runtime
+
+Part of [Oppi server architecture](../architecture-server.md). Runtime ownership, the managed SDK runtime, saved Agents and schedules, and the terminal mirror.
+
+## Session runtime ownership
+
+`SessionRuntimes` is the server facade for runtime-owned operations. It dispatches by persisted `Session.runtime`:
+
+- `"oppi"` routes to managed `SessionManager` and the in-process Pi SDK backend.
+- `"pi-tui"` routes to `PiTuiMirrorRuntime` and the terminal bridge.
+
+The facade handles common calls such as prompt, steer, follow-up, abort, stop, queue state, pending UI, event catch-up, snapshots, and full tool-output paths. Route and stream code should prefer `SessionRuntimes` when the command applies to either runtime owner.
+
+A stopped, disconnected mirror session with a canonical session file can be promoted to `"oppi"` on resume or focused-stream open. A connected or stale terminal-owned session stays terminal-owned. A terminal bridge can take over an existing `"oppi"` session only after explicit terminal confirmation; if that session is active, the server stops the managed runtime before switching ownership.
+
+## Managed SDK runtime
+
+`SessionManager` is the managed runtime facade. It keeps active sessions in memory and delegates most behavior to coordinators from `session-coordinators.ts`:
+
+- `SessionStartCoordinator` creates SDK-backed active sessions.
+- `SessionActivationCoordinator` handles start/resume idempotence.
+- `SessionInputCoordinator` handles prompt, steer, follow-up, attachment validation, and first-message capture.
+- `SessionMessageQueueCoordinator` owns steering/follow-up queue state.
+- `SessionCommandCoordinator` forwards SDK commands and applies SDK snapshots.
+- `SessionAgentEventCoordinator` translates Pi events into server messages.
+- `SessionBroadcaster` assigns per-session sequence numbers and supports focused-session catch-up.
+- `SessionStopFlowCoordinator` and `SessionStopCoordinator` own abort/stop behavior.
+- `SessionLifecycleCoordinator` handles idle timers and session end cleanup.
+
+`sdk-backend.ts` wraps Pi's `AgentSession`. It resolves workspace cwd, configures sandbox tools when requested, binds extensions through `SdkUiBridge`, injects session attachment helpers, forwards SDK commands, and emits Pi events back into the session projection pipeline. Declared control sessions use an owner-only, non-symlink `$OPPI_DATA_DIR/control-sessions/cwd` as the real Pi SessionManager cwd. They otherwise use ordinary Pi global configuration and resources. `Pi Control` remains display metadata only and must not be persisted as SessionManager cwd, or Pi JSONLs land under the server process working directory and leak into workspace importable-local discovery. Sandboxes still keep their guest/display cwd split with a host existence override.
+
+## Saved Agents and schedules
+
+Saved Agent routes persist reusable user definitions. The Agents client presents Pi separately, without an `agent_definitions` row. Launch-time inputs such as workspace, worktree, prompt, model override, and session name flow through `AgentLaunchService`, which owns idempotency, launch recovery, target-constraint enforcement, and prompt dispatch into managed sessions. Definitions may restrict launches to allowed workspace IDs and a required host or sandbox runtime. Incompatible targets and unavailable selected Skills or Extensions fail closed as typed configuration failures. Allowed tool names that no active tool matches at launch are dropped from the session's effective tool set and surfaced through `session.warnings`, so an unavailable allowlist entry cannot block the whole launch; the saved definition is not rewritten. Pre-start checks may discard a never-announced empty shell and return an actionable non-retryable `422` without a session ID; failures after runtime start preserve one `error` session for audit. Focused streams close with policy violation rather than reconnecting and duplicating timeline errors.
+
+A server-scoped Pi Control session persists explicit `domain`, `intent`, and optional target metadata with no `workspaceId`. Creation may set model and thinking overrides, while a user-selected workspace remains prompt context rather than runtime ownership. `/control-sessions` routes enforce that declaration before reusing the ordinary lifecycle, trace, attachment, command, broadcaster, and focused-stream services. Control sessions remain in the global recent projection but never enter workspace catalogs or counts. An idempotent launch persisted as `promptDispatch: not_sent` may claim a compare-and-swap lease and retry its frozen initial prompt. A launch left `launching` after process failure is conservatively not redispatched even after lease expiry, because existing persistence cannot distinguish a crash before send from one after Pi accepted the turn. Agent, Schedule, Workspace, and Skill revisions use explicit control domains rather than inferring authority from a missing workspace. Pi Control loads normal global `SYSTEM.md`, `APPEND_SYSTEM.md`, settings, tools, Skills, prompt templates, and Extensions. It has ordinary host-user permissions and can run the installed `oppi` CLI through `bash`; Oppi does not add a separate tool approval layer.
+
+The CLI accepts bounded in-memory `--definition-json` objects for Agent create/update and schedule update, avoiding temporary files for those domains. Canonical Agent and schedule validators reject unexpected fields and empty updates at the server boundary. Skill revisions instead use stock `read` and `edit` on the selected existing absolute host path. The `oppi skill` CLI family and Skill-file HTTP PUT route do not exist; catalog editability remains presentation metadata, not a stock-tool authorization boundary.
+
+Schedules persist a trigger plus an action. `AgentScheduleRunner` scans active schedules, materializes due slots, claims due runs with a lease, and dispatches automatic runs through the same launch hooks used by manual schedule runs. Pause or archive a schedule to stop future automatic runs. Archived schedules remain listable and can be restored directly to active.
+
+## Terminal mirror runtime
+
+`PiTuiMirrorRuntime` owns `/mirror/v1/bridge` and implements the same `AgentRuntimeTransport` interface as the managed runtime. It registers terminal bridges, resolves the workspace, coalesces sessions by Pi identity, handles takeover confirmation, forwards remote commands, proxies extension UI, mirrors queue state, and projects terminal Pi events through the shared session event pipeline.
+
+Mirror sessions are terminal-owned. If the bridge disconnects, the stored session remains `runtime == "pi-tui"` unless the app explicitly resumes a stopped disconnected session as an Oppi-managed runtime.

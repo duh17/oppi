@@ -174,6 +174,7 @@ export const SOURCE_EXTRA_FILES = [
   "clients/apple/Oppi.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
   "dev/testing/qa-verification.md",
   "dev/testing/README.md",
+  "dev/testing/apple.md",
   ".gitignore",
   "server/package.json",
   "server/package-lock.json",
