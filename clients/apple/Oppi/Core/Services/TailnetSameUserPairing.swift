@@ -96,6 +96,7 @@ extension TailnetSameUserPairing {
         dnsName: String,
         probe: (URL) async throws -> Bool
     ) async -> TailnetPeerProbe {
+        guard ServerTLSTrustPolicy.isTailscaleHostname(dnsName) else { return .notReachable }
         var sawCertificateFailure = false
         do {
             _ = try await firstHealthyProbeURL(dnsName: dnsName) { url in
@@ -123,6 +124,34 @@ extension TailnetSameUserPairing {
         return try await client.health(timeoutInterval: 5)
     }
 
+    /// Readiness needs an Oppi response, not merely a reachable web server.
+    /// `server/src/server.ts` returns `{ok: true, protocol: 2}` at `/health`.
+    /// System CA trust checks the original HTTPS hostname; redirects are refused.
+    static func peerHealth(at url: URL) async throws -> Bool {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 5
+        configuration.timeoutIntervalForResource = 5
+        TailnetTransportRoute.apply(to: configuration, proxy: TailnetTransportRoute.Snapshot.forHost(url.host).proxy)
+        let session = URLSession(configuration: configuration, delegate: PeerHealthDelegate(), delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+
+        let request = URLRequest(url: url.appendingPathComponent("health"))
+        let (data, response) = try await session.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let health = try? JSONDecoder().decode(PeerHealthResponse.self, from: data) else { return false }
+        return health.ok && health.protocolVersion == 2
+    }
+
+    private struct PeerHealthResponse: Decodable {
+        let ok: Bool
+        let protocolVersion: Int
+
+        enum CodingKeys: String, CodingKey {
+            case ok
+            case protocolVersion = "protocol"
+        }
+    }
+
     /// Probes every machine concurrently and reports each outcome as it lands.
     /// Cancelling the caller cancels the probes; their outcomes are dropped.
     static func probeOutcomes(
@@ -132,8 +161,10 @@ extension TailnetSameUserPairing {
         await withTaskGroup(of: (String, TailnetPeerProbe).self) { group in
             for dnsName in dnsNames {
                 group.addTask {
-                    let outcome = await TailnetSameUserPairing.probeOutcome(dnsName: dnsName) {
-                        try await TailnetSameUserPairing.health(at: $0)
+                    let outcome = await TailnetSameUserPairing.probeOutcome(dnsName: dnsName) { @MainActor url in
+                        try TailnetSameUserPairing.requireRunning(TailnetNodeController.shared.state)
+                        guard TailnetTransportRoute.proxy != nil else { throw Failure.proxyNotReady }
+                        return try await TailnetSameUserPairing.peerHealth(at: url)
                     }
                     return (dnsName, outcome)
                 }
@@ -156,6 +187,19 @@ extension TailnetSameUserPairing {
         default:
             return false
         }
+    }
+}
+
+/// A health redirect cannot establish readiness at the machine being probed.
+private final class PeerHealthDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }
 

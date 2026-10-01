@@ -455,6 +455,48 @@ struct TailnetPeerStatusTests {
         #expect(outcome == .notReachable)
     }
 
+    @Test(arguments: [
+        (#"{"ok":true,"protocol":2}"#, true),
+        ("<html>Another service</html>", false),
+        (#"{"ok":true}"#, false),
+        (#"{"ok":true,"protocol":1}"#, false),
+        (#"{"ok":false,"protocol":2}"#, false),
+    ])
+    func readinessRequiresOppiHealthIdentity(body: String, isOppi: Bool) async throws {
+        let server = try await PeerHealthHTTPFixture.start(body: body)
+        defer { server.stop() }
+        let url = try #require(server.baseURL)
+        let outcome = await TailnetSameUserPairing.probeOutcome(dnsName: "mac-studio.tail1234.ts.net") { _ in
+            try await TailnetSameUserPairing.peerHealth(at: url)
+        }
+        #expect(outcome == (isOppi ? .ready : .notReachable))
+
+        let afterCertificateFailure = await TailnetSameUserPairing.probeOutcome(dnsName: "mac-studio.tail1234.ts.net") { probeURL in
+            if probeURL.port == 7749 { throw Self.certificateFailure }
+            return try await TailnetSameUserPairing.peerHealth(at: url)
+        }
+        #expect(afterCertificateFailure == (isOppi ? .ready : .needsCertificate))
+    }
+
+    @Test func readinessNeverFollowsAHealthRedirect() async throws {
+        let server = try await PeerHealthHTTPFixture.start(body: #"{"ok":true,"protocol":2}"#, redirects: true)
+        defer { server.stop() }
+        let url = try #require(server.baseURL)
+        let outcome = await TailnetSameUserPairing.probeOutcome(dnsName: "mac-studio.tail1234.ts.net") { _ in
+            try await TailnetSameUserPairing.peerHealth(at: url)
+        }
+        #expect(outcome == .notReachable)
+
+        let afterCertificateFailure = await TailnetSameUserPairing.probeOutcome(dnsName: "mac-studio.tail1234.ts.net") { probeURL in
+            if probeURL.port == 7749 { throw Self.certificateFailure }
+            return try await TailnetSameUserPairing.peerHealth(at: url)
+        }
+        #expect(afterCertificateFailure == .needsCertificate)
+        // The redirect destination returns genuine Oppi JSON. Reaching it
+        // would both change readiness and escape the original peer's identity.
+        #expect(server.paths == ["/health", "/health", "/health"])
+    }
+
     @Test func onlyCertificateVerdictsCountAsCertificateFailure() {
         let certificate: [URLError.Code] = [
             .serverCertificateUntrusted, .serverCertificateHasUnknownRoot,
@@ -611,6 +653,79 @@ private enum TailnetFixtures {
       "Peer": null
     }
     """
+}
+
+/// Real loopback HTTP responses exercise URLSession body parsing and redirect
+/// policy without replacing that client boundary. TLS remains system-trusted
+/// in production; the fixture uses HTTP under NSAllowsLocalNetworking.
+private final class PeerHealthHTTPFixture: @unchecked Sendable {
+    private let listener: NWListener
+    private let body: String
+    private let redirects: Bool
+    private let lock = NSLock()
+    private var requestedPaths: [String] = []
+
+    private init(listener: NWListener, body: String, redirects: Bool) {
+        self.listener = listener
+        self.body = body
+        self.redirects = redirects
+    }
+
+    var baseURL: URL? {
+        listener.port.flatMap { URL(string: "http://127.0.0.1:\($0.rawValue)") }
+    }
+
+    var paths: [String] { lock.withLock { requestedPaths } }
+
+    static func start(body: String, redirects: Bool = false) async throws -> PeerHealthHTTPFixture {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        let listener = try NWListener(using: parameters)
+        let server = PeerHealthHTTPFixture(listener: listener, body: body, redirects: redirects)
+        let queue = DispatchQueue(label: "oppi.tests.peer-health")
+        listener.newConnectionHandler = { [weak server] connection in
+            connection.start(queue: queue)
+            server?.receive(connection)
+        }
+        try await withCheckedThrowingContinuation { (ready: CheckedContinuation<Void, Error>) in
+            let resumed = LockedFlag()
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    if resumed.setOnce() { ready.resume() }
+                case .failed(let error):
+                    if resumed.setOnce() { ready.resume(throwing: error) }
+                default: break
+                }
+            }
+            listener.start(queue: queue)
+        }
+        return server
+    }
+
+    func stop() { listener.cancel() }
+
+    private func receive(_ connection: NWConnection, accumulated: Data = Data()) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [self] data, _, complete, error in
+            var request = accumulated
+            request.append(data ?? Data())
+            guard error == nil, request.count < 16_384 else {
+                connection.cancel()
+                return
+            }
+            guard let text = String(data: request, encoding: .utf8), text.contains("\r\n\r\n") else {
+                if complete { connection.cancel() } else { receive(connection, accumulated: request) }
+                return
+            }
+            let path = String(text.split(separator: " ").dropFirst().first ?? "")
+            lock.withLock { requestedPaths.append(path) }
+            let redirect = redirects && path == "/health"
+            let status = redirect ? "302 Found" : "200 OK"
+            let location = redirect ? "Location: /destination\r\n" : ""
+            let response = "HTTP/1.1 \(status)\r\n\(location)Content-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+            connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
+        }
+    }
 }
 
 // MARK: - SOCKS5 recorder

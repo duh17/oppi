@@ -60,7 +60,7 @@ iOS can reclaim the loopback listener from a suspended app. A bus watch that fai
 Settings → Network → Tailscale → Online Machines (`TailnetSettingsView`) shows one state per online peer, derived by `TailnetPeerStatus.derive`:
 
 - **Paired**: the peer's MagicDNS name (case-insensitive, no root dot) equals a paired server host. The row opens that server; no probe runs.
-- **Ready to pair**: an unauthenticated `GET /health` over the node's SOCKS route succeeded on a `TailnetSameUserPairing.probeURLs` port (7749, then 443). This is the same `firstHealthyProbeURL` the Pair button uses.
+- **Ready to pair**: an unauthenticated `GET /health` over the node's SOCKS route returned a direct HTTP 200 with Oppi's `{ok: true, protocol: 2}` body on a `TailnetSameUserPairing.probeURLs` port (7749, then 443). Readiness probes refuse redirects and reject other services' 200 responses. The Pair button uses the same port order; its existing reachability check is unchanged.
 - **Oppi needs Tailscale HTTPS**: a probe got a certificate verdict (`serverCertificateUntrusted`, `…HasUnknownRoot`, `…HasBadDate`, `…NotYetValid`), even if a later port was merely refused. `secureConnectionFailed` is not one: CFNetwork also reports resets and SOCKS failures that way, so it counts as not reachable.
 - **Oppi not reachable**: refused, timed out, or not Oppi. Both setup states offer **Check this Mac**, which opens `SSHPreflightView` with that peer selected.
 - iOS, iPadOS, and Android peers (`TailnetPeer.os`) are not listed. Nothing branches on machine names.
