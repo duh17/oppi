@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { ServerMessage, Session } from "../src/types.js";
-import type { MobileRendererRegistry } from "../src/mobile-renderer.js";
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import {
   applyMessageEndToSession,
   translatePiEvent,
@@ -1146,6 +1146,8 @@ describe("translatePiEvent", () => {
       };
       const mockRegistry = {
         inputPresentation: () => undefined,
+        outputPresentation: () => undefined,
+        outputAvailability: () => ({ complete: true }),
         renderCall: (tool: string, args: Record<string, unknown>) =>
           mockRenderer.renderCall(tool, args),
         renderResult: () => undefined,
@@ -1460,7 +1462,7 @@ describe("translatePiEvent", () => {
     });
 
     it("switches to replace mode when bash output exceeds 8KB", () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ mobileRenderers: new MobileRendererRegistry() });
       ctx.toolNames.set("tc-1", "bash");
 
       // Create output > 8KB
@@ -1484,7 +1486,7 @@ describe("translatePiEvent", () => {
     });
 
     it("throttles shell preview updates to 150ms intervals", () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ mobileRenderers: new MobileRendererRegistry() });
       ctx.toolNames.set("tc-1", "bash");
 
       const bigOutput = "x".repeat(9000);
@@ -1553,15 +1555,11 @@ describe("translatePiEvent", () => {
       expect(msg.mode).toBeUndefined(); // normal append mode
     });
 
-    it("is case-insensitive for shell tool detection", () => {
-      const ctx = makeCtx();
+    it("uses Pi's exact name, never a case-insensitive shell fallback", () => {
+      const ctx = makeCtx({ mobileRenderers: new MobileRendererRegistry() });
       ctx.toolNames.set("tc-1", "Bash");
 
       const bigOutput = "x".repeat(9000);
-      // The tool name lookup uses toolNames map (which stores what was passed)
-      // but isShellLikeTool lowercases. Let's check the code flow:
-      // toolName = ctx.toolNames.get(key) → "Bash"
-      // shellTool = isShellLikeTool("Bash") → SHELL_LIKE_TOOLS.has("bash") → true
       const result = translatePiEvent(
         {
           type: "tool_execution_update",
@@ -1574,7 +1572,7 @@ describe("translatePiEvent", () => {
       );
 
       expect(result).toHaveLength(1);
-      expect((result[0] as Extract<ServerMessage, { type: "tool_output" }>).mode).toBe("replace");
+      expect((result[0] as Extract<ServerMessage, { type: "tool_output" }>).mode).toBeUndefined();
     });
   });
 
@@ -2052,7 +2050,7 @@ describe("translatePiEvent", () => {
     });
 
     it("uses replace mode for shell tool final output exceeding threshold", () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ mobileRenderers: new MobileRendererRegistry() });
       ctx.toolNames.set("tc-1", "bash");
 
       const bigOutput = "line\n".repeat(2000); // > 8KB

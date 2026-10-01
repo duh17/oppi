@@ -36,9 +36,6 @@ import {
 
 // ─── Shell Preview Constants ───
 
-/** Tools that produce shell-like streaming output eligible for tail preview. */
-const SHELL_LIKE_TOOLS = new Set(["bash"]);
-
 /** Accumulated output threshold (bytes) before switching to replace mode. */
 const SHELL_PREVIEW_THRESHOLD = 8 * 1024; // 8KB
 
@@ -52,10 +49,6 @@ const SHELL_PREVIEW_MAX_BYTES = 16 * 1024; // 16KB
 const SHELL_PREVIEW_MIN_INTERVAL_MS = 150;
 
 const log = createLogger({ base: { component: "session_protocol" } });
-
-function isShellLikeTool(toolName: string): boolean {
-  return SHELL_LIKE_TOOLS.has(toolName.toLowerCase());
-}
 
 /**
  * Extract a bounded tail preview from text.
@@ -948,6 +941,8 @@ export function translatePiEvent(
           }
           const inputPresentation = ctx.mobileRenderers?.inputPresentation(toolCallUpdate.tool);
           if (inputPresentation) toolCallUpdate.inputPresentation = inputPresentation;
+          const outputPresentation = ctx.mobileRenderers?.outputPresentation(toolCallUpdate.tool);
+          if (outputPresentation) toolCallUpdate.outputPresentation = outputPresentation;
           const display = resolveToolDisplay(
             toolCallUpdate.tool,
             ctx.getToolDefinition?.(toolCallUpdate.tool),
@@ -968,6 +963,7 @@ export function translatePiEvent(
       const toolCallId = resolveToolCallId(event);
       const callSegments = ctx.mobileRenderers?.renderCall(event.toolName, event.args || {});
       const inputPresentation = ctx.mobileRenderers?.inputPresentation(event.toolName);
+      const outputPresentation = ctx.mobileRenderers?.outputPresentation(event.toolName);
       const display = resolveToolDisplay(event.toolName, ctx.getToolDefinition?.(event.toolName));
       // Track tool name for shell preview decisions in subsequent updates.
       if (toolCallId) {
@@ -983,6 +979,7 @@ export function translatePiEvent(
         args: event.args || {},
         toolCallId,
         ...(callSegments ? { callSegments } : {}),
+        ...(outputPresentation ? { outputPresentation } : {}),
         ...(inputPresentation ? { inputPresentation } : {}),
         ...(display ? { display } : {}),
       });
@@ -1006,7 +1003,8 @@ export function translatePiEvent(
       if (toolName === "ask") return EMPTY_MESSAGES;
 
       const messages: ServerMessage[] = [];
-      const shellTool = isShellLikeTool(toolName);
+      const shellTool =
+        ctx.mobileRenderers?.outputPresentation(toolName, updateDetails)?.kind === "terminal";
       const audioDetails = audioPresentationDetails(updateDetails);
       let emittedOutput = false;
 
@@ -1099,7 +1097,9 @@ export function translatePiEvent(
       const key = toolCallId ?? "";
       const lastText = ctx.partialResults.get(key) ?? "";
       const toolName = ctx.toolNames.get(key) ?? event.toolName ?? "";
-      const shellTool = isShellLikeTool(toolName);
+      const shellTool =
+        ctx.mobileRenderers?.outputPresentation(toolName, event.result?.details)?.kind ===
+        "terminal";
 
       // Ask tool output is only for the LLM — suppress it from iOS broadcast.
       // The structured details (answers) are delivered via tool_end, and iOS
@@ -1205,6 +1205,17 @@ export function translatePiEvent(
       );
       messages.push({
         type: "tool_end",
+        ...(ctx.mobileRenderers
+          ? { outputAvailability: ctx.mobileRenderers.outputAvailability(event.result?.details) }
+          : {}),
+        ...(ctx.mobileRenderers?.outputPresentation(event.toolName, event.result?.details)
+          ? {
+              outputPresentation: ctx.mobileRenderers.outputPresentation(
+                event.toolName,
+                event.result?.details,
+              ),
+            }
+          : {}),
         ...(nestedCalls ? { nestedCalls } : {}),
         tool: event.toolName,
         toolCallId,

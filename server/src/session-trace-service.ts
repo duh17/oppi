@@ -113,7 +113,12 @@ export interface SessionTraceServiceDeps {
   ensureSessionContextWindow: (session: Session) => Session;
   getMcpServerNames?: (session: Session) => readonly string[];
   mobileRenderers?: Pick<MobileRendererRegistry, "renderCall" | "renderResult"> &
-    Partial<Pick<MobileRendererRegistry, "inputPresentation">>;
+    Partial<
+      Pick<
+        MobileRendererRegistry,
+        "inputPresentation" | "outputPresentation" | "outputAvailability"
+      >
+    >;
 }
 
 /**
@@ -125,7 +130,12 @@ export interface SessionTraceServiceDeps {
  */
 export class SessionTraceService {
   private readonly mobileRenderers: Pick<MobileRendererRegistry, "renderCall" | "renderResult"> &
-    Partial<Pick<MobileRendererRegistry, "inputPresentation">>;
+    Partial<
+      Pick<
+        MobileRendererRegistry,
+        "inputPresentation" | "outputPresentation" | "outputAvailability"
+      >
+    >;
 
   constructor(private readonly deps: SessionTraceServiceDeps) {
     this.mobileRenderers = deps.mobileRenderers ?? new MobileRendererRegistry();
@@ -585,6 +595,10 @@ export class SessionTraceService {
           ? this.mobileRenderers.renderCall(tool, event.args ?? {})
           : undefined;
         const inputPresentation = this.mobileRenderers.inputPresentation?.(tool);
+        const outputPresentation = this.mobileRenderers.outputPresentation?.(
+          tool,
+          resultDetails.get(event.id),
+        );
         const display =
           event.display ??
           resolveToolDisplay(tool, undefined, resultDetails.get(event.id), serverNames);
@@ -592,18 +606,24 @@ export class SessionTraceService {
           ...event,
           ...(callSegments ? { callSegments } : {}),
           ...(inputPresentation ? { inputPresentation } : {}),
+          ...(outputPresentation ? { outputPresentation } : {}),
           ...(display ? { display } : {}),
         };
       }
-      if (event.type === "toolResult" && includeSegments) {
+      if (event.type === "toolResult") {
         const tool = event.toolName ?? toolNames.get(event.toolCallId ?? "");
         if (!tool) return event;
-        const resultSegments = this.mobileRenderers.renderResult(
-          tool,
-          event.details,
-          event.isError === true,
-        );
-        return resultSegments ? { ...event, resultSegments } : event;
+        const resultSegments = includeSegments
+          ? this.mobileRenderers.renderResult(tool, event.details, event.isError === true)
+          : undefined;
+        const outputPresentation = this.mobileRenderers.outputPresentation?.(tool, event.details);
+        const outputAvailability = this.mobileRenderers.outputAvailability?.(event.details);
+        return {
+          ...event,
+          ...(resultSegments ? { resultSegments } : {}),
+          ...(outputPresentation ? { outputPresentation } : {}),
+          ...(outputAvailability ? { outputAvailability } : {}),
+        };
       }
       return event;
     });

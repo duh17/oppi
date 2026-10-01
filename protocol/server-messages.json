@@ -634,10 +634,13 @@
       "inputPresentation": {
         "fields": {
           "command": {
-            "role": "code",
-            "language": "bash"
+            "role": "command",
+            "language": "shell"
           }
         }
+      },
+      "outputPresentation": {
+        "kind": "terminal"
       }
     },
     "tool_start_with_display": {
@@ -723,7 +726,15 @@
     "tool_end": {
       "type": "tool_end",
       "tool": "bash",
-      "toolCallId": "tc-001"
+      "toolCallId": "tc-001",
+      "outputPresentation": {
+        "kind": "terminal"
+      },
+      "outputAvailability": {
+        "complete": false,
+        "totalBytes": 32768,
+        "source": "sidecar"
+      }
     },
     "tool_end_with_details": {
       "type": "tool_end",

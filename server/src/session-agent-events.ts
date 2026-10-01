@@ -37,11 +37,6 @@ import type { SessionStopCoordinator } from "./session-stop.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
 import { materializeToolMediaDetails } from "./session-attachments.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
-import {
-  mergeToolTuiRenderSnapshot,
-  renderToolTuiResultSnapshot,
-  shouldAttachToolTuiRenderSnapshot,
-} from "./tool-tui-renderer.js";
 import { normalizeMutationToolName } from "./tool-mutations.js";
 import type { ServerMessage, SessionSummary } from "./types.js";
 
@@ -159,13 +154,12 @@ export class SessionAgentEventCoordinator {
       return;
     }
 
-    let event = materializeAgentEventMedia({
+    const event = materializeAgentEventMedia({
       event: data,
       dataDir: this.deps.dataDir,
       sessionId: active.session.id,
       trustedSourceRoots: this.deps.trustedAttachmentSourceRoots,
     });
-    event = this.withToolTuiRenderSnapshot(active, event);
 
     active.cacheMissTracker ??= {};
     active.showCacheMissNotices ??= false;
@@ -436,70 +430,6 @@ export class SessionAgentEventCoordinator {
 
     const toolName = normalizeMutationToolName(event.toolName);
     return SessionAgentEventCoordinator.CHANGE_SUMMARY_TOOL_NAMES.has(toolName);
-  }
-
-  private withToolTuiRenderSnapshot(
-    active: SessionAgentEventState,
-    event: AgentSessionEvent,
-  ): AgentSessionEvent {
-    if (event.type !== "tool_execution_end") {
-      return event;
-    }
-
-    const toolName = typeof event.toolName === "string" ? event.toolName : undefined;
-    if (!toolName || !shouldAttachToolTuiRenderSnapshot(toolName)) {
-      return event;
-    }
-
-    const piSession = active.sdkBackend?.session;
-    const toolDefinition = piSession?.getToolDefinition(toolName);
-    if (!toolDefinition?.renderResult) {
-      return event;
-    }
-
-    const result = event.result;
-    const content = Array.isArray(result?.content) ? result.content : [];
-    const toolCallId =
-      typeof event.toolCallId === "string" && event.toolCallId.length > 0
-        ? event.toolCallId
-        : undefined;
-
-    try {
-      const snapshot = renderToolTuiResultSnapshot({
-        toolDefinition,
-        toolCallId,
-        content,
-        details: result?.details,
-        isError: event.isError ?? false,
-        args: toolCallId ? active.toolArgs?.get(toolCallId) : undefined,
-        cwd:
-          piSession?.sessionManager.getHeader()?.cwd ??
-          active.session.mirror?.terminal?.cwd ??
-          process.cwd(),
-      });
-      if (!snapshot) {
-        return event;
-      }
-      const details = mergeToolTuiRenderSnapshot(result?.details, snapshot);
-      if (!details) {
-        return event;
-      }
-      return {
-        ...event,
-        result: {
-          ...result,
-          details,
-        },
-      };
-    } catch (error) {
-      log.warn("session_agent_events.tool_tui_render.failed", {
-        sessionId: active.session.id,
-        tool: toolName,
-        toolCallId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return event;
-    }
   }
 
   private logPiEvent(

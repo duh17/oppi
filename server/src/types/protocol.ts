@@ -27,7 +27,20 @@ export interface NestedToolCalls extends Omit<PiNestedToolCalls, "calls"> {
 /** How clients present a tool call's arguments. */
 export interface ToolInputPresentation {
   /** Argument field name → semantic role and source language. */
-  fields: Record<string, { role: "code"; language: string }>;
+  fields: Record<string, { role: "code" | "command"; language: string }>;
+}
+
+/** Result semantics, not a requested viewer or layout. */
+export interface ToolOutputPresentation {
+  kind: "terminal" | "structured";
+}
+
+/** Pi result text completeness; source uses toolCallId, never a private path.
+ * The sidecar may become unavailable when the session stops. */
+export interface ToolOutputAvailability {
+  complete: boolean;
+  totalBytes?: number;
+  source?: "sidecar";
 }
 
 // ─── WebSocket Messages ───
@@ -476,6 +489,7 @@ export type ServerMessage = // ── Connection ──
     // ── Tool execution ──
     | {
         type: "tool_start";
+        outputPresentation?: ToolOutputPresentation;
         inputPresentation?: ToolInputPresentation;
         display?: ToolDisplay;
         tool: string;
@@ -485,6 +499,7 @@ export type ServerMessage = // ── Connection ──
       }
     | {
         type: "tool_update";
+        outputPresentation?: ToolOutputPresentation;
         inputPresentation?: ToolInputPresentation;
         display?: ToolDisplay;
         tool: string;
@@ -508,6 +523,8 @@ export type ServerMessage = // ── Connection ──
       }
     | {
         type: "tool_end";
+        outputAvailability?: ToolOutputAvailability;
+        outputPresentation?: ToolOutputPresentation;
         nestedCalls?: NestedToolCalls;
         tool: string;
         toolCallId?: string;

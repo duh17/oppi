@@ -108,6 +108,8 @@ describe("SessionAgentEventCoordinator", () => {
             renderCall: vi.fn(),
             renderResult: vi.fn(),
             inputPresentation: vi.fn(),
+            outputPresentation: vi.fn(),
+            outputAvailability: vi.fn(() => ({ complete: true })),
           } as never,
           toolNames: active.toolNames,
           toolArgs: active.toolArgs,
@@ -158,6 +160,8 @@ describe("SessionAgentEventCoordinator", () => {
         renderCall: vi.fn(),
         renderResult: vi.fn(),
         inputPresentation: vi.fn(),
+        outputPresentation: vi.fn(),
+        outputAvailability: vi.fn(() => ({ complete: true })),
       } as never,
       broadcast: vi.fn(),
       persistSessionNow: vi.fn(),
@@ -376,7 +380,7 @@ describe("SessionAgentEventCoordinator", () => {
     expect(broadcast.mock.calls.some(([, message]) => message.type === "cache_miss")).toBe(true);
   });
 
-  it("attaches managed SDK renderResult snapshots to tool_end details", () => {
+  it("preserves generic details without executing Pi's TUI result renderer", () => {
     const active = makeActiveSession({ status: "busy" });
     active.sdkBackend = {
       session: {
@@ -428,15 +432,9 @@ describe("SessionAgentEventCoordinator", () => {
       tool: "todo",
       details: {
         body: "Use the TUI renderer",
-        tuiRender: {
-          version: 1,
-          source: "renderResult",
-          width: 80,
-        },
       },
     });
-    expect(toolEnd?.details?.tuiRender?.expandedText).toContain("title: Ship it");
-    expect(toolEnd?.details?.tuiRender?.expandedText).toContain("body: Use the TUI renderer");
+    expect(toolEnd?.details).toEqual({ body: "Use the TUI renderer" });
   });
 
   it("does not attach TUI render snapshots for native tool rows", () => {
@@ -518,6 +516,8 @@ describe("SessionAgentEventCoordinator", () => {
         renderCall: vi.fn(),
         renderResult: vi.fn(),
         inputPresentation: vi.fn(),
+        outputPresentation: vi.fn(),
+        outputAvailability: vi.fn(() => ({ complete: true })),
       } as never,
       broadcast: vi.fn(),
       persistSessionNow: vi.fn(),
@@ -566,6 +566,8 @@ describe("SessionAgentEventCoordinator", () => {
         renderCall: vi.fn(),
         renderResult: vi.fn(),
         inputPresentation: vi.fn(),
+        outputPresentation: vi.fn(),
+        outputAvailability: vi.fn(() => ({ complete: true })),
       } as never,
       broadcast: vi.fn(),
       persistSessionNow: vi.fn(),
@@ -625,6 +627,8 @@ describe("SessionAgentEventCoordinator", () => {
         renderCall: vi.fn(),
         renderResult: vi.fn(),
         inputPresentation: vi.fn(),
+        outputPresentation: vi.fn(),
+        outputAvailability: vi.fn(() => ({ complete: true })),
       } as never,
       broadcast: vi.fn(),
       persistSessionNow: vi.fn(),
@@ -673,6 +677,8 @@ describe("SessionAgentEventCoordinator", () => {
           renderCall: vi.fn(),
           renderResult: vi.fn(),
           inputPresentation: vi.fn(),
+          outputPresentation: vi.fn(),
+          outputAvailability: vi.fn(() => ({ complete: true })),
         } as never,
         broadcast: vi.fn(),
         persistSessionNow: vi.fn(),
@@ -768,9 +774,9 @@ describe("SessionAgentEventCoordinator", () => {
       throw new Error("persist failed");
     });
 
-    expect(() =>
-      coordinator.handlePiEvent(active.session.id, { type: "agent_settled" }),
-    ).toThrow("persist failed");
+    expect(() => coordinator.handlePiEvent(active.session.id, { type: "agent_settled" })).toThrow(
+      "persist failed",
+    );
     expect(handleSessionSettled).toHaveBeenCalledTimes(1);
     expect(handleSessionSettled).toHaveBeenCalledWith("child-1");
   });

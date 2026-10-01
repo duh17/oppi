@@ -31,6 +31,8 @@ import { createLogger } from "./logger.js";
 import type {
   StyledSegment,
   ToolInputPresentation,
+  ToolOutputPresentation,
+  ToolOutputAvailability,
   NestedToolCalls,
   ToolDisplay,
 } from "./types.js";
@@ -345,6 +347,8 @@ export interface TraceEvent {
   /** Semantic collapsed presentation reconstructed for durable replay. */
   callSegments?: StyledSegment[];
   inputPresentation?: ToolInputPresentation;
+  outputPresentation?: ToolOutputPresentation;
+  outputAvailability?: ToolOutputAvailability;
   display?: ToolDisplay;
   nestedCalls?: NestedToolCalls;
   /** For toolResult: the tool's output */

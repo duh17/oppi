@@ -215,7 +215,7 @@ describe("tool call document producer", () => {
       });
       expect(registry.inputPresentation("bad")).toBeUndefined();
       for (const fields of [
-        { source: { role: "command", language: "bash" } },
+        { source: { role: "future", language: "bash" } },
         { source: "python" },
       ]) {
         registry.register("bad-role", {

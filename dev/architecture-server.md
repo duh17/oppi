@@ -263,6 +263,16 @@ When changing protocol messages:
 3. Update protocol snapshots in `protocol/*.json` when the wire shape changes. Ordinary protocol tests compare deterministic canonical bytes with the committed fixtures without writing tracked files. Deliberate fixture changes use `cd server && npm run protocol:fixtures:update`.
 4. Run server protocol tests, followed by Apple Codable tests.
 
+### Tool inspection facts
+
+`MobileRendererRegistry` owns terminal tool identity and matches Pi's exact tool name. Built-in `bash` and arbitrary renderer sidecars declare command fields through `inputPresentation.fields` (`role: "command"`, `language: "shell"`) and terminal output through `outputPresentation.kind`. Session protocol projection and trace replay consume these facts; neither keeps a shell-name list. History resolves facts from the current registry even when summary segments are not requested.
+
+Explicit result `details.outputPresentation` overrides the static declaration. `details.expandedText` also overrides it: terminal format keeps terminal semantics; other formats emit structured semantics so clients clear an earlier terminal declaration. Unknown explicit kinds degrade to structured output. Missing facts on old servers select generic inspection, not a client tool-name fallback.
+
+Result `outputAvailability` projects Pi truncation and full-output-source availability as `{ complete, totalBytes?, source? }`. The optional source is `"sidecar"`, never a filesystem path. A source fact permits tool-call-ID reads but does not promise the file survives a stopped session. Terminal transport over 8 KB sends bounded replace-mode tail previews; clients preserve preview completeness until a full sidecar read succeeds. Input roles, output semantics, and completeness are independent facts carried through live events and trace replay.
+
+Tool results no longer capture Pi TUI render snapshots. Generic output with empty text renders structured result details using the client document renderer. This does not remove the separate terminal mirror runtime or its owner-socket protocol.
+
 ## Server boundary rules current code
 
 These rules are enforced by `server/scripts/check-architecture-boundaries.ts` and ESLint local rules:

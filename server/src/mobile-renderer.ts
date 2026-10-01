@@ -18,7 +18,13 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { createLogger } from "./logger.js";
-import type { StyledSegment, ToolInputPresentation, ToolDisplay } from "./types.js";
+import type {
+  StyledSegment,
+  ToolInputPresentation,
+  ToolDisplay,
+  ToolOutputPresentation,
+  ToolOutputAvailability,
+} from "./types.js";
 
 /** One producer-only name rule. Pi's public definitions drop raw MCP titles,
  * icons and serverInfo; do not guess titles from description or serverInfo.name.
@@ -67,6 +73,7 @@ export type { StyledSegment } from "./types.js";
 
 export interface MobileToolRenderer {
   inputPresentation?: ToolInputPresentation;
+  outputPresentation?: ToolOutputPresentation;
   renderCall(args: Record<string, unknown>): StyledSegment[];
   renderResult(details: unknown, isError: boolean): StyledSegment[];
 }
@@ -209,6 +216,8 @@ const bashCommandSummaryMaxCharacters = 200;
 // ─── Built-in Renderers ───
 
 const bash: MobileToolRenderer = {
+  inputPresentation: { fields: { command: { role: "command", language: "shell" } } },
+  outputPresentation: { kind: "terminal" },
   renderCall(args) {
     const cmd = firstLine(str(args.command), bashCommandSummaryMaxCharacters);
     return [
@@ -697,7 +706,7 @@ export class MobileRendererRegistry {
         return (
           !key ||
           key.length > 100 ||
-          hint?.role !== "code" ||
+          (hint?.role !== "code" && hint?.role !== "command") ||
           typeof hint.language !== "string" ||
           !/^[a-zA-Z0-9_+-]{1,40}$/.test(hint.language)
         );
@@ -710,9 +719,44 @@ export class MobileRendererRegistry {
       fields: Object.fromEntries(
         Object.entries(fields).map(([key, field]) => {
           const hint = asRecord(field);
-          return [key, { role: "code" as const, language: hint?.language as string }];
+          return [
+            key,
+            { role: hint?.role as "code" | "command", language: hint?.language as string },
+          ];
         }),
       ),
+    };
+  }
+
+  /** Explicit result facts win over the current registry's static declaration. */
+  outputPresentation(toolName: string, details?: unknown): ToolOutputPresentation | undefined {
+    const payload = asRecord(details);
+    if (payload?.outputPresentation !== undefined) {
+      return {
+        kind: asRecord(payload.outputPresentation)?.kind === "terminal" ? "terminal" : "structured",
+      };
+    }
+    // Existing explicit expanded text remains authoritative over static facts.
+    if (typeof payload?.expandedText === "string" && payload.expandedText.trim()) {
+      return { kind: payload.presentationFormat === "terminal" ? "terminal" : "structured" };
+    }
+    const kind = this.renderers.get(toolName)?.outputPresentation?.kind;
+    return kind === "terminal" || kind === "structured" ? { kind } : undefined;
+  }
+
+  /** Shared live/history projection of Pi result availability. Never expose a path. */
+  outputAvailability(details: unknown): ToolOutputAvailability {
+    const payload = asRecord(details);
+    const truncation = asRecord(payload?.truncation);
+    const totalBytes = truncation?.totalBytes;
+    const sidecar =
+      typeof payload?.fullOutputPath === "string" && payload.fullOutputPath.trim().length > 0;
+    return {
+      complete: truncation?.truncated !== true,
+      ...(typeof totalBytes === "number" && Number.isSafeInteger(totalBytes) && totalBytes >= 0
+        ? { totalBytes }
+        : {}),
+      ...(sidecar ? { source: "sidecar" as const } : {}),
     };
   }
 
@@ -832,6 +876,9 @@ export class MobileRendererRegistry {
             renderResult: (details, isError) => renderResult(details, isError) as StyledSegment[],
             ...(candidate?.inputPresentation !== undefined
               ? { inputPresentation: candidate.inputPresentation as ToolInputPresentation }
+              : {}),
+            ...(candidate?.outputPresentation !== undefined
+              ? { outputPresentation: candidate.outputPresentation as ToolOutputPresentation }
               : {}),
           });
           loaded.push(toolName);

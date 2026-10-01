@@ -243,7 +243,8 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     tool: "bash",
     args: { command: "npm test" },
     toolCallId: "tc-001",
-    inputPresentation: { fields: { command: { role: "code", language: "bash" } } },
+    inputPresentation: { fields: { command: { role: "command", language: "shell" } } },
+    outputPresentation: { kind: "terminal" },
   },
   tool_start_with_display: {
     type: "tool_start",
@@ -296,6 +297,8 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     type: "tool_end",
     tool: "bash",
     toolCallId: "tc-001",
+    outputPresentation: { kind: "terminal" },
+    outputAvailability: { complete: false, totalBytes: 32768, source: "sidecar" },
   },
   tool_end_with_details: {
     type: "tool_end",

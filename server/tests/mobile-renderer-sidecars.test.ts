@@ -64,6 +64,26 @@ describe("discoverRenderers", () => {
 });
 
 describe("loadRenderer", () => {
+  it("loads terminal facts for an arbitrary exact tool name from a sidecar", async () => {
+    const filePath = join(tempDir, "terminal.ts");
+    writeFileSync(
+      filePath,
+      `export default { run_thing: {
+      inputPresentation: { fields: { command: { role: "command", language: "shell" } } },
+      outputPresentation: { kind: "terminal" },
+      renderCall(args) { return [{ text: "$ ", style: "bold" }, { text: args.command, style: "accent" }]; },
+      renderResult() { return []; }
+    } };`,
+    );
+    const reg = new MobileRendererRegistry();
+    expect(await reg.loadRenderer(filePath)).toEqual({ loaded: ["run_thing"], errors: [] });
+    expect(reg.inputPresentation("run_thing")).toEqual(reg.inputPresentation("bash"));
+    expect(reg.outputPresentation("run_thing")).toEqual(reg.outputPresentation("bash"));
+    expect(reg.renderCall("run_thing", { command: "echo hi" })).toEqual(
+      reg.renderCall("bash", { command: "echo hi" }),
+    );
+    expect(reg.outputPresentation("functions.run_thing")).toBeUndefined();
+  });
   it("loads a valid .ts renderer with typed renderers", async () => {
     const filePath = join(tempDir, "test.ts");
     writeFileSync(
