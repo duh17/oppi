@@ -127,6 +127,7 @@ struct ToolInspection: Equatable, Sendable {
     var audioOutput = false
     var interactionSummary: String? = nil
     var availability: ToolOutputAvailability? = nil
+    var outputPresentation: ToolOutputPresentation? = nil
     var copyCommandText: String? = nil
     var copyOutputText: String? = nil
     var activityKind: ActivityKind {
@@ -147,6 +148,10 @@ struct ToolInspection: Equatable, Sendable {
     var activityLabel: String { "Running \(title.isEmpty ? "tool" : title)" }
     var input: [Field]
     var calls: NestedToolCalls?
+    var callsSummary: String? {
+        guard let calls, !calls.calls.isEmpty else { return nil }
+        return calls.summary
+    }
     var output: [ToolContentDescriptor]
     var raw: String
     var previewOnly: Bool

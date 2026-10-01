@@ -59,6 +59,10 @@ struct ScreenshotPreviewView: View {
             SessionTimelinePreview()
         case "quiet-work-strip":
             QuietWorkStripPreview()
+        case "old-server-bash":
+            BuiltInToolFactsPreview(isEdit: false)
+        case "old-server-edit":
+            BuiltInToolFactsPreview(isEdit: true)
         case "chat-file-panel":
             ChatFileBrowserPanelPreview()
         case "file-browser-motion":

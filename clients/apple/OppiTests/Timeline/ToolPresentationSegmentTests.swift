@@ -53,9 +53,9 @@ struct ToolPresentationSegmentTests {
         #expect(config.segmentAttributedTitle!.string == "npm test")
     }
 
-    @Test func noFactsDegradesToGeneric() {
+    @Test func nonBuiltInWithoutFactsDegradesToGeneric() {
         let config = buildConfig(
-            tool: "bash",
+            tool: "functions.bash",
             argsSummary: "echo hi"
         )
         #expect(config.segmentAttributedTitle == nil)

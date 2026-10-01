@@ -764,7 +764,7 @@ struct ToolPresentationBuilderTests {
         #expect(build(tool: "edit", fileOperation: "edit").currentFileOpenIntent == nil)
         #expect(build(tool: "put_file").currentFileOpenIntent?.path == "docs/current.md")
         #expect(build(tool: "extensions.write", fileOperation: nil).currentFileOpenIntent == nil)
-        #expect(build(fileOperation: nil).currentFileOpenIntent == nil)
+        #expect(build(tool: "put_file", fileOperation: nil).currentFileOpenIntent == nil)
         #expect(build(path: .string("image.png")).currentFileOpenIntent == nil)
         #expect(build(path: .string("archive.zip")).currentFileOpenIntent == nil)
     }

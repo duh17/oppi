@@ -557,11 +557,10 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
-        guard case .markdown(let text, let path) = config.expandedContent else {
-            Issue.record("Missing facts must render a generic document"); return
+        guard case .text(let text, _) = config.expandedContent else {
+            Issue.record("Built-in read without a path keeps native plain text"); return
         }
-        #expect(text.contains("let value = 1"))
-        #expect(path == nil)
+        #expect(text == "let value = 1")
         #expect(config.currentFileOpenIntent == nil)
     }
 

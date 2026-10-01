@@ -96,7 +96,7 @@ enum ToolPresentationBuilder {
             isError: isError,
             isDone: isDone,
             outputPreview: outputPreview,
-            display: context.callSegments?.isEmpty != false ? context.display : nil,
+            display: context.callSegments?.isEmpty != false ? inspection.display : nil,
             terminalOutput: isTerminal,
             file: file
         )
@@ -116,8 +116,8 @@ enum ToolPresentationBuilder {
             trailing = String(localized: "Interrupted")
         } else if let editTrailingFallback = collapsed.editTrailingFallback {
             trailing = editTrailingFallback
-        } else if let nested = context.nestedCalls, !nested.calls.isEmpty {
-            trailing = nested.summary
+        } else if let callsSummary = inspection.callsSummary {
+            trailing = callsSummary
         } else {
             trailing = nil
         }
@@ -275,9 +275,13 @@ enum ToolPresentationBuilder {
         terminalOutput: Bool,
         file: ToolFileInspection?
     ) -> CollapsedPresentation {
-        var result = CollapsedPresentation(title: tool)
+        var result = CollapsedPresentation(title: inspection.title)
 
         if terminalOutput {
+            // Older servers may omit summary segments; the resolved command is
+            // still available in the inspection rather than reconstructed from a name.
+            if let command = inspection.commandText, !command.isEmpty { result.title = command }
+            else if !argsSummary.isEmpty { result.title = argsSummary }
             result.toolNamePrefix = "$"
             result.toolNameColor = UIColor(Color.themeGreen)
             return result

@@ -85,6 +85,7 @@ enum ToolContentDescriptorBuilder {
     static func build(tool: String, argsSummary: String, outputPreview: String,
                       isError: Bool, isDone: Bool, context: Context,
                       includeOutput: Bool = true) -> ToolContentPresentation {
+        let context = BuiltInToolFacts.resolve(tool: tool, context: context)
         var result = buildContent(tool: tool, argsSummary: argsSummary, outputPreview: outputPreview,
                                   isError: isError, isDone: isDone, context: context, includeOutput: includeOutput)
         result.inspection.display = context.display
@@ -98,6 +99,7 @@ enum ToolContentDescriptorBuilder {
         result.inspection.mediaOutput = audioPresentation(from: context.details) != nil
             || imageAttachment(from: context.details) != nil || !mediaAttachments(from: context.details).isEmpty
         result.inspection.availability = context.outputAvailability
+        result.inspection.outputPresentation = context.outputPresentation
         return result
     }
 

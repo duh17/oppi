@@ -50,13 +50,13 @@ struct ToolInspectionConsumerTests {
         #expect(line.workSummary == (resultPatch ? "edit +1 −1" : "Requested edit +3 −1"))
     }
 
-    @Test func arbitraryInteractionStaysVisibleAndOldServerNamesStayGeneric() throws {
+    @Test func arbitraryInteractionStaysVisibleAndNonBuiltInNamesStayGeneric() throws {
         let reducer = TimelineReducer()
         reducer.process(.toolStart(sessionId: "s", toolEventId: "q", tool: "choose_next", args: [:], outputPresentation: .init(kind: "interactive")))
         let projection = QuietTimelineProjection.make(items: reducer.items, isQuiet: true, isBusy: true,
             expandedTurnIDs: [], toolInspection: { reducer.toolInspection(for: $0) })
         #expect(projection.rows.map(\.id) == ["q"])
-        for tool in ["bash", "read", "write", "edit", "ask", "mcp__x__read"] {
+        for tool in ["functions.read", "Read", "put_file", "functions.ask", "mcp__x__read"] {
             let inspection = ToolContentDescriptorBuilder.inspect(tool: tool,
                 context: .init(args: ["command": "not a command fact", "path": "file.swift"]), includeOutput: false)
             #expect(inspection.activityKind == .generic)
@@ -64,6 +64,32 @@ struct ToolInspectionConsumerTests {
             #expect(inspection.file == nil)
             #expect(inspection.commandText == nil)
             #expect(!inspection.isInteractive)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func callsSummaryUsesTheInspectionEnvelope(expanded: Bool) throws {
+        let calls = NestedToolCalls(calls: [
+            .init(id: "ok", name: "first", status: "ok"),
+            .init(id: "failed", name: "second", status: "error", error: "Rejected"),
+            .init(id: "running", name: "third", status: "running")
+        ], complete: false)
+        let inspection = ToolContentDescriptorBuilder.inspect(tool: "compose",
+            context: .init(args: [:], nestedCalls: calls), includeOutput: expanded)
+        var context = ToolPresentationBuilder.Context(args: [:], expandedItemIDs: expanded ? ["root"] : [],
+            fullOutput: "", isLoadingOutput: false)
+        context.inspection = inspection
+        // The supplied envelope is authoritative even if the legacy context is stale.
+        context.nestedCalls = .init(calls: [.init(id: "old", name: "old", status: "ok")], complete: true)
+        let row = ToolPresentationBuilder.build(itemID: "root", tool: "compose", argsSummary: "",
+            outputPreview: "", isError: false, isDone: false, context: context)
+        #expect(row.trailing == "3 calls · 1 failed · 1 running")
+        if expanded {
+            guard case .markdown(let document) = inspection.output.first else {
+                Issue.record("Expected the Calls document"); return
+            }
+            #expect(document.text.contains("**3 calls · 1 failed · 1 running**"))
+            #expect(document.text.contains("Some calls not recorded."))
         }
     }
 

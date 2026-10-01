@@ -140,6 +140,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 outputAvailability: toolArgsStore.outputAvailability(for: id)), includeOutput: includeOutput)
     }
 
+    private func isInteractiveTool(_ id: String) -> Bool {
+        guard let index = indexForID(id) else {
+            // Retained producer metadata can outlive a trimmed row.
+            return toolArgsStore.outputPresentation(for: id)?.isInteractive == true
+        }
+        return toolInspection(for: items[index])?.isInteractive == true
+    }
+
     /// O(1) item lookup by ID — avoids linear scans on every streaming upsert.
     /// Invalidated on insert, remove, and reset.
     private let itemIndex = TimelineItemIndex()
@@ -208,7 +216,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         extensionToolsExpanded = expanded
         let toolIDs = items.compactMap { item -> String? in
             guard case .toolCall(let id, _, _, _, _, _, _) = item,
-                  toolArgsStore.outputPresentation(for: id)?.isInteractive != true else {
+                  !isInteractiveTool(id) else {
                 return nil
             }
             return id
@@ -469,7 +477,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 // optimistic composer messages awaiting a JSONL echo.
                 let prefix = "ask-answer-"
                 if id.hasPrefix(prefix),
-                   toolArgsStore.outputPresentation(for: String(id.dropFirst(prefix.count)))?.isInteractive == true {
+                   isInteractiveTool(String(id.dropFirst(prefix.count))) {
                     return false
                 }
                 return true
@@ -679,7 +687,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             if let nested = event.nestedCalls { toolDetailsStore.setNestedCalls(nested, for: matchId) }
 
             // Ask tool result — convert to user message, skip tool row update.
-            if toolArgsStore.outputPresentation(for: matchId)?.isInteractive == true {
+            if isInteractiveTool(matchId) {
                 if let details = event.details {
                     toolDetailsStore.set(details, for: matchId)
                 }
@@ -1367,7 +1375,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         if let callSegments, !callSegments.isEmpty {
             toolSegmentStore.setCallSegments(callSegments, for: toolEventId)
         }
-        if extensionToolsExpanded == true, toolArgsStore.outputPresentation(for: toolEventId)?.isInteractive != true {
+        if extensionToolsExpanded == true, !isInteractiveTool(toolEventId) {
             expandedItemIDs.insert(toolEventId)
         }
         return renderMutationCheckpoint() != before ||
@@ -1377,9 +1385,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     private func handleToolEnd(toolEventId: String, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?) -> Bool {
-        // Interaction settlement is separate from inspection. The stored fact
-        // and stable answer ID survive reconnect/replay without a name test.
-        if toolArgsStore.outputPresentation(for: toolEventId)?.isInteractive == true {
+        // Settlement consumes the resolved interaction fact, including the
+        // centralized old-server compatibility facts. The answer ID stays stable.
+        if isInteractiveTool(toolEventId) {
             // Freeze elapsed time and mark tool row done (with empty output).
             if toolElapsedSeconds[toolEventId] == nil,
                let startedAt = toolStartTimes[toolEventId] {

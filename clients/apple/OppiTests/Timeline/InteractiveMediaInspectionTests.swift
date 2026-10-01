@@ -37,7 +37,7 @@ struct InteractiveMediaInspectionTests {
         #expect(document.text.contains("Continue?"))
     }
 
-    @Test(arguments: ["ask", "voice_speak", "functions.ask"])
+    @Test(arguments: ["Ask", "voice_speak", "functions.ask"])
     func oldServerUsesGenericInspection(tool: String) {
         let reducer = TimelineReducer()
         reducer.process(.toolStart(sessionId: "s", toolEventId: "q", tool: tool, args: args))
