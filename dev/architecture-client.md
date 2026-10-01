@@ -138,6 +138,7 @@ These policies remain deferred:
 
 - **Mac collapsed switch** — `OppiMac/Views/MacSessionTimelineViews.swift`: migrate in the Mac inspection/chrome slice.
 - **Session-outline bash summary** — `Oppi/Features/Chat/Support/SessionOutlineView.swift`, `case "bash", "Bash"`: migrate to producer-driven outline summaries in the iOS inspection/chrome slice. `OppiMac/Formatting/MacLegacyToolCallFormatting.swift` remains part of the deferred Mac inspection/chrome slice.
+- **Quiet edit counts** — `Oppi/Features/Chat/Timeline/QuietTimelineProjection.swift`: requested edit-pair counts still ignore result patches; migrate to the shared selected-diff statistics in slice 5 with quiet-mode buckets and labels.
 - **Live Activity bash labels** — `Oppi/Core/Services/LiveActivityManager.swift`: migrate in the semantic activity-label slice.
 - **Ask branches** — `OppiCore/Formatting/ToolContentDescriptorBuilder.swift` and `Oppi/Features/Chat/Output/ToolPresentationBuilder.swift`: migrate in the interactive-input slice.
 - **Formatting helpers and built-in glyph/title aliases** — `OppiCore/Formatting/ToolCallFormatting.swift`: retire alongside the input and Mac title migrations; `isBashTool` remains for Mac until then. Mac-target-only adapters in `OppiMac/Formatting/MacLegacyToolCallFormatting.swift` (`isReadTool`, `isWriteTool`, `isEditTool`, file/skill/range titles, edit statistics/result patches, and legacy glyphs) remain until slice 6.

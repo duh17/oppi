@@ -82,6 +82,37 @@ struct ToolFileInspectionTests {
         #expect(errorDocument.text.contains("No match"))
     }
 
+    @Test func malformedResultPatchWithEmptyDisplayDiffFallsBackToRequestedEdits() throws {
+        let args: [String: JSONValue] = ["path": .string("main.swift"), "edits": .array([
+            .object(["oldText": .string("before"), "newText": .string("requested\nextra")])])]
+        let facts = try #require(ToolFileFactsFixture.facts("edit"))
+        let details: JSONValue = .object(["patch": .string("not a unified patch"), "diff": .string("")])
+        let presentation = build("replace_text", args: args, input: facts.0, output: facts.1, details: details)
+        #expect(presentation.inspection.file?.provenance == .requested)
+        #expect(presentation.inspection.file?.stats?.added == 2)
+        #expect(presentation.inspection.file?.stats?.removed == 1)
+        guard case .diff(let diff) = presentation.content else { Issue.record("Expected requested diff"); return }
+        #expect(diff.lines.filter { $0.kind == .added }.map(\.text) == ["requested", "extra"])
+        var context = ToolPresentationBuilder.Context(args: args, details: details, expandedItemIDs: [], fullOutput: "", isLoadingOutput: false)
+        context.inputPresentation = facts.0
+        context.outputPresentation = facts.1
+        let row = ToolPresentationBuilder.build(itemID: "row", tool: "replace_text", argsSummary: "", outputPreview: "",
+            isError: false, isDone: true, context: context)
+        #expect(row.trailing == "Requested")
+        #expect(row.editAdded == 2)
+        #expect(row.editRemoved == 1)
+    }
+
+    @Test func emptyDisplayDiffWithoutPatchPreservesAuthoritativeNoChanges() throws {
+        let facts = try #require(ToolFileFactsFixture.facts("edit"))
+        let presentation = build("replace_text", args: ["path": .string("main.swift"), "edits": .array([
+            .object(["oldText": .string("before"), "newText": .string("requested")])])],
+            input: facts.0, output: facts.1, details: .object(["diff": .string("")]))
+        #expect(presentation.inspection.file?.provenance == .result)
+        #expect(presentation.inspection.file?.stats?.added == 0)
+        #expect(presentation.inspection.file?.stats?.removed == 0)
+    }
+
     @Test(arguments: ["read", "write", "edit", "functions.read", "put_file"])
     func oldServerDegradesToGenericDocument(tool: String) throws {
         let presentation = build(tool, args: ["path": .string("README.md"), "content": .string("# Requested")], input: nil, output: nil, text: "result")

@@ -113,9 +113,10 @@ struct ToolRowViewportPolicy {
     static func readMedia(
         output: String,
         filePath: String?,
-        attachments: [ToolPresentationBuilder.ToolMediaAttachment]
+        attachments: [ToolPresentationBuilder.ToolMediaAttachment],
+        fileType: FileType?
     ) -> ToolRowViewportPolicy {
-        let facts = readMediaFacts(output: output, filePath: filePath, attachments: attachments)
+        let facts = readMediaFacts(output: output, filePath: filePath, attachments: attachments, fileType: fileType)
 
         if facts.isVoiceMessage {
             return ToolRowViewportPolicy(
@@ -169,8 +170,8 @@ struct ToolRowViewportPolicy {
             return .code
         case .markdown(_, let filePath):
             return .markdown(isCustomTool: filePath == nil)
-        case .readMedia(let output, let filePath, _, let attachments):
-            return .readMedia(output: output, filePath: filePath, attachments: attachments)
+        case .readMedia(let output, let filePath, _, let attachments, let fileType):
+            return .readMedia(output: output, filePath: filePath, attachments: attachments, fileType: fileType)
         case .audioMessage:
             return .audioMessage
         case .status:
@@ -197,9 +198,9 @@ struct ToolRowViewportPolicy {
     static func readMediaFacts(
         output: String,
         filePath: String?,
-        attachments: [ToolPresentationBuilder.ToolMediaAttachment]
+        attachments: [ToolPresentationBuilder.ToolMediaAttachment],
+        fileType: FileType?
     ) -> ReadMediaFacts {
-        let fileType = detectedFileType(filePath)
         let isVideoFile = fileType.map { type in
             if case .video = type { return true }
             return false
@@ -238,14 +239,6 @@ struct ToolRowViewportPolicy {
             isAudioFile: isAudioFile,
             isVoiceMessage: filePath == "Voice message"
         )
-    }
-
-    private static func detectedFileType(_ filePath: String?) -> FileType? {
-        guard let filePath,
-              !filePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        return FileType.detect(from: filePath)
     }
 
     private static func normalizedMediaKind(_ kind: String) -> String {

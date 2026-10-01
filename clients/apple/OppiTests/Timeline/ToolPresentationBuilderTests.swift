@@ -483,7 +483,7 @@ struct ToolPresentationBuilderTests {
         #expect(config.title == "[skill] oppi-dev:1-220")
         #expect(config.toolNamePrefix == "file-content")
         #expect(config.languageBadge == "Markdown")
-        #expect(config.titleLineBreakMode == .byTruncatingTail)
+        #expect(config.titleLineBreakMode == .byTruncatingMiddle)
     }
 
     @Test("read expanded skill markdown keeps file path")
@@ -2237,42 +2237,32 @@ struct ToolPresentationBuilderTests {
         #expect(config.languageBadge == nil)
     }
 
-    // MARK: - File Type Helpers
+    // MARK: - Resolved File Facts
 
-    @Test("readOutputFileType detects Swift")
-    func readFileTypeSwift() {
-        let ft = ToolPresentationBuilder.readOutputFileType(
-            args: ["path": .string("Oppi/App.swift")],
-            argsSummary: ""
+    @Test(arguments: ["Oppi/App.swift", "README.md"])
+    func fileFactsChooseNativeRendererAndLanguage(path: String) {
+        let config = ToolPresentationBuilder.build(
+            itemID: "file", tool: "inspect_blob", argsSummary: "misleading.txt",
+            outputPreview: "result", isError: false, isDone: true,
+            context: emptyContext(fileOperation: "read", args: ["path": .string(path)], expanded: ["file"])
         )
-        #expect(ft == .code(language: .swift))
-    }
-
-    @Test("readOutputFileType detects markdown")
-    func readFileTypeMarkdown() {
-        let ft = ToolPresentationBuilder.readOutputFileType(
-            args: ["path": .string("README.md")],
-            argsSummary: ""
-        )
-        #expect(ft == .markdown)
-    }
-
-    @Test("readOutputLanguage returns swift for .swift files")
-    func readLanguageSwift() {
-        let lang = ToolPresentationBuilder.readOutputLanguage(
-            args: ["path": .string("file.swift")],
-            argsSummary: ""
-        )
-        #expect(lang == .swift)
-    }
-
-    @Test("readOutputLanguage returns nil for markdown")
-    func readLanguageMarkdown() {
-        let lang = ToolPresentationBuilder.readOutputLanguage(
-            args: ["path": .string("README.md")],
-            argsSummary: ""
-        )
-        #expect(lang == nil)
+        #expect(config.toolNamePrefix == "file-content")
+        if path == "README.md" {
+            guard case .markdown(let text, let filePath) = config.expandedContent else {
+                Issue.record("Expected native Markdown from file facts"); return
+            }
+            #expect(text == "result")
+            #expect(filePath == path)
+            #expect(config.languageBadge == "Markdown")
+        } else {
+            guard case .code(let text, let language, _, let filePath) = config.expandedContent else {
+                Issue.record("Expected native code from file facts"); return
+            }
+            #expect(text == "result")
+            #expect(filePath == path)
+            #expect(language == .swift)
+            #expect(config.languageBadge == "Swift")
+        }
     }
 
     // MARK: - Collapsed image read presentation
@@ -2387,12 +2377,13 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .readMedia(let output, let filePath, _, let attachments) = config.expandedContent else {
+        guard case .readMedia(let output, let filePath, _, let attachments, let fileType) = config.expandedContent else {
             Issue.record("Expected .readMedia content for image attachment read")
             return
         }
         #expect(output.isEmpty)
         #expect(filePath == "icon.png")
+        #expect(fileType == .image)
         #expect(attachments.first?.id == "att-image-1")
         #expect(attachments.first?.sizeBytes == 1234)
         #expect(attachments.first?.sha256 == "abc123")
@@ -2443,7 +2434,7 @@ struct ToolPresentationBuilderTests {
             context: emptyContext(details: details, expanded: ["t1"], fullOutput: "Generated image")
         )
 
-        guard case .readMedia(let output, let filePath, _, let attachments) = config.expandedContent else {
+        guard case .readMedia(let output, let filePath, _, let attachments, _) = config.expandedContent else {
             Issue.record("Expected .readMedia content for generic image tool")
             return
         }

@@ -203,7 +203,7 @@ enum ToolPresentationBuilder {
             copyOutputText: expanded.copyOutputText,
             languageBadge: isVoicePresentationResult ? nil : languageBadge,
             trailing: segmentAttributedTrailing != nil ? nil : trailing,
-            titleLineBreakMode: segmentAttributedTitle != nil ? .byTruncatingTail : collapsed.titleLineBreakMode,
+            titleLineBreakMode: segmentAttributedTitle != nil && file == nil ? .byTruncatingTail : collapsed.titleLineBreakMode,
             toolNamePrefix: glyphPrefix,
             toolNameColor: segmentAttributedTitle != nil
                 ? (isTerminal || file != nil ? collapsed.toolNameColor : (segmentToolNameColor ?? collapsed.toolNameColor))
@@ -350,7 +350,7 @@ enum ToolPresentationBuilder {
         /// Source toggle (`DocumentFamily.sourceToggleTitle`).
         case document(DocumentFamily)
         /// Media renderer for images/audio in read output
-        case readMedia(output: String, filePath: String?, startLine: Int, attachments: [ToolMediaAttachment])
+        case readMedia(output: String, filePath: String?, startLine: Int, attachments: [ToolMediaAttachment], fileType: FileType? = nil)
         /// Audio message card with server-owned session attachment replay.
         case audioMessage(text: String, attachmentId: String, mimeType: String, durationSeconds: Double?, playbackBehavior: AudioPlaybackBehavior?)
         /// Lightweight non-copyable placeholder while an expanded tool has no body yet.
@@ -477,7 +477,8 @@ enum ToolPresentationBuilder {
                 output: text,
                 filePath: metadata.filePath,
                 startLine: startLine,
-                attachments: attachments
+                attachments: attachments,
+                fileType: fileType
             )
         case .json:
             return .code(
@@ -514,22 +515,10 @@ enum ToolPresentationBuilder {
             || text.range(of: "data:audio/", options: .caseInsensitive) != nil
     }
 
-    static func readOutputFileType(
-        args: [String: JSONValue]?,
-        argsSummary: String
-    ) -> FileType? {
-        ToolContentDescriptorBuilder.readOutputFileType(args: args, argsSummary: argsSummary)
-    }
-
     /// Convert org mode source text to markdown for the `.markdown` render pipeline.
     /// Uses the shared DocumentRenderPipeline conversion.
     private static func orgToMarkdown(_ orgText: String) -> String {
         DocumentRenderPipeline.orgToMarkdown(orgText)
-    }
-
-    // periphery:ignore - used by ToolPresentationBuilderTests via @testable import
-    static func readOutputLanguage(args: [String: JSONValue]?, argsSummary: String) -> SyntaxLanguage? {
-        ToolContentDescriptorBuilder.readOutputLanguage(args: args, argsSummary: argsSummary)
     }
 
     static func toolAudioPresentationDetails(

@@ -53,9 +53,9 @@ enum ToolTimelineRowDisplayState {
     }
 
     private static func shouldUseResponsiveCollapsedFileTitle(_ configuration: ToolTimelineRowConfiguration) -> Bool {
-        !configuration.isExpanded
-            && configuration.segmentAttributedTitle == nil
-            && isFileTool(configuration)
+        // Producer segments remain the source of configuration.title; the same
+        // filename-preserving fit applies whether that string was attributed or plain.
+        !configuration.isExpanded && isFileTool(configuration)
     }
 
     private static func isFileTool(_ configuration: ToolTimelineRowConfiguration) -> Bool {

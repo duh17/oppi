@@ -1614,7 +1614,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 viewportPolicy: viewportPolicy
             )
 
-        case .readMedia(let output, let filePath, let startLine, let attachments):
+        case .readMedia(let output, let filePath, let startLine, let attachments, _):
             return ToolRowReadMediaRenderStrategy.render(
                 output: output,
                 filePath: filePath,

@@ -85,7 +85,7 @@ enum ToolRowPlanBuilder {
             return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .document(let family):
             return !family.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .readMedia(let text, _, _, let attachments):
+        case .readMedia(let text, _, _, let attachments, _):
             return !attachments.isEmpty || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .status:
             return false

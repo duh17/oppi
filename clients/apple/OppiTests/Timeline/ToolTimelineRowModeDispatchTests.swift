@@ -898,7 +898,8 @@ struct ToolTimelineRowModeDispatchTests {
                 output: "Read video file [video/mp4]",
                 filePath: "clips/demo.mp4",
                 startLine: 1,
-                attachments: []
+                attachments: [],
+                fileType: .video
             ),
             isExpanded: true
         )

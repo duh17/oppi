@@ -44,12 +44,6 @@ enum ToolContentDescriptorBuilder {
         }
     }
 
-    struct FileMetadata: Equatable, Sendable {
-        let filePath: String?
-        let fileType: FileType?
-        let language: SyntaxLanguage?
-    }
-
     struct AudioPresentation: Equatable, Sendable {
         let text: String?
         let playbackBehavior: AudioPlaybackBehavior?
@@ -230,35 +224,6 @@ enum ToolContentDescriptorBuilder {
         )
     }
 
-    static func fileMetadata(
-        args: [String: JSONValue]?,
-        argsSummary: String,
-        content: String? = nil
-    ) -> FileMetadata {
-        let filePath = resolvedFilePath(args: args, argsSummary: argsSummary)
-        let fileType = filePath.map { FileType.detect(from: $0, content: content) }
-        return FileMetadata(
-            filePath: filePath,
-            fileType: fileType,
-            language: fileType?.syntaxLanguage
-        )
-    }
-
-    static func readOutputFileType(
-        args: [String: JSONValue]?,
-        argsSummary: String
-    ) -> FileType? {
-        guard let filePath = resolvedFilePath(args: args, argsSummary: argsSummary),
-              !filePath.isEmpty else {
-            return nil
-        }
-        return FileType.detect(from: filePath)
-    }
-
-    static func readOutputLanguage(args: [String: JSONValue]?, argsSummary: String) -> SyntaxLanguage? {
-        readOutputFileType(args: args, argsSummary: argsSummary)?.syntaxLanguage
-    }
-
     static func mediaAttachments(from details: JSONValue?) -> [ToolContentMediaAttachment] {
         guard let object = details?.objectValue else { return [] }
         let mediaArray = object["media"]?.arrayValue ?? []
@@ -375,29 +340,6 @@ enum ToolContentDescriptorBuilder {
             return trimmedOutput
         }
         return argText
-    }
-
-    private static func resolvedFilePath(
-        args: [String: JSONValue]?,
-        argsSummary: String
-    ) -> String? {
-        ToolCallFormatting.filePath(from: args)
-            ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
-            ?? inferredPathFromSummary(argsSummary)
-    }
-
-    private static func inferredPathFromSummary(_ argsSummary: String) -> String? {
-        let trimmed = argsSummary.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-
-        let candidate = trimmed
-        guard !candidate.isEmpty else { return nil }
-
-        if let range = candidate.range(of: #":\d+(?:-\d+)?$"#, options: .regularExpression) {
-            return String(candidate[..<range.lowerBound])
-        }
-
-        return candidate
     }
 
     private static func audioPlaybackBehavior(from object: [String: JSONValue]) -> AudioPlaybackBehavior? {

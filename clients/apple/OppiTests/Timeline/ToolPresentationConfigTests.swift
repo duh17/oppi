@@ -1032,13 +1032,23 @@ struct ToolPresentationConfigTests {
         #expect(config.preview == nil)
     }
 
-    @Test func readOutputFileTypeDetectsFromRawSummaryWithLineRange() {
-        let fileType = ToolPresentationBuilder.readOutputFileType(
-            args: nil,
-            argsSummary: "Chat/ChatTimelineCollectionView.swift:440-499"
-        )
-
-        #expect(fileType == .code(language: .swift))
+    @Test func fileFactsChooseDeclaredPathAndRangeInsteadOfRawSummary() throws {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        let id = "declared-file"
+        harness.reducer.expandedItemIDs.insert(id)
+        harness.toolArgsStore.set(["source": .string("Chat/ChatTimelineCollectionView.swift"), "start": .number(440)], for: id)
+        harness.toolArgsStore.setInputPresentation(.init(fields: ["source": .init(role: "filePath"), "start": .init(role: "lineOffset")]), for: id)
+        harness.toolArgsStore.setOutputPresentation(.init(kind: "fileContent", provenance: "result"), for: id)
+        let item = ChatItem.toolCall(id: id, tool: "inspect_blob", argsSummary: "misleading.md:1-2",
+            outputPreview: "let result = true", outputByteCount: 0, isError: false, isDone: true)
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: id, item: item)))
+        guard case .code(let text, let language, let startLine, let path) = config.expandedContent else {
+            Issue.record("Expected native code from declared file facts"); return
+        }
+        #expect(text == "let result = true")
+        #expect(language == .swift)
+        #expect(startLine == 440)
+        #expect(path == "Chat/ChatTimelineCollectionView.swift")
     }
 
     @Test func nativeReadToolConfigurationInfersLanguageBadgeFromRawSummaryWhenArgsMissing() throws {

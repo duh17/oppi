@@ -69,7 +69,9 @@ struct ToolFileInspection: Equatable, Sendable {
            let document = UnifiedPatchParser.parse(patch, options: .strict), !document.isMultiFile,
            let file = document.files.first { return file.lines }
         guard let diff = object["diff"]?.stringValue else { return nil }
-        if diff.isEmpty { return [] }
+        // An empty legacy diff can report no changes, but cannot rescue a
+        // rejected patch. In that case keep the requested preview and its provenance.
+        if diff.isEmpty { return object["patch"] == nil ? [] : nil }
         if let document = UnifiedPatchParser.parse(diff, options: .strict), !document.isMultiFile,
            let file = document.files.first { return file.lines }
         var lines: [DiffLine] = []

@@ -183,17 +183,20 @@ struct ToolTimelineRowViewportPolicyTests {
         let videoFacts = ToolRowViewportPolicy.readMediaFacts(
             output: "Read video file [video/mp4]",
             filePath: "clip.mp4",
-            attachments: []
+            attachments: [],
+            fileType: .video
         )
         let mixedFacts = ToolRowViewportPolicy.readMediaFacts(
             output: "Read video file [video/mp4]",
             filePath: "clip.mp4",
-            attachments: [imageAttachment]
+            attachments: [imageAttachment],
+            fileType: .video
         )
         let svgFacts = ToolRowViewportPolicy.readMediaFacts(
             output: "<svg viewBox=\"0 0 10 10\"></svg>",
             filePath: "chart.svg",
-            attachments: []
+            attachments: [],
+            fileType: .image
         )
 
         #expect(videoFacts.hasVideo)
@@ -204,6 +207,20 @@ struct ToolTimelineRowViewportPolicyTests {
         #expect(svgFacts.hasImage)
         #expect(svgFacts.hasInlineImage)
         #expect(!svgFacts.shouldUseCompactVideoLauncher)
+    }
+
+    @Test func mediaViewportUsesResolvedTypeWithoutReclassifyingThePath() {
+        // The paint case's resolved type is authoritative, even if its label looks like another format.
+        let policy = ToolRowViewportPolicy.forExpandedContent(
+            .readMedia(output: "media", filePath: "misleading.png", startLine: 1, attachments: [], fileType: .video),
+            toolNamePrefix: "file-content"
+        )
+        #expect(policy.surface == .compactHostedView)
+        #expect(policy.heightBehavior == .compactMeasured(minHeight: 1, maxHeight: nil))
+        let facts = ToolRowViewportPolicy.readMediaFacts(output: "media", filePath: "misleading.mp4", attachments: [], fileType: .image)
+        #expect(facts.isImageFile)
+        #expect(!facts.isVideoFile)
+        #expect(!facts.shouldUseCompactVideoLauncher)
     }
 
     @Test func bucketedCodeViewportSkipsMeasurementClosure() {

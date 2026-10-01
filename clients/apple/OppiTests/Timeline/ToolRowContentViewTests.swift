@@ -67,11 +67,41 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func producerFileTitleKeepsFilenameBesideEditStatsAndLanguageBadge() throws {
+        let path = String(repeating: "very-long-directory/", count: 20) + "local-api-client.ts"
+        let facts = try #require(ToolFileFactsFixture.facts("edit"))
+        var context = ToolPresentationBuilder.Context(
+            args: ["path": .string(path)],
+            details: .object(["diff": .string("-42 before\n+42 after")]),
+            expandedItemIDs: [], fullOutput: "", isLoadingOutput: false,
+            callSegments: [.init(text: "replace_text ", style: .bold), .init(text: path, style: .accent)]
+        )
+        context.inputPresentation = facts.0
+        context.outputPresentation = facts.1
+        let config = ToolPresentationBuilder.build(itemID: "row", tool: "replace_text", argsSummary: "",
+            outputPreview: "", isError: false, isDone: true, context: context)
+        #expect(config.title == path)
+        #expect(config.segmentAttributedTitle?.string == path)
+        #expect(config.titleLineBreakMode == .byTruncatingMiddle)
+        #expect(config.editAdded == 1 && config.editRemoved == 1)
+        #expect(config.languageBadge == "TypeScript")
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 360)
+        let labels = timelineAllLabels(in: view)
+        let titleLabel = try #require(labels.first { timelineRenderedText(of: $0).contains("local-api-client.ts") })
+        #expect(timelineRenderedText(of: titleLabel) == "local-api-client.ts")
+        #expect(titleLabel.lineBreakMode == .byTruncatingMiddle)
+        #expect(ceil(titleLabel.attributedText?.size().width ?? .infinity) <= ceil(titleLabel.bounds.width))
+        #expect(labels.contains { $0.text == "+1" })
+        #expect(labels.contains { $0.text == "-1" })
+    }
+
+    @MainActor
     @Test func collapsedFileToolTitleUsesBreadcrumbWhenFullPathDoesNotFit() throws {
         let path = "clients/apple/Oppi/Sources/ScheduleEditView.swift"
         let config = makeTimelineToolConfiguration(
             title: path,
-            toolNamePrefix: "edit",
+            toolNamePrefix: "file-diff",
             isExpanded: false
         )
         let view = ToolTimelineRowContentView(configuration: config)
@@ -93,7 +123,7 @@ struct ToolTimelineRowContentViewTests {
             title: path,
             languageBadge: "typescript",
             titleLineBreakMode: .byTruncatingMiddle,
-            toolNamePrefix: "read",
+            toolNamePrefix: "file-content",
             isExpanded: false
         )
         let view = ToolTimelineRowContentView(configuration: config)
@@ -115,7 +145,7 @@ struct ToolTimelineRowContentViewTests {
             title: path,
             languageBadge: "typescript",
             titleLineBreakMode: .byTruncatingMiddle,
-            toolNamePrefix: "edit",
+            toolNamePrefix: "file-diff",
             editAdded: 10,
             editRemoved: 4,
             isExpanded: false
@@ -137,7 +167,7 @@ struct ToolTimelineRowContentViewTests {
         let path = "clients/apple/Oppi/Features/Chat/Support/Schedules/ScheduleEditView.swift"
         let config = makeTimelineToolConfiguration(
             title: path,
-            toolNamePrefix: "write",
+            toolNamePrefix: "file-mutation",
             isExpanded: false
         )
         let view = ToolTimelineRowContentView(configuration: config)
@@ -157,7 +187,7 @@ struct ToolTimelineRowContentViewTests {
         let path = "clients/apple/Oppi/Sources/ScheduleEditView.swift"
         let config = makeTimelineToolConfiguration(
             title: path,
-            toolNamePrefix: "read",
+            toolNamePrefix: "file-content",
             isExpanded: false
         )
         let view = ToolTimelineRowContentView(configuration: config)
@@ -183,7 +213,7 @@ struct ToolTimelineRowContentViewTests {
                 startLine: 1,
                 filePath: longPath
             ),
-            toolNamePrefix: "read",
+            toolNamePrefix: "file-content",
             isExpanded: true
         )
         let view = ToolTimelineRowContentView(configuration: config)
