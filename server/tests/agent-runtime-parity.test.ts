@@ -198,6 +198,105 @@ function expectRuntimeParity(
 }
 
 describe("managed and mirror runtime event parity", () => {
+  it("projects interactive facts for any exact declared name without streaming answer output", () => {
+    const registry = new MobileRendererRegistry();
+    registry.register("choose_next", {
+      outputPresentation: { kind: "interactive" },
+      renderCall: () => [],
+      renderResult: () => [],
+    });
+    for (const toolName of ["ask", "choose_next"]) {
+      const { managed } = expectRuntimeParity(
+        [
+          {
+            type: "tool_execution_start",
+            toolCallId: "q",
+            toolName,
+            args: { questions: [{ id: "q", question: "Continue?" }] },
+          },
+          {
+            type: "tool_execution_update",
+            toolCallId: "q",
+            toolName,
+            partialResult: { content: [{ type: "text", text: "LLM-only answer" }] },
+          },
+          {
+            type: "tool_execution_end",
+            toolCallId: "q",
+            toolName,
+            result: {
+              content: [{ type: "text", text: "LLM-only answer" }],
+              details: { answers: { q: "yes" } },
+            },
+            isError: false,
+          },
+        ] as AgentSessionEvent[],
+        registry,
+      );
+      expect(managed.received.filter((m) => m.type === "tool_output")).toEqual([]);
+      expect(
+        managed.received
+          .filter((m) => m.type === "tool_start" || m.type === "tool_end")
+          .map((m) => m.outputPresentation),
+      ).toEqual([{ kind: "interactive" }, { kind: "interactive" }]);
+    }
+    expect(registry.outputPresentation("functions.ask")).toBeUndefined();
+  });
+
+  it("preserves nested parent identity on start, metadata update, output and end in both runtimes", () => {
+    const events: AgentSessionEvent[] = [
+      {
+        type: "tool_execution_start",
+        toolCallId: "parent",
+        toolName: "codemode",
+        args: { code: "await Promise.all([a(), b()])" },
+      } as AgentSessionEvent,
+    ];
+    for (const [index, toolName] of ["mcp__alpha__a", "mcp__beta__b"].entries()) {
+      const toolCallId = `child-${index}`;
+      events.push(
+        ...([
+          {
+            type: "tool_execution_start",
+            toolCallId,
+            parentToolCallId: "parent",
+            toolName,
+            args: { query: "first" },
+          },
+          {
+            type: "tool_execution_update",
+            toolCallId,
+            parentToolCallId: "parent",
+            toolName,
+            args: { query: "updated" },
+            partialResult: { content: [{ type: "text", text: "running" }] },
+          },
+          {
+            type: "tool_execution_end",
+            toolCallId,
+            parentToolCallId: "parent",
+            toolName,
+            result: { content: [{ type: "text", text: "done" }] },
+            isError: false,
+          },
+        ] as AgentSessionEvent[]),
+      );
+    }
+    const { managed } = expectRuntimeParity(events);
+    for (const id of ["child-0", "child-1"]) {
+      const messages = managed.received.filter((m) => "toolCallId" in m && m.toolCallId === id);
+      expect(messages.map((m) => m.type)).toEqual([
+        "tool_start",
+        "tool_update",
+        "tool_output",
+        "tool_output",
+        "tool_end",
+      ]);
+      expect(
+        messages.every((m) => "parentToolCallId" in m && m.parentToolCallId === "parent"),
+      ).toBe(true);
+    }
+  });
   it("projects compaction lifecycle events identically", () => {
     const { managed, mirror } = expectRuntimeParity([
       { type: "compaction_start", reason: "threshold" },

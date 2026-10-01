@@ -357,6 +357,8 @@ struct ToolOutputFetchTests {
         let harness = makeTimelineHarness(sessionId: "session-a")
         harness.coordinator._toolOutputRetryDelayForTesting = 0.001
         let toolID = "tool-read-stream-retry"
+        harness.toolArgsStore.setInputPresentation(ToolFileFactsFixture.readInput, for: toolID)
+        harness.toolArgsStore.setOutputPresentation(.init(kind: "fileContent", provenance: "result"), for: toolID)
         let attempts = Attempts()
 
         let readConfig = makeTimelineConfiguration(

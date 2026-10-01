@@ -64,6 +64,20 @@ describe("discoverRenderers", () => {
 });
 
 describe("loadRenderer", () => {
+  it("loads interactive semantics for an arbitrary exact name", async () => {
+    const filePath = join(tempDir, "interactive.ts");
+    writeFileSync(
+      filePath,
+      `export default { choose_next: { outputPresentation: { kind: "interactive" }, renderCall() { return []; }, renderResult() { return []; } } };`,
+    );
+    const registry = new MobileRendererRegistry();
+    expect(await registry.loadRenderer(filePath)).toEqual({ loaded: ["choose_next"], errors: [] });
+    expect(registry.outputPresentation("choose_next")).toEqual({ kind: "interactive" });
+    expect(registry.outputPresentation("functions.choose_next")).toBeUndefined();
+    expect(
+      registry.outputPresentation("choose_next", { outputPresentation: { kind: "structured" } }),
+    ).toEqual({ kind: "structured" });
+  });
   it("loads write-equivalent file facts for an arbitrary tool without requiring language", async () => {
     const filePath = join(tempDir, "files.ts");
     writeFileSync(

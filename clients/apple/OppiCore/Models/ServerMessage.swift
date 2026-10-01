@@ -92,10 +92,10 @@ enum ServerMessage: Sendable, Equatable {
     case audioStream(AudioStreamMessage)
 
     // Tool execution
-    case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil)
-    case toolUpdate(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil)
-    case toolOutput(output: String, isError: Bool, toolCallId: String?, mode: ToolOutputMode, truncated: Bool, totalBytes: Int?, details: JSONValue?, outputAvailability: ToolOutputAvailability? = nil)
-    case toolEnd(tool: String, toolCallId: String?, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?, nestedCalls: NestedToolCalls? = nil, outputPresentation: ToolOutputPresentation? = nil, outputAvailability: ToolOutputAvailability? = nil)
+    case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil, parentToolCallId: String? = nil)
+    case toolUpdate(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil, parentToolCallId: String? = nil)
+    case toolOutput(output: String, isError: Bool, toolCallId: String?, mode: ToolOutputMode, truncated: Bool, totalBytes: Int?, details: JSONValue?, outputAvailability: ToolOutputAvailability? = nil, parentToolCallId: String? = nil)
+    case toolEnd(tool: String, toolCallId: String?, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?, nestedCalls: NestedToolCalls? = nil, outputPresentation: ToolOutputPresentation? = nil, outputAvailability: ToolOutputAvailability? = nil, parentToolCallId: String? = nil)
 
     // Message queue
     case queueState(queue: MessageQueueState)
@@ -296,7 +296,7 @@ extension ServerMessage: Decodable {
         // message_end / cache_miss / notice / text_delta / thinking_delta / audio_stream
         case role, content, assistantContent, entryId, delta, contentIndex, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior
         // tool_start / tool_update / tool_end
-        case tool, args, toolCallId, details, callSegments, resultSegments, inputPresentation, nestedCalls, display, outputPresentation, outputAvailability
+        case tool, args, toolCallId, parentToolCallId, details, callSegments, resultSegments, inputPresentation, nestedCalls, display, outputPresentation, outputAvailability
         // tool_output
         case output, isError, mode, truncated, totalBytes
         // turn_ack
@@ -439,7 +439,8 @@ extension ServerMessage: Decodable {
             self = .toolStart(tool: tool, args: args, toolCallId: tcId, callSegments: callSegs,
                               inputPresentation: try c.decodeIfPresent(ToolInputPresentation.self, forKey: .inputPresentation),
                               display: try c.decodeIfPresent(ToolDisplay.self, forKey: .display),
-                              outputPresentation: try c.decodeIfPresent(ToolOutputPresentation.self, forKey: .outputPresentation))
+                              outputPresentation: try c.decodeIfPresent(ToolOutputPresentation.self, forKey: .outputPresentation),
+                              parentToolCallId: try? c.decodeIfPresent(String.self, forKey: .parentToolCallId))
 
         case "tool_update":
             let tool = try c.decode(String.self, forKey: .tool)
@@ -449,7 +450,8 @@ extension ServerMessage: Decodable {
             self = .toolUpdate(tool: tool, args: args, toolCallId: tcId, callSegments: callSegs,
                                inputPresentation: try c.decodeIfPresent(ToolInputPresentation.self, forKey: .inputPresentation),
                                display: try c.decodeIfPresent(ToolDisplay.self, forKey: .display),
-                               outputPresentation: try c.decodeIfPresent(ToolOutputPresentation.self, forKey: .outputPresentation))
+                               outputPresentation: try c.decodeIfPresent(ToolOutputPresentation.self, forKey: .outputPresentation),
+                               parentToolCallId: try? c.decodeIfPresent(String.self, forKey: .parentToolCallId))
 
         case "tool_output":
             let output = try c.decode(String.self, forKey: .output)
@@ -460,7 +462,8 @@ extension ServerMessage: Decodable {
             let totalBytes = try c.decodeIfPresent(Int.self, forKey: .totalBytes)
             let details = try c.decodeIfPresent(JSONValue.self, forKey: .details)
             self = .toolOutput(output: output, isError: isErr, toolCallId: tcId, mode: mode, truncated: truncated, totalBytes: totalBytes, details: details,
-                               outputAvailability: try c.decodeIfPresent(ToolOutputAvailability.self, forKey: .outputAvailability))
+                               outputAvailability: try c.decodeIfPresent(ToolOutputAvailability.self, forKey: .outputAvailability),
+                               parentToolCallId: try? c.decodeIfPresent(String.self, forKey: .parentToolCallId))
 
         case "tool_end":
             let tool = try c.decode(String.self, forKey: .tool)
@@ -471,7 +474,8 @@ extension ServerMessage: Decodable {
             self = .toolEnd(tool: tool, toolCallId: tcId, details: details, isError: isError, resultSegments: resultSegs,
                             nestedCalls: try c.decodeIfPresent(NestedToolCalls.self, forKey: .nestedCalls),
                             outputPresentation: try c.decodeIfPresent(ToolOutputPresentation.self, forKey: .outputPresentation),
-                            outputAvailability: try c.decodeIfPresent(ToolOutputAvailability.self, forKey: .outputAvailability))
+                            outputAvailability: try c.decodeIfPresent(ToolOutputAvailability.self, forKey: .outputAvailability),
+                            parentToolCallId: try? c.decodeIfPresent(String.self, forKey: .parentToolCallId))
 
         case "queue_state":
             let queue = try c.decode(MessageQueueState.self, forKey: .queue)

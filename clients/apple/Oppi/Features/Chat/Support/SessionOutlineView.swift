@@ -1062,7 +1062,7 @@ struct SessionOutlineView: View {
     private static func isCompactionEvent(_ item: ChatItem) -> Bool {
         switch item {
         case .toolCall(_, let tool, _, _, _, _, _):
-            return ToolCallFormatting.normalized(tool) == "__compaction"
+            return tool == "__compaction"
         case .systemEvent(_, let message):
             return isCompactionMessage(message)
         default:
@@ -1237,7 +1237,7 @@ private struct OutlineRow: View {
         case .assistant: return itemAudioIcon ?? "cpu"
         case .thinking: return "sparkle"
         case .tool:
-            return ToolCallFormatting.sfSymbolName(for: tool ?? "") ?? "wrench"
+            return "wrench"
         case .system: return "info.circle"
         case .compaction: return "arrow.trianglehead.2.clockwise.rotate.90"
         case .custom: return "info.circle.fill"

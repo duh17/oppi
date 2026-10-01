@@ -153,9 +153,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Kept outside ToolOutputStore so interruption never becomes fabricated output.
     private var interruptedToolIDs: Set<String> = []
 
-    /// Tool event IDs for ask tool calls — suppressed from timeline as tool rows,
-    /// converted to user messages when tool_end arrives with structured answers.
-    private var askToolEventIDs: Set<String> = []
+    /// Child executions project into the parent's Calls rather than timeline rows.
+    private var liveNestedCalls = LiveNestedToolCalls()
 
     /// Most recent provider error row that can be rewritten into a retry notice.
     ///
@@ -195,8 +194,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     func applyExtensionToolsExpanded(_ expanded: Bool) {
         extensionToolsExpanded = expanded
         let toolIDs = items.compactMap { item -> String? in
-            guard case .toolCall(let id, let tool, _, _, _, _, _) = item,
-                  ToolCallFormatting.normalized(tool) != "ask" else {
+            guard case .toolCall(let id, _, _, _, _, _, _) = item,
+                  toolArgsStore.outputPresentation(for: id)?.isInteractive != true else {
                 return nil
             }
             return id
@@ -324,7 +323,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         toolStartTimes.removeAll()
         toolElapsedSeconds.removeAll()
         interruptedToolIDs.removeAll()
-        askToolEventIDs.removeAll()
+        liveNestedCalls = LiveNestedToolCalls()
         retryMergeCandidate = nil
         loadedTraceEvents.removeAll()
         loadedTraceEventIDs.removeAll()
@@ -452,8 +451,15 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             orphanedUserMessages = []
         } else {
             let existingUserMessages = items.filter { item in
-                if case .userMessage = item { return true }
-                return false
+                guard case .userMessage(let id, _, _, _) = item else { return false }
+                // Receipts are rebuilt from interactive tool results, not
+                // optimistic composer messages awaiting a JSONL echo.
+                let prefix = "ask-answer-"
+                if id.hasPrefix(prefix),
+                   toolArgsStore.outputPresentation(for: String(id.dropFirst(prefix.count)))?.isInteractive == true {
+                    return false
+                }
+                return true
             }
             if existingUserMessages.isEmpty {
                 orphanedUserMessages = []
@@ -500,6 +506,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         toolStartTimes.removeAll()
         toolElapsedSeconds.removeAll()
         interruptedToolIDs.removeAll()
+        liveNestedCalls = LiveNestedToolCalls()
 
         // Pre-size arrays to avoid reallocation during event processing.
         items.reserveCapacity(events.count)
@@ -520,6 +527,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         // Re-insert orphaned user messages at their chronological position.
         for orphan in orphanedUserMessages {
+            guard indexForID(orphan.id) == nil else { continue }
             let insertIdx = Self.chronologicalInsertionIndex(for: orphan, in: items)
             items.insert(orphan, at: insertIdx)
         }
@@ -617,12 +625,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         case .toolCall:
             let tool = event.tool ?? "unknown"
-            // Ask tool — track for user message conversion on toolResult,
-            // but still render the tool row to show the questions.
-            if tool == "ask" {
-                askToolEventIDs.insert(event.id)
-            }
-
             let args = event.args ?? [:]
             // Build summary directly without intermediate array allocation.
             var argsSummary = ""
@@ -664,7 +666,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             if let nested = event.nestedCalls { toolDetailsStore.setNestedCalls(nested, for: matchId) }
 
             // Ask tool result — convert to user message, skip tool row update.
-            if askToolEventIDs.contains(matchId) {
+            if toolArgsStore.outputPresentation(for: matchId)?.isInteractive == true {
                 if let details = event.details {
                     toolDetailsStore.set(details, for: matchId)
                 }
@@ -941,6 +943,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
 
         for event in events {
+            if let nested = liveNestedCalls.reduce(event, current: { toolDetailsStore.nestedCalls(for: $0) }) {
+                flushPendingUpserts()
+                if toolDetailsStore.nestedCalls(for: nested.parent) != nested.calls {
+                    toolDetailsStore.setNestedCalls(nested.calls, for: nested.parent)
+                    didMutate = true
+                }
+                continue
+            }
             switch event {
             case .textDelta(_, let delta, let contentIndex):
                 // Text is a structural boundary. Pi streams content blocks in
@@ -1068,6 +1078,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         )
     }
     private func processInternal(_ event: AgentEvent) -> Bool {
+        if let nested = liveNestedCalls.reduce(event, current: { toolDetailsStore.nestedCalls(for: $0) }) {
+            guard toolDetailsStore.nestedCalls(for: nested.parent) != nested.calls else { return false }
+            toolDetailsStore.setNestedCalls(nested.calls, for: nested.parent)
+            return true
+        }
         switch event {
         case .agentStart:
             let before = renderMutationCheckpoint()
@@ -1129,7 +1144,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         case .notice(_, let id, let message):
             return upsertLiveWarningRow(.notice(id: id, message: message), id: id)
 
-        case .toolStart(_, let toolEventId, let tool, let args, let callSegments, let inputPresentation, let display, let outputPresentation):
+        case .toolStart(_, let toolEventId, let tool, let args, let callSegments, let inputPresentation, let display, let outputPresentation, _):
             let metadataChanged = (inputPresentation != nil && toolArgsStore.inputPresentation(for: toolEventId) != inputPresentation)
                 || (display != nil && toolArgsStore.display(for: toolEventId) != display)
                 || (outputPresentation != nil && toolArgsStore.outputPresentation(for: toolEventId) != outputPresentation)
@@ -1145,7 +1160,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             )
             return metadataChanged || startChanged
 
-        case .toolUpdate(_, let toolEventId, let tool, let args, let callSegments, let inputPresentation, let display, let outputPresentation):
+        case .toolUpdate(_, let toolEventId, let tool, let args, let callSegments, let inputPresentation, let display, let outputPresentation, _):
             let metadataChanged = (inputPresentation != nil && toolArgsStore.inputPresentation(for: toolEventId) != inputPresentation)
                 || (display != nil && toolArgsStore.display(for: toolEventId) != display)
                 || (outputPresentation != nil && toolArgsStore.outputPresentation(for: toolEventId) != outputPresentation)
@@ -1187,7 +1202,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return outputDidChange || previewDidChange || toolDetailsStore.details(for: payload.toolEventId) != previousDetails
                 || toolArgsStore.outputAvailability(for: payload.toolEventId) != previousAvailability
 
-        case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability):
+        case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability, _):
             let factsChanged = (outputPresentation != nil && toolArgsStore.outputPresentation(for: toolEventId) != outputPresentation)
                 || (outputAvailability != nil && toolArgsStore.outputAvailability(for: toolEventId) != outputAvailability)
             if let outputPresentation { toolArgsStore.setOutputPresentation(outputPresentation, for: toolEventId) }
@@ -1200,6 +1215,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             }
             let callsChanged = nestedCalls != nil && toolDetailsStore.nestedCalls(for: toolEventId) != nestedCalls
             if let nestedCalls { toolDetailsStore.setNestedCalls(nestedCalls, for: toolEventId) }
+            else if var recorded = toolDetailsStore.nestedCalls(for: toolEventId) {
+                recorded.complete = true
+                toolDetailsStore.setNestedCalls(recorded, for: toolEventId)
+            }
             let endChanged = handleToolEnd(toolEventId: toolEventId, details: details, isError: isError, resultSegments: resultSegments)
             return factsChanged || callsChanged || endChanged
 
@@ -1256,12 +1275,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     // MARK: - Event Handlers (extracted from processInternal)
 
     private func handleToolStart(toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]?, startsExecution: Bool) -> Bool {
-        // Ask tool: show the tool row for questions, but suppress the tool_end
-        // (answers appear as a user message instead). Track the ID for tool_end interception.
-        if tool == "ask" {
-            askToolEventIDs.insert(toolEventId)
-        }
-
         let before = renderMutationCheckpoint()
         let beforeExpandedItemIDs = expandedItemIDs
         let previousArgs = toolArgsStore.args(for: toolEventId)
@@ -1341,7 +1354,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         if let callSegments, !callSegments.isEmpty {
             toolSegmentStore.setCallSegments(callSegments, for: toolEventId)
         }
-        if extensionToolsExpanded == true, ToolCallFormatting.normalized(tool) != "ask" {
+        if extensionToolsExpanded == true, toolArgsStore.outputPresentation(for: toolEventId)?.isInteractive != true {
             expandedItemIDs.insert(toolEventId)
         }
         return renderMutationCheckpoint() != before ||
@@ -1351,9 +1364,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     private func handleToolEnd(toolEventId: String, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?) -> Bool {
-        // Ask tool — mark question row as done, inject answer as user message.
-        // Use contains (not remove) so the ID persists for reconnection suppression.
-        if askToolEventIDs.contains(toolEventId) {
+        // Interaction settlement is separate from inspection. The stored fact
+        // and stable answer ID survive reconnect/replay without a name test.
+        if toolArgsStore.outputPresentation(for: toolEventId)?.isInteractive == true {
             // Freeze elapsed time and mark tool row done (with empty output).
             if toolElapsedSeconds[toolEventId] == nil,
                let startedAt = toolStartTimes[toolEventId] {

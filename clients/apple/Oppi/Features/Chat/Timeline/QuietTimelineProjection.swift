@@ -322,7 +322,7 @@ struct QuietTimelineProjection: Equatable {
         for item in items {
             guard case .toolCall(let id, let tool, _, _, _, _, _) = item else { continue }
             let kind: QuietWorkBucketKind
-            switch ToolCallFormatting.normalized(tool) {
+            switch tool {
             case "read": kind = .read
             case "write": kind = .write
             case "edit": kind = .edit
@@ -359,7 +359,7 @@ struct QuietTimelineProjection: Equatable {
         case .toolCall(_, let tool, _, _, _, _, _):
             // Ask cards remain visible, while every other tool stays
             // inspectable inside the strip regardless of success or failure.
-            return ToolCallFormatting.normalized(tool) != "ask"
+            return tool != "ask"
         case .thinking:
             return true
         case .userMessage, .assistantMessage, .audioClip, .systemEvent,

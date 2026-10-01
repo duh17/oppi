@@ -100,58 +100,6 @@ enum ToolCallFormatting {
             : "\(hours)h"
     }
 
-    // MARK: - Tool Name Normalization
-
-    /// Canonical lowercase tool name for switch matching.
-    ///
-    /// Tool names may arrive namespaced (for example `functions.read` or
-    /// `tools/write`). We keep only the final segment so rendering and parity
-    /// rules stay stable regardless of transport prefixes.
-    static func normalized(_ name: String) -> String {
-        let trimmed = name
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-
-        guard !trimmed.isEmpty else { return trimmed }
-
-        let components = trimmed.split(whereSeparator: { character in
-            character == "." || character == "/" || character == ":"
-        })
-
-        guard let suffix = components.last, !suffix.isEmpty else {
-            return trimmed
-        }
-
-        return String(suffix)
-    }
-
-    static func isBashTool(_ name: String) -> Bool { normalized(name) == "bash" }
-
-    // MARK: - Tool SF Symbol
-
-    /// Canonical SF Symbol name for a built-in tool.
-    ///
-    /// Terminal rows use the fact-derived `"$"` presentation prefix, never a
-    /// raw shell-tool name. Other built-in raw names remain until their migration.
-    static func sfSymbolName(for toolName: String) -> String? {
-        switch toolName {
-        case "$":
-            return "dollarsign"
-        case "file-content":
-            return "magnifyingglass"
-        case "file-mutation":
-            return "pencil"
-        case "file-diff":
-            return "arrow.left.arrow.right"
-        case "voice_speak", "voice_create", "Voice_speak", "Voice_create":
-            return "speaker.wave.2.fill"
-        case "ask", "Ask", "?":
-            return "questionmark"
-        default:
-            return nil
-        }
-    }
-
     // MARK: - Ask Formatting
 
     static func askCollapsedTitle(

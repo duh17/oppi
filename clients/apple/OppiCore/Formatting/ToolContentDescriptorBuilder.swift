@@ -82,7 +82,6 @@ enum ToolContentDescriptorBuilder {
         context: Context,
         includeOutput: Bool = true
     ) -> ToolContentPresentation {
-        let normalizedTool = ToolCallFormatting.normalized(tool)
         let output = context.fullOutput.isEmpty ? outputPreview : context.fullOutput
         let input = (context.args ?? [:]).keys.sorted().compactMap { key -> ToolInspection.Field? in
             guard let value = context.args?[key] else { return nil }
@@ -127,7 +126,11 @@ enum ToolContentDescriptorBuilder {
             } else { file.text }
             return .init(inspection: .init(input: input, calls: context.nestedCalls, output: leaf.map { [$0] } ?? [],
                                           raw: output, previewOnly: previewOnly, totalBytes: totalBytes,
-                                          terminalOutput: false, file: file), copyCommandText: nil,
+                                          terminalOutput: false, file: file,
+                                          supplement: { if case .file(let native) = leaf,
+                                              native.fileType == .image || native.fileType == .audio || native.fileType == .video {
+                                              return ToolCallDocumentBuilder.supplement(args: context.args, inputPresentation: context.inputPresentation, nestedCalls: context.nestedCalls)
+                                          }; return nil }()), copyCommandText: nil,
                          copyOutputText: copy.isEmpty ? nil : copy)
         }
         // Collapsed rows need semantic input and glyph facts, not a JSON/Markdown
@@ -142,11 +145,7 @@ enum ToolContentDescriptorBuilder {
         var copyOutput: String? = outputTrimmed.isEmpty ? nil : outputTrimmed
         var content: ToolContentDescriptor?
 
-        switch normalizedTool {
-        case "ask":
-            break
-
-        default:
+        do {
             let audioDetails = audioPresentation(from: context.details)
             let hasStructuredVoiceContent = audioDetails != nil
             let hasStructuredMediaContent = !mediaAttachments.isEmpty
@@ -155,7 +154,7 @@ enum ToolContentDescriptorBuilder {
                 content = ToolCallDocumentBuilder.build(
                     args: context.args, inputPresentation: context.inputPresentation,
                     nestedCalls: context.nestedCalls,
-                    output: sanitizeGenericExtensionOutput(output, toolName: tool), rawOutput: output,
+                    output: sanitizeGenericExtensionOutput(output), rawOutput: output,
                     details: context.details, isDone: isDone,
                     previewOnly: previewOnly || (context.fullOutput.isEmpty && !outputPreview.isEmpty),
                     totalBytes: totalBytes,
@@ -212,16 +211,33 @@ enum ToolContentDescriptorBuilder {
             }
         }
 
-        if content == nil, !isDone, normalizedTool != "ask" {
+        if content == nil, !isDone {
             content = .status(message: "Waiting for output…")
         }
 
         return ToolContentPresentation(
             inspection: .init(input: input, calls: context.nestedCalls, output: content.map { [$0] } ?? [],
-                              raw: output, previewOnly: previewOnly, totalBytes: totalBytes, terminalOutput: false),
+                              raw: output, previewOnly: previewOnly, totalBytes: totalBytes, terminalOutput: false,
+                              supplement: { if case .media = content {
+                                  return ToolCallDocumentBuilder.supplement(args: context.args, inputPresentation: context.inputPresentation, nestedCalls: context.nestedCalls)
+                              }; return nil }()),
             copyCommandText: nil,
             copyOutputText: copyOutput
         )
+    }
+
+    /// Shared fact-to-glyph translation. A raw name/summary never chooses a glyph.
+    static func glyph(input: ToolInputPresentation?, output: ToolOutputPresentation?, details: JSONValue?) -> String? {
+        if output?.isInteractive == true { return "questionmark" }
+        if audioPresentation(from: details) != nil { return "speaker.wave.2.fill" }
+        if imageAttachment(from: details) != nil || !mediaAttachments(from: details).isEmpty { return "photo" }
+        switch output?.kind {
+        case "terminal": return "dollarsign"
+        case "diffOfEdits": return "arrow.left.arrow.right"
+        case "fileContent":
+            return input?.fields.values.contains { $0.role == "fileContent" } == true ? "pencil" : "magnifyingglass"
+        default: return nil
+        }
     }
 
     static func mediaAttachments(from details: JSONValue?) -> [ToolContentMediaAttachment] {
@@ -307,7 +323,7 @@ enum ToolContentDescriptorBuilder {
            !expandedText.isEmpty {
             fallbackTextOutput = expandedText
         } else {
-            let sanitized = sanitizeGenericExtensionOutput(output, toolName: toolName)
+            let sanitized = sanitizeGenericExtensionOutput(output)
             fallbackTextOutput = sanitized.isEmpty ? output : sanitized
         }
         if let presentation = audioDetails {
@@ -606,7 +622,7 @@ enum ToolContentDescriptorBuilder {
         return false
     }
 
-    private static func sanitizeGenericExtensionOutput(_ output: String, toolName: String) -> String {
+    private static func sanitizeGenericExtensionOutput(_ output: String) -> String {
         var normalized = output
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
@@ -614,69 +630,8 @@ enum ToolContentDescriptorBuilder {
             .components(separatedBy: "\n")
             .map { ANSIParser.strip($0).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : $0 }
             .joined(separator: "\n")
-        normalized = stripInvocationEchoBlockIfPresent(normalized, toolName: toolName)
         normalized = normalized.replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
         return normalized.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func stripInvocationEchoBlockIfPresent(_ text: String, toolName: String) -> String {
-        let tool = toolName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !tool.isEmpty else { return text }
-
-        let candidates = Set([
-            tool,
-            tool.split(separator: ".").last.map(String.init),
-            tool.split(separator: "/").last.map(String.init),
-        ].compactMap { $0 })
-        let orderedCandidates = candidates.sorted { $0.count > $1.count }
-        let lines = text.components(separatedBy: "\n")
-        let isBlank: (String) -> Bool = {
-            ANSIParser.strip($0).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-
-        guard let firstContentIndex = lines.firstIndex(where: { !isBlank($0) }) else { return text }
-        let firstLine = ANSIParser.strip(lines[firstContentIndex])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        guard isLikelyInvocationEchoHeader(firstLine, toolCandidates: orderedCandidates) else {
-            return text
-        }
-
-        var scanIndex = firstContentIndex + 1
-        while scanIndex < lines.count {
-            if isBlank(lines[scanIndex]) {
-                var nextContentIndex = scanIndex + 1
-                while nextContentIndex < lines.count, isBlank(lines[nextContentIndex]) {
-                    nextContentIndex += 1
-                }
-                if nextContentIndex < lines.count {
-                    return lines[nextContentIndex...].joined(separator: "\n")
-                }
-            }
-            scanIndex += 1
-        }
-
-        guard firstContentIndex + 1 < lines.count,
-              lines[(firstContentIndex + 1)...].contains(where: { !isBlank($0) }) else {
-            return text
-        }
-        var updated = lines
-        updated.remove(at: firstContentIndex)
-        return updated.joined(separator: "\n")
-    }
-
-    private static func isLikelyInvocationEchoHeader(_ line: String, toolCandidates: [String]) -> Bool {
-        for candidate in toolCandidates where line.hasPrefix(candidate) {
-            let remainder = line.dropFirst(candidate.count)
-            guard let first = remainder.first,
-                  first == " " || first == "(" || first == ":" else {
-                continue
-            }
-            if line.contains(":") || line.contains("(") || line.contains("{") || line.contains("[")
-                || line.contains("\"") || line.contains("'") || line.contains("`") {
-                return true
-            }
-        }
-        return false
-    }
 }

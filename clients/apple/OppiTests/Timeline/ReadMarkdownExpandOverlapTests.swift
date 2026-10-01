@@ -1062,12 +1062,14 @@ struct ReadMarkdownExpandOverlapTests {
             id: skillBeforeID,
             skillName: "agent-workflow",
             toolArgsStore: wh.toolArgsStore,
+            toolSegmentStore: wh.toolSegmentStore,
             toolOutputStore: wh.toolOutputStore
         )
         installCompletedMarkdownRead(
             id: readID,
             markdown: markdown,
             toolArgsStore: wh.toolArgsStore,
+            toolSegmentStore: wh.toolSegmentStore,
             toolOutputStore: wh.toolOutputStore
         )
         for (index, followingID) in followingIDs.enumerated() {
@@ -1075,6 +1077,7 @@ struct ReadMarkdownExpandOverlapTests {
                 id: followingID,
                 skillName: index == 0 ? "testing" : "follow-\(index)",
                 toolArgsStore: wh.toolArgsStore,
+                toolSegmentStore: wh.toolSegmentStore,
                 toolOutputStore: wh.toolOutputStore
             )
         }
@@ -1143,15 +1146,21 @@ struct ReadMarkdownExpandOverlapTests {
         id: String,
         skillName: String,
         toolArgsStore: ToolArgsStore,
+        toolSegmentStore: ToolSegmentStore,
         toolOutputStore: ToolOutputStore
     ) {
         let path = "/Users/dev/.pi/agent/skills/\(skillName)/SKILL.md"
         let output = "---\nname: \(skillName)\n---"
+        toolArgsStore.setInputPresentation(ToolFileFactsFixture.readInput, for: id)
+        toolArgsStore.setOutputPresentation(.init(kind: "fileContent", provenance: "result"), for: id)
         toolArgsStore.set([
             "path": .string(path),
             "offset": .number(1),
             "limit": .number(220),
         ], for: id)
+        if let segments = ToolFileFactsFixture.callSegments(args: toolArgsStore.args(for: id), operation: "read") {
+            toolSegmentStore.setCallSegments(segments, for: id)
+        }
         toolOutputStore.append(output, to: id)
     }
 
@@ -1159,14 +1168,20 @@ struct ReadMarkdownExpandOverlapTests {
         id: String,
         markdown: String,
         toolArgsStore: ToolArgsStore,
+        toolSegmentStore: ToolSegmentStore,
         toolOutputStore: ToolOutputStore
     ) {
         let path = "Docs/Work-Item-Delivery.md"
+        toolArgsStore.setInputPresentation(ToolFileFactsFixture.readInput, for: id)
+        toolArgsStore.setOutputPresentation(.init(kind: "fileContent", provenance: "result"), for: id)
         toolArgsStore.set([
             "path": .string(path),
             "offset": .number(1),
             "limit": .number(300),
         ], for: id)
+        if let segments = ToolFileFactsFixture.callSegments(args: toolArgsStore.args(for: id), operation: "read") {
+            toolSegmentStore.setCallSegments(segments, for: id)
+        }
         toolOutputStore.append(markdown, to: id)
     }
 

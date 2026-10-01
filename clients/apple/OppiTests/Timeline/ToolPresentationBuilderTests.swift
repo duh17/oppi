@@ -10,6 +10,7 @@ struct ToolPresentationBuilderTests {
 
     private func emptyContext(
         fileOperation: String? = nil,
+        interactive: Bool = false,
         args: [String: JSONValue]? = nil,
         details: JSONValue? = nil,
         expanded: Set<String> = [],
@@ -32,6 +33,7 @@ struct ToolPresentationBuilderTests {
             context.inputPresentation = .init(fields: ["command": .init(role: "command", language: "shell")])
             context.outputPresentation = .init(kind: "terminal")
         }
+        if interactive { context.outputPresentation = .init(kind: "interactive") }
         return context
     }
 
@@ -372,7 +374,8 @@ struct ToolPresentationBuilderTests {
         )
 
         #expect(config.title == "Voice message")
-        #expect(config.toolNamePrefix == "voice_speak")
+        #expect(config.toolNamePrefix == nil)
+        #expect(config.glyph == "speaker.wave.2.fill")
         guard case .audioMessage(let text, let attachmentId, let mimeType, let durationSeconds, let delivery) = config.expandedContent else {
             Issue.record("Expected .audioMessage content")
             return
@@ -1838,7 +1841,7 @@ struct ToolPresentationBuilderTests {
         #expect(markdown.copyOutputText == oversizedMarkdown)
     }
 
-    @Test("extension expanded strips invocation echo and excessive blank lines")
+    @Test("extension expanded preserves invocation-like result bytes without name heuristics")
     func extensionExpandedStripsInvocationEcho() {
         let noisyOutput = """
         remember tags: [6 items], text:
@@ -1862,7 +1865,9 @@ struct ToolPresentationBuilderTests {
             Issue.record("Expected sanitized Markdown text fence")
             return
         }
-        #expect(text == "```text\nSaved to journal: 2026-02-28-mac-studio.md\n```")
+        #expect(text.contains("remember tags: [6 items], text:"))
+        #expect(text.contains("M3 complete, dispatch M4"))
+        #expect(text.contains("Saved to journal: 2026-02-28-mac-studio.md"))
         #expect(config.copyOutputText == noisyOutput)
 
         let namespacedOutput = """
@@ -1884,7 +1889,8 @@ struct ToolPresentationBuilderTests {
             Issue.record("Expected sanitized Markdown text fence")
             return
         }
-        #expect(namespacedText == "```text\nSaved to journal: 2026-02-28-mac-studio.md\n```")
+        #expect(namespacedText.contains("extensions.remember(tags: [2], text: first line"))
+        #expect(namespacedText.contains("Saved to journal:"))
     }
 
     @Test("extension expanded quoted invocation + ansi progress lines reproduces empty-space bug")
@@ -1911,8 +1917,8 @@ struct ToolPresentationBuilderTests {
             Issue.record("Expected sanitized Markdown text fence")
             return
         }
-        #expect(text == "```text\nSaved to journal: 2026-02-28-mac-studio.md\n```")
-        #expect(!text.contains("remember \"Compacted"))
+        #expect(text.contains("Saved to journal: 2026-02-28-mac-studio.md"))
+        #expect(text.contains("remember \"Compacted"))
         #expect(!text.contains("\u{001B}["))
         #expect(config.copyOutputText == noisyOutput)
     }
@@ -2469,12 +2475,12 @@ struct ToolPresentationBuilderTests {
             argsSummary: "allowCustom: true, questions: [2 items]",
             outputPreview: "",
             isError: false, isDone: false,
-            context: emptyContext(args: args)
+            context: emptyContext(interactive: true, args: args)
         )
 
         #expect(config.title == "2 questions")
-        #expect(config.toolNamePrefix == "ask")
-        #expect(ToolCallFormatting.sfSymbolName(for: config.toolNamePrefix ?? "") == "questionmark")
+        #expect(config.isInteractive)
+        #expect(config.glyph == "questionmark")
     }
 
     @Test("ask collapsed row ignores server segment question text")
@@ -2491,23 +2497,20 @@ struct ToolPresentationBuilderTests {
             argsSummary: "questions: [2 items]",
             outputPreview: "",
             isError: false, isDone: true,
-            context: .init(
-                args: args,
-                expandedItemIDs: [],
-                fullOutput: "",
-                isLoadingOutput: false,
-                callSegments: [
-                    StyledSegment(text: "ask ", style: .bold),
-                    StyledSegment(text: "2 questions · Which scope should I use?", style: .muted),
-                ]
-            )
+            context: {
+                var context = emptyContext(interactive: true, args: args)
+                context = ToolPresentationBuilder.Context(args: args, expandedItemIDs: [], fullOutput: "", isLoadingOutput: false,
+                    callSegments: [StyledSegment(text: "ask ", style: .bold), StyledSegment(text: "2 questions · Which scope should I use?", style: .muted)])
+                context.outputPresentation = .init(kind: "interactive")
+                return context
+            }()
         )
 
         #expect(config.title == "2 questions")
         #expect(config.segmentAttributedTitle == nil)
     }
 
-    @Test("ask expanded row does not duplicate user answer receipt")
+    @Test("interactive inspection retains Input and Output independently of answer receipt")
     func askExpandedDoesNotDuplicateUserAnswerReceipt() {
         let questions: JSONValue = .array([
             .object([
@@ -2531,13 +2534,17 @@ struct ToolPresentationBuilderTests {
             outputPreview: "",
             isError: false, isDone: true,
             context: emptyContext(
+                interactive: true,
                 args: ["questions": questions],
                 details: details,
                 expanded: ["ask-1"]
             )
         )
 
-        #expect(config.expandedContent == nil)
+        guard case .markdown(let text, _) = config.expandedContent else { Issue.record("Expected inspection"); return }
+        #expect(text.contains("## Input"))
+        #expect(text.contains("## Output"))
+        #expect(text.contains("Full refactor"))
         #expect(config.copyOutputText == nil)
     }
 

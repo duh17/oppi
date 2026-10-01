@@ -450,6 +450,8 @@ struct SessionContentAccessTests {
 
         // Real timeline: expanded tool row (streaming and completed viewports), image leaf, then HTTP.
         wh.toolArgsStore.set(["path": .string("docs/README.md")], for: "read-md")
+        wh.toolArgsStore.setInputPresentation(ToolFileFactsFixture.readInput, for: "read-md")
+        wh.toolArgsStore.setOutputPresentation(.init(kind: "fileContent", provenance: "result"), for: "read-md")
         wh.reducer.expandedItemIDs.insert("read-md")
         wh.toolOutputStore.append("# Title\n\n![diagram](diagram.png)", to: "read-md")
         wh.applyItems(
@@ -571,6 +573,8 @@ struct SessionContentAccessTests {
         )
         harness.connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
         harness.toolArgsStore.set(["path": .string("docs/README.md")], for: "read-md")
+        harness.toolArgsStore.setInputPresentation(ToolFileFactsFixture.readInput, for: "read-md")
+        harness.toolArgsStore.setOutputPresentation(.init(kind: "fileContent", provenance: "result"), for: "read-md")
         harness.reducer.expandedItemIDs.insert("read-md")
         harness.toolOutputStore.append(markdown, to: "read-md")
         let item = ChatItem.toolCall(

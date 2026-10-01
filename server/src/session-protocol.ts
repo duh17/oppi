@@ -849,6 +849,25 @@ export function translatePiEvent(
   event: AgentSessionEvent,
   ctx: TranslationContext,
 ): ServerMessage[] {
+  const messages = translateEvent(event, ctx);
+  // Managed and mirror share this boundary, including output synthesized at end.
+  const parent = asRecord(event)?.parentToolCallId;
+  if (typeof parent === "string" && parent && parent !== resolveToolCallId(event)) {
+    for (const message of messages) {
+      if (
+        message.type === "tool_start" ||
+        message.type === "tool_update" ||
+        message.type === "tool_output" ||
+        message.type === "tool_end"
+      ) {
+        message.parentToolCallId = parent;
+      }
+    }
+  }
+  return messages;
+}
+
+function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): ServerMessage[] {
   switch (event.type) {
     case "agent_start":
       ctx.streamedAssistantText = "";
@@ -1004,9 +1023,29 @@ export function translatePiEvent(
       const toolName = ctx.toolNames.get(key) ?? event.toolName ?? "";
 
       // Ask tool: no streaming output to iOS.
-      if (toolName === "ask") return EMPTY_MESSAGES;
+      if (ctx.mobileRenderers.outputPresentation(toolName, updateDetails)?.kind === "interactive")
+        return EMPTY_MESSAGES;
 
       const messages: ServerMessage[] = [];
+      if (typeof asRecord(event)?.parentToolCallId === "string") {
+        const args = asRecord(asRecord(event)?.args) ?? ctx.toolArgs?.get(key) ?? {};
+        const inputPresentation = ctx.mobileRenderers.inputPresentation(toolName);
+        const outputPresentation = ctx.mobileRenderers.outputPresentation(toolName, updateDetails);
+        const display = resolveToolDisplay(
+          toolName,
+          ctx.getToolDefinition?.(toolName),
+          updateDetails,
+        );
+        messages.push({
+          type: "tool_update",
+          tool: toolName,
+          toolCallId,
+          args,
+          ...(inputPresentation ? { inputPresentation } : {}),
+          ...(outputPresentation ? { outputPresentation } : {}),
+          ...(display ? { display } : {}),
+        });
+      }
       const shellTool =
         ctx.mobileRenderers.outputPresentation(toolName, updateDetails)?.kind === "terminal";
       const producerAvailability = ctx.mobileRenderers.outputAvailability(
@@ -1136,7 +1175,9 @@ export function translatePiEvent(
       // The structured details (answers) are delivered via tool_end, and iOS
       // renders them as a user message. This avoids scattered output suppression
       // checks on the iOS side (processInternal, processBatch, trace replay).
-      const isAskTool = toolName === "ask";
+      const isAskTool =
+        ctx.mobileRenderers.outputPresentation(toolName, event.result?.details)?.kind ===
+        "interactive";
       const producerAvailability = ctx.mobileRenderers.outputAvailability(event.result?.details);
       const wasPreviewed = ctx.shellPreviewLastSent.has(key);
       let finalText = "";

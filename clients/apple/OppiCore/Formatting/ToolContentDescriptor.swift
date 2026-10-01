@@ -127,6 +127,8 @@ struct ToolInspection: Equatable, Sendable {
     /// Resolved semantics for the painter, not tool identity.
     var terminalOutput: Bool
     var file: ToolFileInspection? = nil
+    /// Native media leaves paint this Input/Calls document alongside output.
+    var supplement: ToolContentDescriptor.Markdown? = nil
     var commandText: String? { input.first { $0.role == "command" }?.value.stringValue }
     var commandLanguageBadge: String? {
         guard terminalOutput,

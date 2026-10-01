@@ -79,7 +79,7 @@ struct TerminalInspectionTests {
             callSegments: [.init(text: "$ ", style: .bold), .init(text: "echo hi", style: .accent)])
         context.outputPresentation = fact
         let config = ToolPresentationBuilder.build(itemID: "tc", tool: "bash", argsSummary: "", outputPreview: "hi", isError: false, isDone: true, context: context)
-        #expect(ToolCallFormatting.sfSymbolName(for: config.toolNamePrefix ?? "") == nil)
+        #expect(config.glyph == nil)
         #expect(config.segmentAttributedTitle?.string == "$ echo hi")
         guard case .markdown = config.expandedContent else { Issue.record("Expected generic document, not command panel"); return }
     }
@@ -100,7 +100,7 @@ struct TerminalInspectionTests {
         context.inputPresentation = reducer.toolArgsStore.inputPresentation(for: "tc")
         context.outputPresentation = reducer.toolArgsStore.outputPresentation(for: "tc")
         let config = ToolPresentationBuilder.build(itemID: "tc", tool: "bash", argsSummary: "", outputPreview: "", isError: false, isDone: true, context: context)
-        #expect(ToolCallFormatting.sfSymbolName(for: config.toolNamePrefix ?? "") == nil)
+        #expect(config.glyph == nil)
         #expect(config.segmentAttributedTitle?.string == "$ Producer summary")
         guard case .markdown(let document, _) = config.expandedContent else { Issue.record("Expected generic document, not command panel"); return }
         #expect(document.contains("Structured result"))
@@ -117,7 +117,7 @@ struct TerminalInspectionTests {
         }
         for config in configs {
             #expect(config.toolNamePrefix == "$")
-            #expect(ToolCallFormatting.sfSymbolName(for: config.toolNamePrefix ?? "") == "dollarsign")
+            #expect(config.glyph == "dollarsign")
             #expect(config.segmentAttributedTitle?.string == "Server summary")
             guard case .bash(let command, let output, let unwrapped) = config.expandedContent else { Issue.record("Expected terminal painter"); return }
             #expect(command == "'quoted'\nnext")
@@ -140,7 +140,7 @@ struct TerminalInspectionTests {
             inputPresentation: input, outputPresentation: terminal))
         let json = #"{"type":"tool_output","toolCallId":"tc","output":"tail","mode":"replace","truncated":true,"totalBytes":20480,"outputAvailability":{"complete":false,"totalBytes":20480,"source":"sidecar"}}"#
         let message = try ServerMessage.decode(from: json)
-        guard case .toolOutput(let text, let error, let id, let mode, let truncated, let bytes, let details, let source) = message else {
+        guard case .toolOutput(let text, let error, let id, let mode, let truncated, let bytes, let details, let source, _) = message else {
             Issue.record("Expected preview output"); return
         }
         coalescer.receive(correlator.output(sessionId: "s", output: text, isError: error, toolCallId: id, mode: mode,
@@ -165,7 +165,7 @@ struct TerminalInspectionTests {
     func tolerantCodable() throws {
         let data = Data(#"{"type":"tool_start","tool":"run_thing","args":{},"inputPresentation":{"fields":{"script":{"role":"command","language":"shell"}}},"outputPresentation":{"kind":"terminal"}}"#.utf8)
         let message = try ServerMessage.decode(from: String(decoding: data, as: UTF8.self))
-        guard case .toolStart(_, _, _, _, let fields, _, let kind) = message else { Issue.record("Expected start"); return }
+        guard case .toolStart(_, _, _, _, let fields, _, let kind, _) = message else { Issue.record("Expected start"); return }
         #expect(fields == input)
         #expect(kind == terminal)
         let decoder = JSONDecoder()

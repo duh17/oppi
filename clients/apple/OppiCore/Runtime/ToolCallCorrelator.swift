@@ -1,51 +1,33 @@
 import Foundation
 
-/// Correlates server tool events to client-side tool call IDs.
-///
-/// Prefers the server-provided `toolCallId` (from pi RPC) when available.
-/// Falls back to synthetic UUIDs for servers that omit `toolCallId`.
-///
-/// v1 assumption: tool events are strictly sequential (one open tool at a time).
+/// Pi IDs are authoritative, including nested calls. The sequential fallback is
+/// only for old servers omitting IDs; children never replace that open parent.
 @MainActor
 final class ToolCallCorrelator {
     private var currentToolEventID: String?
 
-    func start(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil, callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil) -> AgentEvent {
+    func start(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil, callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil, parentToolCallId: String? = nil) -> AgentEvent {
         let id = toolCallId ?? UUID().uuidString
-        currentToolEventID = id
-        return .toolStart(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation)
+        if parentToolCallId == nil { currentToolEventID = id }
+        return .toolStart(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation, parentToolCallId: parentToolCallId)
     }
 
-    func update(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil, callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil) -> AgentEvent {
+    func update(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil, callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil, parentToolCallId: String? = nil) -> AgentEvent {
         let id = toolCallId ?? currentToolEventID ?? UUID().uuidString
-        currentToolEventID = id
-        return .toolUpdate(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation)
+        if parentToolCallId == nil { currentToolEventID = id }
+        return .toolUpdate(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation, parentToolCallId: parentToolCallId)
     }
 
-    func output(sessionId: String, output: String, isError: Bool, toolCallId: String? = nil, mode: ToolOutputMode = .append, truncated: Bool = false, totalBytes: Int? = nil, details: JSONValue? = nil, outputAvailability: ToolOutputAvailability? = nil) -> AgentEvent {
-        // Prefer server-provided toolCallId, then current open tool, then synthetic
+    func output(sessionId: String, output: String, isError: Bool, toolCallId: String? = nil, mode: ToolOutputMode = .append, truncated: Bool = false, totalBytes: Int? = nil, details: JSONValue? = nil, outputAvailability: ToolOutputAvailability? = nil, parentToolCallId: String? = nil) -> AgentEvent {
         let id = toolCallId ?? currentToolEventID ?? UUID().uuidString
-        return .toolOutput(.init(
-            sessionId: sessionId,
-            toolEventId: id,
-            output: output,
-            isError: isError,
-            mode: mode,
-            truncated: truncated,
-            totalBytes: totalBytes,
-            details: details,
-            outputAvailability: outputAvailability
-        ))
+        return .toolOutput(.init(sessionId: sessionId, toolEventId: id, output: output, isError: isError, mode: mode, truncated: truncated, totalBytes: totalBytes, details: details, outputAvailability: outputAvailability, parentToolCallId: parentToolCallId))
     }
 
-    func end(sessionId: String, toolCallId: String? = nil, details: JSONValue? = nil, isError: Bool = false, resultSegments: [StyledSegment]? = nil, nestedCalls: NestedToolCalls? = nil, outputPresentation: ToolOutputPresentation? = nil, outputAvailability: ToolOutputAvailability? = nil) -> AgentEvent {
+    func end(sessionId: String, toolCallId: String? = nil, details: JSONValue? = nil, isError: Bool = false, resultSegments: [StyledSegment]? = nil, nestedCalls: NestedToolCalls? = nil, outputPresentation: ToolOutputPresentation? = nil, outputAvailability: ToolOutputAvailability? = nil, parentToolCallId: String? = nil) -> AgentEvent {
         let id = toolCallId ?? currentToolEventID ?? UUID().uuidString
-        currentToolEventID = nil
-        return .toolEnd(sessionId: sessionId, toolEventId: id, details: details, isError: isError, resultSegments: resultSegments, nestedCalls: nestedCalls, outputPresentation: outputPresentation, outputAvailability: outputAvailability)
+        if parentToolCallId == nil { currentToolEventID = nil }
+        return .toolEnd(sessionId: sessionId, toolEventId: id, details: details, isError: isError, resultSegments: resultSegments, nestedCalls: nestedCalls, outputPresentation: outputPresentation, outputAvailability: outputAvailability, parentToolCallId: parentToolCallId)
     }
 
-    /// Reset state (e.g., on disconnect/reconnect).
-    func reset() {
-        currentToolEventID = nil
-    }
+    func reset() { currentToolEventID = nil }
 }

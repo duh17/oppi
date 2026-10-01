@@ -60,10 +60,7 @@ extension ChatTimelineCollectionHost.Controller {
 
     private func hardwareKeybindingToolRowIDs() -> [String] {
         currentIDs.compactMap { id in
-            guard let item = currentItemByID[id], case .toolCall(_, let tool, _, _, _, _, _) = item else {
-                return nil
-            }
-            if ToolCallFormatting.normalized(tool) == "ask" {
+            guard let item = currentItemByID[id], case .toolCall = item else {
                 return nil
             }
             return id

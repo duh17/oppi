@@ -14,13 +14,12 @@ struct ToolPresentationConfigTests {
     @Test(arguments: ["read", "functions.read", "write", "tools/write", "edit"])
     func missingFileFactsDoesNotSuppressMediaWarning(tool: String) {
         #expect(ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-            normalizedTool: tool, outputPreview: "data:image/png;base64,sample", fullOutput: ""))
+            outputPreview: "data:image/png;base64,sample", fullOutput: ""))
     }
 
     @Test func missingTerminalFactsDoesNotInferFromName() {
         #expect(
             ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "bash",
                 outputPreview: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
                 fullOutput: ""
             )
@@ -28,7 +27,6 @@ struct ToolPresentationConfigTests {
 
         #expect(
             ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "functions.bash",
                 outputPreview: "",
                 fullOutput: "before data:audio/wav;base64,UklGRg== after"
             )
@@ -36,7 +34,6 @@ struct ToolPresentationConfigTests {
 
         #expect(
             !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "bash\n",
                 outputPreview: "plain output",
                 fullOutput: ""
             )
@@ -46,7 +43,6 @@ struct ToolPresentationConfigTests {
     @Test func inlineMediaWarningHeuristicDetectsDataURIsForNonBashTools() {
         #expect(
             ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "grep",
                 outputPreview: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
                 fullOutput: ""
             )
@@ -54,7 +50,6 @@ struct ToolPresentationConfigTests {
 
         #expect(
             ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "find",
                 outputPreview: "",
                 fullOutput: "before data:audio/wav;base64,UklGRg== after"
             )
@@ -66,21 +61,18 @@ struct ToolPresentationConfigTests {
 
         #expect(
             ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "notes",
                 outputPreview: sample,
                 fullOutput: ""
             )
         )
         #expect(
             ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "lookup",
                 outputPreview: sample,
                 fullOutput: ""
             )
         )
         #expect(
             ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "edit",
                 outputPreview: sample,
                 fullOutput: ""
             )
@@ -90,7 +82,6 @@ struct ToolPresentationConfigTests {
     @Test func inlineMediaWarningHeuristicIsCaseInsensitiveForUnknownTools() {
         #expect(
             ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "grep",
                 outputPreview: "DATA:IMAGE/PNG;BASE64,iVBORw0KGgoAAAANSUhEUg==",
                 fullOutput: ""
             )
@@ -98,7 +89,6 @@ struct ToolPresentationConfigTests {
 
         #expect(
             ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "grep",
                 outputPreview: "",
                 fullOutput: "before DaTa:AuDiO/WaV;BaSe64,UklGRg== after"
             )

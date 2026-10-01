@@ -410,6 +410,12 @@ struct WriteToolViewportTailVisibilityTests {
 @Suite("Write tool presentation builder streaming content")
 @MainActor
 struct WritePresentationBuilderStreamingTests {
+    private func requestedContext(args: [String: JSONValue], expandedItemIDs: Set<String>, fullOutput: String, isLoadingOutput: Bool) -> ToolPresentationBuilder.Context {
+        var context = ToolPresentationBuilder.Context(args: args, expandedItemIDs: expandedItemIDs, fullOutput: fullOutput, isLoadingOutput: isLoadingOutput)
+        context.inputPresentation = ToolFileFactsFixture.writeInput
+        context.outputPresentation = .init(kind: "fileContent", provenance: "requested")
+        return context
+    }
 
     @Test("write with args content during streaming produces code content")
     func writeArgsStreamingProducesCode() {
@@ -420,7 +426,7 @@ struct WritePresentationBuilderStreamingTests {
             outputPreview: "",
             isError: false,
             isDone: false,
-            context: .init(
+            context: requestedContext(
                 args: [
                     "path": .string("Test.swift"),
                     "content": .string("struct Test {}\n"),
@@ -440,7 +446,7 @@ struct WritePresentationBuilderStreamingTests {
         #expect(startLine == 1)
     }
 
-    @Test("write without args content but with output falls back to text")
+    @Test("write result text never substitutes for missing requested content")
     func writeNoArgsWithOutputFallsToText() {
         let config = ToolPresentationBuilder.build(
             itemID: "tool-1",
@@ -449,7 +455,7 @@ struct WritePresentationBuilderStreamingTests {
             outputPreview: "streaming preview content",
             isError: false,
             isDone: false,
-            context: .init(
+            context: requestedContext(
                 args: ["path": .string("Test.swift")],
                 expandedItemIDs: ["tool-1"],
                 fullOutput: "streaming preview content",
@@ -457,11 +463,12 @@ struct WritePresentationBuilderStreamingTests {
             )
         )
 
-        guard case .text(let text, _) = config.expandedContent else {
-            Issue.record("Expected .text expanded content for write without args content, got \(String(describing: config.expandedContent))")
+        guard case .status(let message) = config.expandedContent else {
+            Issue.record("Expected requested-content placeholder, got \(String(describing: config.expandedContent))")
             return
         }
-        #expect(text == "streaming preview content")
+        #expect(message == "Waiting for output…")
+        #expect(config.copyOutputText == nil)
     }
 
     @Test("write with no content shows status placeholder")
@@ -473,7 +480,7 @@ struct WritePresentationBuilderStreamingTests {
             outputPreview: "",
             isError: false,
             isDone: false,
-            context: .init(
+            context: requestedContext(
                 args: ["path": .string("Test.swift")],
                 expandedItemIDs: ["tool-1"],
                 fullOutput: "",
@@ -485,7 +492,7 @@ struct WritePresentationBuilderStreamingTests {
             Issue.record("Expected .status expanded content for write with no content, got \(String(describing: config.expandedContent))")
             return
         }
-        #expect(message == "Writing…")
+        #expect(message == "Waiting for output…")
     }
 
     @Test("write done with args content produces code (not text)")
@@ -497,7 +504,7 @@ struct WritePresentationBuilderStreamingTests {
             outputPreview: "File written successfully",
             isError: false,
             isDone: true,
-            context: .init(
+            context: requestedContext(
                 args: [
                     "path": .string("Test.swift"),
                     "content": .string("struct Test {}\n"),
@@ -525,7 +532,7 @@ struct WritePresentationBuilderStreamingTests {
             outputPreview: "",
             isError: false,
             isDone: false,
-            context: .init(
+            context: requestedContext(
                 args: [
                     "path": .string("README.md"),
                     "content": .string("# Title\n\nBody text\n"),

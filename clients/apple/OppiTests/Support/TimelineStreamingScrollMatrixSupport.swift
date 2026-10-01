@@ -190,6 +190,16 @@ final class TimelineStreamingScrollScenarioRunner {
         let inToolContent = contentForPhase(.inTool, highlightPhase: highlightPhase, selected: content)
         let postContent = contentForPhase(.postTool, highlightPhase: highlightPhase, selected: content)
         let toolSpec = inToolContent.inToolSpec(token: token)
+        let inputPresentation: ToolInputPresentation
+        let outputPresentation: ToolOutputPresentation
+        switch toolSpec.expectedExpandedContent {
+        case .bash:
+            inputPresentation = .init(fields: ["command": .init(role: "command", language: "shell")])
+            outputPresentation = .init(kind: "terminal")
+        case .markdown, .code:
+            inputPresentation = ToolFileFactsFixture.readInput
+            outputPresentation = .init(kind: "fileContent", provenance: "result")
+        }
 
         process(
             [.agentStart(sessionId: sessionId)],
@@ -211,7 +221,9 @@ final class TimelineStreamingScrollScenarioRunner {
                     sessionId: sessionId,
                     toolEventId: toolEventID,
                     tool: toolSpec.tool,
-                    args: toolSpec.args
+                    args: toolSpec.args,
+                    inputPresentation: inputPresentation,
+                    outputPresentation: outputPresentation
                 ),
             ],
             step: "\(token)-tool-start",
@@ -283,7 +295,9 @@ final class TimelineStreamingScrollScenarioRunner {
                     sessionId: sessionId,
                     toolEventId: toolEventID,
                     tool: toolSpec.tool,
-                    args: toolSpec.args
+                    args: toolSpec.args,
+                    inputPresentation: inputPresentation,
+                    outputPresentation: outputPresentation
                 ),
                 .toolEnd(sessionId: sessionId, toolEventId: toolEventID),
                 .messageEnd(sessionId: sessionId, content: postDelta),

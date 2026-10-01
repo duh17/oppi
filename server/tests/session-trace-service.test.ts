@@ -109,6 +109,80 @@ describe("SessionTraceService", () => {
     return dir;
   }
 
+  it.each(["ask", "choose_next"])(
+    "reloads %s with current interactive facts and recorded nested calls",
+    async (name) => {
+      const dataDir = tempDir("oppi-interactive-history-");
+      const tracePath = join(dataDir, "trace.jsonl");
+      const nestedCalls = {
+        calls: [
+          {
+            id: "child",
+            name: "mcp__alpha__lookup",
+            arguments: { query: "notes" },
+            status: "ok",
+            durationMs: 15,
+          },
+        ],
+        complete: true,
+      };
+      writeJsonl(tracePath, [
+        { type: "session", id: "pi-1", cwd: dataDir },
+        {
+          type: "message",
+          id: "call",
+          parentId: null,
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "toolCall",
+                id: "q",
+                name,
+                arguments: { questions: [{ id: "q", question: "Continue?" }] },
+              },
+            ],
+          },
+        },
+        {
+          type: "message",
+          id: "result",
+          parentId: "call",
+          message: {
+            role: "toolResult",
+            toolCallId: "q",
+            toolName: name,
+            content: [{ type: "text", text: "yes" }],
+            details: { answers: { q: "yes" } },
+            nestedCalls,
+            isError: false,
+          },
+        },
+      ]);
+      const { service, deps } = makeService({
+        dataDir,
+        storedSession: makeSession({ piSessionFile: tracePath }),
+      });
+      deps.mobileRenderers.register("choose_next", {
+        outputPresentation: { kind: "interactive" },
+        renderCall: () => [],
+        renderResult: () => [],
+      });
+      const loaded = await service.getSessionWithTrace({
+        session: makeSession({ piSessionFile: tracePath }),
+      });
+      expect(
+        loaded.trace
+          .filter((e) => e.type === "toolCall" || e.type === "toolResult")
+          .map((e) => e.outputPresentation),
+      ).toEqual([{ kind: "interactive" }, { kind: "interactive" }]);
+      expect(loaded.trace.filter((e) => e.type === "toolCall")).toHaveLength(1);
+      expect(loaded.trace.find((e) => e.type === "toolResult")?.nestedCalls).toMatchObject(
+        nestedCalls,
+      );
+    },
+  );
+
   it.each(["read", "write", "edit", "put_file"])(
     "reloads %s with the same file facts as live projection",
     async (name) => {

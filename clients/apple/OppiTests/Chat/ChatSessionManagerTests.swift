@@ -56,6 +56,29 @@ struct ChatSessionManagerTests {
         }
     }
 
+    @Test func settingsDetailsApplyWithoutToolIdentity() async {
+        let sessionId = "voice-fact-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._fetchSessionTraceForTesting = { _, _ in
+            (makeTestSession(id: sessionId, workspaceId: "w1", status: .busy), [])
+        }
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        let store = SessionStore()
+        store.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .busy))
+        defer { AppPreferenceStore.Voice.setSessionReplyMode(nil, for: sessionId) }
+        let task = Task { @MainActor in await manager.connect(connection: connection, sessionStore: store) }
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .toolEnd(tool: "arbitrary_settings", toolCallId: "settings", details: ["kind": "voice_reply_mode", "mode": "manual"], isError: false, resultSegments: nil))
+        #expect(await waitForTestCondition(timeoutMs: 1000) { await MainActor.run { AppPreferenceStore.Voice.sessionReplyMode(for: sessionId) == .manual } })
+        streams.yield(index: 0, message: .toolEnd(tool: "voice_reply_mode", toolCallId: "unrelated", details: ["kind": "other", "mode": "autoplay"], isError: false, resultSegments: nil))
+        streams.finish(index: 0)
+        await task.value
+        #expect(AppPreferenceStore.Voice.sessionReplyMode(for: sessionId) == .manual)
+    }
+
     @Test func initialState() {
         let manager = ChatSessionManager(sessionId: "test-123")
         #expect(manager.sessionId == "test-123")

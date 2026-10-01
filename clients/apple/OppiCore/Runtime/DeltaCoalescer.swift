@@ -169,7 +169,7 @@ final class DeltaCoalescer {
         case .textDelta, .thinkingDelta, .toolOutput:
             appendAppendableEvent(event)
 
-        case .toolStart(let sessionId, let toolEventId, _, _, _, _, _, _):
+        case .toolStart(let sessionId, let toolEventId, _, _, _, _, _, _, _):
             let key = ToolStartKey(sessionId: sessionId, toolEventId: toolEventId)
             if activeToolStarts.contains(key) {
                 appendOrReplaceBufferedToolEvent(event, key: key)
@@ -179,7 +179,7 @@ final class DeltaCoalescer {
                 deliverImmediately(event)
             }
 
-        case .toolUpdate(let sessionId, let toolEventId, _, _, _, _, _, _):
+        case .toolUpdate(let sessionId, let toolEventId, _, _, _, _, _, _, _):
             let key = ToolStartKey(sessionId: sessionId, toolEventId: toolEventId)
             if activeToolStarts.contains(key) || previewToolStarts.contains(key) {
                 appendOrReplaceBufferedToolEvent(event, key: key)
@@ -188,7 +188,7 @@ final class DeltaCoalescer {
                 deliverImmediately(event)
             }
 
-        case .toolEnd(let sessionId, let toolEventId, _, _, _, _, _, _):
+        case .toolEnd(let sessionId, let toolEventId, _, _, _, _, _, _, _):
             activeToolStarts.remove(ToolStartKey(sessionId: sessionId, toolEventId: toolEventId))
             previewToolStarts.remove(ToolStartKey(sessionId: sessionId, toolEventId: toolEventId))
             deliverImmediately(event)
@@ -354,7 +354,8 @@ final class DeltaCoalescer {
                     truncated: payload.truncated,
                     totalBytes: payload.totalBytes,
                     details: payload.details,
-                    outputAvailability: payload.outputAvailability
+                    outputAvailability: payload.outputAvailability,
+                    parentToolCallId: payload.parentToolCallId
                 ))
             }
         default:
@@ -499,7 +500,8 @@ final class DeltaCoalescer {
                 truncated: payload.truncated,
                 totalBytes: payload.totalBytes,
                 details: payload.details ?? previous.details,
-                outputAvailability: payload.outputAvailability ?? previous.outputAvailability
+                outputAvailability: payload.outputAvailability ?? previous.outputAvailability,
+                parentToolCallId: payload.parentToolCallId ?? previous.parentToolCallId
             ))
             let previousBytes = estimatedPayloadBytes(buffer[lastIndex])
             let mergedBytes = estimatedPayloadBytes(mergedEvent)
@@ -560,12 +562,12 @@ final class DeltaCoalescer {
     }
 
     private func matchesBufferedToolStart(_ event: AgentEvent, key: ToolStartKey) -> Bool {
-        guard case .toolStart(let sessionId, let toolEventId, _, _, _, _, _, _) = event else { return false }
+        guard case .toolStart(let sessionId, let toolEventId, _, _, _, _, _, _, _) = event else { return false }
         return sessionId == key.sessionId && toolEventId == key.toolEventId
     }
 
     private func matchesBufferedToolUpdate(_ event: AgentEvent, key: ToolStartKey) -> Bool {
-        guard case .toolUpdate(let sessionId, let toolEventId, _, _, _, _, _, _) = event else { return false }
+        guard case .toolUpdate(let sessionId, let toolEventId, _, _, _, _, _, _, _) = event else { return false }
         return sessionId == key.sessionId && toolEventId == key.toolEventId
     }
 
@@ -593,8 +595,8 @@ final class DeltaCoalescer {
              .notice(_, let id, let message):
             return id.utf8.count + message.utf8.count
 
-        case .toolStart(_, _, let tool, let args, let callSegments, let inputPresentation, let display, let outputPresentation),
-             .toolUpdate(_, _, let tool, let args, let callSegments, let inputPresentation, let display, let outputPresentation):
+        case .toolStart(_, _, let tool, let args, let callSegments, let inputPresentation, let display, let outputPresentation, _),
+             .toolUpdate(_, _, let tool, let args, let callSegments, let inputPresentation, let display, let outputPresentation, _):
             let inputBytes = inputPresentation?.fields.reduce(into: 0) { total, field in
                 total += field.key.utf8.count + field.value.role.utf8.count
                 total += field.value.language?.utf8.count ?? 0
@@ -611,7 +613,7 @@ final class DeltaCoalescer {
             return payload.output.utf8.count
                 + estimatedPayloadBytes(payload.details)
 
-        case .toolEnd(_, _, let details, _, let resultSegments, let nestedCalls, _, _):
+        case .toolEnd(_, _, let details, _, let resultSegments, let nestedCalls, _, _, _):
             return estimatedPayloadBytes(details)
                 + estimatedPayloadBytes(resultSegments)
                 + ((try? JSONEncoder().encode(nestedCalls).count) ?? 0)

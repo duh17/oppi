@@ -281,12 +281,13 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func dollarPrefixRendersToolIconCenteredWithTitleRow() throws {
-        let config = makeTimelineToolConfiguration(
+    @Test func terminalGlyphRendersToolIconCenteredWithTitleRow() throws {
+        var config = makeTimelineToolConfiguration(
             title: "cd /Users/example/workspace/oppi",
             trailing: nil,
             isExpanded: false
         )
+        config.glyph = "dollarsign"
         let view = ToolTimelineRowContentView(configuration: config)
 
         _ = fittedTimelineSize(for: view, width: 370)

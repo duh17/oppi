@@ -168,7 +168,7 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
             titleLabel: titleLabel
         )
         applyToolIcon(
-            toolNamePrefix: chrome.toolNamePrefix,
+            toolNamePrefix: chrome.glyph,
             toolNameColor: chrome.toolNameColor
         )
         ToolTimelineRowDisplayState.applyLanguageBadge(
@@ -220,7 +220,7 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
     }
 
     private func applyToolIcon(toolNamePrefix: String?, toolNameColor: UIColor) {
-        guard let symbolName = ToolTimelineRowUIHelpers.toolSymbolName(for: toolNamePrefix),
+        guard let symbolName = toolNamePrefix,
               let baseImage = UIImage(systemName: symbolName) else {
             toolImageView.image = nil
             toolImageView.isHidden = true
@@ -281,7 +281,7 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
     private func scheduleFeatureEducationTipIfNeeded(configuration: ToolTimelineRowConfiguration) {
         guard configuration.isDone,
               !configuration.isExpanded,
-              configuration.toolNamePrefix?.localizedCaseInsensitiveCompare("ask") != .orderedSame else {
+              !configuration.isInteractive else {
             clearInlineFeatureEducationTip()
             return
         }

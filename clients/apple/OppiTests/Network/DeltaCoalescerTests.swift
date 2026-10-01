@@ -19,7 +19,7 @@ struct DeltaCoalescerTests {
 
         #expect(flushed.count == 1)
         #expect(flushed[0].count == 1)
-        guard case .toolStart(_, _, let tool, _, _, _, _, _) = flushed[0][0] else {
+        guard case .toolStart(_, _, let tool, _, _, _, _, _, _) = flushed[0][0] else {
             Issue.record("Expected toolStart")
             return
         }
@@ -47,7 +47,7 @@ struct DeltaCoalescerTests {
 
         #expect(flushed.count == 2)
         #expect(flushed[1].count == 1)
-        guard case .toolUpdate(_, _, _, let args, _, _, _, _) = flushed[1][0] else {
+        guard case .toolUpdate(_, _, _, let args, _, _, _, _, _) = flushed[1][0] else {
             Issue.record("Expected buffered toolUpdate")
             return
         }
@@ -70,7 +70,7 @@ struct DeltaCoalescerTests {
         ))
 
         #expect(flushed.count == 3)
-        guard case .toolUpdate(_, _, _, let previewArgs, _, _, _, _) = flushed[1][0] else {
+        guard case .toolUpdate(_, _, _, let previewArgs, _, _, _, _, _) = flushed[1][0] else {
             Issue.record("Expected buffered preview before toolStart")
             return
         }
@@ -105,7 +105,7 @@ struct DeltaCoalescerTests {
         coalescer.receive(.toolEnd(sessionId: "s1", toolEventId: "t1"))
 
         #expect(flushed.count == 3)
-        guard case .toolUpdate(_, _, _, let args, _, _, _, _) = flushed[1][0] else {
+        guard case .toolUpdate(_, _, _, let args, _, _, _, _, _) = flushed[1][0] else {
             Issue.record("Expected buffered toolUpdate before toolEnd")
             return
         }
@@ -518,7 +518,7 @@ struct DeltaCoalescerTests {
         #expect(!coalescer.resume())
         #expect(flushed.count == 1)
         #expect(flushed[0].map(\.typeLabel) == ["toolStart", "toolUpdate"])
-        guard case .toolUpdate(_, _, _, let args, _, _, _, _) = flushed[0][1] else {
+        guard case .toolUpdate(_, _, _, let args, _, _, _, _, _) = flushed[0][1] else {
             Issue.record("Expected coalesced toolUpdate after retained toolStart")
             return
         }
@@ -552,9 +552,9 @@ struct DeltaCoalescerTests {
         #expect(flushed.count == 1)
         #expect(flushed[0].map(\.typeLabel) == ["toolUpdate", "toolStart", "toolUpdate"])
 
-        guard case .toolUpdate(_, _, _, let previewArgs, _, _, _, _) = flushed[0][0],
+        guard case .toolUpdate(_, _, _, let previewArgs, _, _, _, _, _) = flushed[0][0],
               case .toolStart = flushed[0][1],
-              case .toolUpdate(_, _, _, let finalArgs, _, _, _, _) = flushed[0][2] else {
+              case .toolUpdate(_, _, _, let finalArgs, _, _, _, _, _) = flushed[0][2] else {
             Issue.record("Expected preview, toolStart, and post-start toolUpdate ordering")
             return
         }

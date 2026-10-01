@@ -4,13 +4,24 @@ import Foundation
 // rather than leaving a bash-schema fallback in the shared inspection owner.
 // Slice 6 deletes these Mac-target-only name adapters when Mac paints shared facts.
 extension ToolCallFormatting {
+    static func normalized(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed.split { $0 == "." || $0 == "/" || $0 == ":" }.last.map(String.init) ?? trimmed
+    }
+    static func isBashTool(_ name: String) -> Bool { normalized(name) == "bash" }
     static func macLegacySFSymbolName(for toolName: String) -> String? {
         if toolName == "bash" || toolName == "Bash" { return "dollarsign" }
         switch normalized(toolName) {
         case "read": return "magnifyingglass"
         case "write": return "pencil"
         case "edit": return "arrow.left.arrow.right"
-        default: return sfSymbolName(for: toolName)
+        case "$": return "dollarsign"
+        case "file-content": return "magnifyingglass"
+        case "file-mutation": return "pencil"
+        case "file-diff": return "arrow.left.arrow.right"
+        case "voice_speak", "voice_create": return "speaker.wave.2.fill"
+        case "ask", "?": return "questionmark"
+        default: return nil
         }
     }
 

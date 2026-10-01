@@ -49,6 +49,15 @@ struct ToolCallDocumentPreview: View {
         var config = ToolPresentationBuilder.build(itemID: "document-preview", tool: tool,
             argsSummary: "", outputPreview: output, isError: fixture["isError"]?.boolValue ?? false,
             isDone: fixture["isDone"]?.boolValue ?? true, context: context)
+        // Fixture bytes replace attachment HTTP fetches, not native media painters.
+        if let attachments = fixture["attachmentFixtures"]?.objectValue {
+            config.sessionAttachmentFetcher = { id in
+                guard let path = attachments[id]?.stringValue else {
+                    throw CocoaError(.fileNoSuchFile)
+                }
+                return try Data(contentsOf: URL(fileURLWithPath: path))
+            }
+        }
         // A fixture source exercises the production reader's window interface.
         // Actual HTTP HEAD/Range paging remains a separate transport proof.
         if let text = fixture["sidecarOutput"]?.stringValue {

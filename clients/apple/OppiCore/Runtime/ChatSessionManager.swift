@@ -1252,35 +1252,35 @@ final class ChatSessionManager {
         case .audioStream(let stream):
             effectsStatePort.handleAudioStream(stream, sessionId: sessionId)
 
-        case .toolStart(let tool, let args, let toolCallId, let callSegments, let inputPresentation, let display, let outputPresentation):
+        case .toolStart(let tool, let args, let toolCallId, let callSegments, let inputPresentation, let display, let outputPresentation, let parent):
             coalescer.receive(toolCallCorrelator.start(
                 sessionId: sessionId, tool: tool, args: args,
-                toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation
+                toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation, parentToolCallId: parent
             ))
 
-        case .toolUpdate(let tool, let args, let toolCallId, let callSegments, let inputPresentation, let display, let outputPresentation):
+        case .toolUpdate(let tool, let args, let toolCallId, let callSegments, let inputPresentation, let display, let outputPresentation, let parent):
             coalescer.receive(toolCallCorrelator.update(
                 sessionId: sessionId, tool: tool, args: args,
-                toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation
+                toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation, parentToolCallId: parent
             ))
 
-        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details, let outputAvailability):
+        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details, let outputAvailability, let parent):
             coalescer.receive(toolCallCorrelator.output(
                 sessionId: sessionId, output: output, isError: isError,
                 toolCallId: toolCallId, mode: mode,
                 truncated: truncated, totalBytes: totalBytes,
-                details: details, outputAvailability: outputAvailability
+                details: details, outputAvailability: outputAvailability, parentToolCallId: parent
             ))
 
-        case .toolEnd(let tool, let toolCallId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability):
-            if tool == "voice_reply_mode" {
-                effectsStatePort.applyVoiceReplyModeDetails(details, sessionId: sessionId)
-            }
+        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability, let parent):
+            // The settings payload validates its own kind/mode. Tool identity
+            // is irrelevant, and failed calls must not mutate preferences.
+            if !isError { effectsStatePort.applyVoiceReplyModeDetails(details, sessionId: sessionId) }
             coalescer.receive(toolCallCorrelator.end(
                 sessionId: sessionId, toolCallId: toolCallId,
                 details: details, isError: isError,
                 resultSegments: resultSegments, nestedCalls: nestedCalls,
-                outputPresentation: outputPresentation, outputAvailability: outputAvailability
+                outputPresentation: outputPresentation, outputAvailability: outputAvailability, parentToolCallId: parent
             ))
 
         case .messageEnd(let role, let content, _, _):

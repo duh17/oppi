@@ -131,10 +131,10 @@ struct QuietTimelineProjectionTests {
 
         let line = try #require(workLines(in: projection).first)
         #expect(line.buckets == [
-            .init(kind: .read, count: 2),
-            .init(kind: .tooling, count: 3),
+            .init(kind: .read, count: 1),
+            .init(kind: .tooling, count: 4),
         ])
-        #expect(line.wordsSummary(now: timestamp) == "read 2 files  run 3 tools")
+        #expect(line.wordsSummary(now: timestamp) == "read 1 file  run 4 tools")
     }
 
     @Test func editSummaryUsesStoredStatsWhenEveryEditHasArgs() throws {

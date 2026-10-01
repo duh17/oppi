@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 54
+    "messageCount": 60
   },
   "messages": {
     "connected": {
@@ -623,6 +623,77 @@
       "chunkIndex": 0,
       "audioBase64": "AAAA",
       "playbackBehavior": "playNow"
+    },
+    "interactive_start": {
+      "type": "tool_start",
+      "tool": "choose_next",
+      "args": {
+        "questions": [
+          {
+            "id": "q",
+            "question": "Continue?"
+          }
+        ]
+      },
+      "toolCallId": "tc-interactive",
+      "outputPresentation": {
+        "kind": "interactive"
+      }
+    },
+    "interactive_end": {
+      "type": "tool_end",
+      "tool": "choose_next",
+      "toolCallId": "tc-interactive",
+      "outputPresentation": {
+        "kind": "interactive"
+      },
+      "details": {
+        "questions": [
+          {
+            "id": "q",
+            "question": "Continue?"
+          }
+        ],
+        "answers": {
+          "q": "yes"
+        }
+      }
+    },
+    "nested_start": {
+      "type": "tool_start",
+      "tool": "mcp__alpha__lookup",
+      "toolCallId": "child",
+      "parentToolCallId": "parent",
+      "args": {
+        "query": "notes"
+      },
+      "display": {
+        "title": "Lookup",
+        "group": "Alpha",
+        "verbatim": true
+      }
+    },
+    "nested_update": {
+      "type": "tool_update",
+      "tool": "mcp__alpha__lookup",
+      "toolCallId": "child",
+      "parentToolCallId": "parent",
+      "args": {
+        "query": "updated"
+      }
+    },
+    "nested_output": {
+      "type": "tool_output",
+      "toolCallId": "child",
+      "parentToolCallId": "parent",
+      "output": "working"
+    },
+    "nested_end": {
+      "type": "tool_end",
+      "tool": "mcp__alpha__lookup",
+      "toolCallId": "child",
+      "parentToolCallId": "parent",
+      "isError": false
     },
     "tool_start": {
       "type": "tool_start",

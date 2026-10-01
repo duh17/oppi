@@ -20,6 +20,9 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var expandedContent: ToolPresentationBuilder.ToolExpandedContent?
     let copyCommandText: String?
     let copyOutputText: String?
+    var isInteractive = false
+    var glyph: String? = nil
+    var inspectionSupplement: String? = nil
     var rawMarkdownText: String? = nil
     var rawMarkdownOutputPrefix: String? = nil
     let languageBadge: String?
@@ -173,6 +176,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     let expandedContainer = UIView()
     let expandedScrollView = HorizontalPanPassthroughScrollView()
     private let expandedSurfaceHostView = ToolExpandedSurfaceHostView()
+    private var inspectionSupplementView: AssistantMarkdownContentView?
     private let compactHostedSurfaceHostView = ToolExpandedSurfaceHostView()
     private let featureTipPresentationOwnerID = UUID()
     private var featureTipView: FeatureEducationTipBannerView?
@@ -1076,6 +1080,18 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let previousConfiguration = currentConfiguration
         let isExpandingTransition = !previousConfiguration.isExpanded && configuration.isExpanded
         currentConfiguration = configuration
+        if let text = configuration.inspectionSupplement, configuration.isExpanded {
+            let supplement = inspectionSupplementView ?? AssistantMarkdownContentView()
+            inspectionSupplementView = supplement
+            if supplement.superview == nil { bodyStack.insertArrangedSubview(supplement, at: 0) }
+            supplement.isHidden = false
+            supplement.apply(configuration: .make(content: text, isStreaming: false,
+                themeID: ThemeRuntimeState.currentThemeID(), textSelectionEnabled: true,
+                resourceAccess: configuration.resourceAccess, perfSurface: .toolExpanded))
+        } else {
+            inspectionSupplementView?.removeFromSuperview()
+            inspectionSupplementView = nil
+        }
 
         let palette = ThemeRuntimeState.currentPalette()
         ToolTimelineRowViewStyler.applyTheme(
@@ -1237,7 +1253,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             titleLabel: titleLabel
         )
         applyToolIcon(
-            toolNamePrefix: configuration.toolNamePrefix,
+            toolNamePrefix: configuration.glyph,
             toolNameColor: configuration.toolNameColor
         )
 
@@ -1388,7 +1404,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private func shouldShowToolDetailsTip(configuration: ToolTimelineRowConfiguration) -> Bool {
         guard configuration.isDone, !configuration.isExpanded else { return false }
-        return configuration.toolNamePrefix?.localizedCaseInsensitiveCompare("ask") != .orderedSame
+        return !configuration.isInteractive
     }
 
     private func shouldShowToolOutputShortcutsTip(
@@ -1496,6 +1512,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         let showImagePreview = !imagePreviewContainer.isHidden
         let showBody = showPreview || showImagePreview || showExpanded || showCommand || showOutput
+            || inspectionSupplementView?.isHidden == false
         bodyStackCollapsedHeightConstraint?.isActive = !showBody
         bodyStack.isHidden = !showBody
         updateViewportHeightsIfNeeded()
@@ -2321,7 +2338,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func applyToolIcon(toolNamePrefix: String?, toolNameColor: UIColor) {
-        guard let symbolName = ToolTimelineRowUIHelpers.toolSymbolName(for: toolNamePrefix),
+        guard let symbolName = toolNamePrefix,
               let baseImage = UIImage(systemName: symbolName) else {
             toolImageView.image = nil
             toolImageView.isHidden = true

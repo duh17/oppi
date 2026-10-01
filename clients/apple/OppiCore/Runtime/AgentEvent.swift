@@ -10,6 +10,7 @@ struct ToolOutputEventPayload: Sendable {
     let totalBytes: Int?
     let details: JSONValue?
     let outputAvailability: ToolOutputAvailability?
+    let parentToolCallId: String?
 
     init(
         sessionId: String,
@@ -20,7 +21,8 @@ struct ToolOutputEventPayload: Sendable {
         truncated: Bool = false,
         totalBytes: Int? = nil,
         details: JSONValue? = nil,
-        outputAvailability: ToolOutputAvailability? = nil
+        outputAvailability: ToolOutputAvailability? = nil,
+        parentToolCallId: String? = nil
     ) {
         self.sessionId = sessionId
         self.toolEventId = toolEventId
@@ -31,6 +33,7 @@ struct ToolOutputEventPayload: Sendable {
         self.totalBytes = totalBytes
         self.details = details
         self.outputAvailability = outputAvailability
+        self.parentToolCallId = parentToolCallId
     }
 }
 
@@ -57,10 +60,10 @@ enum AgentEvent: Sendable {
     case notice(sessionId: String, id: String, message: String)
 
     /// Tool events carry a client-generated `toolEventId` (v1: sequential assumption).
-    case toolStart(sessionId: String, toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil)
-    case toolUpdate(sessionId: String, toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil)
+    case toolStart(sessionId: String, toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil, parentToolCallId: String? = nil)
+    case toolUpdate(sessionId: String, toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil, parentToolCallId: String? = nil)
     case toolOutput(ToolOutputEventPayload)
-    case toolEnd(sessionId: String, toolEventId: String, details: JSONValue? = nil, isError: Bool = false, resultSegments: [StyledSegment]? = nil, nestedCalls: NestedToolCalls? = nil, outputPresentation: ToolOutputPresentation? = nil, outputAvailability: ToolOutputAvailability? = nil)
+    case toolEnd(sessionId: String, toolEventId: String, details: JSONValue? = nil, isError: Bool = false, resultSegments: [StyledSegment]? = nil, nestedCalls: NestedToolCalls? = nil, outputPresentation: ToolOutputPresentation? = nil, outputAvailability: ToolOutputAvailability? = nil, parentToolCallId: String? = nil)
 
     // Compaction
     case compactionStart(sessionId: String, reason: String)

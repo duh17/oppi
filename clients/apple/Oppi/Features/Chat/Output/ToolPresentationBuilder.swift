@@ -64,7 +64,7 @@ enum ToolPresentationBuilder {
         isInterrupted: Bool = false,
         context: Context
     ) -> ToolTimelineRowConfiguration {
-        let normalizedTool = ToolCallFormatting.normalized(tool)
+        let isInteractive = context.outputPresentation?.isInteractive == true
         let isExpanded = context.expandedItemIDs.contains(itemID)
         let args = context.args
 
@@ -81,14 +81,13 @@ enum ToolPresentationBuilder {
         let isTerminal = presentation.inspection.terminalOutput
         let file = presentation.inspection.file
         let hasInlineMediaDataURI = !isTerminal && file == nil && shouldWarnInlineMediaForToolOutput(
-            normalizedTool: normalizedTool,
             outputPreview: outputPreview,
             fullOutput: context.fullOutput
         )
 
         // Collapsed presentation
         let collapsed = buildCollapsed(
-            normalizedTool: normalizedTool,
+            isInteractive: isInteractive,
             tool: tool,
             args: args,
             argsSummary: argsSummary,
@@ -146,11 +145,10 @@ enum ToolPresentationBuilder {
         // belongs to the separate command panel. Generic extensions retain
         // their name per the non-segment fallback behavior.
         let segmentAttributedTitle: NSAttributedString?
-        if isVoicePresentationResult || normalizedTool == "ask" {
+        if isVoicePresentationResult || isInteractive {
             segmentAttributedTitle = nil
         } else if let callSegs = context.callSegments, !callSegs.isEmpty {
-            let prefix = SegmentRenderer.toolNamePrefix(from: callSegs)
-            if isTerminal || file != nil || Self.toolPrefixIconReplacesName(prefix) {
+            if isTerminal || file != nil {
                 segmentAttributedTitle = SegmentRenderer.attributedStringStrippingPrefix(from: callSegs)
             } else {
                 segmentAttributedTitle = SegmentRenderer.attributedString(from: callSegs)
@@ -221,6 +219,9 @@ enum ToolPresentationBuilder {
             segmentAttributedTitle: segmentAttributedTitle,
             segmentAttributedTrailing: segmentAttributedTrailing
         )
+        configuration.isInteractive = isInteractive
+        configuration.glyph = ToolContentDescriptorBuilder.glyph(input: context.inputPresentation, output: context.outputPresentation, details: context.details)
+        configuration.inspectionSupplement = presentation.inspection.supplement?.text
         configuration.rawMarkdownText = expanded.rawMarkdownText
         configuration.rawMarkdownOutputPrefix = expanded.rawMarkdownOutputPrefix
         configuration.currentFileOpenIntent = currentFileOpenIntent
@@ -260,7 +261,7 @@ enum ToolPresentationBuilder {
 
     // periphery:ignore:parameters isError,outputPreview
     private static func buildCollapsed(
-        normalizedTool: String,
+        isInteractive: Bool,
         tool: String,
         args: [String: JSONValue]?,
         argsSummary: String,
@@ -298,24 +299,23 @@ enum ToolPresentationBuilder {
             }
             return result
         }
-        switch normalizedTool {
-        case "ask":
+        if isInteractive {
             result.title = ToolCallFormatting.askCollapsedTitle(
                 args: args,
                 details: details,
                 argsSummary: argsSummary
             )
-            result.toolNamePrefix = "ask"
+            result.toolNamePrefix = nil
             result.toolNameColor = UIColor(Color.themeCyan)
             result.titleLineBreakMode = .byTruncatingTail
 
-        default:
+        } else {
             // Extension tools are rendered via server-provided StyledSegments.
             // This default case is the fallback when segments aren't available.
             if Self.toolAudioPresentationDetails(from: details) != nil {
                 result.title = "Voice message"
                 result.languageBadge = nil
-                result.toolNamePrefix = normalizedTool
+                result.toolNamePrefix = nil
                 result.toolNameColor = UIColor(Color.themePurple)
             } else if let display, !display.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 result.title = display.label(fallback: tool)
@@ -442,14 +442,6 @@ enum ToolPresentationBuilder {
 
     // MARK: - Helpers (moved from Coordinator)
 
-    /// Tools whose icon replaces the textual tool name in collapsed title rendering.
-    private static func toolPrefixIconReplacesName(_ prefix: String?) -> Bool {
-        switch prefix {
-        case "ask", "voice_speak", "voice_create": true
-        default: false
-        }
-    }
-
     private struct FilePresentationMetadata {
         let filePath: String?
         let fileType: FileType?
@@ -501,7 +493,6 @@ enum ToolPresentationBuilder {
     }
 
     static func shouldWarnInlineMediaForToolOutput(
-        normalizedTool: String,
         outputPreview: String,
         fullOutput: String
     ) -> Bool {

@@ -215,7 +215,9 @@ function validatedOutputPresentation(value: unknown): ToolOutputPresentation | u
   const fact = asRecord(value);
   if (
     !fact ||
-    !["terminal", "structured", "fileContent", "diffOfEdits"].includes(String(fact.kind))
+    !["terminal", "structured", "fileContent", "diffOfEdits", "interactive"].includes(
+      String(fact.kind),
+    )
   )
     return undefined;
   if (
@@ -617,6 +619,7 @@ const oppi: MobileToolRenderer = {
 };
 
 const ask: MobileToolRenderer = {
+  outputPresentation: { kind: "interactive" },
   renderCall(args) {
     const qs = Array.isArray(args.questions)
       ? (args.questions as Array<Record<string, unknown>>)

@@ -61,6 +61,7 @@ struct ToolInputPresentation: Codable, Equatable, Sendable {
 struct ToolOutputPresentation: Codable, Equatable, Sendable {
     var kind: String
     var provenance: String? = nil
+    var isInteractive: Bool { kind == "interactive" }
     init(kind: String, provenance: String? = nil) { self.kind = kind; self.provenance = provenance }
     private enum CodingKeys: String, CodingKey { case kind, provenance }
     init(from decoder: Decoder) throws {

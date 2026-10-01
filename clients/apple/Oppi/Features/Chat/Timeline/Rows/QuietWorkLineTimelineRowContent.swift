@@ -200,7 +200,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     }
 
     static func symbolName(forActivityKind kind: String) -> String {
-        switch ToolCallFormatting.normalized(kind) {
+        switch kind {
         case "read": return QuietWorkBucketKind.read.symbolName
         case "write": return QuietWorkBucketKind.write.symbolName
         case "edit": return QuietWorkBucketKind.edit.symbolName

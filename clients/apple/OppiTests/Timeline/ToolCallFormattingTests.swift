@@ -3,11 +3,6 @@ import Testing
 
 @Suite("ToolCallFormatting")
 struct ToolCallFormattingTests {
-    @Test func normalizedCanonicalizesNamespacedTools() {
-        #expect(ToolCallFormatting.normalized(" functions.ask ") == "ask")
-        #expect(ToolCallFormatting.normalized("tools/bash") == "bash")
-        #expect(ToolCallFormatting.normalized("") == "")
-    }
     @Test func filePathReadsCanonicalPathOnly() {
         #expect(ToolCallFormatting.filePath(from: ["path": .string("src/main.swift")]) == "src/main.swift")
         #expect(ToolCallFormatting.filePath(from: ["filePath": .string("legacy")]) == nil)
@@ -27,11 +22,11 @@ struct ToolCallFormattingTests {
         #expect(ToolCallFormatting.formatBytes(1048576) == "1.0 MB")
     }
     @Test func glyphsUseTranslatedSemanticsNotFileToolNames() {
-        #expect(ToolCallFormatting.sfSymbolName(for: "file-content") == "magnifyingglass")
-        #expect(ToolCallFormatting.sfSymbolName(for: "file-mutation") == "pencil")
-        #expect(ToolCallFormatting.sfSymbolName(for: "file-diff") == "arrow.left.arrow.right")
-        for name in ["read", "write", "edit", "put_file"] { #expect(ToolCallFormatting.sfSymbolName(for: name) == nil) }
-        #expect(ToolCallFormatting.sfSymbolName(for: "ask") == "questionmark")
+        #expect(ToolContentDescriptorBuilder.glyph(input: nil, output: .init(kind: "fileContent"), details: nil) == "magnifyingglass")
+        #expect(ToolContentDescriptorBuilder.glyph(input: .init(fields: ["bytes": .init(role: "fileContent")]), output: .init(kind: "fileContent"), details: nil) == "pencil")
+        #expect(ToolContentDescriptorBuilder.glyph(input: nil, output: .init(kind: "diffOfEdits"), details: nil) == "arrow.left.arrow.right")
+        #expect(ToolContentDescriptorBuilder.glyph(input: nil, output: nil, details: nil) == nil)
+        #expect(ToolContentDescriptorBuilder.glyph(input: nil, output: .init(kind: "interactive"), details: nil) == "questionmark")
     }
     @Test func askCollapsedTitleUsesQuestionCountOnly() {
         let args: [String: JSONValue] = ["questions": .array([

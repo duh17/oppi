@@ -130,7 +130,9 @@ graph TD
 
 The Markdown descriptor carries optional Raw text and output-preview wording for the iOS full-screen reader; copy output stays separate. The row passes `ToolOutputStore` completeness and total bytes into the descriptor context. The reader receives the same full-output sidecar source as the terminal reader and replaces preview Raw only after all bytes arrive.
 
-Pi's nested `tool_execution_start/update/end` events carry `parentToolCallId`. Oppi does not forward or route on that field: live nested calls can appear as separate top-level rows, while history shows the parent row with its recorded Calls section. This is a known live/history difference; Calls composition does not implement nested-row routing. The invocation-echo sanitizer also remains a name-derived output heuristic for a later migration.
+Pi's nested `tool_execution_start/update/end` events carry `parentToolCallId`. The shared managed/mirror projection forwards it on tool start/update/output/end. `LiveNestedToolCalls` folds child status, arguments, display and duration into the parent's Calls; child output does not create a timeline row. The canonical parent result replaces the live projection, including after reload. Completed parent records win over replayed child starts. Generic output preserves invocation-like text without tool-name heuristics.
+
+`outputPresentation.kind: "interactive"` identifies question/answer settlement independently of inspection. The reducer emits one stable answer message; the builder still composes Input/Output. Automatic expansion skips interactive rows. Glyphs use terminal/file/interactive facts and explicit media details, never raw names or summary prefixes. Voice settings use the validated `details.kind` payload without a tool-name gate. Native media keeps Input/Calls alongside attachment output.
 
 ### Remaining tool-name interpretation (to migrate)
 
@@ -140,11 +142,8 @@ These policies remain deferred:
 - **Session-outline bash summary** — `Oppi/Features/Chat/Support/SessionOutlineView.swift`, `case "bash", "Bash"`: migrate to producer-driven outline summaries in the iOS inspection/chrome slice. `OppiMac/Formatting/MacLegacyToolCallFormatting.swift` remains part of the deferred Mac inspection/chrome slice.
 - **Quiet edit counts** — `Oppi/Features/Chat/Timeline/QuietTimelineProjection.swift`: requested edit-pair counts still ignore result patches; migrate to the shared selected-diff statistics in slice 5 with quiet-mode buckets and labels.
 - **Live Activity bash labels** — `Oppi/Core/Services/LiveActivityManager.swift`: migrate in the semantic activity-label slice.
-- **Ask branches** — `OppiCore/Formatting/ToolContentDescriptorBuilder.swift` and `Oppi/Features/Chat/Output/ToolPresentationBuilder.swift`: migrate in the interactive-input slice.
-- **Formatting helpers and built-in glyph/title aliases** — `OppiCore/Formatting/ToolCallFormatting.swift`: retire alongside the input and Mac title migrations; `isBashTool` remains for Mac until then. Mac-target-only adapters in `OppiMac/Formatting/MacLegacyToolCallFormatting.swift` (`isReadTool`, `isWriteTool`, `isEditTool`, file/skill/range titles, edit statistics/result patches, and legacy glyphs) remain until slice 6.
-- **Ask handling** — `OppiCore/Runtime/TimelineReducer.swift`: migrate question/answer lifecycle routing in the interactive-input slice.
-- **`stripInvocationEchoBlockIfPresent`** — `OppiCore/Formatting/ToolContentDescriptorBuilder.swift`: replace the name-derived wrapper heuristic in the generic wrapper/output-normalization slice.
-- **`parentToolCallId` nested rows** — `OppiCore/Runtime/ToolCallCorrelator.swift` and `OppiCore/Runtime/TimelineReducer.swift` (with the server projection): implement parent-aware live routing in the nested-call lifecycle slice. This is a deferred identity/routing gap, not a current name switch.
+- **Quiet buckets and visibility** — `QuietTimelineProjection.swift` and `QuietWorkLineTimelineRowContent.swift`: migrate exact-name bucket labels and interaction visibility in slice 5.
+- **Mac-local formatting adapters** — `OppiMac/Formatting/MacLegacyToolCallFormatting.swift`: suffix/lowercase normalization, built-in glyphs and file/skill/range helpers remain only in the Mac target until slice 6. OppiCore and iOS no longer normalize tool names.
 
 Paths above are relative to `clients/apple/`. This list records migration scope only; file/diff inspection does not migrate quiet-mode buckets, outline summary labels, or Live Activity copy.
 

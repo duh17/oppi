@@ -38,7 +38,7 @@ export interface ToolInputPresentation {
 
 /** Result semantics, not a requested viewer or layout. */
 export interface ToolOutputPresentation {
-  kind: "terminal" | "structured" | "fileContent" | "diffOfEdits";
+  kind: "terminal" | "structured" | "fileContent" | "diffOfEdits" | "interactive";
   /** Requested bytes are input, never evidence of the resulting file. */
   provenance?: "requested" | "result";
 }
@@ -497,6 +497,7 @@ export type ServerMessage = // ── Connection ──
     // ── Tool execution ──
     | {
         type: "tool_start";
+        parentToolCallId?: string;
         outputPresentation?: ToolOutputPresentation;
         inputPresentation?: ToolInputPresentation;
         display?: ToolDisplay;
@@ -507,6 +508,7 @@ export type ServerMessage = // ── Connection ──
       }
     | {
         type: "tool_update";
+        parentToolCallId?: string;
         outputPresentation?: ToolOutputPresentation;
         inputPresentation?: ToolInputPresentation;
         display?: ToolDisplay;
@@ -517,6 +519,7 @@ export type ServerMessage = // ── Connection ──
       }
     | {
         type: "tool_output";
+        parentToolCallId?: string;
         output: string;
         outputAvailability?: ToolOutputAvailability;
         isError?: boolean;
@@ -532,6 +535,7 @@ export type ServerMessage = // ── Connection ──
       }
     | {
         type: "tool_end";
+        parentToolCallId?: string;
         outputAvailability?: ToolOutputAvailability;
         outputPresentation?: ToolOutputPresentation;
         nestedCalls?: NestedToolCalls;

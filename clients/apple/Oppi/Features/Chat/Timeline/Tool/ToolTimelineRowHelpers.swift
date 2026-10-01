@@ -1078,10 +1078,6 @@ enum ToolTimelineRowUIHelpers {
         return distance <= autoFollowBottomThreshold
     }
 
-    static func toolSymbolName(for toolNamePrefix: String?) -> String? {
-        guard let toolNamePrefix else { return nil }
-        return ToolCallFormatting.sfSymbolName(for: toolNamePrefix)
-    }
 
     /// Resolve a language badge string to either an asset catalog image or an SF Symbol.
     ///

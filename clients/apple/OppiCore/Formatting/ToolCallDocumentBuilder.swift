@@ -29,6 +29,17 @@ enum ToolCallDocumentBuilder {
                      rawText: rawPrefix + availability + rawOutput, rawOutputPrefix: rawPrefix)
     }
 
+    /// Input/Calls alongside native media output, never converted attachments.
+    static func supplement(args: [String: JSONValue]?, inputPresentation: ToolInputPresentation?, nestedCalls: NestedToolCalls?) -> ToolContentDescriptor.Markdown? {
+        let hints = inputPresentation?.fields.compactMapValues(\.language) ?? [:]
+        let fields = input(args ?? [:], hints: hints)
+        var sections: [String] = []
+        if !fields.isEmpty { sections.append("## Input\n\n" + fields) }
+        if let nestedCalls { sections.append("## Calls\n\n" + calls(nestedCalls)) }
+        guard !sections.isEmpty else { return nil }
+        return .init(text: sections.joined(separator: "\n\n"))
+    }
+
     private static func input(_ args: [String: JSONValue], hints: [String: String]) -> String {
         let nonEmpty = args.keys.sorted().filter { args[$0] != .null && args[$0] != .string("") }
         let fields = Array((nonEmpty.filter { hints[$0] != nil } + nonEmpty.filter { hints[$0] == nil }).prefix(200))

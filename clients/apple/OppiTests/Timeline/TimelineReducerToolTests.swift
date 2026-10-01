@@ -696,7 +696,10 @@ struct TimelineReducerToolTests {
         ]
 
         reducer.process(.agentStart(sessionId: "s1"))
-        reducer.process(.toolUpdate(sessionId: "s1", toolEventId: toolId, tool: "edit", args: editArgs))
+        reducer.process(.toolUpdate(sessionId: "s1", toolEventId: toolId, tool: "edit", args: editArgs,
+            callSegments: ToolFileFactsFixture.callSegments(args: editArgs, operation: "edit"),
+            inputPresentation: ToolFileFactsFixture.editInput,
+            outputPresentation: .init(kind: "diffOfEdits", provenance: "result")))
 
         guard let item = reducer.items.first(where: {
             if case .toolCall(let id, _, _, _, _, _, _) = $0 { return id == toolId }
@@ -707,6 +710,12 @@ struct TimelineReducerToolTests {
             return
         }
 
+        var context = ToolPresentationBuilder.Context(
+            args: reducer.toolArgsStore.args(for: toolId), expandedItemIDs: [],
+            fullOutput: reducer.toolOutputStore.fullOutput(for: toolId), isLoadingOutput: false,
+            callSegments: reducer.toolSegmentStore.callSegments(for: toolId))
+        context.inputPresentation = reducer.toolArgsStore.inputPresentation(for: toolId)
+        context.outputPresentation = reducer.toolArgsStore.outputPresentation(for: toolId)
         let config = ToolPresentationBuilder.build(
             itemID: toolId,
             tool: tool,
@@ -714,12 +723,7 @@ struct TimelineReducerToolTests {
             outputPreview: outputPreview,
             isError: isError,
             isDone: isDone,
-            context: .init(
-                args: reducer.toolArgsStore.args(for: toolId),
-                expandedItemIDs: [],
-                fullOutput: reducer.toolOutputStore.fullOutput(for: toolId),
-                isLoadingOutput: false
-            )
+            context: context
         )
 
         #expect(config.title == "server/src/routes/sessions.ts")

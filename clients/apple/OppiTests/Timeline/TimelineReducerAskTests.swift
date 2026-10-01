@@ -128,6 +128,12 @@ struct TimelineReducerAskTests {
         #expect(TimelineReducer.formatAskAnswers(details: nil).isEmpty)
     }
 
+    private func interactiveReducer() -> TimelineReducer {
+        let reducer = TimelineReducer()
+        reducer.toolArgsStore.setOutputPresentation(.init(kind: "interactive"), for: "ask-evt-1")
+        return reducer
+    }
+
     // MARK: - Ask tool handling in timeline
 
     @Test("ask toolStart creates tool row")
@@ -146,7 +152,7 @@ struct TimelineReducerAskTests {
 
     @Test("ask toolEnd injects user message with full question and answer")
     func askToolEndInjectsUserMessage() {
-        let reducer = TimelineReducer()
+        let reducer = interactiveReducer()
         reducer.process(.toolStart(
             sessionId: "s1", toolEventId: "ask-evt-1", tool: "ask", args: [:]
         ))
@@ -173,7 +179,7 @@ struct TimelineReducerAskTests {
 
     @Test("ask toolEnd clears any leaked output from tool row")
     func askToolEndClearsOutput() {
-        let reducer = TimelineReducer()
+        let reducer = interactiveReducer()
         reducer.process(.toolStart(
             sessionId: "s1", toolEventId: "ask-evt-1", tool: "ask", args: [:]
         ))
@@ -205,7 +211,7 @@ struct TimelineReducerAskTests {
 
     @Test("ask toolEnd marks tool row as done")
     func askToolEndMarksRowDone() {
-        let reducer = TimelineReducer()
+        let reducer = interactiveReducer()
         reducer.process(.toolStart(
             sessionId: "s1", toolEventId: "ask-evt-1", tool: "ask", args: [:]
         ))

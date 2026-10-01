@@ -1505,9 +1505,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             switch item {
             case .toolCall(_, let tool, _, _, let outputByteCount, _, _):
-                if ToolCallFormatting.normalized(tool) == "ask" {
-                    return
-                }
+                // Interactive settlement is independent of manual inspection.
 
                 if presentReadImagePreviewInsteadOfExpanding(
                     itemID: itemID,

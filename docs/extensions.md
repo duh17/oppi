@@ -399,9 +399,9 @@ For tool rows, Oppi uses this order:
 3. server-provided `StyledSegment[]` summaries for the collapsed row
 4. generic rendering from tool `content` and `details`
 
-On iOS, generic expanded tool rows show one Markdown document with **Input**, optional **Calls**, and **Output** sections. Terminal-kind rows use a separate command panel and streaming terminal viewport. File and diff facts select the existing native file viewers. Ask rows and audio/image/media presentations keep their own renderers. Section labels appear only when the document has more than one section.
+On iOS, generic expanded tool rows show one Markdown document with **Input**, optional **Calls**, and **Output** sections. Terminal-kind rows use a separate command panel and streaming terminal viewport. File and diff facts select the existing native file viewers. Interactive rows use the same Input/Output inspection independently of their answer-message receipt. Audio/image/media presentations keep native attachment renderers with Input and Calls alongside output. Section labels appear only when the document has more than one section.
 
-Input shows non-empty arguments as a form table, source-code fences, or labeled text/JSON blocks. Calls shows Pi's recorded nested calls with status, literal compact arguments, duration, and errors. An incomplete record shows a notice.
+Input shows non-empty arguments as a form table, source-code fences, or labeled text/JSON blocks. Calls shows Pi's recorded nested calls with status, literal compact arguments, duration, and errors. An incomplete record shows a notice. Live child executions carrying `parentToolCallId` update the parent's Calls rather than add top-level rows, in managed and Mirror sessions. The parent result replaces the live records and supplies the same Calls after reload. Invocation-like output is retained; the app does not strip it based on a tool name.
 
 The server can emit `display: { title, group?, verbatim? }` on tool calls and nested-call records. Without summary segments, iOS uses `group · Title` and applies one sentence-case humanizer to the title fact (for example, `getActivityDetail` becomes “Get activity detail”). `verbatim: true` preserves a provided title exactly. With no display fact, older-server rows keep their raw names. Input and Raw retain raw tool names; Raw also retains nested-call records.
 
@@ -433,6 +433,11 @@ export default {
     },
     renderResult(details, isError) { return []; },
   },
+  choose_next: {
+    outputPresentation: { kind: "interactive" },
+    renderCall(args) { return [{ text: "Choose next", style: "bold" }]; },
+    renderResult(details, isError) { return []; },
+  },
   run_thing: {
     inputPresentation: { fields: { command: { role: "command", language: "shell" } } },
     outputPresentation: { kind: "terminal" },
@@ -445,6 +450,10 @@ export default {
 ```
 
 `run_thing` receives the same iOS command panel and terminal viewport as built-in `bash`. The registry matches Pi's exact tool name; aliases such as `functions.bash` do not inherit facts. The server sends `outputPresentation` on live start/update and history calls, and resolves it again on results. Explicit `details.outputPresentation` wins over the static declaration. `details.expandedText` also wins: `presentationFormat: "terminal"` keeps terminal semantics; other formats select the generic document. Unknown explicit kinds degrade to structured output.
+
+`outputPresentation.kind: "interactive"` declares the question/answer lifecycle used by built-in `ask`. Any exact tool name can declare it, including `choose_next`. Result `details.questions` and `details.answers` supply the answer receipt; the fact does not create an input prompt. Use `ctx.ui.ask()` for the actual prompt. Interactive tools stay out of automatic expand-all, and emit one answer message per call. Inspection remains available independently of settlement. Without this fact, even a tool named `ask` is generic and emits no answer receipt.
+
+Glyphs are derived in the shared Apple builder from terminal, file and interactive facts, or explicit audio/image/media details. Sidecars declare semantics, not symbol names or views. Generic tools retain the default glyph; a textual prefix such as `$` or `ask` does not select one. Voice reply settings are applied only from the validated `details.kind: "voice_reply_mode"` and `mode` payload, independent of the tool's name.
 
 File facts use `filePath`, `fileContent`, and `edits` input roles. `edits` is an array of `{ oldText, newText }` pairs. Optional `lineOffset` and `lineLimit` fields describe one-based read ranges. File roles do not require a language. `outputPresentation.kind` can be `fileContent` or `diffOfEdits`; `provenance: "requested"` identifies input content, and `"result"` identifies tool-result content. Built-in read declares result file content; write declares requested file content; edit declares result diffs. The app uses a result patch or Pi's numbered `details.diff` when available, otherwise it labels an args-derived diff **Requested**. Partial write/edit arguments stay previewable while running. A successful requested-file-content operation offers **Open Current File**, which reads the file as it is now, not the historical requested bytes. The same facts work for any exact tool name, including `put_file`. Missing facts on an older server select the generic document, including for read/write/edit.
 
