@@ -113,8 +113,8 @@ struct ToolFileInspectionTests {
         #expect(presentation.inspection.file?.stats?.removed == 0)
     }
 
-    @Test(arguments: ["read", "write", "edit", "functions.read", "put_file"])
-    func oldServerDegradesToGenericDocument(tool: String) throws {
+    @Test(arguments: ["Read", "functions.read", "functions.write", "functions.edit", "put_file"])
+    func undeclaredNamesDegradeToGenericDocument(tool: String) throws {
         let presentation = build(tool, args: ["path": .string("README.md"), "content": .string("# Requested")], input: nil, output: nil, text: "result")
         #expect(presentation.inspection.file == nil)
         guard case .markdown(let document) = presentation.content else { Issue.record("Missing facts must be generic"); return }

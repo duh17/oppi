@@ -66,9 +66,10 @@ struct TerminalInspectionTests {
         #expect(reducer.toolOutputStore.outputByteCount(for: "tc") == 200_000)
     }
 
-    @Test("no facts and future facts degrade to a generic document", arguments: [nil, ToolOutputPresentation(kind: "future")])
-    func oldServerAndUnknownKind(fact: ToolOutputPresentation?) {
-        let result = ToolContentDescriptorBuilder.build(tool: "bash", argsSummary: "command: echo hi", outputPreview: "hi",
+    @Test("undeclared aliases and future producer kinds remain generic", arguments: [nil, ToolOutputPresentation(kind: "future")])
+    func oldServerAliasAndUnknownProducerKind(fact: ToolOutputPresentation?) {
+        let tool = fact == nil ? "functions.bash" : "bash"
+        let result = ToolContentDescriptorBuilder.build(tool: tool, argsSummary: "command: echo hi", outputPreview: "hi",
             isError: false, isDone: true, context: .init(args: ["command": "echo hi"], outputPresentation: fact))
         guard case .markdown(let document) = result.content else { Issue.record("Expected generic document"); return }
         #expect(document.text.contains("echo hi"))
@@ -78,7 +79,7 @@ struct TerminalInspectionTests {
         var context = ToolPresentationBuilder.Context(args: ["command": "echo hi"], expandedItemIDs: ["tc"], fullOutput: "hi", isLoadingOutput: false,
             callSegments: [.init(text: "$ ", style: .bold), .init(text: "echo hi", style: .accent)])
         context.outputPresentation = fact
-        let config = ToolPresentationBuilder.build(itemID: "tc", tool: "bash", argsSummary: "", outputPreview: "hi", isError: false, isDone: true, context: context)
+        let config = ToolPresentationBuilder.build(itemID: "tc", tool: tool, argsSummary: "", outputPreview: "hi", isError: false, isDone: true, context: context)
         #expect(config.glyph == nil)
         #expect(config.segmentAttributedTitle?.string == "$ echo hi")
         guard case .markdown = config.expandedContent else { Issue.record("Expected generic document, not command panel"); return }
