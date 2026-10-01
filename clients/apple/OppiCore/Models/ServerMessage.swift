@@ -94,7 +94,7 @@ enum ServerMessage: Sendable, Equatable {
     // Tool execution
     case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil)
     case toolUpdate(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil)
-    case toolOutput(output: String, isError: Bool, toolCallId: String?, mode: ToolOutputMode, truncated: Bool, totalBytes: Int?, details: JSONValue?)
+    case toolOutput(output: String, isError: Bool, toolCallId: String?, mode: ToolOutputMode, truncated: Bool, totalBytes: Int?, details: JSONValue?, outputAvailability: ToolOutputAvailability? = nil)
     case toolEnd(tool: String, toolCallId: String?, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?, nestedCalls: NestedToolCalls? = nil, outputPresentation: ToolOutputPresentation? = nil, outputAvailability: ToolOutputAvailability? = nil)
 
     // Message queue
@@ -459,7 +459,8 @@ extension ServerMessage: Decodable {
             let truncated = try c.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
             let totalBytes = try c.decodeIfPresent(Int.self, forKey: .totalBytes)
             let details = try c.decodeIfPresent(JSONValue.self, forKey: .details)
-            self = .toolOutput(output: output, isError: isErr, toolCallId: tcId, mode: mode, truncated: truncated, totalBytes: totalBytes, details: details)
+            self = .toolOutput(output: output, isError: isErr, toolCallId: tcId, mode: mode, truncated: truncated, totalBytes: totalBytes, details: details,
+                               outputAvailability: try c.decodeIfPresent(ToolOutputAvailability.self, forKey: .outputAvailability))
 
         case "tool_end":
             let tool = try c.decode(String.self, forKey: .tool)

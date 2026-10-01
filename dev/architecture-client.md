@@ -132,6 +132,21 @@ The Markdown descriptor carries optional Raw text and output-preview wording for
 
 Pi's nested `tool_execution_start/update/end` events carry `parentToolCallId`. Oppi does not forward or route on that field: live nested calls can appear as separate top-level rows, while history shows the parent row with its recorded Calls section. This is a known live/history difference; Calls composition does not implement nested-row routing. The invocation-echo sanitizer also remains a name-derived output heuristic for a later migration.
 
+### Remaining tool-name interpretation (to migrate)
+
+The terminal slice does not remove these deferred policies:
+
+- **Mac collapsed switch** — `OppiMac/Views/MacSessionTimelineViews.swift`: migrate in the Mac inspection/chrome slice.
+- **Session-outline bash summary** — `OppiMac/Views/MacSessionOutlineView.swift` and `OppiMac/Formatting/MacLegacyToolCallFormatting.swift`: migrate in the Mac inspection/chrome slice.
+- **Live Activity bash labels** — `Oppi/Core/Services/LiveActivityManager.swift`: migrate in the semantic activity-label slice.
+- **Read/write/edit/ask branches** — `OppiCore/Formatting/ToolContentDescriptorBuilder.swift` and `Oppi/Features/Chat/Output/ToolPresentationBuilder.swift`: remove file/edit branches in file-mutation inspection slices and ask branches in the interactive-input slice.
+- **Formatting helpers and built-in glyph/title aliases** — `OppiCore/Formatting/ToolCallFormatting.swift`: retire alongside the corresponding file/edit/input and Mac title migrations; `isBashTool` remains for Mac until then.
+- **Ask handling** — `OppiCore/Runtime/TimelineReducer.swift`: migrate question/answer lifecycle routing in the interactive-input slice.
+- **`stripInvocationEchoBlockIfPresent`** — `OppiCore/Formatting/ToolContentDescriptorBuilder.swift`: replace the name-derived wrapper heuristic in the generic wrapper/output-normalization slice.
+- **`parentToolCallId` nested rows** — `OppiCore/Runtime/ToolCallCorrelator.swift` and `OppiCore/Runtime/TimelineReducer.swift` (with the server projection): implement parent-aware live routing in the nested-call lifecycle slice. This is a deferred identity/routing gap, not a current name switch.
+
+Paths above are relative to `clients/apple/`. This list records migration scope only; none of these behaviors changes in the terminal slice.
+
 `ToolDisplay` is a producer identity fact stored alongside input metadata in `ToolArgsStore`. Live start/update and history calls populate it; metadata-only updates invalidate the existing row without adding a call. Its single humanizer acts on `display.title` only, never raw tool names; `verbatim` preserves a supplied title. Collapsed generic titles and Calls share that label, while existing segments and built-in rows keep their titles. Raw preserves raw identity and nested records. Reader Copy/Share follow the displayed Raw preview or completed sidecar, while the row copy-output action stays on tool output. A producer-built Raw prefix binds the sidecar at the section boundary without searching source text. Both Rendered and Raw show the same preview/byte availability sentence. The producer's MCP fallback resolver lives in `server/src/mobile-renderer.ts`; Apple clients do not parse MCP names. Pi's public definitions currently omit raw MCP titles and icons, and its connection objects/serverInfo are not exposed; those standards-compliant metadata inputs need a future Pi boundary change.
 
 Files in `OppiCore` must stay platform-neutral. The CommonMark parser, its `MarkdownBlock` / `MarkdownInline` AST, and the tail-only `CommonMarkStreamingParser` cache live under `OppiCore/Formatting`; iOS and macOS paint that shared parse result in their platform UI layers. UI/device work belongs in the iOS app under `clients/apple/Oppi/**` or the Mac app under `clients/apple/OppiMac/**`.

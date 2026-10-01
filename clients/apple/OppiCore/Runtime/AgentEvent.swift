@@ -9,6 +9,7 @@ struct ToolOutputEventPayload: Sendable {
     let truncated: Bool
     let totalBytes: Int?
     let details: JSONValue?
+    let outputAvailability: ToolOutputAvailability?
 
     init(
         sessionId: String,
@@ -18,7 +19,8 @@ struct ToolOutputEventPayload: Sendable {
         mode: ToolOutputMode = .append,
         truncated: Bool = false,
         totalBytes: Int? = nil,
-        details: JSONValue? = nil
+        details: JSONValue? = nil,
+        outputAvailability: ToolOutputAvailability? = nil
     ) {
         self.sessionId = sessionId
         self.toolEventId = toolEventId
@@ -28,6 +30,7 @@ struct ToolOutputEventPayload: Sendable {
         self.truncated = truncated
         self.totalBytes = totalBytes
         self.details = details
+        self.outputAvailability = outputAvailability
     }
 }
 

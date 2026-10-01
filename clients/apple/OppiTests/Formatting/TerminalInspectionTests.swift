@@ -75,10 +75,35 @@ struct TerminalInspectionTests {
         #expect(document.text.contains("hi"))
         #expect(result.copyCommandText == nil)
         #expect(!result.inspection.terminalOutput)
-        var context = ToolPresentationBuilder.Context(args: ["command": "echo hi"], expandedItemIDs: ["tc"], fullOutput: "hi", isLoadingOutput: false)
+        var context = ToolPresentationBuilder.Context(args: ["command": "echo hi"], expandedItemIDs: ["tc"], fullOutput: "hi", isLoadingOutput: false,
+            callSegments: [.init(text: "$ ", style: .bold), .init(text: "echo hi", style: .accent)])
         context.outputPresentation = fact
         let config = ToolPresentationBuilder.build(itemID: "tc", tool: "bash", argsSummary: "", outputPreview: "hi", isError: false, isDone: true, context: context)
         #expect(ToolCallFormatting.sfSymbolName(for: config.toolNamePrefix ?? "") == nil)
+        #expect(config.segmentAttributedTitle?.string == "$ echo hi")
+        guard case .markdown = config.expandedContent else { Issue.record("Expected generic document, not command panel"); return }
+    }
+
+    @Test("structured result override clears terminal glyph and panel but retains dollar summary text")
+    func structuredResultOverride() throws {
+        let reducer = TimelineReducer()
+        let segments: [StyledSegment] = [.init(text: "$ ", style: .bold), .init(text: "Producer summary", style: .accent)]
+        reducer.process(.toolStart(sessionId: "s", toolEventId: "tc", tool: "bash", args: ["script": "echo hello"],
+            callSegments: segments, inputPresentation: input, outputPresentation: terminal))
+        let details: JSONValue = .object(["expandedText": .string("Structured result"), "presentationFormat": .string("markdown"),
+            "outputPresentation": .object(["kind": .string("structured")])])
+        reducer.process(.toolEnd(sessionId: "s", toolEventId: "tc", details: details,
+            outputPresentation: .init(kind: "structured")))
+        var context = ToolPresentationBuilder.Context(args: reducer.toolArgsStore.args(for: "tc"), details: details,
+            expandedItemIDs: ["tc"], fullOutput: "", isLoadingOutput: false,
+            callSegments: reducer.toolSegmentStore.callSegments(for: "tc"))
+        context.inputPresentation = reducer.toolArgsStore.inputPresentation(for: "tc")
+        context.outputPresentation = reducer.toolArgsStore.outputPresentation(for: "tc")
+        let config = ToolPresentationBuilder.build(itemID: "tc", tool: "bash", argsSummary: "", outputPreview: "", isError: false, isDone: true, context: context)
+        #expect(ToolCallFormatting.sfSymbolName(for: config.toolNamePrefix ?? "") == nil)
+        #expect(config.segmentAttributedTitle?.string == "$ Producer summary")
+        guard case .markdown(let document, _) = config.expandedContent else { Issue.record("Expected generic document, not command panel"); return }
+        #expect(document.contains("Structured result"))
     }
 
     @Test("arbitrary tool paints the same command panel, segments and terminal as bash")
@@ -100,6 +125,40 @@ struct TerminalInspectionTests {
             #expect(unwrapped)
         }
         #expect(configs[0].title == configs[1].title)
+    }
+
+    @Test("live availability survives decode, correlation and coalescing; final inline output matches history", arguments: [false, true])
+    func livePreviewSourceHandoff(batched: Bool) throws {
+        let reducer = TimelineReducer()
+        let coalescer = DeltaCoalescer()
+        coalescer.onFlush = { events in
+            if batched { reducer.processBatch(events) }
+            else { for event in events { reducer.process(event) } }
+        }
+        let correlator = ToolCallCorrelator()
+        coalescer.receive(correlator.start(sessionId: "s", tool: "run_thing", args: ["script": "emit fixture"], toolCallId: "tc",
+            inputPresentation: input, outputPresentation: terminal))
+        let json = #"{"type":"tool_output","toolCallId":"tc","output":"tail","mode":"replace","truncated":true,"totalBytes":20480,"outputAvailability":{"complete":false,"totalBytes":20480,"source":"sidecar"}}"#
+        let message = try ServerMessage.decode(from: json)
+        guard case .toolOutput(let text, let error, let id, let mode, let truncated, let bytes, let details, let source) = message else {
+            Issue.record("Expected preview output"); return
+        }
+        coalescer.receive(correlator.output(sessionId: "s", output: text, isError: error, toolCallId: id, mode: mode,
+            truncated: truncated, totalBytes: bytes, details: details, outputAvailability: source))
+        // Consecutive replacement coalescing must retain optional source facts.
+        coalescer.receive(correlator.output(sessionId: "s", output: "latest tail", isError: false, toolCallId: "tc", mode: .replace,
+            truncated: true, totalBytes: bytes))
+        coalescer.flushNow()
+        #expect(reducer.toolArgsStore.outputAvailability(for: "tc")?.hasSidecar == true)
+        #expect(reducer.toolOutputStore.hasPreviewOnlyOutput(for: "tc"))
+        let full = String(repeating: "x", count: 20 * 1024)
+        let complete = ToolOutputAvailability(complete: true)
+        coalescer.receive(correlator.output(sessionId: "s", output: full, isError: false, toolCallId: "tc", mode: .replace,
+            outputAvailability: complete))
+        coalescer.receive(correlator.end(sessionId: "s", toolCallId: "tc", outputAvailability: complete))
+        #expect(reducer.toolOutputStore.fullOutput(for: "tc") == full)
+        #expect(!reducer.toolOutputStore.hasPreviewOnlyOutput(for: "tc"))
+        #expect(reducer.toolArgsStore.outputAvailability(for: "tc") == complete)
     }
 
     @Test("wire facts tolerate missing, malformed and future values")

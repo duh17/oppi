@@ -62,6 +62,7 @@ function makeRouter(
     subscribe: vi.fn(() => () => {}),
     getPendingUIRequestMessages: vi.fn(() => []),
     getToolFullOutputPath: vi.fn(() => "/tmp/managed-full-output.txt"),
+    getToolPartialOutput: vi.fn(() => "managed snapshot"),
     getEventRing: vi.fn(() => ({ length: 1, capacity: 500 })),
     refreshSessionState: vi.fn(async () => ({ sessionFile: "/tmp/managed.jsonl" })),
     startSession: vi.fn(async () => {
@@ -84,6 +85,7 @@ function makeRouter(
     subscribe: vi.fn(() => () => {}),
     getPendingUIRequestMessages: vi.fn(() => []),
     getToolFullOutputPath: vi.fn(() => "/tmp/mirror-full-output.txt"),
+    getToolPartialOutput: vi.fn(() => "mirror snapshot"),
     getEventRing: vi.fn(() => ({ length: 2, capacity: 500 })),
     getSessionTraceState: vi.fn(() => ({
       sessionFile: session.piSessionFile,
@@ -231,6 +233,7 @@ describe("SessionRuntimes", () => {
     expect(router.getCurrentSeq("sess-1")).toBe(22);
     expect(router.getCatchUp("sess-1", 10)?.currentSeq).toBe(22);
     expect(router.getToolFullOutputPath("sess-1", "tool-1")).toBe("/tmp/mirror-full-output.txt");
+    expect(router.getToolPartialOutput("sess-1", "tool-1")).toBe("mirror snapshot");
     await expect(router.refreshSessionState("sess-1")).resolves.toEqual({
       sessionFile: "/tmp/mirror.jsonl",
       sessionId: "sess-1",

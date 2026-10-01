@@ -89,9 +89,9 @@ final class TestEventPipeline {
         case .toolUpdate(let tool, let args, let toolCallId, let callSegments, let inputPresentation, let display, let outputPresentation):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(toolCallCorrelator.update(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation))
-        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details):
+        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details, let outputAvailability):
             conn.silenceWatchdog.recordEvent()
-            coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId, mode: mode, truncated: truncated, totalBytes: totalBytes, details: details))
+            coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId, mode: mode, truncated: truncated, totalBytes: totalBytes, details: details, outputAvailability: outputAvailability))
         case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments, nestedCalls: nestedCalls, outputPresentation: outputPresentation, outputAvailability: outputAvailability))

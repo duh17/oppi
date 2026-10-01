@@ -17,11 +17,12 @@ const TOOL_OUTPUT_SIDECAR_TYPE = "text/plain; charset=utf-8";
  * boundaries (`http-range.ts`); HEAD reports the unclamped length.
  */
 export function streamFullToolOutputSidecar(
-  sidecar: { path: string; size: number },
+  sidecar: { path: string; size: number } | { text: string; size: number },
   req: IncomingMessage,
   res: ServerResponse,
   method = "GET",
 ): void {
+  const bytes = "text" in sidecar ? Buffer.from(sidecar.text, "utf8") : undefined;
   const commonHeaders = {
     "Content-Type": TOOL_OUTPUT_SIDECAR_TYPE,
     "Cache-Control": "private, no-cache",
@@ -45,7 +46,10 @@ export function streamFullToolOutputSidecar(
     let start = range.start;
     let end = range.end;
     if (!isHeadRequest) {
-      const clamped = clampSidecarUtf8Range(sidecar.path, start, end, sidecar.size);
+      const clamped =
+        "path" in sidecar
+          ? clampSidecarUtf8Range(sidecar.path, start, end, sidecar.size)
+          : clampUtf8CodepointRange(start, end, sidecar.size, (offset) => bytes?.[offset] ?? 0);
       if ("kind" in clamped) {
         logRejectedByteRange(
           "tool-output-sidecar",
@@ -74,7 +78,8 @@ export function streamFullToolOutputSidecar(
       res.end();
       return;
     }
-    pipeSidecar(sidecar.path, res, { start, end });
+    if ("path" in sidecar) pipeSidecar(sidecar.path, res, { start, end });
+    else res.end(bytes?.subarray(start, end + 1));
     return;
   }
 
@@ -86,7 +91,8 @@ export function streamFullToolOutputSidecar(
     res.end();
     return;
   }
-  pipeSidecar(sidecar.path, res);
+  if ("path" in sidecar) pipeSidecar(sidecar.path, res);
+  else res.end(bytes);
 }
 
 function clampSidecarUtf8Range(

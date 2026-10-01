@@ -42,6 +42,36 @@ describe("sanitizeToolResultDetails", () => {
     expect(result.warnings).toEqual(["dropped unsupported details.ui payload"]);
   });
 
+  it("removes private output paths without mutating server-owned details", () => {
+    const details = {
+      fullOutputPath: "/private/output.log",
+      truncation: {
+        truncated: true,
+        totalBytes: 100_000,
+        content: "preview",
+        outputPath: "/private/tail.log",
+        paths: ["/private/part.log"],
+      },
+      source: "custom",
+      path: "requested/file.txt",
+    };
+    const result = sanitizeToolResultDetails(details);
+    expect(result.details).toEqual({
+      truncation: { truncated: true, totalBytes: 100_000, content: "preview" },
+      source: "custom",
+      path: "requested/file.txt",
+    });
+    expect(JSON.stringify(result.details)).not.toContain("/private/");
+    expect(details.fullOutputPath).toBe("/private/output.log");
+    expect(details.truncation.outputPath).toBe("/private/tail.log");
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("preserves safe truncation records by identity", () => {
+    const details = { truncation: { truncated: false, totalBytes: 6 } };
+    expect(sanitizeToolResultDetails(details).details).toBe(details);
+  });
+
   it("returns non-object details unchanged", () => {
     const result = sanitizeToolResultDetails("plain output details");
 

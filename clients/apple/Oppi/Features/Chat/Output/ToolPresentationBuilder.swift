@@ -191,6 +191,11 @@ enum ToolPresentationBuilder {
             expanded.content
         }
 
+        let toolNamePrefix = segmentAttributedTitle != nil
+            ? (isTerminal ? collapsed.toolNamePrefix : (segmentToolNamePrefix ?? collapsed.toolNamePrefix))
+            : collapsed.toolNamePrefix
+        // A dollar in legacy or structured summary text is not a terminal fact.
+        let glyphPrefix = !isTerminal && toolNamePrefix == "$" ? nil : toolNamePrefix
         var configuration = ToolTimelineRowConfiguration(
             itemID: itemID,
             title: title,
@@ -201,9 +206,7 @@ enum ToolPresentationBuilder {
             languageBadge: isVoicePresentationResult ? nil : languageBadge,
             trailing: segmentAttributedTrailing != nil ? nil : trailing,
             titleLineBreakMode: segmentAttributedTitle != nil ? .byTruncatingTail : collapsed.titleLineBreakMode,
-            toolNamePrefix: segmentAttributedTitle != nil
-                ? (isTerminal ? collapsed.toolNamePrefix : (segmentToolNamePrefix ?? collapsed.toolNamePrefix))
-                : collapsed.toolNamePrefix,
+            toolNamePrefix: glyphPrefix,
             toolNameColor: segmentAttributedTitle != nil
                 ? (isTerminal ? collapsed.toolNameColor : (segmentToolNameColor ?? collapsed.toolNameColor))
                 : collapsed.toolNameColor,
@@ -473,7 +476,7 @@ enum ToolPresentationBuilder {
     /// Tools whose icon replaces the textual tool name in collapsed title rendering.
     private static func toolPrefixIconReplacesName(_ prefix: String?) -> Bool {
         switch prefix {
-        case "$", "read", "write", "edit", "ask", "voice_speak", "voice_create": true
+        case "read", "write", "edit", "ask", "voice_speak", "voice_create": true
         default: false
         }
     }

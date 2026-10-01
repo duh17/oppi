@@ -3,7 +3,7 @@
  *
  * Oppi does not currently render legacy `details.ui[]` chart payloads. Keep the
  * sanitizer narrow: preserve regular tool detail fields, drop unsupported UI
- * payloads, and report warnings so callers can log the downgrade.
+ * payloads and private output paths, and report UI downgrade warnings.
  */
 
 interface ToolResultDetailsSanitization {
@@ -21,23 +21,34 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 /**
  * Sanitize tool result details before they are broadcast to clients.
  *
- * Non-UI fields are preserved as-is. Legacy `details.ui` chart payloads are no
- * longer a supported rendering surface, so they are removed instead of being
- * forwarded as an implied mobile contract.
+ * Availability is projected separately before this boundary. Keep Pi's private
+ * full-output path server-only, including path members inside truncation metadata.
+ * Other detail fields (including requested file paths) remain inspectable.
  */
 export function sanitizeToolResultDetails(details: unknown): ToolResultDetailsSanitization {
   const record = asRecord(details);
-  if (!record || !("ui" in record)) {
+  if (!record) return { details, warnings: [] };
+  const truncation = asRecord(record.truncation);
+  // Pi's current truncation DTO has no paths. Also guard path-bearing additions
+  // from extensions/future Pi versions without dropping counters or preview text.
+  const privateTruncationKeys = truncation
+    ? Object.keys(truncation).filter((key) => /paths?$/i.test(key))
+    : [];
+  const hasUI = "ui" in record;
+  if (!hasUI && !("fullOutputPath" in record) && privateTruncationKeys.length === 0) {
     return { details, warnings: [] };
   }
 
-  const next: Record<string, unknown> = {};
-  for (const key in record) {
-    if (key !== "ui") next[key] = record[key];
+  const next = { ...record };
+  delete next.ui;
+  delete next.fullOutputPath;
+  if (truncation && privateTruncationKeys.length > 0) {
+    const safeTruncation = { ...truncation };
+    for (const key of privateTruncationKeys) delete safeTruncation[key];
+    next.truncation = safeTruncation;
   }
-
   return {
     details: next,
-    warnings: ["dropped unsupported details.ui payload"],
+    warnings: hasUI ? ["dropped unsupported details.ui payload"] : [],
   };
 }

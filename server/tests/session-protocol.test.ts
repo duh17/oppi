@@ -2034,8 +2034,8 @@ describe("translatePiEvent", () => {
         ServerMessage,
         { type: "tool_end" }
       >;
+      expect(toolEnd.details).not.toHaveProperty("fullOutputPath");
       expect(toolEnd.details).toMatchObject({
-        fullOutputPath: "/tmp/plot.png",
         media: [
           {
             kind: "image",
@@ -2049,7 +2049,7 @@ describe("translatePiEvent", () => {
       });
     });
 
-    it("uses replace mode for shell tool final output exceeding threshold", () => {
+    it("keeps untruncated final output complete above the preview threshold", () => {
       const ctx = makeCtx({ mobileRenderers: new MobileRendererRegistry() });
       ctx.toolNames.set("tc-1", "bash");
 
@@ -2069,8 +2069,11 @@ describe("translatePiEvent", () => {
         ServerMessage,
         { type: "tool_output" }
       >;
-      expect(toolOutput.mode).toBe("replace");
-      expect(toolOutput.truncated).toBe(true);
+      expect(toolOutput.output).toBe(bigOutput);
+      expect(toolOutput.truncated ?? false).toBe(false);
+      expect(result.find((message) => message.type === "tool_end")?.outputAvailability).toEqual({
+        complete: true,
+      });
     });
   });
 

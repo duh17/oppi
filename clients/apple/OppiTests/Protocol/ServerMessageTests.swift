@@ -286,7 +286,7 @@ struct ServerMessageTests {
         {"type":"tool_output","output":"total 42\\ndrwxr-xr-x"}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolOutput(let output, let isError, let toolCallId, _, _, _, _) = msg else {
+        guard case .toolOutput(let output, let isError, let toolCallId, _, _, _, _, _) = msg else {
             Issue.record("Expected .toolOutput")
             return
         }
@@ -300,7 +300,7 @@ struct ServerMessageTests {
         {"type":"tool_output","output":"data","toolCallId":"tc-42"}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolOutput(_, _, let toolCallId, _, _, _, _) = msg else {
+        guard case .toolOutput(_, _, let toolCallId, _, _, _, _, _) = msg else {
             Issue.record("Expected .toolOutput")
             return
         }
@@ -312,7 +312,7 @@ struct ServerMessageTests {
         {"type":"tool_output","output":"command not found","isError":true}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolOutput(_, let isError, _, _, _, _, _) = msg else {
+        guard case .toolOutput(_, let isError, _, _, _, _, _, _) = msg else {
             Issue.record("Expected .toolOutput")
             return
         }
@@ -899,7 +899,7 @@ struct ServerMessageTests {
     @Test func toolOutputDefaultsIsErrorToFalse() throws {
         let json = #"{"type":"tool_output","output":"data"}"#
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolOutput(let output, let isError, _, let mode, let truncated, let totalBytes, _) = msg else {
+        guard case .toolOutput(let output, let isError, _, let mode, let truncated, let totalBytes, _, _) = msg else {
             Issue.record("Expected .toolOutput")
             return
         }
@@ -913,7 +913,7 @@ struct ServerMessageTests {
     @Test func toolOutputDecodesReplaceMode() throws {
         let json = #"{"type":"tool_output","output":"tail preview","toolCallId":"tc-1","mode":"replace","truncated":true,"totalBytes":32768}"#
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolOutput(let output, _, let toolCallId, let mode, let truncated, let totalBytes, _) = msg else {
+        guard case .toolOutput(let output, _, let toolCallId, let mode, let truncated, let totalBytes, _, _) = msg else {
             Issue.record("Expected .toolOutput")
             return
         }
@@ -927,7 +927,7 @@ struct ServerMessageTests {
     @Test func toolOutputDefaultsToAppendModeWhenOmitted() throws {
         let json = #"{"type":"tool_output","output":"data","toolCallId":"tc-2"}"#
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolOutput(_, _, _, let mode, let truncated, _, _) = msg else {
+        guard case .toolOutput(_, _, _, let mode, let truncated, _, _, _) = msg else {
             Issue.record("Expected .toolOutput")
             return
         }

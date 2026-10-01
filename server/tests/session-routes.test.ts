@@ -684,6 +684,7 @@ describe("sessions module", () => {
         },
         sessionRuntimes: {
           getToolFullOutputPath: vi.fn(() => null),
+          getToolPartialOutput: vi.fn(() => null),
         },
         ensureSessionContextWindow: vi.fn((session: unknown) => session),
       } as unknown as RouteContext;

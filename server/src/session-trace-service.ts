@@ -39,6 +39,7 @@ import {
 } from "./trace-outline.js";
 import type { Session, Workspace, WorkspaceReviewDiffResponse } from "./types.js";
 import { buildDiffHunks } from "./workspace-review-diff.js";
+import { sanitizeToolResultDetails } from "./visual-schema.js";
 
 const MAX_SESSION_FILE_BYTES = 10 * 1024 * 1024;
 
@@ -107,7 +108,10 @@ export type SessionRawFileResult =
 
 export interface SessionTraceServiceDeps {
   storage: Pick<Storage, "getDataDir" | "getSession" | "getWorkspace">;
-  sessionRuntimes: Pick<SessionRuntimes, "getToolFullOutputPath" | "refreshSessionState"> & {
+  sessionRuntimes: Pick<
+    SessionRuntimes,
+    "getToolFullOutputPath" | "getToolPartialOutput" | "refreshSessionState"
+  > & {
     getEntryRenderers?: SessionRuntimes["getEntryRenderers"];
   };
   ensureSessionContextWindow: (session: Session) => Session;
@@ -336,18 +340,23 @@ export class SessionTraceService {
     toolCallId: string,
   ): Promise<SessionFullToolOutputResult | null> {
     const fullOutputPath = this.deps.sessionRuntimes.getToolFullOutputPath(sessionId, toolCallId);
-    if (!fullOutputPath) {
-      return null;
+    if (fullOutputPath) {
+      try {
+        return { toolCallId, output: await readFile(fullOutputPath, "utf8") };
+      } catch {
+        // Never present Pi's truncated trace text as full when its file is gone.
+        return null;
+      }
     }
-
-    try {
-      return {
-        toolCallId,
-        output: await readFile(fullOutputPath, "utf8"),
-      };
-    } catch {
-      return null;
+    const partial = this.deps.sessionRuntimes.getToolPartialOutput(sessionId, toolCallId);
+    if (partial !== null) return { toolCallId, output: partial };
+    const session = this.deps.storage.getSession(sessionId);
+    if (!session) return null;
+    for (const jsonlPath of await this.collectExistingSessionJsonlPaths(session)) {
+      const output = findToolOutput(jsonlPath, toolCallId, { requireComplete: true });
+      if (output !== null) return { toolCallId, output: output.text };
     }
+    return null;
   }
 
   async statFullToolOutput(
@@ -612,14 +621,20 @@ export class SessionTraceService {
       }
       if (event.type === "toolResult") {
         const tool = event.toolName ?? toolNames.get(event.toolCallId ?? "");
-        if (!tool) return event;
-        const resultSegments = includeSegments
-          ? this.mobileRenderers.renderResult(tool, event.details, event.isError === true)
-          : undefined;
-        const outputPresentation = this.mobileRenderers.outputPresentation?.(tool, event.details);
+        // Project availability from server-owned details before stripping paths
+        // at the client boundary, including results whose call is not in this page.
         const outputAvailability = this.mobileRenderers.outputAvailability?.(event.details);
+        const details = sanitizeToolResultDetails(event.details).details;
+        const resultSegments =
+          includeSegments && tool
+            ? this.mobileRenderers.renderResult(tool, details, event.isError === true)
+            : undefined;
+        const outputPresentation = tool
+          ? this.mobileRenderers.outputPresentation?.(tool, event.details)
+          : undefined;
         return {
           ...event,
+          ...(event.details !== undefined ? { details } : {}),
           ...(resultSegments ? { resultSegments } : {}),
           ...(outputPresentation ? { outputPresentation } : {}),
           ...(outputAvailability ? { outputAvailability } : {}),

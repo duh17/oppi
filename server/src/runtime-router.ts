@@ -108,6 +108,10 @@ export class SessionRuntimes implements AgentRuntimeTransport {
     return this.runtimeFor(sessionId).getToolFullOutputPath(sessionId, toolCallId);
   }
 
+  getToolPartialOutput(sessionId: string, toolCallId: string): string | null {
+    return this.runtimeFor(sessionId).getToolPartialOutput(sessionId, toolCallId);
+  }
+
   getEventRing(sessionId: string): { length: number; capacity: number } | null {
     return this.runtimeFor(sessionId).getEventRing(sessionId);
   }

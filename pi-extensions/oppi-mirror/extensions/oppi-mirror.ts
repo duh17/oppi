@@ -1,12 +1,9 @@
 import {
   type AgentSessionEvent,
-  type AgentToolResult,
   type ExtensionAPI,
   type ExtensionContext,
   type ExtensionUIDialogOptions,
   type ExtensionUIContext,
-  type ToolDefinition,
-  type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import { WebSocket, type RawData } from "ws";
 import { createHash, randomUUID } from "node:crypto";
@@ -88,7 +85,6 @@ interface EditableAgentSession {
   settingsManager?: {
     getShowCacheMissNotices?: () => boolean;
   };
-  getToolDefinition?: (name: string) => ToolDefinition | undefined;
   getSessionStats?: () => {
     tokens: {
       input: number;
@@ -2422,155 +2418,6 @@ export function createMirrorWidgetForwardingComponent(
   });
 }
 
-const TOOL_TUI_RENDER_VERSION = 1;
-const TOOL_TUI_RENDER_SOURCE = "renderResult";
-const TOOL_TUI_RENDER_WIDTH = 80;
-const TOOL_TUI_RENDER_MAX_LINES = 500;
-const TOOL_TUI_RENDER_MAX_CHARS = 80_000;
-const TOOL_TUI_RENDER_NATIVE_TOOL_NAMES = new Set([
-  "bash",
-  "read",
-  "write",
-  "edit",
-  "ask",
-]);
-
-interface ToolTuiRenderSnapshot {
-  version: typeof TOOL_TUI_RENDER_VERSION;
-  source: typeof TOOL_TUI_RENDER_SOURCE;
-  width: number;
-  expandedText: string;
-  truncated?: boolean;
-}
-
-interface ToolTuiRenderContextSnapshot {
-  args: Record<string, unknown>;
-  toolCallId: string;
-  invalidate: () => void;
-  lastComponent: MirrorWidgetComponent | undefined;
-  state: unknown;
-  cwd: string;
-  executionStarted: boolean;
-  argsComplete: boolean;
-  isPartial: boolean;
-  expanded: boolean;
-  showImages: boolean;
-  isError: boolean;
-}
-
-type ToolTuiResultRenderer = (
-  result: AgentToolResult<unknown>,
-  options: ToolRenderResultOptions,
-  theme: unknown,
-  context: ToolTuiRenderContextSnapshot,
-) => MirrorWidgetComponent;
-
-function isToolTuiRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function shouldAttachToolTuiRenderSnapshot(toolName: string): boolean {
-  return !TOOL_TUI_RENDER_NATIVE_TOOL_NAMES.has(toolName.trim().toLowerCase());
-}
-
-function trimToolTuiRenderLines(lines: string[]): string[] {
-  let start = 0;
-  let end = lines.length;
-  while (start < end && stripAnsiCodes(lines[start] ?? "").trim().length === 0)
-    start++;
-  while (
-    end > start &&
-    stripAnsiCodes(lines[end - 1] ?? "").trim().length === 0
-  )
-    end--;
-  return lines.slice(start, end);
-}
-
-function limitToolTuiRenderLines(lines: string[]): {
-  lines: string[];
-  truncated: boolean;
-} {
-  if (lines.length <= TOOL_TUI_RENDER_MAX_LINES) {
-    return { lines, truncated: false };
-  }
-  return {
-    lines: [...lines.slice(0, TOOL_TUI_RENDER_MAX_LINES), "… truncated …"],
-    truncated: true,
-  };
-}
-
-function renderToolTuiResultSnapshot(options: {
-  toolDefinition: Pick<ToolDefinition, "renderResult">;
-  toolCallId?: string;
-  content: unknown[];
-  details: unknown;
-  isError: boolean;
-  args?: Record<string, unknown>;
-  cwd: string;
-  theme: unknown;
-}): ToolTuiRenderSnapshot | undefined {
-  const renderResult = options.toolDefinition.renderResult as
-    | ToolTuiResultRenderer
-    | undefined;
-  if (!renderResult) return undefined;
-
-  const agentToolResult = {
-    content: options.content as AgentToolResult<unknown>["content"],
-    details: options.details,
-  } satisfies AgentToolResult<unknown>;
-  const context: ToolTuiRenderContextSnapshot = {
-    args: options.args ?? {},
-    toolCallId: options.toolCallId ?? "",
-    invalidate: () => {},
-    lastComponent: undefined,
-    state: {},
-    cwd: options.cwd,
-    executionStarted: true,
-    argsComplete: true,
-    isPartial: false,
-    expanded: true,
-    showImages: false,
-    isError: options.isError,
-  };
-  const component = renderResult(
-    agentToolResult,
-    { expanded: true, isPartial: false },
-    options.theme,
-    context,
-  );
-  if (!isMirrorWidgetComponent(component)) return undefined;
-
-  const limited = limitToolTuiRenderLines(
-    trimToolTuiRenderLines(component.render(TOOL_TUI_RENDER_WIDTH)),
-  );
-  let expandedText = limited.lines.join("\n");
-  let truncated = limited.truncated;
-  if (expandedText.length > TOOL_TUI_RENDER_MAX_CHARS) {
-    expandedText = `${expandedText.slice(0, TOOL_TUI_RENDER_MAX_CHARS)}\n… truncated …`;
-    truncated = true;
-  }
-  if (!stripAnsiCodes(expandedText).trim()) return undefined;
-
-  return {
-    version: TOOL_TUI_RENDER_VERSION,
-    source: TOOL_TUI_RENDER_SOURCE,
-    width: TOOL_TUI_RENDER_WIDTH,
-    expandedText,
-    ...(truncated ? { truncated: true } : {}),
-  };
-}
-
-function mergeToolTuiRenderSnapshot(
-  details: unknown,
-  snapshot: ToolTuiRenderSnapshot,
-): Record<string, unknown> | undefined {
-  if (!isToolTuiRecord(details)) {
-    return undefined;
-  }
-  if (details.tuiRender !== undefined) return details;
-  return { ...details, tuiRender: snapshot };
-}
-
 export interface MirrorExtensionUIResponse {
   type: "extension_ui_response";
   id: string;
@@ -2953,7 +2800,6 @@ async function createTuiMirrorRuntime(
   const pendingTreeNavigations = new Map<string, PendingTreeNavigation>();
   let activeTreeNavigationToken: string | null = null;
   const terminalDialogQueue = createMirrorTerminalDialogQueue();
-  const toolArgsByCallId = new Map<string, Record<string, unknown>>();
   const proxiedUIContexts = new WeakSet<object>();
   const widgetForwardingGenerations = new Map<string, number>();
   const persistentExtensionUIRequests = new Map<
@@ -3015,7 +2861,7 @@ async function createTuiMirrorRuntime(
         send({
           type: "event",
           event: flushed.guessed
-            ? mirrorAgentEventPayload("message_end", flushed.event, ctx)
+            ? mirrorAgentEventPayload("message_end", flushed.event)
             : flushed.event,
           state: stateSnapshot(pi, ctx),
         });
@@ -5235,9 +5081,8 @@ async function createTuiMirrorRuntime(
   function mirrorAgentEventPayload(
     eventType: (typeof EVENT_TYPES)[number],
     event: unknown,
-    ctx: ExtensionContext,
   ): object {
-    const eventRecord = isToolTuiRecord(event) ? event : {};
+    const eventRecord = isRecord(event) ? event : {};
     if (eventType === "turn_end") {
       return {
         type: "turn_end",
@@ -5245,79 +5090,6 @@ async function createTuiMirrorRuntime(
           ? { turnIndex: eventRecord.turnIndex }
           : {}),
       };
-    }
-
-    if (eventType === "tool_execution_start") {
-      const toolCallId =
-        typeof eventRecord.toolCallId === "string" &&
-        eventRecord.toolCallId.length > 0
-          ? eventRecord.toolCallId
-          : undefined;
-      if (toolCallId) {
-        toolArgsByCallId.set(
-          toolCallId,
-          isToolTuiRecord(eventRecord.args) ? eventRecord.args : {},
-        );
-      }
-      return { ...eventRecord, type: eventType };
-    }
-
-    if (eventType !== "tool_execution_end") {
-      return { ...eventRecord, type: eventType };
-    }
-
-    const toolCallId =
-      typeof eventRecord.toolCallId === "string" &&
-      eventRecord.toolCallId.length > 0
-        ? eventRecord.toolCallId
-        : undefined;
-    const toolName =
-      typeof eventRecord.toolName === "string"
-        ? eventRecord.toolName
-        : undefined;
-    const result = isToolTuiRecord(eventRecord.result)
-      ? eventRecord.result
-      : undefined;
-    const session = findEditableAgentSession(ctx);
-    const toolDefinition =
-      toolName && shouldAttachToolTuiRenderSnapshot(toolName)
-        ? session?.getToolDefinition?.(toolName)
-        : undefined;
-
-    try {
-      if (toolDefinition?.renderResult && result) {
-        const snapshot = renderToolTuiResultSnapshot({
-          toolDefinition,
-          toolCallId,
-          content: Array.isArray(result.content) ? result.content : [],
-          details: result.details,
-          isError: eventRecord.isError === true,
-          args: toolCallId ? toolArgsByCallId.get(toolCallId) : undefined,
-          cwd: session?.sessionManager?.getHeader?.()?.cwd ?? ctx.cwd,
-          theme: ctx.ui.theme,
-        });
-        if (snapshot) {
-          const details = mergeToolTuiRenderSnapshot(result.details, snapshot);
-          if (details) {
-            return {
-              ...eventRecord,
-              type: eventType,
-              result: {
-                ...result,
-                details,
-              },
-            };
-          }
-        }
-      }
-    } catch (error) {
-      writeMirrorLog("warn", "tool_tui_render_failed", {
-        tool: toolName,
-        toolCallId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      if (toolCallId) toolArgsByCallId.delete(toolCallId);
     }
 
     return { ...eventRecord, type: eventType };
@@ -5353,7 +5125,7 @@ async function createTuiMirrorRuntime(
             send({
               type: "event",
               event: flushed.guessed
-                ? mirrorAgentEventPayload("message_end", flushed.event, ctx)
+                ? mirrorAgentEventPayload("message_end", flushed.event)
                 : flushed.event,
               state: stateSnapshot(pi, ctx),
             });
@@ -5384,7 +5156,7 @@ async function createTuiMirrorRuntime(
             eventType === "message_end";
           send({
             type: "event",
-            event: mirrorAgentEventPayload(eventType, event, ctx),
+            event: mirrorAgentEventPayload(eventType, event),
             ...(includeState ? { state: stateSnapshot(pi, ctx) } : {}),
           });
         },

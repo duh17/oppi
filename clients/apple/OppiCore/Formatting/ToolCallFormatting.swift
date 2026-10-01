@@ -241,9 +241,6 @@ enum ToolCallFormatting {
     }
 
     static func isBashTool(_ name: String) -> Bool { normalized(name) == "bash" }
-    static func isGrepTool(_ name: String) -> Bool { normalized(name) == "grep" }
-    static func isFindTool(_ name: String) -> Bool { normalized(name) == "find" }
-    static func isLsTool(_ name: String) -> Bool { normalized(name) == "ls" }
 
     // MARK: - Tool SF Symbol
 

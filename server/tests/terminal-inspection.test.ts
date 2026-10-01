@@ -11,7 +11,7 @@ import type { Session } from "../src/types.js";
 const inputPresentation = { fields: { command: { role: "command" as const, language: "shell" } } };
 const outputPresentation = { kind: "terminal" as const };
 const details = {
-  truncation: { truncated: true, totalBytes: 9000 },
+  truncation: { truncated: true, totalBytes: 9000, outputPath: "/private/truncated.log" },
   fullOutputPath: "/private/tool-output.log",
 };
 const availability = { complete: false, totalBytes: 9000, source: "sidecar" };
@@ -104,7 +104,9 @@ describe("terminal inspection facts", () => {
         outputPresentation,
         outputAvailability: availability,
       });
-      expect(JSON.stringify(end.at(-1)?.outputAvailability)).not.toContain("/private/");
+      expect(JSON.stringify(end.at(-1))).not.toContain("/private/");
+      expect(end.at(-1)?.details).not.toHaveProperty("fullOutputPath");
+      expect(details.fullOutputPath).toBe("/private/tool-output.log");
     },
   );
 
@@ -148,6 +150,13 @@ describe("terminal inspection facts", () => {
                 isError: false,
               },
             },
+            {
+              type: "message",
+              id: "orphan",
+              parentId: "r1",
+              timestamp: "2026-09-30T00:00:02Z",
+              message: { role: "toolResult", toolCallId: "unknown-call", content: [], details },
+            },
           ]
             .map((entry) => JSON.stringify(entry))
             .join("\n") + "\n",
@@ -162,6 +171,7 @@ describe("terminal inspection facts", () => {
           sessionRuntimes: {
             refreshSessionState: async () => null,
             getToolFullOutputPath: () => null,
+            getToolPartialOutput: () => null,
           },
           ensureSessionContextWindow: (s) => s,
           mobileRenderers: registry(),
@@ -176,6 +186,11 @@ describe("terminal inspection facts", () => {
           outputAvailability: availability,
         });
         expect(replay.trace.every((event) => event.callSegments === undefined)).toBe(true);
+        for (const event of replay.trace.filter((event) => event.type === "toolResult")) {
+          expect(event.details).not.toHaveProperty("fullOutputPath");
+          expect(JSON.stringify(event)).not.toContain("/private/");
+          expect(event.outputAvailability).toEqual(availability);
+        }
         const liveEnd = translatePiEvent(
           {
             type: "tool_execution_end",

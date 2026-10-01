@@ -22,6 +22,7 @@ const COMMAND_METHODS = [
   "respondToUIRequest",
   "forwardClientCommand",
   "getToolFullOutputPath",
+  "getToolPartialOutput",
   "getEventRing",
 ] as const;
 

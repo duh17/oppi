@@ -289,6 +289,7 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     output: "/path/to/file-180\n/path/to/file-181\n/path/to/file-182",
     isError: false,
     toolCallId: "tc-preview-001",
+    outputAvailability: { complete: false, totalBytes: 32768, source: "sidecar" },
     mode: "replace",
     truncated: true,
     totalBytes: 32768,

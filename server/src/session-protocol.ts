@@ -17,6 +17,7 @@ import type {
   ServerMessage,
   Session,
   SessionMessage,
+  ToolOutputAvailability,
 } from "./types.js";
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-renderer.js";
@@ -700,6 +701,7 @@ function pushToolOutputMessage(
     truncated?: boolean;
     totalBytes?: number;
     details?: unknown;
+    outputAvailability?: ToolOutputAvailability;
   },
 ): void {
   messages.push({
@@ -711,6 +713,7 @@ function pushToolOutputMessage(
     ...(payload.truncated !== undefined ? { truncated: payload.truncated } : {}),
     ...(payload.totalBytes !== undefined ? { totalBytes: payload.totalBytes } : {}),
     ...(payload.details !== undefined ? { details: payload.details } : {}),
+    ...(payload.outputAvailability ? { outputAvailability: payload.outputAvailability } : {}),
   });
 }
 
@@ -866,6 +869,9 @@ export function translatePiEvent(
       return EMPTY_MESSAGES;
 
     case "turn_end":
+      // Pi has appended every tool result by this boundary. Release the temporary
+      // tool_end handoff snapshots; complete trace text now backs full-output reads.
+      ctx.partialResults.clear();
       return EMPTY_MESSAGES;
 
     case "message_start":
@@ -988,7 +994,7 @@ export function translatePiEvent(
     }
 
     case "tool_execution_update": {
-      const contents = Array.isArray(event.partialResult?.content)
+      const contents: unknown[] = Array.isArray(event.partialResult?.content)
         ? event.partialResult.content
         : [];
       const updateDetails = normalizeAudioPresentationDetails(
@@ -1005,10 +1011,26 @@ export function translatePiEvent(
       const messages: ServerMessage[] = [];
       const shellTool =
         ctx.mobileRenderers?.outputPresentation(toolName, updateDetails)?.kind === "terminal";
+      const producerAvailability = ctx.mobileRenderers?.outputAvailability(
+        event.partialResult?.details,
+      );
       const audioDetails = audioPresentationDetails(updateDetails);
       let emittedOutput = false;
 
-      for (const block of contents) {
+      // A terminal snapshot can contain multiple ordered text blocks. Its preview
+      // and retrievable source must describe the same whole snapshot, not just
+      // whichever block happened to update partialResults last.
+      const textParts = contents.flatMap((block) => {
+        const record = asRecord(block);
+        return record &&
+          (record.type === "text" || record.type === "output_text") &&
+          typeof record.text === "string"
+          ? [record.text]
+          : [];
+      });
+      const outputContents =
+        shellTool && textParts.length > 0 ? [{ type: "text", text: textParts.join("") }] : contents;
+      for (const block of outputContents) {
         const record = asRecord(block);
         if (!record) {
           continue;
@@ -1025,7 +1047,7 @@ export function translatePiEvent(
           ctx.partialResults.set(key, fullText);
 
           const fullTextBytes = utf8ByteCount(fullText);
-          if (shellTool && fullTextBytes > SHELL_PREVIEW_THRESHOLD) {
+          if (shellTool && toolCallId && fullTextBytes > SHELL_PREVIEW_THRESHOLD) {
             // Shell tool above threshold: send bounded tail preview with replace mode.
             // Throttle to avoid spamming the client with large snapshots.
             const now = Date.now();
@@ -1041,7 +1063,15 @@ export function translatePiEvent(
               toolCallId,
               mode: "replace",
               truncated: true,
-              totalBytes: fullTextBytes,
+              totalBytes: producerAvailability?.totalBytes ?? fullTextBytes,
+              outputAvailability: {
+                complete: false,
+                totalBytes: producerAvailability?.totalBytes ?? fullTextBytes,
+                ...(producerAvailability?.complete !== false ||
+                producerAvailability.source === "sidecar"
+                  ? { source: "sidecar" as const }
+                  : {}),
+              },
               details: updateDetails,
             });
             emittedOutput = true;
@@ -1054,6 +1084,9 @@ export function translatePiEvent(
                 output: update.output,
                 toolCallId,
                 ...(update.mode ? { mode: update.mode } : {}),
+                ...(shellTool && ctx.shellPreviewLastSent.has(key)
+                  ? { outputAvailability: producerAvailability }
+                  : {}),
                 details: updateDetails,
               });
               emittedOutput = true;
@@ -1106,6 +1139,9 @@ export function translatePiEvent(
       // renders them as a user message. This avoids scattered output suppression
       // checks on the iOS side (processInternal, processBatch, trace replay).
       const isAskTool = toolName === "ask";
+      const producerAvailability = ctx.mobileRenderers?.outputAvailability(event.result?.details);
+      const wasPreviewed = ctx.shellPreviewLastSent.has(key);
+      let finalText = "";
 
       // Extract final text/media from result — some tools only include output
       // at end (no partial updates), so emit missing delta here.
@@ -1113,7 +1149,7 @@ export function translatePiEvent(
       const messages: ServerMessage[] = [];
 
       if (!isAskTool && Array.isArray(resultContents) && resultContents.length > 0) {
-        const finalText = resultContents
+        finalText = resultContents
           .map((block) => {
             const record = asRecord(block);
             if (!record) {
@@ -1127,7 +1163,11 @@ export function translatePiEvent(
           .join("");
 
         const finalTextBytes = utf8ByteCount(finalText);
-        if (shellTool && finalTextBytes > SHELL_PREVIEW_THRESHOLD) {
+        if (
+          shellTool &&
+          finalTextBytes > SHELL_PREVIEW_THRESHOLD &&
+          producerAvailability?.complete === false
+        ) {
           // Shell tool final output: always send the tail preview (no throttle).
           const preview = extractTailPreview(finalText);
           pushToolOutputMessage(messages, {
@@ -1135,7 +1175,18 @@ export function translatePiEvent(
             toolCallId,
             mode: "replace",
             truncated: true,
+            totalBytes: producerAvailability.totalBytes ?? finalTextBytes,
+            outputAvailability: producerAvailability,
+          });
+        } else if (wasPreviewed) {
+          // Oppi's transport preview must not hide an otherwise complete result.
+          pushToolOutputMessage(messages, {
+            output: finalText,
+            toolCallId,
+            mode: "replace",
+            truncated: false,
             totalBytes: finalTextBytes,
+            outputAvailability: producerAvailability,
           });
         } else {
           const update = computeToolOutputUpdate(lastText, finalText);
@@ -1172,7 +1223,11 @@ export function translatePiEvent(
           ...(inputPresentation ? { inputPresentation } : {}),
         });
       }
-      ctx.partialResults.delete(key);
+      // Keep only complete preview-source snapshots until Pi appends the result.
+      // This closes the interval between tool_end publication and durable trace.
+      if (wasPreviewed && producerAvailability?.complete === true)
+        ctx.partialResults.set(key, finalText);
+      else ctx.partialResults.delete(key);
       ctx.toolNames.delete(key);
       ctx.toolArgs?.delete(key);
       ctx.shellPreviewLastSent.delete(key);

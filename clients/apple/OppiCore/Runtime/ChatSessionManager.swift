@@ -1264,12 +1264,12 @@ final class ChatSessionManager {
                 toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation
             ))
 
-        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details):
+        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details, let outputAvailability):
             coalescer.receive(toolCallCorrelator.output(
                 sessionId: sessionId, output: output, isError: isError,
                 toolCallId: toolCallId, mode: mode,
                 truncated: truncated, totalBytes: totalBytes,
-                details: details
+                details: details, outputAvailability: outputAvailability
             ))
 
         case .toolEnd(let tool, let toolCallId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability):

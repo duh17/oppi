@@ -79,6 +79,7 @@ function makeService(options: {
     sessionRuntimes: {
       refreshSessionState: vi.fn(async () => options.liveState ?? null),
       getToolFullOutputPath: vi.fn(() => options.fullOutputPath ?? null),
+      getToolPartialOutput: vi.fn(() => null),
       getEntryRenderers: vi.fn(() => options.entryRenderers),
     },
     ensureSessionContextWindow: vi.fn((session) => ({
@@ -369,6 +370,31 @@ describe("SessionTraceService", () => {
       output: "full output text",
     });
     expect(deps.sessionRuntimes.getToolFullOutputPath).toHaveBeenCalledWith("sess-1", "tc-1");
+  });
+
+  it("does not substitute truncated trace text when no Pi full-output file is available", async () => {
+    const dataDir = tempDir("oppi-session-missing-full-output-");
+    const tracePath = join(dataDir, "trace.jsonl");
+    writeJsonl(tracePath, [
+      {
+        type: "message",
+        id: "result",
+        message: {
+          role: "toolResult",
+          toolCallId: "tc-1",
+          content: [{ type: "text", text: "Pi preview" }],
+          details: {
+            truncation: { truncated: true, totalBytes: 100_000 },
+            fullOutputPath: "/private/gone.log",
+          },
+        },
+      },
+    ]);
+    const { service } = makeService({
+      dataDir,
+      storedSession: makeSession({ piSessionFile: tracePath }),
+    });
+    expect(await service.getFullToolOutput("sess-1", "tc-1")).toBeNull();
   });
 
   it("stats full tool output length without reading sidecar bytes", async () => {

@@ -761,6 +761,13 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return active.toolFullOutputPaths.get(normalizedToolCallId) ?? null;
   }
 
+  getToolPartialOutput(sessionId: string, toolCallId: string): string | null {
+    const key = toolCallId.trim();
+    return key
+      ? (this.active.get(this.sessionKey(sessionId))?.partialResults.get(key) ?? null)
+      : null;
+  }
+
   /** Return the event ring for an active session (for utilization sampling). */
   getEventRing(sessionId: string): { length: number; capacity: number } | null {
     const active = this.active.get(this.sessionKey(sessionId));

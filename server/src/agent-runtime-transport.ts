@@ -229,6 +229,8 @@ export interface AgentRuntimeCommandTransport {
     requestId: string | undefined,
   ): Promise<void>;
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null;
+  /** Current uncut transport snapshot, including the tool_end → trace handoff. */
+  getToolPartialOutput(sessionId: string, toolCallId: string): string | null;
   getEventRing(sessionId: string): { length: number; capacity: number } | null;
 }
 

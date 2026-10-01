@@ -1520,6 +1520,51 @@ describe("oppi mirror extension UI replay", () => {
     expect(wsMock.instances).toHaveLength(0);
   });
 
+  it("forwards tool results without invoking TUI render hooks or attaching snapshots", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      const renderResult = vi.fn(() => ({ render: () => ["TUI snapshot"] }));
+      const session = new piAgentMock.FakeAgentSession();
+      Object.assign(session, {
+        getToolDefinition: vi.fn(() => ({ renderResult })),
+      });
+      session.bindExtensions();
+      const socket = await startMirror(pi, ctx);
+      const start = {
+        type: "tool_execution_start",
+        toolCallId: "custom-1",
+        toolName: "run_thing",
+        args: { script: "echo hello" },
+      };
+      const end = {
+        type: "tool_execution_end",
+        toolCallId: "custom-1",
+        toolName: "run_thing",
+        isError: false,
+        result: { content: [], details: { answer: 42 } },
+      };
+      for (const event of [start, end]) {
+        for (const handler of pi.handlers.get(event.type) ?? [])
+          await handler(event, ctx);
+      }
+      const forwarded = socket.sent
+        .map((line) => JSON.parse(line))
+        .filter(
+          (message) =>
+            message.type === "event" && message.event.toolCallId === "custom-1",
+        );
+      expect(forwarded.map((message) => message.event)).toEqual([start, end]);
+      expect(renderResult).not.toHaveBeenCalled();
+      expect(end.result.details).not.toHaveProperty("tuiRender");
+    });
+  });
+
   it("persists Pi lifecycle evidence in TUI session entries", async () => {
     vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
     const pi = createMockPi();

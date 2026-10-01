@@ -22,7 +22,7 @@ final class ToolCallCorrelator {
         return .toolUpdate(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation)
     }
 
-    func output(sessionId: String, output: String, isError: Bool, toolCallId: String? = nil, mode: ToolOutputMode = .append, truncated: Bool = false, totalBytes: Int? = nil, details: JSONValue? = nil) -> AgentEvent {
+    func output(sessionId: String, output: String, isError: Bool, toolCallId: String? = nil, mode: ToolOutputMode = .append, truncated: Bool = false, totalBytes: Int? = nil, details: JSONValue? = nil, outputAvailability: ToolOutputAvailability? = nil) -> AgentEvent {
         // Prefer server-provided toolCallId, then current open tool, then synthetic
         let id = toolCallId ?? currentToolEventID ?? UUID().uuidString
         return .toolOutput(.init(
@@ -33,7 +33,8 @@ final class ToolCallCorrelator {
             mode: mode,
             truncated: truncated,
             totalBytes: totalBytes,
-            details: details
+            details: details,
+            outputAvailability: outputAvailability
         ))
     }
 

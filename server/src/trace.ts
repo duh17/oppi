@@ -409,6 +409,7 @@ export interface SessionEntry {
     toolCallId?: string;
     toolName?: string;
     isError?: boolean;
+    details?: unknown;
   };
   // compaction entries
   summary?: string;
@@ -1321,6 +1322,7 @@ function readTraceFromFiles(
 export function findToolOutput(
   jsonlPath: string,
   toolCallId: string,
+  options: { requireComplete?: boolean } = {},
 ): { text: string; isError: boolean } | null {
   if (!existsSync(jsonlPath)) return null;
 
@@ -1346,6 +1348,8 @@ export function findToolOutput(
     const msg = entry.message;
     if (!msg || msg.role !== "toolResult") continue;
     if (msg.toolCallId !== toolCallId) continue;
+    if (options.requireComplete && asRecord(asRecord(msg.details)?.truncation)?.truncated === true)
+      return null;
 
     return {
       text: extractText(msg.content),

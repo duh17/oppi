@@ -510,6 +510,7 @@ export type ServerMessage = // ── Connection ──
     | {
         type: "tool_output";
         output: string;
+        outputAvailability?: ToolOutputAvailability;
         isError?: boolean;
         toolCallId?: string;
         /** "append" (default) or "replace" — replace means output is a bounded tail preview. */

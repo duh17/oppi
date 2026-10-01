@@ -353,7 +353,8 @@ final class DeltaCoalescer {
                     mode: payload.mode,
                     truncated: payload.truncated,
                     totalBytes: payload.totalBytes,
-                    details: payload.details
+                    details: payload.details,
+                    outputAvailability: payload.outputAvailability
                 ))
             }
         default:
@@ -497,7 +498,8 @@ final class DeltaCoalescer {
                 mode: payload.mode,
                 truncated: payload.truncated,
                 totalBytes: payload.totalBytes,
-                details: payload.details ?? previous.details
+                details: payload.details ?? previous.details,
+                outputAvailability: payload.outputAvailability ?? previous.outputAvailability
             ))
             let previousBytes = estimatedPayloadBytes(buffer[lastIndex])
             let mergedBytes = estimatedPayloadBytes(mergedEvent)

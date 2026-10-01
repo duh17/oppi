@@ -371,6 +371,7 @@ describe("tool call document producer", () => {
         sessionRuntimes: {
           refreshSessionState: async () => null,
           getToolFullOutputPath: () => null,
+          getToolPartialOutput: () => null,
         },
         getMcpServerNames: (s) => mcp.configuredServerNames(s.workspaceId),
         ensureSessionContextWindow: (s) => s,

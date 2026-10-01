@@ -896,7 +896,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 var didMutateToolOutputs = false
 
                 for toolEventId in pendingToolOutputOrder {
-                    let outputDidChange: Bool
+                    var outputDidChange: Bool
                     let isReplace = pendingToolOutputIsReplace[toolEventId] ?? false
                     if let chunks = pendingToolOutputChunksByID[toolEventId], !chunks.isEmpty {
                         if isReplace, let lastChunk = chunks.last {
@@ -915,6 +915,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                         outputDidChange = false
                     }
 
+                    if let availability = toolArgsStore.outputAvailability(for: toolEventId), !availability.complete {
+                        outputDidChange = toolOutputStore.replace(toolOutputStore.fullOutput(for: toolEventId), for: toolEventId,
+                            previewOnly: true, totalBytes: availability.totalBytes) || outputDidChange
+                    }
                     let previewDidChange = updateToolCallPreview(
                         id: toolEventId,
                         isError: pendingToolOutputIsError[toolEventId] ?? false
@@ -976,6 +980,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     pendingToolOutputOrder.append(toolEventId)
                 }
                 pendingToolOutputIsError[toolEventId] = (pendingToolOutputIsError[toolEventId] ?? false) || payload.isError
+                if let availability = payload.outputAvailability,
+                   toolArgsStore.outputAvailability(for: toolEventId) != availability {
+                    toolArgsStore.setOutputAvailability(availability, for: toolEventId)
+                    didMutate = true
+                }
                 if let details = payload.details,
                    toolDetailsStore.details(for: toolEventId) != details {
                     toolDetailsStore.set(details, for: toolEventId)
@@ -1153,7 +1162,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return metadataChanged || startChanged
 
         case .toolOutput(let payload):
-            let outputDidChange: Bool
+            let previousAvailability = toolArgsStore.outputAvailability(for: payload.toolEventId)
+            if let availability = payload.outputAvailability { toolArgsStore.setOutputAvailability(availability, for: payload.toolEventId) }
+            var outputDidChange: Bool
             if payload.mode == .replace {
                 outputDidChange = toolOutputStore.replace(
                     payload.output,
@@ -1164,12 +1175,17 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             } else {
                 outputDidChange = toolOutputStore.append(payload.output, to: payload.toolEventId)
             }
+            if let availability = payload.outputAvailability, !availability.complete {
+                outputDidChange = toolOutputStore.replace(toolOutputStore.fullOutput(for: payload.toolEventId), for: payload.toolEventId,
+                    previewOnly: true, totalBytes: availability.totalBytes) || outputDidChange
+            }
             let previousDetails = toolDetailsStore.details(for: payload.toolEventId)
             if let details = payload.details {
                 toolDetailsStore.set(details, for: payload.toolEventId)
             }
             let previewDidChange = updateToolCallPreview(id: payload.toolEventId, isError: payload.isError)
             return outputDidChange || previewDidChange || toolDetailsStore.details(for: payload.toolEventId) != previousDetails
+                || toolArgsStore.outputAvailability(for: payload.toolEventId) != previousAvailability
 
         case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability):
             let factsChanged = (outputPresentation != nil && toolArgsStore.outputPresentation(for: toolEventId) != outputPresentation)

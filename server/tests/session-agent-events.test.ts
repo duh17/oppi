@@ -135,6 +135,31 @@ describe("SessionAgentEventCoordinator", () => {
     return { broadcast, coordinator, resetIdleTimer, updateSessionFromEvent };
   }
 
+  it("indexes Pi full-output paths from updates before publishing a live preview", () => {
+    const active = makeActiveSession();
+    const { broadcast, coordinator } = makeCoordinator(active);
+    broadcast.mockImplementation((_key, message) => {
+      if (message.type === "tool_output")
+        expect(active.toolFullOutputPaths.get("tc-1")).toBe("/private/live-output.log");
+    });
+    coordinator.handlePiEvent(active.session.id, {
+      type: "tool_execution_update",
+      toolCallId: "tc-1",
+      toolName: "bash",
+      partialResult: {
+        content: [{ type: "text", text: "preview" }],
+        details: {
+          fullOutputPath: "/private/live-output.log",
+          truncation: { truncated: true, totalBytes: 100_000 },
+        },
+      },
+    } as unknown as SessionBackendEvent);
+    expect(active.toolFullOutputPaths.get("tc-1")).toBe("/private/live-output.log");
+    const output = broadcast.mock.calls.find(([, message]) => message.type === "tool_output")?.[1];
+    expect(output).toBeDefined();
+    expect(output.details).not.toHaveProperty("fullOutputPath");
+  });
+
   it("broadcasts ready summaries to the session key", () => {
     const active = makeActiveSession({ status: "busy" });
     const { broadcast, coordinator } = makeCoordinator(active);

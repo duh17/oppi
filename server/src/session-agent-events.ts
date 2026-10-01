@@ -212,14 +212,18 @@ export class SessionAgentEventCoordinator {
     active.streamedAssistantText = ctx.streamedAssistantText;
     active.currentThinkingContentIndex = ctx.currentThinkingContentIndex;
 
-    if (event.type === "tool_execution_end") {
+    if (event.type === "tool_execution_update" || event.type === "tool_execution_end") {
       const toolCallId =
         typeof event.toolCallId === "string" && event.toolCallId.length > 0
           ? event.toolCallId
           : null;
 
       if (toolCallId) {
-        const fullOutputPath = extractToolFullOutputPath(event.result?.details);
+        const fullOutputPath = extractToolFullOutputPath(
+          event.type === "tool_execution_end"
+            ? event.result?.details
+            : event.partialResult?.details,
+        );
         if (fullOutputPath) {
           active.toolFullOutputPaths.set(toolCallId, fullOutputPath);
         }

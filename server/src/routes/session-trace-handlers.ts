@@ -163,11 +163,21 @@ export function createSessionTraceRouteHandlers(
     const wantsRawSidecar = method.toUpperCase() === "HEAD" || Boolean(req.headers?.range);
     if (wantsRawSidecar) {
       const sidecar = await traceService.statFullToolOutput(session.id, toolCallIdDecoded);
-      if (!sidecar) {
+      if (sidecar) {
+        streamFullToolOutputSidecar(sidecar, req, res, method);
+        return;
+      }
+      const snapshot = await traceService.getFullToolOutput(session.id, toolCallIdDecoded);
+      if (!snapshot) {
         helpers.error(res, 404, "Full tool output not found");
         return;
       }
-      streamFullToolOutputSidecar(sidecar, req, res, method);
+      streamFullToolOutputSidecar(
+        { text: snapshot.output, size: Buffer.byteLength(snapshot.output, "utf8") },
+        req,
+        res,
+        method,
+      );
       return;
     }
 

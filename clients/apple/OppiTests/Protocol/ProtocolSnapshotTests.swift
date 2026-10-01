@@ -280,7 +280,7 @@ struct ProtocolSnapshotTests {
 
         // tool_output
         let outputMsg = try decodeMessage("tool_output")
-        guard case .toolOutput(let output, let isError, _, _, _, _, _) = outputMsg else {
+        guard case .toolOutput(let output, let isError, _, _, _, _, _, _) = outputMsg else {
             Issue.record("Expected .toolOutput")
             return
         }
@@ -289,7 +289,7 @@ struct ProtocolSnapshotTests {
 
         // tool_output_preview (replace mode)
         let previewMsg = try decodeMessage("tool_output_preview")
-        guard case .toolOutput(let previewOutput, _, _, let mode, let truncated, let totalBytes, _) = previewMsg else {
+        guard case .toolOutput(let previewOutput, _, _, let mode, let truncated, let totalBytes, _, let availability) = previewMsg else {
             Issue.record("Expected .toolOutput (preview)")
             return
         }
@@ -297,6 +297,7 @@ struct ProtocolSnapshotTests {
         #expect(mode == .replace)
         #expect(truncated)
         #expect(totalBytes == 32768)
+        #expect(availability == ToolOutputAvailability(complete: false, totalBytes: 32768, source: "sidecar"))
 
         // tool_end
         let endMsg = try decodeMessage("tool_end")
