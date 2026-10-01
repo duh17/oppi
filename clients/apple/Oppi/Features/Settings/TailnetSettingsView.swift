@@ -9,6 +9,25 @@ struct TailnetSettingsView: View {
 
     @State private var pairingPeerID: String?
     @State private var pairingMessage: String?
+    /// Latest Oppi probe per peer id; a missing entry means none has started.
+    @State private var probes: [String: TailnetPeerProbe] = [:]
+    @State private var probeRefresh = 0
+
+    /// Re-runs the probes when the node starts or stops, the probed machines
+    /// change, or a refresh was requested. There is no polling timer.
+    private struct ProbeTrigger: Equatable {
+        let isRunning: Bool
+        let peers: [String]
+        let refresh: Int
+    }
+
+    private var probeTrigger: ProbeTrigger {
+        ProbeTrigger(
+            isRunning: tailnet.state == .running,
+            peers: probeTargets.map { "\($0.id)|\($0.dnsName)" },
+            refresh: probeRefresh
+        )
+    }
 
     var body: some View {
         List {
@@ -45,7 +64,11 @@ struct TailnetSettingsView: View {
         .navigationTitle("Tailscale")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { tailnet.startIfEnabled() }
-        .refreshable { await tailnet.refresh() }
+        .task(id: probeTrigger) { await probePeers() }
+        .refreshable {
+            await tailnet.refresh()
+            reprobe()
+        }
     }
 
     @ViewBuilder
@@ -106,35 +129,12 @@ struct TailnetSettingsView: View {
 
     private var peersSection: some View {
         Section {
-            if tailnet.onlinePeers.isEmpty {
+            if visiblePeers.isEmpty {
                 Text("No other machines are online.")
                     .foregroundStyle(.themeComment)
             } else {
-                ForEach(tailnet.onlinePeers) { peer in
-                    VStack(alignment: .leading, spacing: 8) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(peer.displayName)
-                            Text(peer.dnsName.isEmpty ? peer.tailscaleIPs.first ?? "" : peer.dnsName)
-                                .font(.footnote)
-                                .foregroundStyle(.themeComment)
-                                .textSelection(.enabled)
-                        }
-                        if pairingPeerID == peer.id {
-                            HStack {
-                                ProgressView()
-                                    .controlSize(.small)
-                                Text("Pairing…")
-                                    .foregroundStyle(.themeComment)
-                            }
-                        } else {
-                            Button("Pair with Oppi") {
-                                Task { await pair(with: peer) }
-                            }
-                            .disabled(pairingPeerID != nil || tailnet.state != .running)
-                            .accessibilityIdentifier("tailnet.pair.\(peer.id)")
-                        }
-                    }
-                    .accessibilityElement(children: .contain)
+                ForEach(visiblePeers) { peer in
+                    peerRow(peer)
                 }
             }
         } header: {
@@ -146,6 +146,157 @@ struct TailnetSettingsView: View {
                 Text("Pair with a Mac that runs Oppi and is signed into the same Tailscale account.")
             }
         }
+    }
+
+    /// Phones and tablets cannot run an Oppi server, so they are not listed.
+    private var visiblePeers: [TailnetPeer] {
+        tailnet.onlinePeers.filter(\.canHostOppi)
+    }
+
+    private var pairedHosts: [String] {
+        serverStore.servers.map(\.host)
+    }
+
+    private func status(of peer: TailnetPeer) -> TailnetPeerStatus {
+        TailnetPeerStatus.derive(peer: peer, pairedHosts: pairedHosts, probe: probes[peer.id])
+    }
+
+    /// Peers whose Oppi readiness is unknown. Paired machines need no probe.
+    private var probeTargets: [TailnetPeer] {
+        visiblePeers.filter { status(of: $0) != .paired }
+    }
+
+    @ViewBuilder
+    private func peerRow(_ peer: TailnetPeer) -> some View {
+        switch status(of: peer) {
+        case .paired:
+            if let server = serverStore.servers.first(where: { peer.hasHost($0.host) }) {
+                NavigationLink {
+                    ServerDetailView(server: server)
+                } label: {
+                    HStack {
+                        peerTitle(peer)
+                        Spacer()
+                        Label("Paired", systemImage: "checkmark.circle.fill")
+                            .font(.footnote)
+                            .foregroundStyle(.themeGreen)
+                    }
+                }
+                .accessibilityIdentifier("tailnet.paired.\(peer.id)")
+            }
+        case .checking:
+            HStack {
+                peerTitle(peer)
+                Spacer()
+                ProgressView()
+                    .controlSize(.small)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(peer.displayName), checking for Oppi")
+        case .ready:
+            VStack(alignment: .leading, spacing: 8) {
+                peerTitle(peer)
+                if pairingPeerID == peer.id {
+                    HStack {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Pairing…")
+                            .foregroundStyle(.themeComment)
+                    }
+                } else {
+                    Button("Pair with Oppi") {
+                        Task { await pair(with: peer) }
+                    }
+                    .disabled(pairingPeerID != nil || tailnet.state != .running)
+                    .accessibilityIdentifier("tailnet.pair.\(peer.id)")
+                }
+            }
+            .accessibilityElement(children: .contain)
+        case .needsCertificate:
+            setupRow(peer) {
+                Label("Oppi needs Tailscale HTTPS", systemImage: "lock.trianglebadge.exclamationmark")
+                    .foregroundStyle(.themeOrange)
+            }
+        case .notReachable:
+            setupRow(peer) {
+                Label("Oppi not reachable", systemImage: "exclamationmark.circle")
+                    .foregroundStyle(.themeComment)
+            }
+        case .unchecked:
+            VStack(alignment: .leading, spacing: 4) {
+                peerTitle(peer)
+                Text("Not checked yet. Pull to refresh.")
+                    .font(.footnote)
+                    .foregroundStyle(.themeComment)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func peerTitle(_ peer: TailnetPeer) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(peer.displayName)
+            Text(peer.dnsName.isEmpty ? peer.tailscaleIPs.first ?? "" : peer.dnsName)
+                .font(.footnote)
+                .foregroundStyle(.themeComment)
+                .textSelection(.enabled)
+        }
+    }
+
+    /// The Mac does not answer as an Oppi server; the SSH check says why.
+    private func setupRow(
+        _ peer: TailnetPeer,
+        @ViewBuilder status: () -> some View
+    ) -> some View {
+        NavigationLink {
+            SSHPreflightView(initialPeer: peer)
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                peerTitle(peer)
+                status()
+                    .font(.footnote)
+                Text("Check this Mac")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.tint)
+            }
+        }
+        .accessibilityIdentifier("tailnet.check.\(peer.id)")
+    }
+
+    /// Probes every unpaired machine for Oppi, concurrently, once the node's
+    /// SOCKS route is current. Each start re-probes them all, so a result never
+    /// outlives the screen visit that produced it. Runs under `.task(id:)`:
+    /// leaving the screen or a new trigger cancels it, and cancelled probes
+    /// never store a result.
+    @MainActor
+    private func probePeers() async {
+        guard tailnet.state == .running else {
+            probes = [:]
+            return
+        }
+        let targets = probeTargets
+        guard !targets.isEmpty else { return }
+        for peer in targets { probes[peer.id] = .inFlight }
+        do {
+            try await tailnet.waitUntilCurrentGenerationProxyReady()
+        } catch {
+            // A cancelled run leaves `.inFlight` for the next run to replace;
+            // a proxy that never came up leaves the rows unchecked.
+            if !Task.isCancelled {
+                for peer in targets { probes[peer.id] = nil }
+            }
+            return
+        }
+        await TailnetSameUserPairing.probeOutcomes(dnsNames: targets.map(\.dnsName)) { dnsName, outcome in
+            for peer in targets where peer.dnsName == dnsName {
+                probes[peer.id] = outcome
+            }
+        }
+    }
+
+    private func reprobe() {
+        probes = [:]
+        probeRefresh += 1
     }
 
     private var setupCheckSection: some View {
@@ -163,18 +314,18 @@ struct TailnetSettingsView: View {
     private func pair(with peer: TailnetPeer) async {
         pairingMessage = nil
         pairingPeerID = peer.id
-        defer { pairingPeerID = nil }
+        defer {
+            pairingPeerID = nil
+            // A paired peer is recognised from the store; a failed attempt
+            // may have changed what the machine answers.
+            probes[peer.id] = nil
+            probeRefresh += 1
+        }
         do {
             tailnet.startIfEnabled()
             try await tailnet.waitUntilCurrentGenerationProxyReady()
             let baseURL = try await TailnetSameUserPairing.firstHealthyProbeURL(dnsName: peer.dnsName) { url in
-                let client = try TailnetSameUserPairing.makeBootstrapClient(
-                    nodeState: tailnet.state,
-                    proxy: TailnetTransportRoute.proxy,
-                    baseURL: url,
-                    makeClient: { APIClient(baseURL: $0, token: "") }
-                )
-                return try await client.health(timeoutInterval: 5)
+                try await TailnetSameUserPairing.health(at: url)
             }
             let inviteClient = try TailnetSameUserPairing.makeBootstrapClient(
                 nodeState: tailnet.state,

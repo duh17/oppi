@@ -131,6 +131,69 @@ struct TailnetPeer: Equatable, Identifiable, Sendable {
         }
         return hostName
     }
+
+    /// Where an SSH check or health probe dials: MagicDNS name when the netmap
+    /// has one, else the first tailnet IP.
+    var dialHost: String {
+        dnsName.isEmpty ? tailscaleIPs.first ?? hostName : dnsName
+    }
+
+    /// Phones and tablets never run an Oppi server. LocalAPI reports iPhones
+    /// and iPads as `iOS`. An unknown OS stays listed.
+    var canHostOppi: Bool {
+        switch os?.lowercased() {
+        case "ios", "ipados", "android": false
+        default: true
+        }
+    }
+
+    /// MagicDNS names compare case-insensitively and may carry the root dot.
+    func hasHost(_ host: String) -> Bool {
+        guard !dnsName.isEmpty else { return false }
+        return Self.normalizedHost(dnsName) == Self.normalizedHost(host)
+    }
+
+    private static func normalizedHost(_ host: String) -> String {
+        var name = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        while name.hasSuffix(".") { name.removeLast() }
+        return name
+    }
+}
+
+/// What an unauthenticated `GET /health` over the tailnet found on a peer.
+enum TailnetPeerProbe: Equatable, Sendable {
+    case inFlight
+    /// Oppi answered.
+    case ready
+    /// The TLS handshake for the MagicDNS name was answered with a certificate
+    /// this device rejects, so Oppi is not serving a Tailscale certificate.
+    case needsCertificate
+    /// Refused, timed out, or not Oppi.
+    case notReachable
+}
+
+/// The one state an Online Machines row shows.
+enum TailnetPeerStatus: Equatable, Sendable {
+    case paired
+    case checking
+    case ready
+    case needsCertificate
+    case notReachable
+    /// No probe has run (for example the proxy was not ready).
+    case unchecked
+
+    /// A peer whose MagicDNS name is a paired server host is paired and needs
+    /// no probe. `probe` is nil until one starts.
+    static func derive(peer: TailnetPeer, pairedHosts: [String], probe: TailnetPeerProbe?) -> Self {
+        if pairedHosts.contains(where: peer.hasHost) { return .paired }
+        switch probe {
+        case nil: return .unchecked
+        case .inFlight: return .checking
+        case .ready: return .ready
+        case .needsCertificate: return .needsCertificate
+        case .notReachable: return .notReachable
+        }
+    }
 }
 
 struct TailnetStatusSnapshot: Equatable, Sendable {

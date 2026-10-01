@@ -74,6 +74,8 @@ struct SSHPreflightProbeTests {
         npm: String = "/opt/homebrew/bin/npm",
         git: String = "/opt/homebrew/bin/git",
         oppi: String = "",
+        tailscale: String = "/usr/local/bin/tailscale",
+        oppiStatus: String? = nil,
         clt: String = "1",
         end: Bool = true
     ) -> String {
@@ -87,8 +89,10 @@ struct SSHPreflightProbeTests {
         npm=\(npm)
         git=\(git)
         oppi=\(oppi)
+        tailscale=\(tailscale)
         node_version=\(nodeVersion)
         clt=\(clt)
+        \(oppiStatus.map { "oppi_status=\($0)" } ?? "")
         \(end ? "end=1" : "")
         """
     }
@@ -102,8 +106,10 @@ struct SSHPreflightProbeTests {
         #expect(report.user == "chen")
         #expect(report.isMacOS)
         #expect(statuses(report) == [
-            "System": .ok, "Node.js": .ok, "npm": .ok, "git": .ok, "Oppi": .info,
+            "System": .ok, "Node.js": .ok, "npm": .ok, "git": .ok, "Tailscale CLI": .ok,
+            "Oppi": .info, "Tailscale HTTPS": .info,
         ])
+        #expect(!report.isReadyToPair)
         #expect(report.checks.first { $0.title == "System" }?.detail == "macOS 26.1 (arm64)")
     }
 
@@ -119,7 +125,8 @@ struct SSHPreflightProbeTests {
             Self.output(node: "", nodeVersion: "", npm: "", git: "/usr/bin/git", clt: "0")
         )
         #expect(statuses(report) == [
-            "System": .ok, "Node.js": .missing, "npm": .missing, "git": .missing, "Oppi": .info,
+            "System": .ok, "Node.js": .missing, "npm": .missing, "git": .missing, "Tailscale CLI": .ok,
+            "Oppi": .info, "Tailscale HTTPS": .info,
         ])
     }
 
@@ -139,6 +146,67 @@ struct SSHPreflightProbeTests {
     func nodeVersionMustMeetServerEngines(version: String, expected: SSHPreflightCheck.Status) throws {
         let report = try SSHPreflightProbe.parse(Self.output(nodeVersion: version))
         #expect(statuses(report)["Node.js"] == expected)
+    }
+
+    // `oppi status --json` as the server prints it: pretty-printed, wrapped in `{ok, data}`.
+    private static let oppiStatusLine = #"{ "ok": true, "data": { "status": { "paired": true, "dataDir": "/Users/chen/.config/oppi", "#
+        + #""server": { "host": "0.0.0.0", "port": 7749, "transport": "https", "tlsMode": "tailscale", "trustedPeers": [] } } } }"#
+
+    @Test func macServingTailscaleHTTPSIsReadyToPair() throws {
+        let report = try SSHPreflightProbe.parse(
+            Self.output(oppi: "/opt/homebrew/bin/oppi", oppiStatus: Self.oppiStatusLine)
+        )
+        #expect(report.oppiStatus == SSHOppiStatus(json: Self.oppiStatusLine))
+        #expect(report.oppiStatus?.paired == true)
+        #expect(report.oppiStatus?.port == 7749)
+        #expect(statuses(report)["Tailscale HTTPS"] == .ok)
+        #expect(statuses(report)["Tailscale CLI"] == .ok)
+        #expect(report.isReadyToPair)
+    }
+
+    @Test(arguments: [
+        #"{"ok":true,"data":{"status":{"paired":true,"server":{"port":7749,"transport":"http","tlsMode":"disabled"}}}}"#,
+        #"{"ok":true,"data":{"status":{"paired":true,"server":{"port":7749,"transport":"https","tlsMode":"self-signed"}}}}"#,
+    ])
+    func serverWithoutTailscaleCertificateFailsTheHTTPSCheck(json: String) throws {
+        let report = try SSHPreflightProbe.parse(Self.output(oppi: "/opt/homebrew/bin/oppi", oppiStatus: json))
+        #expect(statuses(report)["Tailscale HTTPS"] == .missing)
+        #expect(!report.isReadyToPair)
+    }
+
+    @Test func missingTailscaleCLIBlocksReadiness() throws {
+        let report = try SSHPreflightProbe.parse(
+            Self.output(oppi: "/opt/homebrew/bin/oppi", tailscale: "", oppiStatus: Self.oppiStatusLine)
+        )
+        #expect(statuses(report)["Tailscale CLI"] == .missing)
+        #expect(!report.isReadyToPair)
+    }
+
+    @Test(arguments: [
+        "not json", "{\"ok\":true,\"data\":", "[1,2]", "null",
+        #"{"paired":true,"server":{"port":7749,"transport":"https","tlsMode":"tailscale"}}"#,
+    ])
+    func unreadableOppiStatusIsInformationalNotFatal(json: String) throws {
+        let report = try SSHPreflightProbe.parse(Self.output(oppi: "/opt/homebrew/bin/oppi", oppiStatus: json))
+        #expect(report.oppiStatus == nil)
+        #expect(statuses(report)["Tailscale HTTPS"] == .info)
+        #expect(statuses(report)["Oppi"] == .ok)
+        #expect(!report.isReadyToPair)
+    }
+
+    @Test func missingCheckBlocksReadinessEvenWhenOppiServesTailscaleHTTPS() throws {
+        let report = try SSHPreflightProbe.parse(
+            Self.output(npm: "", oppi: "/opt/homebrew/bin/oppi", oppiStatus: Self.oppiStatusLine)
+        )
+        #expect(!report.isReadyToPair)
+    }
+
+    @Test func statusWithoutEndMarkerIsNotTrusted() {
+        #expect(throws: SSHPreflightFailure.probeIncomplete) {
+            try SSHPreflightProbe.parse(
+                Self.output(oppi: "/opt/homebrew/bin/oppi", oppiStatus: Self.oppiStatusLine, end: false)
+            )
+        }
     }
 
     @Test func loginShellNoiseAndCRLFAreIgnored() throws {
@@ -168,6 +236,7 @@ struct SSHPreflightProbeTests {
         npm=/usr/bin/npm
         git=/usr/bin/git
         oppi=
+        tailscale=
         node_version=v22.20.0
         clt=0
         end=1

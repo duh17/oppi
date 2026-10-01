@@ -88,6 +88,77 @@ enum TailnetSameUserPairing {
     }
 }
 
+extension TailnetSameUserPairing {
+    /// Classifies a peer from the same probe pairing uses. A certificate
+    /// rejection on any port wins over a later refusal: something answered the
+    /// handshake but not with a certificate this device trusts for the name.
+    static func probeOutcome(
+        dnsName: String,
+        probe: (URL) async throws -> Bool
+    ) async -> TailnetPeerProbe {
+        var sawCertificateFailure = false
+        do {
+            _ = try await firstHealthyProbeURL(dnsName: dnsName) { url in
+                do {
+                    return try await probe(url)
+                } catch {
+                    if isCertificateFailure(error) { sawCertificateFailure = true }
+                    throw error
+                }
+            }
+            return .ready
+        } catch {
+            return sawCertificateFailure ? .needsCertificate : .notReachable
+        }
+    }
+
+    /// Unauthenticated `GET /health` over the node's SOCKS route, 5 s per URL.
+    static func health(at url: URL) async throws -> Bool {
+        let client = try makeBootstrapClient(
+            nodeState: TailnetNodeController.shared.state,
+            proxy: TailnetTransportRoute.proxy,
+            baseURL: url,
+            makeClient: { APIClient(baseURL: $0, token: "") }
+        )
+        return try await client.health(timeoutInterval: 5)
+    }
+
+    /// Probes every machine concurrently and reports each outcome as it lands.
+    /// Cancelling the caller cancels the probes; their outcomes are dropped.
+    static func probeOutcomes(
+        dnsNames: [String],
+        onOutcome: (String, TailnetPeerProbe) -> Void
+    ) async {
+        await withTaskGroup(of: (String, TailnetPeerProbe).self) { group in
+            for dnsName in dnsNames {
+                group.addTask {
+                    let outcome = await TailnetSameUserPairing.probeOutcome(dnsName: dnsName) {
+                        try await TailnetSameUserPairing.health(at: $0)
+                    }
+                    return (dnsName, outcome)
+                }
+            }
+            while let result = await group.next() {
+                if Task.isCancelled { continue }
+                onOutcome(result.0, result.1)
+            }
+        }
+    }
+
+    /// Only certificate verdicts. `secureConnectionFailed` is also what a reset
+    /// or SOCKS failure can surface as, so it classifies with refused/timeout.
+    static func isCertificateFailure(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .serverCertificateUntrusted, .serverCertificateHasUnknownRoot,
+             .serverCertificateHasBadDate, .serverCertificateNotYetValid:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 extension TailnetSameUserPairing.Failure: LocalizedError {
     var errorDescription: String? {
         switch self {

@@ -100,9 +100,10 @@ enum SSHPreflightProbe {
     echo "release=$(uname -r)"
     echo "arch=$(uname -m)"
     echo "macos=$(sw_vers -productVersion 2>/dev/null)"
-    for tool in node npm git oppi; do echo "$tool=$(command -v "$tool" 2>/dev/null)"; done
+    for tool in node npm git oppi tailscale; do echo "$tool=$(command -v "$tool" 2>/dev/null)"; done
     echo "node_version=$(node --version 2>/dev/null)"
     if xcode-select -p >/dev/null 2>&1; then echo clt=1; else echo clt=0; fi
+    if command -v oppi >/dev/null 2>&1; then echo "oppi_status=$(oppi status --json </dev/null 2>/dev/null | tr -d '\\r\\n')"; fi
     echo end=1
 
     """
@@ -135,6 +136,8 @@ enum SSHPreflightProbe {
             npmPath: nonEmpty(values["npm"]),
             gitPath: nonEmpty(values["git"]),
             oppiPath: nonEmpty(values["oppi"]),
+            tailscalePath: nonEmpty(values["tailscale"]),
+            oppiStatus: nonEmpty(values["oppi_status"]).flatMap(SSHOppiStatus.init(json:)),
             hasCommandLineTools: values["clt"] == "1"
         )
     }
@@ -142,6 +145,34 @@ enum SSHPreflightProbe {
     private static func nonEmpty(_ value: String?) -> String? {
         guard let value, !value.isEmpty else { return nil }
         return value
+    }
+}
+
+/// The few fields of `oppi status --json` the setup check reads, from the
+/// server's `{ok, data: {status}}` envelope.
+struct SSHOppiStatus: Equatable, Sendable {
+    let paired: Bool?
+    let transport: String?
+    let tlsMode: String?
+    let port: Int?
+
+    /// Nil for anything but the envelope, so a garbled line never fails the report.
+    init?(json: String) {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)),
+              let envelope = object as? [String: Any],
+              let data = envelope["data"] as? [String: Any],
+              let status = data["status"] as? [String: Any] else { return nil }
+        let server = status["server"] as? [String: Any]
+        paired = status["paired"] as? Bool
+        transport = server?["transport"] as? String
+        tlsMode = server?["tlsMode"] as? String
+        port = server?["port"] as? Int
+    }
+
+    /// Oppi serves HTTPS with a Tailscale certificate, which the iPhone's
+    /// same-account pairing and `*.ts.net` connection both need.
+    var servesTailscaleHTTPS: Bool {
+        transport?.lowercased() == "https" && tlsMode?.lowercased() == "tailscale"
     }
 }
 
@@ -157,12 +188,20 @@ struct SSHPreflightReport: Equatable, Sendable {
     let npmPath: String?
     let gitPath: String?
     let oppiPath: String?
+    let tailscalePath: String?
+    /// Nil when Oppi is not installed or its status was unreadable.
+    let oppiStatus: SSHOppiStatus?
     let hasCommandLineTools: Bool
 
     var isMacOS: Bool { kernel == "Darwin" }
 
     var checks: [SSHPreflightCheck] {
-        [systemCheck, nodeCheck, npmCheck, gitCheck, oppiCheck]
+        [systemCheck, nodeCheck, npmCheck, gitCheck, tailscaleCheck, oppiCheck, tailscaleHTTPSCheck]
+    }
+
+    /// Everything passes: the iPhone's Pair button should work.
+    var isReadyToPair: Bool {
+        checks.allSatisfy { $0.status == .ok }
     }
 
     private var systemCheck: SSHPreflightCheck {
@@ -223,7 +262,48 @@ struct SSHPreflightReport: Equatable, Sendable {
         guard let oppiPath else {
             return SSHPreflightCheck(title: "Oppi", detail: "Not installed yet.", status: .info)
         }
-        return SSHPreflightCheck(title: "Oppi", detail: "Installed at \(oppiPath)", status: .ok)
+        var detail = "Installed at \(oppiPath)"
+        if let paired = oppiStatus?.paired {
+            detail += paired ? ". A device is paired." : ". No device is paired yet."
+        }
+        return SSHPreflightCheck(title: "Oppi", detail: detail, status: .ok)
+    }
+
+    /// Same-account pairing asks `tailscale whois` who is calling.
+    private var tailscaleCheck: SSHPreflightCheck {
+        guard let tailscalePath else {
+            return SSHPreflightCheck(
+                title: "Tailscale CLI",
+                detail: "Not found. Oppi uses it to confirm a pairing request comes from your account.",
+                status: .missing
+            )
+        }
+        return SSHPreflightCheck(title: "Tailscale CLI", detail: tailscalePath, status: .ok)
+    }
+
+    private var tailscaleHTTPSCheck: SSHPreflightCheck {
+        let title = "Tailscale HTTPS"
+        guard oppiPath != nil else {
+            return SSHPreflightCheck(title: title, detail: "Checked once Oppi is installed.", status: .info)
+        }
+        guard let oppiStatus, oppiStatus.transport != nil else {
+            return SSHPreflightCheck(
+                title: title,
+                detail: "Could not read the server's settings from `oppi status --json`.",
+                status: .info
+            )
+        }
+        if oppiStatus.servesTailscaleHTTPS {
+            let port = oppiStatus.port.map { " on port \($0)" } ?? ""
+            return SSHPreflightCheck(title: title, detail: "Serving HTTPS with a Tailscale certificate\(port).", status: .ok)
+        }
+        let transport = oppiStatus.transport?.uppercased() ?? "unknown"
+        let tlsMode = oppiStatus.tlsMode ?? "unknown"
+        return SSHPreflightCheck(
+            title: title,
+            detail: "The server is set to \(transport) with \(tlsMode) TLS. Pairing from this iPhone needs HTTPS with a Tailscale certificate.",
+            status: .missing
+        )
     }
 
     /// `v22.19.0` → `[22, 19, 0]`; missing components count as 0.

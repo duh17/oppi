@@ -338,6 +338,137 @@ struct TailnetSameUserPairingTests {
     }
 }
 
+// MARK: - Machine list status
+
+@Suite("Tailnet machine list status")
+@MainActor
+struct TailnetPeerStatusTests {
+    private static func peer(_ name: String, dns: String? = nil, os: String? = "macOS") -> TailnetPeer {
+        TailnetPeer(
+            id: "n-\(name)",
+            hostName: name,
+            dnsName: dns ?? "\(name).tail1234.ts.net",
+            os: os,
+            tailscaleIPs: ["100.64.0.1"],
+            isOnline: true
+        )
+    }
+
+    private static let probeFailure = URLError(.cannotConnectToHost)
+    private static let certificateFailure = URLError(.serverCertificateUntrusted)
+
+    @Test(arguments: ["iOS", "iPadOS", "android", "Android"])
+    func phonesAndTabletsCannotHostOppi(os: String) {
+        #expect(!Self.peer("iphone171", os: os).canHostOppi)
+    }
+
+    @Test(arguments: ["macOS", "linux", "windows", nil])
+    func everyOtherMachineMayHostOppi(os: String?) {
+        #expect(Self.peer("box", os: os).canHostOppi)
+    }
+
+    @Test func pairedHostMatchIgnoresCaseAndRootDot() {
+        let studio = Self.peer("mac-studio")
+        #expect(TailnetPeerStatus.derive(
+            peer: studio, pairedHosts: ["Mac-Studio.TAIL1234.ts.net."], probe: nil
+        ) == .paired)
+        #expect(TailnetPeerStatus.derive(
+            peer: studio, pairedHosts: ["mac-mini.tail1234.ts.net", "192.168.1.5"], probe: nil
+        ) == .unchecked)
+    }
+
+    @Test func pairedWinsOverAnyProbeResult() {
+        let studio = Self.peer("mac-studio")
+        for probe: TailnetPeerProbe? in [nil, .inFlight, .ready, .needsCertificate, .notReachable] {
+            #expect(TailnetPeerStatus.derive(
+                peer: studio, pairedHosts: [studio.dnsName], probe: probe
+            ) == .paired)
+        }
+    }
+
+    @Test func peerWithoutMagicDNSNameNeverMatchesAPairedHost() {
+        let printer = Self.peer("printer", dns: "")
+        #expect(TailnetPeerStatus.derive(peer: printer, pairedHosts: [""], probe: .ready) == .ready)
+    }
+
+    @Test func probeOutcomeSelectsTheRowState() {
+        let studio = Self.peer("mac-studio")
+        let expected: [(TailnetPeerProbe?, TailnetPeerStatus)] = [
+            (nil, .unchecked), (.inFlight, .checking), (.ready, .ready),
+            (.needsCertificate, .needsCertificate), (.notReachable, .notReachable),
+        ]
+        for (probe, status) in expected {
+            #expect(TailnetPeerStatus.derive(peer: studio, pairedHosts: [], probe: probe) == status)
+        }
+    }
+
+    @Test func healthyPeerIsReadyOnTheFirstPortThatAnswers() async {
+        var seen: [String] = []
+        let outcome = await TailnetSameUserPairing.probeOutcome(dnsName: "mac-studio.tail1234.ts.net") { url in
+            seen.append(url.absoluteString)
+            return url.port == 443
+        }
+        #expect(outcome == .ready)
+        #expect(seen.count == 2)
+    }
+
+    @Test func refusedOnEveryPortIsNotReachable() async {
+        let outcome = await TailnetSameUserPairing.probeOutcome(dnsName: "macbook-pro.tail1234.ts.net") { _ in
+            throw Self.probeFailure
+        }
+        #expect(outcome == .notReachable)
+    }
+
+    @Test func nonOppiAnswerIsNotReachable() async {
+        let outcome = await TailnetSameUserPairing.probeOutcome(dnsName: "nas.tail1234.ts.net") { _ in false }
+        #expect(outcome == .notReachable)
+    }
+
+    @Test func certificateRejectionOnTheDefaultPortSurvivesALaterRefusal() async {
+        let outcome = await TailnetSameUserPairing.probeOutcome(dnsName: "mac-mini.tail1234.ts.net") { url in
+            throw url.port == 7749 ? Self.certificateFailure : Self.probeFailure
+        }
+        #expect(outcome == .needsCertificate)
+    }
+
+    @Test func failedHandshakeWithoutACertificateVerdictIsNotReachable() async {
+        // CFNetwork also reports a reset or SOCKS failure as secureConnectionFailed.
+        let outcome = await TailnetSameUserPairing.probeOutcome(dnsName: "macbook-pro.tail1234.ts.net") { _ in
+            throw URLError(.secureConnectionFailed)
+        }
+        #expect(outcome == .notReachable)
+    }
+
+    @Test func healthyPortBeatsAnEarlierCertificateRejection() async {
+        let outcome = await TailnetSameUserPairing.probeOutcome(dnsName: "mac-mini.tail1234.ts.net") { url in
+            if url.port == 7749 { throw Self.certificateFailure }
+            return true
+        }
+        #expect(outcome == .ready)
+    }
+
+    @Test func machineWithoutMagicDNSNameCannotBeProbed() async {
+        let outcome = await TailnetSameUserPairing.probeOutcome(dnsName: "") { _ in
+            Issue.record("probe must not run without a host")
+            return true
+        }
+        #expect(outcome == .notReachable)
+    }
+
+    @Test func onlyCertificateVerdictsCountAsCertificateFailure() {
+        let certificate: [URLError.Code] = [
+            .serverCertificateUntrusted, .serverCertificateHasUnknownRoot,
+            .serverCertificateHasBadDate, .serverCertificateNotYetValid,
+        ]
+        let other: [URLError.Code] = [
+            .secureConnectionFailed, .timedOut, .cannotConnectToHost, .networkConnectionLost, .cancelled,
+        ]
+        for code in certificate { #expect(TailnetSameUserPairing.isCertificateFailure(URLError(code))) }
+        for code in other { #expect(!TailnetSameUserPairing.isCertificateFailure(URLError(code))) }
+        #expect(!TailnetSameUserPairing.isCertificateFailure(CancellationError()))
+    }
+}
+
 // MARK: - Transport through the node's SOCKS5 proxy
 
 @Suite("Tailnet transport route", .serialized)

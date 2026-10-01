@@ -17,13 +17,19 @@ struct SSHPreflightView: View {
 
     private var tailnet: TailnetNodeController { .shared }
 
-    @State private var selection = ""
+    @State private var selection: String
     @State private var manualHost = ""
     @State private var username = ""
     @State private var password = ""
     @State private var phase = Phase.idle
     @State private var runID = UUID()
     @State private var task: Task<Void, Never>?
+
+    /// `initialPeer` preselects a machine from the tailnet list; the picker
+    /// still allows changing it.
+    init(initialPeer: TailnetPeer? = nil) {
+        _selection = State(initialValue: initialPeer?.dialHost ?? "")
+    }
 
     var body: some View {
         List {
@@ -48,7 +54,7 @@ struct SSHPreflightView: View {
         Section {
             Picker("Machine", selection: $selection) {
                 ForEach(tailnet.onlinePeers) { peer in
-                    Text(peer.displayName).tag(Self.dialHost(peer))
+                    Text(peer.displayName).tag(peer.dialHost)
                 }
                 Text("Other…").tag(Self.manualSelection)
             }
@@ -138,11 +144,7 @@ struct SSHPreflightView: View {
             } header: {
                 Text(host)
             } footer: {
-                Text(
-                    report.checks.contains { $0.status == .missing }
-                        ? "Install the missing items on the Mac, then check again."
-                        : "This Mac has what Oppi's installer needs."
-                )
+                Text(Self.resultFooter(report))
             }
         }
     }
@@ -223,7 +225,7 @@ struct SSHPreflightView: View {
         guard selection.isEmpty else { return }
         let peers = tailnet.onlinePeers
         let mac = peers.first { $0.os?.lowercased() == "macos" } ?? peers.first
-        selection = mac.map(Self.dialHost) ?? Self.manualSelection
+        selection = mac?.dialHost ?? Self.manualSelection
     }
 
     private func check(trusting key: SSHHostKey? = nil, host: String? = nil) {
@@ -267,9 +269,14 @@ struct SSHPreflightView: View {
         if isChecking { phase = .idle }
     }
 
-    /// MagicDNS name when the netmap has one, else the first tailnet IP.
-    private static func dialHost(_ peer: TailnetPeer) -> String {
-        peer.dnsName.isEmpty ? peer.tailscaleIPs.first ?? peer.hostName : peer.dnsName
+    private static func resultFooter(_ report: SSHPreflightReport) -> String {
+        if report.checks.contains(where: { $0.status == .missing }) {
+            return "Fix the missing items on the Mac, then check again."
+        }
+        if report.isReadyToPair {
+            return "Ready — go back and tap Pair."
+        }
+        return "This Mac has what Oppi's installer needs."
     }
 
     /// `ssh-ed25519` → `ed25519`, `ecdsa-sha2-nistp256` → `ecdsa`.
