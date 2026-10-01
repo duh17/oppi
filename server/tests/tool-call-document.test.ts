@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import { MobileRendererRegistry } from "../src/mobile-renderer.js";
+import { MobileRendererRegistry, resolveToolDisplay } from "../src/mobile-renderer.js";
 import { translatePiEvent, type TranslationContext } from "../src/session-protocol.js";
 import { SessionTraceService } from "../src/session-trace-service.js";
 import { validatedNestedCalls } from "../src/tool-nested-calls.js";
@@ -37,6 +37,100 @@ function translate(event: unknown, ctx: TranslationContext) {
 }
 
 describe("tool call document producer", () => {
+  it("resolves display identity from live definition, then result facts, then MCP naming", () => {
+    const name = "mcp__coros__getActivityDetail";
+    expect(
+      resolveToolDisplay(
+        name,
+        { label: "configured/get-activity", namespace: { name: "mcp__configured" } },
+        { server: "ignored", tool: "ignored", serverInfo: { name: "mcp-server" } },
+      ),
+    ).toEqual({ title: "get-activity", group: "configured" });
+    expect(
+      resolveToolDisplay(name, undefined, { server: "coros", tool: "getActivityDetail" }),
+    ).toEqual({ title: "getActivityDetail", group: "coros" });
+    expect(resolveToolDisplay(name)).toEqual({ title: "getActivityDetail", group: "coros" });
+    expect(resolveToolDisplay("plain")).toBeUndefined();
+    expect(resolveToolDisplay("mcp__incomplete")).toBeUndefined();
+    expect(resolveToolDisplay("mcp____tool")).toBeUndefined();
+  });
+  it("emits matching display facts on live, streamed and nested calls without changing raw names", () => {
+    const ctx = context();
+    ctx.getToolDefinition = () => ({
+      label: "coros/getActivityDetail",
+      namespace: { name: "mcp__coros" },
+    });
+    const name = "mcp__coros__getActivityDetail";
+    const display = { title: "getActivityDetail", group: "coros" };
+    expect(
+      translate(
+        { type: "tool_execution_start", toolCallId: "d", toolName: name, args: { labelId: "123" } },
+        ctx,
+      )[0],
+    ).toMatchObject({ tool: name, display });
+    expect(
+      translate(
+        {
+          type: "message_update",
+          assistantMessageEvent: {
+            type: "toolcall_end",
+            toolCall: { id: "d", name, arguments: { labelId: "1234" } },
+          },
+        },
+        ctx,
+      )[0],
+    ).toMatchObject({ type: "tool_update", tool: name, display });
+    const rawNested = { calls: [{ ...nested.calls[0], name }], complete: true };
+    expect(
+      translate(
+        {
+          type: "message_end",
+          message: {
+            role: "toolResult",
+            toolName: "codemode",
+            toolCallId: "parent",
+            content: [],
+            nestedCalls: rawNested,
+          },
+        },
+        ctx,
+      ),
+    ).toEqual([
+      {
+        type: "tool_end",
+        tool: "codemode",
+        toolCallId: "parent",
+        isError: undefined,
+        nestedCalls: { ...rawNested, calls: [{ ...rawNested.calls[0], display }] },
+      },
+    ]);
+  });
+  it("enriches an existing live call when result metadata restores a sanitized MCP identity", () => {
+    const ctx = context();
+    ctx.toolArgs = new Map();
+    const name = "mcp__dev_tools__get_activity";
+    translate(
+      { type: "tool_execution_start", toolCallId: "d", toolName: name, args: { id: 42 } },
+      ctx,
+    );
+    const messages = translate(
+      {
+        type: "tool_execution_end",
+        toolCallId: "d",
+        toolName: name,
+        result: { content: [], details: { server: "dev-tools", tool: "get-activity" } },
+      },
+      ctx,
+    );
+    expect(messages[0]).toEqual({
+      type: "tool_update",
+      tool: name,
+      toolCallId: "d",
+      args: { id: 42 },
+      display: { title: "get-activity", group: "dev-tools" },
+    });
+    expect(messages[1]).toMatchObject({ type: "tool_end", toolCallId: "d" });
+  });
   it("emits static code hints on start and streaming arguments", () => {
     const ctx = context();
     expect(
@@ -170,6 +264,12 @@ describe("tool call document producer", () => {
               role: "assistant",
               content: [
                 { type: "toolCall", id: "t", name: "codemode", arguments: { code: "text(1)" } },
+                {
+                  type: "toolCall",
+                  id: "direct",
+                  name: "mcp__coros__getActivityDetail",
+                  arguments: { labelId: "123" },
+                },
               ],
             },
           },
@@ -184,6 +284,23 @@ describe("tool call document producer", () => {
               toolName: "codemode",
               content: [{ type: "text", text: "ok" }],
               nestedCalls: nested,
+            },
+          },
+          {
+            type: "message",
+            id: "c",
+            parentId: "b",
+            timestamp: "2026-09-30T15:20:02Z",
+            message: {
+              role: "toolResult",
+              toolCallId: "direct",
+              toolName: "mcp__coros__getActivityDetail",
+              content: [{ type: "text", text: "ok" }],
+              details: { server: "coros", tool: "getActivityDetail" },
+              nestedCalls: {
+                calls: [{ ...nested.calls[0], name: "mcp__coros__getActivityDetail" }],
+                complete: true,
+              },
             },
           },
         ]
@@ -214,6 +331,16 @@ describe("tool call document producer", () => {
           fields: { code: { role: "code", language: "javascript" } },
         });
         expect(trace.find((e) => e.type === "toolResult")?.nestedCalls).toEqual(nested);
+        expect(trace.find((e) => e.id === "direct")?.display).toEqual(
+          resolveToolDisplay("mcp__coros__getActivityDetail", {
+            label: "coros/getActivityDetail",
+            namespace: { name: "mcp__coros" },
+          }),
+        );
+        expect(trace.find((e) => e.toolCallId === "direct")?.nestedCalls?.calls[0]).toMatchObject({
+          name: "mcp__coros__getActivityDetail",
+          display: { title: "getActivityDetail", group: "coros" },
+        });
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });

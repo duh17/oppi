@@ -8,6 +8,10 @@ import Foundation
 final class ToolArgsStore {
     private var store: [String: [String: JSONValue]] = [:]
     private var presentations: [String: ToolInputPresentation] = [:]
+    private var displays: [String: ToolDisplay] = [:]
+
+    func setDisplay(_ display: ToolDisplay, for id: String) { displays[id] = display }
+    func display(for id: String) -> ToolDisplay? { displays[id] }
 
     func setInputPresentation(_ presentation: ToolInputPresentation, for id: String) { presentations[id] = presentation }
     func inputPresentation(for id: String) -> ToolInputPresentation? { presentations[id] }
@@ -29,6 +33,7 @@ final class ToolArgsStore {
     func clearAll() {
         store.removeAll()
         presentations.removeAll()
+        displays.removeAll()
     }
 
     private static func previewArgs(_ args: [String: JSONValue]) -> [String: JSONValue] {

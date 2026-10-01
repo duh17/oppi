@@ -19,7 +19,7 @@ import type {
   SessionMessage,
 } from "./types.js";
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
-import type { MobileRendererRegistry } from "./mobile-renderer.js";
+import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-renderer.js";
 import { validatedNestedCalls } from "./tool-nested-calls.js";
 import type { PiMessage } from "./pi-events.js";
 import { sanitizeToolResultDetails } from "./visual-schema.js";
@@ -535,6 +535,9 @@ export interface TranslationContext {
   currentThinkingContentIndex?: number;
   /** Mobile renderer registry for pre-rendering tool call/result summaries. */
   mobileRenderers?: MobileRendererRegistry;
+  getToolDefinition?: (
+    name: string,
+  ) => { label?: string; namespace?: { name: string } } | undefined;
   /** Tool names per toolCallId — tracked for shell preview logic. */
   toolNames: Map<string, string>;
   /** Tool call arguments per toolCallId — used by deferred result renderers. */
@@ -945,6 +948,11 @@ export function translatePiEvent(
           }
           const inputPresentation = ctx.mobileRenderers?.inputPresentation(toolCallUpdate.tool);
           if (inputPresentation) toolCallUpdate.inputPresentation = inputPresentation;
+          const display = resolveToolDisplay(
+            toolCallUpdate.tool,
+            ctx.getToolDefinition?.(toolCallUpdate.tool),
+          );
+          if (display) toolCallUpdate.display = display;
           messages.push(toolCallUpdate);
         }
 
@@ -960,6 +968,7 @@ export function translatePiEvent(
       const toolCallId = resolveToolCallId(event);
       const callSegments = ctx.mobileRenderers?.renderCall(event.toolName, event.args || {});
       const inputPresentation = ctx.mobileRenderers?.inputPresentation(event.toolName);
+      const display = resolveToolDisplay(event.toolName, ctx.getToolDefinition?.(event.toolName));
       // Track tool name for shell preview decisions in subsequent updates.
       if (toolCallId) {
         ctx.toolNames.set(toolCallId, event.toolName);
@@ -975,6 +984,7 @@ export function translatePiEvent(
         toolCallId,
         ...(callSegments ? { callSegments } : {}),
         ...(inputPresentation ? { inputPresentation } : {}),
+        ...(display ? { display } : {}),
       });
 
       return messages;
@@ -1145,6 +1155,23 @@ export function translatePiEvent(
         );
       }
 
+      const definition = ctx.getToolDefinition?.(event.toolName);
+      const display = resolveToolDisplay(event.toolName, definition, event.result?.details);
+      const startDisplay = resolveToolDisplay(event.toolName, definition);
+      const args = ctx.toolArgs?.get(key);
+      if (display && args && JSON.stringify(display) !== JSON.stringify(startDisplay)) {
+        // A result can restore a sanitized/truncated MCP name when the live
+        // definition is unavailable. Update the existing call, never add a row.
+        const inputPresentation = ctx.mobileRenderers?.inputPresentation(event.toolName);
+        messages.push({
+          type: "tool_update",
+          tool: event.toolName,
+          toolCallId,
+          args,
+          display,
+          ...(inputPresentation ? { inputPresentation } : {}),
+        });
+      }
       ctx.partialResults.delete(key);
       ctx.toolNames.delete(key);
       ctx.toolArgs?.delete(key);
@@ -1168,7 +1195,9 @@ export function translatePiEvent(
           Array.isArray(resultContents) ? extractAttachmentMedia(resultContents) : [],
         ),
       );
-      const nestedCalls = validatedNestedCalls(asRecord(event.result)?.nestedCalls);
+      const nestedCalls = validatedNestedCalls(asRecord(event.result)?.nestedCalls, (name) =>
+        resolveToolDisplay(name, ctx.getToolDefinition?.(name)),
+      );
       const resultSegments = ctx.mobileRenderers?.renderResult(
         event.toolName,
         details,
@@ -1238,7 +1267,9 @@ export function translatePiEvent(
       // Pi attaches nestedCalls to the result message, not tool_execution_end.
       // A metadata-only end enriches the already-completed row without replaying output.
       if (message.role === "toolResult") {
-        const nestedCalls = validatedNestedCalls(asRecord(message)?.nestedCalls);
+        const nestedCalls = validatedNestedCalls(asRecord(message)?.nestedCalls, (name) =>
+          resolveToolDisplay(name, ctx.getToolDefinition?.(name)),
+        );
         if (nestedCalls)
           return [
             {

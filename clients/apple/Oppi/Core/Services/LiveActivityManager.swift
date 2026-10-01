@@ -255,7 +255,7 @@ final class LiveActivityManager {
             entry.updatedAt = now
             snapshot.sessionsById[sessionId] = entry
 
-        case .toolStart(let sessionId, let toolEventId, let tool, _, _, _):
+        case .toolStart(let sessionId, let toolEventId, let tool, _, _, _, _):
             var entry = upsertSession(sessionId)
             let now = Date()
             entry.status = .busy

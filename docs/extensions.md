@@ -401,7 +401,11 @@ For tool rows, Oppi uses this order:
 
 On iOS, generic expanded tool rows show one Markdown document with **Input**, optional **Calls**, and **Output** sections. Built-in bash/read/write/edit/ask rows and audio/image/media presentations keep their own renderers. Section labels appear only when the document has more than one section.
 
-Input shows non-empty arguments as a form table, source-code fences, or labeled text/JSON blocks. Calls shows Pi's recorded nested calls with status, compact arguments, duration, and errors. An incomplete record shows a notice.
+Input shows non-empty arguments as a form table, source-code fences, or labeled text/JSON blocks. Calls shows Pi's recorded nested calls with status, literal compact arguments, duration, and errors. An incomplete record shows a notice.
+
+The server can emit `display: { title, group?, verbatim? }` on tool calls and nested-call records. Without summary segments, iOS uses `group · Title` and applies one sentence-case humanizer to the title fact (for example, `getActivityDetail` becomes “Get activity detail”). `verbatim: true` preserves a provided title exactly. With no display fact, older-server rows keep their raw names. Input and Raw retain raw tool names; Raw also retains nested-call records.
+
+MCP display facts currently use the live tool definition's label/namespace, then result `details.server`/`details.tool` for history, then Pi's `mcp__<server>__<tool>` naming convention. MCP-provided `title`, `annotations.title`, and `serverInfo.title` are not shown yet: Pi drops tool titles before its public session boundary and does not expose its MCP connections. Oppi does not infer a title from description or use `serverInfo.name` as the group. No icons are carried or fetched in this release.
 
 Expanded output uses this order:
 

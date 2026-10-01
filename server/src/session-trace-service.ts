@@ -10,7 +10,7 @@ import {
   computeLineDiffStatsFromLines,
   reconstructBaselineFromCurrent,
 } from "./diff-core.js";
-import { MobileRendererRegistry } from "./mobile-renderer.js";
+import { MobileRendererRegistry, resolveToolDisplay } from "./mobile-renderer.js";
 import type { SessionRuntimes } from "./runtime-router.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import { WorkspaceWorktreeError } from "./worktrees.js";
@@ -540,7 +540,33 @@ export class SessionTraceService {
 
   private withMobileRenderSegments(trace: TraceEvent[], includeSegments: boolean): TraceEvent[] {
     const toolNames = new Map<string, string>();
-    return trace.map((event) => {
+    // Results can follow their calls (or lie on a later trace event). Resolve
+    // identity before mapping, not from whatever happened to be seen so far.
+    const resultDetails = new Map(
+      trace
+        .filter((e) => e.type === "toolResult" && e.toolCallId)
+        .map((e) => [e.toolCallId, e.details]),
+    );
+    const nestedDetails = new Map(
+      trace
+        .filter((e) => e.type === "toolResult" && e.toolName)
+        .map((e) => [e.toolName, e.details]),
+    );
+    return trace.map((original) => {
+      const event = original.nestedCalls
+        ? {
+            ...original,
+            nestedCalls: {
+              ...original.nestedCalls,
+              calls: original.nestedCalls.calls.map((call) => {
+                const display =
+                  resolveToolDisplay(call.name, undefined, nestedDetails.get(call.name)) ??
+                  call.display;
+                return { ...call, ...(display ? { display } : {}) };
+              }),
+            },
+          }
+        : original;
       if (event.type === "toolCall") {
         const tool = event.tool ?? "unknown";
         toolNames.set(event.id, tool);
@@ -548,10 +574,13 @@ export class SessionTraceService {
           ? this.mobileRenderers.renderCall(tool, event.args ?? {})
           : undefined;
         const inputPresentation = this.mobileRenderers.inputPresentation?.(tool);
+        const display =
+          event.display ?? resolveToolDisplay(tool, undefined, resultDetails.get(event.id));
         return {
           ...event,
           ...(callSegments ? { callSegments } : {}),
           ...(inputPresentation ? { inputPresentation } : {}),
+          ...(display ? { display } : {}),
         };
       }
       if (event.type === "toolResult" && includeSegments) {

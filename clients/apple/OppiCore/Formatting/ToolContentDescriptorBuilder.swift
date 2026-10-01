@@ -13,6 +13,7 @@ enum ToolContentDescriptorBuilder {
         var nestedCalls: NestedToolCalls?
         var previewOnly: Bool
         var totalBytes: Int?
+        var display: ToolDisplay?
 
         init(
             args: [String: JSONValue]? = nil,
@@ -22,7 +23,8 @@ enum ToolContentDescriptorBuilder {
             inputPresentation: ToolInputPresentation? = nil,
             nestedCalls: NestedToolCalls? = nil,
             previewOnly: Bool = false,
-            totalBytes: Int? = nil
+            totalBytes: Int? = nil,
+            display: ToolDisplay? = nil
         ) {
             self.args = args
             self.details = details
@@ -32,6 +34,7 @@ enum ToolContentDescriptorBuilder {
             self.nestedCalls = nestedCalls
             self.previewOnly = previewOnly
             self.totalBytes = totalBytes
+            self.display = display
         }
     }
 
@@ -219,7 +222,8 @@ enum ToolContentDescriptorBuilder {
                     output: sanitizeGenericExtensionOutput(output, toolName: tool), rawOutput: output,
                     details: context.details, isDone: isDone,
                     previewOnly: context.previewOnly || (context.fullOutput.isEmpty && !outputPreview.isEmpty),
-                    totalBytes: context.totalBytes
+                    totalBytes: context.totalBytes,
+                    toolName: context.display?.title.isEmpty == false ? tool : nil
                 ).map { .markdown($0) }
                 copyOutput = output.isEmpty ? nil : output
             } else if !outputTrimmed.isEmpty || hasStructuredVoiceContent || hasStructuredMediaContent {

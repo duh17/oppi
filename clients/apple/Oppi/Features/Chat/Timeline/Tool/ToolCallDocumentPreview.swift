@@ -25,7 +25,10 @@ struct ToolCallDocumentPreview: View {
               let tool = fixture["tool"]?.stringValue,
               let output = fixture["output"]?.stringValue else { return nil }
         var context = ToolPresentationBuilder.Context(args: fixture["args"]?.objectValue,
-            expandedItemIDs: ["document-preview"], fullOutput: output, isLoadingOutput: false)
+            expandedItemIDs: fixture["expanded"]?.boolValue == false ? [] : ["document-preview"], fullOutput: output, isLoadingOutput: false)
+        if let display = fixture["display"], let encoded = try? JSONEncoder().encode(display) {
+            context.display = try? JSONDecoder().decode(ToolDisplay.self, from: encoded)
+        }
         if !direct { context.inputPresentation = .init(fields: ["code": .init(role: "code", language: "javascript")]) }
         context.previewOnly = fixture["previewOnly"]?.boolValue == true
         context.totalBytes = fixture["totalBytes"]?.numberValue.map(Int.init)

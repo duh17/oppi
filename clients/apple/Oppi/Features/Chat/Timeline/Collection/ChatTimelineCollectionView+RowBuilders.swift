@@ -294,7 +294,7 @@ extension ChatTimelineCollectionHost.Controller {
         isDone: Bool,
         details: JSONValue?
     ) -> CollapsedToolTimelineRowConfiguration {
-        let context = ToolPresentationBuilder.Context(
+        var context = ToolPresentationBuilder.Context(
             args: toolArgsStore?.args(for: itemID),
             details: details,
             expandedItemIDs: [],
@@ -305,6 +305,7 @@ extension ChatTimelineCollectionHost.Controller {
             startedAt: reducer?.toolStartTime(for: itemID),
             elapsedSeconds: reducer?.toolElapsed(for: itemID)
         )
+        context.display = toolArgsStore?.display(for: itemID)
         let chrome = ToolPresentationBuilder.build(
             itemID: itemID,
             tool: tool,
@@ -342,6 +343,7 @@ extension ChatTimelineCollectionHost.Controller {
         context.previewOnly = toolOutputStore?.hasCompleteOutput(for: itemID) != true
         let outputBytes = toolOutputStore?.outputByteCount(for: itemID) ?? 0
         context.totalBytes = outputBytes > 0 ? outputBytes : nil
+        context.display = toolArgsStore?.display(for: itemID)
         context.inputPresentation = toolArgsStore?.inputPresentation(for: itemID)
         context.nestedCalls = toolDetailsStore?.nestedCalls(for: itemID)
         let interactionCtx = self.interactionContext

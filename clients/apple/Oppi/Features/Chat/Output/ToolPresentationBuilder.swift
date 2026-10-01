@@ -18,6 +18,7 @@ enum ToolPresentationBuilder {
         var nestedCalls: NestedToolCalls? = nil
         var previewOnly = false
         var totalBytes: Int? = nil
+        var display: ToolDisplay? = nil
         let expandedItemIDs: Set<String>
         let fullOutput: String
         let isLoadingOutput: Bool
@@ -81,7 +82,8 @@ enum ToolPresentationBuilder {
             isExpanded: isExpanded,
             isError: isError,
             isDone: isDone,
-            outputPreview: outputPreview
+            outputPreview: outputPreview,
+            display: context.callSegments?.isEmpty != false ? context.display : nil
         )
 
         let isBuiltInFileTool = normalizedTool == "read" || normalizedTool == "write" || normalizedTool == "edit"
@@ -102,7 +104,8 @@ enum ToolPresentationBuilder {
                 isDone: isDone,
                 isLoadingOutput: context.isLoadingOutput,
                 inputPresentation: context.inputPresentation, nestedCalls: context.nestedCalls,
-                previewOnly: context.previewOnly, totalBytes: context.totalBytes
+                previewOnly: context.previewOnly, totalBytes: context.totalBytes,
+                display: context.display
             )
         } else {
             expanded = ExpandedPresentation()
@@ -267,7 +270,8 @@ enum ToolPresentationBuilder {
         isExpanded: Bool,
         isError: Bool,
         isDone: Bool,
-        outputPreview: String
+        outputPreview: String,
+        display: ToolDisplay?
     ) -> CollapsedPresentation {
         var result = CollapsedPresentation(title: tool)
 
@@ -364,6 +368,9 @@ enum ToolPresentationBuilder {
                 result.languageBadge = nil
                 result.toolNamePrefix = normalizedTool
                 result.toolNameColor = UIColor(Color.themePurple)
+            } else if let display, !display.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                result.title = display.label(fallback: tool)
+                result.toolNamePrefix = nil
             } else {
                 result.title = argsSummary.isEmpty ? tool : "\(tool) \(argsSummary)"
                 result.toolNamePrefix = tool
@@ -422,7 +429,7 @@ enum ToolPresentationBuilder {
         isDone: Bool,
         isLoadingOutput: Bool,
         inputPresentation: ToolInputPresentation?, nestedCalls: NestedToolCalls?,
-        previewOnly: Bool, totalBytes: Int?
+        previewOnly: Bool, totalBytes: Int?, display: ToolDisplay?
     ) -> ExpandedPresentation {
         let presentation = ToolContentDescriptorBuilder.build(
             tool: rawToolName,
@@ -436,7 +443,8 @@ enum ToolPresentationBuilder {
                 fullOutput: fullOutput,
                 isLoadingOutput: isLoadingOutput,
                 inputPresentation: inputPresentation, nestedCalls: nestedCalls,
-                previewOnly: previewOnly, totalBytes: totalBytes
+                previewOnly: previewOnly, totalBytes: totalBytes,
+                display: display
             )
         )
         return ExpandedPresentation(

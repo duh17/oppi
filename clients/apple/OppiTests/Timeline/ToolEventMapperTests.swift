@@ -12,7 +12,7 @@ struct ToolCallCorrelatorTests {
         let mapper = ToolCallCorrelator()
 
         let startEvent = mapper.start(sessionId: "s1", tool: "bash", args: ["command": "ls"])
-        guard case .toolStart(_, let startId, let tool, let args, _, _) = startEvent else {
+        guard case .toolStart(_, let startId, let tool, let args, _, _, _) = startEvent else {
             Issue.record("Expected toolStart")
             return
         }
@@ -41,7 +41,7 @@ struct ToolCallCorrelatorTests {
         let mapper = ToolCallCorrelator()
 
         let updateEvent = mapper.update(sessionId: "s1", tool: "edit", args: ["path": "README.md"])
-        guard case .toolUpdate(_, let updateId, let tool, let args, _, _) = updateEvent else {
+        guard case .toolUpdate(_, let updateId, let tool, let args, _, _, _) = updateEvent else {
             Issue.record("Expected toolUpdate")
             return
         }
@@ -70,14 +70,14 @@ struct ToolCallCorrelatorTests {
         let mapper = ToolCallCorrelator()
 
         let start1 = mapper.start(sessionId: "s1", tool: "bash", args: [:])
-        guard case .toolStart(_, let id1, _, _, _, _) = start1 else {
+        guard case .toolStart(_, let id1, _, _, _, _, _) = start1 else {
             Issue.record("Expected toolStart")
             return
         }
         _ = mapper.end(sessionId: "s1")
 
         let start2 = mapper.start(sessionId: "s1", tool: "read", args: [:])
-        guard case .toolStart(_, let id2, _, _, _, _) = start2 else {
+        guard case .toolStart(_, let id2, _, _, _, _, _) = start2 else {
             Issue.record("Expected toolStart")
             return
         }
@@ -120,7 +120,7 @@ struct ToolCallCorrelatorTests {
         let mapper = ToolCallCorrelator()
 
         let start = mapper.start(sessionId: "s1", tool: "bash", args: [:])
-        guard case .toolStart(_, let startId, _, _, _, _) = start else {
+        guard case .toolStart(_, let startId, _, _, _, _, _) = start else {
             Issue.record("Expected toolStart")
             return
         }
@@ -141,7 +141,7 @@ struct ToolCallCorrelatorTests {
         let mapper = ToolCallCorrelator()
 
         let start = mapper.start(sessionId: "s1", tool: "bash", args: [:])
-        guard case .toolStart(_, let startId, _, _, _, _) = start else {
+        guard case .toolStart(_, let startId, _, _, _, _, _) = start else {
             Issue.record("Expected toolStart")
             return
         }
@@ -163,7 +163,7 @@ struct ToolCallCorrelatorTests {
         let mapper = ToolCallCorrelator()
 
         let start = mapper.start(sessionId: "session-42", tool: "read", args: [:])
-        guard case .toolStart(let sid, _, _, _, _, _) = start else {
+        guard case .toolStart(let sid, _, _, _, _, _, _) = start else {
             Issue.record("Expected toolStart")
             return
         }
@@ -194,7 +194,7 @@ struct ToolCallCorrelatorTests {
         ]
 
         let event = mapper.start(sessionId: "s1", tool: "bash", args: args)
-        guard case .toolStart(_, _, _, let resultArgs, _, _) = event else {
+        guard case .toolStart(_, _, _, let resultArgs, _, _, _) = event else {
             Issue.record("Expected toolStart")
             return
         }
@@ -222,7 +222,7 @@ struct ToolCallCorrelatorTests {
         let mapper = ToolCallCorrelator()
 
         let startEvent = mapper.start(sessionId: "s1", tool: "bash", args: [:], toolCallId: "server-tc-1")
-        guard case .toolStart(_, let startId, _, _, _, _) = startEvent else {
+        guard case .toolStart(_, let startId, _, _, _, _, _) = startEvent else {
             Issue.record("Expected toolStart")
             return
         }
@@ -262,7 +262,7 @@ struct ToolCallCorrelatorTests {
         let mapper = ToolCallCorrelator()
 
         let startEvent = mapper.start(sessionId: "s1", tool: "bash", args: [:])
-        guard case .toolStart(_, let id, _, _, _, _) = startEvent else {
+        guard case .toolStart(_, let id, _, _, _, _, _) = startEvent else {
             Issue.record("Expected toolStart")
             return
         }

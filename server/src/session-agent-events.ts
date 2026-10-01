@@ -213,6 +213,7 @@ export class SessionAgentEventCoordinator {
     }
 
     const ctx = this.deps.eventProcessor.translationContext(active);
+    ctx.getToolDefinition = (name) => active.sdkBackend?.session?.getToolDefinition?.(name);
     const messages = translatePiEvent(event, ctx);
     active.streamedAssistantText = ctx.streamedAssistantText;
     active.currentThinkingContentIndex = ctx.currentThinkingContentIndex;

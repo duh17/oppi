@@ -5,10 +5,10 @@ import Foundation
 enum ToolCallDocumentBuilder {
     static func build(args: [String: JSONValue]?, inputPresentation: ToolInputPresentation?,
                       nestedCalls: NestedToolCalls?, output: String, rawOutput: String,
-                      details: JSONValue?, isDone: Bool, previewOnly: Bool = false, totalBytes: Int? = nil) -> ToolContentDescriptor.Markdown? {
+                      details: JSONValue?, isDone: Bool, previewOnly: Bool = false, totalBytes: Int? = nil, toolName: String? = nil) -> ToolContentDescriptor.Markdown? {
         var sections: [(String, String)] = []
         let hints = inputPresentation?.fields.filter { $0.value.role == "code" }.mapValues(\.language) ?? [:]
-        let input = input(args ?? [:], hints: hints)
+        let input = (toolName.map { "**Tool**\n\n" + inlineCode($0) + "\n\n" } ?? "") + input(args ?? [:], hints: hints)
         if !input.isEmpty { sections.append(("Input", input)) }
         if let nestedCalls { sections.append(("Calls", calls(nestedCalls))) }
         let body = outputBody(output, details: details)
@@ -20,8 +20,12 @@ enum ToolCallDocumentBuilder {
         let availability = previewOnly
             ? "Output preview only" + (totalBytes.map { " (\(rawOutput.utf8.count) of \($0) bytes)" } ?? "") + ". Full output may be unavailable for a stopped session.\n\n"
             : ""
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let rawCalls = nestedCalls.flatMap { try? encoder.encode($0) }.flatMap { String(data: $0, encoding: .utf8) }
+        let identity = toolName.map { "Tool\n\n" + $0 + "\n\n" } ?? ""
         return .init(text: text, filePath: details?.objectValue?["filePath"]?.stringValue,
-                     rawText: "Input\n\n" + rawArgs + "\n\nOutput\n\n" + availability + rawOutput)
+                     rawText: identity + "Input\n\n" + rawArgs + (rawCalls.map { "\n\nCalls\n\n" + $0 } ?? "") + "\n\nOutput\n\n" + availability + rawOutput)
     }
 
     private static func input(_ args: [String: JSONValue], hints: [String: String]) -> String {
@@ -56,7 +60,7 @@ enum ToolCallDocumentBuilder {
             let duration = call.durationMs.map { ms in
                 ms < 1000 ? "\(Int(ms)) ms" : String(format: "%.1f s", locale: Locale(identifier: "en_US_POSIX"), ms / 1000)
             }
-            var text = "- \(mark) \(inline(call.name)) \(inlineCode(clipped(args, cap: 120)))"
+            var text = "- \(mark) \(inline(call.display?.label(fallback: call.name) ?? call.name)) \(inlineCode(clipped(args, cap: 120)))"
             if let duration { text += " · " + duration }
             if call.status == "error", let error = call.error, !error.isEmpty {
                 text += "\n\n" + boundedFence(error, language: "text").components(separatedBy: "\n").map { "  " + $0 }.joined(separator: "\n")

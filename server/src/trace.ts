@@ -28,7 +28,12 @@ import {
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { OPPI_LIFECYCLE_CUSTOM_TYPE } from "./lifecycle-journal-extension.js";
 import { createLogger } from "./logger.js";
-import type { StyledSegment, ToolInputPresentation, NestedToolCalls } from "./types.js";
+import type {
+  StyledSegment,
+  ToolInputPresentation,
+  NestedToolCalls,
+  ToolDisplay,
+} from "./types.js";
 import { validatedNestedCalls } from "./tool-nested-calls.js";
 import {
   sessionAttachmentDetailsForToolCall,
@@ -340,6 +345,7 @@ export interface TraceEvent {
   /** Semantic collapsed presentation reconstructed for durable replay. */
   callSegments?: StyledSegment[];
   inputPresentation?: ToolInputPresentation;
+  display?: ToolDisplay;
   nestedCalls?: NestedToolCalls;
   /** For toolResult: the tool's output */
   output?: string;

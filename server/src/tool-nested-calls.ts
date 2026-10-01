@@ -1,7 +1,11 @@
-import type { NestedToolCallRecord, NestedToolCalls } from "./types.js";
+import type { NestedToolCallRecord, NestedToolCalls, ToolDisplay } from "./types.js";
+import { resolveToolDisplay } from "./mobile-renderer.js";
 
 // Mirror Pi's recorder limits. The boundary also handles imported, untrusted JSONL.
-export function validatedNestedCalls(value: unknown): NestedToolCalls | undefined {
+export function validatedNestedCalls(
+  value: unknown,
+  displayFor: (name: string) => ToolDisplay | undefined = resolveToolDisplay,
+): NestedToolCalls | undefined {
   if (!value || typeof value !== "object") return undefined;
   const record = value as Record<string, unknown>;
   if (!Array.isArray(record.calls) || typeof record.complete !== "boolean") return undefined;
@@ -27,6 +31,8 @@ export function validatedNestedCalls(value: unknown): NestedToolCalls | undefine
       name: c.name,
       status: c.status as NestedToolCallRecord["status"],
     };
+    const display = displayFor(call.name);
+    if (display) call.display = display;
     if (c.arguments && typeof c.arguments === "object" && !Array.isArray(c.arguments)) {
       try {
         const json = JSON.stringify(c.arguments);

@@ -646,6 +646,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
             // Store structured args for smart rendering
             if let presentation = event.inputPresentation { toolArgsStore.setInputPresentation(presentation, for: event.id) }
+            if let display = event.display { toolArgsStore.setDisplay(display, for: event.id) }
             if !args.isEmpty {
                 toolArgsStore.set(args, for: event.id)
             }
@@ -1116,8 +1117,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         case .notice(_, let id, let message):
             return upsertLiveWarningRow(.notice(id: id, message: message), id: id)
 
-        case .toolStart(_, let toolEventId, let tool, let args, let callSegments, let inputPresentation):
-            let metadataChanged = inputPresentation != nil && toolArgsStore.inputPresentation(for: toolEventId) != inputPresentation
+        case .toolStart(_, let toolEventId, let tool, let args, let callSegments, let inputPresentation, let display):
+            let metadataChanged = (inputPresentation != nil && toolArgsStore.inputPresentation(for: toolEventId) != inputPresentation)
+                || (display != nil && toolArgsStore.display(for: toolEventId) != display)
+            if let display { toolArgsStore.setDisplay(display, for: toolEventId) }
             if let inputPresentation { toolArgsStore.setInputPresentation(inputPresentation, for: toolEventId) }
             let startChanged = handleToolStart(
                 toolEventId: toolEventId,
@@ -1128,8 +1131,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             )
             return metadataChanged || startChanged
 
-        case .toolUpdate(_, let toolEventId, let tool, let args, let callSegments, let inputPresentation):
-            let metadataChanged = inputPresentation != nil && toolArgsStore.inputPresentation(for: toolEventId) != inputPresentation
+        case .toolUpdate(_, let toolEventId, let tool, let args, let callSegments, let inputPresentation, let display):
+            let metadataChanged = (inputPresentation != nil && toolArgsStore.inputPresentation(for: toolEventId) != inputPresentation)
+                || (display != nil && toolArgsStore.display(for: toolEventId) != display)
+            if let display { toolArgsStore.setDisplay(display, for: toolEventId) }
             if let inputPresentation { toolArgsStore.setInputPresentation(inputPresentation, for: toolEventId) }
             let startChanged = handleToolStart(
                 toolEventId: toolEventId,

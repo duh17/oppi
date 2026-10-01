@@ -232,24 +232,84 @@ struct ToolCallDocumentTests {
         #expect(!preview.contains("LAST MATCH"))
     }
 
+    @Test func displayHumanizerIsUniversalAndVerbatimTitlesArePreserved() {
+        for title in ["getActivityDetail", "get_activity_detail", "get-activity-detail"] {
+            #expect(ToolDisplay(title: title, group: "coros").label(fallback: "raw") == "coros · Get activity detail")
+        }
+        #expect(ToolDisplay(title: "getURLForId").label(fallback: "raw") == "Get url for id")
+        #expect(ToolDisplay(title: "Get Activity Detail (COROS)", group: "Coros", verbatim: true).label(fallback: "raw") == "Coros · Get Activity Detail (COROS)")
+        #expect(ToolDisplay(title: " ").label(fallback: "mcp__raw__name") == "mcp__raw__name")
+    }
+
+    @Test(arguments: [#"{"title":42,"group":false,"verbatim":"future"}"#, #"[]"#, #""invalid""#, #"null"#])
+    func malformedDisplayDoesNotRejectProtocolOrNestedRecords(_ value: String) throws {
+        let message = try ServerMessage.decode(from: "{\"type\":\"tool_start\",\"tool\":\"raw\",\"args\":{},\"display\":" + value + "}")
+        guard case .toolStart(_, _, _, _, _, let display) = message else { Issue.record("tool start"); return }
+        #expect((display?.label(fallback: "raw") ?? "raw") == "raw")
+        let data = Data(("{\"id\":\"t\",\"type\":\"toolCall\",\"timestamp\":\"2026-09-30T15:20:00Z\",\"tool\":\"raw\",\"display\":" + value + "}").utf8)
+        let trace = try JSONDecoder().decode(TraceEvent.self, from: data)
+        #expect((trace.display?.label(fallback: "raw") ?? "raw") == "raw")
+        let nestedData = Data(("{\"id\":\"n\",\"name\":\"raw\",\"status\":\"future\",\"display\":" + value + "}").utf8)
+        let nested = try JSONDecoder().decode(NestedToolCallRecord.self, from: nestedData)
+        #expect((nested.display?.label(fallback: nested.name) ?? nested.name) == "raw")
+    }
+
+    @Test @MainActor func displayFactsDriveTitlesCallsAndRawWithoutClientNameParsing() throws {
+        let fact = ToolDisplay(title: "getActivityDetail", group: "coros")
+        let rawName = "arbitrarily.named.tool"
+        var context = ToolPresentationBuilder.Context(args: ["labelId": "123"], expandedItemIDs: [], fullOutput: "ok", isLoadingOutput: false)
+        func config(_ context: ToolPresentationBuilder.Context) -> ToolTimelineRowConfiguration {
+            ToolPresentationBuilder.build(itemID: "t", tool: rawName, argsSummary: "", outputPreview: "", isError: false, isDone: true, context: context)
+        }
+        #expect(config(context).title == rawName) // Old server: no guessing from the name.
+        context.display = fact
+        #expect(config(context).title == "coros · Get activity detail")
+        let calls = NestedToolCalls(calls: [.init(id: "n", name: "nested.raw", display: fact, status: "ok")], complete: true)
+        let doc = try #require(ToolCallDocumentBuilder.build(args: context.args, inputPresentation: nil, nestedCalls: calls,
+            output: "ok", rawOutput: "ok", details: nil, isDone: true, toolName: rawName))
+        #expect(doc.text.contains("✓ coros · Get activity detail"))
+        #expect(!doc.text.contains("nested.raw"))
+        #expect(doc.text.contains(rawName)); #expect(doc.rawText?.contains(rawName) == true)
+        #expect(doc.rawText?.contains("nested.raw") == true)
+        var segmented = ToolPresentationBuilder.Context(args: nil, expandedItemIDs: [], fullOutput: "ok", isLoadingOutput: false,
+            callSegments: [.init(text: "native ", style: .bold), .init(text: "payload", style: .accent)])
+        segmented.display = fact
+        #expect(config(segmented).segmentAttributedTitle?.string == "native payload")
+    }
+
+    @Test @MainActor func displayUpdateInvalidatesExistingRowAndClearsWithStore() {
+        let reducer = TimelineReducer()
+        let correlator = ToolCallCorrelator()
+        reducer.process(correlator.start(sessionId: "s", tool: "raw", args: [:], toolCallId: "t"))
+        let fact = ToolDisplay(title: "getActivityDetail", group: "coros")
+        let previousVersion = reducer.renderVersion
+        reducer.processBatch([correlator.update(sessionId: "s", tool: "raw", args: [:], toolCallId: "t", display: fact)])
+        #expect(reducer.renderVersion > previousVersion)
+        #expect(reducer.toolArgsStore.display(for: "t") == fact)
+        #expect(reducer.items.count == 1)
+        reducer.toolArgsStore.clearAll()
+        #expect(reducer.toolArgsStore.display(for: "t") == nil)
+    }
+
     @Test @MainActor func protocolReducerHistoryAndDescriptorParity() throws {
-        let start = try ServerMessage.decode(from: #"{"type":"tool_start","tool":"arbitrary","toolCallId":"t","args":{"source":"text(1)"},"inputPresentation":{"fields":{"source":{"role":"code","language":"javascript"}}}}"#)
+        let start = try ServerMessage.decode(from: #"{"type":"tool_start","tool":"arbitrary","toolCallId":"t","args":{"source":"text(1)"},"inputPresentation":{"fields":{"source":{"role":"code","language":"javascript"}}},"display":{"title":"getActivityDetail","group":"coros"}}"#)
         let end = try ServerMessage.decode(from: #"{"type":"tool_end","tool":"arbitrary","toolCallId":"t","nestedCalls":{"calls":[{"id":"t/1","name":"nested","status":"future"}],"complete":false}}"#)
         let live = TimelineReducer(); let correlator = ToolCallCorrelator()
-        guard case .toolStart(let tool, let args, let id, let segments, let hints) = start,
+        guard case .toolStart(let tool, let args, let id, let segments, let hints, let display) = start,
               case .toolEnd(_, _, _, _, _, let nested) = end else { Issue.record("protocol case"); return }
-        live.process(correlator.start(sessionId: "s", tool: tool, args: args, toolCallId: id, callSegments: segments, inputPresentation: hints))
+        live.process(correlator.start(sessionId: "s", tool: tool, args: args, toolCallId: id, callSegments: segments, inputPresentation: hints, display: display))
         live.process(correlator.output(sessionId: "s", output: #"{"z":1,"a":2}"#, isError: false, toolCallId: "t"))
         live.process(correlator.end(sessionId: "s", toolCallId: "t"))
         live.process(correlator.end(sessionId: "s", toolCallId: "t", nestedCalls: nested))
         let history = TimelineReducer()
-        history.loadSession([.init(id: "t", type: .toolCall, timestamp: "2026-09-30T15:20:00Z", tool: tool, args: args, inputPresentation: hints),
+        history.loadSession([.init(id: "t", type: .toolCall, timestamp: "2026-09-30T15:20:00Z", tool: tool, args: args, inputPresentation: hints, display: display),
                              .init(id: "r", type: .toolResult, timestamp: "2026-09-30T15:20:01Z", output: #"{"z":1,"a":2}"#, toolCallId: "t", nestedCalls: nested)])
         func presentation(_ r: TimelineReducer) -> ToolContentPresentation {
             ToolContentDescriptorBuilder.build(tool: tool, argsSummary: "", outputPreview: "", isError: false, isDone: true,
                 context: .init(args: r.toolArgsStore.args(for: "t"), fullOutput: r.toolOutputStore.fullOutput(for: "t"),
-                               inputPresentation: r.toolArgsStore.inputPresentation(for: "t"), nestedCalls: r.toolDetailsStore.nestedCalls(for: "t")))
+                               inputPresentation: r.toolArgsStore.inputPresentation(for: "t"), nestedCalls: r.toolDetailsStore.nestedCalls(for: "t"), display: r.toolArgsStore.display(for: "t")))
         }
+        #expect(live.toolArgsStore.display(for: "t")?.label(fallback: tool) == "coros · Get activity detail")
         #expect(presentation(live) == presentation(history))
         #expect(presentation(live).copyOutputText == #"{"z":1,"a":2}"#)
         guard case .markdown(let d) = presentation(live).content else { Issue.record("document descriptor"); return }

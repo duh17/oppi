@@ -10,16 +10,16 @@ import Foundation
 final class ToolCallCorrelator {
     private var currentToolEventID: String?
 
-    func start(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil, callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil) -> AgentEvent {
+    func start(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil, callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil) -> AgentEvent {
         let id = toolCallId ?? UUID().uuidString
         currentToolEventID = id
-        return .toolStart(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments, inputPresentation: inputPresentation)
+        return .toolStart(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments, inputPresentation: inputPresentation, display: display)
     }
 
-    func update(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil, callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil) -> AgentEvent {
+    func update(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil, callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil) -> AgentEvent {
         let id = toolCallId ?? currentToolEventID ?? UUID().uuidString
         currentToolEventID = id
-        return .toolUpdate(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments, inputPresentation: inputPresentation)
+        return .toolUpdate(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments, inputPresentation: inputPresentation, display: display)
     }
 
     func output(sessionId: String, output: String, isError: Bool, toolCallId: String? = nil, mode: ToolOutputMode = .append, truncated: Bool = false, totalBytes: Int? = nil, details: JSONValue? = nil) -> AgentEvent {

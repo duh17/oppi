@@ -169,7 +169,7 @@ final class DeltaCoalescer {
         case .textDelta, .thinkingDelta, .toolOutput:
             appendAppendableEvent(event)
 
-        case .toolStart(let sessionId, let toolEventId, _, _, _, _):
+        case .toolStart(let sessionId, let toolEventId, _, _, _, _, _):
             let key = ToolStartKey(sessionId: sessionId, toolEventId: toolEventId)
             if activeToolStarts.contains(key) {
                 appendOrReplaceBufferedToolEvent(event, key: key)
@@ -179,7 +179,7 @@ final class DeltaCoalescer {
                 deliverImmediately(event)
             }
 
-        case .toolUpdate(let sessionId, let toolEventId, _, _, _, _):
+        case .toolUpdate(let sessionId, let toolEventId, _, _, _, _, _):
             let key = ToolStartKey(sessionId: sessionId, toolEventId: toolEventId)
             if activeToolStarts.contains(key) || previewToolStarts.contains(key) {
                 appendOrReplaceBufferedToolEvent(event, key: key)
@@ -558,12 +558,12 @@ final class DeltaCoalescer {
     }
 
     private func matchesBufferedToolStart(_ event: AgentEvent, key: ToolStartKey) -> Bool {
-        guard case .toolStart(let sessionId, let toolEventId, _, _, _, _) = event else { return false }
+        guard case .toolStart(let sessionId, let toolEventId, _, _, _, _, _) = event else { return false }
         return sessionId == key.sessionId && toolEventId == key.toolEventId
     }
 
     private func matchesBufferedToolUpdate(_ event: AgentEvent, key: ToolStartKey) -> Bool {
-        guard case .toolUpdate(let sessionId, let toolEventId, _, _, _, _) = event else { return false }
+        guard case .toolUpdate(let sessionId, let toolEventId, _, _, _, _, _) = event else { return false }
         return sessionId == key.sessionId && toolEventId == key.toolEventId
     }
 
@@ -591,12 +591,13 @@ final class DeltaCoalescer {
              .notice(_, let id, let message):
             return id.utf8.count + message.utf8.count
 
-        case .toolStart(_, _, let tool, let args, let callSegments, let inputPresentation),
-             .toolUpdate(_, _, let tool, let args, let callSegments, let inputPresentation):
+        case .toolStart(_, _, let tool, let args, let callSegments, let inputPresentation, let display),
+             .toolUpdate(_, _, let tool, let args, let callSegments, let inputPresentation, let display):
             return tool.utf8.count
                 + estimatedPayloadBytes(args)
                 + estimatedPayloadBytes(callSegments)
                 + (inputPresentation?.fields.reduce(0) { $0 + $1.key.utf8.count + $1.value.role.utf8.count + $1.value.language.utf8.count } ?? 0)
+                + (display?.title.utf8.count ?? 0) + (display?.group?.utf8.count ?? 0)
 
         case .toolOutput(let payload):
             return payload.output.utf8.count

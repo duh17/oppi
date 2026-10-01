@@ -92,8 +92,8 @@ enum ServerMessage: Sendable, Equatable {
     case audioStream(AudioStreamMessage)
 
     // Tool execution
-    case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil)
-    case toolUpdate(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil)
+    case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil)
+    case toolUpdate(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil)
     case toolOutput(output: String, isError: Bool, toolCallId: String?, mode: ToolOutputMode, truncated: Bool, totalBytes: Int?, details: JSONValue?)
     case toolEnd(tool: String, toolCallId: String?, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?, nestedCalls: NestedToolCalls? = nil)
 
@@ -296,7 +296,7 @@ extension ServerMessage: Decodable {
         // message_end / cache_miss / notice / text_delta / thinking_delta / audio_stream
         case role, content, assistantContent, entryId, delta, contentIndex, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior
         // tool_start / tool_update / tool_end
-        case tool, args, toolCallId, details, callSegments, resultSegments, inputPresentation, nestedCalls
+        case tool, args, toolCallId, details, callSegments, resultSegments, inputPresentation, nestedCalls, display
         // tool_output
         case output, isError, mode, truncated, totalBytes
         // turn_ack
@@ -437,7 +437,8 @@ extension ServerMessage: Decodable {
             let tcId = try c.decodeIfPresent(String.self, forKey: .toolCallId)
             let callSegs = try c.decodeIfPresent([StyledSegment].self, forKey: .callSegments)
             self = .toolStart(tool: tool, args: args, toolCallId: tcId, callSegments: callSegs,
-                              inputPresentation: try c.decodeIfPresent(ToolInputPresentation.self, forKey: .inputPresentation))
+                              inputPresentation: try c.decodeIfPresent(ToolInputPresentation.self, forKey: .inputPresentation),
+                              display: try c.decodeIfPresent(ToolDisplay.self, forKey: .display))
 
         case "tool_update":
             let tool = try c.decode(String.self, forKey: .tool)
@@ -445,7 +446,8 @@ extension ServerMessage: Decodable {
             let tcId = try c.decodeIfPresent(String.self, forKey: .toolCallId)
             let callSegs = try c.decodeIfPresent([StyledSegment].self, forKey: .callSegments)
             self = .toolUpdate(tool: tool, args: args, toolCallId: tcId, callSegments: callSegs,
-                               inputPresentation: try c.decodeIfPresent(ToolInputPresentation.self, forKey: .inputPresentation))
+                               inputPresentation: try c.decodeIfPresent(ToolInputPresentation.self, forKey: .inputPresentation),
+                               display: try c.decodeIfPresent(ToolDisplay.self, forKey: .display))
 
         case "tool_output":
             let output = try c.decode(String.self, forKey: .output)

@@ -59,6 +59,7 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
     let args: [String: JSONValue]?
     let callSegments: [StyledSegment]?
     var inputPresentation: ToolInputPresentation? = nil
+    var display: ToolDisplay? = nil
     var nestedCalls: NestedToolCalls? = nil
 
     // Tool result fields
@@ -109,7 +110,8 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         thinking: String? = nil,
         presentation: TraceEventPresentation? = nil,
         inputPresentation: ToolInputPresentation? = nil,
-        nestedCalls: NestedToolCalls? = nil
+        nestedCalls: NestedToolCalls? = nil,
+        display: ToolDisplay? = nil
     ) {
         self.id = id
         self.type = type
@@ -135,6 +137,7 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         self.presentation = presentation
         self.inputPresentation = inputPresentation
         self.nestedCalls = nestedCalls
+        self.display = display
     }
 }
 

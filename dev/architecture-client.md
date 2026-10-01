@@ -130,6 +130,8 @@ graph TD
 
 Pi's nested `tool_execution_start/update/end` events carry `parentToolCallId`. Oppi does not forward or route on that field: live nested calls can appear as separate top-level rows, while history shows the parent row with its recorded Calls section. This is a known live/history difference; Calls composition does not implement nested-row routing. The invocation-echo sanitizer also remains a name-derived output heuristic for a later migration.
 
+`ToolDisplay` is a producer identity fact stored alongside input metadata in `ToolArgsStore`. Live start/update and history calls populate it; metadata-only updates invalidate the existing row without adding a call. Its single humanizer acts on `display.title` only, never raw tool names; `verbatim` preserves a supplied title. Collapsed generic titles and Calls share that label, while existing segments and built-in rows keep their titles. Raw preserves raw identity and nested records. The producer's MCP fallback resolver lives in `server/src/mobile-renderer.ts`; Apple clients do not parse MCP names. Pi's public definitions currently omit raw MCP titles and icons, and its connection objects/serverInfo are not exposed; those standards-compliant metadata inputs need a future Pi boundary change.
+
 Files in `OppiCore` must stay platform-neutral. The CommonMark parser, its `MarkdownBlock` / `MarkdownInline` AST, and the tail-only `CommonMarkStreamingParser` cache live under `OppiCore/Formatting`; iOS and macOS paint that shared parse result in their platform UI layers. UI/device work belongs in the iOS app under `clients/apple/Oppi/**` or the Mac app under `clients/apple/OppiMac/**`.
 
 ## Mac adapter path

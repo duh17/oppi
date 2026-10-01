@@ -245,7 +245,7 @@ struct ServerMessageTests {
         {"type":"tool_start","tool":"bash","args":{"command":"ls -la"}}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolStart(let tool, let args, let toolCallId, _, _) = msg else {
+        guard case .toolStart(let tool, let args, let toolCallId, _, _, _) = msg else {
             Issue.record("Expected .toolStart")
             return
         }
@@ -259,7 +259,7 @@ struct ServerMessageTests {
         {"type":"tool_start","tool":"bash","args":{"command":"ls"},"toolCallId":"tc-42"}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolStart(let tool, _, let toolCallId, _, _) = msg else {
+        guard case .toolStart(let tool, _, let toolCallId, _, _, _) = msg else {
             Issue.record("Expected .toolStart")
             return
         }
@@ -272,7 +272,7 @@ struct ServerMessageTests {
         {"type":"tool_update","tool":"write","args":{"path":"README.md","content":"hello"},"toolCallId":"tc-update-1"}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolUpdate(let tool, let args, let toolCallId, _, _) = msg else {
+        guard case .toolUpdate(let tool, let args, let toolCallId, _, _, _) = msg else {
             Issue.record("Expected .toolUpdate")
             return
         }
@@ -888,7 +888,7 @@ struct ServerMessageTests {
     @Test func toolStartWithNullArgsDefaultsToEmpty() throws {
         let json = #"{"type":"tool_start","tool":"read"}"#
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolStart(let tool, let args, _, _, _) = msg else {
+        guard case .toolStart(let tool, let args, _, _, _, _) = msg else {
             Issue.record("Expected .toolStart")
             return
         }

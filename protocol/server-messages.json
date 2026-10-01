@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 51
+    "messageCount": 53
   },
   "messages": {
     "connected": {
@@ -640,6 +640,18 @@
         }
       }
     },
+    "tool_start_with_display": {
+      "type": "tool_start",
+      "tool": "mcp__coros__getActivityDetail",
+      "args": {
+        "labelId": "123"
+      },
+      "toolCallId": "tc-display-001",
+      "display": {
+        "title": "getActivityDetail",
+        "group": "coros"
+      }
+    },
     "tool_start_with_segments": {
       "type": "tool_start",
       "tool": "read",
@@ -681,6 +693,18 @@
         }
       }
     },
+    "tool_update_with_display": {
+      "type": "tool_update",
+      "tool": "mcp__coros__getActivityDetail",
+      "args": {
+        "labelId": "123"
+      },
+      "toolCallId": "tc-display-001",
+      "display": {
+        "title": "getActivityDetail",
+        "group": "coros"
+      }
+    },
     "tool_output": {
       "type": "tool_output",
       "output": "All 42 tests passed",
@@ -709,7 +733,11 @@
         "calls": [
           {
             "id": "tc-ext-001/1",
-            "name": "lookup",
+            "name": "mcp__coros__getActivityDetail",
+            "display": {
+              "title": "getActivityDetail",
+              "group": "coros"
+            },
             "arguments": {
               "query": "notes"
             },

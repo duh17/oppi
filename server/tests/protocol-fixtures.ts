@@ -245,6 +245,20 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     toolCallId: "tc-001",
     inputPresentation: { fields: { command: { role: "code", language: "bash" } } },
   },
+  tool_start_with_display: {
+    type: "tool_start",
+    tool: "mcp__coros__getActivityDetail",
+    args: { labelId: "123" },
+    toolCallId: "tc-display-001",
+    display: { title: "getActivityDetail", group: "coros" },
+  },
+  tool_update_with_display: {
+    type: "tool_update",
+    tool: "mcp__coros__getActivityDetail",
+    args: { labelId: "123" },
+    toolCallId: "tc-display-001",
+    display: { title: "getActivityDetail", group: "coros" },
+  },
   tool_start_with_segments: {
     type: "tool_start",
     tool: "read",
@@ -291,7 +305,8 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
       calls: [
         {
           id: "tc-ext-001/1",
-          name: "lookup",
+          name: "mcp__coros__getActivityDetail",
+          display: { title: "getActivityDetail", group: "coros" },
           arguments: { query: "notes" },
           status: "ok",
           durationMs: 1528,
@@ -614,8 +629,10 @@ const SERVER_MESSAGE_ORDER = [
   "thinking_delta",
   "audio_stream",
   "tool_start",
+  "tool_start_with_display",
   "tool_start_with_segments",
   "tool_update",
+  "tool_update_with_display",
   "tool_output",
   "tool_output_preview",
   "tool_end",

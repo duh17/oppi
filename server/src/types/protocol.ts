@@ -1,10 +1,26 @@
-import type { NestedToolCalls } from "@earendil-works/pi-ai";
+import type {
+  NestedToolCallRecord as PiNestedToolCallRecord,
+  NestedToolCalls as PiNestedToolCalls,
+} from "@earendil-works/pi-ai";
 import type { GitStatus } from "./git.js";
 import type { Session, SessionSummary } from "./session.js";
 import type { StyledSegment } from "./shared.js";
 import type { ThinkingLevel } from "../thinking-levels.js";
 
-export type { NestedToolCallRecord, NestedToolCalls } from "@earendil-works/pi-ai";
+/** Producer-resolved identity; raw tool names remain separate. */
+export interface ToolDisplay {
+  title: string;
+  group?: string;
+  /** Preserve an actual provider title verbatim rather than humanizing a name. */
+  verbatim?: boolean;
+}
+
+export interface NestedToolCallRecord extends PiNestedToolCallRecord {
+  display?: ToolDisplay;
+}
+export interface NestedToolCalls extends Omit<PiNestedToolCalls, "calls"> {
+  calls: NestedToolCallRecord[];
+}
 
 /** How clients present a tool call's arguments. */
 export interface ToolInputPresentation {
@@ -459,6 +475,7 @@ export type ServerMessage = // ── Connection ──
     | {
         type: "tool_start";
         inputPresentation?: ToolInputPresentation;
+        display?: ToolDisplay;
         tool: string;
         args: Record<string, unknown>;
         toolCallId?: string;
@@ -467,6 +484,7 @@ export type ServerMessage = // ── Connection ──
     | {
         type: "tool_update";
         inputPresentation?: ToolInputPresentation;
+        display?: ToolDisplay;
         tool: string;
         args: Record<string, unknown>;
         toolCallId?: string;
