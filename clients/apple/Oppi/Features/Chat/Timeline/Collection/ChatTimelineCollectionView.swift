@@ -1646,10 +1646,16 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 fetchToolOutput = defaultFetch
             #endif
 
+            // The configuration's metadata stores need not be the reducer's.
+            // Resolve only facts, from the same stores that paint the row.
+            let outputPresentation = BuiltInToolFacts.resolve(tool: tool, context: .init(
+                inputPresentation: toolArgsStore?.inputPresentation(for: itemID),
+                outputPresentation: toolArgsStore?.outputPresentation(for: itemID)
+            )).outputPresentation
             let request = ExpandedToolOutputLoader.LoadRequest(
                 itemID: itemID,
                 tool: tool,
-                outputPresentation: reducer?.resolvedToolOutputPresentation(for: itemID),
+                outputPresentation: outputPresentation,
                 outputByteCount: outputByteCount,
                 attempt: attempt,
                 hasExistingOutput: {

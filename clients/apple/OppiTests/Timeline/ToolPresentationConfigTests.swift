@@ -1060,6 +1060,25 @@ struct ToolPresentationConfigTests {
         #expect(config.glyph == "magnifyingglass")
     }
 
+    @Test(arguments: [false, true])
+    func expandedGenericPreviewUsesProducerTotalWhenOutputStoreIsMissing(hasDeclaredTotal: Bool) throws {
+        let harness = makeTimelineHarness(sessionId: "session-preview")
+        let id = "generic-preview"
+        harness.reducer.expandedItemIDs.insert(id)
+        harness.toolArgsStore.setOutputAvailability(.init(complete: false,
+            totalBytes: hasDeclaredTotal ? 200_000 : nil, source: "sidecar"), for: id)
+        let item = ChatItem.toolCall(id: id, tool: "inspect_records", argsSummary: "",
+            outputPreview: "tail", outputByteCount: 0, isError: false, isDone: true)
+        let config = try #require(timelineToolRowConfiguration(from:
+            harness.coordinator.toolRowConfiguration(itemID: id, item: item)))
+        guard case .markdown(let text, _) = config.expandedContent else {
+            Issue.record("Expected generic preview document"); return
+        }
+        #expect(text.contains(hasDeclaredTotal
+            ? "Output preview only (4 of 200000 bytes)" : "Output preview only."))
+        #expect(!text.contains("of 0 bytes"))
+    }
+
     @Test func expandedBashToolConfigurationPrefersUnwrappedOutput() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
         harness.reducer.expandedItemIDs.insert("bash-1")

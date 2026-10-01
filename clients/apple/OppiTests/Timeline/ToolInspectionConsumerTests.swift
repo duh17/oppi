@@ -111,6 +111,16 @@ struct ToolInspectionConsumerTests {
         #expect(inspection.outlineSummary(argsSummary: "", fallback: "$ ls -la / retained path") == "$ ls -la / retained path")
     }
 
+    @Test func outlineDisplayPathKeepsCanonicalFilePathUntouched() throws {
+        let inspection = ToolContentDescriptorBuilder.inspect(tool: "read",
+            context: .init(args: ["path": "/Users/example/workspace/Example.swift"]),
+            includeOutput: false, includeFileContent: false)
+        let path = try #require(inspection.file?.path)
+        #expect(inspection.outlineSummary(argsSummary: "", displayPath: path.shortenedPath)
+            == "read ~/workspace/Example.swift")
+        #expect(inspection.file?.path == "/Users/example/workspace/Example.swift")
+    }
+
     @Test func arbitraryInteractionStaysVisibleAndNonBuiltInNamesStayGeneric() throws {
         let reducer = TimelineReducer()
         reducer.process(.toolStart(sessionId: "s", toolEventId: "q", tool: "choose_next", args: [:], outputPresentation: .init(kind: "interactive")))

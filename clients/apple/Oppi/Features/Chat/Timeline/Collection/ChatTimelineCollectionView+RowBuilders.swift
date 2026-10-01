@@ -253,6 +253,7 @@ extension ChatTimelineCollectionHost.Controller {
 
         let details = toolDetailsStore?.details(for: itemID)
         let isExpanded = reducer?.expandedItemIDs.contains(itemID) == true
+        let outputBytes = toolOutputStore?.outputByteCount(for: itemID) ?? 0
         let inspection = ToolContentDescriptorBuilder.inspect(tool: tool, argsSummary: argsSummary,
             outputPreview: outputPreview, isError: isError, isDone: isDone,
             context: .init(args: toolArgsStore?.args(for: itemID), details: details,
@@ -260,7 +261,7 @@ extension ChatTimelineCollectionHost.Controller {
                 isLoadingOutput: toolOutputLoader.isLoading(itemID), inputPresentation: toolArgsStore?.inputPresentation(for: itemID),
                 nestedCalls: toolDetailsStore?.nestedCalls(for: itemID),
                 previewOnly: toolOutputStore?.hasCompleteOutput(for: itemID) != true,
-                totalBytes: toolOutputStore?.outputByteCount(for: itemID), display: toolArgsStore?.display(for: itemID),
+                totalBytes: outputBytes > 0 ? outputBytes : nil, display: toolArgsStore?.display(for: itemID),
                 outputPresentation: toolArgsStore?.outputPresentation(for: itemID), outputAvailability: toolArgsStore?.outputAvailability(for: itemID)),
             includeOutput: isExpanded)
         let hasCanonicalAudioDetails = inspection.audioOutput

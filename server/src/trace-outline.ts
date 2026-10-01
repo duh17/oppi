@@ -55,6 +55,12 @@ export interface TraceOutlineResult {
   metrics: TraceOutlineMetrics;
 }
 
+// Entry-local semantic hints survive optional content eviction. This is only
+// an outline intermediate, not a protocol field or another identity owner.
+type OutlineSourceEntry = SessionEntry & {
+  resultHints?: { outputPresentation?: ToolOutputPresentation; server?: string; tool?: string };
+};
+
 interface TraceOutlineSource {
   path: string;
   size: number;
@@ -108,7 +114,7 @@ export async function readSessionTraceOutlineFromFiles(
 ): Promise<TraceOutlineResult> {
   const sources = traceOutlineSources(jsonlPaths);
   const jsonlBytes = sources.reduce((sum, source) => sum + source.size, 0);
-  const sessionEntries: SessionEntry[] = [];
+  const sessionEntries: OutlineSourceEntry[] = [];
   const entries: TraceOutlineEntry[] = [];
   const toolRowsByCallId = new Map<string, TraceOutlineEntry>();
   // Bounds retained details across all branches and optional response args
@@ -133,7 +139,7 @@ export async function readSessionTraceOutlineFromFiles(
       }
 
       const parseStart = performance.now();
-      const entry = parseOutlineEntryLine(trimmed, metadataBudget);
+      const entry = parseOutlineEntryLine(trimmed, metadataBudget, options.mobileRenderers);
       parseMs += elapsed(parseStart);
       if (!entry) {
         continue;
@@ -220,11 +226,18 @@ function appendRendererVersion(base: string, rendererVersion: string): string {
 function parseOutlineEntryLine(
   line: string,
   metadataBudget: OutlineMetadataBudget,
-): SessionEntry | null {
+  mobileRenderers: MobileRendererRegistry,
+): OutlineSourceEntry | null {
   if (line.includes('"role":"toolResult"')) {
     const toolCallId = readJsonStringField(line, "toolCallId");
     if (!toolCallId) return null;
+    const result = retainResultDetails(
+      readObjectField(line, "details"),
+      metadataBudget,
+      mobileRenderers,
+    );
     return {
+      resultHints: result.hints,
       type: "message",
       id: readJsonStringField(line, "id") ?? `result-${toolCallId}`,
       parentId: readJsonNullableStringField(line, "parentId"),
@@ -235,21 +248,24 @@ function parseOutlineEntryLine(
         toolCallId,
         toolName: readJsonStringField(line, "toolName"),
         isError: line.includes('"isError":true'),
-        details: takeOutlineMetadata(readBoundedObjectField(line, "details"), metadataBudget),
+        details: result.details,
       },
     };
   }
 
   try {
-    const entry = JSON.parse(line) as SessionEntry;
+    const entry = JSON.parse(line) as OutlineSourceEntry;
     // Noncompact JSONL takes the general parser. Apply the same retained-detail
     // budget here; whitespace must not bypass the lightweight outline contract.
     if (entry.message?.role === "toolResult") {
-      entry.message.content = "";
-      entry.message.details = takeOutlineMetadata(
+      const result = retainResultDetails(
         asRecord(entry.message.details) ?? undefined,
         metadataBudget,
+        mobileRenderers,
       );
+      entry.message.content = "";
+      entry.message.details = result.details;
+      entry.resultHints = result.hints;
     }
     return entry;
   } catch {
@@ -257,16 +273,16 @@ function parseOutlineEntryLine(
   }
 }
 
-// Tool-result text can be megabytes. Read only a bounded details object, rather
-// than parsing or retaining result content in the lightweight outline.
-function readBoundedObjectField(line: string, field: string): Record<string, unknown> | undefined {
+// Decode details separately, never the potentially megabytes-long result text.
+// Details are temporary: derive semantic hints, then retain only budgeted fields.
+function readObjectField(line: string, field: string): Record<string, unknown> | undefined {
   const match = new RegExp(`"${field}"\\s*:\\s*\\{`).exec(line);
   if (!match) return undefined;
   const start = match.index + match[0].lastIndexOf("{");
   let depth = 0,
     inString = false,
     escaped = false;
-  for (let index = start; index < line.length && index - start < MAX_ROW_METADATA_BYTES; index++) {
+  for (let index = start; index < line.length; index++) {
     const ch = line[index];
     if (inString) {
       if (escaped) escaped = false;
@@ -283,6 +299,47 @@ function readBoundedObjectField(line: string, field: string): Record<string, unk
     }
   }
   return undefined;
+}
+
+function retainResultDetails(
+  details: Record<string, unknown> | undefined,
+  budget: OutlineMetadataBudget,
+  registry: MobileRendererRegistry,
+): {
+  hints: NonNullable<OutlineSourceEntry["resultHints"]>;
+  details: Record<string, unknown> | undefined;
+} {
+  // Only the registry interprets content overrides; no declaration means an
+  // untrusted result cannot grant setting authority. Projection attaches it.
+  const hints = {
+    outputPresentation: registry.outputPresentationOverride(details),
+    server: boundedDisplayLabel(details?.server),
+    tool: boundedDisplayLabel(details?.tool),
+  };
+  const selected = details && {
+    ...(typeof details.patch === "string" ? { patch: details.patch } : {}),
+    ...(typeof details.diff === "string" ? { diff: details.diff } : {}),
+    ...(details.kind === "audio_presentation" ? { kind: details.kind, audio: details.audio } : {}),
+    ...(details.image ? { image: details.image } : {}),
+    ...(Array.isArray(details.media) ? { media: details.media } : {}),
+  };
+  return {
+    hints,
+    details:
+      selected && Object.keys(selected).length ? takeOutlineMetadata(selected, budget) : undefined,
+  };
+}
+
+function boundedDisplayLabel(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return boundedText(value);
+}
+
+function boundedText(value: string): string {
+  const text =
+    value.length > MAX_SUMMARY_CHARS ? value.slice(0, MAX_SUMMARY_CHARS - 1) + "…" : value;
+  // Copy the small value: a sliced prefix must not pin a huge details string.
+  return Buffer.from(text, "utf8").toString("utf8");
 }
 
 function readJsonStringField(line: string, field: string): string | undefined {
@@ -430,7 +487,7 @@ function projectEntry(
 }
 
 function projectMessageEntry(
-  entry: SessionEntry,
+  entry: OutlineSourceEntry,
   entries: TraceOutlineEntry[],
   toolRowsByCallId: Map<string, TraceOutlineEntry>,
   timestamp: string,
@@ -476,20 +533,10 @@ function projectMessageEntry(
         row.isError = message.isError === true;
         row.outputPresentation = mobileRenderers.outputPresentation(
           row.tool ?? "",
-          message.details,
+          entry.resultHints,
         );
-        const details = asRecord(message.details);
-        // Diff selection is shared with the client row. Other large details stay out.
-        row.details = details && {
-          ...(typeof details.patch === "string" ? { patch: details.patch } : {}),
-          ...(typeof details.diff === "string" ? { diff: details.diff } : {}),
-          ...(details.kind === "audio_presentation"
-            ? { kind: details.kind, audio: details.audio }
-            : {}),
-          ...(details.image ? { image: details.image } : {}),
-          ...(Array.isArray(details.media) ? { media: details.media } : {}),
-        };
-        row.display = resolveToolDisplay(row.tool ?? "", undefined, message.details);
+        row.details = asRecord(message.details) ?? undefined;
+        row.display = resolveToolDisplay(row.tool ?? "", undefined, entry.resultHints);
       }
       return;
     }
@@ -608,11 +655,13 @@ function projectAssistantEntry(
         kind: "tool",
         tool,
         summary:
-          mobileRenderers
-            .renderCall(tool, args ?? {})
-            ?.map((segment) => segment.text)
-            .join("") ??
-          (summarizeArgs(args ?? {}) ? `${tool}: ${summarizeArgs(args ?? {})}` : tool),
+          previewText(
+            mobileRenderers
+              .renderCall(tool, args ?? {})
+              ?.map((segment) => segment.text)
+              .join("") ??
+              (summarizeArgs(args ?? {}) ? `${tool}: ${summarizeArgs(args ?? {})}` : tool),
+          ) ?? "",
         args: outlineArguments(tool, args, mobileRenderers, metadataBudget),
         display: resolveToolDisplay(tool),
         inputPresentation: mobileRenderers.inputPresentation(tool),
@@ -661,8 +710,7 @@ function extractText(content: unknown): string {
 function previewText(rawText: string): string | undefined {
   const normalized = rawText.replace(/\s+/g, " ").trim();
   if (!normalized) return undefined;
-  if (normalized.length <= MAX_SUMMARY_CHARS) return normalized;
-  return `${normalized.slice(0, MAX_SUMMARY_CHARS - 1)}…`;
+  return boundedText(normalized);
 }
 
 function summarizeArgs(args: Record<string, unknown>): string {

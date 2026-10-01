@@ -101,6 +101,13 @@ export class MobileRendererRegistry {
     );
   }
 
+  /** Content overrides can be retained before large details are discarded.
+   * Declaration-owned effects are attached later, once the tool is associated.
+   */
+  outputPresentationOverride(details: unknown): ToolOutputPresentation | undefined {
+    return resolveOutputPresentation(undefined, details);
+  }
+
   /** Shared live/history projection of Pi result availability. Never expose a path. */
   outputAvailability(details: unknown): ToolOutputAvailability {
     return outputAvailability(details);

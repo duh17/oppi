@@ -134,6 +134,114 @@ describe("trace outline projection", () => {
     },
   );
 
+  it.each([false, true])(
+    "preserves result semantics after content budget eviction (spaced roles: %s)",
+    async (spacedRoles) => {
+      const registry = new MobileRendererRegistry();
+      registry.register("runner", {
+        inputPresentation: { fields: { script: { role: "command", language: "shell" } } },
+        outputPresentation: { kind: "terminal" },
+        renderCall: () => [{ text: "$ echo hello" }],
+        renderResult: () => [],
+      });
+      const lines = [
+        messageEntry("a", null, "assistant", [
+          { type: "toolCall", id: "run", name: "runner", arguments: { script: "echo hello" } },
+          {
+            type: "toolCall",
+            id: "expanded",
+            name: "runner",
+            arguments: { script: "echo formatted" },
+          },
+          { type: "toolCall", id: "voice", name: "voice_reply_mode", arguments: {} },
+        ]),
+      ];
+      // These off-branch details still consume the retained-content budget.
+      for (let index = 0; index < 20; index++) {
+        lines.push(
+          messageEntry(`fill-${index}`, index ? `fill-${index - 1}` : "a", "toolResult", "", {
+            toolCallId: `unused-${index}`,
+            details: { diff: "x".repeat(4000) },
+          }),
+        );
+      }
+      // Deliberately omit toolName: declaration authority is attached at row association.
+      lines.push(
+        messageEntry("run-result", "a", "toolResult", "text".repeat(100000), {
+          toolCallId: "run",
+          details: {
+            patch: "p".repeat(5000),
+            ignored: "NOT_RETAINED".repeat(10000),
+            outputPresentation: { kind: "structured", settingEffect: "voiceReplyMode" },
+            server: "Producer server",
+            tool: "Producer action",
+          },
+        }),
+      );
+      lines.push(
+        messageEntry("expanded-result", "run-result", "toolResult", "", {
+          toolCallId: "expanded",
+          details: {
+            expandedText: "FORMATTED_BODY".repeat(10000),
+            presentationFormat: "markdown",
+          },
+        }),
+      );
+      lines.push(
+        messageEntry("voice-result", "expanded-result", "toolResult", "done", {
+          toolCallId: "voice",
+          details: { outputPresentation: { kind: "terminal" } },
+        }),
+      );
+      const result = await readSessionTraceOutlineFromFiles(tempJsonlFiles([lines], spacedRoles), {
+        mobileRenderers: registry,
+      });
+      expect(result.outline.entries).toHaveLength(3);
+      expect(result.outline.entries[0]).toMatchObject({
+        outputPresentation: { kind: "structured" },
+        display: { title: "Producer action", group: "Producer server" },
+      });
+      expect(result.outline.entries[0]?.outputPresentation?.settingEffect).toBeUndefined();
+      expect(result.outline.entries[0]?.details).toBeUndefined();
+      expect(result.outline.entries[1]?.outputPresentation).toEqual({ kind: "structured" });
+      expect(result.outline.entries[2]?.outputPresentation).toEqual({
+        kind: "terminal",
+        settingEffect: "voiceReplyMode",
+      });
+      expect(JSON.stringify(result.outline)).not.toContain("NOT_RETAINED");
+      expect(JSON.stringify(result.outline)).not.toContain("FORMATTED_BODY");
+      expect(Buffer.byteLength(JSON.stringify(result.outline))).toBeLessThan(8 * 1024);
+    },
+  );
+
+  it("bounds sidecar summaries and result display labels", async () => {
+    const registry = new MobileRendererRegistry();
+    registry.register("verbose_tool", {
+      renderCall: () => [{ text: "A long summary\n" + "x".repeat(4000) }],
+      renderResult: () => [],
+    });
+    const result = await readSessionTraceOutlineFromFiles(
+      tempJsonlFiles([
+        [
+          messageEntry("a", null, "assistant", [
+            { type: "toolCall", id: "t", name: "verbose_tool", arguments: {} },
+          ]),
+          messageEntry("r", "a", "toolResult", "", {
+            toolCallId: "t",
+            details: { server: "s".repeat(10000), tool: "t".repeat(10000) },
+          }),
+        ],
+      ]),
+      { mobileRenderers: registry },
+    );
+    const row = result.outline.entries[0];
+    expect(row?.summary.startsWith("A long summary ")).toBe(true);
+    expect(row?.summary.length).toBe(160);
+    expect(row?.summary).not.toContain("\n");
+    expect(row?.display?.title.length).toBe(160);
+    expect(row?.display?.group?.length).toBe(160);
+  });
+
   it("returns an explicit empty snapshot when no trace files exist", async () => {
     const result = await readSessionTraceOutlineFromFiles([], {
       mobileRenderers: new MobileRendererRegistry(),

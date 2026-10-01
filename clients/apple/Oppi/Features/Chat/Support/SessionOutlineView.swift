@@ -222,8 +222,8 @@ struct SessionOutlineView: View {
 
         allEntries = items.map { item in
             let isCompaction = Self.isCompactionEvent(item)
-            let summary = outlineSummary(for: item)
             let inspection = inspection(for: item)
+            let summary = outlineSummary(for: item, inspection: inspection)
             let diffStats = inspection?.file?.stats
 
             let passesAllFilter: Bool
@@ -351,7 +351,8 @@ struct SessionOutlineView: View {
             kind: OutlineEntryKind(rawValue: snapshot.kind) ?? .system,
             tool: snapshot.tool,
             timestamp: outlineTimestamp(snapshot.timestamp),
-            summary: inspection?.outlineSummary(argsSummary: "", fallback: snapshot.summary) ?? snapshot.summary,
+            summary: inspection?.outlineSummary(argsSummary: "", fallback: snapshot.summary,
+                displayPath: inspection?.file?.path?.shortenedPath) ?? snapshot.summary,
             diffStats: inspection?.file?.stats,
             diffRequested: inspection?.file?.provenance == .requested,
             glyph: inspection?.glyph,
@@ -1004,7 +1005,7 @@ struct SessionOutlineView: View {
 
     // MARK: - Summary Text
 
-    private func outlineSummary(for item: ChatItem) -> String {
+    private func outlineSummary(for item: ChatItem, inspection: ToolInspection?) -> String {
         switch item {
         case .userMessage(_, let text, _, _):
             return String(text.prefix(120))
@@ -1021,7 +1022,8 @@ struct SessionOutlineView: View {
             return String(clean.prefix(80))
 
         case .toolCall(_, _, let argsSummary, _, _, _, _):
-            return inspection(for: item)?.outlineSummary(argsSummary: argsSummary) ?? argsSummary
+            return inspection?.outlineSummary(argsSummary: argsSummary,
+                displayPath: inspection?.file?.path?.shortenedPath) ?? argsSummary
 
         case .systemEvent(_, let msg), .cacheMiss(_, let msg), .notice(_, let msg):
             return msg
@@ -1041,7 +1043,7 @@ struct SessionOutlineView: View {
             context: .init(args: toolArgsStore.args(for: id), details: toolDetails(id),
                 inputPresentation: toolArgsStore.inputPresentation(for: id), display: toolArgsStore.display(for: id),
                 outputPresentation: toolArgsStore.outputPresentation(for: id), outputAvailability: toolArgsStore.outputAvailability(for: id)),
-            includeOutput: false)
+            includeOutput: false, includeFileContent: false)
     }
 
     // MARK: - Classification Helpers

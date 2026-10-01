@@ -343,7 +343,8 @@ struct ToolOutputFetchTests {
         })
     }
 
-    @Test func readToolRetriesFetchWhenStreamingInitiallyReturnsEmptyOutput() async {
+    @Test(arguments: ["read", "load_source"])
+    func readToolRetriesFetchWhenStreamingInitiallyReturnsEmptyOutput(tool: String) async {
         actor Attempts {
             var value = 0
             func next() -> Int {
@@ -365,7 +366,7 @@ struct ToolOutputFetchTests {
             items: [
                 .toolCall(
                     id: toolID,
-                    tool: "read",
+                    tool: tool,
                     argsSummary: "path: src/main.swift",
                     outputPreview: "",
                     outputByteCount: 0,
