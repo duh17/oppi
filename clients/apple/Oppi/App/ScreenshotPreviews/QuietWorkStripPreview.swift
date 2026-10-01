@@ -18,6 +18,7 @@ struct QuietWorkStripPreview: View {
                 WorkStripPreviewCard(style: .icons)
             }
             .padding(16)
+            .foregroundStyle(.themeFg)
         }
         .background(Color.themeBg.ignoresSafeArea())
         .accessibilityIdentifier("screenshot.ready")
