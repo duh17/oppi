@@ -407,24 +407,24 @@ Expanded output uses this order:
 
 1. `details.expandedText` plus `details.presentationFormat`
 2. the tool's text, parsed as JSON (including a text preamble followed by JSON), a unified diff, Markdown, or fenced plain text
-3. ANSI-stripped `details.tuiRender.expandedText`, only when the first two sources are empty
+3. ANSI-stripped `details.tuiRender.expandedText`, a live-only fallback when the first two sources are empty; history does not generate TUI snapshots
 4. the waiting status while the tool runs
 
-JSON objects become form tables in wire key order. Scalar object arrays become tables when they have at most eight columns. Other arrays become lists of forms. JSON strings, MCP content wrappers, and Promise.allSettled results are unwrapped without tool-name checks. Rendered previews are bounded; the full-screen reader's **Raw** toggle retains all arguments, including null/empty fields, and raw output. Double-tap opens the same document with a **Rendered / Raw** toggle. Copy output still copies the tool's raw text.
+JSON objects become form tables in wire key order. Scalar object arrays become tables when they have at most eight columns. Other arrays become lists of forms. JSON strings, MCP content wrappers, and Promise.allSettled results are unwrapped without tool-name checks. Rendered previews are bounded; the full-screen reader's **Raw** toggle retains all arguments, including null/empty fields, and available raw output. Raw identifies output previews and their total byte count when known. In an active session, Raw loads the full-output sidecar when available; a stopped session or unavailable sidecar keeps the preview notice. Double-tap opens the same document with a **Rendered / Raw** toggle. Copy output still copies the tool's raw text.
 
 Sidecars provide short collapsed summaries and optional input hints. Each tool renderer can declare source-code fields:
 
 ```typescript
 export default {
   custom: {
-    inputPresentation: { codeFields: { source: "python" } },
+    inputPresentation: { fields: { source: { role: "code", language: "python" } } },
     renderCall(args) { return [{ text: "custom ", style: "bold" }]; },
     renderResult(details, isError) { return []; },
   },
 };
 ```
 
-Oppi sends `inputPresentation` on live tool start/update and history tool calls. The built-in codemode hint declares `code` as JavaScript. Invalid hints are omitted and logged. Segment style is a closed semantic set: `bold`, `muted`, `dim`, `accent`, `success`, `warning`, or `error`. Invalid sidecar segments are also omitted and logged. Put rich output in `details.expandedText`, not sidecar summary lines.
+Oppi sends `inputPresentation` on live tool start/update and history tool calls. History resolves hints against the current renderer registry, not a saved per-call declaration. The built-in codemode hint declares `code` as JavaScript. Invalid hints are omitted and logged. Segment style is a closed semantic set: `bold`, `muted`, `dim`, `accent`, `success`, `warning`, or `error`. Invalid sidecar segments are also omitted and logged. Put rich output in `details.expandedText`, not sidecar summary lines.
 
 Mirror mode uses the same semantic request payloads from an interactive terminal Pi process. Mirror-specific first-wins dialog behavior lives in [`oppi-mirror.md`](oppi-mirror.md#extension-ui-compatibility-matrix).
 

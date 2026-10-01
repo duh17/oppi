@@ -85,6 +85,8 @@ final class FullScreenCodeViewController: UIViewController {
     private var navigationActions: [FullScreenViewerNavigationAction]
     private var navigationActionPresentation: [FullScreenViewerNavigationAction.Presentation]
     private var showSource = false
+    private var completeRawText: String?
+    private var rawSidecarTask: Task<Void, Never>?
     private var copyButton: UIBarButtonItem?
     private var floatingViewingOptionsButton: UIButton?
     private weak var viewingOptionsController: FullScreenViewingOptionsController?
@@ -246,6 +248,7 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     deinit {
+        rawSidecarTask?.cancel()
         liveSourceObserverCleanup?.cancel()
         NotificationCenter.default.removeObserver(self, name: .oppiThemeDidChange, object: nil)
     }
@@ -682,7 +685,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .code(let text, _, _, let startLine):
             textAndFirstLine = (text, startLine)
         case .plainText(let text, _),
-             .markdown(let text, _, _, _),
+             .markdown(let text, _, _, _, _),
              .html(let text, _),
              .latex(let text, _),
              .orgMode(let text, _),
@@ -1368,7 +1371,7 @@ final class FullScreenCodeViewController: UIViewController {
                     filePath: document.filePath
                 )
             )
-        case .markdown(let text, let filePath, let resourceAccess, _):
+        case .markdown(let text, let filePath, let resourceAccess, _, _):
             let body = NativeFullScreenMarkdownBody(
                 content: text,
                 themeID: themeID,
@@ -1617,7 +1620,7 @@ final class FullScreenCodeViewController: UIViewController {
         themeID: ThemeID
     ) -> UIView {
         switch bodyContent(for: snapshot) {
-        case .markdown(let text, let filePath, let resourceAccess, _):
+        case .markdown(let text, let filePath, let resourceAccess, _, _):
             let body = makeLiveSourceMarkdownBody(
                 text: text,
                 filePath: filePath,
@@ -1643,7 +1646,7 @@ final class FullScreenCodeViewController: UIViewController {
     ) {
         let palette = themeID.palette
         switch bodyContent(for: snapshot) {
-        case .markdown(let text, let filePath, let resourceAccess, _):
+        case .markdown(let text, let filePath, let resourceAccess, _, _):
             liveSourceBodyView = nil
             liveSourceHTMLBodyView = nil
             if let body = liveSourceMarkdownBodyView, installedBodyView === body {
@@ -1703,7 +1706,7 @@ final class FullScreenCodeViewController: UIViewController {
         let palette = themeID.palette
         if snapshot.isDone {
             let presentation = makePresentation()
-            if case .markdown(let text, let filePath, let resourceAccess, _) = presentation.bodyContent,
+            if case .markdown(let text, let filePath, let resourceAccess, _, _) = presentation.bodyContent,
                let body = liveSourceMarkdownBodyView,
                installedBodyView === body {
                 // Flush final bytes and final source context through the shared
@@ -1764,11 +1767,11 @@ final class FullScreenCodeViewController: UIViewController {
         fallbackFilePath: String?
     ) -> FullScreenCodeContent {
         switch content {
-        case .markdown(_, let filePath, let resourceAccess, let rawText):
+        case .markdown(_, let filePath, let resourceAccess, let rawText, let sidecarSource):
             return .markdown(
                 content: text,
                 filePath: filePath ?? fallbackFilePath,
-                resourceAccess: resourceAccess, rawText: rawText
+                resourceAccess: resourceAccess, rawText: rawText, sidecarSource: sidecarSource
             )
         case .html(_, let filePath):
             return .html(content: text, filePath: filePath ?? fallbackFilePath)
@@ -1783,8 +1786,8 @@ final class FullScreenCodeViewController: UIViewController {
 
     private func bodyContent(for content: FullScreenCodeContent) -> FullScreenCodeContent {
         if showSource {
-            if case .markdown(let text, let filePath, _, let rawText) = content {
-                return .plainText(content: rawText ?? text, filePath: filePath)
+            if case .markdown(let text, let filePath, _, let rawText, _) = content {
+                return .plainText(content: completeRawText ?? rawText ?? text, filePath: filePath)
             }
             if case .html(let text, let filePath) = content {
                 return .code(content: text, language: "html", filePath: filePath, startLine: 1)
@@ -1812,7 +1815,7 @@ final class FullScreenCodeViewController: UIViewController {
 
     private func sourceToggleTitle(for content: FullScreenCodeContent) -> String? {
         switch content {
-        case .markdown(_, _, _, let rawText):
+        case .markdown(_, _, _, let rawText, _):
             if rawText != nil { return showSource ? String(localized: "Rendered") : String(localized: "Raw") }
             return showSource ? String(localized: "Reader") : String(localized: "Source")
         case .html:
@@ -2019,7 +2022,7 @@ final class FullScreenCodeViewController: UIViewController {
             return text
         case .diff(let document):
             return document.copyText
-        case .markdown(let text, _, _, _):
+        case .markdown(let text, _, _, _, _):
             return text
         case .html(let text, _):
             return text
@@ -2143,7 +2146,7 @@ final class FullScreenCodeViewController: UIViewController {
         switch content {
         case .mermaid(let text, let filePath): return .mermaid(text, fileName: filePath)
         case .latex(let text, let filePath): return .latex(text, fileName: filePath)
-        case .markdown(let text, let filePath, _, _): return .markdown(text, fileName: filePath)
+        case .markdown(let text, let filePath, _, _, _): return .markdown(text, fileName: filePath)
         case .orgMode(let text, let filePath): return .orgMode(text, fileName: filePath)
         case .html(let text, let filePath): return .html(text, fileName: filePath)
         case .graphviz(let text, let filePath): return .code(text, language: "dot", fileName: filePath)
@@ -2171,6 +2174,38 @@ final class FullScreenCodeViewController: UIViewController {
         }
     }
 
+    private func loadRawSidecarIfNeeded() {
+        guard rawSidecarTask == nil, completeRawText == nil,
+              case .markdown(_, _, _, let rawText, let source) = currentSemanticContent(),
+              let rawText, let source,
+              let outputMarker = rawText.range(of: "\n\nOutput\n\n") else { return }
+        let inputPrefix = String(rawText[..<outputMarker.upperBound])
+        // Publish complete Raw only after every byte arrives. Missing windows,
+        // cancellation and stopped-session 404s retain the explicit preview.
+        rawSidecarTask = Task { [weak self] in
+            defer { self?.rawSidecarTask = nil }
+            do {
+                guard let first = try await source.loadFirst() else { return }
+                var output = first.text
+                var offset = first.endByteOffset
+                let total = first.totalBytes
+                while offset < total {
+                    guard !Task.isCancelled,
+                          let next = try await source.loadNext(offset),
+                          next.endByteOffset > offset, next.totalBytes == total else { return }
+                    output += next.text
+                    offset = next.endByteOffset
+                }
+                guard !Task.isCancelled, output.utf8.count == total else { return }
+                self?.completeRawText = inputPrefix + output
+                guard let self, self.showSource, let host = self.contentHostController else { return }
+                self.installBodyView(self.makeBodyView(for: self.makePresentation().bodyContent, themeID: self.bodyThemeID), on: host)
+            } catch {
+                // The preview remains the honest fallback if the sidecar is gone.
+            }
+        }
+    }
+
     @objc private func toggleSource() {
         guard makePresentation().sourceToggleTitle != nil,
               let viewController = contentHostController else {
@@ -2181,6 +2216,7 @@ final class FullScreenCodeViewController: UIViewController {
             liveSourceMarkdownViewportIntent = mutableMarkdown.currentViewportIntent()
         }
         showSource.toggle()
+        if showSource { loadRawSidecarIfNeeded() }
         let themeID = bodyThemeID
         let palette = themeID.palette
         if case .liveSource(let initialSnapshot, _) = content {

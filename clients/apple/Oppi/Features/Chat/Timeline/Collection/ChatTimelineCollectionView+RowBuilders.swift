@@ -339,6 +339,9 @@ extension ChatTimelineCollectionHost.Controller {
             elapsedSeconds: reducer?.toolElapsed(for: itemID)
         )
 
+        context.previewOnly = toolOutputStore?.hasCompleteOutput(for: itemID) != true
+        let outputBytes = toolOutputStore?.outputByteCount(for: itemID) ?? 0
+        context.totalBytes = outputBytes > 0 ? outputBytes : nil
         context.inputPresentation = toolArgsStore?.inputPresentation(for: itemID)
         context.nestedCalls = toolDetailsStore?.nestedCalls(for: itemID)
         let interactionCtx = self.interactionContext

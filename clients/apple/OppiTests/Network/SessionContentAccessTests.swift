@@ -483,7 +483,7 @@ struct SessionContentAccessTests {
         let harness = makeTimelineHarness(sessionId: "s-control")
         defer { withExtendedLifetime(harness) {} }
         let content = try makeControlSessionToolMarkdownContent(harness, markdown: "# Title\n\n![](diagram.png)")
-        guard case .markdown(_, let filePath, let access, _) = content else {
+        guard case .markdown(_, let filePath, let access, _, _) = content else {
             Issue.record("Expected Markdown full-screen content, got \(content)")
             return
         }
@@ -509,7 +509,7 @@ struct SessionContentAccessTests {
         let harness = makeTimelineHarness(sessionId: "s-control")
         defer { withExtendedLifetime(harness) {} }
         let content = try makeControlSessionToolMarkdownContent(harness, markdown: "[[\(hostPath)|Child]]")
-        guard case .markdown(let markdown, let filePath, let access, _) = content else {
+        guard case .markdown(let markdown, let filePath, let access, _, _) = content else {
             Issue.record("Expected Markdown full-screen content, got \(content)")
             return
         }

@@ -40,7 +40,7 @@ Example:
 
 ### Added
 
-- **Client:** Generic iOS tool rows expand to an Input / Calls / Output document with highlighted code inputs, recorded nested calls, and readable JSON forms and tables. Double-tap opens the same document with a Rendered / Raw toggle; Copy output still copies raw tool text. Built-in tool and media presentations are unchanged.
+- **Client:** Generic iOS tool rows expand to an Input / Calls / Output document with highlighted code inputs, recorded nested calls, and readable JSON forms and tables. Double-tap opens the same document with a Rendered / Raw toggle; Copy output still copies raw tool text. Built-in tool and media presentations are unchanged. Empty output can still use a live-only `tuiRender` fallback; history does not generate those snapshots. Raw identifies previews and loads full output from an available sidecar.
 - **Server/Protocol:** Additive `inputPresentation` on tool start/update and trace calls, plus Pi's bounded `nestedCalls` on tool end and trace results. Mobile-renderer sidecars can declare code-field language hints; live and history use the same metadata.
 
 - **Client:** Customize Rows (Settings → Session List) chooses Standard or Compact session rows and turns model, time, context usage, cost, files touched, compactions, and the Thread strip's Agent summary and lane graph on or off, with a preview drawn by the real row. Done saves for this device and applies to Oppi session rows in every session list; Cancel discards; Restore Defaults resets the preview. Status, questions, Incognito, workspace context, and Thread access always show, and hidden cost stays out of the Thread strip total.

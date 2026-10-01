@@ -678,7 +678,7 @@ struct MarkdownInlineVideoTests {
             fetchSessionFileData: { _ in Data() },
             sessionID: "session-a"
         )
-        guard case .markdown(let text, let path, _, _) = content else {
+        guard case .markdown(let text, let path, _, _, _) = content else {
             Issue.record("Expected markdown content, got \(content)")
             return
         }

@@ -607,7 +607,7 @@ const BUILTIN_RENDERERS: Record<string, MobileToolRenderer> = {
 };
 
 const BUILTIN_INPUT_PRESENTATIONS: Record<string, ToolInputPresentation> = {
-  codemode: { codeFields: { code: "javascript" } },
+  codemode: { fields: { code: { role: "code", language: "javascript" } } },
 };
 
 export class MobileRendererRegistry {
@@ -646,23 +646,33 @@ export class MobileRendererRegistry {
     if (value === undefined) {
       return BUILTIN_INPUT_PRESENTATIONS[toolName];
     }
-    const fields = asRecord(asRecord(value)?.codeFields);
+    const fields = asRecord(asRecord(value)?.fields);
     if (
       !fields ||
       Array.isArray(fields) ||
       Object.keys(fields).length > 32 ||
-      Object.entries(fields).some(
-        ([key, language]) =>
+      Object.entries(fields).some(([key, field]) => {
+        const hint = asRecord(field);
+        return (
           !key ||
           key.length > 100 ||
-          typeof language !== "string" ||
-          !/^[a-zA-Z0-9_+-]{1,40}$/.test(language),
-      )
+          hint?.role !== "code" ||
+          typeof hint.language !== "string" ||
+          !/^[a-zA-Z0-9_+-]{1,40}$/.test(hint.language)
+        );
+      })
     ) {
-      this.warnInvalidRenderer(toolName, "input", "invalid inputPresentation.codeFields");
+      this.warnInvalidRenderer(toolName, "input", "invalid inputPresentation.fields");
       return undefined;
     }
-    return { codeFields: { ...fields } as Record<string, string> };
+    return {
+      fields: Object.fromEntries(
+        Object.entries(fields).map(([key, field]) => {
+          const hint = asRecord(field);
+          return [key, { role: "code" as const, language: hint?.language as string }];
+        }),
+      ),
+    };
   }
 
   /** Render call segments, returning undefined if no renderer or on error. */

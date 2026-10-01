@@ -49,7 +49,9 @@ describe("tool call document producer", () => {
         },
         ctx,
       )[0],
-    ).toMatchObject({ inputPresentation: { codeFields: { code: "javascript" } } });
+    ).toMatchObject({
+      inputPresentation: { fields: { code: { role: "code", language: "javascript" } } },
+    });
     expect(
       translate(
         {
@@ -63,7 +65,7 @@ describe("tool call document producer", () => {
       )[0],
     ).toMatchObject({
       type: "tool_update",
-      inputPresentation: { codeFields: { code: "javascript" } },
+      inputPresentation: { fields: { code: { role: "code", language: "javascript" } } },
     });
     expect(
       translate(
@@ -98,17 +100,30 @@ describe("tool call document producer", () => {
       const path = join(dir, "renderer.mjs");
       writeFileSync(
         path,
-        `export default { custom: { inputPresentation: { codeFields: { source: "python" } }, renderCall() { return [] }, renderResult() { return [] } } };`,
+        `export default { custom: { inputPresentation: { fields: { source: { role: "code", language: "python" } } }, renderCall() { return [] }, renderResult() { return [] } } };`,
       );
       const registry = new MobileRendererRegistry();
       expect((await registry.loadRenderer(path)).errors).toEqual([]);
-      expect(registry.inputPresentation("custom")).toEqual({ codeFields: { source: "python" } });
+      expect(registry.inputPresentation("custom")).toEqual({
+        fields: { source: { role: "code", language: "python" } },
+      });
       registry.register("bad", {
-        inputPresentation: { codeFields: { source: "python\n```" } },
+        inputPresentation: { fields: { source: { role: "code", language: "python\n```" } } },
         renderCall: () => [],
         renderResult: () => [],
       });
       expect(registry.inputPresentation("bad")).toBeUndefined();
+      for (const fields of [
+        { source: { role: "command", language: "bash" } },
+        { source: "python" },
+      ]) {
+        registry.register("bad-role", {
+          inputPresentation: { fields } as never,
+          renderCall: () => [],
+          renderResult: () => [],
+        });
+        expect(registry.inputPresentation("bad-role")).toBeUndefined();
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -196,7 +211,7 @@ describe("tool call document producer", () => {
       });
       for (const trace of [raw.trace, mobile.trace]) {
         expect(trace.find((e) => e.type === "toolCall")?.inputPresentation).toEqual({
-          codeFields: { code: "javascript" },
+          fields: { code: { role: "code", language: "javascript" } },
         });
         expect(trace.find((e) => e.type === "toolResult")?.nestedCalls).toEqual(nested);
       }

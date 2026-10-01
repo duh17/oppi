@@ -1,7 +1,11 @@
 import Foundation
 
 struct ToolInputPresentation: Codable, Equatable, Sendable {
-    var codeFields: [String: String]
+    struct Field: Codable, Equatable, Sendable {
+        var role: String
+        var language: String
+    }
+    var fields: [String: Field]
 }
 
 /// Status is a string deliberately: a future Pi status must not reject a trace.

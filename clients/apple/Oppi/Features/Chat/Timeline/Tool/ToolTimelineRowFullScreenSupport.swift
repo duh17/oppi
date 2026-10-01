@@ -85,7 +85,8 @@ enum ToolTimelineRowFullScreenSupport {
                 content: text,
                 filePath: path,
                 resourceAccess: configuration.resourceAccess,
-                rawText: configuration.rawMarkdownText
+                rawText: configuration.rawMarkdownText,
+                sidecarSource: configuration.toolOutputSidecarSource
             )
 
         case .document(let family):
@@ -190,7 +191,8 @@ enum ToolTimelineRowFullScreenSupport {
                     content: text,
                     filePath: path,
                     resourceAccess: configuration.resourceAccess,
-                    rawText: configuration.rawMarkdownText
+                    rawText: configuration.rawMarkdownText,
+                    sidecarSource: configuration.toolOutputSidecarSource
                 )
             )
 

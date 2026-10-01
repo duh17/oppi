@@ -16,6 +16,8 @@ enum ToolPresentationBuilder {
         let details: JSONValue?
         var inputPresentation: ToolInputPresentation? = nil
         var nestedCalls: NestedToolCalls? = nil
+        var previewOnly = false
+        var totalBytes: Int? = nil
         let expandedItemIDs: Set<String>
         let fullOutput: String
         let isLoadingOutput: Bool
@@ -99,7 +101,8 @@ enum ToolPresentationBuilder {
                 isError: isError,
                 isDone: isDone,
                 isLoadingOutput: context.isLoadingOutput,
-                inputPresentation: context.inputPresentation, nestedCalls: context.nestedCalls
+                inputPresentation: context.inputPresentation, nestedCalls: context.nestedCalls,
+                previewOnly: context.previewOnly, totalBytes: context.totalBytes
             )
         } else {
             expanded = ExpandedPresentation()
@@ -418,7 +421,8 @@ enum ToolPresentationBuilder {
         isError: Bool,
         isDone: Bool,
         isLoadingOutput: Bool,
-        inputPresentation: ToolInputPresentation?, nestedCalls: NestedToolCalls?
+        inputPresentation: ToolInputPresentation?, nestedCalls: NestedToolCalls?,
+        previewOnly: Bool, totalBytes: Int?
     ) -> ExpandedPresentation {
         let presentation = ToolContentDescriptorBuilder.build(
             tool: rawToolName,
@@ -431,7 +435,8 @@ enum ToolPresentationBuilder {
                 details: details,
                 fullOutput: fullOutput,
                 isLoadingOutput: isLoadingOutput,
-                inputPresentation: inputPresentation, nestedCalls: nestedCalls
+                inputPresentation: inputPresentation, nestedCalls: nestedCalls,
+                previewOnly: previewOnly, totalBytes: totalBytes
             )
         )
         return ExpandedPresentation(

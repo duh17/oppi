@@ -33,7 +33,7 @@ struct ToolCallDocumentTests {
     @Test func inputFormsCodeFirstAndRawKeepsEmptyFields() throws {
         let d = try doc("ok", args: ["z": .number(2), "a": .string("a|b"), "empty": .string(""), "null": .null,
                                      "source": .string("text(1);"), "multi": .string("one\ntwo"), "nested": .array([1])],
-                        hints: .init(codeFields: ["source": "javascript"]))
+                        hints: .init(fields: ["source": .init(role: "code", language: "javascript")]))
         #expect(d.text.contains("## Input\n\n**source**\n\n```javascript\ntext(1);"))
         #expect(d.text.contains("| a | a\\|b |\n| z | 2 |"))
         #expect(d.text.contains("**multi**\n\n```text\none\ntwo"))
@@ -44,7 +44,7 @@ struct ToolCallDocumentTests {
     }
     @Test func sectionLabelsAndPending() throws {
         #expect(try doc("ok").text == "```text\nok\n```")
-        #expect(try doc(args: ["source": "text(1)"], hints: .init(codeFields: ["source": "javascript"])).text == "```javascript\ntext(1)\n```")
+        #expect(try doc(args: ["source": "text(1)"], hints: .init(fields: ["source": .init(role: "code", language: "javascript")])).text == "```javascript\ntext(1)\n```")
         #expect(try doc(args: ["x": 1], done: false).text.contains("## Output\n\nWaiting for output…"))
         #expect(ToolCallDocumentBuilder.build(args: nil, inputPresentation: nil, nestedCalls: nil, output: "", rawOutput: "", details: nil, isDone: true) == nil)
     }
@@ -61,6 +61,38 @@ struct ToolCallDocumentTests {
         #expect(d.text.contains("✗ Error")); #expect(d.text.contains("| answer | 42 |")); #expect(!d.text.contains("ignored"))
         let media = try doc(#"{"content":[{"type":"image","mimeType":"image/png"},{"type":"resource_link","name":"Report","uri":"file:///report"},{"type":"resource","resource":{"uri":"file:///note","text":"hello"}}]}"#)
         #expect(media.text.contains("image image/png")); #expect(media.text.contains("Report · file:///report")); #expect(media.text.contains("hello"))
+    }
+    @Test(arguments: [
+        #"{"content":[],"count":42}"#,
+        #"{"type":"doc","content":[{"type":"paragraph"}]}"#,
+        #"{"content":[{"type":"text","text":"hello"}],"count":42}"#
+    ])
+    func nonMCPContentKeepsSiblingFields(_ output: String) throws {
+        let text = try doc(output).text
+        if output.contains("count") { #expect(text.contains("| count | 42 |")) }
+        else { #expect(text.contains("| type | doc |")); #expect(text.contains("paragraph")) }
+        #expect(text.contains("**content**"))
+    }
+    @Test func callArgumentsStayLiteralIncludingBackticks() throws {
+        let args: [String: JSONValue] = ["labelId": "480696530943115366", "code": "`one``two`"]
+        let calls = NestedToolCalls(calls: [.init(id: "1", name: "lookup", arguments: args, status: "ok")], complete: true)
+        let blocks = parseCommonMark(try doc(calls: calls).text)
+        guard case .unorderedList(let items) = try #require(blocks.first),
+              case .paragraph(let inlines) = try #require(items.first?.first) else { Issue.record("Calls list"); return }
+        #expect(inlines.contains(.code(OrderedJSON.from(.object(args)).json())))
+    }
+    @Test func rawPreviewWordingAndCompleteOutput() throws {
+        let output = String(repeating: "result\n", count: 24000)
+        let complete = try doc(output)
+        #expect(!complete.text.contains("Raw contains the complete"))
+        #expect(complete.rawText?.hasSuffix(output) == true)
+        let partial = try #require(ToolCallDocumentBuilder.build(args: [:], inputPresentation: nil, nestedCalls: nil,
+            output: output, rawOutput: output, details: nil, isDone: true, previewOnly: true, totalBytes: 300000))
+        #expect(partial.rawText?.contains("Output preview only (168000 of 300000 bytes)") == true)
+        let fallback = ToolContentDescriptorBuilder.build(tool: "find", argsSummary: "", outputPreview: "trace preview",
+            isError: false, isDone: true, context: .init())
+        guard case .markdown(let d) = fallback.content else { Issue.record("Generic document"); return }
+        #expect(d.rawText?.contains("Output preview only") == true)
     }
     @Test func preambleAndFirstSeenTableColumns() throws {
         let d = try doc("Script completed\nWall time 1.6 seconds\nOutput:\n\n[{\"z\":1,\"a\":2},{\"a\":3,\"b\":4}]")
@@ -94,7 +126,7 @@ struct ToolCallDocumentTests {
     }
     @Test func inputFieldCapIncludesCodeAndMultilineFields() throws {
         let args = Dictionary(uniqueKeysWithValues: (0..<205).map { (String(format: "field%03d", $0), JSONValue.string("one\ntwo")) })
-        let hints = ToolInputPresentation(codeFields: Dictionary(uniqueKeysWithValues: args.keys.map { ($0, "javascript") }))
+        let hints = ToolInputPresentation(fields: Dictionary(uniqueKeysWithValues: args.keys.map { ($0, .init(role: "code", language: "javascript")) }))
         let d = try doc(args: args, hints: hints)
         #expect(parseCommonMark(d.text).filter { if case .codeBlock = $0 { return true }; return false }.count == 200)
         #expect(d.text.contains("… 5 more fields"))
@@ -142,12 +174,12 @@ struct ToolCallDocumentTests {
     @Test @MainActor func fullScreenUsesSameDocumentAndRawToggle() throws {
         var context = ToolPresentationBuilder.Context(args: ["source": "text(1)", "unused": .null],
             expandedItemIDs: ["t"], fullOutput: "{\"z\":1}", isLoadingOutput: false)
-        context.inputPresentation = .init(codeFields: ["source": "javascript"])
+        context.inputPresentation = .init(fields: ["source": .init(role: "code", language: "javascript")])
         let config = ToolPresentationBuilder.build(itemID: "t", tool: "arbitrary", argsSummary: "",
             outputPreview: "", isError: false, isDone: true, context: context)
         let content = try #require(ToolTimelineRowFullScreenSupport.staticFullScreenContent(
             configuration: config, outputCopyText: nil, terminalStream: nil))
-        guard case .markdown(let document, _, _, let raw) = content,
+        guard case .markdown(let document, _, _, let raw, _) = content,
               case .markdown(let inline, _) = config.expandedContent else { Issue.record("Markdown reader"); return }
         #expect(document == inline)
         #expect(raw == config.rawMarkdownText)
@@ -159,12 +191,49 @@ struct ToolCallDocumentTests {
         #expect(rawBody.contains("\"unused\": null"))
         #expect(rawBody.hasSuffix("{\"z\":1}"))
         controller.toggleSourceForTesting()
-        guard case .markdown(let rendered, _, _, _) = controller.presentationBodyContentForTesting else { Issue.record("Rendered body"); return }
+        guard case .markdown(let rendered, _, _, _, _) = controller.presentationBodyContentForTesting else { Issue.record("Rendered body"); return }
         #expect(rendered == inline)
     }
 
+    @Test @MainActor func rawReaderLoadsAllSidecarWindowsAndKeepsPreviewWhenUnavailable() async throws {
+        let output = String(repeating: "match\n", count: 30000) + "LAST MATCH\n"
+        let split = 128 * 1024
+        let first = String(decoding: output.utf8.prefix(split), as: UTF8.self)
+        let rest = String(decoding: output.utf8.dropFirst(split), as: UTF8.self)
+        let source = ToolOutputSidecarWindowSource(loadFirst: {
+            .init(text: first, endByteOffset: split, totalBytes: output.utf8.count)
+        }, loadNext: { offset in
+            #expect(offset == split)
+            return .init(text: rest, endByteOffset: output.utf8.count, totalBytes: output.utf8.count)
+        })
+        var context = ToolPresentationBuilder.Context(args: ["pattern": "match"], expandedItemIDs: ["t"], fullOutput: first, isLoadingOutput: false)
+        context.previewOnly = true; context.totalBytes = output.utf8.count
+        var config = ToolPresentationBuilder.build(itemID: "t", tool: "grep", argsSummary: "", outputPreview: "", isError: false, isDone: true, context: context)
+        config.toolOutputSidecarSource = source
+        func controller(_ config: ToolTimelineRowConfiguration) throws -> FullScreenCodeViewController {
+            let content = try #require(ToolTimelineRowFullScreenSupport.staticFullScreenContent(configuration: config, outputCopyText: nil, terminalStream: nil))
+            let vc = FullScreenCodeViewController(content: content)
+            vc.loadViewIfNeeded(); vc.toggleSourceForTesting()
+            return vc
+        }
+        let active = try controller(config)
+        let deadline = ContinuousClock.now + .seconds(3)
+        var raw = ""
+        repeat {
+            await Task.yield()
+            if case .plainText(let text, _) = active.presentationBodyContentForTesting { raw = text }
+        } while !raw.hasSuffix("LAST MATCH\n") && ContinuousClock.now < deadline
+        #expect(raw == "Input\n\n{\n  \"pattern\": \"match\"\n}\n\nOutput\n\n" + output)
+        config.toolOutputSidecarSource = .init(loadFirst: { nil }, loadNext: { _ in nil })
+        let stopped = try controller(config)
+        await Task.yield()
+        guard case .plainText(let preview, _) = stopped.presentationBodyContentForTesting else { Issue.record("Raw preview"); return }
+        #expect(preview.contains("Output preview only"))
+        #expect(!preview.contains("LAST MATCH"))
+    }
+
     @Test @MainActor func protocolReducerHistoryAndDescriptorParity() throws {
-        let start = try ServerMessage.decode(from: #"{"type":"tool_start","tool":"arbitrary","toolCallId":"t","args":{"source":"text(1)"},"inputPresentation":{"codeFields":{"source":"javascript"}}}"#)
+        let start = try ServerMessage.decode(from: #"{"type":"tool_start","tool":"arbitrary","toolCallId":"t","args":{"source":"text(1)"},"inputPresentation":{"fields":{"source":{"role":"code","language":"javascript"}}}}"#)
         let end = try ServerMessage.decode(from: #"{"type":"tool_end","tool":"arbitrary","toolCallId":"t","nestedCalls":{"calls":[{"id":"t/1","name":"nested","status":"future"}],"complete":false}}"#)
         let live = TimelineReducer(); let correlator = ToolCallCorrelator()
         guard case .toolStart(let tool, let args, let id, let segments, let hints) = start,

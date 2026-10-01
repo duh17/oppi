@@ -632,8 +632,11 @@
       },
       "toolCallId": "tc-001",
       "inputPresentation": {
-        "codeFields": {
-          "command": "bash"
+        "fields": {
+          "command": {
+            "role": "code",
+            "language": "bash"
+          }
         }
       }
     },
@@ -670,8 +673,11 @@
       },
       "toolCallId": "tc-update-001",
       "inputPresentation": {
-        "codeFields": {
-          "content": "markdown"
+        "fields": {
+          "content": {
+            "role": "code",
+            "language": "markdown"
+          }
         }
       }
     },

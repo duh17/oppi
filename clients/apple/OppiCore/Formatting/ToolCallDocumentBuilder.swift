@@ -5,9 +5,10 @@ import Foundation
 enum ToolCallDocumentBuilder {
     static func build(args: [String: JSONValue]?, inputPresentation: ToolInputPresentation?,
                       nestedCalls: NestedToolCalls?, output: String, rawOutput: String,
-                      details: JSONValue?, isDone: Bool) -> ToolContentDescriptor.Markdown? {
+                      details: JSONValue?, isDone: Bool, previewOnly: Bool = false, totalBytes: Int? = nil) -> ToolContentDescriptor.Markdown? {
         var sections: [(String, String)] = []
-        let input = input(args ?? [:], hints: inputPresentation?.codeFields ?? [:])
+        let hints = inputPresentation?.fields.filter { $0.value.role == "code" }.mapValues(\.language) ?? [:]
+        let input = input(args ?? [:], hints: hints)
         if !input.isEmpty { sections.append(("Input", input)) }
         if let nestedCalls { sections.append(("Calls", calls(nestedCalls))) }
         let body = outputBody(output, details: details)
@@ -16,7 +17,11 @@ enum ToolCallDocumentBuilder {
         guard !sections.isEmpty else { return nil }
         let text = sections.map { sections.count > 1 ? "## \($0.0)\n\n\($0.1)" : $0.1 }.joined(separator: "\n\n")
         let rawArgs = OrderedJSON.from(.object(args ?? [:])).json(pretty: true)
-        return .init(text: text, filePath: details?.objectValue?["filePath"]?.stringValue, rawText: "Input\n\n" + rawArgs + "\n\nOutput\n\n" + rawOutput)
+        let availability = previewOnly
+            ? "Output preview only" + (totalBytes.map { " (\(rawOutput.utf8.count) of \($0) bytes)" } ?? "") + ". Full output may be unavailable for a stopped session.\n\n"
+            : ""
+        return .init(text: text, filePath: details?.objectValue?["filePath"]?.stringValue,
+                     rawText: "Input\n\n" + rawArgs + "\n\nOutput\n\n" + availability + rawOutput)
     }
 
     private static func input(_ args: [String: JSONValue], hints: [String: String]) -> String {
@@ -51,7 +56,7 @@ enum ToolCallDocumentBuilder {
             let duration = call.durationMs.map { ms in
                 ms < 1000 ? "\(Int(ms)) ms" : String(format: "%.1f s", locale: Locale(identifier: "en_US_POSIX"), ms / 1000)
             }
-            var text = "- \(mark) \(inline(call.name)) \(inline(clipped(args, cap: 120)))"
+            var text = "- \(mark) \(inline(call.name)) \(inlineCode(clipped(args, cap: 120)))"
             if let duration { text += " · " + duration }
             if call.status == "error", let error = call.error, !error.isEmpty {
                 text += "\n\n" + boundedFence(error, language: "text").components(separatedBy: "\n").map { "  " + $0 }.joined(separator: "\n")
@@ -116,7 +121,9 @@ enum ToolCallDocumentBuilder {
         if keys == ["status", "reason"], value["status"] == .string("rejected"), let reason = value["reason"] {
             return .object([.init(key: "✗ Error", value: reason)])
         }
-        if case .array(let content) = value["content"], content.allSatisfy({ $0["type"]?.scalar != nil }) {
+        if case .array(let content) = value["content"], !content.isEmpty,
+           keys.isSubset(of: ["content", "structuredContent", "isError", "_meta"]),
+           content.allSatisfy({ ["text", "image", "audio", "resource", "resource_link"].contains($0["type"]?.scalar ?? "") }) {
             let result: OrderedJSON
             if let structured = value["structuredContent"], structured != .null, structured != .object([]), structured != .array([]), structured != .string("") { result = structured }
             else {
@@ -223,7 +230,15 @@ enum ToolCallDocumentBuilder {
         let preview = String(text.unicodeScalars.prefix { scalar in
             bytes += scalar.utf8.count; return bytes <= OrderedJSON.byteBudget
         })
-        return fence(preview, language: language) + "\n\nPreview limited to 64 KB. Raw contains the complete input and output."
+        return fence(preview, language: language) + "\n\nPreview limited to 64 KB. See Raw for available input and output; output completeness is noted there."
+    }
+    private static func inlineCode(_ text: String) -> String {
+        guard !text.isEmpty else { return "" }
+        // Code spans have no backslash escape. Use a delimiter longer than any
+        // backtick run and padding so JSON quotes and backticks stay literal.
+        let longest = text.split(whereSeparator: { $0 != "`" }).map(\.count).max() ?? 0
+        let marker = String(repeating: "`", count: longest + 1)
+        return marker + " " + text.replacingOccurrences(of: "\n", with: " ") + " " + marker
     }
     private static func safeLanguage(_ language: String) -> String {
         language.range(of: "^[a-zA-Z0-9_+-]{1,40}$", options: .regularExpression) != nil ? language : "text"

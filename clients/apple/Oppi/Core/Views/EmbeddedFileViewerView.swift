@@ -499,7 +499,7 @@ struct ChatReaderDestinationView: View {
     ) -> MarkdownResourceAccess.Identity {
         switch payload.kind {
         case .document(let content, _):
-            if case .markdown(_, _, let resourceAccess, _) = content {
+            if case .markdown(_, _, let resourceAccess, _, _) = content {
                 return resourceAccess.identity
             }
             return MarkdownResourceAccess.Identity()

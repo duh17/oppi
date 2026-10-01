@@ -26,7 +26,9 @@ struct ToolCallDocumentPreview: View {
               let output = fixture["output"]?.stringValue else { return nil }
         var context = ToolPresentationBuilder.Context(args: fixture["args"]?.objectValue,
             expandedItemIDs: ["document-preview"], fullOutput: output, isLoadingOutput: false)
-        if !direct { context.inputPresentation = .init(codeFields: ["code": "javascript"]) }
+        if !direct { context.inputPresentation = .init(fields: ["code": .init(role: "code", language: "javascript")]) }
+        context.previewOnly = fixture["previewOnly"]?.boolValue == true
+        context.totalBytes = fixture["totalBytes"]?.numberValue.map(Int.init)
         if let calls = fixture["nestedCalls"], let encoded = try? JSONEncoder().encode(calls) {
             context.nestedCalls = try? JSONDecoder().decode(NestedToolCalls.self, from: encoded)
         }

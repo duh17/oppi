@@ -243,7 +243,7 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     tool: "bash",
     args: { command: "npm test" },
     toolCallId: "tc-001",
-    inputPresentation: { codeFields: { command: "bash" } },
+    inputPresentation: { fields: { command: { role: "code", language: "bash" } } },
   },
   tool_start_with_segments: {
     type: "tool_start",
@@ -261,7 +261,7 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     tool: "write",
     args: { path: "README.md", content: "hello" },
     toolCallId: "tc-update-001",
-    inputPresentation: { codeFields: { content: "markdown" } },
+    inputPresentation: { fields: { content: { role: "code", language: "markdown" } } },
   },
   tool_output: {
     type: "tool_output",

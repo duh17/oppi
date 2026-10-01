@@ -8,8 +8,8 @@ export type { NestedToolCallRecord, NestedToolCalls } from "@earendil-works/pi-a
 
 /** How clients present a tool call's arguments. */
 export interface ToolInputPresentation {
-  /** Source-code argument field → language id. */
-  codeFields: Record<string, string>;
+  /** Argument field name → semantic role and source language. */
+  fields: Record<string, { role: "code"; language: string }>;
 }
 
 // ─── WebSocket Messages ───

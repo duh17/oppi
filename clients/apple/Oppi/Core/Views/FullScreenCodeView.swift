@@ -267,7 +267,7 @@ indirect enum FullScreenCodeContent {
     case code(content: String, language: String?, filePath: String?, startLine: Int)
     case plainText(content: String, filePath: String?)
     case diff(ToolDiffDocument)
-    case markdown(content: String, filePath: String?, resourceAccess: MarkdownResourceAccess = .empty, rawText: String? = nil)
+    case markdown(content: String, filePath: String?, resourceAccess: MarkdownResourceAccess = .empty, rawText: String? = nil, sidecarSource: ToolOutputSidecarWindowSource? = nil)
     case html(content: String, filePath: String?)
     case thinking(content: String, stream: ThinkingTraceStream? = nil)
     case terminal(
@@ -318,8 +318,8 @@ indirect enum FullScreenCodeContent {
         resourceAccess: MarkdownResourceAccess
     ) -> FullScreenCodeContent {
         let base = fromText(text, filePath: filePath)
-        if case .markdown(let content, let path, _, let rawText) = base {
-            return .markdown(content: content, filePath: path, resourceAccess: resourceAccess, rawText: rawText)
+        if case .markdown(let content, let path, _, let rawText, let sidecarSource) = base {
+            return .markdown(content: content, filePath: path, resourceAccess: resourceAccess, rawText: rawText, sidecarSource: sidecarSource)
         }
         return base
     }
