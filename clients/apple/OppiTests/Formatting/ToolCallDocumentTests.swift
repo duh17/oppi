@@ -48,6 +48,22 @@ struct ToolCallDocumentTests {
         #expect(try doc(args: ["x": 1], done: false).text.contains("## Output\n\nWaiting for output…"))
         #expect(ToolCallDocumentBuilder.build(args: nil, inputPresentation: nil, nestedCalls: nil, output: "", rawOutput: "", details: nil, isDone: true) == nil)
     }
+    @Test @MainActor func runningEmptyPreviewShowsWaitingInsteadOfStoppedSessionNotice() throws {
+        let args: [String: JSONValue] = ["requestId": "waiting-check"]
+        let document = try #require(ToolCallDocumentBuilder.build(args: args, inputPresentation: nil, nestedCalls: nil,
+            output: "", rawOutput: "", details: nil, isDone: false, previewOnly: true))
+        #expect(document.text.contains("## Output\n\nWaiting for output…"))
+        #expect(!document.text.contains("Output preview only"))
+        #expect(document.rawText?.contains("Output preview only") == false)
+        var context = ToolPresentationBuilder.Context(args: args, expandedItemIDs: ["t"], fullOutput: "", isLoadingOutput: false)
+        context.previewOnly = true
+        let config = ToolPresentationBuilder.build(itemID: "t", tool: "generic_probe", argsSummary: "", outputPreview: "",
+            isError: false, isDone: false, context: context)
+        guard case .markdown(let rendered, _) = config.expandedContent else { Issue.record("Running document"); return }
+        #expect(rendered == document.text)
+        #expect(!config.isDone)
+    }
+
     @Test func mcpAndSettledUnwrapRecursively() throws {
         let output = #"[{"status":"fulfilled","value":{"content":[{"type":"text","text":"\"Track Run\\nTime: 50:53\""}],"isError":false}},{"status":"fulfilled","value":{"content":[{"type":"text","text":"{\"z\":1,\"a\":2}"}]}},{"status":"rejected","reason":"failed"}]"#
         let d = try doc(output)

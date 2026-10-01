@@ -36,7 +36,7 @@ struct ToolCallDocumentPreview: View {
             context.nestedCalls = try? JSONDecoder().decode(NestedToolCalls.self, from: encoded)
         }
         var config = ToolPresentationBuilder.build(itemID: "document-preview", tool: tool,
-            argsSummary: "", outputPreview: output, isError: false, isDone: true, context: context)
+            argsSummary: "", outputPreview: output, isError: false, isDone: fixture["isDone"]?.boolValue ?? true, context: context)
         config.openFullScreen = { payload in
             if case .document(let content, _) = payload.kind { reader = Reader(content: content) }
         }

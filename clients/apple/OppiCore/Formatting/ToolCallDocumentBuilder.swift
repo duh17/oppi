@@ -11,7 +11,7 @@ enum ToolCallDocumentBuilder {
         let input = (toolName.map { "**Tool**\n\n" + inlineCode($0) + "\n\n" } ?? "") + input(args ?? [:], hints: hints)
         if !input.isEmpty { sections.append(("Input", input)) }
         if let nestedCalls { sections.append(("Calls", calls(nestedCalls))) }
-        let availability = previewOnly
+        let availability = previewOnly && !rawOutput.isEmpty
             ? "Output preview only" + (totalBytes.map { " (\(rawOutput.utf8.count) of \($0) bytes)" } ?? "") + ". Full output may be unavailable for a stopped session.\n\n"
             : ""
         let body = availability + outputBody(output, details: details)

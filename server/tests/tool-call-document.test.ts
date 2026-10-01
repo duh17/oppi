@@ -251,7 +251,7 @@ describe("tool call document producer", () => {
       ],
       complete: true,
     });
-    expect(result?.complete).toBe(true);
+    expect(result?.complete).toBe(false);
     expect(result?.calls).toHaveLength(2);
     expect(result?.calls[0]).toEqual(nested.calls[0]);
     expect(result?.calls[1].arguments).toBeUndefined();
@@ -262,7 +262,14 @@ describe("tool call document producer", () => {
       complete: true,
     });
     expect(bounded?.calls).toHaveLength(256);
-    expect(bounded?.complete).toBe(true);
+    expect(bounded?.complete).toBe(false);
+    // Argument elision retains the call itself and therefore Pi's complete flag.
+    const kept = validatedNestedCalls({
+      calls: [{ id: "big", name: "tool", status: "queued", arguments: { data: "x".repeat(9000) } }],
+      complete: true,
+    });
+    expect(kept?.calls).toHaveLength(1);
+    expect(kept?.complete).toBe(true);
   });
   it("produces identical live and raw/mobile trace metadata", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-document-trace-"));
