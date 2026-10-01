@@ -106,4 +106,15 @@ struct NestedToolCallRecord: Codable, Equatable, Sendable {
 struct NestedToolCalls: Codable, Equatable, Sendable {
     var calls: [NestedToolCallRecord]
     var complete: Bool
+
+    /// "3 calls · 1 failed · 1 running": one line for the collapsed row and the Calls section.
+    /// Statuses are open strings; anything but ok/error/running is only counted as a call.
+    var summary: String {
+        let failed = calls.filter { $0.status == "error" }.count
+        let running = calls.filter { $0.status == "running" }.count
+        var parts = ["\(calls.count) \(calls.count == 1 ? "call" : "calls")"]
+        if failed > 0 { parts.append("\(failed) failed") }
+        if running > 0 { parts.append("\(running) running") }
+        return parts.joined(separator: " · ")
+    }
 }

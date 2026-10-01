@@ -64,23 +64,31 @@ enum ToolCallDocumentBuilder {
         return blocks.joined(separator: "\n\n")
     }
 
+    private static let callLimit = 256
+
+    /// A summary line, then one tight list item per call: status glyph, title, duration, with
+    /// arguments and a failure's error on following lines of the same paragraph (hard breaks),
+    /// so a phone-width title never wraps around inline code and the error stays under its call.
     private static func calls(_ nested: NestedToolCalls) -> String {
-        var lines = nested.calls.prefix(256).map { call in
+        let items = nested.calls.prefix(callLimit).map { call in
             let mark = call.status == "ok" ? "✓" : call.status == "error" ? "✗" : "…"
             let args = call.arguments.map { OrderedJSON.from(.object($0)).json() }
                 ?? call.argumentsBytes.map { "[\($0) bytes]" } ?? ""
-            let duration = call.durationMs.map { ms in
-                ms < 1000 ? "\(Int(ms)) ms" : String(format: "%.1f s", locale: Locale(identifier: "en_US_POSIX"), ms / 1000)
+            var head = "- \(mark) **\(inline(call.display?.label(fallback: call.name) ?? call.name))**"
+            if let ms = call.durationMs {
+                head += " · " + (ms < 1000 ? "\(Int(ms)) ms" : String(format: "%.1f s", locale: Locale(identifier: "en_US_POSIX"), ms / 1000))
             }
-            var text = "- \(mark) \(inline(call.display?.label(fallback: call.name) ?? call.name)) \(inlineCode(clipped(args, cap: 120)))"
-            if let duration { text += " · " + duration }
+            var item = head
+            if !args.isEmpty { item += "  \n  " + inlineCode(clipped(args, cap: 120)) }
             if call.status == "error", let error = call.error, !error.isEmpty {
-                text += "\n\n" + boundedFence(error, language: "text").components(separatedBy: "\n").map { "  " + $0 }.joined(separator: "\n")
+                item += "  \n  ✗ " + inline(clipped(error.replacingOccurrences(of: "\n", with: " "), cap: 240))
             }
-            return text
+            return item
         }
-        if !nested.complete { lines.append("Some calls not recorded.") }
-        return lines.joined(separator: "\n\n")
+        var blocks = ["**" + nested.summary + "**", items.joined(separator: "\n")]
+        if nested.calls.count > callLimit { blocks.append("\(nested.calls.count - callLimit) more calls. See Raw for all of them.") }
+        if !nested.complete { blocks.append("Some calls not recorded.") }
+        return blocks.joined(separator: "\n\n")
     }
 
     private static func outputBody(_ output: String, details: JSONValue?) -> String {

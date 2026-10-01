@@ -116,6 +116,8 @@ enum ToolPresentationBuilder {
             trailing = String(localized: "Interrupted")
         } else if let editTrailingFallback = collapsed.editTrailingFallback {
             trailing = editTrailingFallback
+        } else if let nested = context.nestedCalls, !nested.calls.isEmpty {
+            trailing = nested.summary
         } else {
             trailing = nil
         }

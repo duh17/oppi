@@ -93,7 +93,7 @@ struct ToolCallDocumentTests {
         let args: [String: JSONValue] = ["labelId": "480696530943115366", "code": "`one``two`"]
         let calls = NestedToolCalls(calls: [.init(id: "1", name: "lookup", arguments: args, status: "ok")], complete: true)
         let blocks = parseCommonMark(try doc(calls: calls).text)
-        guard case .unorderedList(let items) = try #require(blocks.first),
+        guard case .unorderedList(let items) = try #require(blocks.dropFirst().first),
               case .paragraph(let inlines) = try #require(items.first?.first) else { Issue.record("Calls list"); return }
         #expect(inlines.contains(.code(OrderedJSON.from(.object(args)).json())))
     }
@@ -181,9 +181,24 @@ struct ToolCallDocumentTests {
             .init(id: "2", name: "second", argumentsBytes: 10000, status: "error", durationMs: 1528, error: "bad\ninput"),
             .init(id: "3", name: "third", status: "future-status")], complete: false)
         let text = try doc("ok", calls: calls).text
-        #expect(text.contains("✓ first")); #expect(text.contains("999 ms")); #expect(text.contains("1.5 s"))
-        #expect(text.contains("10000 bytes")); #expect(text.contains("bad")); #expect(text.contains("… third"))
+        #expect(text.contains("✓ **first**")); #expect(text.contains("999 ms")); #expect(text.contains("1.5 s"))
+        #expect(text.contains("10000 bytes")); #expect(text.contains("bad")); #expect(text.contains("… **third**"))
         #expect(text.contains("Some calls not recorded."))
+        #expect(text.contains("**3 calls · 1 failed**"))
+        #expect(calls.summary == "3 calls · 1 failed")
+        #expect(NestedToolCalls(calls: [.init(id: "1", name: "a", status: "running")], complete: true).summary == "1 call · 1 running")
+    }
+    @Test func longCallListsSayHowManyAreOmitted() throws {
+        let many = (0..<300).map { NestedToolCallRecord(id: "\($0)", name: "c\($0)", status: "ok") }
+        let text = try doc("ok", calls: .init(calls: many, complete: true)).text
+        #expect(text.contains("**300 calls**")); #expect(text.contains("44 more calls"))
+        #expect(!text.contains("**c256**")); #expect(text.contains("**c255**"))
+    }
+    @Test @MainActor func collapsedRowSummarizesNestedCallsUnlessSomethingMoreSpecificOwnsTheTrailingText() {
+        var context = ToolPresentationBuilder.Context(args: nil, expandedItemIDs: [], fullOutput: "ok", isLoadingOutput: false)
+        context.nestedCalls = .init(calls: [.init(id: "a", name: "x", status: "ok"), .init(id: "b", name: "y", status: "error")], complete: true)
+        let config = ToolPresentationBuilder.build(itemID: "t", tool: "arbitrary", argsSummary: "", outputPreview: "", isError: false, isDone: true, context: context)
+        #expect(config.trailing == "2 calls · 1 failed")
     }
     @Test func expandedTextWinsAndEmptyOutputRendersDetails() throws {
         let details: JSONValue = .object(["expandedText": "# Human", "presentationFormat": "markdown", "count": 42])
@@ -314,7 +329,7 @@ struct ToolCallDocumentTests {
         let calls = NestedToolCalls(calls: [.init(id: "n", name: "nested.raw", display: fact, status: "ok")], complete: true)
         let doc = try #require(ToolCallDocumentBuilder.build(args: context.args, inputPresentation: nil, nestedCalls: calls,
             output: "ok", rawOutput: "ok", details: nil, isDone: true, toolName: rawName))
-        #expect(doc.text.contains("✓ coros · Get activity detail"))
+        #expect(doc.text.contains("✓ **coros · Get activity detail**"))
         #expect(!doc.text.contains("nested.raw"))
         #expect(doc.text.contains(rawName)); #expect(doc.rawText?.contains(rawName) == true)
         #expect(doc.rawText?.contains("nested.raw") == true)
@@ -360,6 +375,6 @@ struct ToolCallDocumentTests {
         #expect(presentation(live) == presentation(history))
         #expect(presentation(live).copyOutputText == #"{"z":1,"a":2}"#)
         guard case .markdown(let d) = presentation(live).content else { Issue.record("document descriptor"); return }
-        #expect(d.text.contains("```javascript")); #expect(d.text.contains("… nested")); #expect(d.rawText != nil)
+        #expect(d.text.contains("```javascript")); #expect(d.text.contains("… **nested**")); #expect(d.rawText != nil)
     }
 }

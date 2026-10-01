@@ -31,6 +31,7 @@ Example:
 ```markdown
 ### Added
 
+- **Client:** A tool's Calls section now opens with a summary such as "3 calls · 1 failed", lists each call with its status, name and duration, and puts arguments and a failure's error under that call. The collapsed row shows the same summary. Lists over 256 calls say how many were omitted.
 - **Client:** Added the workspace browser deep link flow.
 - **Server:** Added import support for stopped local sessions.
 - **Protocol:** Added `workspace_session_list` pagination fields.
