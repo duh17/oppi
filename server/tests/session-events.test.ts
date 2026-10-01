@@ -1,3 +1,4 @@
+import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { describe, expect, it, vi } from "vitest";
 
@@ -22,7 +23,7 @@ function makeActiveSession(session: Session): EventProcessorSessionState {
   return {
     session,
     pendingUIRequests: new Map(),
-    partialResults: new Map<string, string>(),
+    toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map<string, string>(),
     shellPreviewLastSent: new Map<string, number>(),

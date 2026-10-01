@@ -1,3 +1,4 @@
+import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -66,7 +67,7 @@ describe("SessionAgentEventCoordinator", () => {
     return {
       session: makeSession(overrides),
       pendingUIRequests: new Map(),
-      partialResults: new Map(),
+      toolOutputSnapshots: new ToolOutputSnapshots(),
       streamedAssistantText: "",
       toolNames: new Map(),
       toolArgs: new Map(),
@@ -101,7 +102,7 @@ describe("SessionAgentEventCoordinator", () => {
       eventProcessor: {
         translationContext: vi.fn(() => ({
           sessionId: active.session.id,
-          partialResults: active.partialResults,
+          toolOutputSnapshots: active.toolOutputSnapshots,
           streamedAssistantText: active.streamedAssistantText,
           currentThinkingContentIndex: active.currentThinkingContentIndex,
           mobileRenderers: {

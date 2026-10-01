@@ -15,6 +15,12 @@ struct SessionOutlineEntrySnapshot: Codable, Identifiable, Equatable, Sendable {
     let isForkable: Bool?
     let tool: String?
     let isError: Bool?
+    // Bounded producer facts for rows outside the local trace window.
+    var args: [String: JSONValue]? = nil
+    var details: JSONValue? = nil
+    var display: ToolDisplay? = nil
+    var inputPresentation: ToolInputPresentation? = nil
+    var outputPresentation: ToolOutputPresentation? = nil
 }
 
 /// Full-session outline snapshot from `GET .../trace-outline`.

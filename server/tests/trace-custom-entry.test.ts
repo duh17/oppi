@@ -1,3 +1,4 @@
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -329,7 +330,10 @@ describe("custom entry timeline projection", () => {
       targetEvents: 10,
       entryRenderers: renderers,
     });
-    const outline = await readSessionTraceOutlineFromFiles([path], { entryRenderers: renderers });
+    const outline = await readSessionTraceOutlineFromFiles([path], {
+      entryRenderers: renderers,
+      mobileRenderers: new MobileRendererRegistry(),
+    });
     const around = readSessionTracePageFromFile(path, {
       aroundEntryId: "c1",
       targetEvents: 10,
@@ -409,12 +413,8 @@ describe("custom entry timeline projection", () => {
 
   it("changes production renderer version when the same customType is replaced", () => {
     const path = writeJsonl(fixtureEntries());
-    const renderersA = createLiveEntryRendererSet([
-      ["demo:card", titleRenderer("Generation A")],
-    ]);
-    const renderersB = createLiveEntryRendererSet([
-      ["demo:card", titleRenderer("Generation B")],
-    ]);
+    const renderersA = createLiveEntryRendererSet([["demo:card", titleRenderer("Generation A")]]);
+    const renderersB = createLiveEntryRendererSet([["demo:card", titleRenderer("Generation B")]]);
     const sameSnapshot = createLiveEntryRendererSet([
       ["demo:card", renderersA.get("demo:card") as CollapsedEntryRenderer],
     ]);
@@ -458,7 +458,10 @@ describe("custom entry timeline projection", () => {
       targetEvents: 5,
       entryRenderers: renderers,
     });
-    const outline = await readSessionTraceOutlineFromFiles([path], { entryRenderers: renderers });
+    const outline = await readSessionTraceOutlineFromFiles([path], {
+      entryRenderers: renderers,
+      mobileRenderers: new MobileRendererRegistry(),
+    });
     const aroundCurrent = readSessionTracePageFromFile(path, {
       aroundEntryId: "current-c",
       targetEvents: 10,

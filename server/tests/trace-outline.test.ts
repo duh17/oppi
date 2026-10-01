@@ -1,3 +1,4 @@
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -42,8 +43,50 @@ function messageEntry(
 }
 
 describe("trace outline projection", () => {
+  it("carries registry facts and result diffs without retaining large result text", async () => {
+    const registry = new MobileRendererRegistry();
+    registry.register("change_document", {
+      inputPresentation: { fields: { target: { role: "filePath" }, changes: { role: "edits" } } },
+      outputPresentation: { kind: "diffOfEdits" },
+      renderCall: (args) => [{ text: `Change ${args.target}` }],
+      renderResult: () => [],
+    });
+    const args = { target: "Example.swift", changes: [{ oldText: "a", newText: "b\nc\nd" }] };
+    const diff = '-1 a "quoted" {value}\n+1 b \\ revised';
+    const paths = tempJsonlFiles([
+      [
+        messageEntry("a", null, "assistant", [
+          { type: "toolCall", id: "edit", name: "change_document", arguments: args },
+          { type: "toolCall", id: "image", name: "draw", arguments: {} },
+        ]),
+        messageEntry("r", "a", "toolResult", "x".repeat(500000), {
+          toolCallId: "edit",
+          toolName: "change_document",
+          details: { diff },
+        }),
+        messageEntry("i", "r", "toolResult", "created", {
+          toolCallId: "image",
+          toolName: "draw",
+          details: { image: { kind: "image", id: "asset", mimeType: "image/png" } },
+        }),
+      ],
+    ]);
+    const result = await readSessionTraceOutlineFromFiles(paths, { mobileRenderers: registry });
+    expect(result.outline.entries[0]).toMatchObject({
+      args,
+      inputPresentation: registry.inputPresentation("change_document"),
+      outputPresentation: { kind: "diffOfEdits" },
+      details: { diff },
+    });
+    expect(result.outline.entries[1]?.details).toEqual({
+      image: { kind: "image", id: "asset", mimeType: "image/png" },
+    });
+    expect(JSON.stringify(result.outline)).not.toContain("xxxxx");
+  });
   it("returns an explicit empty snapshot when no trace files exist", async () => {
-    const result = await readSessionTraceOutlineFromFiles([]);
+    const result = await readSessionTraceOutlineFromFiles([], {
+      mobileRenderers: new MobileRendererRegistry(),
+    });
 
     expect(result.outline).toMatchObject({
       traceVersion: "",
@@ -81,7 +124,9 @@ describe("trace outline projection", () => {
       ],
     ]);
 
-    const result = await readSessionTraceOutlineFromFiles(paths);
+    const result = await readSessionTraceOutlineFromFiles(paths, {
+      mobileRenderers: new MobileRendererRegistry(),
+    });
 
     expect(result.outline.sourceCount).toBe(2);
     expect(result.outline.entries).toMatchObject([
@@ -109,7 +154,9 @@ describe("trace outline projection", () => {
       ],
     ]);
 
-    const outline = await readSessionTraceOutlineFromFiles(paths);
+    const outline = await readSessionTraceOutlineFromFiles(paths, {
+      mobileRenderers: new MobileRendererRegistry(),
+    });
     const trace = readSessionTraceFromFiles(paths, { view: "full" }) ?? [];
     const outlineAssistantIDs = outline.outline.entries
       .filter((entry) => entry.id !== "u1")
@@ -136,7 +183,9 @@ describe("trace outline projection", () => {
       ],
     ]);
 
-    const outline = await readSessionTraceOutlineFromFiles(paths);
+    const outline = await readSessionTraceOutlineFromFiles(paths, {
+      mobileRenderers: new MobileRendererRegistry(),
+    });
     const outlineIDs = outline.outline.entries.map((entry) => entry.id);
 
     expect(outlineIDs).toEqual(["u1", "u2", "a-current"]);
@@ -161,7 +210,9 @@ describe("trace outline projection", () => {
       ],
     ]);
 
-    const result = await readSessionTraceOutlineFromFiles(paths);
+    const result = await readSessionTraceOutlineFromFiles(paths, {
+      mobileRenderers: new MobileRendererRegistry(),
+    });
 
     expect(result.outline.entries.map((entry) => entry.id)).toEqual(["u1"]);
   });

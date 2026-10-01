@@ -9,6 +9,34 @@ import {
 
 const TOOL_OUTPUT_SIDECAR_TYPE = "text/plain; charset=utf-8";
 
+/** Per-runtime, per-turn uncut output. This owner keeps delta baselines and the
+ * tool_end → Pi trace-append handoff together. No disk cache; turn_end/disposal
+ * releases it. Pi-truncated snapshots are delta baselines only, never full output. */
+export class ToolOutputSnapshots {
+  private readonly snapshots = new Map<string, { text: string; complete: boolean }>();
+
+  previous(id: string): string {
+    return this.snapshots.get(id)?.text ?? "";
+  }
+  update(id: string, text: string, complete = true): void {
+    this.snapshots.set(id, { text, complete });
+  }
+  finish(id: string, text: string, retainUntilTraceAppend: boolean, complete: boolean): void {
+    if (retainUntilTraceAppend && complete) this.update(id, text);
+    else this.snapshots.delete(id);
+  }
+  fullOutput(id: string): string | null {
+    const snapshot = this.snapshots.get(id);
+    return snapshot?.complete ? snapshot.text : null;
+  }
+  clear(): void {
+    this.snapshots.clear();
+  }
+  get size(): number {
+    return this.snapshots.size;
+  }
+}
+
 /**
  * Stream the existing full-tool-output sidecar as raw bytes.
  *

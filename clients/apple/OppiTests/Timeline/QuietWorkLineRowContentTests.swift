@@ -24,15 +24,13 @@ struct QuietWorkLineRowContentTests {
         )
     }
 
-    @Test func activitySymbolsFollowTheFourBuckets() {
-        #expect(QuietWorkLineTimelineRowContentView.symbolName(forActivityKind: "read") == "magnifyingglass")
-        #expect(QuietWorkLineTimelineRowContentView.symbolName(forActivityKind: "write") == "pencil")
-        #expect(QuietWorkLineTimelineRowContentView.symbolName(forActivityKind: "edit") == "arrow.left.arrow.right")
-        #expect(QuietWorkLineTimelineRowContentView.symbolName(forActivityKind: "bash") == "wrench.fill")
-        #expect(
-            QuietWorkLineTimelineRowContentView.symbolName(forActivityKind: "mermaid")
-                == "wrench.fill"
-        )
+    @Test func activitySymbolsFollowSemanticBuckets() {
+        #expect(QuietWorkBucketKind.read.symbolName == "magnifyingglass")
+        #expect(QuietWorkBucketKind.write.symbolName == "pencil")
+        #expect(QuietWorkBucketKind.edit.symbolName == "arrow.left.arrow.right")
+        #expect(QuietWorkBucketKind.terminal.symbolName == "dollarsign")
+        #expect(QuietWorkBucketKind.media.symbolName == "photo")
+        #expect(QuietWorkBucketKind.tooling.symbolName == "wrench.fill")
     }
 
     @Test func accessibilityAlwaysUsesWordsSummary() {

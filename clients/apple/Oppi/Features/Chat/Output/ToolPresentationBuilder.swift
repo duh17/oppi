@@ -21,6 +21,7 @@ enum ToolPresentationBuilder {
         var display: ToolDisplay? = nil
         var outputPresentation: ToolOutputPresentation? = nil
         var outputAvailability: ToolOutputAvailability? = nil
+        var inspection: ToolInspection? = nil
         let expandedItemIDs: Set<String>
         let fullOutput: String
         let isLoadingOutput: Bool
@@ -64,11 +65,10 @@ enum ToolPresentationBuilder {
         isInterrupted: Bool = false,
         context: Context
     ) -> ToolTimelineRowConfiguration {
-        let isInteractive = context.outputPresentation?.isInteractive == true
         let isExpanded = context.expandedItemIDs.contains(itemID)
         let args = context.args
 
-        let presentation = ToolContentDescriptorBuilder.build(
+        let inspection = context.inspection ?? ToolContentDescriptorBuilder.inspect(
             tool: tool, argsSummary: argsSummary, outputPreview: outputPreview,
             isError: isError, isDone: isDone,
             context: .init(args: args, details: context.details, fullOutput: context.fullOutput,
@@ -76,10 +76,11 @@ enum ToolPresentationBuilder {
                            nestedCalls: context.nestedCalls, previewOnly: context.previewOnly,
                            totalBytes: context.totalBytes, display: context.display,
                            outputPresentation: context.outputPresentation, outputAvailability: context.outputAvailability),
-            includeOutput: isExpanded || Self.toolAudioPresentationDetails(from: context.details) != nil
+            includeOutput: isExpanded
         )
-        let isTerminal = presentation.inspection.terminalOutput
-        let file = presentation.inspection.file
+        let isInteractive = inspection.isInteractive
+        let isTerminal = inspection.terminalOutput
+        let file = inspection.file
         let hasInlineMediaDataURI = !isTerminal && file == nil && shouldWarnInlineMediaForToolOutput(
             outputPreview: outputPreview,
             fullOutput: context.fullOutput
@@ -89,9 +90,8 @@ enum ToolPresentationBuilder {
         let collapsed = buildCollapsed(
             isInteractive: isInteractive,
             tool: tool,
-            args: args,
+            inspection: inspection,
             argsSummary: argsSummary,
-            details: context.details,
             isExpanded: isExpanded,
             isError: isError,
             isDone: isDone,
@@ -100,12 +100,12 @@ enum ToolPresentationBuilder {
             terminalOutput: isTerminal,
             file: file
         )
-        let isVoicePresentationResult = Self.toolAudioPresentationDetails(from: context.details) != nil
+        let isVoicePresentationResult = inspection.audioOutput
 
         // Expanded presentation
         let expanded: ExpandedPresentation
         if isExpanded || isVoicePresentationResult {
-            expanded = buildExpanded(presentation)
+            expanded = buildExpanded(inspection)
         } else {
             expanded = ExpandedPresentation()
         }
@@ -123,7 +123,7 @@ enum ToolPresentationBuilder {
         }
 
         // Language badge
-        var languageBadge = presentation.inspection.commandLanguageBadge ?? collapsed.languageBadge
+        var languageBadge = inspection.commandLanguageBadge ?? collapsed.languageBadge
         if hasInlineMediaDataURI {
             if let existingBadge = languageBadge, !existingBadge.isEmpty {
                 languageBadge = "\(existingBadge) • ⚠︎media"
@@ -222,8 +222,8 @@ enum ToolPresentationBuilder {
             segmentAttributedTrailing: segmentAttributedTrailing
         )
         configuration.isInteractive = isInteractive
-        configuration.glyph = ToolContentDescriptorBuilder.glyph(input: context.inputPresentation, output: context.outputPresentation, details: context.details)
-        configuration.inspectionSupplement = presentation.inspection.supplement?.text
+        configuration.glyph = inspection.glyph
+        configuration.inspectionSupplement = inspection.supplement?.text
         configuration.rawMarkdownText = expanded.rawMarkdownText
         configuration.rawMarkdownOutputPrefix = expanded.rawMarkdownOutputPrefix
         configuration.currentFileOpenIntent = currentFileOpenIntent
@@ -265,9 +265,8 @@ enum ToolPresentationBuilder {
     private static func buildCollapsed(
         isInteractive: Bool,
         tool: String,
-        args: [String: JSONValue]?,
+        inspection: ToolInspection,
         argsSummary: String,
-        details: JSONValue?,
         isExpanded: Bool,
         isError: Bool,
         isDone: Bool,
@@ -302,11 +301,7 @@ enum ToolPresentationBuilder {
             return result
         }
         if isInteractive {
-            result.title = ToolCallFormatting.askCollapsedTitle(
-                args: args,
-                details: details,
-                argsSummary: argsSummary
-            )
+            result.title = inspection.interactionSummary ?? inspection.title
             result.toolNamePrefix = nil
             result.toolNameColor = UIColor(Color.themeCyan)
             result.titleLineBreakMode = .byTruncatingTail
@@ -314,7 +309,7 @@ enum ToolPresentationBuilder {
         } else {
             // Extension tools are rendered via server-provided StyledSegments.
             // This default case is the fallback when segments aren't available.
-            if Self.toolAudioPresentationDetails(from: details) != nil {
+            if inspection.audioOutput {
                 result.title = "Voice message"
                 result.languageBadge = nil
                 result.toolNamePrefix = nil
@@ -369,18 +364,18 @@ enum ToolPresentationBuilder {
         var rawMarkdownOutputPrefix: String?
     }
 
-    private static func buildExpanded(_ presentation: ToolContentPresentation) -> ExpandedPresentation {
+    private static func buildExpanded(_ inspection: ToolInspection) -> ExpandedPresentation {
         return ExpandedPresentation(
-            content: presentation.content.map { descriptor in
-                if presentation.inspection.terminalOutput, case .terminal(let terminal) = descriptor {
-                    return .bash(command: presentation.inspection.commandText, output: terminal.output, unwrapped: true)
+            content: inspection.output.first.map { descriptor in
+                if inspection.terminalOutput, case .terminal(let terminal) = descriptor {
+                    return .bash(command: inspection.commandText, output: terminal.output, unwrapped: true)
                 }
                 return expandedContent(from: descriptor)
             },
-            copyCommandText: presentation.copyCommandText,
-            copyOutputText: presentation.copyOutputText,
-            rawMarkdownText: { if case .markdown(let markdown) = presentation.content { return markdown.rawText }; return nil }(),
-            rawMarkdownOutputPrefix: { if case .markdown(let markdown) = presentation.content { return markdown.rawOutputPrefix }; return nil }()
+            copyCommandText: inspection.copyCommandText,
+            copyOutputText: inspection.copyOutputText,
+            rawMarkdownText: { if case .markdown(let markdown) = inspection.output.first { return markdown.rawText }; return nil }(),
+            rawMarkdownOutputPrefix: { if case .markdown(let markdown) = inspection.output.first { return markdown.rawOutputPrefix }; return nil }()
         )
     }
 
@@ -514,19 +509,4 @@ enum ToolPresentationBuilder {
         DocumentRenderPipeline.orgToMarkdown(orgText)
     }
 
-    static func toolAudioPresentationDetails(
-        from details: JSONValue?
-    ) -> ToolContentDescriptorBuilder.AudioPresentation? {
-        ToolContentDescriptorBuilder.audioPresentation(from: details)
-    }
-
-    static func toolImageAttachmentDetails(
-        from details: JSONValue?
-    ) -> ToolContentDescriptorBuilder.ImageAttachment? {
-        ToolContentDescriptorBuilder.imageAttachment(from: details)
-    }
-
-    static func mediaAttachmentDetails(from details: JSONValue?) -> [ToolMediaAttachment] {
-        ToolContentDescriptorBuilder.mediaAttachments(from: details)
-    }
 }

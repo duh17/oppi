@@ -1,3 +1,4 @@
+import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 import { EventEmitter } from "node:events";
 
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
@@ -52,7 +53,7 @@ function makeActiveSession(): SessionAgentEventState {
   return {
     session: makeSession(),
     pendingUIRequests: new Map(),
-    partialResults: new Map(),
+    toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
@@ -479,6 +480,38 @@ describe("managed and mirror runtime event parity", () => {
       expect(managed.received.find((event) => event.type === "tool_end")).toMatchObject({
         outputPresentation: registry.outputPresentation(name),
         outputAvailability: { complete: true },
+      });
+    },
+  );
+
+  it.each(["voice_reply_mode", "unrelated"])(
+    "projects %s setting authority identically",
+    (toolName) => {
+      const registry = new MobileRendererRegistry();
+      const { managed } = expectRuntimeParity(
+        [
+          { type: "tool_execution_start", toolCallId: "setting", toolName, args: {} },
+          {
+            type: "tool_execution_end",
+            toolCallId: "setting",
+            toolName,
+            result: {
+              content: [],
+              details: {
+                kind: "voice_reply_mode",
+                mode: "manual",
+                outputPresentation: { kind: "structured", settingEffect: "voiceReplyMode" },
+              },
+            },
+          },
+        ] as AgentSessionEvent[],
+        registry,
+      );
+      expect(
+        managed.received.find((event) => event.type === "tool_end")?.outputPresentation,
+      ).toEqual({
+        kind: "structured",
+        ...(toolName === "voice_reply_mode" ? { settingEffect: "voiceReplyMode" } : {}),
       });
     },
   );

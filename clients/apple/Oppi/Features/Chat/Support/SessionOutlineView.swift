@@ -223,7 +223,8 @@ struct SessionOutlineView: View {
         allEntries = items.map { item in
             let isCompaction = Self.isCompactionEvent(item)
             let summary = outlineSummary(for: item)
-            let diffStats = outlineDiffStats(for: item)
+            let inspection = inspection(for: item)
+            let diffStats = inspection?.file?.stats
 
             let passesAllFilter: Bool
             switch item {
@@ -263,6 +264,8 @@ struct SessionOutlineView: View {
                 timestamp: item.timestamp,
                 summary: summary,
                 diffStats: diffStats,
+                diffRequested: inspection?.file?.provenance == .requested,
+                glyph: inspection?.glyph,
                 isCompaction: isCompaction,
                 isForkable: isForkable,
                 passesAllFilter: passesAllFilter,
@@ -337,14 +340,22 @@ struct SessionOutlineView: View {
     }
 
     private static func outlineEntry(from snapshot: SessionOutlineEntrySnapshot) -> OutlineEntry {
-        OutlineEntry(
+        let inspection = snapshot.isTool ? ToolContentDescriptorBuilder.inspect(tool: snapshot.tool ?? "tool",
+            isError: snapshot.isError == true, isDone: true,
+            context: .init(args: snapshot.args, details: snapshot.details, inputPresentation: snapshot.inputPresentation,
+                display: snapshot.display, outputPresentation: snapshot.outputPresentation), includeOutput: false) : nil
+        return OutlineEntry(
             id: snapshot.id,
             item: nil,
             kind: OutlineEntryKind(rawValue: snapshot.kind) ?? .system,
             tool: snapshot.tool,
             timestamp: outlineTimestamp(snapshot.timestamp),
-            summary: snapshot.summary,
-            diffStats: nil,
+            summary: inspection?.terminalOutput == true || inspection?.file != nil
+                ? inspection?.outlineSummary(argsSummary: "") ?? snapshot.summary
+                : inspection?.display != nil ? inspection?.title ?? snapshot.summary : snapshot.summary,
+            diffStats: inspection?.file?.stats,
+            diffRequested: inspection?.file?.provenance == .requested,
+            glyph: inspection?.glyph,
             isCompaction: snapshot.kind == OutlineEntryKind.compaction.rawValue,
             isForkable: snapshot.isForkable == true,
             passesAllFilter: snapshot.passesAllFilter,
@@ -822,6 +833,8 @@ struct SessionOutlineView: View {
                                 summary: entry.summary,
                                 matchPositions: entry.matchPositions,
                                 diffStats: entry.diffStats,
+                                diffRequested: entry.diffRequested,
+                                glyph: entry.glyph,
                                 isCompaction: entry.isCompaction,
                                 isError: entry.isError,
                                 showDivider: index < visibleCount - 1
@@ -1008,8 +1021,8 @@ struct SessionOutlineView: View {
             let clean = preview.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
             return String(clean.prefix(80))
 
-        case .toolCall(let id, let tool, let argsSummary, _, _, _, _):
-            return formatToolSummary(id: id, tool: tool, argsSummary: argsSummary)
+        case .toolCall(_, _, let argsSummary, _, _, _, _):
+            return inspection(for: item)?.outlineSummary(argsSummary: argsSummary) ?? argsSummary
 
         case .systemEvent(_, let msg), .cacheMiss(_, let msg), .notice(_, let msg):
             return msg
@@ -1022,47 +1035,20 @@ struct SessionOutlineView: View {
         }
     }
 
-    private func formatToolSummary(id: String, tool: String, argsSummary: String) -> String {
-        let args = toolArgsStore.args(for: id)
-
-        switch tool {
-        case "bash", "Bash":
-            let cmd = args?["command"]?.stringValue ?? argsSummary
-            return "$ " + String(cmd.replacingOccurrences(of: "\n", with: " ").prefix(100))
-
-        case "__compaction":
-            return "Context compacted"
-
-        case "read", "Read":
-            let path = args?["path"]?.stringValue ?? ""
-            return "read " + path.shortenedPath
-
-        case "write", "Write":
-            let path = args?["path"]?.stringValue ?? ""
-            return "write " + path.shortenedPath
-
-        case "edit", "Edit":
-            let path = args?["path"]?.stringValue ?? ""
-            return "edit " + path.shortenedPath
-
-        default:
-            return "\(tool): \(String(argsSummary.prefix(80)))"
-        }
-    }
-
-    private func outlineDiffStats(for item: ChatItem) -> ToolCallFormatting.DiffStats? {
-        guard case .toolCall(let id, _, _, let output, _, let isError, let isDone) = item else { return nil }
-        return ToolFileInspection.resolve(args: toolArgsStore.args(for: id),
-            input: toolArgsStore.inputPresentation(for: id), output: toolArgsStore.outputPresentation(for: id),
-            details: toolDetails(id), text: output, isDone: isDone, isError: isError)?.stats
+    private func inspection(for item: ChatItem) -> ToolInspection? {
+        guard case .toolCall(let id, let tool, let summary, let output, _, let isError, let isDone) = item else { return nil }
+        return ToolContentDescriptorBuilder.inspect(tool: tool, argsSummary: summary, outputPreview: output,
+            isError: isError, isDone: isDone,
+            context: .init(args: toolArgsStore.args(for: id), details: toolDetails(id),
+                inputPresentation: toolArgsStore.inputPresentation(for: id), display: toolArgsStore.display(for: id),
+                outputPresentation: toolArgsStore.outputPresentation(for: id), outputAvailability: toolArgsStore.outputAvailability(for: id)),
+            includeOutput: false)
     }
 
     // MARK: - Classification Helpers
 
     private static func isCompactionEvent(_ item: ChatItem) -> Bool {
         switch item {
-        case .toolCall(_, let tool, _, _, _, _, _):
-            return tool == "__compaction"
         case .systemEvent(_, let message):
             return isCompactionMessage(message)
         default:
@@ -1103,6 +1089,8 @@ private struct OutlineEntry: Identifiable {
     let timestamp: Date?
     let summary: String
     let diffStats: ToolCallFormatting.DiffStats?
+    let diffRequested: Bool
+    let glyph: String?
     let isCompaction: Bool
     let isForkable: Bool
 
@@ -1127,6 +1115,8 @@ private struct OutlineRow: View {
     let summary: String
     var matchPositions: [Int] = []
     var diffStats: ToolCallFormatting.DiffStats?
+    var diffRequested: Bool
+    var glyph: String?
     let isCompaction: Bool
     let isError: Bool
     let showDivider: Bool
@@ -1168,6 +1158,9 @@ private struct OutlineRow: View {
                 // Diff stats for edit tools
                 if let stats = diffStats {
                     HStack(spacing: 3) {
+                        if diffRequested {
+                            Text("Requested").font(.caption2).foregroundStyle(.themeComment)
+                        }
                         if stats.added > 0 {
                             Text("+\(stats.added)")
                                 .font(.caption2.monospaced().bold())
@@ -1237,7 +1230,7 @@ private struct OutlineRow: View {
         case .assistant: return itemAudioIcon ?? "cpu"
         case .thinking: return "sparkle"
         case .tool:
-            return "wrench"
+            return glyph ?? "wrench"
         case .system: return "info.circle"
         case .compaction: return "arrow.trianglehead.2.clockwise.rotate.90"
         case .custom: return "info.circle.fill"

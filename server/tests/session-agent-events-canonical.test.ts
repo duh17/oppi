@@ -1,3 +1,4 @@
+import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
@@ -32,7 +33,7 @@ function makeActiveSession(
     session: makeSession(overrides),
     pendingUIRequests: new Map(),
     persistentExtensionUINotifications: new Map(),
-    partialResults: new Map(),
+    toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map(),
     toolArgs: new Map(),
@@ -59,7 +60,7 @@ function makeCoordinator(active: SessionAgentEventState) {
     eventProcessor: {
       translationContext: vi.fn(() => ({
         sessionId: active.session.id,
-        partialResults: active.partialResults,
+        toolOutputSnapshots: active.toolOutputSnapshots,
         streamedAssistantText: active.streamedAssistantText,
         currentThinkingContentIndex: active.currentThinkingContentIndex,
         mobileRenderers: {

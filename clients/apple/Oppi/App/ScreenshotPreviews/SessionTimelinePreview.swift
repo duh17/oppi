@@ -4,7 +4,7 @@ import SwiftUI
 // MARK: - Session Timeline Preview
 
 struct SessionTimelinePreview: View {
-    @State private var toolArgsStore = ToolArgsStore()
+    @State private var inspectionFixture = ToolInspectionPreviewFixture.makeReducer()
     @State private var gitStatusStore = GitStatusStore()
     @State private var lastTreeNavigationCapture = "none"
 
@@ -13,48 +13,6 @@ struct SessionTimelinePreview: View {
 
         var errorDescription: String? { message }
     }
-
-    private static let previewItems: [ChatItem] = {
-        let base = Date(timeIntervalSince1970: 1_700_000_000)
-
-        return [
-            .userMessage(
-                id: "entry-user-1",
-                text: "Plan rollout for timeline branch/fork UX on mobile.",
-                images: [],
-                timestamp: base
-            ),
-            .assistantMessage(
-                id: "entry-assistant-1",
-                text: "Got it. I can draft a migration plan and test checklist.",
-                timestamp: base.addingTimeInterval(2)
-            ),
-            .toolCall(
-                id: "entry-tool-1",
-                tool: "edit",
-                argsSummary: "path: clients/apple/Oppi/Features/Chat/Support/SessionOutlineView.swift",
-                outputPreview: "",
-                outputByteCount: 220,
-                isError: false,
-                isDone: true
-            ),
-            .systemEvent(
-                id: "entry-system-1",
-                message: "Context compacted (42100 tokens): preserved latest branch summary and task checklist"
-            ),
-            .userMessage(
-                id: "entry-user-2",
-                text: "Now move fork + branch controls into Session Timeline, not row long-press.",
-                images: [],
-                timestamp: base.addingTimeInterval(8)
-            ),
-            .assistantMessage(
-                id: "entry-assistant-2",
-                text: "Done. Branch and Fork are in one dock in Session Timeline view.",
-                timestamp: base.addingTimeInterval(11)
-            ),
-        ]
-    }()
 
     private static let previewTreeSnapshot = SessionTreeSnapshot(
         leafId: "entry-6",
@@ -130,7 +88,7 @@ struct SessionTimelinePreview: View {
 
     var body: some View {
         SessionOutlineView(
-            items: Self.previewItems,
+            items: inspectionFixture.items,
             sessionId: "preview-session",
             workspaceId: "preview-workspace",
             onSelect: { _ in },
@@ -152,7 +110,8 @@ struct SessionTimelinePreview: View {
                 }
                 throw PreviewNavigationCaptureError(message: "Captured \(summary)")
             },
-            initialTreeSnapshot: Self.previewTreeSnapshot
+            initialTreeSnapshot: Self.previewTreeSnapshot,
+            toolDetails: { inspectionFixture.toolDetailsStore.details(for: $0) }
         )
         .overlay(alignment: .bottomLeading) {
             Text("Last tree navigate: \(lastTreeNavigationCapture)")
@@ -164,16 +123,8 @@ struct SessionTimelinePreview: View {
                 .padding(10)
                 .accessibilityIdentifier("session-timeline.last-navigation")
         }
-        .environment(toolArgsStore)
+        .environment(inspectionFixture.toolArgsStore)
         .environment(gitStatusStore)
-        .onAppear {
-            toolArgsStore.set(
-                [
-                    "path": .string("clients/apple/Oppi/Features/Chat/Support/SessionOutlineView.swift"),
-                ],
-                for: "entry-tool-1"
-            )
-        }
         .accessibilityIdentifier("screenshot.ready")
     }
 }

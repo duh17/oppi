@@ -199,15 +199,6 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         )
     }
 
-    static func symbolName(forActivityKind kind: String) -> String {
-        switch kind {
-        case "read": return QuietWorkBucketKind.read.symbolName
-        case "write": return QuietWorkBucketKind.write.symbolName
-        case "edit": return QuietWorkBucketKind.edit.symbolName
-        default: return QuietWorkBucketKind.tooling.symbolName
-        }
-    }
-
     static func accessibilitySummary(for workLine: QuietTimelineWorkLine, now: Date = Date()) -> String {
         workLine.wordsSummary(now: now)
     }
@@ -356,7 +347,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
             }
             if bucket.kind == .edit, let stats = bucket.editStats {
                 result.append(NSAttributedString(
-                    string: "edit ",
+                    string: bucket.requestedStats ? "Requested edit " : "edit ",
                     attributes: [.font: font, .foregroundColor: foreground]
                 ))
                 Self.appendEditStats(stats, to: result, font: font)

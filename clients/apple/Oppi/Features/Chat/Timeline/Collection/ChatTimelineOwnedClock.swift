@@ -344,7 +344,7 @@ extension ChatTimelineCollectionHost.Controller {
             isBusy: configuration.isBusy,
             expandedTurnIDs: ownedClock.expandedQuietTurnIDs,
             displayStyle: configuration.workStripStyle,
-            toolArgs: { reducer.toolArgsStore.args(for: $0) },
+            toolInspection: { reducer.toolInspection(for: $0) },
             settledEnds: ownedClock.quietSettledEnds
         )
     }

@@ -1,3 +1,4 @@
+import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,7 +34,7 @@ function context(mobileRenderers: MobileRendererRegistry): TranslationContext {
   return {
     sessionId: "s1",
     mobileRenderers,
-    partialResults: new Map(),
+    toolOutputSnapshots: new ToolOutputSnapshots(),
     toolNames: new Map(),
     toolArgs: new Map(),
     streamingToolUpdatesSeen: new Map(),

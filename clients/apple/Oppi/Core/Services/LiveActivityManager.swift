@@ -255,7 +255,10 @@ final class LiveActivityManager {
             entry.updatedAt = now
             snapshot.sessionsById[sessionId] = entry
 
-        case .toolStart(let sessionId, let toolEventId, let tool, _, _, _, _, _, _):
+        case .toolStart(let sessionId, _, let tool, let args, _, let input, let display, let output, let parent):
+            guard parent == nil else { break }
+            let inspection = ToolContentDescriptorBuilder.inspect(tool: tool,
+                context: .init(args: args, inputPresentation: input, display: display, outputPresentation: output), includeOutput: false)
             var entry = upsertSession(sessionId)
             let now = Date()
             entry.status = .busy
@@ -263,8 +266,8 @@ final class LiveActivityManager {
             if entry.startDate == nil {
                 entry.startDate = now
             }
-            entry.activeTool = displayToolName(tool)
-            entry.lastActivity = toolActivityLabel(tool, seed: toolEventId)
+            entry.activeTool = inspection.title
+            entry.lastActivity = inspection.activityLabel
             entry.updatedAt = now
             snapshot.sessionsById[sessionId] = entry
 
@@ -831,69 +834,4 @@ final class LiveActivityManager {
         }
     }
 
-    private func displayToolName(_ tool: String) -> String {
-        let lowered = tool.lowercased()
-        switch lowered {
-        case "bash": return "Bash"
-        case "read": return "Read"
-        case "write": return "Write"
-        case "edit": return "Edit"
-        default:
-            return tool.isEmpty ? "tool" : tool
-        }
-    }
-
-    private func toolActivityLabel(_ tool: String, seed: String) -> String {
-        let options: [String]
-        switch tool.lowercased() {
-        case "bash":
-            options = [
-                String(localized: "Bashing"),
-                String(localized: "Invoking"),
-                String(localized: "Poking"),
-                String(localized: "Tinkering"),
-            ]
-        case "read":
-            options = [
-                String(localized: "Scanning"),
-                String(localized: "Inspecting"),
-                String(localized: "Peeking"),
-                String(localized: "Parsing"),
-            ]
-        case "write":
-            options = [
-                String(localized: "Drafting"),
-                String(localized: "Composing"),
-                String(localized: "Writing"),
-                String(localized: "Authoring"),
-            ]
-        case "edit":
-            options = [
-                String(localized: "Patching"),
-                String(localized: "Tweaking"),
-                String(localized: "Refining"),
-                String(localized: "Reworking"),
-            ]
-        default:
-            let displayName = displayToolName(tool)
-            guard !displayName.isEmpty else {
-                return String(localized: "Working")
-            }
-            return displayName
-        }
-
-        let index = stableVariationIndex(seed: seed, count: options.count)
-        return options[index]
-    }
-
-    private func stableVariationIndex(seed: String, count: Int) -> Int {
-        guard count > 1 else { return 0 }
-
-        var hash: UInt64 = 1_469_598_103_934_665_603
-        for byte in seed.utf8 {
-            hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
-        }
-        return Int(hash % UInt64(count))
-    }
 }

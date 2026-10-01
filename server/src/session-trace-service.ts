@@ -265,6 +265,7 @@ export class SessionTraceService {
     );
     const entryRenderers = this.liveEntryRenderers(params.session.id);
     const result = await readSessionTraceOutlineFromFiles(jsonlPaths, {
+      mobileRenderers: this.mobileRenderers,
       ...(entryRenderers ? { entryRenderers } : {}),
     });
     const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;

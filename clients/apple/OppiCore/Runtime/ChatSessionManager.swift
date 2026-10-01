@@ -1273,9 +1273,11 @@ final class ChatSessionManager {
             ))
 
         case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability, let parent):
-            // The settings payload validates its own kind/mode. Tool identity
-            // is irrelevant, and failed calls must not mutate preferences.
-            if !isError { effectsStatePort.applyVoiceReplyModeDetails(details, sessionId: sessionId) }
+            // Only registry-declared setting producers may mutate preferences.
+            // The payload still validates kind/mode; arbitrary result details cannot opt in.
+            if !isError, outputPresentation?.settingEffect == "voiceReplyMode" {
+                effectsStatePort.applyVoiceReplyModeDetails(details, sessionId: sessionId)
+            }
             coalescer.receive(toolCallCorrelator.end(
                 sessionId: sessionId, toolCallId: toolCallId,
                 details: details, isError: isError,

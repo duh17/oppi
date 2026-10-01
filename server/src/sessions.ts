@@ -732,7 +732,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   getToolPartialOutput(sessionId: string, toolCallId: string): string | null {
     const key = toolCallId.trim();
     return key
-      ? (this.active.get(this.sessionKey(sessionId))?.partialResults.get(key) ?? null)
+      ? (this.active.get(this.sessionKey(sessionId))?.toolOutputSnapshots.fullOutput(key) ?? null)
       : null;
   }
 

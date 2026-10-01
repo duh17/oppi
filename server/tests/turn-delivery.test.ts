@@ -1,3 +1,4 @@
+import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 import { describe, expect, it, vi } from "vitest";
 import { EventRing } from "../src/event-ring.js";
 import { SessionManager } from "../src/sessions.js";
@@ -60,7 +61,7 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
     workspaceId: "w1",
     subscribers: new Set<(msg: ServerMessage) => void>(),
     pendingUIRequests: new Map(),
-    partialResults: new Map(),
+    toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),

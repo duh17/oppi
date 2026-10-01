@@ -361,6 +361,13 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     outputAvailability: { complete: true },
     details: { diff: "-42 old\n+42 actual" },
   },
+  tool_end_setting: {
+    type: "tool_end",
+    tool: "voice_reply_mode",
+    toolCallId: "tc-setting-001",
+    outputPresentation: { kind: "structured", settingEffect: "voiceReplyMode" },
+    details: { kind: "voice_reply_mode", mode: "manual" },
+  },
   tool_end_with_details: {
     type: "tool_end",
     tool: "remember",
@@ -708,6 +715,7 @@ const SERVER_MESSAGE_ORDER = [
   "tool_end",
   "tool_end_with_details",
   "tool_end_file_diff",
+  "tool_end_setting",
   "queue_state",
   "queue_item_started",
   "turn_ack",

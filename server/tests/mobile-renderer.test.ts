@@ -13,6 +13,28 @@ function styleOf(segs: StyledSegment[] | undefined, index: number): string | und
 }
 
 describe("MobileRendererRegistry", () => {
+  it("only registry declarations grant voice setting effects", () => {
+    const registry = new MobileRendererRegistry();
+    const details = {
+      kind: "voice_reply_mode",
+      mode: "manual",
+      outputPresentation: { kind: "structured", settingEffect: "voiceReplyMode" },
+    };
+    expect(registry.outputPresentation("unrelated", details)).toEqual({ kind: "structured" });
+    expect(registry.outputPresentation("voice_reply_mode", details)).toEqual({
+      kind: "structured",
+      settingEffect: "voiceReplyMode",
+    });
+    registry.register("custom_settings", {
+      outputPresentation: { kind: "structured", settingEffect: "voiceReplyMode" },
+      renderCall: () => [],
+      renderResult: () => [],
+    });
+    expect(registry.outputPresentation("custom_settings", details)).toEqual({
+      kind: "structured",
+      settingEffect: "voiceReplyMode",
+    });
+  });
   it("declares file roles and requested/result semantics independently of summaries", () => {
     const reg = new MobileRendererRegistry();
     expect(reg.inputPresentation("read")).toEqual({

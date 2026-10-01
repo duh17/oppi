@@ -71,9 +71,10 @@ struct LiveActivityStateTests {
         mgr.sync(connectionId: "c1", sessions: [session])
 
         mgr.recordEvent(connectionId: "c1", event: .toolStart(
-            sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]
+            sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:], display: .init(title: "Bash", verbatim: true)
         ))
         #expect(mgr.currentState.primaryTool == "Bash")
+        #expect(mgr.currentState.primaryLastActivity == "Running Bash")
         #expect(mgr.currentState.primaryPhase == .working)
     }
 

@@ -118,6 +118,33 @@ struct ToolInspection: Equatable, Sendable {
         var role: String?
         var language: String?
     }
+    enum ActivityKind: Equatable, Sendable { case terminal, fileContent, fileMutation, fileDiff, interactive, media, generic }
+    var display: ToolDisplay? = nil
+    var title: String = ""
+    var glyph: String? = nil
+    var isInteractive = false
+    var mediaOutput = false
+    var audioOutput = false
+    var interactionSummary: String? = nil
+    var availability: ToolOutputAvailability? = nil
+    var copyCommandText: String? = nil
+    var copyOutputText: String? = nil
+    var activityKind: ActivityKind {
+        if isInteractive { return .interactive }
+        if terminalOutput { return .terminal }
+        if let file {
+            switch file.operation { case .content: return .fileContent; case .mutation: return .fileMutation; case .edits: return .fileDiff }
+        }
+        if mediaOutput { return .media }
+        return .generic
+    }
+    /// Summary consumers use the same selected path/diff/input as the tool row.
+    func outlineSummary(argsSummary: String) -> String {
+        if terminalOutput, let commandText { return "$ " + String(commandText.replacingOccurrences(of: "\n", with: " ").prefix(100)) }
+        if let path = file?.path { return title + " " + path }
+        return argsSummary.isEmpty ? title : title + ": " + String(argsSummary.prefix(80))
+    }
+    var activityLabel: String { "Running \(title.isEmpty ? "tool" : title)" }
     var input: [Field]
     var calls: NestedToolCalls?
     var output: [ToolContentDescriptor]
@@ -146,6 +173,11 @@ struct ToolInspection: Equatable, Sendable {
 struct ToolContentPresentation: Equatable, Sendable {
     var inspection: ToolInspection
     var content: ToolContentDescriptor? { inspection.output.first }
-    var copyCommandText: String?
-    var copyOutputText: String?
+    var copyCommandText: String? { inspection.copyCommandText }
+    var copyOutputText: String? { inspection.copyOutputText }
+    init(inspection: ToolInspection, copyCommandText: String?, copyOutputText: String?) {
+        self.inspection = inspection
+        self.inspection.copyCommandText = copyCommandText
+        self.inspection.copyOutputText = copyOutputText
+    }
 }

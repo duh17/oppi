@@ -6,11 +6,12 @@ import UIKit
 
 struct QuietWorkStripPreview: View {
     private let assistantStartedAt = Date().addingTimeInterval(-7)
+    @State private var inspectionFixture = ToolInspectionPreviewFixture.makeReducer()
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                toolIconOptions
+                mixedInspectionSession
                 chatSequence(style: .icons, title: "Icons")
                 chatSequence(style: .words, title: "Words")
                 WorkStripPreviewCard(style: .icons)
@@ -21,46 +22,24 @@ struct QuietWorkStripPreview: View {
         .accessibilityIdentifier("screenshot.ready")
     }
 
-    private var toolIconOptions: some View {
-        let candidates = [
-            ("wrench", "wrench"),
-            ("wrench.fill", "wrench.fill"),
-            ("hammer", "hammer"),
-            ("hammer.fill", "hammer.fill"),
-            ("screwdriver", "screwdriver"),
-            ("toolbox", "toolbox"),
-        ]
-        let reference = [
-            "magnifyingglass",
-            "pencil",
-            "arrow.left.arrow.right",
-        ]
+    private var mixedInspectionSession: some View {
+        let projection = QuietTimelineProjection.make(items: inspectionFixture.items, isQuiet: true, isBusy: false,
+            expandedTurnIDs: [], toolInspection: { inspectionFixture.toolInspection(for: $0) })
         return VStack(alignment: .leading, spacing: 10) {
-            Text("Tool icon options — same 13pt as the others")
+            Text("Mixed tool facts: terminal · files · MCP · nested calls")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.themeFgDim)
-            ForEach(candidates, id: \.0) { name, symbol in
-                HStack(spacing: 10) {
-                    labeledSymbol(symbol)
-                    Text("9")
-                        .font(.subheadline.monospacedDigit().weight(.semibold))
-                    ForEach(reference, id: \.self) { other in
-                        labeledSymbol(other)
+            ForEach(projection.rows) { row in
+                switch row {
+                case .quietWork(let line):
+                    QuietWorkStripRowPreview(workLine: line, style: .icons).frame(height: 44)
+                    QuietWorkStripRowPreview(workLine: line, style: .words).frame(height: 44)
+                case .item(let item):
+                    if case .toolCall = item, let inspection = inspectionFixture.toolInspection(for: item) {
+                        Label(inspection.interactionSummary ?? inspection.title, systemImage: inspection.glyph ?? "wrench")
                     }
-                    Text(name)
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-                    Spacer(minLength: 0)
                 }
-                .foregroundStyle(.themeFg)
             }
-        }
-        .accessibilityIdentifier("quiet-work-strip.tool-icons")
-    }
-
-    private func labeledSymbol(_ name: String) -> some View {
-        Image(systemName: name)
-            .font(.system(size: 13, weight: .semibold))
+        }.accessibilityIdentifier("quiet-work-strip.mixed-inspection")
     }
 
     private func chatSequence(

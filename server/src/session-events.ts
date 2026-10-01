@@ -1,3 +1,4 @@
+import type { ToolOutputSnapshots } from "./tool-output-sidecar.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import type { ExtensionUIState } from "./extension-ui-state.js";
@@ -146,7 +147,7 @@ function routingTags(session: Session, extra?: Record<string, string>): Record<s
 
 export interface EventProcessorSessionState extends ExtensionUIState {
   session: Session;
-  partialResults: Map<string, string>;
+  toolOutputSnapshots: ToolOutputSnapshots;
   streamedAssistantText: string;
   currentThinkingContentIndex?: number;
   pendingStop?: PendingStop;
@@ -205,7 +206,7 @@ export class SessionEventProcessor {
   translationContext(active: EventProcessorSessionState): TranslationContext {
     return {
       sessionId: active.session.id,
-      partialResults: active.partialResults,
+      toolOutputSnapshots: active.toolOutputSnapshots,
       streamedAssistantText: active.streamedAssistantText,
       currentThinkingContentIndex: active.currentThinkingContentIndex,
       mobileRenderers: this.deps.mobileRenderers,

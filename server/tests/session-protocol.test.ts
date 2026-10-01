@@ -1,3 +1,4 @@
+import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { ServerMessage, Session } from "../src/types.js";
@@ -20,7 +21,7 @@ function makeCtx(overrides?: Partial<TranslationContext>): TranslationContext {
   return {
     sessionId: "test-session",
     mobileRenderers: new MobileRendererRegistry(),
-    partialResults: new Map(),
+    toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
@@ -1295,7 +1296,7 @@ describe("translatePiEvent", () => {
 
     it("emits nothing when text hasn't changed", () => {
       const ctx = makeCtx();
-      ctx.partialResults.set("tc-1", "hello");
+      ctx.toolOutputSnapshots.update("tc-1", "hello");
       ctx.toolNames.set("tc-1", "read");
 
       const result = translatePiEvent(
@@ -1346,7 +1347,7 @@ describe("translatePiEvent", () => {
     // receives duplicated output, but no content is dropped.
     it("emits full text on divergence (replace semantics reset)", () => {
       const ctx = makeCtx();
-      ctx.partialResults.set("tc-1", "hello world");
+      ctx.toolOutputSnapshots.update("tc-1", "hello world");
       ctx.toolNames.set("tc-1", "read");
 
       const result = translatePiEvent(
@@ -1869,7 +1870,7 @@ describe("translatePiEvent", () => {
   describe("tool_execution_end", () => {
     it("emits final delta and tool_end", () => {
       const ctx = makeCtx();
-      ctx.partialResults.set("tc-1", "partial");
+      ctx.toolOutputSnapshots.update("tc-1", "partial");
       ctx.toolNames.set("tc-1", "read");
 
       const result = translatePiEvent(
@@ -1892,7 +1893,7 @@ describe("translatePiEvent", () => {
 
     it("emits only tool_end when final matches accumulated", () => {
       const ctx = makeCtx();
-      ctx.partialResults.set("tc-1", "complete");
+      ctx.toolOutputSnapshots.update("tc-1", "complete");
       ctx.toolNames.set("tc-1", "read");
 
       const result = translatePiEvent(
@@ -1912,7 +1913,7 @@ describe("translatePiEvent", () => {
 
     it("retains completed terminal output until turn_end and clears call maps", () => {
       const ctx = makeCtx();
-      ctx.partialResults.set("tc-1", "data");
+      ctx.toolOutputSnapshots.update("tc-1", "data");
       ctx.toolNames.set("tc-1", "bash");
       ctx.shellPreviewLastSent.set("tc-1", 1000);
 
@@ -1927,12 +1928,12 @@ describe("translatePiEvent", () => {
         ctx,
       );
 
-      expect(ctx.partialResults.get("tc-1")).toBe("completed output");
+      expect(ctx.toolOutputSnapshots.previous("tc-1")).toBe("completed output");
       expect(ctx.toolNames.has("tc-1")).toBe(false);
       expect(ctx.shellPreviewLastSent.has("tc-1")).toBe(false);
 
       translatePiEvent({ type: "turn_end" } as AgentSessionEvent, ctx);
-      expect(ctx.partialResults.size).toBe(0);
+      expect(ctx.toolOutputSnapshots.size).toBe(0);
     });
 
     it("emits tool_end with isError when tool errored", () => {
@@ -2574,11 +2575,11 @@ describe("translatePiEvent", () => {
       ).toBe("hello\n");
 
       // Context should be clean
-      expect(ctx.partialResults.size).toBe(0);
+      expect(ctx.toolOutputSnapshots.size).toBe(0);
       expect(ctx.toolNames.size).toBe(0);
     });
 
-    it("handles concurrent tool calls with separate partialResults tracking", () => {
+    it("handles concurrent tool calls with separate toolOutputSnapshots tracking", () => {
       const ctx = makeCtx();
 
       // Start two tools
@@ -2639,8 +2640,8 @@ describe("translatePiEvent", () => {
         ctx,
       );
       expect(next1).toEqual([{ type: "tool_output", output: " plus", toolCallId: "tc-1" }]);
-      expect(ctx.partialResults.get("tc-1")).toBe("file1 plus");
-      expect(ctx.partialResults.get("tc-2")).toBe("file2");
+      expect(ctx.toolOutputSnapshots.previous("tc-1")).toBe("file1 plus");
+      expect(ctx.toolOutputSnapshots.previous("tc-2")).toBe("file2");
 
       // End tc-1 — should only clear tc-1's state
       translatePiEvent(
@@ -2654,8 +2655,8 @@ describe("translatePiEvent", () => {
         ctx,
       );
 
-      expect(ctx.partialResults.has("tc-1")).toBe(false);
-      expect(ctx.partialResults.get("tc-2")).toBe("file2");
+      expect(ctx.toolOutputSnapshots.fullOutput("tc-1")).toBeNull();
+      expect(ctx.toolOutputSnapshots.previous("tc-2")).toBe("file2");
     });
 
     it("handles extension tool lifecycle without duplicating streamed args as output", () => {
@@ -2716,7 +2717,7 @@ describe("translatePiEvent", () => {
       expect(realOutput.mode).toBeUndefined(); // append mode (default)
       expect(execEnd.find((m) => m.type === "tool_end")).toBeTruthy();
 
-      expect(ctx.partialResults.size).toBe(0);
+      expect(ctx.toolOutputSnapshots.size).toBe(0);
     });
 
     it("forwards generic audio presentation details on tool updates and avoids duplicate final transcript", () => {

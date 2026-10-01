@@ -62,12 +62,16 @@ struct ToolOutputPresentation: Codable, Equatable, Sendable {
     var kind: String
     var provenance: String? = nil
     var isInteractive: Bool { kind == "interactive" }
-    init(kind: String, provenance: String? = nil) { self.kind = kind; self.provenance = provenance }
-    private enum CodingKeys: String, CodingKey { case kind, provenance }
+    var settingEffect: String? = nil
+    init(kind: String, provenance: String? = nil, settingEffect: String? = nil) {
+        self.kind = kind; self.provenance = provenance; self.settingEffect = settingEffect
+    }
+    private enum CodingKeys: String, CodingKey { case kind, provenance, settingEffect }
     init(from decoder: Decoder) throws {
         let c = try? decoder.container(keyedBy: CodingKeys.self)
         kind = (try? c?.decode(String.self, forKey: .kind)) ?? ""
         provenance = try? c?.decode(String.self, forKey: .provenance)
+        settingEffect = try? c?.decode(String.self, forKey: .settingEffect)
     }
 }
 

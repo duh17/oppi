@@ -3,6 +3,8 @@ import { createReadStream, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { performance } from "node:perf_hooks";
 import { projectCustomEntry, type LiveEntryRendererSet, type SessionEntry } from "./trace.js";
+import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-renderer.js";
+import type { ToolInputPresentation, ToolOutputPresentation, ToolDisplay } from "./types.js";
 
 export type TraceOutlineEntryKind =
   | "user"
@@ -24,6 +26,11 @@ export interface TraceOutlineEntry {
   isForkable?: boolean;
   tool?: string;
   isError?: boolean;
+  args?: Record<string, unknown>;
+  details?: unknown;
+  display?: ToolDisplay;
+  inputPresentation?: ToolInputPresentation;
+  outputPresentation?: ToolOutputPresentation;
 }
 
 export interface TraceOutlineSnapshot {
@@ -59,7 +66,10 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 
 export async function readSessionTraceOutlineFromFiles(
   jsonlPaths: string[],
-  options: { entryRenderers?: LiveEntryRendererSet | null } = {},
+  options: {
+    mobileRenderers: MobileRendererRegistry;
+    entryRenderers?: LiveEntryRendererSet | null;
+  },
 ): Promise<TraceOutlineResult> {
   const sources = traceOutlineSources(jsonlPaths);
   const jsonlBytes = sources.reduce((sum, source) => sum + source.size, 0);
@@ -98,7 +108,7 @@ export async function readSessionTraceOutlineFromFiles(
 
   const projectStart = performance.now();
   for (const entry of currentSessionEntryPath(sessionEntries)) {
-    projectEntry(entry, entries, toolRowsByCallId, options.entryRenderers);
+    projectEntry(entry, entries, toolRowsByCallId, options.mobileRenderers, options.entryRenderers);
   }
   projectMs += elapsed(projectStart);
 
@@ -177,6 +187,7 @@ function parseOutlineEntryLine(line: string): SessionEntry | null {
         toolCallId,
         toolName: readJsonStringField(line, "toolName"),
         isError: line.includes('"isError":true'),
+        details: readBoundedObjectField(line, "details"),
       },
     };
   }
@@ -186,6 +197,34 @@ function parseOutlineEntryLine(line: string): SessionEntry | null {
   } catch {
     return null;
   }
+}
+
+// Tool-result text can be megabytes. Read only a bounded details object, rather
+// than parsing or retaining result content in the lightweight outline.
+function readBoundedObjectField(line: string, field: string): Record<string, unknown> | undefined {
+  const match = new RegExp(`"${field}"\\s*:\\s*\\{`).exec(line);
+  if (!match) return undefined;
+  const start = match.index + match[0].lastIndexOf("{");
+  let depth = 0,
+    inString = false,
+    escaped = false;
+  for (let index = start; index < line.length && index - start < 256 * 1024; index++) {
+    const ch = line[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) {
+      try {
+        return JSON.parse(line.slice(start, index + 1)) as Record<string, unknown>;
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  return undefined;
 }
 
 function readJsonStringField(line: string, field: string): string | undefined {
@@ -244,6 +283,7 @@ function projectEntry(
   entry: SessionEntry,
   entries: TraceOutlineEntry[],
   toolRowsByCallId: Map<string, TraceOutlineEntry>,
+  mobileRenderers: MobileRendererRegistry,
   renderers?: LiveEntryRendererSet | null,
 ): void {
   if (typeof entry.id !== "string" || entry.id.length === 0) return;
@@ -252,7 +292,7 @@ function projectEntry(
 
   switch (entry.type) {
     case "message":
-      projectMessageEntry(entry, entries, toolRowsByCallId, timestamp);
+      projectMessageEntry(entry, entries, toolRowsByCallId, timestamp, mobileRenderers);
       return;
 
     case "compaction":
@@ -328,6 +368,7 @@ function projectMessageEntry(
   entries: TraceOutlineEntry[],
   toolRowsByCallId: Map<string, TraceOutlineEntry>,
   timestamp: string,
+  mobileRenderers: MobileRendererRegistry,
 ): void {
   const message = entry.message;
   if (!message) return;
@@ -350,7 +391,7 @@ function projectMessageEntry(
     }
 
     case "assistant":
-      projectAssistantEntry(entry, entries, toolRowsByCallId, timestamp);
+      projectAssistantEntry(entry, entries, toolRowsByCallId, timestamp, mobileRenderers);
       return;
 
     case "toolResult": {
@@ -359,6 +400,22 @@ function projectMessageEntry(
       const row = toolRowsByCallId.get(toolCallId);
       if (row) {
         row.isError = message.isError === true;
+        row.outputPresentation = mobileRenderers.outputPresentation(
+          row.tool ?? "",
+          message.details,
+        );
+        const details = asRecord(message.details);
+        // Diff selection is shared with the client row. Other large details stay out.
+        row.details = details && {
+          ...(typeof details.patch === "string" ? { patch: details.patch } : {}),
+          ...(typeof details.diff === "string" ? { diff: details.diff } : {}),
+          ...(details.kind === "audio_presentation"
+            ? { kind: details.kind, audio: details.audio }
+            : {}),
+          ...(details.image ? { image: details.image } : {}),
+          ...(Array.isArray(details.media) ? { media: details.media } : {}),
+        };
+        row.display = resolveToolDisplay(row.tool ?? "", undefined, message.details);
       }
       return;
     }
@@ -370,6 +427,9 @@ function projectMessageEntry(
         id: entry.id,
         kind: "tool",
         tool: "bash",
+        args: { command: String((message as Record<string, unknown>).command || "") },
+        inputPresentation: mobileRenderers.inputPresentation("bash"),
+        outputPresentation: mobileRenderers.outputPresentation("bash"),
         summary: `$ ${summary}`,
         timestamp,
         isMessage: false,
@@ -389,6 +449,7 @@ function projectAssistantEntry(
   entries: TraceOutlineEntry[],
   toolRowsByCallId: Map<string, TraceOutlineEntry>,
   timestamp: string,
+  mobileRenderers: MobileRendererRegistry,
 ): void {
   const content = entry.message?.content;
   if (typeof content === "string") {
@@ -466,7 +527,16 @@ function projectAssistantEntry(
         id,
         kind: "tool",
         tool,
-        summary: formatToolSummary(tool, args ?? {}),
+        summary:
+          mobileRenderers
+            .renderCall(tool, args ?? {})
+            ?.map((segment) => segment.text)
+            .join("") ??
+          (summarizeArgs(args ?? {}) ? `${tool}: ${summarizeArgs(args ?? {})}` : tool),
+        args: args && JSON.stringify(args).length <= 256 * 1024 ? args : undefined,
+        display: resolveToolDisplay(tool),
+        inputPresentation: mobileRenderers.inputPresentation(tool),
+        outputPresentation: mobileRenderers.outputPresentation(tool),
         timestamp,
         isMessage: false,
         isTool: true,
@@ -515,48 +585,12 @@ function previewText(rawText: string): string | undefined {
   return `${normalized.slice(0, MAX_SUMMARY_CHARS - 1)}…`;
 }
 
-function formatToolSummary(tool: string, args: Record<string, unknown>): string {
-  switch (tool) {
-    case "bash":
-    case "Bash": {
-      const command = String(args.command || "")
-        .replace(/[\n\t]/g, " ")
-        .trim();
-      return `$ ${previewText(command) ?? tool}`;
-    }
-
-    case "read":
-    case "Read":
-      return `read ${shortenPath(String(args.path || ""))}`.trim();
-
-    case "write":
-    case "Write":
-      return `write ${shortenPath(String(args.path || ""))}`.trim();
-
-    case "edit":
-    case "Edit":
-      return `edit ${shortenPath(String(args.path || ""))}`.trim();
-
-    default: {
-      const argsSummary = summarizeArgs(args);
-      return argsSummary ? `${tool}: ${argsSummary}` : tool;
-    }
-  }
-}
-
 function summarizeArgs(args: Record<string, unknown>): string {
   const parts: string[] = [];
   for (const [key, value] of Object.entries(args).slice(0, 4)) {
     parts.push(`${key}: ${previewText(String(value)) ?? ""}`.trim());
   }
   return previewText(parts.join(", ")) ?? "";
-}
-
-function shortenPath(path: string): string {
-  if (!path) return "";
-  const home = process.env.HOME || process.env.USERPROFILE || "";
-  const display = home && path.startsWith(home) ? `~${path.slice(home.length)}` : path;
-  return previewText(display) ?? display;
 }
 
 function tryParseJsonObject(value: unknown): Record<string, unknown> | undefined {

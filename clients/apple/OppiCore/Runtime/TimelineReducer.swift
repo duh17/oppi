@@ -127,6 +127,19 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Separate store for full tool output.
     let toolOutputStore = ToolOutputStore()
 
+    /// Shared snapshot translation for secondary consumers. Output documents stay
+    /// lazy; resolving summary facts never introduces another interpretation path.
+    func toolInspection(for item: ChatItem, includeOutput: Bool = false) -> ToolInspection? {
+        guard case .toolCall(let id, let tool, let summary, let preview, _, let isError, let isDone) = item else { return nil }
+        return ToolContentDescriptorBuilder.inspect(tool: tool, argsSummary: summary, outputPreview: preview,
+            isError: isError, isDone: isDone,
+            context: .init(args: toolArgsStore.args(for: id), details: toolDetailsStore.details(for: id),
+                fullOutput: toolOutputStore.fullOutput(for: id), inputPresentation: toolArgsStore.inputPresentation(for: id),
+                nestedCalls: toolDetailsStore.nestedCalls(for: id), previewOnly: toolOutputStore.hasPreviewOnlyOutput(for: id),
+                display: toolArgsStore.display(for: id), outputPresentation: toolArgsStore.outputPresentation(for: id),
+                outputAvailability: toolArgsStore.outputAvailability(for: id)), includeOutput: includeOutput)
+    }
+
     /// O(1) item lookup by ID — avoids linear scans on every streaming upsert.
     /// Invalidated on insert, remove, and reset.
     private let itemIndex = TimelineItemIndex()
@@ -1216,7 +1229,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             let callsChanged = nestedCalls != nil && toolDetailsStore.nestedCalls(for: toolEventId) != nestedCalls
             if let nestedCalls { toolDetailsStore.setNestedCalls(nestedCalls, for: toolEventId) }
             else if var recorded = toolDetailsStore.nestedCalls(for: toolEventId) {
-                recorded.complete = true
+                recorded.complete = liveNestedCalls.recordedAllCalls(for: toolEventId)
                 toolDetailsStore.setNestedCalls(recorded, for: toolEventId)
             }
             let endChanged = handleToolEnd(toolEventId: toolEventId, details: details, isError: isError, resultSegments: resultSegments)

@@ -1,3 +1,4 @@
+import type { ToolOutputSnapshots } from "./tool-output-sidecar.js";
 /**
  * Pi event translation and session state helpers.
  *
@@ -522,7 +523,7 @@ export interface TranslationContext {
   /** Session ID — used for logging only. */
   sessionId: string;
   /** Accumulated partial-result text per toolCallId (replace → delta conversion). */
-  partialResults: Map<string, string>;
+  toolOutputSnapshots: ToolOutputSnapshots;
   /** Assistant text already streamed via text_delta for the current turn. */
   streamedAssistantText: string;
   /** Current thinking block content index from thinking_start, used when deltas omit it. */
@@ -838,7 +839,7 @@ function resolveToolCallId(event: AgentSessionEvent): string | undefined {
 /**
  * Translate a single pi agent event into zero or more ServerMessages.
  *
- * Mutates `ctx.streamedAssistantText` and `ctx.partialResults` as a
+ * Mutates `ctx.streamedAssistantText` and `ctx.toolOutputSnapshots` as a
  * side effect (streaming state for the current turn).
  */
 function contentIndexFrom(value: unknown): number | undefined {
@@ -890,7 +891,7 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
     case "turn_end":
       // Pi has appended every tool result by this boundary. Release the temporary
       // tool_end handoff snapshots; complete trace text now backs full-output reads.
-      ctx.partialResults.clear();
+      ctx.toolOutputSnapshots.clear();
       return EMPTY_MESSAGES;
 
     case "message_start":
@@ -1056,7 +1057,7 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
 
       // A terminal snapshot can contain multiple ordered text blocks. Its preview
       // and retrievable source must describe the same whole snapshot, not just
-      // whichever block happened to update partialResults last.
+      // whichever block happened to update toolOutputSnapshots last.
       const textParts = contents.flatMap((block) => {
         const record = asRecord(block);
         return record &&
@@ -1080,8 +1081,8 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
           // Compute delta from last partialResult to avoid duplication.
           // partialResult is accumulated (replace semantics) — we convert
           // to delta so the client can append without duplicating output.
-          const lastText = ctx.partialResults.get(key) ?? "";
-          ctx.partialResults.set(key, fullText);
+          const lastText = ctx.toolOutputSnapshots.previous(key);
+          ctx.toolOutputSnapshots.update(key, fullText, producerAvailability.complete);
 
           const fullTextBytes = utf8ByteCount(fullText);
           if (shellTool && toolCallId && fullTextBytes > SHELL_PREVIEW_THRESHOLD) {
@@ -1135,8 +1136,8 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
       if (!emittedOutput && audioDetails) {
         const transcript = audioDetails.text ?? "";
         if (transcript) {
-          const lastText = ctx.partialResults.get(key) ?? "";
-          ctx.partialResults.set(key, transcript);
+          const lastText = ctx.toolOutputSnapshots.previous(key);
+          ctx.toolOutputSnapshots.update(key, transcript, producerAvailability.complete);
           const update = computeToolOutputUpdate(lastText, transcript);
           pushToolOutputMessage(messages, {
             output: update?.output ?? transcript,
@@ -1165,7 +1166,7 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
     case "tool_execution_end": {
       const toolCallId = resolveToolCallId(event);
       const key = toolCallId ?? "";
-      const lastText = ctx.partialResults.get(key) ?? "";
+      const lastText = ctx.toolOutputSnapshots.previous(key);
       const toolName = ctx.toolNames.get(key) ?? event.toolName ?? "";
       const shellTool =
         ctx.mobileRenderers.outputPresentation(toolName, event.result?.details)?.kind ===
@@ -1262,11 +1263,7 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
           ...(inputPresentation ? { inputPresentation } : {}),
         });
       }
-      // Keep only complete preview-source snapshots until Pi appends the result.
-      // This closes the interval between tool_end publication and durable trace.
-      if (wasPreviewed && producerAvailability?.complete === true)
-        ctx.partialResults.set(key, finalText);
-      else ctx.partialResults.delete(key);
+      ctx.toolOutputSnapshots.finish(key, finalText, wasPreviewed, producerAvailability.complete);
       ctx.toolNames.delete(key);
       ctx.toolArgs?.delete(key);
       ctx.shellPreviewLastSent.delete(key);

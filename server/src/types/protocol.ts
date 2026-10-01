@@ -41,6 +41,8 @@ export interface ToolOutputPresentation {
   kind: "terminal" | "structured" | "fileContent" | "diffOfEdits" | "interactive";
   /** Requested bytes are input, never evidence of the resulting file. */
   provenance?: "requested" | "result";
+  /** Registry-declared session-setting effect, never inferred from result details. */
+  settingEffect?: "voiceReplyMode";
 }
 
 /** Pi result text completeness; source uses toolCallId, never a private path.

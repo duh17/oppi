@@ -263,7 +263,7 @@ struct ToolPresentationConfigTests {
             isDone: false
         )
         #expect(harness.reducer.toolDetailsStore.details(for: voiceItem.id) == nil)
-        #expect(ToolPresentationBuilder.toolAudioPresentationDetails(from: nil) == nil)
+        #expect(!ToolContentDescriptorBuilder.inspect(tool: "arbitrary", context: .init(), includeOutput: false).audioOutput)
 
         let voiceConfig = try #require(
             harness.coordinator.toolRowConfiguration(itemID: voiceItem.id, item: voiceItem)

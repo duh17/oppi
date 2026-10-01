@@ -253,13 +253,24 @@ extension ChatTimelineCollectionHost.Controller {
 
         let details = toolDetailsStore?.details(for: itemID)
         let isExpanded = reducer?.expandedItemIDs.contains(itemID) == true
-        let hasCanonicalAudioDetails = ToolPresentationBuilder.toolAudioPresentationDetails(from: details) != nil
+        let inspection = ToolContentDescriptorBuilder.inspect(tool: tool, argsSummary: argsSummary,
+            outputPreview: outputPreview, isError: isError, isDone: isDone,
+            context: .init(args: toolArgsStore?.args(for: itemID), details: details,
+                fullOutput: toolOutputStore?.fullOutput(for: itemID) ?? "",
+                isLoadingOutput: toolOutputLoader.isLoading(itemID), inputPresentation: toolArgsStore?.inputPresentation(for: itemID),
+                nestedCalls: toolDetailsStore?.nestedCalls(for: itemID),
+                previewOnly: toolOutputStore?.hasCompleteOutput(for: itemID) != true,
+                totalBytes: toolOutputStore?.outputByteCount(for: itemID), display: toolArgsStore?.display(for: itemID),
+                outputPresentation: toolArgsStore?.outputPresentation(for: itemID), outputAvailability: toolArgsStore?.outputAvailability(for: itemID)),
+            includeOutput: isExpanded)
+        let hasCanonicalAudioDetails = inspection.audioOutput
         let hasLifecycleVoicePresentation = audioLifecycleCoordinator.map {
             $0.presentation.timelinePresentation(for: itemID) != .hidden
         } ?? false
 
-        // Ordinary collapsed tools paint chrome only. Branch before full-output
-        // lookup, expanded descriptors, media adapters, and fetcher closures.
+        // One inspection serves chrome, native media and the inspector. Reading
+        // stored output shares its String; collapsed generic documents stay lazy.
+        // Branch before media adapters and fetcher closures.
         // Voice-while-collapsed stays full when serialized audio details exist
         // or the lifecycle coordinator already has a non-hidden presentation.
         if !isExpanded && !hasCanonicalAudioDetails && !hasLifecycleVoicePresentation {
@@ -270,7 +281,8 @@ extension ChatTimelineCollectionHost.Controller {
                 outputPreview: outputPreview,
                 isError: isError,
                 isDone: isDone,
-                details: details
+                details: details,
+                inspection: inspection
             )
         }
 
@@ -281,7 +293,8 @@ extension ChatTimelineCollectionHost.Controller {
             outputPreview: outputPreview,
             isError: isError,
             isDone: isDone,
-            details: details
+            details: details,
+            inspection: inspection
         )
     }
 
@@ -292,7 +305,8 @@ extension ChatTimelineCollectionHost.Controller {
         outputPreview: String,
         isError: Bool,
         isDone: Bool,
-        details: JSONValue?
+        details: JSONValue?,
+        inspection: ToolInspection
     ) -> CollapsedToolTimelineRowConfiguration {
         var context = ToolPresentationBuilder.Context(
             args: toolArgsStore?.args(for: itemID),
@@ -305,9 +319,8 @@ extension ChatTimelineCollectionHost.Controller {
             startedAt: reducer?.toolStartTime(for: itemID),
             elapsedSeconds: reducer?.toolElapsed(for: itemID)
         )
-        context.display = toolArgsStore?.display(for: itemID)
-        context.inputPresentation = toolArgsStore?.inputPresentation(for: itemID)
-        context.outputPresentation = toolArgsStore?.outputPresentation(for: itemID)
+        context.inspection = inspection
+        context.display = inspection.display
         let chrome = ToolPresentationBuilder.build(
             itemID: itemID,
             tool: tool,
@@ -328,7 +341,8 @@ extension ChatTimelineCollectionHost.Controller {
         outputPreview: String,
         isError: Bool,
         isDone: Bool,
-        details: JSONValue?
+        details: JSONValue?,
+        inspection: ToolInspection
     ) -> ToolTimelineRowConfiguration {
         var context = ToolPresentationBuilder.Context(
             args: toolArgsStore?.args(for: itemID),
@@ -342,14 +356,9 @@ extension ChatTimelineCollectionHost.Controller {
             elapsedSeconds: reducer?.toolElapsed(for: itemID)
         )
 
-        context.previewOnly = toolOutputStore?.hasCompleteOutput(for: itemID) != true
-        let outputBytes = toolOutputStore?.outputByteCount(for: itemID) ?? 0
-        context.totalBytes = outputBytes > 0 ? outputBytes : nil
-        context.display = toolArgsStore?.display(for: itemID)
-        context.inputPresentation = toolArgsStore?.inputPresentation(for: itemID)
-        context.outputPresentation = toolArgsStore?.outputPresentation(for: itemID)
-        context.outputAvailability = toolArgsStore?.outputAvailability(for: itemID)
-        context.nestedCalls = toolDetailsStore?.nestedCalls(for: itemID)
+        context.inspection = inspection
+        context.display = inspection.display
+        context.outputAvailability = inspection.availability
         let interactionCtx = self.interactionContext
         let sessionContent = self.sessionContent
         // Stored tool attachments belong to the session, not its workspace path.

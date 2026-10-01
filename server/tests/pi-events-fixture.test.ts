@@ -1,3 +1,4 @@
+import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 /**
  * Loads protocol/pi-events.json and runs the AgentSessionEvent examples
  * through translatePiEvent. This is the consumer that keeps the catalog honest.
@@ -56,7 +57,7 @@ function makeCtx(): TranslationContext {
   return {
     sessionId: "pi-events-fixture",
     mobileRenderers: new MobileRendererRegistry(),
-    partialResults: new Map(),
+    toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),

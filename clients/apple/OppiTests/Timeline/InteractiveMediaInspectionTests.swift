@@ -122,6 +122,30 @@ struct InteractiveMediaInspectionTests {
         #expect(reducer.toolDetailsStore.nestedCalls(for: "p") == canonical)
     }
 
+    @Test func grandchildBeforeIntermediateStartIsRehomed() throws {
+        let reducer = TimelineReducer()
+        reducer.process(.toolStart(sessionId: "s", toolEventId: "root", tool: "runner", args: [:]))
+        reducer.process(.toolStart(sessionId: "s", toolEventId: "grandchild", tool: "lookup", args: [:], parentToolCallId: "middle"))
+        reducer.process(.toolEnd(sessionId: "s", toolEventId: "grandchild", parentToolCallId: "middle"))
+        reducer.process(.toolStart(sessionId: "s", toolEventId: "middle", tool: "runner", args: [:], parentToolCallId: "root"))
+        let calls = try #require(reducer.toolDetailsStore.nestedCalls(for: "root"))
+        #expect(Set(calls.calls.map(\.id)) == ["middle", "grandchild"])
+        #expect(calls.calls.first { $0.id == "grandchild" }?.status == "ok")
+        #expect(reducer.items.map(\.id) == ["root"])
+    }
+
+    @Test func droppedLiveCallsRemainIncompleteAfterParentEnd() throws {
+        let reducer = TimelineReducer()
+        reducer.process(.toolStart(sessionId: "s", toolEventId: "root", tool: "runner", args: [:]))
+        for index in 0..<257 {
+            reducer.process(.toolStart(sessionId: "s", toolEventId: "c-\(index)", tool: "lookup", args: [:], parentToolCallId: "root"))
+        }
+        reducer.process(.toolEnd(sessionId: "s", toolEventId: "root"))
+        let calls = try #require(reducer.toolDetailsStore.nestedCalls(for: "root"))
+        #expect(calls.calls.count == 256)
+        #expect(!calls.complete)
+    }
+
     @Test func tolerantParentDecodingAndLegacyCorrelatorRemainSafe() throws {
         let decoded = try ServerMessage.decode(from: #"{"type":"tool_start","tool":"raw","toolCallId":"c","parentToolCallId":"p","args":{}}"#)
         guard case .toolStart(_, _, _, _, _, _, _, let parent) = decoded else { Issue.record("Expected start"); return }

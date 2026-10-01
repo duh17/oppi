@@ -1,3 +1,4 @@
+import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,6 +20,52 @@ afterEach(() => {
 const full = Array.from({ length: 300 }, (_, i) => `row-${i} ${"x".repeat(61)} 🙂\n`).join("");
 
 describe("terminal preview source handoff", () => {
+  it("never exposes a Pi-truncated live snapshot as full output", () => {
+    const registry = new MobileRendererRegistry();
+    const ctx: TranslationContext = {
+      sessionId: "s",
+      toolOutputSnapshots: new ToolOutputSnapshots(),
+      streamedAssistantText: "",
+      mobileRenderers: registry,
+      toolNames: new Map(),
+      shellPreviewLastSent: new Map(),
+      streamingToolUpdatesSeen: new Map(),
+    };
+    translatePiEvent(
+      {
+        type: "tool_execution_start",
+        toolCallId: "tc",
+        toolName: "bash",
+        args: {},
+      } as AgentSessionEvent,
+      ctx,
+    );
+    const partialResult = {
+      content: [{ type: "text", text: full }],
+      details: { truncation: { truncated: true, totalBytes: 200000 } },
+    };
+    translatePiEvent(
+      {
+        type: "tool_execution_update",
+        toolCallId: "tc",
+        toolName: "bash",
+        partialResult,
+      } as AgentSessionEvent,
+      ctx,
+    );
+    expect(ctx.toolOutputSnapshots.previous("tc")).toBe(full);
+    expect(ctx.toolOutputSnapshots.fullOutput("tc")).toBeNull();
+    translatePiEvent(
+      {
+        type: "tool_execution_end",
+        toolCallId: "tc",
+        toolName: "bash",
+        result: partialResult,
+      } as AgentSessionEvent,
+      ctx,
+    );
+    expect(ctx.toolOutputSnapshots.fullOutput("tc")).toBeNull();
+  });
   it.each(["bash", "run_thing"])(
     "keeps %s full output reachable during preview, completion and trace reload",
     async (toolName) => {
@@ -36,7 +83,7 @@ describe("terminal preview source handoff", () => {
         });
       const ctx: TranslationContext = {
         sessionId: "sess-1",
-        partialResults: new Map(),
+        toolOutputSnapshots: new ToolOutputSnapshots(),
         streamedAssistantText: "",
         currentThinkingContentIndex: undefined,
         mobileRenderers: registry,
@@ -54,7 +101,7 @@ describe("terminal preview source handoff", () => {
       const runtimes = {
         getToolFullOutputPath: () => null,
         getToolPartialOutput: (_sessionId: string, id: string) =>
-          ctx.partialResults.get(id) ?? null,
+          ctx.toolOutputSnapshots.fullOutput(id),
         refreshSessionState: async () => session,
       };
       const storage = {
@@ -196,7 +243,7 @@ describe("terminal preview source handoff", () => {
             .join("\n"),
         );
         emit({ type: "turn_end", turnIndex: 0 });
-        expect(ctx.partialResults.size).toBe(0);
+        expect(ctx.toolOutputSnapshots.size).toBe(0);
         expect(await (await fetch(url)).json()).toEqual({ toolCallId: "tc", output: full });
         session.status = "stopped";
         const replay = await service.getSessionWithTrace({ session, includeSegments: false });

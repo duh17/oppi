@@ -1,3 +1,4 @@
+import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { describe, expect, it, vi } from "vitest";
 
@@ -44,7 +45,7 @@ function createHarness(): {
   const active = {
     session: makeSession(key),
     pendingUIRequests: new Map<string, ExtensionUIRequest>(),
-    partialResults: new Map<string, string>(),
+    toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map<string, string>(),
     shellPreviewLastSent: new Map<string, number>(),

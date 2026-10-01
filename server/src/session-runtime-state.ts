@@ -1,3 +1,4 @@
+import { ToolOutputSnapshots } from "./tool-output-sidecar.js";
 import { randomUUID } from "node:crypto";
 
 import { EventRing } from "./event-ring.js";
@@ -15,7 +16,7 @@ export interface RuntimeSessionStateScaffold<
   seq: number;
   runtimeEpoch: string;
   eventRing: EventRing;
-  partialResults: Map<string, string>;
+  toolOutputSnapshots: ToolOutputSnapshots;
   streamedAssistantText: string;
   currentThinkingContentIndex?: number;
   pendingStop?: PendingStop;
@@ -55,7 +56,7 @@ export function createRuntimeSessionStateScaffold<
     eventRing: new EventRing(eventRingCapacity),
     pendingUIRequests: new Map(),
     persistentExtensionUINotifications: new Map(),
-    partialResults: new Map(),
+    toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map(),
     toolArgs: new Map(),

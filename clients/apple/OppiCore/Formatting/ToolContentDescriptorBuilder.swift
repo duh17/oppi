@@ -73,7 +73,35 @@ enum ToolContentDescriptorBuilder {
         let height: Int?
     }
 
-    static func build(
+    static func inspect(tool: String, argsSummary: String = "", outputPreview: String = "",
+                        isError: Bool = false, isDone: Bool = false, context: Context,
+                        includeOutput: Bool = true) -> ToolInspection {
+        build(tool: tool, argsSummary: argsSummary, outputPreview: outputPreview,
+              isError: isError, isDone: isDone, context: context, includeOutput: includeOutput).inspection
+    }
+
+    /// The legacy presentation is a Mac adapter; all translated facts and copy
+    /// payloads live in its single inspection value.
+    static func build(tool: String, argsSummary: String, outputPreview: String,
+                      isError: Bool, isDone: Bool, context: Context,
+                      includeOutput: Bool = true) -> ToolContentPresentation {
+        var result = buildContent(tool: tool, argsSummary: argsSummary, outputPreview: outputPreview,
+                                  isError: isError, isDone: isDone, context: context, includeOutput: includeOutput)
+        result.inspection.display = context.display
+        result.inspection.title = context.display?.label(fallback: tool) ?? tool
+        result.inspection.isInteractive = context.outputPresentation?.isInteractive == true
+        if result.inspection.isInteractive {
+            result.inspection.interactionSummary = ToolCallFormatting.askCollapsedTitle(args: context.args, details: context.details, argsSummary: argsSummary)
+        }
+        result.inspection.audioOutput = audioPresentation(from: context.details) != nil
+        result.inspection.glyph = glyph(input: context.inputPresentation, output: context.outputPresentation, details: context.details)
+        result.inspection.mediaOutput = audioPresentation(from: context.details) != nil
+            || imageAttachment(from: context.details) != nil || !mediaAttachments(from: context.details).isEmpty
+        result.inspection.availability = context.outputAvailability
+        return result
+    }
+
+    private static func buildContent(
         tool: String,
         argsSummary: String,
         outputPreview: String,
@@ -107,7 +135,7 @@ enum ToolContentDescriptorBuilder {
         }
         if let file = ToolFileInspection.resolve(args: context.args, input: context.inputPresentation,
                                                   output: context.outputPresentation, details: context.details,
-                                                  text: output, isDone: isDone, isError: isError) {
+                                                  text: includeOutput ? output : outputPreview, isDone: isDone, isError: isError) {
             let leaf: ToolContentDescriptor?
             if !includeOutput { leaf = nil }
             else if isError {
@@ -135,7 +163,7 @@ enum ToolContentDescriptorBuilder {
         }
         // Collapsed rows need semantic input and glyph facts, not a JSON/Markdown
         // document rebuilt for every delta. Preserve the existing lazy output path.
-        if !includeOutput {
+        if !includeOutput, audioPresentation(from: context.details) == nil {
             return .init(inspection: .init(input: input, calls: context.nestedCalls, output: [], raw: output,
                                           previewOnly: previewOnly, totalBytes: totalBytes, terminalOutput: false),
                          copyCommandText: nil, copyOutputText: nil)

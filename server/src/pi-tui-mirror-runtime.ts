@@ -862,7 +862,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
   getToolPartialOutput(sessionId: string, toolCallId: string): string | null {
     const key = toolCallId.trim();
-    return key ? (this.active.get(sessionId)?.partialResults.get(key) ?? null) : null;
+    return key ? (this.active.get(sessionId)?.toolOutputSnapshots.fullOutput(key) ?? null) : null;
   }
 
   getEventRing(sessionId: string): { length: number; capacity: number } | null {

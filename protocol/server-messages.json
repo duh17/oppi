@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 60
+    "messageCount": 61
   },
   "messages": {
     "connected": {
@@ -887,6 +887,19 @@
       },
       "details": {
         "diff": "-42 old\n+42 actual"
+      }
+    },
+    "tool_end_setting": {
+      "type": "tool_end",
+      "tool": "voice_reply_mode",
+      "toolCallId": "tc-setting-001",
+      "outputPresentation": {
+        "kind": "structured",
+        "settingEffect": "voiceReplyMode"
+      },
+      "details": {
+        "kind": "voice_reply_mode",
+        "mode": "manual"
       }
     },
     "queue_state": {

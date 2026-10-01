@@ -21,7 +21,7 @@ struct QuietTimelineProjectionTests {
             .assistantMessage(id: "a1", text: "Done", timestamp: timestamp),
         ]
 
-        let projection = QuietTimelineProjection.make(
+        let projection = projectFixture(
             items: items,
             isQuiet: true,
             isBusy: false,
@@ -35,7 +35,7 @@ struct QuietTimelineProjectionTests {
         ])
         let workLine = try #require(workLines(in: projection).first)
         #expect(workLine.sourceItemIDs == ["think-1", "tool-1", "tool-error"])
-        #expect(workLine.buckets == [.init(kind: .tooling, count: 2)])
+        #expect(workLine.buckets == [.init(kind: .terminal, count: 2)])
         #expect(workLine.wordsSummary(now: timestamp) == "run 2 tools")
     }
 
@@ -48,13 +48,13 @@ struct QuietTimelineProjectionTests {
             .assistantMessage(id: "a1", text: "Done", timestamp: timestamp),
         ]
 
-        let collapsed = QuietTimelineProjection.make(
+        let collapsed = projectFixture(
             items: items,
             isQuiet: true,
             isBusy: false,
             expandedTurnIDs: []
         )
-        let expanded = QuietTimelineProjection.make(
+        let expanded = projectFixture(
             items: items,
             isQuiet: true,
             isBusy: false,
@@ -65,7 +65,7 @@ struct QuietTimelineProjectionTests {
         let workLine = try #require(workLines(in: collapsed).first)
         #expect(workLine.sourceItemIDs == ["bash-ok", "bash-failed", "grep-1"])
         #expect(workLine.buckets == [
-            .init(kind: .tooling, count: 3),
+            .init(kind: .terminal, count: 2), .init(kind: .tooling, count: 1),
         ])
         #expect(!collapsed.rows.contains { $0.id == "bash-failed" })
         #expect(collapsed.renderedRowID(forSourceItemID: "bash-failed") == "quiet-work-line:bash-ok")
@@ -75,7 +75,7 @@ struct QuietTimelineProjectionTests {
     }
 
     @Test func liveThinkingOnlyGroupShowsThinkingStatus() throws {
-        let projection = QuietTimelineProjection.make(
+        let projection = projectFixture(
             items: [
                 .assistantMessage(id: "a0", text: "Earlier", timestamp: Date(timeIntervalSince1970: 1_000)),
                 .thinking(id: "think-live", preview: "hidden", hasMore: true, isDone: false),
@@ -95,7 +95,7 @@ struct QuietTimelineProjectionTests {
     @Test func historicalThinkingOnlyGroupsKeepAFinishedThought() throws {
         let start = Date(timeIntervalSince1970: 1_000)
         let end = Date(timeIntervalSince1970: 1_012)
-        let projection = QuietTimelineProjection.make(
+        let projection = projectFixture(
             items: [
                 .userMessage(id: "u1", text: "Think", timestamp: start),
                 .thinking(id: "think-1", preview: "hidden", hasMore: false, isDone: true),
@@ -116,7 +116,7 @@ struct QuietTimelineProjectionTests {
     }
 
     @Test func bucketSummaryGroupsBashAndOtherTools() throws {
-        let projection = QuietTimelineProjection.make(
+        let projection = projectFixture(
             items: [
                 .toolCall(id: "read-1", tool: "functions.read", argsSummary: "one", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
                 .toolCall(id: "read-2", tool: "read", argsSummary: "two", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
@@ -132,9 +132,9 @@ struct QuietTimelineProjectionTests {
         let line = try #require(workLines(in: projection).first)
         #expect(line.buckets == [
             .init(kind: .read, count: 1),
-            .init(kind: .tooling, count: 4),
+            .init(kind: .terminal, count: 1), .init(kind: .tooling, count: 3),
         ])
-        #expect(line.wordsSummary(now: timestamp) == "read 1 file  run 4 tools")
+        #expect(line.wordsSummary(now: timestamp) == "read 1 file  run 1 tool  run 3 tools")
     }
 
     @Test func editSummaryUsesStoredStatsWhenEveryEditHasArgs() throws {
@@ -142,7 +142,7 @@ struct QuietTimelineProjectionTests {
             "edit-1": editArgs(old: "old\nline", new: "new\nline\nextra"),
             "edit-2": editArgs(old: "remove", new: "replace"),
         ]
-        let projection = QuietTimelineProjection.make(
+        let projection = projectFixture(
             items: [
                 .toolCall(id: "edit-1", tool: "edit", argsSummary: "one", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
                 .toolCall(id: "edit-2", tool: "edit", argsSummary: "two", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
@@ -155,13 +155,13 @@ struct QuietTimelineProjectionTests {
 
         let line = try #require(workLines(in: projection).first)
         #expect(line.buckets == [
-            .init(kind: .edit, count: 2, editStats: .init(added: 3, removed: 2)),
+            .init(kind: .edit, count: 2, editStats: .init(added: 3, removed: 2), requestedStats: true),
         ])
-        #expect(line.wordsSummary(now: timestamp) == "edit +3 −2")
+        #expect(line.wordsSummary(now: timestamp) == "Requested edit +3 −2")
     }
 
     @Test func editSummaryFallsBackToFileCountWhenAnyStatsAreMissing() throws {
-        let projection = QuietTimelineProjection.make(
+        let projection = projectFixture(
             items: [
                 .toolCall(id: "edit-1", tool: "edit", argsSummary: "one", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
                 .toolCall(id: "edit-2", tool: "edit", argsSummary: "two", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
@@ -173,7 +173,7 @@ struct QuietTimelineProjectionTests {
         )
 
         let line = try #require(workLines(in: projection).first)
-        #expect(line.buckets == [.init(kind: .edit, count: 2)])
+        #expect(line.buckets == [.init(kind: .edit, count: 2, requestedStats: true)])
         #expect(line.wordsSummary(now: timestamp) == "edit 2")
     }
 
@@ -187,7 +187,7 @@ struct QuietTimelineProjectionTests {
             .assistantMessage(id: "a2", text: "Second", timestamp: timestamp),
         ]
 
-        let projection = QuietTimelineProjection.make(
+        let projection = projectFixture(
             items: items,
             isQuiet: true,
             isBusy: false,
@@ -201,7 +201,7 @@ struct QuietTimelineProjectionTests {
     }
 
     @Test func visibleInterruptionsSplitGroupsAndKeepThinkingOnlySide() throws {
-        let projection = QuietTimelineProjection.make(
+        let projection = projectFixture(
             items: [
                 .userMessage(id: "u1", text: "Run", timestamp: timestamp),
                 .thinking(id: "think-1", preview: "one", hasMore: false, isDone: true),
@@ -229,8 +229,8 @@ struct QuietTimelineProjectionTests {
             .assistantMessage(id: "a1", text: "Done", timestamp: timestamp),
         ]
 
-        let collapsed = QuietTimelineProjection.make(items: items, isQuiet: true, isBusy: false, expandedTurnIDs: [])
-        let expanded = QuietTimelineProjection.make(items: items, isQuiet: true, isBusy: false, expandedTurnIDs: ["think-1"])
+        let collapsed = projectFixture(items: items, isQuiet: true, isBusy: false, expandedTurnIDs: [])
+        let expanded = projectFixture(items: items, isQuiet: true, isBusy: false, expandedTurnIDs: ["think-1"])
 
         #expect(collapsed.rows.map(\.id) == ["u1", "quiet-work-line:think-1", "a1"])
         #expect(expanded.rows.map(\.id) == ["u1", "quiet-work-line:think-1", "think-1", "tool-1", "a1"])
@@ -242,13 +242,13 @@ struct QuietTimelineProjectionTests {
             .thinking(id: "think-6", preview: "six", hasMore: false, isDone: true),
             .assistantMessage(id: "a1", text: "Done", timestamp: timestamp),
         ]
-        let before = QuietTimelineProjection.make(
+        let before = projectFixture(
             items: currentPage,
             isQuiet: true,
             isBusy: false,
             expandedTurnIDs: ["tool-5"]
         )
-        let after = QuietTimelineProjection.make(
+        let after = projectFixture(
             items: [
                 .assistantMessage(id: "a0", text: "Earlier", timestamp: timestamp),
                 .thinking(id: "think-1", preview: "one", hasMore: false, isDone: true),
@@ -267,7 +267,7 @@ struct QuietTimelineProjectionTests {
     }
 
     @Test func liveClockUsesPrecedingAssistantTimestamp() throws {
-        let projection = QuietTimelineProjection.make(
+        let projection = projectFixture(
             items: [
                 .assistantMessage(id: "a0", text: "Earlier", timestamp: Date(timeIntervalSince1970: 1_000)),
                 .thinking(id: "think-1", preview: "hidden", hasMore: false, isDone: false),
@@ -287,7 +287,7 @@ struct QuietTimelineProjectionTests {
     }
 
     @Test func historicalStripFreezesDurationBetweenAssistantTimestamps() throws {
-        let projection = QuietTimelineProjection.make(
+        let projection = projectFixture(
             items: [
                 .assistantMessage(id: "a0", text: "Earlier", timestamp: Date(timeIntervalSince1970: 1_000)),
                 .toolCall(id: "bash-1", tool: "bash", argsSummary: "run", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
@@ -308,7 +308,7 @@ struct QuietTimelineProjectionTests {
     @Test func trailingSettledStripFreezesDurationWithoutFollowingRow() throws {
         let start = Date(timeIntervalSince1970: 1_000)
         let settledAt = Date(timeIntervalSince1970: 1_012)
-        let projection = QuietTimelineProjection.make(
+        let projection = projectFixture(
             items: [
                 .userMessage(id: "u1", text: "Run", timestamp: start),
                 .thinking(id: "think-1", preview: "hidden", hasMore: false, isDone: true),
@@ -333,7 +333,7 @@ struct QuietTimelineProjectionTests {
             .userMessage(id: "u1", text: "Run", timestamp: start),
             .thinking(id: "think-1", preview: "hidden", hasMore: false, isDone: true),
         ]
-        let first = QuietTimelineProjection.make(
+        let first = projectFixture(
             items: items,
             isQuiet: true,
             isBusy: false,
@@ -343,7 +343,7 @@ struct QuietTimelineProjectionTests {
         let firstLine = try #require(workLines(in: first).first)
         let firstEnd = try #require(firstLine.intervalEndedAt)
 
-        let remade = QuietTimelineProjection.make(
+        let remade = projectFixture(
             items: items,
             isQuiet: true,
             isBusy: false,
@@ -357,7 +357,7 @@ struct QuietTimelineProjectionTests {
     }
 
     @Test func liveClockUsesPrecedingUserTimestampWhenNoAssistant() throws {
-        let projection = QuietTimelineProjection.make(
+        let projection = projectFixture(
             items: [
                 .userMessage(id: "u1", text: "First", timestamp: Date(timeIntervalSince1970: 2_003)),
                 .toolCall(id: "bash-1", tool: "bash", argsSummary: "run", outputPreview: "", outputByteCount: 0, isError: false, isDone: false),
@@ -374,7 +374,7 @@ struct QuietTimelineProjectionTests {
     }
 
     @Test func busyVisibleInterruptionDoesNotRelightPreviousStrip() throws {
-        let projection = QuietTimelineProjection.make(
+        let projection = projectFixture(
             items: [
                 .userMessage(id: "u1", text: "One", timestamp: timestamp),
                 .toolCall(id: "tool-1", tool: "bash", argsSummary: "one", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
@@ -395,14 +395,14 @@ struct QuietTimelineProjectionTests {
         let items: [ChatItem] = [
             .toolCall(id: "tool-1", tool: "bash", argsSummary: "run", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
         ]
-        let icons = QuietTimelineProjection.make(
+        let icons = projectFixture(
             items: items,
             isQuiet: true,
             isBusy: false,
             expandedTurnIDs: [],
             displayStyle: .icons
         )
-        let words = QuietTimelineProjection.make(
+        let words = projectFixture(
             items: items,
             isQuiet: true,
             isBusy: false,
@@ -422,11 +422,30 @@ struct QuietTimelineProjectionTests {
             .toolCall(id: "tool-1", tool: "read", argsSummary: "file", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
             .assistantMessage(id: "a1", text: "Done", timestamp: timestamp),
         ]
-        let projection = QuietTimelineProjection.make(items: items, isQuiet: true, isBusy: false, expandedTurnIDs: [])
+        let projection = projectFixture(items: items, isQuiet: true, isBusy: false, expandedTurnIDs: [])
 
         #expect(projection.rows(forRenderedItemIDs: ["think-1"]).map(\.id) == ["quiet-work-line:think-1"])
         #expect(projection.fullTimelineItemIDs == ["u1", "think-1", "tool-1", "a1"])
         #expect(projection.renderedRowID(forSourceItemID: "tool-1") == "quiet-work-line:think-1")
+    }
+
+    /// Named fixtures simulate the facts supplied by the server, not a production fallback.
+    private func projectFixture(items: [ChatItem], isQuiet: Bool, isBusy: Bool, expandedTurnIDs: Set<String>,
+        displayStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons,
+        toolArgs: (String) -> [String: JSONValue]? = { _ in nil }, now: Date = Date(),
+        settledEnds: [String: Date] = [:]) -> QuietTimelineProjection {
+        QuietTimelineProjection.make(items: items, isQuiet: isQuiet, isBusy: isBusy,
+            expandedTurnIDs: expandedTurnIDs, displayStyle: displayStyle,
+            toolInspection: { item in
+                guard case .toolCall(let id, let tool, _, let text, _, let error, let done) = item else { return nil }
+                let output: ToolOutputPresentation? = [
+                    "bash": .init(kind: "terminal"), "read": .init(kind: "fileContent", provenance: "result"),
+                    "write": .init(kind: "fileContent", provenance: "requested"), "edit": .init(kind: "diffOfEdits"),
+                    "ask": .init(kind: "interactive")
+                ][tool]
+                return ToolContentDescriptorBuilder.inspect(tool: tool, outputPreview: text, isError: error, isDone: done,
+                    context: .init(args: toolArgs(id), inputPresentation: .init(fields: ["edits": .init(role: "edits")]), outputPresentation: output), includeOutput: false)
+            }, now: now, settledEnds: settledEnds)
     }
 
     private func workLines(in projection: QuietTimelineProjection) -> [QuietTimelineWorkLine] {

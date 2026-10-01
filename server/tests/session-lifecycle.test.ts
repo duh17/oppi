@@ -1,3 +1,4 @@
+import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 /**
  * Session lifecycle tests — state queries, RPC line handling, broadcast,
  * cleanup, prompt/steer/follow_up commands, extension UI protocol, and
@@ -85,7 +86,7 @@ function makeManagerHarness(
     subscribers: new Set<(msg: ServerMessage) => void>(),
     pendingUIRequests: new Map(),
     persistentExtensionUINotifications: new Map(),
-    partialResults: new Map(),
+    toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
