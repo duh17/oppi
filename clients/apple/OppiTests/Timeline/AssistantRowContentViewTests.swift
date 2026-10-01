@@ -600,20 +600,12 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func mermaidInlineDiagramRecomputesHeightWhenWidthChanges() {
+    @Test func mermaidInlineDiagramRecomputesPresentationWhenWidthChanges() {
+        // About 280pt wide: fits a 330pt bubble whole, but a 210pt bubble
+        // would shrink its text below the legible preview scale.
         let mermaidCode = """
         flowchart LR
-            A[Second Brain] --> B[Capture]
-            A --> C[Process]
-            A --> D[Organize]
-            A --> E[Retrieve]
-            A --> F[Express]
-            A --> G[Review]
-            A --> H[Improve]
-            B --> B1[Quick inbox]
-            B --> B2[Voice notes]
-            C --> C1[Daily triage]
-            C --> C2[Link notes]
+            A[Alpha] --> B[Beta] --> C[Gamma]
         """
 
         let view = NativeMermaidBlockView()
@@ -635,6 +627,8 @@ struct AssistantTimelineRowContentViewTests {
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         ).height
+        let narrowIsPartial = view.debugIsShowingPartialPreviewForTesting
+        let narrowImageWidth = view.debugDiagramImageFrameForTesting.width
 
         container.frame.size.width = 330
         container.setNeedsLayout()
@@ -646,9 +640,15 @@ struct AssistantTimelineRowContentViewTests {
             verticalFittingPriority: .fittingSizeLevel
         ).height
 
+        // Narrow: legible clipped preview wider than the bubble, plus footer.
+        #expect(narrowIsPartial)
+        #expect(narrowImageWidth > 210)
+        // Wide: the whole diagram fits, so the footer goes and height follows.
+        #expect(!view.debugIsShowingPartialPreviewForTesting)
+        #expect(view.debugDiagramImageFrameForTesting.width <= 330)
         #expect(
-            wideHeight > narrowHeight + 10,
-            "Mermaid inline height should grow when width grows (narrow=\(narrowHeight), wide=\(wideHeight))"
+            abs(wideHeight - narrowHeight) > 5,
+            "Inline height should follow the width change (narrow=\(narrowHeight), wide=\(wideHeight))"
         )
     }
 

@@ -11,11 +11,17 @@ import UIKit
 /// Tap opens `FullScreenCodeViewController` with pinch-to-zoom and full
 /// export support (image, PDF, source). No inline zoom — keeps the view
 /// simple and avoids UIScrollView gesture conflicts.
+///
+/// Inline never shrinks a diagram below `MermaidInlinePresentation`'s
+/// legible scale: larger diagrams show a clipped preview with a footer, and
+/// the expanded view keeps the same geometry.
 @MainActor
 final class NativeMermaidBlockView: UIView {
     struct RasterResult: @unchecked Sendable {
         let image: UIImage
         let size: CGSize
+        /// Where a clipped preview pins the diagram.
+        var previewAnchor = MermaidInlinePresentation.Anchor.center
     }
 
     struct Rasterizer: Sendable {
@@ -29,7 +35,13 @@ final class NativeMermaidBlockView: UIView {
                     renderer: MermaidRenderer(),
                     text: code,
                     config: DocumentRenderPipeline.mermaidConfiguration(theme: theme)
-                ).map { RasterResult(image: $0.image, size: $0.size) }
+                ).map {
+                    RasterResult(
+                        image: $0.image,
+                        size: $0.size,
+                        previewAnchor: MermaidInlinePresentation.anchor(for: code)
+                    )
+                }
             },
             renderAsync: { code, _, theme in
                 #if DEBUG
@@ -41,7 +53,13 @@ final class NativeMermaidBlockView: UIView {
                         renderer: MermaidRenderer(),
                         text: code,
                         config: DocumentRenderPipeline.mermaidConfiguration(theme: theme)
-                    ).map { RasterResult(image: $0.image, size: $0.size) }
+                    ).map {
+                        RasterResult(
+                            image: $0.image,
+                            size: $0.size,
+                            previewAnchor: MermaidInlinePresentation.anchor(for: code)
+                        )
+                    }
                 }.value
             }
         )
@@ -52,25 +70,48 @@ final class NativeMermaidBlockView: UIView {
     /// Code block shown while the fence is open (streaming) or on parse failure.
     private let codeBlockView = NativeCodeBlockView()
 
-    /// Rasterized diagram image — simple UIImageView, just like NativeMarkdownImageView.
-    /// No UIScrollView, no inline zoom. Tap opens fullscreen for zoom/export.
+    /// Clips the rasterized diagram to the bubble. No UIScrollView, no inline
+    /// zoom. Tap opens fullscreen for zoom/export.
+    private let diagramClipView: UIView = {
+        let view = UIView()
+        view.clipsToBounds = true
+        view.isUserInteractionEnabled = true
+        view.isAccessibilityElement = false
+        view.layer.cornerRadius = 8
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }()
+
+    /// Natural-geometry raster, framed by `MermaidInlinePresentation`.
     private let diagramImageView: UIImageView = {
         let iv = UIImageView()
-        iv.contentMode = .scaleAspectFit
-        iv.clipsToBounds = true
-        iv.isUserInteractionEnabled = true
+        iv.contentMode = .scaleToFill
         iv.isAccessibilityElement = false
-        iv.layer.cornerRadius = 8
-        iv.translatesAutoresizingMaskIntoConstraints = false
         return iv
+    }()
+
+    /// Shown only for clipped previews: says the diagram continues.
+    private let previewFooterLabel: UILabel = {
+        let label = UILabel()
+        label.font = .preferredFont(forTextStyle: .caption2)
+        label.adjustsFontForContentSizeCategory = true
+        // The footer band is a fixed 28pt so the reserved cell height
+        // matches the raster; cap growth to what fits in it.
+        label.maximumContentSizeCategory = .extraExtraLarge
+        label.adjustsFontSizeToFitWidth = true
+        label.minimumScaleFactor = 0.8
+        label.textAlignment = .center
+        label.text = String(localized: "Partial preview · Tap to expand")
+        label.isAccessibilityElement = false
+        label.isHidden = true
+        return label
     }()
 
     /// Active only while showing the rendered diagram. A direct self-height
     /// constraint makes stack/scroll relayout more reliable after async renders.
     private var diagramHeightConstraint: NSLayoutConstraint?
-
-    /// Cap diagram height in the timeline to keep cells reasonable.
-    private static let maxInlineHeight: CGFloat = 400
+    private var previewAnchor = MermaidInlinePresentation.Anchor.center
+    private var isShowingPartialPreview = false
 
     // MARK: - State
 
@@ -153,12 +194,14 @@ final class NativeMermaidBlockView: UIView {
         codeBlockView.prepareForGraphicalPlaceholder()
         addSubview(codeBlockView)
 
-        diagramImageView.isHidden = true
-        addSubview(diagramImageView)
+        diagramClipView.isHidden = true
+        diagramClipView.addSubview(diagramImageView)
+        diagramClipView.addSubview(previewFooterLabel)
+        addSubview(diagramClipView)
 
         // Tap to open fullscreen — same pattern as NativeMarkdownImageView
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap))
-        diagramImageView.addGestureRecognizer(tapGesture)
+        diagramClipView.addGestureRecognizer(tapGesture)
 
         let diagramHeight = heightAnchor.constraint(equalToConstant: 200)
         diagramHeight.isActive = false
@@ -171,13 +214,34 @@ final class NativeMermaidBlockView: UIView {
             codeBlockView.trailingAnchor.constraint(equalTo: trailingAnchor),
             codeBlockView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            // Image view fills self while the container height is driven by
+            // Clip view fills self while the container height is driven by
             // `diagramHeightConstraint` when the rendered diagram is visible.
-            diagramImageView.topAnchor.constraint(equalTo: topAnchor),
-            diagramImageView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            diagramImageView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            diagramImageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            diagramClipView.topAnchor.constraint(equalTo: topAnchor),
+            diagramClipView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            diagramClipView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            diagramClipView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+    }
+
+    private func layoutDiagramContent() {
+        guard let naturalSize = renderedDiagramNaturalSize, bounds.width > 0 else { return }
+        let presentation = MermaidInlinePresentation(
+            naturalSize: naturalSize,
+            availableWidth: bounds.width,
+            anchor: previewAnchor
+        )
+        diagramImageView.frame = presentation.imageFrame
+        previewFooterLabel.isHidden = !presentation.isPartial
+        previewFooterLabel.frame = CGRect(
+            x: 0,
+            y: presentation.height - MermaidInlinePresentation.footerHeight,
+            width: bounds.width,
+            height: MermaidInlinePresentation.footerHeight
+        )
+        if presentation.isPartial != isShowingPartialPreview {
+            isShowingPartialPreview = presentation.isPartial
+            if isShowingDiagram { configureDiagramAccessibility() }
+        }
     }
 
     override func layoutSubviews() {
@@ -196,6 +260,7 @@ final class NativeMermaidBlockView: UIView {
                 availableWidth: bounds.width
             )
         }
+        layoutDiagramContent()
 
         if rasterWidthMismatch(bounds.width), let code = currentCode {
             applyAsDiagram(
@@ -215,12 +280,18 @@ final class NativeMermaidBlockView: UIView {
         invalidateRasterRequest()
 
         codeBlockView.isHidden = false
-        diagramImageView.isHidden = true
+        diagramClipView.isHidden = true
         diagramHeightConstraint?.isActive = false
         isShowingDiagram = false
         renderedDiagramNaturalSize = nil
         requiresExactRasterWidth = false
         currentPalette = palette
+        // A reused cell must not frame the next diagram's reservation with
+        // the previous image and anchor before its own raster arrives.
+        diagramImageView.image = nil
+        previewAnchor = .center
+        isShowingPartialPreview = false
+        previewFooterLabel.isHidden = true
         clearDiagramAccessibility()
 
         codeBlockView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
@@ -248,7 +319,7 @@ final class NativeMermaidBlockView: UIView {
             renderThemeIdentity: theme.renderIdentity,
             usesExactWidth: usesExactWidth
         )
-        diagramImageView.backgroundColor = UIColor(palette.bgHighlight)
+        applyDiagramChrome(palette)
         currentCode = code
         currentPalette = palette
         requiresExactRasterWidth = usesExactWidth
@@ -268,8 +339,7 @@ final class NativeMermaidBlockView: UIView {
         guard rasterRequestIsCurrent(request, generation: generation) else { return }
 
         showDiagram(
-            image: result.image,
-            naturalSize: result.size,
+            result,
             palette: palette,
             request: request,
             invalidateHostLayout: false
@@ -292,7 +362,7 @@ final class NativeMermaidBlockView: UIView {
             renderThemeIdentity: theme.renderIdentity,
             usesExactWidth: usesExactWidth
         )
-        diagramImageView.backgroundColor = UIColor(palette.bgHighlight)
+        applyDiagramChrome(palette)
         currentCode = code
         requiresExactRasterWidth = usesExactWidth
         #if DEBUG
@@ -324,8 +394,7 @@ final class NativeMermaidBlockView: UIView {
             }
 
             self.showDiagram(
-                image: result.image,
-                naturalSize: result.size,
+                result,
                 palette: palette,
                 request: request,
                 invalidateHostLayout: true
@@ -447,7 +516,7 @@ final class NativeMermaidBlockView: UIView {
         )
         diagramHeightConstraint?.isActive = true
         codeBlockView.isHidden = true
-        diagramImageView.isHidden = false
+        diagramClipView.isHidden = false
         isShowingDiagram = true
         invalidateIntrinsicContentSize()
         setNeedsLayout()
@@ -458,14 +527,21 @@ final class NativeMermaidBlockView: UIView {
         return true
     }
 
+    private func applyDiagramChrome(_ palette: ThemePalette) {
+        diagramClipView.backgroundColor = UIColor(palette.bgHighlight)
+        previewFooterLabel.backgroundColor = UIColor(palette.bgHighlight)
+        previewFooterLabel.textColor = UIColor(palette.comment)
+    }
+
     private func showDiagram(
-        image: UIImage,
-        naturalSize: CGSize,
+        _ result: RasterResult,
         palette: ThemePalette,
         request: RasterRequest,
         invalidateHostLayout: Bool
     ) {
+        let naturalSize = result.size
         renderedDiagramNaturalSize = naturalSize
+        previewAnchor = result.previewAnchor
         displayedRasterRequest = request
         inFlightRasterRequest = nil
         renderTask = nil
@@ -481,12 +557,13 @@ final class NativeMermaidBlockView: UIView {
         // Activate and swap before any force-invalidation so a collection
         // self-size pass measures the diagram, not the code placeholder.
         diagramHeightConstraint?.isActive = true
-        diagramImageView.backgroundColor = UIColor(palette.bgHighlight)
-        diagramImageView.image = image
+        applyDiagramChrome(palette)
+        diagramImageView.image = result.image
 
         codeBlockView.isHidden = true
-        diagramImageView.isHidden = false
+        diagramClipView.isHidden = false
         isShowingDiagram = true
+        layoutDiagramContent()
         configureDiagramAccessibility()
 
         invalidateIntrinsicContentSize()
@@ -511,9 +588,13 @@ final class NativeMermaidBlockView: UIView {
             return false
         }
 
-        let scale = min(1.0, availableWidth / naturalSize.width)
-        let displayHeight = min(naturalSize.height * scale, Self.maxInlineHeight)
-        let clampedHeight = max(1, displayHeight)
+        // Height does not depend on alignment, so the fence-close reservation
+        // matches the final raster before the preview anchor is known.
+        let clampedHeight = MermaidInlinePresentation(
+            naturalSize: naturalSize,
+            availableWidth: availableWidth,
+            anchor: .center
+        ).height
         let constraintIsActive = diagramHeightConstraint?.isActive == true
         let heightUnchanged = abs((diagramHeightConstraint?.constant ?? 0) - clampedHeight) <= 0.5
         // An inactive 200pt default is not a displayed height. First reveal
@@ -533,7 +614,7 @@ final class NativeMermaidBlockView: UIView {
         let wasShowingDiagram = isShowingDiagram
 
         codeBlockView.isHidden = false
-        diagramImageView.isHidden = true
+        diagramClipView.isHidden = true
         diagramHeightConstraint?.isActive = false
         isShowingDiagram = false
         renderedDiagramNaturalSize = nil
@@ -551,7 +632,9 @@ final class NativeMermaidBlockView: UIView {
     private func configureDiagramAccessibility() {
         isAccessibilityElement = true
         accessibilityIdentifier = "mermaid.diagram.open"
-        accessibilityLabel = String(localized: "Mermaid diagram")
+        accessibilityLabel = isShowingPartialPreview
+            ? String(localized: "Mermaid diagram, partial preview")
+            : String(localized: "Mermaid diagram")
         accessibilityHint = String(localized: "Opens diagram full screen")
         accessibilityTraits = [.image, .button]
         // The rendered diagram is one control; its backing UIImageView must
@@ -617,5 +700,86 @@ extension NativeMermaidBlockView {
     var debugDiagramHeightConstraintIsActiveForTesting: Bool {
         diagramHeightConstraint?.isActive == true
     }
+    var debugIsShowingPartialPreviewForTesting: Bool { !previewFooterLabel.isHidden }
+    var debugDiagramImageFrameForTesting: CGRect { diagramImageView.frame }
 }
 #endif
+
+/// How a natural-size diagram sits in an inline bubble.
+///
+/// The whole diagram shows when it fits at `minPreviewScale` or larger.
+/// Otherwise inline shows a clipped preview at a legible scale with a
+/// footer; expanding uses the same geometry with Fit/Readable controls.
+struct MermaidInlinePresentation: Equatable {
+    static let maxHeight: CGFloat = 400
+    /// 14pt labels stay about 12pt; smaller is unreadable on a phone.
+    static let minPreviewScale: CGFloat = 0.85
+    static let footerHeight: CGFloat = 28
+
+    let height: CGFloat
+    let imageFrame: CGRect
+    let isPartial: Bool
+
+    /// Where a clipped preview pins the diagram: the side its flow starts.
+    struct Anchor: Equatable, Sendable {
+        enum Horizontal: Sendable { case leading, center, trailing }
+        var horizontal: Horizontal = .center
+        var fromBottom = false
+
+        static let center = Anchor()
+    }
+
+    init(naturalSize: CGSize, availableWidth: CGFloat, anchor: Anchor) {
+        let width = max(availableWidth, 1)
+        let natural = CGSize(width: max(naturalSize.width, 1), height: max(naturalSize.height, 1))
+        let widthFit = min(1, width / natural.width)
+        let fullFit = min(widthFit, Self.maxHeight / natural.height)
+        if fullFit >= Self.minPreviewScale {
+            let size = CGSize(width: natural.width * fullFit, height: natural.height * fullFit)
+            height = max(1, size.height)
+            imageFrame = CGRect(origin: CGPoint(x: (width - size.width) / 2, y: 0), size: size)
+            isPartial = false
+            return
+        }
+        let scale = max(Self.minPreviewScale, widthFit)
+        let size = CGSize(width: natural.width * scale, height: natural.height * scale)
+        height = min(size.height + Self.footerHeight, Self.maxHeight)
+        var x = (width - size.width) / 2
+        if size.width > width {
+            switch anchor.horizontal {
+            case .leading: x = 0
+            case .trailing: x = width - size.width
+            case .center: break
+            }
+        }
+        let visibleHeight = height - Self.footerHeight
+        let y = anchor.fromBottom && size.height > visibleHeight ? visibleHeight - size.height : 0
+        imageFrame = CGRect(origin: CGPoint(x: x, y: y), size: size)
+        isPartial = true
+    }
+
+    /// Top-down trees, mind maps, and pies grow from the center top. Flows
+    /// start where their sources are: LR charts, sequences, and timelines at
+    /// the leading edge, RL at the trailing edge, BT at the bottom.
+    nonisolated static func anchor(for source: String) -> Anchor {
+        func flow(_ direction: FlowDirection) -> Anchor {
+            switch direction {
+            case .LR: return Anchor(horizontal: .leading)
+            case .RL: return Anchor(horizontal: .trailing)
+            case .BT: return Anchor(fromBottom: true)
+            case .TB, .TD: return .center
+            }
+        }
+        switch MermaidParser().parse(source) {
+        case .flowchart(let diagram):
+            return flow(diagram.direction)
+        case .state(let diagram):
+            return flow(diagram.direction)
+        case .mindmap, .pie, .quadrantChart, .unsupported:
+            return .center
+        case .sequence, .gantt, .timeline, .classDiagram, .erDiagram, .xyChart,
+             .gitGraph, .sankey, .kanban, .journey:
+            return Anchor(horizontal: .leading)
+        }
+    }
+}

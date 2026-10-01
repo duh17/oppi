@@ -67,9 +67,14 @@ enum DocumentRenderPipeline {
 
     /// Diagram geometry is independent of the viewport. Inline previews, file
     /// viewers, and expansion must scale the same canvas, not shelf-pack it again.
+    /// One phone-first geometry for inline, file, and expanded diagrams.
+    /// `maxWidth` is a soft target: renderers wrap and pack toward it, while
+    /// connected ranks may still exceed it and scale or crop inline.
     static func mermaidConfiguration(theme: RenderTheme) -> RenderConfiguration {
-        RenderConfiguration(fontSize: 14, maxWidth: 800, theme: theme, displayMode: .document)
+        RenderConfiguration(fontSize: 14, maxWidth: mermaidLayoutWidth, theme: theme, displayMode: .document)
     }
+
+    static let mermaidLayoutWidth: CGFloat = 360
 
     // MARK: - Render Cache
 

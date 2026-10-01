@@ -12,6 +12,79 @@ struct MermaidRendererTests {
     let renderer = MermaidRenderer()
     let config = RenderConfiguration.default(maxWidth: 600)
 
+    /// Real session diagram: both titles start with "Server". Mermaid treats a
+    /// bare multi-word header as a title, so these are two clusters, and
+    /// layout used to trap on a duplicate cluster id.
+    @Test func subgraphTitlesSharingFirstWordStayDistinctClusters() {
+        let diagram = parser.parse("""
+            graph TD
+              subgraph Server session metadata
+                S1[SessionStore]
+              end
+              subgraph Server trace readers
+                T1[trace.ts]
+              end
+              S1 --> T1
+            """)
+        guard case .flowchart(let flow) = diagram else {
+            Issue.record("Expected flowchart")
+            return
+        }
+        #expect(flow.subgraphs.map(\.title) == ["Server session metadata", "Server trace readers"])
+        #expect(Set(flow.subgraphs.map(\.id)).count == 2)
+
+        let layout = renderer.layout(diagram, configuration: config)
+        let frames = flow.subgraphs.compactMap { layout.subgraphFrames[$0.id] }
+        #expect(frames.count == 2)
+        if frames.count == 2 {
+            #expect(!frames[0].intersects(frames[1]))
+        }
+    }
+
+    /// A renamed duplicate must not land on an id another cluster already
+    /// owns, or that cluster's nodes lose their positions.
+    @Test func repeatedSubgraphIdsKeepEveryClusterAndNode() {
+        let diagram = parser.parse("""
+            flowchart TD
+              subgraph foo__3
+                A[A]
+              end
+              subgraph foo
+                B[B]
+              end
+              subgraph foo
+                C[C]
+              end
+            """)
+        guard case .flowchart(let flow) = diagram else {
+            Issue.record("Expected flowchart")
+            return
+        }
+        #expect(Set(flow.subgraphs.map(\.id)).count == 3)
+        let layout = renderer.layout(diagram, configuration: config)
+        #expect(Set(layout.graphResult.nodePositions.keys) == ["A", "B", "C"])
+    }
+
+    /// An authored retry loop reads top-down from its real entry: the step
+    /// declared first starts the flow, and the fix branch sits below the
+    /// decision that leads to it instead of looking like a second entry.
+    @Test func authoredLoopKeepsSourceEntryOnTop() {
+        let layout = renderer.layout(parser.parse("""
+            flowchart TD
+              Start([Start]) --> Plan[Plan]
+              Plan --> Impl[Implement]
+              Impl --> Test{Tests pass?}
+              Test -->|No| Fix[Fix]
+              Fix --> Impl
+              Test -->|Yes| Done([Done])
+            """), configuration: config)
+        let rects = layout.graphResult.nodePositions
+        let start = rects["Start"]!
+        #expect(rects.values.allSatisfy { $0.minY >= start.minY })
+        #expect(rects["Fix"]!.minY > rects["Test"]!.minY)
+        #expect(rects["Impl"]!.minY > rects["Plan"]!.minY)
+    }
+
     // MARK: - Layout integration
 
     @Test func twoNodeGraph() {
@@ -423,8 +496,18 @@ struct MermaidRendererTests {
             configuration: config
         )
         let backedge = cycle.graphResult.edgePaths.first { $0.from == "B" && $0.to == "A" }!
-        #expect(backedge.points[1].y < backedge.points[0].y)
-        #expect(backedge.points[backedge.points.count - 2].y > backedge.points.last!.y)
+        let forward = cycle.graphResult.edgePaths.first { $0.from == "A" && $0.to == "B" }!
+        let alpha = cycle.graphResult.nodePositions["A"]!.insetBy(dx: 1, dy: 1)
+        let beta = cycle.graphResult.nodePositions["B"]!.insetBy(dx: 1, dy: 1)
+        // The loop back must not cut through either node or ride on top of
+        // the forward edge, or the cycle reads as one line.
+        #expect(backedge.points.count >= 2)
+        for (first, second) in zip(backedge.points, backedge.points.dropFirst()) {
+            let mid = CGPoint(x: (first.x + second.x) / 2, y: (first.y + second.y) / 2)
+            #expect(!alpha.contains(mid) && !beta.contains(mid), "backedge=\(backedge.points)")
+            let isVertical = abs(first.x - second.x) < 0.5
+            #expect(!(isVertical && abs(first.x - forward.points[0].x) < 0.5), "backedge=\(backedge.points)")
+        }
     }
 
     @Test func parallelEdgesUseSeparateRoutes() {
@@ -724,8 +807,8 @@ struct MermaidRendererTests {
         let fanIn = layout.graphResult.edgePaths.filter { $0.to == "Z" }
         #expect(fanOut.count == 3)
         #expect(fanIn.count == 3)
-        #expect(sharedOverlappingTrunk(of: fanOut, horizontal: true) != nil)
-        #expect(sharedOverlappingTrunk(of: fanIn, horizontal: true) != nil)
+        expectOneBus(fanOut)
+        expectOneBus(fanIn)
 
         assertEveryPathClearsOtherLabelsAndArrowheads(layout, among: fanOut, expectedLabelCount: 3)
         assertEveryPathClearsOtherLabelsAndArrowheads(layout, among: fanIn, expectedLabelCount: 3)
@@ -1183,6 +1266,25 @@ struct MermaidRendererTests {
     private struct OverlappingTrunk {
         let coord: CGFloat
         let overlap: ClosedRange<CGFloat>
+    }
+
+    /// Bent TD branches share one horizontal bus. A branch aligned straight
+    /// under its parent has no bend, but must still pass through that bus line.
+    private func expectOneBus(_ paths: [GraphLayoutEdgePath]) {
+        let bent = paths.filter { !axisSegments($0, horizontal: true).isEmpty }
+        let straight = paths.filter { axisSegments($0, horizontal: true).isEmpty }
+        #expect(bent.count >= 2, "paths=\(paths.map(\.points))")
+        guard let bus = sharedOverlappingTrunk(of: bent, horizontal: true) else {
+            Issue.record("Bent branches should share a bus, paths=\(paths.map(\.points))")
+            return
+        }
+        for path in straight {
+            let ys = path.points.map(\.y)
+            #expect(
+                (ys.min() ?? 0) <= bus.coord && bus.coord <= (ys.max() ?? 0),
+                "Straight branch should cross the bus at y=\(bus.coord), path=\(path.points)"
+            )
+        }
     }
 
     private func sharedOverlappingTrunk(

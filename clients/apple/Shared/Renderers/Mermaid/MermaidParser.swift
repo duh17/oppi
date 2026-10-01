@@ -503,6 +503,9 @@ struct MermaidParser: DocumentParser, Sendable {
         collector: SemanticSourceCollector?
     ) -> FlowchartDiagram {
         var nodesById: [String: FlowNode] = [:]
+        // First-appearance order. Layout uses it for cycle breaking and
+        // in-rank order, like Mermaid/dagre.
+        var nodeOrder: [String] = []
         var edges: [FlowEdge] = []
         var subgraphs: [FlowSubgraph] = []
         var classDefs: [String: [String: String]] = [:]
@@ -523,6 +526,8 @@ struct MermaidParser: DocumentParser, Sendable {
 
         // Parse subgraphs with a stack-based approach.
         var subgraphStack: [SubgraphBuilder] = []
+        var subgraphCount = 0
+        var usedSubgraphIds: Set<String> = []
         // Exclusive membership: an implicit edge endpoint must not join the
         // enclosing cluster when another subgraph later declares that node.
         var lastExplicitSubgraphId: [String: String] = [:]
@@ -535,7 +540,16 @@ struct MermaidParser: DocumentParser, Sendable {
             if trimmed.hasPrefix("%%") { continue }
 
             // subgraph
-            if let sg = parseSubgraphStart(trimmed) {
+            if let sg = parseSubgraphStart(trimmed, autoId: "subGraph\(subgraphCount)") {
+                subgraphCount += 1
+                // Two clusters must never share one id: compound layout keys
+                // one layout unit per subgraph id.
+                let baseId = sg.id
+                var suffix = subgraphCount
+                while !usedSubgraphIds.insert(sg.id).inserted {
+                    sg.id = "\(baseId)__\(suffix)"
+                    suffix += 1
+                }
                 subgraphStack.append(sg)
                 continue
             }
@@ -604,6 +618,7 @@ struct MermaidParser: DocumentParser, Sendable {
                     }
                 } else {
                     nodesById[node.id] = node
+                    nodeOrder.append(node.id)
                 }
                 for className in node.classes {
                     applyClass(className, to: node.id)
@@ -638,9 +653,9 @@ struct MermaidParser: DocumentParser, Sendable {
         // Build ordered node list. When edges target subgraph IDs, Mermaid
         // treats those IDs as cluster endpoints, not implicit standalone nodes.
         let subgraphIds = Set(subgraphs.flatMap(allSubgraphIds(in:)))
-        let orderedNodes = nodesById.values
+        let orderedNodes = nodeOrder
+            .compactMap { nodesById[$0] }
             .filter { node in !(subgraphIds.contains(node.id) && node.shape == .default && node.label == node.id) }
-            .sorted { a, b in a.id < b.id }
 
         return FlowchartDiagram(
             direction: direction,
@@ -815,7 +830,7 @@ struct MermaidParser: DocumentParser, Sendable {
     // MARK: - Subgraph parsing
 
     private final class SubgraphBuilder {
-        let id: String
+        var id: String
         let title: String?
         let isMarkdown: Bool
         var direction: FlowDirection?
@@ -842,12 +857,15 @@ struct MermaidParser: DocumentParser, Sendable {
     }
 
     /// Parse `subgraph id [title]` or `subgraph title`.
-    private func parseSubgraphStart(_ line: String) -> SubgraphBuilder? {
+    ///
+    /// Mermaid `addSubGraph`: a bare header with whitespace is all title and
+    /// gets the auto id, so `subgraph Server trace readers` is not id `Server`.
+    private func parseSubgraphStart(_ line: String, autoId: String) -> SubgraphBuilder? {
         guard line.lowercased().hasPrefix("subgraph") else { return nil }
         let rest = line.dropFirst("subgraph".count).trimmingCharacters(in: .whitespaces)
 
         if rest.isEmpty {
-            return SubgraphBuilder(id: "subgraph_\(UInt.random(in: 0...UInt.max))", title: nil)
+            return SubgraphBuilder(id: autoId, title: nil)
         }
 
         // Check for bracket syntax: subgraph id [title]
@@ -873,22 +891,9 @@ struct MermaidParser: DocumentParser, Sendable {
             )
         }
 
-        // Otherwise: first token is id (if there are multiple tokens) or title
-        let tokens = rest.split(separator: " ", maxSplits: 1).map(String.init)
-        if tokens.count == 1 {
-            // Single token: use as both id and title
-            let inspected = inspect(tokens[0])
-            return SubgraphBuilder(
-                id: tokens[0],
-                title: inspected.text,
-                isMarkdown: inspected.isMarkdown
-            )
-        }
-
-        // Multi-token: first is id, rest is title
-        let inspected = inspect(tokens[1])
+        let inspected = inspect(rest)
         return SubgraphBuilder(
-            id: tokens[0],
+            id: rest.contains(where: \.isWhitespace) ? autoId : rest,
             title: inspected.text,
             isMarkdown: inspected.isMarkdown
         )

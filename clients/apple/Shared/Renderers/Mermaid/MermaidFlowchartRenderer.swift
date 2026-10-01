@@ -283,20 +283,23 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
     ) -> FlowchartLayout {
         let fontSize = configuration.fontSize
 
-        // Build node labels and shapes.
+        // Build display labels and shapes. Plain labels wrap so one sentence
+        // does not become a canvas-wide box; markdown keeps its own lines.
+        let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
         var nodeLabels: [String: String] = [:]
         var nodeShapes: [String: FlowNodeShape] = [:]
         for node in flowchart.nodes {
-            nodeLabels[node.id] = node.label
+            nodeLabels[node.id] = node.isMarkdown
+                ? node.label
+                : wrapFlowNodeLabel(node.label, shape: node.shape, font: font, fontSize: fontSize)
             nodeShapes[node.id] = node.shape
         }
 
         // Measure node sizes.
-        let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
         var layoutNodes: [GraphLayoutNode] = []
         for node in flowchart.nodes {
             let textSize = measureText(
-                node.label,
+                nodeLabels[node.id] ?? node.label,
                 font: font,
                 fontSize: fontSize,
                 isMarkdown: node.isMarkdown
@@ -312,9 +315,6 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         let layoutEdgeSpecs = flowchart.edges.map { edge in
             resolvedLayoutEdgeSpec(edge, anchors: subgraphAnchors)
         }
-        let layoutEdges = layoutEdgeSpecs.map { spec in
-            GraphLayoutEdge(from: spec.from, to: spec.to)
-        }
 
         // Map direction.
         let direction = graphLayoutDirection(for: flowchart.direction)
@@ -329,6 +329,12 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             wrappedEdgeLabels[index] = wrapped
             labeledEnds.append((spec.from, spec.to, wrapped))
         }
+        let layoutEdges = flowLayoutEdges(
+            layoutEdgeSpecs,
+            wrappedLabels: wrappedEdgeLabels,
+            direction: direction,
+            fontSize: fontSize
+        )
         let reservedRank = reservedRankLabelSpace(
             labels: labeledEnds.map(\.label),
             direction: direction,
@@ -340,27 +346,29 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             fontSize: fontSize
         )
 
-        let input = GraphLayoutInput(
-            nodes: layoutNodes,
-            edges: layoutEdges,
-            direction: direction,
-            nodeSpacing: fontSize * 3 + reservedSibling,
-            rankSpacing: fontSize * 4 + reservedRank
-        )
-
-        let positionedGraphResult: GraphLayoutResult
-        if flowchart.subgraphs.isEmpty {
-            positionedGraphResult = SugiyamaLayout.layout(input)
-        } else {
+        func positioned(
+            _ chart: FlowchartDiagram,
+            _ nodes: [GraphLayoutNode],
+            _ edges: [GraphLayoutEdge]
+        ) -> GraphLayoutResult {
+            if chart.subgraphs.isEmpty {
+                return SugiyamaLayout.layout(GraphLayoutInput(
+                    nodes: nodes,
+                    edges: edges,
+                    direction: direction,
+                    nodeSpacing: flowNodeGap(fontSize: fontSize) + reservedSibling,
+                    rankSpacing: flowRankGap(fontSize: fontSize)
+                ))
+            }
             // A flat node layout followed by drawing cluster bounds causes large
             // subgraphs to overlap each other and unrelated nodes. Mermaid's
             // compound layout treats clusters as first-class graph units. Do the
             // same here: lay out each cluster internally, then lay out the
             // top-level clusters and ungrouped nodes as a second graph.
-            positionedGraphResult = compoundGraphResult(
-                flowchart: flowchart,
-                layoutNodes: layoutNodes,
-                layoutEdges: layoutEdges,
+            return compoundGraphResult(
+                flowchart: chart,
+                layoutNodes: nodes,
+                layoutEdges: edges,
                 direction: direction,
                 fontSize: fontSize,
                 maxWidth: configuration.maxWidth,
@@ -368,6 +376,17 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                 reservedRank: reservedRank
             )
         }
+
+        let positionedGraphResult = shelfPackedComponents(
+            flowchart: flowchart,
+            layoutNodes: layoutNodes,
+            layoutEdges: layoutEdges,
+            layoutEdgeSpecs: layoutEdgeSpecs,
+            direction: direction,
+            fontSize: fontSize,
+            maxWidth: configuration.maxWidth,
+            layout: positioned
+        )
         let subgraphFrames = makeSubgraphFrameMap(
             flowchart.subgraphs,
             positions: positionedGraphResult.nodePositions,
@@ -646,6 +665,69 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         fontSize * 12
     }
 
+    /// Phone-first node text: wrap near 160pt (140pt in diamonds) at 14pt.
+    /// A longer single identifier widens the box up to twice that before it
+    /// is broken mid-word.
+    private func wrapFlowNodeLabel(
+        _ label: String,
+        shape: FlowNodeShape,
+        font: CTFont,
+        fontSize: CGFloat
+    ) -> String {
+        let budget = shape == .diamond ? fontSize * 10 : fontSize * 11.5
+        let widestWord = label.split(whereSeparator: \.isWhitespace)
+            .map { MermaidTextUtils.measureText(String($0), font: font, fontSize: fontSize).width }
+            .max() ?? 0
+        return MermaidTextUtils.wrapText(
+            label,
+            maxWidth: min(max(budget, widestWord), budget * 2),
+            font: font,
+            fontSize: fontSize
+        )
+    }
+
+    private func flowNodeGap(fontSize: CGFloat) -> CGFloat {
+        fontSize * 2
+    }
+
+    /// Gap for a plain one-to-one connection. Shared trunks and labels
+    /// raise only the rank gaps they cross (`flowLayoutEdges`).
+    private func flowRankGap(fontSize: CGFloat) -> CGFloat {
+        fontSize * 2.3
+    }
+
+    /// Layout edges with the rank gap each one needs: a fan-out/fan-in bus
+    /// needs room for its trunk plus unique stubs, and a label needs its
+    /// along-rank extent clear of both nodes.
+    private func flowLayoutEdges(
+        _ specs: [LayoutEdgeSpec],
+        wrappedLabels: [Int: String],
+        direction: GraphLayoutDirection,
+        fontSize: CGFloat
+    ) -> [GraphLayoutEdge] {
+        var outDegree: [String: Int] = [:]
+        var inDegree: [String: Int] = [:]
+        for spec in specs {
+            outDegree[spec.from, default: 0] += 1
+            inDegree[spec.to, default: 0] += 1
+        }
+        let (labelFont, labelFontSize) = flowEdgeLabelFont(fontSize: fontSize)
+        let isHorizontal = direction == .leftToRight || direction == .rightToLeft
+        return specs.enumerated().map { index, spec in
+            var gap: CGFloat = 0
+            if (outDegree[spec.from] ?? 0) > 1 || (inDegree[spec.to] ?? 0) > 1 {
+                gap = fontSize * 3.7
+            }
+            if let label = wrappedLabels[index] {
+                // A label needs its own corridor clear of both nodes and of
+                // any shared bus, so it keeps the full pre-phone label gap.
+                let size = MermaidTextUtils.measureText(label, font: labelFont, fontSize: labelFontSize)
+                gap = max(gap, fontSize * 4.5 + (isHorizontal ? size.width : size.height))
+            }
+            return GraphLayoutEdge(from: spec.from, to: spec.to, minRankGap: gap)
+        }
+    }
+
     private func flowEdgeLabelFont(fontSize: CGFloat) -> (CTFont, CGFloat) {
         let labelFontSize = fontSize * 0.85
         return (CTFontCreateWithName("Helvetica" as CFString, labelFontSize, nil), labelFontSize)
@@ -757,7 +839,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                 ownerUnitByNodeId[nodeId] = unitId
             }
 
-            let localNodes = memberIds.sorted().compactMap { nodesById[$0] }
+            let localNodes = layoutNodes.filter { memberIds.contains($0.id) }
             let localEdges = layoutEdges.filter {
                 memberIds.contains($0.from) && memberIds.contains($0.to)
             }
@@ -774,8 +856,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                     nodes: localNodes,
                     edges: localEdges,
                     direction: localDirection,
-                    nodeSpacing: fontSize * 3 + reservedSibling,
-                    rankSpacing: fontSize * 4 + reservedRank,
+                    nodeSpacing: flowNodeGap(fontSize: fontSize) + reservedSibling,
+                    rankSpacing: flowRankGap(fontSize: fontSize),
                     maxWidth: maxWidth
                 )
             } else {
@@ -822,6 +904,19 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             ownerUnitByNodeId[node.id] = node.id
             unitNodes.append(node)
         }
+        // Units follow their first member's source order, so clusters and
+        // loose nodes keep the author's sequence for cycle breaking and ranks.
+        var firstIndexByUnit: [String: Int] = [:]
+        for (index, node) in layoutNodes.enumerated() {
+            if let unit = ownerUnitByNodeId[node.id], firstIndexByUnit[unit] == nil {
+                firstIndexByUnit[unit] = index
+            }
+        }
+        unitNodes = unitNodes.enumerated().sorted { lhs, rhs in
+            let l = firstIndexByUnit[lhs.element.id] ?? Int.max
+            let r = firstIndexByUnit[rhs.element.id] ?? Int.max
+            return l == r ? lhs.offset < rhs.offset : l < r
+        }.map(\.element)
 
         var seenUnitEdges: Set<String> = []
         var unitEdges: [GraphLayoutEdge] = []
@@ -865,6 +960,114 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                 flowchart: flowchart,
                 rootDirection: direction
             ),
+            totalSize: totalSize(for: positions)
+        )
+    }
+
+    /// Top-down diagrams wider than `maxWidth` that are made of disconnected
+    /// parts (separate graphs or unlinked top-level subgraphs) stack those
+    /// parts in source order on shelves instead of one wide row. Connected
+    /// parts are never split, and LR/RL layouts already stack them.
+    private func shelfPackedComponents(
+        flowchart: FlowchartDiagram,
+        layoutNodes: [GraphLayoutNode],
+        layoutEdges: [GraphLayoutEdge],
+        layoutEdgeSpecs: [LayoutEdgeSpec],
+        direction: GraphLayoutDirection,
+        fontSize: CGFloat,
+        maxWidth: CGFloat,
+        layout: (FlowchartDiagram, [GraphLayoutNode], [GraphLayoutEdge]) -> GraphLayoutResult
+    ) -> GraphLayoutResult {
+        let whole = layout(flowchart, layoutNodes, layoutEdges)
+        guard direction == .topToBottom || direction == .bottomToTop,
+              layoutNodes.count > 1 else { return whole }
+
+        func bounds(_ result: GraphLayoutResult, subgraphs: [FlowSubgraph]) -> CGRect {
+            let rects = Array(result.nodePositions.values)
+                + Array(makeSubgraphFrameMap(subgraphs, positions: result.nodePositions, fontSize: fontSize).values)
+            return rects.dropFirst().reduce(rects.first ?? .zero) { $0.union($1) }
+        }
+        guard bounds(whole, subgraphs: flowchart.subgraphs).width > maxWidth else { return whole }
+
+        // Union-find over edges and top-level subgraph membership.
+        var parent = Dictionary(uniqueKeysWithValues: layoutNodes.map { ($0.id, $0.id) })
+        func root(_ id: String) -> String {
+            var current = id
+            while let next = parent[current], next != current { current = next }
+            return current
+        }
+        func join(_ a: String, _ b: String) {
+            guard parent[a] != nil, parent[b] != nil else { return }
+            let (ra, rb) = (root(a), root(b))
+            if ra != rb { parent[rb] = ra }
+        }
+        for edge in layoutEdges { join(edge.from, edge.to) }
+        for subgraph in flowchart.subgraphs {
+            // Member lists can name ids that are not layout nodes (a cluster
+            // id used as a node); chain only the ones that are.
+            let members = allNodeIds(in: subgraph).filter { parent[$0] != nil }
+            for (previous, member) in zip(members, members.dropFirst()) { join(previous, member) }
+        }
+        var componentOrder: [String] = []
+        var members: [String: Set<String>] = [:]
+        for node in layoutNodes {
+            let id = root(node.id)
+            if members[id] == nil { componentOrder.append(id) }
+            members[id, default: []].insert(node.id)
+        }
+        guard componentOrder.count > 1 else { return whole }
+
+        let columnGap = flowNodeGap(fontSize: fontSize)
+        let rowGap = flowRankGap(fontSize: fontSize)
+        var positions: [String: CGRect] = [:]
+        var cursor = CGPoint.zero
+        var rowHeight: CGFloat = 0
+        var rows: [(ids: [String], width: CGFloat)] = [([], 0)]
+        for componentId in componentOrder {
+            let ids = members[componentId] ?? []
+            let subgraphs = flowchart.subgraphs.filter { !ids.isDisjoint(with: allNodeIds(in: $0)) }
+            let edgePairs = zip(flowchart.edges, layoutEdgeSpecs).filter {
+                ids.contains($0.1.from) && ids.contains($0.1.to)
+            }
+            let chart = FlowchartDiagram(
+                direction: flowchart.direction,
+                nodes: flowchart.nodes.filter { ids.contains($0.id) },
+                edges: edgePairs.map(\.0),
+                subgraphs: subgraphs,
+                classDefs: flowchart.classDefs,
+                styleDirectives: flowchart.styleDirectives,
+                classApplications: flowchart.classApplications
+            )
+            let result = layout(
+                chart,
+                layoutNodes.filter { ids.contains($0.id) },
+                layoutEdges.filter { ids.contains($0.from) && ids.contains($0.to) }
+            )
+            let box = bounds(result, subgraphs: subgraphs)
+            if cursor.x > 0, cursor.x + box.width > maxWidth {
+                cursor = CGPoint(x: 0, y: cursor.y + rowHeight + rowGap)
+                rowHeight = 0
+                rows.append(([], 0))
+            }
+            for (id, rect) in result.nodePositions {
+                positions[id] = rect.offsetBy(dx: cursor.x - box.minX, dy: cursor.y - box.minY)
+            }
+            rows[rows.count - 1].ids.append(contentsOf: result.nodePositions.keys)
+            rows[rows.count - 1].width = cursor.x + box.width
+            cursor.x += box.width + columnGap
+            rowHeight = max(rowHeight, box.height)
+        }
+        // Center shelves on the widest one, like ranks in a top-down flow.
+        let widest = rows.map(\.width).max() ?? 0
+        for row in rows {
+            let dx = (widest - row.width) / 2
+            for id in row.ids {
+                positions[id] = positions[id]?.offsetBy(dx: dx, dy: 0)
+            }
+        }
+        return GraphLayoutResult(
+            nodePositions: positions,
+            edgePaths: [],
             totalSize: totalSize(for: positions)
         )
     }
@@ -1018,6 +1221,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
 
         for (index, edge) in edges.enumerated() {
             guard let trunk = sharedTrunks[index],
+                  backEdgeSidePorts(edge, positions: positions, direction: edgeDirections[index], clearance: clearance) == nil,
                   positions[edge.from] != nil, positions[edge.to] != nil,
                   !pathIntersectsObstacles(
                     trunk,
@@ -1065,6 +1269,40 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             let pairKey = "\(edge.from)->\(edge.to)"
             let parallelOrdinal = routedPairCounts[pairKey, default: 0]
             routedPairCounts[pairKey] = parallelOrdinal + 1
+
+            // A loop back to an earlier rank leaves and enters from the side,
+            // so it does not share the forward ports or run up the main trunk.
+            if let side = backEdgeSidePorts(edge, positions: positions, direction: edgeDirection, clearance: clearance) {
+                let routedPoints = obstacleAwareRoute(
+                    from: side.start,
+                    to: side.end,
+                    direction: edgeDirection,
+                    obstacles: obstacles,
+                    occupiedSegments: occupiedSegments,
+                    clearance: clearance,
+                    bendPenalty: fontSize * 1.5,
+                    sharedPenaltyMultiplier: 6,
+                    avoidOccupiedSegments: false,
+                    considerAllObstacles: true,
+                    stubs: (side.startStub, side.endStub)
+                ).flatMap { pathIntersectsObstacles($0, obstacles: obstacles) ? nil : $0 }
+                    ?? safePerimeterRoute(
+                        from: side.start,
+                        to: side.end,
+                        direction: edgeDirection,
+                        obstacles: obstacles,
+                        clearance: clearance,
+                        laneOrdinal: parallelOrdinal,
+                        stubs: (side.startStub, side.endStub)
+                    )
+                if let routedPoints {
+                    let path = GraphLayoutEdgePath(from: edge.from, to: edge.to, points: routedPoints)
+                    rememberDecorations(path: path, label: label)
+                    occupiedSegments.register(routedPoints)
+                    routed[index] = path
+                    continue
+                }
+            }
             let usesOccupied = pathUsesOccupiedSegment(fallback.points, usage: occupiedSegments)
             let needsParallelLane = (parallelOrdinal > 0 && usesOccupied) || usesOccupied
             let needsReroute = pathIntersectsObstacles(fallback.points, obstacles: obstacles)
@@ -1131,6 +1369,56 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
 
         return routed.enumerated().map { index, path in
             path ?? GraphLayoutEdgePath(from: edges[index].from, to: edges[index].to, points: [])
+        }
+    }
+
+    private struct BackEdgePorts {
+        let start: CGPoint
+        let end: CGPoint
+        let startStub: CGPoint
+        let endStub: CGPoint
+    }
+
+    /// Side ports for an edge that points against the flow (a loop back to an
+    /// earlier rank): the side facing away from the target's column, at both
+    /// ends, with stubs leaving outward. Nil for forward and same-rank edges.
+    private func backEdgeSidePorts(
+        _ edge: GraphLayoutEdge,
+        positions: [String: CGRect],
+        direction: GraphLayoutDirection,
+        clearance: CGFloat
+    ) -> BackEdgePorts? {
+        guard edge.from != edge.to,
+              let from = positions[edge.from],
+              let to = positions[edge.to] else { return nil }
+        let stub = clearance * 2
+        switch direction {
+        case .topToBottom, .bottomToTop:
+            let isBack = direction == .topToBottom ? to.maxY <= from.minY : to.minY >= from.maxY
+            guard isBack else { return nil }
+            let left = from.midX < to.midX - 1
+            let start = CGPoint(x: left ? from.minX : from.maxX, y: from.midY)
+            let end = CGPoint(x: left ? to.minX : to.maxX, y: to.midY)
+            let dx = left ? -stub : stub
+            return BackEdgePorts(
+                start: start,
+                end: end,
+                startStub: CGPoint(x: start.x + dx, y: start.y),
+                endStub: CGPoint(x: end.x + dx, y: end.y)
+            )
+        case .leftToRight, .rightToLeft:
+            let isBack = direction == .leftToRight ? to.maxX <= from.minX : to.minX >= from.maxX
+            guard isBack else { return nil }
+            let top = from.midY < to.midY - 1
+            let start = CGPoint(x: from.midX, y: top ? from.minY : from.maxY)
+            let end = CGPoint(x: to.midX, y: top ? to.minY : to.maxY)
+            let dy = top ? -stub : stub
+            return BackEdgePorts(
+                start: start,
+                end: end,
+                startStub: CGPoint(x: start.x, y: start.y + dy),
+                endStub: CGPoint(x: end.x, y: end.y + dy)
+            )
         }
     }
 
@@ -1531,9 +1819,10 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         bendPenalty: CGFloat,
         sharedPenaltyMultiplier: CGFloat,
         avoidOccupiedSegments: Bool,
-        considerAllObstacles: Bool = false
+        considerAllObstacles: Bool = false,
+        stubs: (CGPoint, CGPoint)? = nil
     ) -> [CGPoint]? {
-        let (routeStart, routeEnd) = routePortStubs(
+        let (routeStart, routeEnd) = stubs ?? routePortStubs(
             from: start,
             to: end,
             direction: direction,
@@ -1717,9 +2006,10 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         direction: GraphLayoutDirection,
         obstacles: [CGRect],
         clearance: CGFloat,
-        laneOrdinal: Int
+        laneOrdinal: Int,
+        stubs: (CGPoint, CGPoint)? = nil
     ) -> [CGPoint]? {
-        let (startStub, endStub) = routePortStubs(
+        let (startStub, endStub) = stubs ?? routePortStubs(
             from: start,
             to: end,
             direction: direction,

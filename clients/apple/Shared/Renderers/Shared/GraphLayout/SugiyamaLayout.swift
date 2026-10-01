@@ -25,6 +25,9 @@ struct GraphLayoutNode: Sendable {
 struct GraphLayoutEdge: Sendable {
     let from: String
     let to: String
+    /// Minimum gap for every rank gap this edge crosses, e.g. room for its
+    /// label or a shared trunk. `rankSpacing` applies when this is smaller.
+    var minRankGap: CGFloat = 0
 }
 
 /// Flow direction for the layered layout.
@@ -106,12 +109,25 @@ enum SugiyamaLayout {
         let orderedLayers = minimizeCrossings(layers: layers, adjacency: acyclicAdj, reverseAdj: acyclicRev)
 
         // Phase 4: Coordinate assignment.
+        var layerIndexById: [String: Int] = [:]
+        for (index, layer) in orderedLayers.enumerated() {
+            for id in layer { layerIndexById[id] = index }
+        }
+        var rankGaps = [CGFloat](repeating: input.rankSpacing, count: max(orderedLayers.count - 1, 0))
+        for edge in acyclicEdges where edge.minRankGap > input.rankSpacing {
+            guard let a = layerIndexById[edge.from], let b = layerIndexById[edge.to] else { continue }
+            for gap in min(a, b) ..< max(a, b) {
+                rankGaps[gap] = max(rankGaps[gap], edge.minRankGap)
+            }
+        }
         let positions = assignCoordinates(
             layers: orderedLayers,
             nodeMap: nodeMap,
+            adjacency: acyclicAdj,
+            reverseAdj: acyclicRev,
             direction: input.direction,
             nodeSpacing: input.nodeSpacing,
-            rankSpacing: input.rankSpacing
+            rankGaps: rankGaps
         )
 
         // Phase 5: Edge routing.
@@ -165,13 +181,15 @@ enum SugiyamaLayout {
             color[u] = .black
         }
 
+        // Input order, like dagre's DFS acyclicer: with source-ordered nodes,
+        // an authored loop back to an earlier step is the reversed edge.
         for id in nodeIds where color[id] == .white {
             dfs(id)
         }
 
         return edges.map { edge in
             if backEdges.contains("\(edge.from)->\(edge.to)") {
-                return GraphLayoutEdge(from: edge.to, to: edge.from)
+                return GraphLayoutEdge(from: edge.to, to: edge.from, minRankGap: edge.minRankGap)
             }
             return edge
         }
@@ -295,89 +313,170 @@ enum SugiyamaLayout {
 
     // MARK: - Phase 4: Coordinate assignment
 
-    /// Assign x/y positions to nodes. Centers each layer and spaces nodes evenly.
+    /// Assign x/y positions to nodes.
+    ///
+    /// Cross axis: each node moves toward the median of its neighbors while
+    /// its rank keeps order and spacing. Alternating sweeps keep chains
+    /// straight and center parents over their children instead of centering
+    /// every rank on the widest one. Main axis: nodes center in their rank.
     private static func assignCoordinates(
         layers: [[String]],
         nodeMap: [String: GraphLayoutNode],
+        adjacency: [String: [String]],
+        reverseAdj: [String: [String]],
         direction: GraphLayoutDirection,
         nodeSpacing: CGFloat,
-        rankSpacing: CGFloat
+        rankGaps: [CGFloat]
     ) -> [String: CGRect] {
         let isHorizontal = direction == .leftToRight || direction == .rightToLeft
+        func size(_ id: String) -> CGSize { nodeMap[id]?.size ?? CGSize(width: 40, height: 30) }
+        func crossSize(_ id: String) -> CGFloat { isHorizontal ? size(id).height : size(id).width }
+        func mainSize(_ id: String) -> CGFloat { isHorizontal ? size(id).width : size(id).height }
 
-        // Compute the width of each layer (max node size along the cross axis)
-        // and total span along the cross axis for centering.
-        struct NodeMetrics {
-            let id: String
-            let mainSize: CGFloat
-            let crossSize: CGFloat
-        }
-
-        struct LayerMetrics {
-            let rankThickness: CGFloat  // size along rank axis (height for TB, width for LR)
-            let crossSpan: CGFloat      // total span along cross axis
-            let nodeSizes: [NodeMetrics]
-        }
-
-        var metrics: [LayerMetrics] = []
+        var center: [String: CGFloat] = [:]
         for layer in layers {
-            var rankThickness: CGFloat = 0
-            var crossSpan: CGFloat = 0
-            var sizes: [NodeMetrics] = []
-            for (i, id) in layer.enumerated() {
-                let size = nodeMap[id]?.size ?? CGSize(width: 40, height: 30)
-                let main = isHorizontal ? size.width : size.height
-                let cross = isHorizontal ? size.height : size.width
-                rankThickness = max(rankThickness, main)
-                crossSpan += cross
-                if i > 0 { crossSpan += nodeSpacing }
-                sizes.append(NodeMetrics(id: id, mainSize: main, crossSize: cross))
+            let span = layer.map(crossSize).reduce(0, +)
+                + nodeSpacing * CGFloat(max(layer.count - 1, 0))
+            var cursor = -span / 2
+            for id in layer {
+                center[id] = cursor + crossSize(id) / 2
+                cursor += crossSize(id) + nodeSpacing
             }
-            metrics.append(LayerMetrics(rankThickness: rankThickness, crossSpan: crossSpan, nodeSizes: sizes))
         }
 
-        // Find max cross span to center narrower layers.
-        let maxCrossSpan = metrics.map(\.crossSpan).max() ?? 0
+        /// Median target toward one side, weighted 4 for a one-to-one chain
+        /// link: keeping chains straight matters more than centering a node
+        /// among several neighbors.
+        func pull(
+            _ id: String,
+            toward neighbors: (String) -> [String],
+            back: (String) -> [String]
+        ) -> (target: CGFloat, weight: CGFloat)? {
+            let ids = neighbors(id)
+            let positions = ids.compactMap { center[$0] }.sorted()
+            guard !positions.isEmpty else { return nil }
+            let mid = positions.count / 2
+            let target = positions.count.isMultiple(of: 2)
+                ? (positions[mid - 1] + positions[mid]) / 2
+                : positions[mid]
+            let isChainLink = ids.count == 1 && back(ids[0]).count == 1
+            return (target, isChainLink ? 4 : 1)
+        }
+        let preds: (String) -> [String] = { reverseAdj[$0] ?? [] }
+        let succs: (String) -> [String] = { adjacency[$0] ?? [] }
 
-        // Lay out each layer.
+        enum Pull { case up, down, both }
+        func align(_ layerIndex: Int, _ mode: Pull) {
+            let layer = layers[layerIndex]
+            var desired: [CGFloat] = []
+            var weights: [CGFloat] = []
+            for id in layer {
+                let pulls = [
+                    mode == .down ? nil : pull(id, toward: preds, back: succs),
+                    mode == .up ? nil : pull(id, toward: succs, back: preds),
+                ].compactMap { $0 }
+                let weight = pulls.reduce(0) { $0 + $1.weight }
+                guard weight > 0 else {
+                    // Free node: hold position, but yield to aligned peers.
+                    desired.append(center[id] ?? 0)
+                    weights.append(0.25)
+                    continue
+                }
+                desired.append(pulls.reduce(0) { $0 + $1.target * $1.weight } / weight)
+                weights.append(weight)
+            }
+            let placed = placeRank(
+                desired: desired,
+                weights: weights,
+                sizes: layer.map(crossSize),
+                gap: nodeSpacing
+            )
+            for (id, value) in zip(layer, placed) {
+                center[id] = value
+            }
+        }
+
+        // One-sided sweeps settle groups under parents and parents over
+        // children; the final two-sided sweeps balance both.
+        if layers.count > 1 {
+            for iteration in 0 ..< 5 {
+                let final = iteration >= 3
+                for index in 1 ..< layers.count {
+                    align(index, final ? .both : .up)
+                }
+                for index in stride(from: layers.count - 2, through: 0, by: -1) {
+                    align(index, final ? .both : .down)
+                }
+            }
+        }
+
+        let minCross = layers.flatMap { $0 }
+            .map { (center[$0] ?? 0) - crossSize($0) / 2 }
+            .min() ?? 0
+
+        let reversed = direction == .bottomToTop || direction == .rightToLeft
+        let layerOrder: [Int] = reversed
+            ? Array((0 ..< layers.count).reversed())
+            : Array(0 ..< layers.count)
+
         var positions: [String: CGRect] = [:]
         var rankOffset: CGFloat = 0
-
-        let layerOrder: [Int]
-        switch direction {
-        case .bottomToTop:
-            layerOrder = Array((0 ..< layers.count).reversed())
-        case .rightToLeft:
-            layerOrder = Array((0 ..< layers.count).reversed())
-        default:
-            layerOrder = Array(0 ..< layers.count)
-        }
-
-        for layerIdx in layerOrder {
-            let m = metrics[layerIdx]
-            // Center this layer within the max cross span.
-            var crossOffset = (maxCrossSpan - m.crossSpan) / 2
-
-            for nm in m.nodeSizes {
-                let id = nm.id
-                let crossSize = nm.crossSize
-                let nodeSize = nodeMap[id]?.size ?? CGSize(width: 40, height: 30)
-                let rect: CGRect
-                if isHorizontal {
-                    // rank axis = x, cross axis = y
-                    rect = CGRect(x: rankOffset, y: crossOffset, width: nodeSize.width, height: nodeSize.height)
-                } else {
-                    // rank axis = y, cross axis = x
-                    rect = CGRect(x: crossOffset, y: rankOffset, width: nodeSize.width, height: nodeSize.height)
-                }
-                positions[id] = rect
-                crossOffset += crossSize + nodeSpacing
+        for layerIndex in layerOrder {
+            let layer = layers[layerIndex]
+            let thickness = layer.map(mainSize).max() ?? 0
+            for id in layer {
+                let nodeSize = size(id)
+                let crossStart = (center[id] ?? 0) - crossSize(id) / 2 - minCross
+                let mainStart = rankOffset + (thickness - mainSize(id)) / 2
+                positions[id] = isHorizontal
+                    ? CGRect(x: mainStart, y: crossStart, width: nodeSize.width, height: nodeSize.height)
+                    : CGRect(x: crossStart, y: mainStart, width: nodeSize.width, height: nodeSize.height)
             }
-
-            rankOffset += m.rankThickness + rankSpacing
+            let gapIndex = reversed ? layerIndex - 1 : layerIndex
+            rankOffset += thickness + (rankGaps.indices.contains(gapIndex) ? rankGaps[gapIndex] : 0)
         }
 
         return positions
+    }
+
+    /// Weighted least-squares placement of one rank: centers as close as
+    /// possible to `desired` while keeping order and `gap` between neighbors.
+    /// Exact via pool-adjacent-violators on gap-shifted coordinates.
+    private static func placeRank(
+        desired: [CGFloat],
+        weights: [CGFloat],
+        sizes: [CGFloat],
+        gap: CGFloat
+    ) -> [CGFloat] {
+        guard !desired.isEmpty else { return [] }
+        var offsets = [CGFloat](repeating: 0, count: desired.count)
+        for index in 1 ..< max(desired.count, 1) {
+            offsets[index] = offsets[index - 1] + (sizes[index - 1] + sizes[index]) / 2 + gap
+        }
+        var blocks: [(weightedSum: CGFloat, weight: CGFloat, count: Int)] = []
+        for index in desired.indices {
+            let weight = weights[index]
+            var block = (weightedSum: (desired[index] - offsets[index]) * weight, weight: weight, count: 1)
+            while let last = blocks.last,
+                  last.weightedSum / last.weight > block.weightedSum / block.weight {
+                block = (
+                    last.weightedSum + block.weightedSum,
+                    last.weight + block.weight,
+                    last.count + block.count
+                )
+                blocks.removeLast()
+            }
+            blocks.append(block)
+        }
+        var result: [CGFloat] = []
+        result.reserveCapacity(desired.count)
+        for block in blocks {
+            let mean = block.weightedSum / block.weight
+            for _ in 0 ..< block.count {
+                result.append(mean + offsets[result.count])
+            }
+        }
+        return result
     }
 
     // MARK: - Phase 5: Edge routing
