@@ -1,12 +1,9 @@
-import { formatSkillsForPrompt, type AgentSession } from "@earendil-works/pi-coding-agent";
-
 import {
   applyForwardedCommandResultToSession,
   runtimeCommandFailure,
   type RuntimeClientCommand,
 } from "./agent-runtime-transport.js";
 import {
-  computeCacheWaste,
   navigationCreatedBranchSummary,
   resetCacheMissTracker,
   type CacheMissTrackerState,
@@ -23,255 +20,21 @@ import {
   readRequiredString,
   readShareSessionAction,
   readShareSessionRedactionPolicy,
-  toRecord,
 } from "./session-command-parse.js";
 import { normalizeCommandError } from "./session-protocol.js";
 import { shareSession } from "./session-share.js";
 import { composeModelId, type SessionStateActiveSession } from "./session-state.js";
 import { readSessionTreeFilterMode, serializeSessionTree } from "./session-tree.js";
-import { extensionNameForAllowlist } from "./extension-loader.js";
-import type { SdkBackend } from "./sdk-backend.js";
+import type { AgentBackend } from "./agent-backend.js";
 import type { Session, ServerMessage } from "./types.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 import type { ThinkingLevel } from "./thinking-levels.js";
 
 const log = createLogger({ base: { component: "session_commands" } });
 
-function toCommandLocation(value: string | undefined): "user" | "project" | "path" | undefined {
-  if (value === "user" || value === "project" || value === "path") {
-    return value;
-  }
-  return undefined;
-}
-
-interface SessionCommandDescriptor {
-  name: string;
-  description?: string;
-  source: "builtin" | "extension" | "prompt" | "skill";
-  location?: "user" | "project" | "path";
-  path?: string;
-}
-
-interface ContextFileTokenSnapshot {
-  path: string;
-  chars: number;
-  tokens: number;
-}
-
-interface SessionContextCompositionSnapshot {
-  piSystemPromptChars: number;
-  piSystemPromptTokens: number;
-  agentsChars: number;
-  agentsTokens: number;
-  agentsFiles: ContextFileTokenSnapshot[];
-  skillsListingChars: number;
-  skillsListingTokens: number;
-}
-
-interface SessionResourceSnapshot {
-  name: string;
-  description?: string;
-  path: string;
-}
-
-function estimateTokensFromChars(chars: number): number {
-  if (chars <= 0) {
-    return 0;
-  }
-  return Math.max(1, Math.ceil(chars / 4));
-}
-
-function collectSessionContextComposition(
-  session: AgentSession,
-): SessionContextCompositionSnapshot {
-  const piSystemPromptChars = session.systemPrompt.length;
-  const piSystemPromptTokens = estimateTokensFromChars(piSystemPromptChars);
-
-  const agentsFiles = session.resourceLoader.getAgentsFiles().agentsFiles.map((file) => {
-    const chars = file.content.length;
-    return {
-      path: file.path,
-      chars,
-      tokens: estimateTokensFromChars(chars),
-    };
-  });
-
-  const agentsChars = agentsFiles.reduce((sum, file) => sum + file.chars, 0);
-  const agentsTokens = agentsFiles.reduce((sum, file) => sum + file.tokens, 0);
-
-  const skillsListing = formatSkillsForPrompt(session.resourceLoader.getSkills().skills);
-  const skillsListingChars = skillsListing.length;
-  const skillsListingTokens = estimateTokensFromChars(skillsListingChars);
-
-  return {
-    piSystemPromptChars,
-    piSystemPromptTokens,
-    agentsChars,
-    agentsTokens,
-    agentsFiles,
-    skillsListingChars,
-    skillsListingTokens,
-  };
-}
-
-function collectLoadedSessionResources(session: AgentSession): {
-  skills: SessionResourceSnapshot[];
-  extensions: SessionResourceSnapshot[];
-} {
-  const skills = session.resourceLoader.getSkills().skills.map((skill) => ({
-    name: skill.name,
-    description: skill.description,
-    path: skill.baseDir,
-  }));
-
-  const extensions = session.resourceLoader.getExtensions().extensions.map((extension) => ({
-    name: extensionNameForAllowlist(extension.resolvedPath || extension.path, extension.sourceInfo),
-    path: extension.resolvedPath || extension.path,
-  }));
-
-  return { skills, extensions };
-}
-
-interface SessionModelUsageSnapshot {
-  provider?: string;
-  model: string;
-  tokens: number;
-  cost: number;
-}
-
-function finiteNonNegative(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
-}
-
-function addUsageToModelBreakdown(
-  byModel: Map<string, SessionModelUsageSnapshot>,
-  key: string,
-  model: string,
-  provider: string | undefined,
-  value: unknown,
-): void {
-  const usage = toRecord(value);
-  const cost = toRecord(usage.cost);
-  const current = byModel.get(key) ?? {
-    ...(provider ? { provider } : {}),
-    model,
-    tokens: 0,
-    cost: 0,
-  };
-  current.tokens +=
-    finiteNonNegative(usage.input) +
-    finiteNonNegative(usage.output) +
-    finiteNonNegative(usage.cacheRead) +
-    finiteNonNegative(usage.cacheWrite);
-  current.cost += finiteNonNegative(cost.total);
-  byModel.set(key, current);
-}
-
-function collectModelUsage(entries: readonly unknown[]): SessionModelUsageSnapshot[] {
-  const byModel = new Map<string, SessionModelUsageSnapshot>();
-
-  for (const value of entries) {
-    if (!value || typeof value !== "object") continue;
-    const entry = value as Record<string, unknown>;
-
-    if (entry.type === "message" && entry.message && typeof entry.message === "object") {
-      const message = entry.message as Record<string, unknown>;
-      if (message.role === "assistant") {
-        const provider = typeof message.provider === "string" ? message.provider : "unknown";
-        const configuredModel = typeof message.model === "string" ? message.model : "unknown";
-        const model =
-          typeof message.responseModel === "string" && message.responseModel.length > 0
-            ? message.responseModel
-            : configuredModel;
-        addUsageToModelBreakdown(byModel, `${provider}/${model}`, model, provider, message.usage);
-      } else if (message.role === "toolResult") {
-        addUsageToModelBreakdown(
-          byModel,
-          "tools-summaries",
-          "Tools & summaries",
-          undefined,
-          message.usage,
-        );
-      }
-    } else if (entry.type === "compaction" || entry.type === "branch_summary") {
-      addUsageToModelBreakdown(
-        byModel,
-        "tools-summaries",
-        "Tools & summaries",
-        undefined,
-        entry.usage,
-      );
-    }
-  }
-
-  return [...byModel.values()]
-    .filter((entry) => entry.tokens > 0 || entry.cost > 0)
-    .sort((left, right) => right.cost - left.cost);
-}
-
-function collectSessionStats(backend: SdkBackend): Record<string, unknown> {
-  const session = backend.session;
-  const entries = session.sessionManager.getEntries();
-  return {
-    ...session.getSessionStats(),
-    cacheWaste: computeCacheWaste(entries, backend.cacheMissModelPriceSource),
-    modelBreakdown: collectModelUsage(entries),
-    contextComposition: collectSessionContextComposition(session),
-    loadedResources: collectLoadedSessionResources(session),
-  };
-}
-
-const BUILTIN_SLASH_COMMANDS: readonly SessionCommandDescriptor[] = [
-  {
-    name: "reload",
-    description: "Reload extensions, skills, prompts, and context files",
-    source: "builtin",
-  },
-  {
-    name: "share",
-    description: "Share session as an auto-redacted secret GitHub gist",
-    source: "builtin",
-  },
-];
-
-function collectSessionCommands(session: AgentSession): { commands: SessionCommandDescriptor[] } {
-  const commands: SessionCommandDescriptor[] = [...BUILTIN_SLASH_COMMANDS];
-
-  for (const command of session.extensionRunner?.getRegisteredCommands() ?? []) {
-    commands.push({
-      name: command.name,
-      description: command.description,
-      source: "extension",
-      path: command.sourceInfo.path,
-    });
-  }
-
-  for (const template of session.promptTemplates) {
-    commands.push({
-      name: template.name,
-      description: template.description,
-      source: "prompt",
-      location: toCommandLocation(template.sourceInfo.source),
-      path: template.filePath,
-    });
-  }
-
-  for (const skill of session.resourceLoader.getSkills().skills) {
-    commands.push({
-      name: `skill:${skill.name}`,
-      description: skill.description,
-      source: "skill",
-      location: toCommandLocation(skill.sourceInfo.source),
-      path: skill.filePath,
-    });
-  }
-
-  return { commands };
-}
-
 export interface CommandSessionState extends SessionStateActiveSession {
   session: Session;
-  sdkBackend: SdkBackend;
+  sdkBackend: AgentBackend;
   cacheMissTracker?: CacheMissTrackerState;
 }
 
@@ -285,12 +48,7 @@ export interface SessionCommandCoordinatorDeps {
 }
 
 type BackendCommandHandler = (
-  backend: SdkBackend,
-  cmd: Record<string, unknown>,
-) => unknown | Promise<unknown>;
-
-type SessionCommandHandler = (
-  session: AgentSession,
+  backend: AgentBackend,
   cmd: Record<string, unknown>,
 ) => unknown | Promise<unknown>;
 
@@ -343,7 +101,7 @@ export class SessionCommandCoordinator {
 
   private static readonly SERVER_LOGIC_HANDLERS = new Map<string, BackendCommandHandler>([
     ["get_state", (backend) => backend.getStateSnapshot()],
-    ["get_session_stats", (backend) => collectSessionStats(backend)],
+    ["get_session_stats", (backend) => backend.getSessionStats()],
 
     [
       "set_model",
@@ -370,7 +128,7 @@ export class SessionCommandCoordinator {
       "cycle_model",
       (backend, cmd) =>
         backend.withRuntimeLifecycleTransaction("cycle_model", async () =>
-          backend.session.cycleModel(cmd.direction as never),
+          backend.cycleModel(cmd.direction as never),
         ),
     ],
 
@@ -379,15 +137,15 @@ export class SessionCommandCoordinator {
       (backend, cmd) => {
         const level = readRequiredString(cmd.level, "level") as ThinkingLevel;
         if (readOptionalBoolean(cmd.persist) === true) {
-          backend.session.setThinkingLevel(level, { persist: true });
+          backend.setThinkingLevel(level, { persist: true });
         } else {
-          backend.session.setThinkingLevel(level);
+          backend.setThinkingLevel(level);
         }
         return { level };
       },
     ],
 
-    ["cycle_thinking_level", (backend) => ({ level: backend.session.cycleThinkingLevel() })],
+    ["cycle_thinking_level", (backend) => ({ level: backend.cycleThinkingLevel() })],
 
     ["reload", (backend) => backend.reloadResources()],
 
@@ -395,19 +153,19 @@ export class SessionCommandCoordinator {
       "set_session_name",
       (backend, cmd) => {
         const name = readRequiredString(cmd.name, "name");
-        backend.session.setSessionName(name);
+        backend.setSessionName(name);
         return { name };
       },
     ],
   ]);
 
-  private static readonly SESSION_PASSTHROUGH_HANDLERS = new Map<string, SessionCommandHandler>([
-    ["get_messages", (session) => session.messages],
-    ["get_fork_messages", (session) => ({ messages: session.getUserMessagesForForking() })],
+  private static readonly SESSION_PASSTHROUGH_HANDLERS = new Map<string, BackendCommandHandler>([
+    ["get_messages", (session) => session.messages()],
+    ["get_fork_messages", (session) => ({ messages: session.forkMessages() })],
     [
       "get_session_tree",
       (session, cmd) =>
-        serializeSessionTree(session.sessionManager, readSessionTreeFilterMode(cmd.filterMode)),
+        serializeSessionTree(session.sessionTree(), readSessionTreeFilterMode(cmd.filterMode)),
     ],
     [
       "navigate_tree",
@@ -419,7 +177,7 @@ export class SessionCommandCoordinator {
           label: readOptionalString(cmd.label),
         }),
     ],
-    ["get_commands", (session) => collectSessionCommands(session)],
+    ["get_commands", (session) => session.commands()],
     [
       "share_session",
       (session, cmd) =>
@@ -614,7 +372,7 @@ export class SessionCommandCoordinator {
       throw new Error(`Unhandled SDK command: ${type}`);
     }
 
-    const result = await sessionHandler(active.sdkBackend.session, command);
+    const result = await sessionHandler(active.sdkBackend, command);
     if (
       type === "navigate_tree" &&
       active.cacheMissTracker &&
@@ -717,7 +475,7 @@ export class SessionCommandCoordinator {
   }
 
   private routeSdkCommand(
-    backend: SdkBackend,
+    backend: AgentBackend,
     command: Record<string, unknown>,
     permit?: SessionRuntimeTransactionPermit,
     onPreflightAccepted?: () => void,

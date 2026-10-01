@@ -115,7 +115,7 @@ export class SessionStopFlowCoordinator {
           );
           const abort = active.sdkBackend.abort(permit);
           try {
-            active.sdkBackend.session.abortBash();
+            active.sdkBackend.abortBash();
           } catch {
             // no bash running — fine
           }
@@ -233,7 +233,7 @@ export class SessionStopFlowCoordinator {
             );
             const abort = active.sdkBackend.abort(permit);
             try {
-              active.sdkBackend.session.abortBash();
+              active.sdkBackend.abortBash();
             } catch {
               // no bash running — fine
             }

@@ -1,6 +1,7 @@
 import type { AgentDefinition } from "./agent-launch-service.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend } from "./sdk-backend.js";
+import type { AgentBackend } from "./agent-backend.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
 import {
   createRuntimeSessionStateScaffold,
@@ -13,7 +14,7 @@ import type { ServerConfig, Session, Workspace } from "./types.js";
 import type { WorkspaceRuntime, WorkspaceSessionIdentity } from "./workspace-runtime.js";
 
 export interface SessionStartActiveSession extends RuntimeSessionStateScaffold<SessionMessageQueueStore> {
-  sdkBackend: SdkBackend;
+  sdkBackend: AgentBackend;
   workspaceId: string;
 }
 

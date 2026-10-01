@@ -32,7 +32,7 @@ import {
 } from "./session-protocol.js";
 import { hasToolMediaDetails, materializeAgentEventMedia } from "./session-agent-event-media.js";
 import type { EventProcessorSessionState, SessionEventProcessor } from "./session-events.js";
-import type { SdkBackend } from "./sdk-backend.js";
+import type { AgentBackend } from "./agent-backend.js";
 import type { SessionStopCoordinator } from "./session-stop.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
 import { materializeToolMediaDetails } from "./session-attachments.js";
@@ -42,7 +42,7 @@ import type { ServerMessage, SessionSummary } from "./types.js";
 
 export interface SessionAgentEventState extends EventProcessorSessionState, TurnSessionState {
   subscribers: Set<(msg: ServerMessage) => void>;
-  sdkBackend?: SdkBackend;
+  sdkBackend?: AgentBackend;
   toolFullOutputPaths: Map<string, string>;
   cacheMissTracker: CacheMissTrackerState;
   showCacheMissNotices: boolean;
@@ -207,7 +207,7 @@ export class SessionAgentEventCoordinator {
     }
 
     const ctx = this.deps.eventProcessor.translationContext(active);
-    ctx.getToolDefinition = (name) => active.sdkBackend?.session?.getToolDefinition?.(name);
+    ctx.getToolDefinition = (name) => active.sdkBackend?.toolDefinition(name);
     const messages = translatePiEvent(event, ctx);
     active.streamedAssistantText = ctx.streamedAssistantText;
     active.currentThinkingContentIndex = ctx.currentThinkingContentIndex;
@@ -306,7 +306,7 @@ export class SessionAgentEventCoordinator {
   }
 
   private sessionTreeFor(active: SessionAgentEventState): CanonicalSessionTree | undefined {
-    return sessionTreeFromUnknown(active.sdkBackend?.session?.sessionManager);
+    return sessionTreeFromUnknown(active.sdkBackend?.sessionTree());
   }
 
   private flushPendingCanonicalMessage(key: string, active: SessionAgentEventState): void {

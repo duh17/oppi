@@ -7,7 +7,6 @@ import { dirname, join } from "node:path";
 import { openDatabase } from "../src/sqlite-compat.js";
 
 import * as PiSdk from "@earendil-works/pi-coding-agent";
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 
@@ -302,7 +301,7 @@ describe("Pi-native session identity cutover", () => {
           ({
             session: makeSession({ status: "ready" }),
             sdkBackend: {
-              session: { navigateTree } as unknown as AgentSession,
+              navigateTree,
               newSession,
               fork,
               isStreaming: false,

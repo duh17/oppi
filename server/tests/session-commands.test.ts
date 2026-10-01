@@ -2,7 +2,7 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
 import { SessionCommandCoordinator, type CommandSessionState } from "../src/session-commands.js";
-import type { SdkBackend } from "../src/sdk-backend.js";
+import { SdkBackend } from "../src/sdk-backend.js";
 import type { Session } from "../src/types.js";
 
 function makeSession(id = "s1"): Session {
@@ -33,10 +33,15 @@ function makeCoordinator(
 } {
   const activeState: CommandSessionState = {
     session: options.session ?? makeSession(),
-    sdkBackend: {
-      session: agentSession,
-      ...options.sdkBackend,
-    } as unknown as SdkBackend,
+    sdkBackend: Object.defineProperties(
+      Object.assign(Object.create(SdkBackend.prototype), {
+        runtime: {
+          session: agentSession,
+          services: { modelRuntime: {} },
+        },
+      }),
+      Object.getOwnPropertyDescriptors(options.sdkBackend ?? {}),
+    ) as SdkBackend,
     cacheMissTracker: options.cacheMissTracker,
   };
 
@@ -59,25 +64,28 @@ describe("SessionCommandCoordinator", () => {
     { persist: undefined, expectedOptions: undefined },
     { persist: false, expectedOptions: undefined },
     { persist: true, expectedOptions: { persist: true } },
-  ])("routes set_model persistence intent to the SDK backend", async ({ persist, expectedOptions }) => {
-    const setModel = vi.fn(async () => ({ success: true as const }));
-    const { coordinator } = makeCoordinator({} as AgentSession, {
-      sdkBackend: { setModel },
-    });
+  ])(
+    "routes set_model persistence intent to the SDK backend",
+    async ({ persist, expectedOptions }) => {
+      const setModel = vi.fn(async () => ({ success: true as const }));
+      const { coordinator } = makeCoordinator({} as AgentSession, {
+        sdkBackend: { setModel },
+      });
 
-    await coordinator.sendCommandAsync("s1", {
-      type: "set_model",
-      provider: "openai-codex",
-      modelId: "gpt-5.6-sol",
-      ...(persist !== undefined ? { persist } : {}),
-    });
+      await coordinator.sendCommandAsync("s1", {
+        type: "set_model",
+        provider: "openai-codex",
+        modelId: "gpt-5.6-sol",
+        ...(persist !== undefined ? { persist } : {}),
+      });
 
-    if (expectedOptions) {
-      expect(setModel).toHaveBeenCalledWith("openai-codex/gpt-5.6-sol", expectedOptions);
-    } else {
-      expect(setModel).toHaveBeenCalledWith("openai-codex/gpt-5.6-sol", undefined);
-    }
-  });
+      if (expectedOptions) {
+        expect(setModel).toHaveBeenCalledWith("openai-codex/gpt-5.6-sol", expectedOptions);
+      } else {
+        expect(setModel).toHaveBeenCalledWith("openai-codex/gpt-5.6-sol", undefined);
+      }
+    },
+  );
 
   it("allows reload and refreshes runtime config before SDK resources", async () => {
     const calls: string[] = [];

@@ -17,17 +17,13 @@ import {
   type StreamingInputKind,
 } from "./session-runtime-capabilities.js";
 
+import type { AgentBackend } from "./agent-backend.js";
+
 export interface SessionInputSessionState extends TurnSessionState {
   session: Session;
-  sdkBackend?: {
-    isStreaming?: boolean;
-    isCompacting?: boolean;
-    isDisposed?: boolean;
-    withModelTurnAdmission?<T>(
-      commandType: string,
-      operation: (permit: SessionRuntimeTransactionPermit) => Promise<T>,
-    ): Promise<T>;
-  };
+  sdkBackend?: Partial<
+    Pick<AgentBackend, "isStreaming" | "isCompacting" | "isDisposed" | "withModelTurnAdmission">
+  >;
 }
 
 const log = createLogger({ base: { component: "session_input" } });

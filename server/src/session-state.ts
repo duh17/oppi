@@ -1,11 +1,11 @@
 import type { PiStateSnapshot } from "./pi-events.js";
-import type { SdkBackend } from "./sdk-backend.js";
+import type { AgentBackend } from "./agent-backend.js";
 import type { Storage } from "./storage.js";
 import type { Session } from "./types.js";
 
 export interface SessionStateActiveSession {
   session: Session;
-  sdkBackend: SdkBackend;
+  sdkBackend: AgentBackend;
 }
 
 export interface SessionStateCoordinatorDeps {
@@ -56,7 +56,7 @@ export class SessionStateCoordinator {
       return {
         sessionFile: active.session.piSessionFile,
         sessionId: active.session.id,
-        leafId: active.sdkBackend.session.sessionManager.getLeafId(),
+        leafId: active.sdkBackend.leafId(),
       };
     } catch {
       return null;

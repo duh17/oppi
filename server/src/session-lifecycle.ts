@@ -1,6 +1,6 @@
 import { clearExtensionUIState, type ExtensionUIState } from "./extension-ui-state.js";
 import type { PendingStop, PendingStopSessionState } from "./session-stop.js";
-import type { SdkBackend } from "./sdk-backend.js";
+import type { AgentBackend } from "./agent-backend.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import { isPendingUserReplyRequest } from "./session-attention.js";
 import type { Session, ServerMessage } from "./types.js";
@@ -9,7 +9,7 @@ import { safeErrorMessage } from "./log-utils.js";
 
 export interface SessionLifecycleSessionState extends ExtensionUIState {
   session: Session;
-  sdkBackend: SdkBackend;
+  sdkBackend: AgentBackend;
   pendingStop?: PendingStop;
   workspaceId: string;
 }

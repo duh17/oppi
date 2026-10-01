@@ -601,24 +601,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const active = this.active.get(this.sessionKey(sessionId));
     if (!active) return false;
 
-    const runtimeModel = active.sdkBackend.session.model;
-    active.sdkBackend.session.sessionManager.appendMessage({
-      role: "assistant",
-      content: [{ type: "text", text: content }],
-      api: runtimeModel?.api ?? "openai-completions",
-      provider: runtimeModel?.provider ?? "oppi-e2e",
-      model: runtimeModel?.id ?? active.session.model ?? "oppi-e2e",
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: "stop",
-      timestamp: Date.now(),
-    });
+    active.sdkBackend.appendAssistantMessage(content, active.session.model);
     return true;
   }
 
@@ -729,22 +712,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   ):
     | { warmer?: SessionPromptCacheWarmer; promptCache?: { short?: number; long?: number } }
     | undefined {
-    const session = this.active.get(this.sessionKey(sessionId))?.sdkBackend.session;
-    if (!session) return undefined;
-    const status = session.cacheWarmingStatus;
-    return {
-      ...(status
-        ? {
-            warmer: {
-              state: status.state,
-              ...(status.decision ? { action: status.decision.action } : {}),
-              ...(status.nextWarmAt !== undefined ? { nextWarmAt: status.nextWarmAt } : {}),
-              ...(status.reason ? { reason: status.reason } : {}),
-            },
-          }
-        : {}),
-      ...(session.model?.promptCache ? { promptCache: session.model.promptCache } : {}),
-    };
+    return this.active.get(this.sessionKey(sessionId))?.sdkBackend.promptCacheRuntime();
   }
 
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {

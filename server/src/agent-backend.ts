@@ -1,0 +1,132 @@
+import type {
+  BranchSummaryEntry,
+  CompactionResult,
+  ModelCycleResult,
+  SessionStats,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+
+import type { CacheMissModelPriceSource } from "./cache-miss.js";
+import type { CanonicalSessionTree } from "./canonical-message.js";
+import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
+import type { PiMessage, PiStateSnapshot } from "./pi-events.js";
+import type {
+  QueuedModelTurnBatch,
+  QueuedModelTurnsAuthority,
+  SdkBackendDisposeResult,
+} from "./sdk-backend.js";
+import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
+import type { SessionTreeManager } from "./session-tree.js";
+import type { ThinkingLevel } from "./thinking-levels.js";
+import type { LiveEntryRendererSet } from "./trace.js";
+import type { SessionPromptCacheWarmer } from "./types.js";
+
+/** Managed-session capabilities. No live Pi AgentSession escapes this seam. */
+export interface AgentBackend {
+  readonly isDisposed: boolean;
+  readonly isStreaming: boolean;
+  readonly isCompacting: boolean;
+  readonly isRuntimeLifecycleTransactionExclusive: boolean;
+  readonly isQueueReconciliationRequired: boolean;
+  readonly showCacheMissNotices: boolean;
+  readonly cacheMissModelPriceSource: CacheMissModelPriceSource;
+
+  prompt(
+    message: string,
+    options?: {
+      images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      streamingBehavior?: "steer" | "followUp";
+      onPreflightAccepted?: () => void;
+    },
+    permit?: SessionRuntimeTransactionPermit,
+  ): Promise<void>;
+  abort(permit?: SessionRuntimeTransactionPermit): Promise<void>;
+  abortBash(): void;
+  dispose(permit?: SessionRuntimeTransactionPermit): Promise<SdkBackendDisposeResult>;
+  captureEmergencyDisposalForStop(): (timeoutMs: number) => SdkBackendDisposeResult;
+  withModelTurnAdmission<T>(
+    commandType: string,
+    operation: (permit: SessionRuntimeTransactionPermit) => Promise<T>,
+  ): Promise<T>;
+  withRuntimeLifecycleTransaction<T>(
+    operationName: string,
+    operation: (permit: SessionRuntimeTransactionPermit) => Promise<T>,
+    options?: { allowDisposed?: boolean },
+  ): Promise<T>;
+  captureQueuedModelTurnsAuthority(
+    permit: SessionRuntimeTransactionPermit,
+  ): QueuedModelTurnsAuthority;
+  assertQueuedModelTurnsAuthority(
+    authority: QueuedModelTurnsAuthority,
+    permit: SessionRuntimeTransactionPermit,
+    phase?: "before_replay" | "during_replay" | "after_replay",
+  ): void;
+  replaceQueuedModelTurns(
+    batch: QueuedModelTurnBatch,
+    rollback?: QueuedModelTurnBatch,
+    permit?: SessionRuntimeTransactionPermit,
+    authority?: QueuedModelTurnsAuthority,
+  ): Promise<QueuedModelTurnsAuthority | undefined>;
+  clearQueuedModelTurns(permit: SessionRuntimeTransactionPermit): void;
+  queuedMessages(): { steering: readonly string[]; followUp: readonly string[] };
+  respondToExtensionUIRequest(response: ExtensionUIResponsePayload): boolean;
+  reloadResources(reloadRuntimeConfig?: () => void): Promise<{ success: true }>;
+  setModel(
+    modelId: string,
+    options?: { persist?: boolean },
+  ): Promise<{
+    success: boolean;
+    provider?: string;
+    id?: string;
+    name?: string;
+    thinkingLevel?: string;
+    error?: string;
+  }>;
+  cycleModel(direction?: "forward" | "backward"): Promise<ModelCycleResult | undefined>;
+  setThinkingLevel(level: ThinkingLevel, options?: { persist?: boolean }): void;
+  cycleThinkingLevel(): ThinkingLevel | undefined;
+  setSessionName(name: string): void;
+  getStateSnapshot(): PiStateSnapshot;
+  getSessionStats(): SessionStats & Record<string, unknown>;
+  messages(): PiMessage[];
+  forkMessages(): Array<{ entryId: string; text: string }>;
+  sessionTree(): SessionTreeManager & CanonicalSessionTree;
+  leafId(): string | null;
+  toolDefinition(name: string): ToolDefinition | undefined;
+  navigateTree(
+    targetId: string,
+    options?: {
+      summarize?: boolean;
+      customInstructions?: string;
+      replaceInstructions?: boolean;
+      label?: string;
+    },
+  ): Promise<{
+    editorText?: string;
+    cancelled: boolean;
+    aborted?: boolean;
+    summaryEntry?: BranchSummaryEntry;
+  }>;
+  commands(): {
+    commands: Array<{
+      name: string;
+      description?: string;
+      source: "builtin" | "extension" | "prompt" | "skill";
+      location?: "user" | "project" | "path";
+      path?: string;
+    }>;
+  };
+  exportToHtml(outputPath: string): Promise<string>;
+  compact(customInstructions?: string): Promise<CompactionResult>;
+  setAutoCompactionEnabled(enabled: boolean): void;
+  setSteeringMode(mode: "all" | "one-at-a-time"): void;
+  setFollowUpMode(mode: "all" | "one-at-a-time"): void;
+  setAutoRetryEnabled(enabled: boolean): void;
+  abortRetry(): void;
+  getEntryRenderers(): LiveEntryRendererSet | undefined;
+  appendAssistantMessage(content: string, fallbackModel?: string): void;
+  promptCacheRuntime(): {
+    warmer?: SessionPromptCacheWarmer;
+    promptCache?: { short?: number; long?: number };
+  };
+}

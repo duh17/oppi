@@ -1,4 +1,5 @@
-import type { SdkBackend, SdkBackendDisposeResult } from "./sdk-backend.js";
+import type { SdkBackendDisposeResult } from "./sdk-backend.js";
+import type { AgentBackend } from "./agent-backend.js";
 import type { Session, ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
@@ -35,7 +36,7 @@ export interface PendingStopSessionState {
 
 export interface StopSessionState extends PendingStopSessionState {
   session: Session;
-  sdkBackend: SdkBackend;
+  sdkBackend: AgentBackend;
 }
 
 export interface SessionStopCoordinatorDeps {
@@ -364,7 +365,7 @@ export class SessionStopCoordinator {
         });
 
         try {
-          current.sdkBackend.session.abortBash();
+          current.sdkBackend.abortBash();
         } catch {
           // process may have already exited
         }

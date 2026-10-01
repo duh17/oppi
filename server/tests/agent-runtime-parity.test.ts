@@ -59,7 +59,7 @@ function makeActiveSession(): SessionAgentEventState {
     streamingToolUpdatesSeen: new Map(),
     turnCache: new TurnDedupeCache(),
     pendingTurnStarts: [],
-    sdkBackend: {} as never,
+    sdkBackend: { sessionTree: () => undefined, toolDefinition: () => undefined } as never,
     subscribers: new Set(),
     toolFullOutputPaths: new Map(),
   };

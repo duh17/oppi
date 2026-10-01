@@ -1,11 +1,11 @@
 import type { PiMessage } from "./pi-events.js";
+import type { AgentBackend } from "./agent-backend.js";
 import {
   QUEUE_RECONCILIATION_REQUIRED_ERROR,
   QueuedModelTurnsAuthorityError,
   QueuedModelTurnsReconciliationError,
   type QueuedModelTurnBatch,
   type QueuedModelTurnsAuthority,
-  type SdkBackend,
 } from "./sdk-backend.js";
 import { materializeChatAttachments } from "./chat-attachments.js";
 import { createLogger } from "./logger.js";
@@ -56,7 +56,7 @@ export interface SessionMessageQueueStore {
 }
 
 export interface SessionMessageQueueState {
-  sdkBackend: SdkBackend;
+  sdkBackend: AgentBackend;
   session: Session;
   messageQueue?: SessionMessageQueueStore;
 }
@@ -186,8 +186,7 @@ export class SessionMessageQueueCoordinator {
   } {
     const queue = this.ensureQueueStore(active);
 
-    const sdkSteering = active.sdkBackend.session.getSteeringMessages();
-    const sdkFollowUp = active.sdkBackend.session.getFollowUpMessages();
+    const { steering: sdkSteering, followUp: sdkFollowUp } = active.sdkBackend.queuedMessages();
 
     const steeringMatches =
       queue.steering.length === sdkSteering.length &&
@@ -519,14 +518,9 @@ export class SessionMessageQueueCoordinator {
   ): never {
     const basisSteering = error.phase === "before_replay" ? queue.steering : replayedSteering;
     const basisFollowUp = error.phase === "before_replay" ? queue.followUp : replayedFollowUp;
-    const nextSteering = this.reconcileItemsWithSdkTextQueue(
-      basisSteering,
-      active.sdkBackend.session.getSteeringMessages(),
-    );
-    const nextFollowUp = this.reconcileItemsWithSdkTextQueue(
-      basisFollowUp,
-      active.sdkBackend.session.getFollowUpMessages(),
-    );
+    const queued = active.sdkBackend.queuedMessages();
+    const nextSteering = this.reconcileItemsWithSdkTextQueue(basisSteering, queued.steering);
+    const nextFollowUp = this.reconcileItemsWithSdkTextQueue(basisFollowUp, queued.followUp);
     const removedSteering = this.removedItemsByID(basisSteering, nextSteering);
     const removedFollowUp = this.removedItemsByID(basisFollowUp, nextFollowUp);
     const version = nextQueueVersion(queue.version);

@@ -15,6 +15,7 @@ import { basename, isAbsolute, join, posix, relative, resolve as resolvePath } f
 
 import {
   createAgentSession,
+  formatSkillsForPrompt,
   createAgentSessionRuntime,
   createBashToolDefinition,
   createReadToolDefinition,
@@ -46,7 +47,10 @@ import {
 } from "./session-scoped-models.js";
 
 import type { AgentDefinition } from "./agent-launch-service.js";
-import type { CacheMissModelPriceSource } from "./cache-miss.js";
+import { computeCacheWaste, type CacheMissModelPriceSource } from "./cache-miss.js";
+import type { AgentBackend } from "./agent-backend.js";
+import { extensionNameForAllowlist } from "./extension-loader.js";
+import { toRecord } from "./session-command-parse.js";
 import {
   modelCandidatesFromRegistry,
   modelUnavailableMessage,
@@ -88,6 +92,204 @@ import {
   type SessionRuntimeTransactionPermit,
 } from "./session-runtime-transaction.js";
 import { createLiveEntryRendererLookup, type LiveEntryRendererSet } from "./trace.js";
+
+function toCommandLocation(value: string | undefined): "user" | "project" | "path" | undefined {
+  if (value === "user" || value === "project" || value === "path") {
+    return value;
+  }
+  return undefined;
+}
+
+type SessionCommandDescriptor = ReturnType<AgentBackend["commands"]>["commands"][number];
+
+function estimateTokensFromChars(chars: number): number {
+  if (chars <= 0) {
+    return 0;
+  }
+  return Math.max(1, Math.ceil(chars / 4));
+}
+
+function collectSessionContextComposition(session: AgentSession): {
+  piSystemPromptChars: number;
+  piSystemPromptTokens: number;
+  agentsChars: number;
+  agentsTokens: number;
+  agentsFiles: Array<{ path: string; chars: number; tokens: number }>;
+  skillsListingChars: number;
+  skillsListingTokens: number;
+} {
+  const piSystemPromptChars = session.systemPrompt.length;
+  const piSystemPromptTokens = estimateTokensFromChars(piSystemPromptChars);
+
+  const agentsFiles = session.resourceLoader.getAgentsFiles().agentsFiles.map((file) => {
+    const chars = file.content.length;
+    return {
+      path: file.path,
+      chars,
+      tokens: estimateTokensFromChars(chars),
+    };
+  });
+
+  const agentsChars = agentsFiles.reduce((sum, file) => sum + file.chars, 0);
+  const agentsTokens = agentsFiles.reduce((sum, file) => sum + file.tokens, 0);
+
+  const skillsListing = formatSkillsForPrompt(session.resourceLoader.getSkills().skills);
+  const skillsListingChars = skillsListing.length;
+  const skillsListingTokens = estimateTokensFromChars(skillsListingChars);
+
+  return {
+    piSystemPromptChars,
+    piSystemPromptTokens,
+    agentsChars,
+    agentsTokens,
+    agentsFiles,
+    skillsListingChars,
+    skillsListingTokens,
+  };
+}
+
+function collectLoadedSessionResources(session: AgentSession): {
+  skills: Array<{ name: string; description?: string; path: string }>;
+  extensions: Array<{ name: string; path: string }>;
+} {
+  const skills = session.resourceLoader.getSkills().skills.map((skill) => ({
+    name: skill.name,
+    description: skill.description,
+    path: skill.baseDir,
+  }));
+
+  const extensions = session.resourceLoader.getExtensions().extensions.map((extension) => ({
+    name: extensionNameForAllowlist(extension.resolvedPath || extension.path, extension.sourceInfo),
+    path: extension.resolvedPath || extension.path,
+  }));
+
+  return { skills, extensions };
+}
+
+interface SessionModelUsageSnapshot {
+  provider?: string;
+  model: string;
+  tokens: number;
+  cost: number;
+}
+
+function finiteNonNegative(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function addUsageToModelBreakdown(
+  byModel: Map<string, SessionModelUsageSnapshot>,
+  key: string,
+  model: string,
+  provider: string | undefined,
+  value: unknown,
+): void {
+  const usage = toRecord(value);
+  const cost = toRecord(usage.cost);
+  const current = byModel.get(key) ?? {
+    ...(provider ? { provider } : {}),
+    model,
+    tokens: 0,
+    cost: 0,
+  };
+  current.tokens +=
+    finiteNonNegative(usage.input) +
+    finiteNonNegative(usage.output) +
+    finiteNonNegative(usage.cacheRead) +
+    finiteNonNegative(usage.cacheWrite);
+  current.cost += finiteNonNegative(cost.total);
+  byModel.set(key, current);
+}
+
+function collectModelUsage(entries: readonly unknown[]): SessionModelUsageSnapshot[] {
+  const byModel = new Map<string, SessionModelUsageSnapshot>();
+
+  for (const value of entries) {
+    if (!value || typeof value !== "object") continue;
+    const entry = value as Record<string, unknown>;
+
+    if (entry.type === "message" && entry.message && typeof entry.message === "object") {
+      const message = entry.message as Record<string, unknown>;
+      if (message.role === "assistant") {
+        const provider = typeof message.provider === "string" ? message.provider : "unknown";
+        const configuredModel = typeof message.model === "string" ? message.model : "unknown";
+        const model =
+          typeof message.responseModel === "string" && message.responseModel.length > 0
+            ? message.responseModel
+            : configuredModel;
+        addUsageToModelBreakdown(byModel, `${provider}/${model}`, model, provider, message.usage);
+      } else if (message.role === "toolResult") {
+        addUsageToModelBreakdown(
+          byModel,
+          "tools-summaries",
+          "Tools & summaries",
+          undefined,
+          message.usage,
+        );
+      }
+    } else if (entry.type === "compaction" || entry.type === "branch_summary") {
+      addUsageToModelBreakdown(
+        byModel,
+        "tools-summaries",
+        "Tools & summaries",
+        undefined,
+        entry.usage,
+      );
+    }
+  }
+
+  return [...byModel.values()]
+    .filter((entry) => entry.tokens > 0 || entry.cost > 0)
+    .sort((left, right) => right.cost - left.cost);
+}
+
+const BUILTIN_SLASH_COMMANDS: readonly SessionCommandDescriptor[] = [
+  {
+    name: "reload",
+    description: "Reload extensions, skills, prompts, and context files",
+    source: "builtin",
+  },
+  {
+    name: "share",
+    description: "Share session as an auto-redacted secret GitHub gist",
+    source: "builtin",
+  },
+];
+
+function collectSessionCommands(session: AgentSession): { commands: SessionCommandDescriptor[] } {
+  const commands: SessionCommandDescriptor[] = [...BUILTIN_SLASH_COMMANDS];
+
+  for (const command of session.extensionRunner?.getRegisteredCommands() ?? []) {
+    commands.push({
+      name: command.name,
+      description: command.description,
+      source: "extension",
+      path: command.sourceInfo.path,
+    });
+  }
+
+  for (const template of session.promptTemplates) {
+    commands.push({
+      name: template.name,
+      description: template.description,
+      source: "prompt",
+      location: toCommandLocation(template.sourceInfo.source),
+      path: template.filePath,
+    });
+  }
+
+  for (const skill of session.resourceLoader.getSkills().skills) {
+    commands.push({
+      name: `skill:${skill.name}`,
+      description: skill.description,
+      source: "skill",
+      location: toCommandLocation(skill.sourceInfo.source),
+      path: skill.filePath,
+    });
+  }
+
+  return { commands };
+}
 
 type AttachmentToolExecute = ToolDefinition["execute"] & {
   __oppiAttachmentHelperWrapped?: true;
@@ -667,7 +869,7 @@ export function forkPiSessionFrom(
  *   backend.abort();
  *   backend.dispose();
  */
-export class SdkBackend {
+export class SdkBackend implements AgentBackend {
   private static readonly DEFAULT_STEERING_MODE = "all" as const;
   private static readonly DEFAULT_FOLLOW_UP_MODE = "one-at-a-time" as const;
   /** Maximum graceful cleanup time within the documented stop bound. */
@@ -1480,6 +1682,144 @@ export class SdkBackend {
 
   get session(): AgentSession {
     return this.piSession;
+  }
+
+  abortBash(): void {
+    this.piSession.abortBash();
+  }
+
+  queuedMessages(): ReturnType<AgentBackend["queuedMessages"]> {
+    return {
+      steering: this.piSession.getSteeringMessages(),
+      followUp: this.piSession.getFollowUpMessages(),
+    };
+  }
+
+  leafId(): string | null {
+    return this.piSession.sessionManager.getLeafId();
+  }
+
+  sessionTree(): ReturnType<AgentBackend["sessionTree"]> {
+    return this.piSession.sessionManager;
+  }
+
+  toolDefinition(name: string): ToolDefinition | undefined {
+    return this.piSession.getToolDefinition(name);
+  }
+
+  messages(): ReturnType<AgentBackend["messages"]> {
+    return this.piSession.messages;
+  }
+
+  forkMessages(): ReturnType<AgentBackend["forkMessages"]> {
+    return this.piSession.getUserMessagesForForking();
+  }
+
+  cycleModel(direction?: "forward" | "backward"): ReturnType<AgentBackend["cycleModel"]> {
+    return this.piSession.cycleModel(direction);
+  }
+
+  setThinkingLevel(level: ThinkingLevel, options?: { persist?: boolean }): void {
+    if (options?.persist === true) this.piSession.setThinkingLevel(level, { persist: true });
+    else this.piSession.setThinkingLevel(level);
+  }
+
+  cycleThinkingLevel(): ThinkingLevel | undefined {
+    return this.piSession.cycleThinkingLevel();
+  }
+
+  setSessionName(name: string): void {
+    this.piSession.setSessionName(name);
+  }
+
+  navigateTree(
+    targetId: string,
+    options?: Parameters<AgentBackend["navigateTree"]>[1],
+  ): ReturnType<AgentBackend["navigateTree"]> {
+    return this.piSession.navigateTree(targetId, options);
+  }
+
+  commands(): ReturnType<AgentBackend["commands"]> {
+    return collectSessionCommands(this.piSession);
+  }
+
+  getSessionStats(): ReturnType<AgentBackend["getSessionStats"]> {
+    const session = this.piSession;
+    const entries = session.sessionManager.getEntries();
+    return {
+      ...session.getSessionStats(),
+      cacheWaste: computeCacheWaste(entries, this.cacheMissModelPriceSource),
+      modelBreakdown: collectModelUsage(entries),
+      contextComposition: collectSessionContextComposition(session),
+      loadedResources: collectLoadedSessionResources(session),
+    };
+  }
+
+  exportToHtml(outputPath: string): Promise<string> {
+    return this.piSession.exportToHtml(outputPath);
+  }
+
+  compact(customInstructions?: string): ReturnType<AgentBackend["compact"]> {
+    return this.piSession.compact(customInstructions);
+  }
+
+  setAutoCompactionEnabled(enabled: boolean): void {
+    this.piSession.setAutoCompactionEnabled(enabled);
+  }
+
+  setSteeringMode(mode: "all" | "one-at-a-time"): void {
+    this.piSession.setSteeringMode(mode);
+  }
+
+  setFollowUpMode(mode: "all" | "one-at-a-time"): void {
+    this.piSession.setFollowUpMode(mode);
+  }
+
+  setAutoRetryEnabled(enabled: boolean): void {
+    this.piSession.setAutoRetryEnabled(enabled);
+  }
+
+  abortRetry(): void {
+    this.piSession.abortRetry();
+  }
+
+  appendAssistantMessage(content: string, fallbackModel?: string): void {
+    const runtimeModel = this.piSession.model;
+    this.piSession.sessionManager.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: content }],
+      api: runtimeModel?.api ?? "openai-completions",
+      provider: runtimeModel?.provider ?? "oppi-e2e",
+      model: runtimeModel?.id ?? fallbackModel ?? "oppi-e2e",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+      timestamp: Date.now(),
+    });
+  }
+
+  promptCacheRuntime(): ReturnType<AgentBackend["promptCacheRuntime"]> {
+    const session = this.piSession;
+    const status = session.cacheWarmingStatus;
+    return {
+      ...(status
+        ? {
+            warmer: {
+              state: status.state,
+              ...(status.decision ? { action: status.decision.action } : {}),
+              ...(status.nextWarmAt !== undefined ? { nextWarmAt: status.nextWarmAt } : {}),
+              ...(status.reason ? { reason: status.reason } : {}),
+            },
+          }
+        : {}),
+      ...(session.model?.promptCache ? { promptCache: session.model.promptCache } : {}),
+    };
   }
 
   getEntryRenderers(): LiveEntryRendererSet | undefined {

@@ -11,7 +11,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentBackend } from "./agent-backend.js";
+
+type ShareSessionSource = Pick<AgentBackend, "exportToHtml"> & {
+  getSessionStats(): { sessionFile?: string };
+};
 import {
   autoRedactionEnabled,
   blockOnSecretFindings,
@@ -101,7 +105,7 @@ export interface ShareSessionOptions {
 
 interface ShareSessionDeps {
   ensureGhAuthenticated?: () => void;
-  exportSessionToHtml?: (session: AgentSession, outputPath: string) => Promise<void>;
+  exportSessionToHtml?: (session: ShareSessionSource, outputPath: string) => Promise<void>;
   createSecretGist?: (htmlPath: string) => Promise<GhCommandResult>;
   makeShareViewerUrl?: (gistId: string) => string;
   makeTempPath?: () => string;
@@ -228,7 +232,7 @@ async function defaultCreateSecretGist(htmlPath: string): Promise<GhCommandResul
 }
 
 async function defaultExportSessionToHtml(
-  session: AgentSession,
+  session: ShareSessionSource,
   outputPath: string,
 ): Promise<void> {
   await session.exportToHtml(outputPath);
@@ -278,7 +282,7 @@ function parseGistId(gistUrl: string): string | undefined {
 }
 
 export async function shareSession(
-  session: AgentSession,
+  session: ShareSessionSource,
   deps: ShareSessionDeps = {},
   options: ShareSessionOptions = {},
 ): Promise<ShareSessionCommandResult> {

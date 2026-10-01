@@ -74,7 +74,7 @@ describe("SessionAgentEventCoordinator", () => {
       streamingToolUpdatesSeen: new Map<string, string>(),
       turnCache: new TurnDedupeCache(),
       pendingTurnStarts: [],
-      sdkBackend: {} as never,
+      sdkBackend: { sessionTree: () => undefined, toolDefinition: () => undefined } as never,
       subscribers: new Set<(msg: unknown) => void>(),
       toolFullOutputPaths: new Map<string, string>(),
       cacheMissTracker: {},
@@ -408,28 +408,24 @@ describe("SessionAgentEventCoordinator", () => {
   it("preserves generic details without executing Pi's TUI result renderer", () => {
     const active = makeActiveSession({ status: "busy" });
     active.sdkBackend = {
-      session: {
-        getToolDefinition: () => ({
-          renderResult: (
-            result: { details?: unknown },
-            options: { expanded: boolean },
-            _theme: unknown,
-            context: { args: Record<string, unknown> },
-          ) => ({
-            render: () => {
-              const details = result.details as { body?: string } | undefined;
-              return [
-                options.expanded ? "expanded" : "collapsed",
-                `title: ${String(context.args.title ?? "")}`,
-                `body: ${details?.body ?? ""}`,
-              ];
-            },
-          }),
+      sessionTree: () => undefined,
+      toolDefinition: () => ({
+        renderResult: (
+          result: { details?: unknown },
+          options: { expanded: boolean },
+          _theme: unknown,
+          context: { args: Record<string, unknown> },
+        ) => ({
+          render: () => {
+            const details = result.details as { body?: string } | undefined;
+            return [
+              options.expanded ? "expanded" : "collapsed",
+              `title: ${String(context.args.title ?? "")}`,
+              `body: ${details?.body ?? ""}`,
+            ];
+          },
         }),
-        sessionManager: {
-          getHeader: () => ({ cwd: "/tmp/oppi-test" }),
-        },
-      },
+      }),
     } as never;
     const { broadcast, coordinator } = makeCoordinator(active);
 
@@ -466,12 +462,8 @@ describe("SessionAgentEventCoordinator", () => {
     const active = makeActiveSession({ status: "busy" });
     const renderResult = vi.fn(() => ({ render: () => ["native renderer"] }));
     active.sdkBackend = {
-      session: {
-        getToolDefinition: () => ({ renderResult }),
-        sessionManager: {
-          getHeader: () => ({ cwd: "/tmp/oppi-test" }),
-        },
-      },
+      sessionTree: () => undefined,
+      toolDefinition: () => ({ renderResult }),
     } as never;
     const { broadcast, coordinator } = makeCoordinator(active);
 
@@ -500,14 +492,10 @@ describe("SessionAgentEventCoordinator", () => {
   it("preserves primitive tool details instead of wrapping them for tuiRender", () => {
     const active = makeActiveSession({ status: "busy" });
     active.sdkBackend = {
-      session: {
-        getToolDefinition: () => ({
-          renderResult: () => ({ render: () => ["rendered snapshot"] }),
-        }),
-        sessionManager: {
-          getHeader: () => ({ cwd: "/tmp/oppi-test" }),
-        },
-      },
+      sessionTree: () => undefined,
+      toolDefinition: () => ({
+        renderResult: () => ({ render: () => ["rendered snapshot"] }),
+      }),
     } as never;
     const { broadcast, coordinator } = makeCoordinator(active);
 

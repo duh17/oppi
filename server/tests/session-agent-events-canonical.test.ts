@@ -42,9 +42,9 @@ function makeActiveSession(
     pendingTurnStarts: [],
     sdkBackend: tree
       ? ({
-          session: { sessionManager: tree },
+          sessionTree: () => tree,
         } as SessionAgentEventState["sdkBackend"])
-      : ({} as SessionAgentEventState["sdkBackend"]),
+      : ({ sessionTree: () => undefined } as unknown as SessionAgentEventState["sdkBackend"]),
     subscribers: new Set<(msg: unknown) => void>(),
     toolFullOutputPaths: new Map<string, string>(),
     cacheMissTracker: {},
