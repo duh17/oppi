@@ -180,9 +180,9 @@ describe("supervision loop", () => {
 
 describe("subagent model requirement", () => {
 	test("rejects a launch that would silently inherit the parent's model", () => {
-		expect(missingModelError({})).toContain("Pass model");
-		expect(missingModelError({ model: "  " })).toContain("Pass model");
-		expect(missingModelError({ agent: "workspace_default" })).toContain("Pass model");
+		for (const input of [{}, { model: "  " }, { agent: "workspace_default" }, { agent: "default" }]) {
+			expect(missingModelError(input)).not.toBeNull();
+		}
 	});
 
 	test("accepts an explicit model, or a saved agent that brings its own default", () => {

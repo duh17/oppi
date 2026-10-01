@@ -98,3 +98,28 @@ describe("subagent refresh", () => {
 		handlers.get("session_shutdown")?.();
 	});
 });
+
+describe("subagent launch model", () => {
+	test("a launch that would inherit the parent's model errors before any session create", async () => {
+		let tool: { execute: (...args: unknown[]) => Promise<{ isError?: boolean }> } | undefined;
+		const ctx = {
+			ui: { setStatus: () => {}, setWidget: () => {} },
+			sessionManager: { getSessionId: () => "parent-2", getEntries: () => [] },
+		};
+		const handlers = new Map<string, (...args: unknown[]) => void>();
+		const { default: extension } = await import("./index.ts");
+		extension({
+			on: (event: string, handler: (...args: unknown[]) => void) => { handlers.set(event, handler); },
+			registerTool: (definition: typeof tool) => { tool = definition; },
+			appendEntry: () => {},
+			sendMessage: () => {},
+		} as never);
+		handlers.get("session_start")?.({}, ctx);
+		const createsBefore = calls.filter((args) => args[1] === "create").length;
+		for (const agent of [undefined, "workspace_default", "default"]) {
+			const result = await tool!.execute("call-x", { action: "launch", workspace: "oppi", prompt: "Hi", agent }, null, null, ctx);
+			expect(result.isError).toBe(true);
+		}
+		expect(calls.filter((args) => args[1] === "create").length).toBe(createsBefore);
+	});
+});

@@ -281,7 +281,8 @@ export function settlementText(items: SettlementItem[]): string {
 export function missingModelError(input: Pick<LaunchPlanInput, "model" | "agent">): string | null {
 	if (input.model?.trim()) return null;
 	const agent = input.agent?.trim();
-	if (agent && agent !== "workspace_default") return null;
+	// The CLI treats both names as "no saved agent".
+	if (agent && agent !== "workspace_default" && agent !== "default") return null;
 	return "Pass model: a launch without model or a saved agent inherits this session's model and skips routing. Pick the route with the agent-workflow skill's scripts/route.ts <role>, or pass a saved agent whose profile sets a default model.";
 }
 
