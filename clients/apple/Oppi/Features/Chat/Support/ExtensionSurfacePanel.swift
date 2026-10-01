@@ -39,15 +39,6 @@ extension View {
 }
 
 private extension View {
-    func extensionGlassInset(cornerRadius: CGFloat = 12) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        return self
-            .background(.themeFg.opacity(0.04), in: shape)
-            .overlay {
-                shape.stroke(.themeFg.opacity(0.08), lineWidth: 0.5)
-            }
-    }
-
     func extensionSubtleInset(cornerRadius: CGFloat = 12) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return self
@@ -72,118 +63,30 @@ private extension View {
     }
 }
 
-private struct ExtensionProgressBar: View {
-    let value: Double
-    var height: CGFloat = 5
-
-    private var clampedValue: Double {
-        min(max(value, 0), 1)
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = max(0, min(proxy.size.width, proxy.size.width * CGFloat(clampedValue)))
-
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(.themeFg.opacity(0.12))
-
-                Capsule()
-                    .fill(.themeFg.opacity(0.82))
-                    .frame(width: width)
-            }
-        }
-        .frame(height: height)
-        .accessibilityHidden(true)
-    }
-}
-
-private struct ExtensionWidgetLinesView: View {
-    let lines: [String]
-    var scrollIdentifier: String? = nil
-    var onOpenFullScreen: (() -> Void)? = nil
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: true) {
-            VStack(alignment: .leading, spacing: 3) {
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                    ExtensionWidgetLineView(line: line)
-                }
-            }
-            .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityIdentifier(scrollIdentifier ?? "extension-widget-lines-scroll")
-        .extensionWidgetFullScreenActivation(onOpenFullScreen)
-        .extensionGlassInset(cornerRadius: 12)
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func extensionWidgetFullScreenActivation(_ onOpenFullScreen: (() -> Void)?) -> some View {
-        if let onOpenFullScreen {
-            self
-                .accessibilityHint("Double tap to open full screen.")
-                .accessibilityAction(named: Text("Open Full Screen")) {
-                    onOpenFullScreen()
-                }
-                .highPriorityGesture(
-                    TapGesture(count: 2).onEnded {
-                        onOpenFullScreen()
-                    }
-                )
-        } else {
-            self
-        }
-    }
-}
-
-private struct ExtensionNativeSurfaceExpandedViewport: View {
-    let surface: ExtensionUINativeSurface
-    let identifierSuffix: String
-    let maxHeight: CGFloat
+/// The drawer's capped, scrolling body for one extension entry. Blocks paint in
+/// UIKit (`ExtensionNativeBlocksView`); double tap opens the full-screen view.
+private struct ExtensionSurfaceExpandedViewport: View {
+    let content: ExtensionNativeBlockContent
+    let accessibilityIdentifier: String
     let onOpenFullScreen: () -> Void
+    var contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10)
     var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)?
 
-    private var displayBlocks: [ExtensionUINativeBlock] {
-        surface.nativeDisplayBlocks
-    }
-
     var body: some View {
-        NativeSurfaceViewportScrollContainer(
-            maxHeight: maxHeight,
-            accessibilityIdentifier: "extension-native-surface-\(identifierSuffix)-viewport",
+        ExtensionNativeBlocksView(
+            content: content,
+            sizing: .capped(maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight),
+            contentInsets: contentInsets,
+            accessibilityIdentifier: accessibilityIdentifier,
+            linkContext: linkContext,
+            onOpenURL: onOpenURL,
             onDoubleTap: onOpenFullScreen
-        ) {
-            VStack(alignment: .leading, spacing: 10) {
-                if displayBlocks.isEmpty {
-                    let fallbackLines = surface.fallbackDisplayLines
-                    if !fallbackLines.isEmpty {
-                        ExtensionWidgetLinesView(lines: fallbackLines)
-                    }
-                } else {
-                    ForEach(Array(displayBlocks.enumerated()), id: \.offset) { _, block in
-                        ExtensionNativeBlockView(
-                            block: block,
-                            isDetail: true,
-                            linkContext: linkContext,
-                            onOpenURL: onOpenURL
-                        )
-                    }
-                }
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
+        )
         .accessibilityHint("Double tap to open full screen.")
         .accessibilityAction(named: Text("Open Full Screen")) {
             onOpenFullScreen()
         }
-        .extensionSubtleInset(cornerRadius: 12)
     }
 }
 
@@ -411,10 +314,6 @@ struct ExtensionNativeSurfaceDetailSheet: View {
     var onOpenURL: ((URL) -> Bool)?
     var usesNavigationBackChrome = false
 
-    private var displayBlocks: [ExtensionUINativeBlock] {
-        surface.nativeDisplayBlocks
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
@@ -456,252 +355,20 @@ struct ExtensionNativeSurfaceDetailSheet: View {
 
             Divider()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    if displayBlocks.isEmpty {
-                        let fallbackLines = surface.fallbackDisplayLines
-                        if !fallbackLines.isEmpty {
-                            ExtensionWidgetLinesView(lines: fallbackLines)
-                        }
-                    } else {
-                        ForEach(Array(displayBlocks.enumerated()), id: \.offset) { _, block in
-                            ExtensionNativeBlockView(
-                                block: block,
-                                isDetail: true,
-                                linkContext: linkContext,
-                                onOpenURL: onOpenURL
-                            )
-                        }
-                    }
-                }
-                .padding(18)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            ExtensionNativeBlocksView(
+                content: ExtensionNativeBlockContent(surface: surface),
+                sizing: .fill,
+                contentInsets: NSDirectionalEdgeInsets(top: 18, leading: 18, bottom: 18, trailing: 18),
+                spacing: 12,
+                linkContext: linkContext,
+                onOpenURL: onOpenURL
+            )
         }
         .themedScrollSurface()
         .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail")
         .horizontalBackSwipeGesture(isEnabled: usesNavigationBackChrome) {
             dismiss()
         }
-    }
-}
-
-private struct ExtensionNativeBlockView: View {
-    let block: ExtensionUINativeBlock
-    var isDetail: Bool = false
-    var linkContext: ExtensionSurfaceLinkContext = .empty
-    var onOpenURL: ((URL) -> Bool)?
-
-    var body: some View {
-        switch block {
-        case .text(_, let spans):
-            ExtensionNativeTextSpansView(spans: spans, onOpenURL: onOpenURL)
-        case .markdown(_, let markdown):
-            ExtensionNativeMarkdownView(markdown: markdown, linkContext: linkContext, onOpenURL: onOpenURL)
-        case .section(_, let title, let subtitle, let blocks):
-            VStack(alignment: .leading, spacing: 6) {
-                if let title, !title.isEmpty {
-                    Text(title)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                }
-                if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.caption2)
-                        .foregroundStyle(.themeComment)
-                }
-                ForEach(Array(blocks.enumerated()), id: \.offset) { _, child in
-                    ExtensionNativeBlockView(
-                        block: child,
-                        isDetail: isDetail,
-                        linkContext: linkContext,
-                        onOpenURL: onOpenURL
-                    )
-                }
-            }
-            .padding(10)
-            .extensionGlassInset(cornerRadius: 12)
-        case .activityList(_, let rows):
-            ExtensionNativeActivityListView(
-                rows: rows,
-                startsExpanded: isDetail,
-                linkContext: linkContext,
-                onOpenURL: onOpenURL
-            )
-        case .progress(let base, let label, let value, let indeterminate):
-            ExtensionNativeProgressBlockView(
-                base: base,
-                label: label,
-                value: value,
-                indeterminate: indeterminate
-            )
-        case .terminal(_, let lines):
-            ExtensionNativeTerminalLinesView(lines: lines, onOpenURL: onOpenURL)
-        case .code(_, _, let text):
-            ExtensionWidgetLinesView(lines: text.components(separatedBy: .newlines))
-        case .divider:
-            Divider()
-        case .spacer(_, let size):
-            Color.clear.frame(height: spacerHeight(size))
-        case .unsupported:
-            EmptyView()
-        }
-    }
-
-    private func spacerHeight(_ size: String?) -> CGFloat {
-        switch size {
-        case "large": return 16
-        case "medium": return 10
-        default: return 6
-        }
-    }
-}
-
-private struct ExtensionNativeProgressBlockView: View {
-    let base: ExtensionUIBlockBase
-    let label: String?
-    let value: Double?
-    let indeterminate: Bool?
-
-    private var trimmedLabel: String? {
-        label.trimmedNonEmpty
-    }
-
-    private var normalizedValue: Double? {
-        guard let value, value.isFinite else { return nil }
-        return min(max(value, 0), 1)
-    }
-
-    private var isIndeterminate: Bool {
-        indeterminate == true || normalizedValue == nil
-    }
-
-    private var accessibilityLabel: String {
-        base.accessibility?.label.trimmedNonEmpty ?? trimmedLabel ?? "Progress"
-    }
-
-    private var accessibilityValue: String {
-        if let value = base.accessibility?.value.trimmedNonEmpty {
-            return value
-        }
-        if isIndeterminate {
-            return "In progress"
-        }
-        if let normalizedValue {
-            return "\(Int(round(normalizedValue * 100))) percent"
-        }
-        return ""
-    }
-
-    var body: some View {
-        Group {
-            if isIndeterminate {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(.themeBlue)
-
-                    if let trimmedLabel {
-                        Text(trimmedLabel)
-                            .font(.caption)
-                            .foregroundStyle(.themeFg)
-                    }
-                }
-                .frame(minHeight: trimmedLabel == nil ? 18 : 28, alignment: .leading)
-            } else if let normalizedValue {
-                VStack(alignment: .leading, spacing: 6) {
-                    if let trimmedLabel {
-                        Text(trimmedLabel)
-                            .font(.caption)
-                            .foregroundStyle(.themeFg)
-                    }
-
-                    ExtensionProgressBar(value: normalizedValue)
-                }
-                .frame(minHeight: trimmedLabel == nil ? 10 : 30, alignment: .leading)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityValue(accessibilityValue)
-    }
-}
-
-private struct ExtensionNativeMarkdownView: View {
-    let markdown: String
-    var linkContext: ExtensionSurfaceLinkContext = .empty
-    var onOpenURL: ((URL) -> Bool)?
-
-    private var rewrittenMarkdown: String {
-        ExtensionNativeMarkdownSupport.rewrittenMarkdown(
-            markdown,
-            serverID: linkContext.serverID,
-            workspaceID: linkContext.workspaceID,
-            sessionID: linkContext.sessionID,
-            sourceDirectory: linkContext.sourceDirectory
-        )
-    }
-
-    private var attributedMarkdown: AttributedString? {
-        try? AttributedString(markdown: rewrittenMarkdown)
-    }
-
-    var body: some View {
-        Group {
-            if let attributedMarkdown {
-                Text(attributedMarkdown)
-            } else {
-                Text(rewrittenMarkdown)
-            }
-        }
-        .font(.caption)
-        .foregroundStyle(.themeFg)
-        .fixedSize(horizontal: false, vertical: true)
-        .environment(\.openURL, OpenURLAction { url in
-            onOpenURL?(url) == true ? .handled : .systemAction
-        })
-    }
-}
-
-private struct ExtensionNativeTextSpansView: View {
-    let spans: [ExtensionUITextSpan]
-    var font: Font = .caption
-    var onOpenURL: ((URL) -> Bool)?
-
-    var body: some View {
-        Text(spans.extensionNativeAttributedString)
-            .font(font)
-            .foregroundStyle(.themeFg)
-            .fixedSize(horizontal: false, vertical: true)
-            .environment(\.openURL, OpenURLAction { url in
-                onOpenURL?(url) == true ? .handled : .systemAction
-            })
-    }
-}
-
-private struct ExtensionNativeTerminalLinesView: View {
-    let lines: [[ExtensionUITextSpan]]
-    var onOpenURL: ((URL) -> Bool)?
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: true) {
-            VStack(alignment: .leading, spacing: 3) {
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                    ExtensionNativeTextSpansView(
-                        spans: line,
-                        font: .caption2.monospaced(),
-                        onOpenURL: onOpenURL
-                    )
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                }
-            }
-            .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .extensionGlassInset(cornerRadius: 12)
     }
 }
 
@@ -759,487 +426,6 @@ private extension String {
             return false
         }
         return Array(words.prefix(prefixWords.count)) == prefixWords
-    }
-}
-
-extension Array where Element == ExtensionUITextSpan {
-    var extensionNativeAttributedString: AttributedString {
-        var result = AttributedString()
-        for span in self {
-            result.append(span.extensionNativeAttributedString)
-        }
-        return result
-    }
-}
-
-private extension ExtensionUITextSpan {
-    var extensionNativeAttributedString: AttributedString {
-        var result = AttributedString(text)
-        let traits = normalizedTraits
-        var intent = InlinePresentationIntent()
-
-        if traits.contains("bold") {
-            intent.insert(.stronglyEmphasized)
-        }
-        if traits.contains("italic") {
-            intent.insert(.emphasized)
-        }
-        if !intent.isEmpty {
-            result.inlinePresentationIntent = intent
-        }
-
-        if traits.contains("underline") {
-            result.underlineStyle = .single
-        }
-        if traits.contains("strikethrough") {
-            result.strikethroughStyle = .single
-        }
-
-        let url = nativeURL
-        if let color = nativeRoleColor {
-            result.foregroundColor = color
-        } else if url != nil {
-            result.foregroundColor = .themeCyan
-        }
-
-        if role?.lowercased() == "code" || traits.contains("monospaced") {
-            result.font = .system(.caption, design: .monospaced)
-        }
-
-        if let url {
-            result.link = url
-            result.underlineStyle = .single
-        }
-
-        return result
-    }
-
-    var normalizedTraits: Set<String> {
-        Set((traits ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
-    }
-
-    var nativeURL: URL? {
-        guard let link,
-              let url = URL(string: link),
-              url.scheme?.isEmpty == false else {
-            return nil
-        }
-        return url
-    }
-
-    var nativeRoleColor: Color? {
-        switch role?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "primary":
-            .themeFg
-        case "secondary":
-            .themeComment
-        case "muted":
-            .themeFgDim
-        case "accent":
-            .themeCyan
-        case "success":
-            .themeGreen
-        case "warning":
-            .themeOrange
-        case "danger":
-            .themeRed
-        case "code":
-            .themeYellow
-        default:
-            nil
-        }
-    }
-}
-
-private struct ExtensionNativeActivityListView: View {
-    let rows: [ExtensionUIActivityRow]
-    var startsExpanded: Bool = false
-    var linkContext: ExtensionSurfaceLinkContext = .empty
-    var onOpenURL: ((URL) -> Bool)?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(rows) { row in
-                ExtensionNativeActivityRowView(
-                    row: row,
-                    startsExpanded: startsExpanded,
-                    linkContext: linkContext,
-                    onOpenURL: onOpenURL
-                )
-            }
-        }
-    }
-}
-
-private struct ExtensionNativeActivityRowView: View {
-    @Environment(\.openURL) private var openURL
-
-    let row: ExtensionUIActivityRow
-    var startsExpanded: Bool = false
-    var linkContext: ExtensionSurfaceLinkContext = .empty
-    var onOpenURL: ((URL) -> Bool)?
-
-    @State private var isExpanded = false
-
-    private var childRows: [ExtensionUIActivityRow] {
-        row.children ?? []
-    }
-
-    private var isExpandedForDisplay: Bool {
-        startsExpanded || isExpanded
-    }
-
-    private var canExpandInline: Bool {
-        guard linkedURL == nil else { return false }
-        if !childRows.isEmpty { return true }
-        if row.title.count > 34 || row.title.contains("\n") { return true }
-        if let subtitle = row.subtitle, subtitle.count > 32 || subtitle.contains("\n") { return true }
-        if let detail = row.detail, detail.count > 44 || detail.contains("\n") { return true }
-        return false
-    }
-
-    var body: some View {
-        let content = ExtensionNativeActivityRowContent(
-            row: row,
-            showsNavigationCue: linkedURL != nil,
-            showsDisclosureCue: linkedURL == nil && canExpandInline && !startsExpanded,
-            isExpanded: isExpandedForDisplay
-        )
-        Group {
-            if let url = linkedURL {
-                Button {
-                    if onOpenURL?(url) != true {
-                        openURL(url)
-                    }
-                } label: {
-                    content
-                }
-                .buttonStyle(.plain)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(accessibilityLabel)
-                .accessibilityValue(accessibilityValue)
-                .accessibilityHint(linkAccessibilityHint ?? "")
-                .accessibilityIdentifier(activityRowAccessibilityIdentifier)
-            } else if canExpandInline && !startsExpanded {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        isExpanded.toggle()
-                    }
-                } label: {
-                    content
-                }
-                .buttonStyle(.plain)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(accessibilityLabel)
-                .accessibilityValue(accessibilityValue)
-                .accessibilityHint(isExpanded ? "Collapse task text" : "Show full task text")
-                .accessibilityIdentifier(activityRowAccessibilityIdentifier)
-            } else {
-                content
-            }
-
-            if isExpandedForDisplay && !childRows.isEmpty {
-                ExtensionNativeActivityListView(
-                    rows: childRows,
-                    startsExpanded: startsExpanded,
-                    linkContext: linkContext,
-                    onOpenURL: onOpenURL
-                )
-                .padding(.leading, 22)
-            }
-        }
-    }
-
-    private var linkedURL: URL? {
-        guard let link = row.link,
-              let url = URL(string: link),
-              url.scheme?.isEmpty == false else {
-            return nil
-        }
-        return url
-    }
-
-    private var linkAccessibilityHint: String? {
-        guard let url = linkedURL else { return nil }
-        return ExtensionSurfaceLinkRouting.accessibilityHint(
-            for: ExtensionSurfaceLinkRouting.action(
-                for: url,
-                serverID: linkContext.serverID,
-                workspaceID: linkContext.workspaceID,
-                currentSessionId: linkContext.sessionID ?? ""
-            )
-        )
-    }
-
-    private var activityRowAccessibilityIdentifier: String {
-        "extension.native.activity.row.\(row.id)"
-    }
-
-    private var accessibilityLabel: String {
-        [row.title, row.subtitle, row.detail]
-            .compactMap { value in
-                let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return trimmed.isEmpty ? nil : trimmed
-            }
-            .joined(separator: ", ")
-    }
-
-    private var accessibilityValue: String {
-        [stateAccessibilityText, progressAccessibilityText]
-            .compactMap { value in
-                let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return trimmed.isEmpty ? nil : trimmed
-            }
-            .joined(separator: ", ")
-    }
-
-    private var stateAccessibilityText: String? {
-        switch row.state {
-        case "running": return "Working"
-        case "success": return "Done"
-        case "warning": return "Warning"
-        case "error": return "Error"
-        case "queued": return "Queued"
-        case "inactive": return "Not started"
-        default: return nil
-        }
-    }
-
-    private var progressAccessibilityText: String? {
-        guard let progress = row.progress, progress.isFinite else { return nil }
-        let normalized = min(max(progress, 0), 1)
-        return "\(Int(round(normalized * 100))) percent"
-    }
-}
-
-private struct ExtensionNativeActivityRowContent: View {
-    let row: ExtensionUIActivityRow
-    let showsNavigationCue: Bool
-    let showsDisclosureCue: Bool
-    let isExpanded: Bool
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            stateMarker
-                .frame(width: 14, height: 14)
-                .padding(.top, 3)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(row.title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(isExpanded ? nil : 2)
-                    .truncationMode(.tail)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let subtitle = row.subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.caption2)
-                        .foregroundStyle(.themeComment)
-                        .lineLimit(isExpanded ? nil : 1)
-                        .truncationMode(.tail)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                if let detail = row.detail, !detail.isEmpty {
-                    Text(detail)
-                        .font(.caption2)
-                        .foregroundStyle(.themeComment)
-                        .lineLimit(isExpanded ? nil : 2)
-                        .truncationMode(.tail)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                if let progress = normalizedProgress {
-                    ExtensionProgressBar(value: progress, height: 4)
-                        .padding(.top, 4)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            if showsNavigationCue || showsDisclosureCue {
-                Image(systemName: showsDisclosureCue && isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.themeComment)
-                    .padding(.top, 3)
-                    .accessibilityHidden(true)
-            }
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 5)
-        .frame(minHeight: showsNavigationCue || showsDisclosureCue ? 44 : 34, alignment: .center)
-        .background(
-            .themeFg.opacity(rowHighlightOpacity),
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(.themeComment.opacity(rowBorderOpacity), lineWidth: 1)
-        }
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityValue(accessibilityValue)
-        .accessibilityIdentifier("extension.native.activity.row.\(row.id)")
-    }
-
-    private var rowAccentColor: Color {
-        switch row.state {
-        case "running": return .themeBlue
-        case "success": return .themeGreen
-        case "warning": return .themeOrange
-        case "error": return .themeRed
-        case "queued": return .themePurple
-        default: return .themeComment
-        }
-    }
-
-    private var rowHighlightOpacity: Double {
-        switch row.state {
-        case "running", "warning", "error": return 0.05
-        default: return 0
-        }
-    }
-
-    private var rowBorderOpacity: Double {
-        switch row.state {
-        case "running", "warning", "error": return 0.16
-        default: return 0
-        }
-    }
-
-    private var markerSymbolName: String {
-        switch row.state {
-        case "running": return "play.circle.fill"
-        case "success": return "checkmark.circle.fill"
-        case "warning": return "exclamationmark.circle.fill"
-        case "error": return "xmark.circle.fill"
-        case "queued": return "clock.circle.fill"
-        case "inactive": return "circle"
-        default: return "circle.fill"
-        }
-    }
-
-    private var markerSymbolWeight: Font.Weight {
-        row.state == "inactive" ? .regular : .semibold
-    }
-
-    private var stateMarker: some View {
-        Image(systemName: markerSymbolName)
-            .font(.system(size: 14, weight: markerSymbolWeight))
-            .foregroundStyle(rowAccentColor)
-    }
-
-    private var normalizedProgress: Double? {
-        guard let progress = row.progress, progress.isFinite else { return nil }
-        return min(max(progress, 0), 1)
-    }
-
-    private var accessibilityLabel: String {
-        [row.title, row.subtitle, row.detail]
-            .compactMap { value in
-                let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return trimmed.isEmpty ? nil : trimmed
-            }
-            .joined(separator: ", ")
-    }
-
-    private var accessibilityValue: String {
-        [stateAccessibilityText, progressAccessibilityText]
-            .compactMap { value in
-                let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return trimmed.isEmpty ? nil : trimmed
-            }
-            .joined(separator: ", ")
-    }
-
-    private var stateAccessibilityText: String? {
-        switch row.state {
-        case "running": return "Working"
-        case "success": return "Done"
-        case "warning": return "Warning"
-        case "error": return "Error"
-        case "queued": return "Queued"
-        case "inactive": return "Not started"
-        default: return nil
-        }
-    }
-
-    private var progressAccessibilityText: String? {
-        guard let normalizedProgress else { return nil }
-        return "\(Int(round(normalizedProgress * 100))) percent"
-    }
-}
-
-private struct ExtensionWidgetTerminalLineText: UIViewRepresentable {
-    let line: String
-    let baseForeground: Color
-
-    func makeUIView(context: Context) -> UILabel {
-        let label = UILabel()
-        label.backgroundColor = .clear
-        label.numberOfLines = 1
-        label.lineBreakMode = .byClipping
-        label.setContentHuggingPriority(.required, for: .horizontal)
-        label.setContentCompressionResistancePriority(.required, for: .horizontal)
-        label.setContentHuggingPriority(.required, for: .vertical)
-        label.setContentCompressionResistancePriority(.required, for: .vertical)
-        return label
-    }
-
-    func updateUIView(_ uiView: UILabel, context: Context) {
-        uiView.attributedText = ANSIParser.attributedString(from: line, baseForeground: baseForeground)
-        uiView.accessibilityLabel = ANSIParser.strip(line)
-    }
-}
-
-private struct ExtensionWidgetLineView: View {
-    let line: String
-
-    private var trimmedLine: String {
-        ANSIParser.strip(line).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var isHeader: Bool {
-        trimmedLine.hasPrefix("● ") || trimmedLine.hasPrefix("○ ")
-    }
-
-    private var isActivity: Bool {
-        trimmedLine.contains("⎿")
-    }
-
-    private var markerColor: Color {
-        if trimmedLine.hasPrefix("●") { return .themeGreen }
-        if trimmedLine.hasPrefix("○") { return .themeComment }
-        if trimmedLine.contains("✗") { return .themeRed }
-        if trimmedLine.contains("✓") { return .themeGreen }
-        if trimmedLine.contains("⠋") || trimmedLine.contains("⠙") || trimmedLine.contains("⠹") || trimmedLine.contains("⠸") || trimmedLine.contains("⠼") || trimmedLine.contains("⠴") || trimmedLine.contains("⠦") || trimmedLine.contains("⠧") || trimmedLine.contains("⠇") || trimmedLine.contains("⠏") {
-            return .themeOrange
-        }
-        return .themeComment
-    }
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            if isHeader {
-                Circle()
-                    .fill(markerColor)
-                    .frame(width: 7, height: 7)
-                    .padding(.top, -1)
-                Text(String(trimmedLine.dropFirst(2)))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
-            } else {
-                ExtensionWidgetTerminalLineText(
-                    line: line,
-                    baseForeground: isActivity ? .themeComment : .themeFg
-                )
-            }
-        }
-        .fixedSize(horizontal: true, vertical: false)
-        .accessibilityLabel(trimmedLine.isEmpty ? line : trimmedLine)
     }
 }
 
@@ -1616,21 +802,24 @@ private struct ExtensionSurfaceDrawer: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("\(key), \(text)")
         case .native(let nativeSurface, _):
-            ExtensionNativeSurfaceExpandedViewport(
-                surface: nativeSurface.surface,
-                identifierSuffix: identifierSuffix,
-                maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight,
+            ExtensionSurfaceExpandedViewport(
+                content: ExtensionNativeBlockContent(surface: nativeSurface.surface),
+                accessibilityIdentifier: "extension-native-surface-\(identifierSuffix)-viewport",
                 onOpenFullScreen: { openNativeDetail() },
                 linkContext: linkContext,
                 onOpenURL: onOpenURL
             )
+            .extensionSubtleInset(cornerRadius: 12)
         case .widget(let widget, _, _):
-            ExtensionWidgetLinesView(
-                lines: widget.lines,
-                scrollIdentifier: "extension-strip-\(placement.accessibilityIdentifierComponent)-terminal-\(identifierSuffix)",
-                onOpenFullScreen: { openTerminalDetail() }
+            // The terminal block draws its own inset; no outer padding.
+            ExtensionSurfaceExpandedViewport(
+                content: .terminalLines(widget.lines),
+                accessibilityIdentifier: "extension-strip-\(placement.accessibilityIdentifierComponent)-terminal-\(identifierSuffix)",
+                onOpenFullScreen: { openTerminalDetail() },
+                contentInsets: NSDirectionalEdgeInsets(),
+                linkContext: linkContext,
+                onOpenURL: onOpenURL
             )
-            .frame(maxWidth: .infinity, alignment: .leading)
         case .messageQueue:
             if let messageQueue {
                 MessageQueueContainer(configuration: messageQueue, presentation: .drawer)

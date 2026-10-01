@@ -500,8 +500,8 @@ Rules:
 
 | Pi TUI component or pattern                       | Native block           | Apple design                                                           |
 | ------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------- |
-| `Text`                                            | `text` or `markdown`   | native `Text` with wrapping and Dynamic Type                           |
-| `Markdown`                                        | `markdown`             | caption-sized markdown that honors the same chat link policy           |
+| `Text`                                            | `text` or `markdown`   | selectable native text with wrapping and Dynamic Type                  |
+| `Markdown`                                        | `markdown`             | compact chat Markdown that honors the same chat link policy            |
 | `Box`                                             | `section`              | rounded card, theme background, subtle stroke                          |
 | `Container`                                       | `section.blocks`       | vertical stack                                                         |
 | `Spacer`                                          | `spacer`               | native spacing token                                                   |
@@ -891,6 +891,7 @@ Apple implementations:
 - keep AskCard as the reference for standard Pi prompt requests
 - keep persistent widgets in generic extension strips and drawers
 - avoid extension-specific Swift UI for generic surfaces
+- on iOS, paint blocks with the same UIKit renderers the chat timeline uses: `markdown` through the chat Markdown view, `code` through the highlighted code block (its `language` drives highlighting), and `terminal` and widget lines as unwrapped, horizontally scrolling monospaced text
 
 ## Acceptance criteria
 
@@ -914,3 +915,6 @@ Apple implementations:
 - `clients/apple/Oppi/Features/Chat/Composer/AskCard.swift`
 - `clients/apple/Oppi/Features/Chat/Composer/AskCardExpanded.swift`
 - `clients/apple/Oppi/Features/Chat/ChatView.swift`
+- `clients/apple/Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift`
+- `clients/apple/Oppi/Features/Chat/Support/ExtensionNativeBlockViews.swift`
+- `clients/apple/OppiCore/Runtime/ExtensionNativeBlockPresentation.swift`

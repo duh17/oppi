@@ -4,7 +4,6 @@ struct ExtensionSurfaceLinkContext: Equatable {
     var serverID: String? = nil
     var workspaceID: String? = nil
     var sessionID: String? = nil
-    var sourceDirectory: String? = nil
 
     static let empty = ExtensionSurfaceLinkContext()
 }

@@ -702,14 +702,18 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         // When the person double taps inside the expanded scroll viewport.
         viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.50)).doubleTap()
 
-        // Then the native surface opens in its full-screen detail presentation.
-        let detailDoneButton = app.buttons["Done"]
+        // Then the native surface opens in the chat reader, which pushes the detail with Back chrome.
+        let detailBackButton = app.buttons
+            .matching(identifier: "extension-native-surface-\(identifierSuffix)-detail")
+            .matching(NSPredicate(format: "label == %@", "Back"))
+            .firstMatch
         XCTAssertTrue(
-            detailDoneButton.waitForExistence(timeout: 5),
+            detailBackButton.waitForExistence(timeout: 5),
             "Double tapping an expanded native surface viewport should open full-screen detail"
         )
+        waitForText(bodyText, timeout: 5)
         try saveLabScreenshot(name: "extension-ui-native-surface-viewport-double-tap-e2e")
-        tap(detailDoneButton, named: "native surface detail done button", timeout: 5)
+        tap(detailBackButton, named: "native surface detail back button", timeout: 5)
 
         try sendHarnessMessage(sessionId: sessionId, [
             "type": "extension_ui_notification",

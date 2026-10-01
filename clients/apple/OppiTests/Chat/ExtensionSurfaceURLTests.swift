@@ -10,24 +10,6 @@ struct ExtensionSurfaceURLTests {
     private let currentSessionId = "session-parent"
     private let hardcodedSessionHint = "Opens the related session"
 
-    @Test func rewrittenWidgetMarkdownContainsWorkspaceFileResourceReference() throws {
-        let rewritten = ExtensionNativeMarkdownSupport.rewrittenMarkdown(
-            "See [[docs/foo.md|Foo]]",
-            serverID: serverID,
-            workspaceID: workspaceID,
-            sessionID: currentSessionId,
-            sourceDirectory: nil
-        )
-
-        let destination = try #require(firstLinkDestination(in: rewritten))
-        let reference = try #require(ResourceReferenceURL.parse(destination))
-
-        #expect(reference.kind == .workspaceFile)
-        #expect(reference.fileCandidatePath == "docs/foo.md")
-        #expect(reference.workspaceID == workspaceID)
-        #expect(reference.target == "docs/foo.md")
-    }
-
     @Test func routesClassifiedDestinations() throws {
         for testCase in Self.routingCases {
             let url = try #require(testCase.url(), "URL for \(testCase.name)")
@@ -146,29 +128,5 @@ struct ExtensionSurfaceURLTests {
                 )
             )
         }
-    }
-
-    private func firstLinkDestination(in markdown: String) -> URL? {
-        func destinations(in inlines: [MarkdownInline]) -> [String] {
-            inlines.flatMap { inline -> [String] in
-                switch inline {
-                case .link(_, let destination):
-                    return destination.map { [$0] } ?? []
-                case .emphasis(let children), .strong(let children), .strikethrough(let children):
-                    return destinations(in: children)
-                default:
-                    return []
-                }
-            }
-        }
-
-        for block in parseCommonMark(markdown) {
-            if case .paragraph(let inlines) = block {
-                if let raw = destinations(in: inlines).first, let url = URL(string: raw) {
-                    return url
-                }
-            }
-        }
-        return nil
     }
 }

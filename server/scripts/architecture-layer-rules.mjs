@@ -103,6 +103,8 @@ const IOS_FORBIDDEN_VIEW_CONNECTION_ACCESS = [
 
 const GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_FULL_FILES = new Set([
   "clients/apple/Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift",
+  "clients/apple/Oppi/Features/Chat/Support/ExtensionNativeBlockViews.swift",
+  "clients/apple/OppiCore/Runtime/ExtensionNativeBlockPresentation.swift",
   "clients/apple/OppiMac/Views/MacExtensionSurfacePanel.swift",
   "clients/apple/Oppi/Core/Networking/ServerConnection+MessageRouter.swift",
   "clients/apple/Oppi/Core/Networking/ServerConnection+AppEvents.swift",

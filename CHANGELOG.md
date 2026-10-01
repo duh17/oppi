@@ -85,6 +85,7 @@ Example:
 
 ### Changed
 
+- **Client:** Extension widget drawers and full-screen surfaces now draw their content with the chat's own UIKit renderers. Code blocks are syntax highlighted by their `language` with copy and wrap controls, Markdown matches chat Markdown (including wiki links), terminal and widget lines keep alignment and scroll sideways (keeping their position when the extension sends an update). Plain widget text in the drawer now scrolls inside the same capped viewport as native surfaces.
 - **Client:** File and diff inspection now uses server facts for read/write/edit and equivalent extension tools. Requested write content and args-derived edit diffs are labeled Requested; result diffs drive both the viewer and change counts. Collapsed file titles use server summaries. Older servers without facts show the generic document.
 - **Protocol:** Added file-path, content, edit-pair, and read-range field roles plus file-content/diff output semantics and requested/result provenance. Managed sessions, mirrors, and history use the same renderer registry.
 - **Client:** iOS prefers verified LAN connections on Wi-Fi or Ethernet, with a bounded LAN attempt before remote fallback. An enabled in-app Tailscale node gets a bounded startup wait before the system VPN/resolver. LAN promotion happens on Bonjour arrival or the next foreground and never while a turn, send, or dictation is active, and the host badge stays connected during routine route preparation and refresh when connection evidence remains.

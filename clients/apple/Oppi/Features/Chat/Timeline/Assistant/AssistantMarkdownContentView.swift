@@ -195,6 +195,11 @@ final class AssistantMarkdownContentView: UIView {
     )
 
     private var currentConfig: Configuration?
+    /// Host-owned link routing. Extension surfaces route classified taps through
+    /// their session-aware handler; nil keeps the chat-wide notification routing.
+    /// Unclassified links keep the system default either way, and links the
+    /// handler declines open with the system.
+    var linkOpenHandler: ((URL) -> Bool)?
     var preparedBlocks: [MarkdownBlock]?
     var imagePreparationContext: TimelineImagePreparationContext? {
         didSet { segmentApplier.imagePreparationContext = imagePreparationContext }
@@ -559,8 +564,16 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
             return defaultAction
         }
 
+        let action = classifyLink(url)
+        if let linkOpenHandler, action != .systemDefault {
+            return UIAction { _ in
+                if !linkOpenHandler(url) {
+                    UIApplication.shared.open(url)
+                }
+            }
+        }
         return MarkdownLinkInteractionSupport.primaryAction(
-            for: classifyLink(url),
+            for: action,
             defaultAction: defaultAction
         )
     }

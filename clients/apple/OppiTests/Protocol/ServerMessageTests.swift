@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("ServerMessage decoding")
@@ -604,6 +605,7 @@ struct ServerMessageTests {
         #expect(notification.workingIndicator?.intervalMs == 250)
     }
 
+    @MainActor
     @Test func extensionNativeTextSpansPreserveRoleTraitsAndLinks() throws {
         let spans = [
             ExtensionUITextSpan(
@@ -620,23 +622,23 @@ struct ServerMessageTests {
             )
         ]
 
-        let attributed = spans.extensionNativeAttributedString
+        let palette = ThemeID.dark.palette
+        let attributed = spans.extensionNativeAttributedString(palette: palette)
 
-        #expect(String(attributed.characters) == "Open child code")
+        #expect(attributed.string == "Open child code")
 
         let url = try #require(URL(string: "oppi://session/child-1"))
-        let linkRun = try #require(attributed.runs.first { $0.link == url })
-        #expect(String(attributed.characters[linkRun.range]) == "Open child")
-        #expect(linkRun.inlinePresentationIntent?.contains(.stronglyEmphasized) == true)
-        #expect(linkRun.underlineStyle == .single)
-        #expect(linkRun.foregroundColor == .themeRed)
+        let link = attributed.attributes(at: 0, effectiveRange: nil)
+        #expect(link[.link] as? URL == url)
+        #expect((link[.font] as? UIFont)?.fontDescriptor.symbolicTraits.contains(.traitBold) == true)
+        #expect(link[.underlineStyle] as? Int == NSUnderlineStyle.single.rawValue)
+        #expect(link[.foregroundColor] as? UIColor == UIColor(palette.red))
 
-        let codeRun = try #require(attributed.runs.first { run in
-            String(attributed.characters[run.range]) == " code"
-        })
-        #expect(codeRun.strikethroughStyle == .single)
-        #expect(codeRun.foregroundColor == .themeYellow)
-        #expect(codeRun.font != nil)
+        let code = attributed.attributes(at: ("Open child" as NSString).length, effectiveRange: nil)
+        #expect(code[.link] == nil)
+        #expect(code[.strikethroughStyle] as? Int == NSUnderlineStyle.single.rawValue)
+        #expect(code[.foregroundColor] as? UIColor == UIColor(palette.yellow))
+        #expect((code[.font] as? UIFont)?.fontDescriptor.symbolicTraits.contains(.traitMonoSpace) == true)
     }
 
     @Test func decodesTerminalNativeSurfaceLinksFromFallbackSpans() throws {
