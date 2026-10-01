@@ -7,6 +7,11 @@ import { fileURLToPath } from "node:url";
 const serverRoot = dirname(fileURLToPath(import.meta.url));
 
 export default function buildCliOnce(): () => void {
+  execFileSync(process.execPath, [join(serverRoot, "scripts", "check-installed-deps.mjs")], {
+    cwd: serverRoot,
+    stdio: "inherit",
+  });
+
   const buildRoot = mkdtempSync(join(tmpdir(), "oppi-vitest-build-"));
 
   try {
