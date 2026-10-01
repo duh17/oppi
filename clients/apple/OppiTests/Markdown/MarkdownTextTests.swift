@@ -4767,21 +4767,16 @@ struct NativeMermaidBlockViewTests {
         return view
     }
 
-    /// Find the diagram image view: a visible UIImageView with a tap gesture
-    /// and user interaction enabled. Skips button images and other incidental
-    /// image views in the hierarchy.
-    private func firstTappableImageView(in root: UIView) -> UIImageView? {
+    /// A clipped diagram's container owns the tap, including areas outside the
+    /// backing bitmap. Locate the rendered control, not a tappable UIImageView.
+    private func renderedDiagramTapTarget(in root: UIView) -> UIView? {
         for sub in root.subviews {
-            if let iv = sub as? UIImageView,
-               !iv.isHidden,
-               iv.isUserInteractionEnabled,
-               iv.image != nil,
-               (iv.gestureRecognizers ?? []).contains(where: { $0 is UITapGestureRecognizer }) {
-                return iv
+            if !sub.isHidden, sub.isUserInteractionEnabled,
+               sub.subviews.contains(where: { ($0 as? UIImageView)?.image != nil }),
+               (sub.gestureRecognizers ?? []).contains(where: { $0 is UITapGestureRecognizer }) {
+                return sub
             }
-            if let found = firstTappableImageView(in: sub) {
-                return found
-            }
+            if let found = renderedDiagramTapTarget(in: sub) { return found }
         }
         return nil
     }
@@ -4819,42 +4814,29 @@ struct NativeMermaidBlockViewTests {
         let palette = ThemeRuntimeState.currentPalette()
         mermaidView.applyAsDiagram(code: "graph TD\n    A-->B", palette: palette)
 
-        // Wait for async render
-        var imageView: UIImageView?
-        for _ in 0..<500 {
+        defer { window.isHidden = true }
+        let rendered = await waitForTimelineCondition(timeoutMs: 10_000) { @MainActor in
             window.layoutIfNeeded()
-            if let iv = firstTappableImageView(in: mermaidView) {
-                imageView = iv
-                break
-            }
-            try await Task.sleep(for: .milliseconds(20))
+            return mermaidView.debugRenderedImageForTesting != nil
         }
+        #expect(rendered, "Diagram never rendered")
+        let tapTarget = try #require(renderedDiagramTapTarget(in: mermaidView))
 
-        guard let imageView else {
-            Issue.record("Diagram never rendered")
-            return
-        }
+        #expect(!(tapTarget is UIScrollView), "Diagram must not introduce an inline scroll view")
+        #expect(!(tapTarget.superview is UIScrollView), "Diagram tap must not compete with an inline scroll view")
+        let taps = (tapTarget.gestureRecognizers ?? []).compactMap { $0 as? UITapGestureRecognizer }
+        #expect(!taps.isEmpty, "Rendered diagram must own a tap gesture")
 
-        // 1. Image view must be directly tappable (no scroll view wrapper)
-        #expect(!(imageView.superview is UIScrollView),
-                "Image view must NOT be inside a UIScrollView")
-
-        // 2. Image view must have a tap gesture
-        let taps = (imageView.gestureRecognizers ?? [])
-            .compactMap { $0 as? UITapGestureRecognizer }
-        #expect(!taps.isEmpty, "Image view must own a tap gesture")
-
-        // 3. Image view must be the hit-test target
-        let center = imageView.convert(
-            CGPoint(x: imageView.bounds.midX, y: imageView.bounds.midY),
+        let center = tapTarget.convert(
+            CGPoint(x: tapTarget.bounds.midX, y: tapTarget.bounds.midY),
             to: window
         )
         let hitView = window.hitTest(center, with: nil)
-        #expect(hitView === imageView,
-                "hitTest must return imageView, got \(type(of: hitView as Any))")
+        #expect(hitView === tapTarget,
+                "hitTest must reach the diagram tap target, got \(type(of: hitView as Any))")
 
-        // 4. isUserInteractionEnabled all the way up
-        var v: UIView? = imageView
+        // Interaction must remain enabled from the tap owner to the window.
+        var v: UIView? = tapTarget
         while let current = v, current !== window {
             #expect(current.isUserInteractionEnabled,
                     "\(type(of: current)) blocks interaction")
@@ -5022,17 +5004,20 @@ struct NativeMermaidBlockViewTests {
         view.applyAsDiagramSync(code: pieSource, palette: palette)
         container.layoutIfNeeded()
 
-        let narrowImage = try #require(firstTappableImageView(in: view)?.image)
-        let narrowHeight = view.bounds.height
+        let narrowImage = try #require(view.debugRenderedImageForTesting)
+        let narrowFrame = view.debugDiagramImageFrameForTesting
         #expect(narrowImage.size.width > 200, "Even a narrow preview uses canonical geometry")
+        #expect(view.debugIsShowingPartialPreviewForTesting, "A narrow bubble clips rather than shrinking text")
+        #expect(narrowFrame.width > view.bounds.width)
 
         container.frame.size.width = 360
         container.setNeedsLayout()
         container.layoutIfNeeded()
 
-        let image = try #require(firstTappableImageView(in: view)?.image)
+        let image = try #require(view.debugRenderedImageForTesting)
         #expect(image === narrowImage, "Resizing must preserve the canonical bitmap")
-        #expect(view.bounds.height > narrowHeight, "The display grows, not the graph geometry")
+        #expect(view.debugDiagramImageFrameForTesting.width >= narrowFrame.width,
+                "Widening must not shrink the legible diagram to repack its legend")
         #expect(
             image.size.height / max(image.size.width, 1) < 1.4,
             "Wide pie should keep a side-legend ratio, not a stacked column (\(image.size))"
@@ -5091,10 +5076,7 @@ struct NativeMermaidBlockViewTests {
     @Test func overBudgetClosedFenceStaysExactSourceWithoutReservedBox() async throws {
         let availableWidth: CGFloat = 360
         let palette = ThemeID.dark.palette
-        let source = try #require(overBudgetMermaidSource(
-            availableWidth: availableWidth,
-            theme: palette.renderTheme
-        ))
+        let source = try #require(overBudgetMermaidSource(theme: palette.renderTheme))
         let view = NativeMermaidBlockView()
         view.frame = CGRect(x: 0, y: 0, width: availableWidth, height: 80)
         view.layoutIfNeeded()
@@ -5172,22 +5154,17 @@ struct NativeMermaidBlockViewTests {
             .joined(separator: "\n")
     }
 
-    private func overBudgetMermaidSource(
-        availableWidth: CGFloat,
-        theme: RenderTheme
-    ) -> String? {
-        for count in [400, 800, 1_600] {
-            let source = "graph TD\n    A[\"\(String(repeating: "W", count: count))\"]"
+    private func overBudgetMermaidSource(theme: RenderTheme) -> String? {
+        // Label wrapping keeps a single long token within the bitmap budget.
+        // A connected chain still grows vertically beyond the natural-raster cap.
+        for count in [32, 64, 128] {
+            let edges = (0..<count).map { "    N\($0) --> N\($0 + 1)" }
+            let source = "graph TD\n" + edges.joined(separator: "\n")
             let layout = DocumentRenderPipeline.layoutGraphical(
                 parser: MermaidParser(),
                 renderer: MermaidRenderer(),
                 text: source,
-                config: RenderConfiguration(
-                    fontSize: 13,
-                    maxWidth: availableWidth,
-                    theme: theme,
-                    displayMode: .inline
-                )
+                config: DocumentRenderPipeline.mermaidConfiguration(theme: theme)
             )
             if layout.size.width > 0,
                layout.size.height > 0,
