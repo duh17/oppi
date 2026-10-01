@@ -322,7 +322,7 @@ struct ToolPresentationConfigTests {
         )
     }
 
-    @Test func editToolWithoutDiffArgsUsesModifiedTrailingFallback() throws {
+    @Test func oldServerEditWithoutEditsKeepsUnknownCountsAndRequestedProvenance() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
         let item = ChatItem.toolCall(
             id: "edit-unknown-diff",
@@ -337,7 +337,7 @@ struct ToolPresentationConfigTests {
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         #expect(config.editAdded == nil)
         #expect(config.editRemoved == nil)
-        #expect(config.trailing == nil, "No facts must not invent edit semantics")
+        #expect(config.trailing == "Requested", "Compatibility facts do not invent edit counts")
     }
 
     @Test func expandedSuccessfulWriteCarriesCompositionOwnedCurrentFileAction() throws {
@@ -557,10 +557,12 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
-        guard case .text(let text, _) = config.expandedContent else {
-            Issue.record("Built-in read without a path keeps native plain text"); return
+        guard case .code(let text, let language, _, let path) = config.expandedContent else {
+            Issue.record("Built-in read without a path keeps native code/plain text"); return
         }
         #expect(text == "let value = 1")
+        #expect(language == nil)
+        #expect(path == nil)
         #expect(config.currentFileOpenIntent == nil)
     }
 
@@ -994,7 +996,7 @@ struct ToolPresentationConfigTests {
 
         #expect(bashConfig.trailing == nil)
         #expect(readConfig.trailing == nil)
-        #expect(writeConfig.trailing == nil)
+        #expect(writeConfig.trailing == "Requested", "Provenance is not a byte-count badge")
     }
 
     @Test func collapsedExtensionToolConfigurationOmitsPreviewForSingleLineConsistency() throws {
@@ -1040,7 +1042,7 @@ struct ToolPresentationConfigTests {
         #expect(path == "Chat/ChatTimelineCollectionView.swift")
     }
 
-    @Test func nativeReadToolConfigurationInfersLanguageBadgeFromRawSummaryWhenArgsMissing() throws {
+    @Test func oldServerReadDoesNotInferLanguageOrMediaFromRawSummaryAndLiteral() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
 
         let item = ChatItem.toolCall(
@@ -1054,7 +1056,8 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
-        #expect(config.languageBadge == "⚠︎media", "Missing facts must not infer a file language from the summary")
+        #expect(config.languageBadge == nil, "Compatibility facts must not infer a file language or attachment from summary/literal text")
+        #expect(config.glyph == "magnifyingglass")
     }
 
     @Test func expandedBashToolConfigurationPrefersUnwrappedOutput() throws {
