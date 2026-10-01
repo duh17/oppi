@@ -41,6 +41,44 @@ struct ToolInputPresentation: Codable, Equatable, Sendable {
         var language: String
     }
     var fields: [String: Field]
+
+    init(fields: [String: Field]) { self.fields = fields }
+    private enum CodingKeys: String, CodingKey { case fields }
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        fields = (try? c?.decode([String: Field].self, forKey: .fields)) ?? [:]
+    }
+}
+
+/// Unknown semantics degrade to the generic document, never a name fallback.
+struct ToolOutputPresentation: Codable, Equatable, Sendable {
+    var kind: String
+    init(kind: String) { self.kind = kind }
+    private enum CodingKeys: String, CodingKey { case kind }
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        kind = (try? c?.decode(String.self, forKey: .kind)) ?? ""
+    }
+}
+
+struct ToolOutputAvailability: Codable, Equatable, Sendable {
+    var complete: Bool
+    var totalBytes: Int? = nil
+    var source: String? = nil
+    var hasSidecar: Bool { source == "sidecar" }
+    init(complete: Bool, totalBytes: Int? = nil, source: String? = nil) {
+        self.complete = complete
+        self.totalBytes = totalBytes
+        self.source = source
+    }
+    private enum CodingKeys: String, CodingKey { case complete, totalBytes, source }
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        complete = (try? c?.decode(Bool.self, forKey: .complete)) ?? false
+        totalBytes = try? c?.decode(Int.self, forKey: .totalBytes)
+        if let bytes = totalBytes, bytes < 0 { totalBytes = nil }
+        source = try? c?.decode(String.self, forKey: .source)
+    }
 }
 
 /// Status is a string deliberately: a future Pi status must not reject a trace.

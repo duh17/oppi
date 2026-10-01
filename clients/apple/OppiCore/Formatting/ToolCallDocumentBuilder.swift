@@ -7,7 +7,7 @@ enum ToolCallDocumentBuilder {
                       nestedCalls: NestedToolCalls?, output: String, rawOutput: String,
                       details: JSONValue?, isDone: Bool, previewOnly: Bool = false, totalBytes: Int? = nil, toolName: String? = nil) -> ToolContentDescriptor.Markdown? {
         var sections: [(String, String)] = []
-        let hints = inputPresentation?.fields.filter { $0.value.role == "code" }.mapValues(\.language) ?? [:]
+        let hints = inputPresentation?.fields.filter { $0.value.role == "code" || $0.value.role == "command" }.mapValues(\.language) ?? [:]
         let input = (toolName.map { "**Tool**\n\n" + inlineCode($0) + "\n\n" } ?? "") + input(args ?? [:], hints: hints)
         if !input.isEmpty { sections.append(("Input", input)) }
         if let nestedCalls { sections.append(("Calls", calls(nestedCalls))) }
@@ -83,9 +83,9 @@ enum ToolCallDocumentBuilder {
             // Presentation metadata describes expandedText, never ordinary output.
             return formatted(output)
         }
-        if let tui = metadata["tuiRender"]?.objectValue,
-           let text = tui["expandedText"]?.stringValue, !text.isEmpty { return boundedFence(ANSIParser.strip(text), language: "text") }
-        return ""
+        guard let details, details != .null else { return "" }
+        var renderer = Renderer()
+        return renderer.render(OrderedJSON.from(details))
     }
 
     private static func formatted(_ text: String, format: String? = nil, language: String? = nil, filePath: String? = nil) -> String {

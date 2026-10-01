@@ -404,6 +404,7 @@ struct MacToolDocumentColumn: View {
             if let descriptor = sessionModel?.presentation.content {
                 MacToolDocumentDescriptorView(
                     descriptor: descriptor,
+                    commandText: sessionModel?.presentation.inspection.commandText,
                     itemID: sessionModel?.toolRowID,
                     workspaceID: store.selectedTarget?.workspaceId,
                     sessionID: store.selectedTarget?.sessionId,
@@ -467,6 +468,7 @@ struct MacToolDocumentColumn: View {
 
 struct MacToolDocumentDescriptorView: View {
     let descriptor: ToolContentDescriptor
+    var commandText: String? = nil
     var itemID: String? = nil
     var workspaceID: String? = nil
     var sessionID: String? = nil
@@ -476,7 +478,7 @@ struct MacToolDocumentDescriptorView: View {
     var body: some View {
         switch descriptor {
         case .terminal(let terminal):
-            MacToolDocumentTerminalView(terminal: terminal, itemID: itemID)
+            MacToolDocumentTerminalView(terminal: terminal, commandText: commandText, itemID: itemID)
         case .diff(let diff):
             MacToolDocumentDiffView(diff: diff)
         case .code(let code):
@@ -525,13 +527,14 @@ struct MacToolDocumentDescriptorView: View {
 private struct MacToolDocumentTerminalView: View {
     @Environment(\.macTypographyRevision) private var typographyRevision
     let terminal: ToolContentDescriptor.Terminal
+    var commandText: String? = nil
     var itemID: String? = nil
     @Environment(\.theme) private var theme
 
     var body: some View {
         let _ = typographyRevision
         VStack(alignment: .leading, spacing: 8) {
-            if let command = terminal.command, !command.isEmpty {
+            if let command = commandText, !command.isEmpty {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text("$")
                         .fontWeight(.semibold)
@@ -547,7 +550,7 @@ private struct MacToolDocumentTerminalView: View {
                 text: terminal.output?.isEmpty == false ? terminal.output ?? "" : " ",
                 source: MacReviewCommentSource(
                     kind: .terminalOutput,
-                    label: terminal.command,
+                    label: commandText,
                     timelineItemId: itemID
                 ),
                 fillsColumn: true,

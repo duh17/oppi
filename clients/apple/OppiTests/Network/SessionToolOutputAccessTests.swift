@@ -44,9 +44,9 @@ struct SessionToolOutputAccessTests {
         let workspace = try #require(content.toolOutputAccess(sessionId: "s1", routeScope: .workspace("w1")))
         let control = try #require(content.toolOutputAccess(sessionId: "s2", routeScope: .control))
 
-        let expanded = try await workspace.fetchForExpand(tool: "read", toolCallId: "tc-1")
+        let expanded = try await workspace.fetchForExpand(availability: nil, toolCallId: "tc-1")
         #expect(expanded.text == "OUT")
-        let copyFetch = try #require(control.completeOutputFetch(tool: "bash", toolCallId: "tc-2", store: nil))
+        let copyFetch = try #require(control.completeOutputFetch(availability: .init(complete: false, source: "sidecar"), toolCallId: "tc-2", store: nil))
         #expect(try await copyFetch() == "OUT")
         let sidecar = workspace.sidecarSource(toolCallId: "tc-3")
         _ = try? await sidecar.loadFirst()
@@ -74,16 +74,16 @@ struct SessionToolOutputAccessTests {
         #expect(RecordingToolOutputProtocol.requests.isEmpty)
     }
 
-    @Test("Copy prefers complete stored output, refetches over a stored preview, and only exists for shell tools")
+    @Test("Copy prefers complete stored output, refetches over a stored preview, and requires a producer sidecar fact")
     func copyFetchPolicy() async throws {
         let content = makeContent(client: makeClient(host: "server-a.test"))
         let access = try #require(content.toolOutputAccess(sessionId: "s1", routeScope: .workspace("w1")))
         let store = ToolOutputStore()
 
-        #expect(access.completeOutputFetch(tool: "read", toolCallId: "tc-1", store: store) == nil)
+        #expect(access.completeOutputFetch(availability: nil, toolCallId: "tc-1", store: store) == nil)
 
         store.replace("PREVIEW", for: "tc-1", previewOnly: true, totalBytes: 1_000_000)
-        let fetch = try #require(access.completeOutputFetch(tool: "bash", toolCallId: "tc-1", store: store))
+        let fetch = try #require(access.completeOutputFetch(availability: .init(complete: false, source: "sidecar"), toolCallId: "tc-1", store: store))
         #expect(try await fetch() == "OUT")
         #expect(RecordingToolOutputProtocol.requests.count == 1)
 

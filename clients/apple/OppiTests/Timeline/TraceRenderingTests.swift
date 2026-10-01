@@ -598,12 +598,6 @@ struct TraceRenderingTests {
 
     // MARK: - ToolCallFormatting
 
-    @Test func toolCallFormattingBashCommand() {
-        let args: [String: JSONValue] = ["command": .string("echo hello world")]
-        let result = ToolCallFormatting.bashCommand(args: args, argsSummary: "command: echo hello world")
-        #expect(result == "echo hello world")
-    }
-
     @Test func toolCallFormattingFilePathWithRange() {
         let args: [String: JSONValue] = [
             "path": .string("/work/src/main.swift"),

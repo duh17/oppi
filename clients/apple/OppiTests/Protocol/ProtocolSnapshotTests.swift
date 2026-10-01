@@ -53,9 +53,9 @@ struct ProtocolSnapshotTests {
         let start = try decodeMessage("tool_start_with_display")
         let update = try decodeMessage("tool_update_with_display")
         let end = try decodeMessage("tool_end_with_details")
-        guard case .toolStart(let raw, _, _, _, _, let startDisplay) = start,
-              case .toolUpdate(_, _, _, _, _, let updateDisplay) = update,
-              case .toolEnd(_, _, _, _, _, let nested) = end else { Issue.record("Display fixtures"); return }
+        guard case .toolStart(let raw, _, _, _, _, let startDisplay, _) = start,
+              case .toolUpdate(_, _, _, _, _, let updateDisplay, _) = update,
+              case .toolEnd(_, _, _, _, _, let nested, _, _) = end else { Issue.record("Display fixtures"); return }
         #expect(raw == "mcp__coros__getActivityDetail")
         #expect(startDisplay == updateDisplay)
         #expect(startDisplay?.label(fallback: raw) == "coros · Get activity detail")
@@ -262,7 +262,7 @@ struct ProtocolSnapshotTests {
     @Test func toolExecution() throws {
         // tool_start
         let startMsg = try decodeMessage("tool_start")
-        guard case .toolStart(let tool, _, let toolCallId, _, _, _) = startMsg else {
+        guard case .toolStart(let tool, _, let toolCallId, _, _, _, _) = startMsg else {
             Issue.record("Expected .toolStart")
             return
         }
@@ -271,7 +271,7 @@ struct ProtocolSnapshotTests {
 
         // tool_update
         let updateMsg = try decodeMessage("tool_update")
-        guard case .toolUpdate(let updateTool, _, let updateToolCallId, _, _, _) = updateMsg else {
+        guard case .toolUpdate(let updateTool, _, let updateToolCallId, _, _, _, _) = updateMsg else {
             Issue.record("Expected .toolUpdate")
             return
         }
@@ -300,7 +300,7 @@ struct ProtocolSnapshotTests {
 
         // tool_end
         let endMsg = try decodeMessage("tool_end")
-        guard case .toolEnd(let endTool, _, _, _, _, _) = endMsg else {
+        guard case .toolEnd(let endTool, _, _, _, _, _, _, _) = endMsg else {
             Issue.record("Expected .toolEnd")
             return
         }
@@ -308,7 +308,7 @@ struct ProtocolSnapshotTests {
 
         // tool_end_with_details
         let detailsMsg = try decodeMessage("tool_end_with_details")
-        guard case .toolEnd(let detTool, _, let details, let isError, let resultSegs, _) = detailsMsg else {
+        guard case .toolEnd(let detTool, _, let details, let isError, let resultSegs, _, _, _) = detailsMsg else {
             Issue.record("Expected .toolEnd with details")
             return
         }
@@ -329,7 +329,7 @@ struct ProtocolSnapshotTests {
 
         // tool_start_with_segments
         let segMsg = try decodeMessage("tool_start_with_segments")
-        guard case .toolStart(let segTool, let segArgs, _, let callSegs, _, _) = segMsg else {
+        guard case .toolStart(let segTool, let segArgs, _, let callSegs, _, _, _) = segMsg else {
             Issue.record("Expected .toolStart with callSegments")
             return
         }

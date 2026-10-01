@@ -83,18 +83,18 @@ final class TestEventPipeline {
         case .thinkingDelta(let delta, let contentIndex):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: delta, contentIndex: contentIndex))
-        case .toolStart(let tool, let args, let toolCallId, let callSegments, let inputPresentation, let display):
+        case .toolStart(let tool, let args, let toolCallId, let callSegments, let inputPresentation, let display, let outputPresentation):
             conn.silenceWatchdog.recordEvent()
-            coalescer.receive(toolCallCorrelator.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation, display: display))
-        case .toolUpdate(let tool, let args, let toolCallId, let callSegments, let inputPresentation, let display):
+            coalescer.receive(toolCallCorrelator.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation))
+        case .toolUpdate(let tool, let args, let toolCallId, let callSegments, let inputPresentation, let display, let outputPresentation):
             conn.silenceWatchdog.recordEvent()
-            coalescer.receive(toolCallCorrelator.update(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation, display: display))
+            coalescer.receive(toolCallCorrelator.update(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation))
         case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId, mode: mode, truncated: truncated, totalBytes: totalBytes, details: details))
-        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments, let nestedCalls):
+        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability):
             conn.silenceWatchdog.recordEvent()
-            coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments, nestedCalls: nestedCalls))
+            coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments, nestedCalls: nestedCalls, outputPresentation: outputPresentation, outputAvailability: outputAvailability))
         case .messageEnd(let role, let content, let assistantContent, let entryId):
             if role == "assistant" {
                 coalescer.receive(.messageEnd(

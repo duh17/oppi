@@ -58,10 +58,7 @@ enum ToolContentDescriptor: Equatable, Sendable {
     case status(message: String)
 
     struct Terminal: Equatable, Sendable {
-        var command: String?
         var output: String?
-        /// Bash expanded rows use a dedicated command panel.
-        var unwrapped: Bool
         /// Set for pretty-printed JSON that iOS still renders as `.text`.
         var language: SyntaxLanguage?
     }
@@ -113,9 +110,39 @@ enum ToolContentDescriptor: Equatable, Sendable {
     }
 }
 
-/// Expanded tool content plus copy payloads.
+/// Composition owned by OppiCore; input is never hidden in an output leaf.
+struct ToolInspection: Equatable, Sendable {
+    struct Field: Equatable, Sendable {
+        var name: String
+        var value: JSONValue
+        var role: String?
+        var language: String?
+    }
+    var input: [Field]
+    var calls: NestedToolCalls?
+    var output: [ToolContentDescriptor]
+    var raw: String
+    var previewOnly: Bool
+    var totalBytes: Int?
+    /// Resolved semantics for the painter, not tool identity.
+    var terminalOutput: Bool
+    var commandText: String? { input.first { $0.role == "command" }?.value.stringValue }
+    var commandLanguageBadge: String? {
+        guard terminalOutput,
+              let field = input.first(where: { $0.role == "command" }),
+              field.language == "shell", let text = field.value.stringValue else { return nil }
+        for segment in BashEmbeddedLanguageDetector.detect(text) {
+            if case .embeddedCode(let language) = segment.kind { return language.displayName }
+        }
+        return nil
+    }
+}
+
+/// Expanded inspection plus copy payloads. `content` is the existing single-leaf
+/// adapter for painters that have not migrated to ordered mixed output yet.
 struct ToolContentPresentation: Equatable, Sendable {
-    var content: ToolContentDescriptor?
+    var inspection: ToolInspection
+    var content: ToolContentDescriptor? { inspection.output.first }
     var copyCommandText: String?
     var copyOutputText: String?
 }

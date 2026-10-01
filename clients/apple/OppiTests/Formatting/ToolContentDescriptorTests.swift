@@ -405,22 +405,22 @@ struct ToolContentDescriptorTests {
         #expect(presentation.copyOutputText == "{\"ok\":true}")
     }
 
-    @Test("bash is terminal with command and unwrapped output")
-    func bashIsUnwrappedTerminal() {
-        let presentation = build(
-            tool: "bash",
-            argsSummary: "command: echo hello",
-            args: ["command": .string("echo hello")],
-            fullOutput: "hello\nworld"
+    @Test("command input is separate from terminal output", arguments: ["bash", "run_thing"])
+    func commandInputIsSeparate(tool: String) {
+        let presentation = ToolContentDescriptorBuilder.build(
+            tool: tool, argsSummary: "command: echo hello", outputPreview: "", isError: false, isDone: true,
+            context: .init(args: ["command": .string("echo hello")], fullOutput: "hello\nworld",
+                           inputPresentation: .init(fields: ["command": .init(role: "command", language: "shell")]),
+                           outputPresentation: .init(kind: "terminal"))
         )
 
         guard case .terminal(let terminal) = presentation.content else {
             Issue.record("Expected .terminal, got \(String(describing: presentation.content))")
             return
         }
-        #expect(terminal.command == "echo hello")
+        #expect(presentation.inspection.commandText == "echo hello")
         #expect(terminal.output == "hello\nworld")
-        #expect(terminal.unwrapped)
+        #expect(presentation.inspection.terminalOutput)
         #expect(presentation.copyCommandText == "echo hello")
         #expect(presentation.copyOutputText == "hello\nworld")
     }

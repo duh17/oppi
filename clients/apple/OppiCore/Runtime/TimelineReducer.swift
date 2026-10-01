@@ -646,6 +646,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
             // Store structured args for smart rendering
             if let presentation = event.inputPresentation { toolArgsStore.setInputPresentation(presentation, for: event.id) }
+            if let presentation = event.outputPresentation { toolArgsStore.setOutputPresentation(presentation, for: event.id) }
             if let display = event.display { toolArgsStore.setDisplay(display, for: event.id) }
             if !args.isEmpty {
                 toolArgsStore.set(args, for: event.id)
@@ -658,6 +659,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         case .toolResult:
             let output = event.output ?? ""
             let matchId = event.toolCallId ?? event.id
+            if let presentation = event.outputPresentation { toolArgsStore.setOutputPresentation(presentation, for: matchId) }
+            if let availability = event.outputAvailability { toolArgsStore.setOutputAvailability(availability, for: matchId) }
             if let nested = event.nestedCalls { toolDetailsStore.setNestedCalls(nested, for: matchId) }
 
             // Ask tool result — convert to user message, skip tool row update.
@@ -678,8 +681,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 return nil
             }
 
-            let outputByteCount = event.outputTotalBytes ?? output.utf8.count
-            if event.outputTruncated == true {
+            let outputByteCount = event.outputTotalBytes ?? event.outputAvailability?.totalBytes ?? output.utf8.count
+            if event.outputTruncated == true || event.outputAvailability?.complete == false {
                 toolOutputStore.replace(
                     output,
                     for: matchId,
@@ -1117,11 +1120,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         case .notice(_, let id, let message):
             return upsertLiveWarningRow(.notice(id: id, message: message), id: id)
 
-        case .toolStart(_, let toolEventId, let tool, let args, let callSegments, let inputPresentation, let display):
+        case .toolStart(_, let toolEventId, let tool, let args, let callSegments, let inputPresentation, let display, let outputPresentation):
             let metadataChanged = (inputPresentation != nil && toolArgsStore.inputPresentation(for: toolEventId) != inputPresentation)
                 || (display != nil && toolArgsStore.display(for: toolEventId) != display)
+                || (outputPresentation != nil && toolArgsStore.outputPresentation(for: toolEventId) != outputPresentation)
             if let display { toolArgsStore.setDisplay(display, for: toolEventId) }
             if let inputPresentation { toolArgsStore.setInputPresentation(inputPresentation, for: toolEventId) }
+            if let outputPresentation { toolArgsStore.setOutputPresentation(outputPresentation, for: toolEventId) }
             let startChanged = handleToolStart(
                 toolEventId: toolEventId,
                 tool: tool,
@@ -1131,11 +1136,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             )
             return metadataChanged || startChanged
 
-        case .toolUpdate(_, let toolEventId, let tool, let args, let callSegments, let inputPresentation, let display):
+        case .toolUpdate(_, let toolEventId, let tool, let args, let callSegments, let inputPresentation, let display, let outputPresentation):
             let metadataChanged = (inputPresentation != nil && toolArgsStore.inputPresentation(for: toolEventId) != inputPresentation)
                 || (display != nil && toolArgsStore.display(for: toolEventId) != display)
+                || (outputPresentation != nil && toolArgsStore.outputPresentation(for: toolEventId) != outputPresentation)
             if let display { toolArgsStore.setDisplay(display, for: toolEventId) }
             if let inputPresentation { toolArgsStore.setInputPresentation(inputPresentation, for: toolEventId) }
+            if let outputPresentation { toolArgsStore.setOutputPresentation(outputPresentation, for: toolEventId) }
             let startChanged = handleToolStart(
                 toolEventId: toolEventId,
                 tool: tool,
@@ -1164,11 +1171,21 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             let previewDidChange = updateToolCallPreview(id: payload.toolEventId, isError: payload.isError)
             return outputDidChange || previewDidChange || toolDetailsStore.details(for: payload.toolEventId) != previousDetails
 
-        case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments, let nestedCalls):
+        case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability):
+            let factsChanged = (outputPresentation != nil && toolArgsStore.outputPresentation(for: toolEventId) != outputPresentation)
+                || (outputAvailability != nil && toolArgsStore.outputAvailability(for: toolEventId) != outputAvailability)
+            if let outputPresentation { toolArgsStore.setOutputPresentation(outputPresentation, for: toolEventId) }
+            if let outputAvailability {
+                if outputAvailability != toolArgsStore.outputAvailability(for: toolEventId), !outputAvailability.complete {
+                    toolOutputStore.replace(toolOutputStore.fullOutput(for: toolEventId), for: toolEventId,
+                                            previewOnly: true, totalBytes: outputAvailability.totalBytes)
+                }
+                toolArgsStore.setOutputAvailability(outputAvailability, for: toolEventId)
+            }
             let callsChanged = nestedCalls != nil && toolDetailsStore.nestedCalls(for: toolEventId) != nestedCalls
             if let nestedCalls { toolDetailsStore.setNestedCalls(nestedCalls, for: toolEventId) }
             let endChanged = handleToolEnd(toolEventId: toolEventId, details: details, isError: isError, resultSegments: resultSegments)
-            return callsChanged || endChanged
+            return factsChanged || callsChanged || endChanged
 
         case .sessionEnded(_, let reason):
             let before = renderMutationCheckpoint()

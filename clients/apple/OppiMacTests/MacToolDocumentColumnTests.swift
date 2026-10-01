@@ -148,7 +148,11 @@ struct MacToolDocumentColumnTests {
             tool: "edit",
             argsSummary: "path: Sources/App.swift",
             presentation: ToolContentPresentation(
-                content: .diff(ToolContentDescriptor.Diff(lines: [], path: "Sources/App.swift")),
+                inspection: ToolInspection(
+                    input: [], calls: nil,
+                    output: [.diff(ToolContentDescriptor.Diff(lines: [], path: "Sources/App.swift"))],
+                    raw: "", previewOnly: false, totalBytes: nil, terminalOutput: false
+                ),
                 copyCommandText: nil,
                 copyOutputText: nil
             )
@@ -178,9 +182,7 @@ struct MacToolDocumentColumnTests {
         )
         let terminal = ToolContentDescriptor.terminal(
             ToolContentDescriptor.Terminal(
-                command: "ls",
                 output: "App.swift",
-                unwrapped: true,
                 language: nil
             )
         )

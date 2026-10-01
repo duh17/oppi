@@ -15,13 +15,19 @@ struct ToolPresentationBuilderTests {
         fullOutput: String = "",
         isLoadingOutput: Bool = false
     ) -> ToolPresentationBuilder.Context {
-        ToolPresentationBuilder.Context(
-            args: args,
-            details: details,
-            expandedItemIDs: expanded,
-            fullOutput: fullOutput,
-            isLoadingOutput: isLoadingOutput
+        var context = ToolPresentationBuilder.Context(
+            args: args, details: details, expandedItemIDs: expanded,
+            fullOutput: fullOutput, isLoadingOutput: isLoadingOutput,
+            callSegments: args?["command"]?.stringValue.map {
+                [StyledSegment(text: "$ ", style: .bold), StyledSegment(text: String($0.prefix(200)), style: .accent)]
+            }
         )
+        // These are producer-authored fixtures, not a client tool-name fallback.
+        if args?["command"] != nil {
+            context.inputPresentation = .init(fields: ["command": .init(role: "command", language: "shell")])
+            context.outputPresentation = .init(kind: "terminal")
+        }
+        return context
     }
 
     @Test("interrupted tool has distinct terminal presentation")
@@ -116,31 +122,24 @@ struct ToolPresentationBuilderTests {
         #expect(command == "echo hello")
         #expect(output == "hello\nworld")
         #expect(unwrapped)
-        #expect(config.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(config.title == "echo hello")
     }
 
-    @Test("bash expanded suppresses segment command preview title")
+    @Test("terminal expanded keeps server segment title")
     func bashExpandedSuppressesSegmentTitlePreview() {
+        var context = emptyContext(args: ["command": .string("npm test")], expanded: ["t1"])
+        context.outputPresentation = .init(kind: "terminal")
         let config = ToolPresentationBuilder.build(
             itemID: "t1", tool: "bash",
             argsSummary: "command: npm test",
             outputPreview: "",
             isError: false, isDone: true,
-            context: .init(
-                args: ["command": .string("npm test")],
-                expandedItemIDs: ["t1"],
-                fullOutput: "",
-                isLoadingOutput: false,
-                callSegments: [
-                    StyledSegment(text: "$ ", style: .bold),
-                    StyledSegment(text: "npm test", style: .accent),
-                ]
-            )
+            context: context
         )
 
         #expect(config.isExpanded)
-        #expect(config.segmentAttributedTitle == nil)
-        #expect(config.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(config.segmentAttributedTitle?.string == "npm test")
+        #expect(config.title == "npm test")
         #expect(config.toolNamePrefix == "$")
     }
 
@@ -170,7 +169,7 @@ struct ToolPresentationBuilderTests {
             context: emptyContext(args: ["command": .string(command)])
         )
 
-        #expect(ToolCallFormatting.bashCommand(args: ["command": .string(command)], argsSummary: "").count == 200)
+        #expect(config.segmentAttributedTitle?.string.count == 200)
         #expect(config.languageBadge == "Python")
     }
 

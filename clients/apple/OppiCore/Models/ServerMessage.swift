@@ -92,10 +92,10 @@ enum ServerMessage: Sendable, Equatable {
     case audioStream(AudioStreamMessage)
 
     // Tool execution
-    case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil)
-    case toolUpdate(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil)
+    case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil)
+    case toolUpdate(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil)
     case toolOutput(output: String, isError: Bool, toolCallId: String?, mode: ToolOutputMode, truncated: Bool, totalBytes: Int?, details: JSONValue?)
-    case toolEnd(tool: String, toolCallId: String?, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?, nestedCalls: NestedToolCalls? = nil)
+    case toolEnd(tool: String, toolCallId: String?, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?, nestedCalls: NestedToolCalls? = nil, outputPresentation: ToolOutputPresentation? = nil, outputAvailability: ToolOutputAvailability? = nil)
 
     // Message queue
     case queueState(queue: MessageQueueState)
@@ -296,7 +296,7 @@ extension ServerMessage: Decodable {
         // message_end / cache_miss / notice / text_delta / thinking_delta / audio_stream
         case role, content, assistantContent, entryId, delta, contentIndex, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior
         // tool_start / tool_update / tool_end
-        case tool, args, toolCallId, details, callSegments, resultSegments, inputPresentation, nestedCalls, display
+        case tool, args, toolCallId, details, callSegments, resultSegments, inputPresentation, nestedCalls, display, outputPresentation, outputAvailability
         // tool_output
         case output, isError, mode, truncated, totalBytes
         // turn_ack
@@ -438,7 +438,8 @@ extension ServerMessage: Decodable {
             let callSegs = try c.decodeIfPresent([StyledSegment].self, forKey: .callSegments)
             self = .toolStart(tool: tool, args: args, toolCallId: tcId, callSegments: callSegs,
                               inputPresentation: try c.decodeIfPresent(ToolInputPresentation.self, forKey: .inputPresentation),
-                              display: try c.decodeIfPresent(ToolDisplay.self, forKey: .display))
+                              display: try c.decodeIfPresent(ToolDisplay.self, forKey: .display),
+                              outputPresentation: try c.decodeIfPresent(ToolOutputPresentation.self, forKey: .outputPresentation))
 
         case "tool_update":
             let tool = try c.decode(String.self, forKey: .tool)
@@ -447,7 +448,8 @@ extension ServerMessage: Decodable {
             let callSegs = try c.decodeIfPresent([StyledSegment].self, forKey: .callSegments)
             self = .toolUpdate(tool: tool, args: args, toolCallId: tcId, callSegments: callSegs,
                                inputPresentation: try c.decodeIfPresent(ToolInputPresentation.self, forKey: .inputPresentation),
-                               display: try c.decodeIfPresent(ToolDisplay.self, forKey: .display))
+                               display: try c.decodeIfPresent(ToolDisplay.self, forKey: .display),
+                               outputPresentation: try c.decodeIfPresent(ToolOutputPresentation.self, forKey: .outputPresentation))
 
         case "tool_output":
             let output = try c.decode(String.self, forKey: .output)
@@ -466,7 +468,9 @@ extension ServerMessage: Decodable {
             let isError = try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false
             let resultSegs = try c.decodeIfPresent([StyledSegment].self, forKey: .resultSegments)
             self = .toolEnd(tool: tool, toolCallId: tcId, details: details, isError: isError, resultSegments: resultSegs,
-                            nestedCalls: try c.decodeIfPresent(NestedToolCalls.self, forKey: .nestedCalls))
+                            nestedCalls: try c.decodeIfPresent(NestedToolCalls.self, forKey: .nestedCalls),
+                            outputPresentation: try c.decodeIfPresent(ToolOutputPresentation.self, forKey: .outputPresentation),
+                            outputAvailability: try c.decodeIfPresent(ToolOutputAvailability.self, forKey: .outputAvailability))
 
         case "queue_state":
             let queue = try c.decode(MessageQueueState.self, forKey: .queue)

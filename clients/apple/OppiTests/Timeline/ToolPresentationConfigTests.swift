@@ -46,9 +46,9 @@ struct ToolPresentationConfigTests {
         )
     }
 
-    @Test func inlineMediaWarningHeuristicKeepsBashPlainText() {
+    @Test func missingTerminalFactsDoesNotInferFromName() {
         #expect(
-            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
+            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
                 normalizedTool: "bash",
                 outputPreview: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
                 fullOutput: ""
@@ -56,7 +56,7 @@ struct ToolPresentationConfigTests {
         )
 
         #expect(
-            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
+            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
                 normalizedTool: "functions.bash",
                 outputPreview: "",
                 fullOutput: "before data:audio/wav;base64,UklGRg== after"
@@ -791,12 +791,13 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: itemID, item: item)))
-        guard case .text(let output, let language) = config.expandedContent else {
-            Issue.record("Expected .text")
+        guard case .markdown(let document, _) = config.expandedContent else {
+            Issue.record("Expected generic inspection document")
             return
         }
-        #expect(output.contains("EXT-a27df231"))
-        #expect(language == .json)
+        #expect(config.rawMarkdownText?.contains("EXT-a27df231") == true)
+        #expect(document.contains("Control tower Live Activity"))
+        #expect(config.rawMarkdownText?.contains("in_progress") == true)
         #expect(config.trailing == nil)
     }
 
@@ -826,12 +827,12 @@ struct ToolPresentationConfigTests {
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: itemID, item: item)))
         #expect(config.trailing == nil)
-        guard case .text(let text, let language) = config.expandedContent else {
-            Issue.record("Expected .text")
+        guard case .markdown(let document, _) = config.expandedContent else {
+            Issue.record("Expected generic inspection document")
             return
         }
-        #expect(language == nil)
-        #expect(text.contains("EXT-463187a1"))
+        #expect(document.contains("EXT-463187a1"))
+        #expect(config.rawMarkdownText?.contains("Investigate smooth scroll follow") == true)
         #expect(config.copyOutputText?.contains("EXT-463187a1") == true)
     }
 
@@ -863,12 +864,12 @@ struct ToolPresentationConfigTests {
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: itemID, item: item)))
         #expect(config.trailing == nil)
-        guard case .text(let text, let language) = config.expandedContent else {
-            Issue.record("Expected .text")
+        guard case .markdown(let document, _) = config.expandedContent else {
+            Issue.record("Expected generic inspection document")
             return
         }
-        #expect(language == nil)
-        #expect(text.contains("status: closed"))
+        #expect(document.contains("status: closed"))
+        #expect(config.rawMarkdownText?.contains("Refine auto-follow scrolling") == true)
         #expect(config.copyOutputText?.contains("status: closed") == true)
     }
 
@@ -913,11 +914,15 @@ struct ToolPresentationConfigTests {
         #expect(snapshot.failsafeConfigureCount == 0)
     }
 
-    @Test func nativeBashToolConfigurationOmitsCollapsedOutputPreview() throws {
+    @Test(arguments: ["bash", "run_thing"])
+    func nativeTerminalToolConfigurationOmitsCollapsedOutputPreview(tool: String) throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
+        harness.toolArgsStore.setOutputPresentation(.init(kind: "terminal"), for: "tool-1")
+        harness.toolArgsStore.setInputPresentation(.init(fields: ["command": .init(role: "command", language: "shell")]), for: "tool-1")
+        harness.toolSegmentStore.setCallSegments([.init(text: "$ ", style: .bold), .init(text: "Producer summary", style: .accent)], for: "tool-1")
         let item = ChatItem.toolCall(
             id: "tool-1",
-            tool: "bash",
+            tool: tool,
             argsSummary: "command: echo hi",
             outputPreview: "hi",
             outputByteCount: 32,
@@ -930,6 +935,7 @@ struct ToolPresentationConfigTests {
         #expect(config.preview == nil)
         #expect(config.trailing == nil)
         #expect(config.toolNamePrefix == "$")
+        #expect(config.title == "Producer summary")
         #expect(!config.title.hasPrefix("$"))
     }
 
@@ -1070,6 +1076,10 @@ struct ToolPresentationConfigTests {
     @Test func expandedBashToolConfigurationPrefersUnwrappedOutput() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
         harness.reducer.expandedItemIDs.insert("bash-1")
+        harness.toolArgsStore.set(["command": .string("tail -16 build.log")], for: "bash-1")
+        harness.toolArgsStore.setInputPresentation(.init(fields: ["command": .init(role: "command", language: "shell")]), for: "bash-1")
+        harness.toolArgsStore.setOutputPresentation(.init(kind: "terminal"), for: "bash-1")
+        harness.toolSegmentStore.setCallSegments([.init(text: "$ ", style: .bold), .init(text: "tail -16 build.log", style: .accent)], for: "bash-1")
 
         let item = ChatItem.toolCall(
             id: "bash-1",
@@ -1085,7 +1095,7 @@ struct ToolPresentationConfigTests {
         guard case .bash = config.expandedContent else { Issue.record("Expected .bash"); return }
         if case .bash(_, _, let unwrapped) = config.expandedContent { #expect(unwrapped) }
         #expect(config.toolNamePrefix == "$")
-        #expect(config.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(config.title == "tail -16 build.log")
     }
 
 }

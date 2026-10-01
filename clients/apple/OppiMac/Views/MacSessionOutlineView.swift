@@ -156,7 +156,7 @@ private struct MacSessionOutlineRow: View {
         case "thinking":
             "sparkle"
         case "tool":
-            ToolCallFormatting.sfSymbolName(for: entry.tool ?? "") ?? "wrench"
+            ToolCallFormatting.macLegacySFSymbolName(for: entry.tool ?? "") ?? "wrench"
         case "compaction":
             "arrow.trianglehead.2.clockwise.rotate.90"
         case "error":

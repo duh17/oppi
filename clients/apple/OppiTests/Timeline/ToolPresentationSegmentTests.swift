@@ -17,23 +17,22 @@ struct ToolPresentationSegmentTests {
         isError: Bool = false,
         isDone: Bool = true,
         callSegments: [StyledSegment]? = nil,
-        resultSegments: [StyledSegment]? = nil
+        resultSegments: [StyledSegment]? = nil,
+        outputPresentation: ToolOutputPresentation? = nil
     ) -> ToolTimelineRowConfiguration {
-        ToolPresentationBuilder.build(
+        var context = ToolPresentationBuilder.Context(
+            args: nil, expandedItemIDs: [], fullOutput: "", isLoadingOutput: false,
+            callSegments: callSegments, resultSegments: resultSegments
+        )
+        context.outputPresentation = outputPresentation
+        return ToolPresentationBuilder.build(
             itemID: "test-1",
             tool: tool,
             argsSummary: argsSummary,
             outputPreview: outputPreview,
             isError: isError,
             isDone: isDone,
-            context: .init(
-                args: nil,
-                expandedItemIDs: [],
-                fullOutput: "",
-                isLoadingOutput: false,
-                callSegments: callSegments,
-                resultSegments: resultSegments
-            )
+            context: context
         )
     }
 
@@ -47,13 +46,14 @@ struct ToolPresentationSegmentTests {
             callSegments: [
                 StyledSegment(text: "$ ", style: .bold),
                 StyledSegment(text: "npm test", style: .accent),
-            ]
+            ],
+            outputPresentation: .init(kind: "terminal")
         )
         #expect(config.segmentAttributedTitle != nil)
         #expect(config.segmentAttributedTitle!.string == "npm test")
     }
 
-    @Test func noCallSegmentsFallsBackToHardcoded() {
+    @Test func noFactsDegradesToGeneric() {
         let config = buildConfig(
             tool: "bash",
             argsSummary: "echo hi"

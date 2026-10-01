@@ -40,52 +40,6 @@ enum ToolCallFormatting {
 
     // MARK: - Display Formatting
 
-    /// Format bash command for header display (truncated to 200 chars).
-    static func bashCommand(args: [String: JSONValue]?, argsSummary: String) -> String {
-        String(bashCommandFull(args: args, argsSummary: argsSummary).prefix(200))
-    }
-
-    /// Full bash command text for expanded views and copy actions.
-    static func bashCommandFull(args: [String: JSONValue]?, argsSummary: String) -> String {
-        let raw: String
-        if let cmd = args?["command"]?.stringValue {
-            raw = cmd
-        } else if let parsed = parseArgValue("command", from: argsSummary) {
-            raw = parsed
-        } else if argsSummary.hasPrefix("command: ") {
-            raw = String(argsSummary.dropFirst(9))
-        } else {
-            raw = argsSummary
-        }
-
-        return normalizedBashCommand(raw)
-    }
-
-    private static func normalizedBashCommand(_ text: String) -> String {
-        var value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return value }
-
-        if let first = value.first, let last = value.last,
-           first == "'" || first == "\"", first == last, value.count >= 2 {
-            value = String(value.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
-            return value
-        }
-
-        if value.hasPrefix("\""), !value.dropFirst().contains("\"") {
-            value = String(value.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
-        } else if value.hasSuffix("\""), !value.dropLast().contains("\"") {
-            value = String(value.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        if value.hasPrefix("'"), !value.dropFirst().contains("'") {
-            value = String(value.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
-        } else if value.hasSuffix("'"), !value.dropLast().contains("'") {
-            value = String(value.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        return value
-    }
-
     /// Format file path for header display with optional read line range.
     ///
     /// Keeps the full (shortened) path string so collapsed rows can use
@@ -295,11 +249,11 @@ enum ToolCallFormatting {
 
     /// Canonical SF Symbol name for a built-in tool.
     ///
-    /// Accepts either a raw tool name (`"bash"`, `"Read"`) or a
-    /// `toolNamePrefix` (`"$"`, `"read"`). Returns `nil` for unknown/extension tools.
+    /// Terminal rows use the fact-derived `"$"` presentation prefix, never a
+    /// raw shell-tool name. Other built-in raw names remain until their migration.
     static func sfSymbolName(for toolName: String) -> String? {
         switch toolName {
-        case "$", "bash", "Bash":
+        case "$":
             return "dollarsign"
         case "read", "Read":
             return "magnifyingglass"

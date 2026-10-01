@@ -306,6 +306,8 @@ extension ChatTimelineCollectionHost.Controller {
             elapsedSeconds: reducer?.toolElapsed(for: itemID)
         )
         context.display = toolArgsStore?.display(for: itemID)
+        context.inputPresentation = toolArgsStore?.inputPresentation(for: itemID)
+        context.outputPresentation = toolArgsStore?.outputPresentation(for: itemID)
         let chrome = ToolPresentationBuilder.build(
             itemID: itemID,
             tool: tool,
@@ -345,6 +347,8 @@ extension ChatTimelineCollectionHost.Controller {
         context.totalBytes = outputBytes > 0 ? outputBytes : nil
         context.display = toolArgsStore?.display(for: itemID)
         context.inputPresentation = toolArgsStore?.inputPresentation(for: itemID)
+        context.outputPresentation = toolArgsStore?.outputPresentation(for: itemID)
+        context.outputAvailability = toolArgsStore?.outputAvailability(for: itemID)
         context.nestedCalls = toolDetailsStore?.nestedCalls(for: itemID)
         let interactionCtx = self.interactionContext
         let sessionContent = self.sessionContent
@@ -425,10 +429,10 @@ extension ChatTimelineCollectionHost.Controller {
                 configuration.sourceFilePath = trimmed
             }
         }
-        if let access = toolOutputAccess {
+        if let access = toolOutputAccess, context.outputAvailability?.hasSidecar == true {
             configuration.toolOutputSidecarSource = access.sidecarSource(toolCallId: itemID)
             configuration.fetchCompleteToolOutput = access.completeOutputFetch(
-                tool: tool,
+                availability: context.outputAvailability,
                 toolCallId: itemID,
                 store: toolOutputStore
             )

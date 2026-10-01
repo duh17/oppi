@@ -215,7 +215,7 @@ struct APIClientToolOutputTests {
         methods.removeAll()
         ranges.removeAll()
         let fetched = try await ExpandedToolOutputFetch.fetchForExpand(
-            tool: "bash",
+            availability: .init(complete: false, source: "sidecar"),
             apiClient: client,
             scope: .workspace("ws-1"),
             sessionId: "s1",
@@ -279,7 +279,7 @@ struct APIClientToolOutputTests {
         }
 
         let fetched = try await ExpandedToolOutputFetch.fetchForExpand(
-            tool: "bash",
+            availability: .init(complete: false, source: "sidecar"),
             apiClient: client,
             scope: .workspace("ws-1"),
             sessionId: "s1",

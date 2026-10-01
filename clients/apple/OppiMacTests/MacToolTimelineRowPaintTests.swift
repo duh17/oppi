@@ -247,13 +247,12 @@ struct MacToolTimelineRowPresentationTests {
             toolDetailsStore: ToolDetailsStore()
         )
 
-        #expect(MacToolDocumentColumnPaint.surface(for: row.content) == .terminal)
-        guard case .terminal(let terminal) = row.content else {
-            Issue.record("Expected .terminal, got \(String(describing: row.content))")
+        #expect(MacToolDocumentColumnPaint.surface(for: row.content) == .markdown)
+        guard case .markdown(let document) = row.content else {
+            Issue.record("Expected generic document without server facts")
             return
         }
-        #expect(terminal.command == "npm test")
-        #expect(terminal.output?.contains("SwiftCompile") == true)
+        #expect(document.text.contains("SwiftCompile"))
     }
 
     @Test func collapsedPresentationUsesChatPreviewExpandedUsesPreviewOnlyStore() {

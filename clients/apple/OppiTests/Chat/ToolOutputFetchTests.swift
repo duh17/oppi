@@ -9,35 +9,34 @@ struct ToolOutputFetchTests {
     @Test func expandFetchPolicySkipsNetworkForHeldShellPreviewOnly() {
         #expect(
             ExpandedToolOutputFetch.shouldSkipExpandFetch(
-                tool: "bash",
+                availability: .init(complete: false, source: "sidecar"),
                 hasCompleteOutput: false,
                 storedPreview: "tail preview"
             )
         )
         #expect(
             ExpandedToolOutputFetch.shouldSkipExpandFetch(
-                tool: "grep",
+                availability: .init(complete: false, source: "sidecar"),
                 hasCompleteOutput: false,
                 storedPreview: "hit"
             )
         )
         #expect(
             !ExpandedToolOutputFetch.shouldSkipExpandFetch(
-                tool: "read",
+                availability: nil,
                 hasCompleteOutput: false,
                 storedPreview: "file body"
             )
         )
-        #expect(
-            !ExpandedToolOutputFetch.shouldSkipExpandFetch(
-                tool: "bash",
-                hasCompleteOutput: false,
-                storedPreview: ""
-            )
+        let skipsEmptyPreview = ExpandedToolOutputFetch.shouldSkipExpandFetch(
+            availability: .init(complete: false, source: "sidecar"),
+            hasCompleteOutput: false,
+            storedPreview: ""
         )
+        #expect(!skipsEmptyPreview)
         #expect(
             ExpandedToolOutputFetch.shouldSkipExpandFetch(
-                tool: "read",
+                availability: nil,
                 hasCompleteOutput: true,
                 storedPreview: "file body"
             )
@@ -204,6 +203,8 @@ struct ToolOutputFetchTests {
         let harness = makeTimelineHarness(sessionId: "session-a")
         let toolID = "tool-shell-preview"
         let preview = "line79\nline80\n"
+        harness.toolArgsStore.setOutputPresentation(.init(kind: "terminal"), for: toolID)
+        harness.toolArgsStore.setOutputAvailability(.init(complete: false, totalBytes: 50_000, source: "sidecar"), for: toolID)
 
         harness.toolOutputStore.replace(preview, for: toolID, previewOnly: true, totalBytes: 50_000)
 

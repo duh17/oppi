@@ -14,6 +14,8 @@ enum ToolContentDescriptorBuilder {
         var previewOnly: Bool
         var totalBytes: Int?
         var display: ToolDisplay?
+        var outputPresentation: ToolOutputPresentation?
+        var outputAvailability: ToolOutputAvailability?
 
         init(
             args: [String: JSONValue]? = nil,
@@ -24,7 +26,9 @@ enum ToolContentDescriptorBuilder {
             nestedCalls: NestedToolCalls? = nil,
             previewOnly: Bool = false,
             totalBytes: Int? = nil,
-            display: ToolDisplay? = nil
+            display: ToolDisplay? = nil,
+            outputPresentation: ToolOutputPresentation? = nil,
+            outputAvailability: ToolOutputAvailability? = nil
         ) {
             self.args = args
             self.details = details
@@ -35,6 +39,8 @@ enum ToolContentDescriptorBuilder {
             self.previewOnly = previewOnly
             self.totalBytes = totalBytes
             self.display = display
+            self.outputPresentation = outputPresentation
+            self.outputAvailability = outputAvailability
         }
     }
 
@@ -79,10 +85,40 @@ enum ToolContentDescriptorBuilder {
         outputPreview: String,
         isError: Bool,
         isDone: Bool,
-        context: Context
+        context: Context,
+        includeOutput: Bool = true
     ) -> ToolContentPresentation {
         let normalizedTool = ToolCallFormatting.normalized(tool)
         let output = context.fullOutput.isEmpty ? outputPreview : context.fullOutput
+        let input = (context.args ?? [:]).keys.sorted().compactMap { key -> ToolInspection.Field? in
+            guard let value = context.args?[key] else { return nil }
+            let fact = context.inputPresentation?.fields[key]
+            return .init(name: key, value: value, role: fact?.role, language: fact?.language)
+        }
+        let command = input.first { $0.role == "command" }?.value.stringValue
+        let previewOnly = context.previewOnly || (context.fullOutput.isEmpty && context.outputAvailability?.complete == false)
+        let totalBytes = context.totalBytes ?? context.outputAvailability?.totalBytes
+        if context.outputPresentation?.kind == "terminal" {
+            // Input and output stay separate before execution and through deltas.
+            // Preserve whitespace in terminal output and replace-mode tails.
+            let terminalText = context.details?.objectValue?["expandedText"]?.stringValue.flatMap {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
+            } ?? output
+            let leaf = ToolContentDescriptor.terminal(.init(output: terminalText.isEmpty ? nil : terminalText, language: nil))
+            return ToolContentPresentation(
+                inspection: .init(input: input, calls: context.nestedCalls, output: [leaf], raw: output,
+                                  previewOnly: previewOnly, totalBytes: totalBytes, terminalOutput: true),
+                copyCommandText: command?.isEmpty == false ? command : nil,
+                copyOutputText: output.isEmpty ? nil : output
+            )
+        }
+        // Collapsed rows need semantic input and glyph facts, not a JSON/Markdown
+        // document rebuilt for every delta. Preserve the existing lazy output path.
+        if !includeOutput {
+            return .init(inspection: .init(input: input, calls: context.nestedCalls, output: [], raw: output,
+                                          previewOnly: previewOnly, totalBytes: totalBytes, terminalOutput: false),
+                         copyCommandText: nil, copyOutputText: nil)
+        }
         let outputTrimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         let writeContent = ToolCallFormatting.writeContent(from: context.args)
         let sniffContent: String? = switch normalizedTool {
@@ -100,24 +136,11 @@ enum ToolContentDescriptorBuilder {
         )
         let mediaAttachments = mediaAttachments(from: context.details)
         var copyOutput: String? = outputTrimmed.isEmpty ? nil : outputTrimmed
-        var copyCommand: String?
         var content: ToolContentDescriptor?
 
         switch normalizedTool {
         case "ask":
             break
-
-        case "bash":
-            let command = ToolCallFormatting.bashCommandFull(args: context.args, argsSummary: argsSummary)
-            copyCommand = command.isEmpty ? nil : command
-            content = .terminal(
-                ToolContentDescriptor.Terminal(
-                    command: command.isEmpty ? nil : command,
-                    output: outputTrimmed.isEmpty ? nil : outputTrimmed,
-                    unwrapped: true,
-                    language: nil
-                )
-            )
 
         case "read":
             if !outputTrimmed.isEmpty || !mediaAttachments.isEmpty {
@@ -151,14 +174,7 @@ enum ToolContentDescriptorBuilder {
                             filePath: fileMetadata.filePath
                         )
                     )
-                    : .terminal(
-                        ToolContentDescriptor.Terminal(
-                            command: nil,
-                            output: outputTrimmed,
-                            unwrapped: false,
-                            language: nil
-                        )
-                    )
+                    : .terminal(.init(output: outputTrimmed, language: nil))
             }
 
         case "edit":
@@ -200,14 +216,7 @@ enum ToolContentDescriptorBuilder {
                             filePath: fileMetadata.filePath
                         )
                     )
-                    : .terminal(
-                        ToolContentDescriptor.Terminal(
-                            command: nil,
-                            output: outputTrimmed,
-                            unwrapped: false,
-                            language: nil
-                        )
-                    )
+                    : .terminal(.init(output: outputTrimmed, language: nil))
             }
 
         default:
@@ -221,8 +230,8 @@ enum ToolContentDescriptorBuilder {
                     nestedCalls: context.nestedCalls,
                     output: sanitizeGenericExtensionOutput(output, toolName: tool), rawOutput: output,
                     details: context.details, isDone: isDone,
-                    previewOnly: context.previewOnly || (context.fullOutput.isEmpty && !outputPreview.isEmpty),
-                    totalBytes: context.totalBytes,
+                    previewOnly: previewOnly || (context.fullOutput.isEmpty && !outputPreview.isEmpty),
+                    totalBytes: totalBytes,
                     toolName: context.display?.title.isEmpty == false ? tool : nil
                 ).map { .markdown($0) }
                 copyOutput = output.isEmpty ? nil : output
@@ -281,8 +290,9 @@ enum ToolContentDescriptorBuilder {
         }
 
         return ToolContentPresentation(
-            content: content,
-            copyCommandText: copyCommand,
+            inspection: .init(input: input, calls: context.nestedCalls, output: content.map { [$0] } ?? [],
+                              raw: output, previewOnly: previewOnly, totalBytes: totalBytes, terminalOutput: false),
+            copyCommandText: nil,
             copyOutputText: copyOutput
         )
     }
@@ -409,7 +419,7 @@ enum ToolContentDescriptorBuilder {
             return imageExpandedContent(image: image, fallbackText: fallbackTextOutput)
         }
 
-        return (.terminal(.init(command: nil, output: fallbackTextOutput, unwrapped: false, language: nil)), fallbackTextOutput)
+        return (.terminal(.init(output: fallbackTextOutput, language: nil)), fallbackTextOutput)
     }
 
     // MARK: - Private
@@ -643,9 +653,7 @@ enum ToolContentDescriptorBuilder {
             return (
                 .terminal(
                     ToolContentDescriptor.Terminal(
-                        command: nil,
                         output: displayText,
-                        unwrapped: false,
                         language: nil
                     )
                 ),

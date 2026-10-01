@@ -9,6 +9,13 @@ final class ToolArgsStore {
     private var store: [String: [String: JSONValue]] = [:]
     private var presentations: [String: ToolInputPresentation] = [:]
     private var displays: [String: ToolDisplay] = [:]
+    private var outputs: [String: ToolOutputPresentation] = [:]
+    private var availability: [String: ToolOutputAvailability] = [:]
+
+    func setOutputPresentation(_ value: ToolOutputPresentation, for id: String) { outputs[id] = value }
+    func outputPresentation(for id: String) -> ToolOutputPresentation? { outputs[id] }
+    func setOutputAvailability(_ value: ToolOutputAvailability, for id: String) { availability[id] = value }
+    func outputAvailability(for id: String) -> ToolOutputAvailability? { availability[id] }
 
     func setDisplay(_ display: ToolDisplay, for id: String) { displays[id] = display }
     func display(for id: String) -> ToolDisplay? { displays[id] }
@@ -34,6 +41,8 @@ final class ToolArgsStore {
         store.removeAll()
         presentations.removeAll()
         displays.removeAll()
+        outputs.removeAll()
+        availability.removeAll()
     }
 
     private static func previewArgs(_ args: [String: JSONValue]) -> [String: JSONValue] {

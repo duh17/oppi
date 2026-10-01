@@ -1655,7 +1655,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 attempt: attempt,
                 hasExistingOutput: {
                     ExpandedToolOutputFetch.shouldSkipExpandFetch(
-                        tool: tool,
+                        availability: self.toolArgsStore?.outputAvailability(for: itemID),
                         hasCompleteOutput: toolOutputStore.hasCompleteOutput(for: itemID),
                         storedPreview: toolOutputStore.fullOutput(for: itemID)
                     )
@@ -1690,12 +1690,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         /// Expansion fetch over the session's tool-output access. Access is bound to this
         /// timeline's session and scope right now; without a client or scope there is no fetch.
-        private func makeDefaultFetchToolOutput(tool: String) -> ExpandedToolOutputLoader.FetchToolOutput? {
+        private func makeDefaultFetchToolOutput(tool _: String) -> ExpandedToolOutputLoader.FetchToolOutput? {
             guard let access = toolOutputAccess else { return nil }
             // The loader's session id is `access.sessionId`: both come from this controller's
             // `sessionId` in the same synchronous call.
-            return { _, toolCallId in
-                try await access.fetchForExpand(tool: tool, toolCallId: toolCallId)
+            return { [weak self] _, toolCallId in
+                try await access.fetchForExpand(availability: self?.toolArgsStore?.outputAvailability(for: toolCallId), toolCallId: toolCallId)
             }
         }
 

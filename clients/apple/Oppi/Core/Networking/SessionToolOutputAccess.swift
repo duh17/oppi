@@ -21,11 +21,11 @@ struct SessionToolOutputAccess: Sendable {
         self.sessionId = sessionId
     }
 
-    /// Expansion fetch: a shell tool's first sidecar window (preview-only when large),
+    /// Expansion fetch: an advertised sidecar's first window (preview-only when large),
     /// or the non-empty stored output for other tools.
-    func fetchForExpand(tool: String, toolCallId: String) async throws -> ExpandedToolOutputFetch.Result {
+    func fetchForExpand(availability: ToolOutputAvailability?, toolCallId: String) async throws -> ExpandedToolOutputFetch.Result {
         try await ExpandedToolOutputFetch.fetchForExpand(
-            tool: tool,
+            availability: availability,
             apiClient: apiClient,
             scope: scope,
             sessionId: sessionId,
@@ -54,16 +54,16 @@ struct SessionToolOutputAccess: Sendable {
         )
     }
 
-    /// Complete-output fetch for copy. Only shell-sidecar tools have one (`nil` otherwise).
+    /// Complete-output fetch for copy, gated by the producer's availability fact.
     /// A complete output already held by `store` wins; a stored preview does not, so copy
     /// never yields a truncated clipboard.
     @MainActor
     func completeOutputFetch(
-        tool: String,
+        availability: ToolOutputAvailability?,
         toolCallId: String,
         store: ToolOutputStore?
     ) -> (() async throws -> String?)? {
-        guard ExpandedToolOutputFetch.isShellSidecarTool(tool) else { return nil }
+        guard availability?.hasSidecar == true else { return nil }
         return { [apiClient, scope, sessionId] in
             if let store, store.hasCompleteOutput(for: toolCallId) {
                 let text = store.fullOutput(for: toolCallId)

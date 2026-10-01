@@ -117,9 +117,7 @@ struct MacToolTimelineChromeTests {
             filePath: "App.swift"
         ))))
         #expect(MacToolTimelineChrome.offersDocumentView(for: .terminal(.init(
-            command: "npm test",
             output: "PASS",
-            unwrapped: false,
             language: nil
         ))))
         #expect(!MacToolTimelineChrome.offersDocumentView(for: .status(message: "Loading…")))

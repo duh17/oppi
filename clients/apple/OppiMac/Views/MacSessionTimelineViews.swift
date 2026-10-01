@@ -791,7 +791,7 @@ enum MacToolTimelineChrome {
     }
 
     static func toolSymbolName(tool: String) -> String? {
-        ToolCallFormatting.sfSymbolName(for: ToolCallFormatting.normalized(tool))
+        ToolCallFormatting.macLegacySFSymbolName(for: ToolCallFormatting.normalized(tool))
     }
 
     static func toolAccentRole(tool: String) -> ThemeShapeStyle.Role {

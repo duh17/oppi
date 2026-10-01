@@ -81,41 +81,6 @@ struct ToolCallFormattingTests {
         #expect(ToolCallFormatting.readStartLine(from: nil) == 1)
     }
 
-    // MARK: - Bash Command
-
-    @Test func bashCommandFromArgs() {
-        let args: [String: JSONValue] = ["command": .string("echo hello")]
-        #expect(ToolCallFormatting.bashCommand(args: args, argsSummary: "") == "echo hello")
-    }
-
-    @Test func bashCommandTruncatesLong() {
-        let long = String(repeating: "a", count: 260)
-        let args: [String: JSONValue] = ["command": .string(long)]
-        let result = ToolCallFormatting.bashCommand(args: args, argsSummary: "")
-        #expect(result.count == 200)
-        #expect(result == String(long.prefix(200)))
-    }
-
-    @Test func bashCommandFallbackToSummary() {
-        let result = ToolCallFormatting.bashCommand(args: nil, argsSummary: "command: ls -la")
-        #expect(result == "ls -la")
-    }
-
-    @Test func bashCommandStripsQuotedSummary() {
-        let result = ToolCallFormatting.bashCommand(args: nil, argsSummary: "command: 'ls -la'")
-        #expect(result == "ls -la")
-    }
-
-    @Test func bashCommandStripsDanglingTrailingQuote() {
-        let result = ToolCallFormatting.bashCommand(args: nil, argsSummary: "command: ls -la'")
-        #expect(result == "ls -la")
-    }
-
-    @Test func bashCommandRawSummary() {
-        let result = ToolCallFormatting.bashCommand(args: nil, argsSummary: "some arg")
-        #expect(result == "some arg")
-    }
-
     // MARK: - Display File Path
 
     @Test func displayFilePathKeepsFullShortenedPath() {

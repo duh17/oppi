@@ -19,6 +19,8 @@ enum ToolPresentationBuilder {
         var previewOnly = false
         var totalBytes: Int? = nil
         var display: ToolDisplay? = nil
+        var outputPresentation: ToolOutputPresentation? = nil
+        var outputAvailability: ToolOutputAvailability? = nil
         let expandedItemIDs: Set<String>
         let fullOutput: String
         let isLoadingOutput: Bool
@@ -66,7 +68,18 @@ enum ToolPresentationBuilder {
         let isExpanded = context.expandedItemIDs.contains(itemID)
         let args = context.args
 
-        let hasInlineMediaDataURI = shouldWarnInlineMediaForToolOutput(
+        let presentation = ToolContentDescriptorBuilder.build(
+            tool: tool, argsSummary: argsSummary, outputPreview: outputPreview,
+            isError: isError, isDone: isDone,
+            context: .init(args: args, details: context.details, fullOutput: context.fullOutput,
+                           isLoadingOutput: context.isLoadingOutput, inputPresentation: context.inputPresentation,
+                           nestedCalls: context.nestedCalls, previewOnly: context.previewOnly,
+                           totalBytes: context.totalBytes, display: context.display,
+                           outputPresentation: context.outputPresentation, outputAvailability: context.outputAvailability),
+            includeOutput: isExpanded || Self.toolAudioPresentationDetails(from: context.details) != nil
+        )
+        let isTerminal = presentation.inspection.terminalOutput
+        let hasInlineMediaDataURI = !isTerminal && shouldWarnInlineMediaForToolOutput(
             normalizedTool: normalizedTool,
             outputPreview: outputPreview,
             fullOutput: context.fullOutput
@@ -83,7 +96,8 @@ enum ToolPresentationBuilder {
             isError: isError,
             isDone: isDone,
             outputPreview: outputPreview,
-            display: context.callSegments?.isEmpty != false ? context.display : nil
+            display: context.callSegments?.isEmpty != false ? context.display : nil,
+            terminalOutput: isTerminal
         )
 
         let isBuiltInFileTool = normalizedTool == "read" || normalizedTool == "write" || normalizedTool == "edit"
@@ -92,21 +106,7 @@ enum ToolPresentationBuilder {
         // Expanded presentation
         let expanded: ExpandedPresentation
         if isExpanded || isVoicePresentationResult {
-            expanded = buildExpanded(
-                normalizedTool: normalizedTool,
-                rawToolName: tool,
-                args: args,
-                details: context.details,
-                argsSummary: argsSummary,
-                fullOutput: context.fullOutput,
-                outputPreview: outputPreview,
-                isError: isError,
-                isDone: isDone,
-                isLoadingOutput: context.isLoadingOutput,
-                inputPresentation: context.inputPresentation, nestedCalls: context.nestedCalls,
-                previewOnly: context.previewOnly, totalBytes: context.totalBytes,
-                display: context.display
-            )
+            expanded = buildExpanded(presentation)
         } else {
             expanded = ExpandedPresentation()
         }
@@ -122,7 +122,7 @@ enum ToolPresentationBuilder {
         }
 
         // Language badge
-        var languageBadge = collapsed.languageBadge
+        var languageBadge = presentation.inspection.commandLanguageBadge ?? collapsed.languageBadge
         if hasInlineMediaDataURI {
             if let existingBadge = languageBadge, !existingBadge.isEmpty {
                 languageBadge = "\(existingBadge) • ⚠︎media"
@@ -141,19 +141,16 @@ enum ToolPresentationBuilder {
         // Inline media belongs in the expanded renderer, not the header.
 
         // Server-rendered segments: build attributed title and trailing.
-        // For tools with SF Symbol icons (read, write, edit, bash), the first
-        // bold segment is the tool name — strip it since the icon already
-        // represents the tool. Generic extension tools keep the name in the
-        // title per their non-segment fallback behavior.
-        //
-        // Expanded bash rows render a dedicated command panel, so we suppress
-        // segment title commands there to avoid duplicate command text.
+        // Terminal facts and file icons replace the summary's tool prefix.
+        // Keep the server's summary title even when expanded: command input
+        // belongs to the separate command panel. Generic extensions retain
+        // their name per the non-segment fallback behavior.
         let segmentAttributedTitle: NSAttributedString?
-        if isVoicePresentationResult || isBuiltInFileTool || normalizedTool == "ask" || (isExpanded && normalizedTool == "bash") {
+        if isVoicePresentationResult || isBuiltInFileTool || normalizedTool == "ask" {
             segmentAttributedTitle = nil
         } else if let callSegs = context.callSegments, !callSegs.isEmpty {
             let prefix = SegmentRenderer.toolNamePrefix(from: callSegs)
-            if Self.toolPrefixIconReplacesName(prefix) {
+            if isTerminal || Self.toolPrefixIconReplacesName(prefix) {
                 segmentAttributedTitle = SegmentRenderer.attributedStringStrippingPrefix(from: callSegs)
             } else {
                 segmentAttributedTitle = SegmentRenderer.attributedString(from: callSegs)
@@ -161,6 +158,8 @@ enum ToolPresentationBuilder {
         } else {
             segmentAttributedTitle = nil
         }
+
+        if isTerminal, let segmentAttributedTitle { title = segmentAttributedTitle.string }
 
         let segmentAttributedTrailing: NSAttributedString?
         if isInterrupted {
@@ -203,10 +202,10 @@ enum ToolPresentationBuilder {
             trailing: segmentAttributedTrailing != nil ? nil : trailing,
             titleLineBreakMode: segmentAttributedTitle != nil ? .byTruncatingTail : collapsed.titleLineBreakMode,
             toolNamePrefix: segmentAttributedTitle != nil
-                ? (segmentToolNamePrefix ?? collapsed.toolNamePrefix)
+                ? (isTerminal ? collapsed.toolNamePrefix : (segmentToolNamePrefix ?? collapsed.toolNamePrefix))
                 : collapsed.toolNamePrefix,
             toolNameColor: segmentAttributedTitle != nil
-                ? (segmentToolNameColor ?? collapsed.toolNameColor)
+                ? (isTerminal ? collapsed.toolNameColor : (segmentToolNameColor ?? collapsed.toolNameColor))
                 : collapsed.toolNameColor,
             editAdded: isInterrupted ? nil : collapsed.editAdded,
             editRemoved: isInterrupted ? nil : collapsed.editRemoved,
@@ -272,41 +271,18 @@ enum ToolPresentationBuilder {
         isError: Bool,
         isDone: Bool,
         outputPreview: String,
-        display: ToolDisplay?
+        display: ToolDisplay?,
+        terminalOutput: Bool
     ) -> CollapsedPresentation {
         var result = CollapsedPresentation(title: tool)
 
-        switch normalizedTool {
-        case "bash":
-            let compactCommand = ToolCallFormatting.bashCommand(args: args, argsSummary: argsSummary)
-                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if isExpanded {
-                // Expanded bash rows already have a dedicated command panel.
-                // Keep the header icon-only ("$" symbol) and reserve line
-                // height with a single space so body content doesn't shift up.
-                result.title = " "
-            } else {
-                result.title = compactCommand.isEmpty ? "bash" : compactCommand
-                result.titleLineBreakMode = .byTruncatingMiddle
-            }
+        if terminalOutput {
             result.toolNamePrefix = "$"
             result.toolNameColor = UIColor(Color.themeGreen)
+            return result
+        }
 
-            // Detect embedded languages (heredocs, inline flags) for badge.
-            // Use the full raw command because heredoc detection relies on
-            // newlines and may appear after the 200-char collapsed title limit.
-            let rawCommand = ToolCallFormatting.bashCommandFull(args: args, argsSummary: argsSummary)
-            if !rawCommand.isEmpty {
-                let segments = BashEmbeddedLanguageDetector.detect(rawCommand)
-                if let embedded = segments.first(where: {
-                    if case .embeddedCode = $0.kind { return true }
-                    return false
-                }), case .embeddedCode(let lang) = embedded.kind {
-                    result.languageBadge = lang.displayName
-                }
-            }
-
+        switch normalizedTool {
         case "read", "write", "edit":
             let displayPath = ToolCallFormatting.displayFilePath(
                 tool: normalizedTool, args: args, argsSummary: argsSummary
@@ -419,38 +395,14 @@ enum ToolPresentationBuilder {
         var rawMarkdownOutputPrefix: String?
     }
 
-    private static func buildExpanded(
-        normalizedTool _: String,
-        rawToolName: String,
-        args: [String: JSONValue]?,
-        details: JSONValue?,
-        argsSummary: String,
-        fullOutput: String,
-        outputPreview: String,
-        isError: Bool,
-        isDone: Bool,
-        isLoadingOutput: Bool,
-        inputPresentation: ToolInputPresentation?, nestedCalls: NestedToolCalls?,
-        previewOnly: Bool, totalBytes: Int?, display: ToolDisplay?
-    ) -> ExpandedPresentation {
-        let presentation = ToolContentDescriptorBuilder.build(
-            tool: rawToolName,
-            argsSummary: argsSummary,
-            outputPreview: outputPreview,
-            isError: isError,
-            isDone: isDone,
-            context: ToolContentDescriptorBuilder.Context(
-                args: args,
-                details: details,
-                fullOutput: fullOutput,
-                isLoadingOutput: isLoadingOutput,
-                inputPresentation: inputPresentation, nestedCalls: nestedCalls,
-                previewOnly: previewOnly, totalBytes: totalBytes,
-                display: display
-            )
-        )
+    private static func buildExpanded(_ presentation: ToolContentPresentation) -> ExpandedPresentation {
         return ExpandedPresentation(
-            content: presentation.content.map(expandedContent(from:)),
+            content: presentation.content.map { descriptor in
+                if presentation.inspection.terminalOutput, case .terminal(let terminal) = descriptor {
+                    return .bash(command: presentation.inspection.commandText, output: terminal.output, unwrapped: true)
+                }
+                return expandedContent(from: descriptor)
+            },
             copyCommandText: presentation.copyCommandText,
             copyOutputText: presentation.copyOutputText,
             rawMarkdownText: { if case .markdown(let markdown) = presentation.content { return markdown.rawText }; return nil }(),
@@ -463,13 +415,6 @@ enum ToolPresentationBuilder {
     private static func expandedContent(from descriptor: ToolContentDescriptor) -> ToolExpandedContent {
         switch descriptor {
         case .terminal(let terminal):
-            if terminal.unwrapped {
-                return .bash(
-                    command: terminal.command,
-                    output: terminal.output,
-                    unwrapped: true
-                )
-            }
             return .text(text: terminal.output ?? "", language: terminal.language)
         case .diff(let diff):
             return .diff(lines: diff.lines, path: diff.path)
@@ -557,7 +502,7 @@ enum ToolPresentationBuilder {
         startLine: Int,
         attachments: [ToolMediaAttachment]
     ) -> ToolExpandedContent {
-        let fileType = resolvedExpandedFileType(metadata: metadata, text: text)
+        let fileType = metadata.fileType
         if let fileType,
            let document = DocumentFamily(fileType: fileType, text: text, filePath: metadata.filePath) {
             return .document(document)
@@ -575,10 +520,6 @@ enum ToolPresentationBuilder {
                 attachments: attachments
             )
         case .json:
-            if let sniffed = GeographicJSONSniffer.fileType(from: text),
-               let document = DocumentFamily(fileType: sniffed, text: text, filePath: metadata.filePath) {
-                return .document(document)
-            }
             return .code(
                 text: text,
                 language: metadata.language,
@@ -598,17 +539,6 @@ enum ToolPresentationBuilder {
         }
     }
 
-    /// Prefer file bytes so `places.json` FeatureCollection/Topology becomes a map.
-    private static func resolvedExpandedFileType(
-        metadata: FilePresentationMetadata,
-        text: String
-    ) -> FileType? {
-        if let path = metadata.filePath {
-            return FileType.detect(from: path, content: text)
-        }
-        return GeographicJSONSniffer.fileType(from: text) ?? metadata.fileType
-    }
-
     static func shouldWarnInlineMediaForToolOutput(
         normalizedTool: String,
         outputPreview: String,
@@ -616,7 +546,7 @@ enum ToolPresentationBuilder {
     ) -> Bool {
         let tool = ToolCallFormatting.normalized(normalizedTool)
         switch tool {
-        case "bash", "read", "write", "edit":
+        case "read", "write", "edit":
             return false
         default:
             break

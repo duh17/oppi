@@ -185,11 +185,14 @@ struct ToolCallDocumentTests {
         #expect(text.contains("10000 bytes")); #expect(text.contains("bad")); #expect(text.contains("… third"))
         #expect(text.contains("Some calls not recorded."))
     }
-    @Test func expandedTextWinsAndTuiIsOnlyEmptyFallback() throws {
-        let details: JSONValue = .object(["expandedText": "# Human", "presentationFormat": "markdown", "tuiRender": .object(["expandedText": "terminal snapshot"])])
+    @Test func expandedTextWinsAndEmptyOutputRendersDetails() throws {
+        let details: JSONValue = .object(["expandedText": "# Human", "presentationFormat": "markdown", "count": 42])
         #expect(try doc("raw", details: details).text == "# Human")
-        #expect(try doc("raw", details: .object(["tuiRender": .object(["expandedText": "snapshot"])])).text == "```text\nraw\n```")
-        #expect(try doc(details: .object(["tuiRender": .object(["expandedText": "\u{1b}[31mfallback"])] )).text == "```text\nfallback\n```")
+        #expect(try doc("raw", details: .object(["count": 42])).text == "```text\nraw\n```")
+        let empty = try doc(details: .object(["count": 42, "status": "saved"]))
+        #expect(empty.text.contains("42"))
+        #expect(empty.text.contains("saved"))
+        #expect(empty.text.contains("| Field | Value |"))
     }
 
     @Test @MainActor func fullScreenUsesSameDocumentAndRawToggle() throws {
@@ -288,7 +291,7 @@ struct ToolCallDocumentTests {
     @Test(arguments: [#"{"title":42,"group":false,"verbatim":"future"}"#, #"[]"#, #""invalid""#, #"null"#])
     func malformedDisplayDoesNotRejectProtocolOrNestedRecords(_ value: String) throws {
         let message = try ServerMessage.decode(from: "{\"type\":\"tool_start\",\"tool\":\"raw\",\"args\":{},\"display\":" + value + "}")
-        guard case .toolStart(_, _, _, _, _, let display) = message else { Issue.record("tool start"); return }
+        guard case .toolStart(_, _, _, _, _, let display, _) = message else { Issue.record("tool start"); return }
         #expect((display?.label(fallback: "raw") ?? "raw") == "raw")
         let data = Data(("{\"id\":\"t\",\"type\":\"toolCall\",\"timestamp\":\"2026-09-30T15:20:00Z\",\"tool\":\"raw\",\"display\":" + value + "}").utf8)
         let trace = try JSONDecoder().decode(TraceEvent.self, from: data)
@@ -339,8 +342,8 @@ struct ToolCallDocumentTests {
         let start = try ServerMessage.decode(from: #"{"type":"tool_start","tool":"arbitrary","toolCallId":"t","args":{"source":"text(1)"},"inputPresentation":{"fields":{"source":{"role":"code","language":"javascript"}}},"display":{"title":"getActivityDetail","group":"coros"}}"#)
         let end = try ServerMessage.decode(from: #"{"type":"tool_end","tool":"arbitrary","toolCallId":"t","nestedCalls":{"calls":[{"id":"t/1","name":"nested","status":"future"}],"complete":false}}"#)
         let live = TimelineReducer(); let correlator = ToolCallCorrelator()
-        guard case .toolStart(let tool, let args, let id, let segments, let hints, let display) = start,
-              case .toolEnd(_, _, _, _, _, let nested) = end else { Issue.record("protocol case"); return }
+        guard case .toolStart(let tool, let args, let id, let segments, let hints, let display, _) = start,
+              case .toolEnd(_, _, _, _, _, let nested, _, _) = end else { Issue.record("protocol case"); return }
         live.process(correlator.start(sessionId: "s", tool: tool, args: args, toolCallId: id, callSegments: segments, inputPresentation: hints, display: display))
         live.process(correlator.output(sessionId: "s", output: #"{"z":1,"a":2}"#, isError: false, toolCallId: "t"))
         live.process(correlator.end(sessionId: "s", toolCallId: "t"))

@@ -48,32 +48,25 @@ enum ExpandedToolOutputFetch {
         }
     }
 
-    static func isShellSidecarTool(_ tool: String) -> Bool {
-        ToolCallFormatting.isBashTool(tool)
-            || ToolCallFormatting.isGrepTool(tool)
-            || ToolCallFormatting.isFindTool(tool)
-            || ToolCallFormatting.isLsTool(tool)
-    }
-
     static func shouldSkipExpandFetch(
-        tool: String,
+        availability: ToolOutputAvailability?,
         hasCompleteOutput: Bool,
         storedPreview: String
     ) -> Bool {
         if hasCompleteOutput {
             return true
         }
-        return isShellSidecarTool(tool) && !storedPreview.isEmpty
+        return availability?.hasSidecar == true && !storedPreview.isEmpty
     }
 
     static func fetchForExpand(
-        tool: String,
+        availability: ToolOutputAvailability?,
         apiClient: APIClient,
         scope: SessionRouteScope,
         sessionId: String,
         toolCallId: String
     ) async throws -> Result {
-        if isShellSidecarTool(tool) {
+        if availability?.hasSidecar == true {
             if let window = try await apiClient.openFullToolOutputSidecar(
                 scope: scope,
                 sessionId: sessionId,
