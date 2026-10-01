@@ -109,6 +109,72 @@ describe("SessionTraceService", () => {
     return dir;
   }
 
+  it.each(["read", "write", "edit", "put_file"])(
+    "reloads %s with the same file facts as live projection",
+    async (name) => {
+      const dataDir = tempDir("oppi-file-facts-history-");
+      const tracePath = join(dataDir, "trace.jsonl");
+      writeJsonl(tracePath, [
+        { type: "session", id: "pi-1", cwd: dataDir },
+        {
+          type: "message",
+          id: "call",
+          parentId: null,
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "toolCall",
+                id: "file-1",
+                name,
+                arguments: {
+                  path: "main.ts",
+                  content: "requested",
+                  edits: [{ oldText: "a", newText: "b" }],
+                },
+              },
+            ],
+          },
+        },
+        {
+          type: "message",
+          id: "result",
+          parentId: "call",
+          message: {
+            role: "toolResult",
+            toolCallId: "file-1",
+            toolName: name,
+            content: [{ type: "text", text: "actual" }],
+            details: { diff: "-42 old\n+42 actual" },
+            isError: false,
+          },
+        },
+      ]);
+      const { service, deps } = makeService({
+        dataDir,
+        storedSession: makeSession({ piSessionFile: tracePath }),
+      });
+      deps.mobileRenderers.register("put_file", {
+        inputPresentation: deps.mobileRenderers.inputPresentation("write"),
+        outputPresentation: deps.mobileRenderers.outputPresentation("write"),
+        renderCall: () => [],
+        renderResult: () => [],
+      });
+      const loaded = await service.getSessionWithTrace({
+        session: makeSession({ piSessionFile: tracePath }),
+      });
+      expect(loaded.trace.find((event) => event.type === "toolCall")).toMatchObject({
+        inputPresentation: deps.mobileRenderers.inputPresentation(name),
+        outputPresentation: deps.mobileRenderers.outputPresentation(name),
+      });
+      const result = loaded.trace.find((entry) => entry.type === "toolResult");
+      expect(result).toMatchObject({
+        outputPresentation: deps.mobileRenderers.outputPresentation(name),
+        outputAvailability: { complete: true },
+      });
+    },
+  );
+
   it("loads a workspace trace after refreshing live session state", async () => {
     const dataDir = tempDir("oppi-session-trace-service-");
     const traceDir = join(dataDir, "ws-1", "sessions", "sess-1", "agent", "sessions", "--work--");

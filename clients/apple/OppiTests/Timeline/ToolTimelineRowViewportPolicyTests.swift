@@ -55,9 +55,9 @@ struct ToolTimelineRowViewportPolicyTests {
                 expectedPriority: .required
             ),
             PolicyCase(
-                name: "built-in markdown",
-                content: .markdown(text: "# Notes"),
-                toolNamePrefix: "read",
+                name: "file markdown",
+                content: .markdown(text: "# Notes", filePath: "Notes.md"),
+                toolNamePrefix: "file-content",
                 expectedSurface: .markdownViewport,
                 expectedMode: .text,
                 expectedHeightBehavior: .markdownViewport(maxHeight: ToolTimelineRowContentView.maxOutputViewportHeight),
@@ -498,13 +498,13 @@ struct ToolTimelineRowViewportPolicyTests {
     }
 
     @Test func completedMarkdownPublishesSettledViewportBeforeParenting() throws {
-        let cases: [(prefix: String, maxHeight: CGFloat)] = [
-            ("read", ToolTimelineRowContentView.maxOutputViewportHeight),
-            ("x_read", ToolRowViewportPolicy.maxExtensionMarkdownViewportHeight),
+        let cases: [(prefix: String, filePath: String?, maxHeight: CGFloat)] = [
+            ("file-content", "Notes.md", ToolTimelineRowContentView.maxOutputViewportHeight),
+            ("read", nil, ToolRowViewportPolicy.maxExtensionMarkdownViewportHeight),
         ]
         for item in cases {
             let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
-                expandedContent: .markdown(text: "# Notes\n\nBody"),
+                expandedContent: .markdown(text: "# Notes\n\nBody", filePath: item.filePath),
                 toolNamePrefix: item.prefix,
                 isExpanded: true,
                 isDone: true

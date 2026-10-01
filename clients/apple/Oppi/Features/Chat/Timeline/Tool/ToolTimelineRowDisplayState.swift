@@ -60,9 +60,7 @@ enum ToolTimelineRowDisplayState {
 
     private static func isFileTool(_ configuration: ToolTimelineRowConfiguration) -> Bool {
         let prefix = configuration.toolNamePrefix ?? ""
-        return ToolCallFormatting.isReadTool(prefix)
-            || ToolCallFormatting.isWriteTool(prefix)
-            || ToolCallFormatting.isEditTool(prefix)
+        return prefix == "file-content" || prefix == "file-mutation" || prefix == "file-diff"
     }
 
     private static func conservativeCollapsedFileTitle(fullTitle: String) -> String {
@@ -147,13 +145,9 @@ enum ToolTimelineRowDisplayState {
             removedLabel.text = removed > 0 ? "-\(removed)" : nil
             removedLabel.isHidden = removedLabel.text == nil
 
-            if added == 0, removed == 0 {
-                trailingLabel.text = "modified"
-                trailingLabel.isHidden = false
-            } else {
-                trailingLabel.text = nil
-                trailingLabel.isHidden = true
-            }
+            trailingLabel.attributedText = nil
+            trailingLabel.text = configuration.trailing ?? (added == 0 && removed == 0 ? "modified" : nil)
+            trailingLabel.isHidden = trailingLabel.text == nil
         } else {
             addedLabel.text = nil
             addedLabel.isHidden = true

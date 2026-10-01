@@ -11,6 +11,7 @@ final class ExpandedToolOutputLoader {
     struct LoadRequest {
         let itemID: String
         let tool: String
+        var outputPresentation: ToolOutputPresentation? = nil
         let outputByteCount: Int
         let attempt: Int
         let hasExistingOutput: () -> Bool
@@ -26,6 +27,7 @@ final class ExpandedToolOutputLoader {
             Self(
                 itemID: itemID,
                 tool: tool,
+                outputPresentation: outputPresentation,
                 outputByteCount: outputByteCount,
                 attempt: nextAttempt,
                 hasExistingOutput: hasExistingOutput,
@@ -205,7 +207,8 @@ final class ExpandedToolOutputLoader {
     }
 
     private func scheduleRetryIfNeeded(for request: LoadRequest) -> Bool {
-        guard ToolCallFormatting.isReadTool(request.tool) else { return false }
+        guard request.outputPresentation?.kind == "fileContent",
+              request.outputPresentation?.provenance != "requested" else { return false }
         guard request.attempt < Self.retryMaxAttempts else { return false }
         guard request.isItemExpanded() else { return false }
 

@@ -238,12 +238,13 @@ struct ToolContentDescriptorTests {
             outputPreview: body,
             isError: false,
             isDone: true,
-            context: ToolPresentationBuilder.Context(
-                args: ["path": .string("notes.tex")],
-                expandedItemIDs: ["read-tex"],
-                fullOutput: body,
-                isLoadingOutput: false
-            )
+            context: {
+                var context = ToolPresentationBuilder.Context(args: ["path": .string("notes.tex")],
+                    expandedItemIDs: ["read-tex"], fullOutput: body, isLoadingOutput: false)
+                context.inputPresentation = ToolFileFactsFixture.readInput
+                context.outputPresentation = .init(kind: "fileContent", provenance: "result")
+                return context
+            }()
         )
         guard case .code(_, let language, _, let filePath) = config.expandedContent else {
             Issue.record("Expected iOS .code, got \(String(describing: config.expandedContent))")
@@ -515,7 +516,7 @@ struct ToolContentDescriptorTests {
             Issue.record("Expected .status, got \(String(describing: presentation.content))")
             return
         }
-        #expect(message == "Writing…")
+        #expect(message == "Waiting for output…")
         #expect(presentation.copyOutputText == nil)
     }
 
@@ -542,7 +543,9 @@ struct ToolContentDescriptorTests {
                 args: args,
                 details: details,
                 fullOutput: fullOutput,
-                isLoadingOutput: isLoadingOutput
+                isLoadingOutput: isLoadingOutput,
+                inputPresentation: ToolFileFactsFixture.facts(tool)?.0,
+                outputPresentation: ToolFileFactsFixture.facts(tool)?.1
             )
         )
     }

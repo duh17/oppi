@@ -171,20 +171,20 @@ function normalizeMessages(messages: ServerMessage[]): ServerMessage[] {
     if (clone.type === "state" || clone.type === "connected") {
       clone.session = normalizeSessionForParity(clone.session);
     } else if (clone.type === "session_summary") {
-      clone.summary = {
-        ...clone.summary,
-        session: normalizeSessionForParity(clone.summary.session),
-      };
+      const summary = clone.summary as Session & { changeStats?: Session["changeStats"] };
+      clone.summary = normalizeSessionForParity(summary);
     }
     return clone;
   });
 }
 
-function expectRuntimeParity(events: AgentSessionEvent[]): {
+function expectRuntimeParity(
+  events: AgentSessionEvent[],
+  mobileRenderers = new MobileRendererRegistry(),
+): {
   managed: ReturnType<typeof makeManagedHarness>;
   mirror: ReturnType<typeof makeMirrorHarness>;
 } {
-  const mobileRenderers = new MobileRendererRegistry();
   const managed = makeManagedHarness(mobileRenderers);
   const mirror = makeMirrorHarness(mobileRenderers);
 
@@ -333,6 +333,56 @@ describe("managed and mirror runtime event parity", () => {
       });
     }
   });
+
+  it.each(["read", "write", "edit", "put_file"])(
+    "projects %s file facts identically in managed and mirror sessions",
+    (name) => {
+      const registry = new MobileRendererRegistry();
+      registry.register("put_file", {
+        inputPresentation: registry.inputPresentation("write"),
+        outputPresentation: registry.outputPresentation("write"),
+        renderCall: (args) => registry.renderCall("write", args) ?? [],
+        renderResult: (details, error) => registry.renderResult("write", details, error) ?? [],
+      });
+      const args = {
+        path: "main.ts",
+        content: "requested",
+        edits: [{ oldText: "a", newText: "b" }],
+        offset: 3,
+        limit: 7,
+      };
+      const { managed } = expectRuntimeParity(
+        [
+          { type: "tool_execution_start", toolCallId: "file-1", toolName: name, args },
+          {
+            type: "tool_execution_update",
+            toolCallId: "file-1",
+            toolName: name,
+            partialResult: { content: [{ type: "text", text: "partial" }] },
+          },
+          {
+            type: "tool_execution_end",
+            toolCallId: "file-1",
+            toolName: name,
+            isError: false,
+            result: {
+              content: [{ type: "text", text: "result" }],
+              details: { diff: "-42 old\n+42 actual" },
+            },
+          },
+        ] as AgentSessionEvent[],
+        registry,
+      );
+      expect(managed.received.find((event) => event.type === "tool_start")).toMatchObject({
+        inputPresentation: registry.inputPresentation(name),
+        outputPresentation: registry.outputPresentation(name),
+      });
+      expect(managed.received.find((event) => event.type === "tool_end")).toMatchObject({
+        outputPresentation: registry.outputPresentation(name),
+        outputAvailability: { complete: true },
+      });
+    },
+  );
 
   it("projects assistant error finalization identically", () => {
     expectRuntimeParity([

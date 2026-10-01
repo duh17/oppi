@@ -211,6 +211,25 @@ function validatedSegments(
   return segments;
 }
 
+function validatedOutputPresentation(value: unknown): ToolOutputPresentation | undefined {
+  const fact = asRecord(value);
+  if (
+    !fact ||
+    !["terminal", "structured", "fileContent", "diffOfEdits"].includes(String(fact.kind))
+  )
+    return undefined;
+  if (
+    fact.provenance !== undefined &&
+    fact.provenance !== "requested" &&
+    fact.provenance !== "result"
+  )
+    return undefined;
+  return {
+    kind: fact.kind as ToolOutputPresentation["kind"],
+    ...(fact.provenance ? { provenance: fact.provenance as "requested" | "result" } : {}),
+  };
+}
+
 const bashCommandSummaryMaxCharacters = 200;
 
 // ─── Built-in Renderers ───
@@ -236,8 +255,21 @@ const bash: MobileToolRenderer = {
 };
 
 const read: MobileToolRenderer = {
+  inputPresentation: {
+    fields: {
+      path: { role: "filePath" },
+      offset: { role: "lineOffset" },
+      limit: { role: "lineLimit" },
+    },
+  },
+  outputPresentation: { kind: "fileContent", provenance: "result" },
   renderCall(args) {
-    const path = shortenPath(str(args.path));
+    const rawPath = str(args.path);
+    const components = rawPath.replace(/\\/g, "/").split("/").filter(Boolean);
+    const path =
+      components.at(-1) === "SKILL.md" && components.length > 1
+        ? `[skill] ${components.at(-2)}`
+        : shortenPath(rawPath);
     const segs: StyledSegment[] = [
       { text: "read ", style: "bold" },
       { text: path || "…", style: "accent" },
@@ -265,6 +297,8 @@ const read: MobileToolRenderer = {
 };
 
 const edit: MobileToolRenderer = {
+  inputPresentation: { fields: { path: { role: "filePath" }, edits: { role: "edits" } } },
+  outputPresentation: { kind: "diffOfEdits", provenance: "result" },
   renderCall(args) {
     const path = shortenPath(str(args.path));
     const segs: StyledSegment[] = [
@@ -285,6 +319,8 @@ const edit: MobileToolRenderer = {
 };
 
 const write: MobileToolRenderer = {
+  inputPresentation: { fields: { path: { role: "filePath" }, content: { role: "fileContent" } } },
+  outputPresentation: { kind: "fileContent", provenance: "requested" },
   renderCall(args) {
     const path = shortenPath(str(args.path));
     return [
@@ -706,9 +742,20 @@ export class MobileRendererRegistry {
         return (
           !key ||
           key.length > 100 ||
-          (hint?.role !== "code" && hint?.role !== "command") ||
-          typeof hint.language !== "string" ||
-          !/^[a-zA-Z0-9_+-]{1,40}$/.test(hint.language)
+          !hint ||
+          ![
+            "code",
+            "command",
+            "filePath",
+            "fileContent",
+            "edits",
+            "lineOffset",
+            "lineLimit",
+          ].includes(String(hint.role)) ||
+          ((hint.role === "code" || hint.role === "command") &&
+            typeof hint.language !== "string") ||
+          (hint.language !== undefined &&
+            (typeof hint.language !== "string" || !/^[a-zA-Z0-9_+-]{1,40}$/.test(hint.language)))
         );
       })
     ) {
@@ -721,7 +768,10 @@ export class MobileRendererRegistry {
           const hint = asRecord(field);
           return [
             key,
-            { role: hint?.role as "code" | "command", language: hint?.language as string },
+            {
+              role: hint?.role as ToolInputPresentation["fields"][string]["role"],
+              ...(typeof hint?.language === "string" ? { language: hint.language } : {}),
+            },
           ];
         }),
       ),
@@ -732,16 +782,13 @@ export class MobileRendererRegistry {
   outputPresentation(toolName: string, details?: unknown): ToolOutputPresentation | undefined {
     const payload = asRecord(details);
     if (payload?.outputPresentation !== undefined) {
-      return {
-        kind: asRecord(payload.outputPresentation)?.kind === "terminal" ? "terminal" : "structured",
-      };
+      return validatedOutputPresentation(payload.outputPresentation) ?? { kind: "structured" };
     }
     // Existing explicit expanded text remains authoritative over static facts.
     if (typeof payload?.expandedText === "string" && payload.expandedText.trim()) {
       return { kind: payload.presentationFormat === "terminal" ? "terminal" : "structured" };
     }
-    const kind = this.renderers.get(toolName)?.outputPresentation?.kind;
-    return kind === "terminal" || kind === "structured" ? { kind } : undefined;
+    return validatedOutputPresentation(this.renderers.get(toolName)?.outputPresentation);
   }
 
   /** Shared live/history projection of Pi result availability. Never expose a path. */

@@ -9,6 +9,7 @@ import Dispatch
 struct ToolPresentationBuilderTests {
 
     private func emptyContext(
+        fileOperation: String? = nil,
         args: [String: JSONValue]? = nil,
         details: JSONValue? = nil,
         expanded: Set<String> = [],
@@ -18,10 +19,14 @@ struct ToolPresentationBuilderTests {
         var context = ToolPresentationBuilder.Context(
             args: args, details: details, expandedItemIDs: expanded,
             fullOutput: fullOutput, isLoadingOutput: isLoadingOutput,
-            callSegments: args?["command"]?.stringValue.map {
+            callSegments: ToolFileFactsFixture.callSegments(args: args, operation: fileOperation) ?? args?["command"]?.stringValue.map {
                 [StyledSegment(text: "$ ", style: .bold), StyledSegment(text: String($0.prefix(200)), style: .accent)]
             }
         )
+        if let fileOperation, let (input, output) = ToolFileFactsFixture.facts(fileOperation) {
+            context.inputPresentation = input
+            context.outputPresentation = output
+        }
         // These are producer-authored fixtures, not a client tool-name fallback.
         if args?["command"] != nil {
             context.inputPresentation = .init(fields: ["command": .init(role: "command", language: "shell")])
@@ -39,7 +44,7 @@ struct ToolPresentationBuilderTests {
             isError: false,
             isDone: true,
             isInterrupted: true,
-            context: emptyContext(args: ["path": .string("README.md")])
+            context: emptyContext(fileOperation: "read", args: ["path": .string("README.md")])
         )
         let appearance = ToolTimelineRowStatusAppearance.make(
             isDone: true,
@@ -207,7 +212,7 @@ struct ToolPresentationBuilderTests {
             argsSummary: "path: build.zig",
             outputPreview: "const std = @import(\"std\");",
             isError: false, isDone: true,
-            context: emptyContext(args: ["path": .string("build.zig")])
+            context: emptyContext(fileOperation: "read", args: ["path": .string("build.zig")])
         )
 
         #expect(config.languageBadge == "Zig")
@@ -220,7 +225,7 @@ struct ToolPresentationBuilderTests {
             argsSummary: "path: README.md",
             outputPreview: "# Hello",
             isError: false, isDone: true,
-            context: emptyContext(args: ["path": .string("README.md")])
+            context: emptyContext(fileOperation: "read", args: ["path": .string("README.md")])
         )
 
         #expect(config.languageBadge == "Markdown")
@@ -453,12 +458,12 @@ struct ToolPresentationBuilderTests {
             argsSummary: "path: src/server.ts",
             outputPreview: "const x = 1;",
             isError: false, isDone: true,
-            context: emptyContext(args: ["path": .string("src/server.ts")])
+            context: emptyContext(fileOperation: "read", args: ["path": .string("src/server.ts")])
         )
 
         #expect(config.title == "src/server.ts")
-        #expect(config.toolNamePrefix == "read")
-        #expect(config.titleLineBreakMode == .byTruncatingMiddle)
+        #expect(config.toolNamePrefix == "file-content")
+        #expect(config.segmentAttributedTitle?.string == "src/server.ts")
     }
 
     @Test("read collapsed skill markdown shows skill label")
@@ -468,7 +473,7 @@ struct ToolPresentationBuilderTests {
             argsSummary: "path: /Users/dev/.pi/agent/skills/oppi-dev/SKILL.md",
             outputPreview: "---\nname: oppi-dev\n---",
             isError: false, isDone: true,
-            context: emptyContext(args: [
+            context: emptyContext(fileOperation: "read", args: [
                 "path": .string("/Users/dev/.pi/agent/skills/oppi-dev/SKILL.md"),
                 "offset": .number(1),
                 "limit": .number(220),
@@ -476,8 +481,8 @@ struct ToolPresentationBuilderTests {
         )
 
         #expect(config.title == "[skill] oppi-dev:1-220")
-        #expect(config.toolNamePrefix == "read")
-        #expect(config.languageBadge == nil)
+        #expect(config.toolNamePrefix == "file-content")
+        #expect(config.languageBadge == "Markdown")
         #expect(config.titleLineBreakMode == .byTruncatingTail)
     }
 
@@ -489,7 +494,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "# Oppi Dev",
             isError: false, isDone: true,
             context: emptyContext(
-                args: [
+                fileOperation: "read", args: [
                     "path": .string("/Users/dev/.pi/agent/skills/oppi-dev/SKILL.md"),
                     "offset": .number(1),
                     "limit": .number(220),
@@ -499,7 +504,7 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        #expect(config.title == "~/.pi/agent/skills/oppi-dev/SKILL.md:1-220")
+        #expect(config.title == "[skill] oppi-dev:1-220")
         #expect(config.languageBadge == "Markdown")
         guard case .markdown(let text, _) = config.expandedContent else {
             Issue.record("Expected .markdown content")
@@ -518,7 +523,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: body,
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string(path)],
+                fileOperation: "read", args: ["path": .string(path)],
                 expanded: ["t-report"],
                 fullOutput: body
             )
@@ -532,28 +537,22 @@ struct ToolPresentationBuilderTests {
         #expect(filePath == path)
     }
 
-    @Test("read ignores segment title override so path truncation stays informative")
-    func readIgnoresSegmentTitleOverride() {
-        let config = ToolPresentationBuilder.build(
-            itemID: "t1", tool: "read",
-            argsSummary: "path: clients/apple/Oppi/Features/Chat/Support/WorkspaceReviewFileDetailView.swift",
-            outputPreview: "",
-            isError: false, isDone: true,
-            context: .init(
-                args: ["path": .string("clients/apple/Oppi/Features/Chat/Support/WorkspaceReviewFileDetailView.swift")],
-                expandedItemIDs: [],
-                fullOutput: "",
-                isLoadingOutput: false,
-                callSegments: [
-                    StyledSegment(text: "read", style: .bold),
-                    StyledSegment(text: " clients/apple/Oppi/Features/Chat/Support/WorkspaceReviewFileDetailView.swift", style: .accent),
-                ]
-            )
+    @Test("file facts keep the server-authored title instead of reconstructing it")
+    func fileFactsUseServerTitle() {
+        var context = ToolPresentationBuilder.Context(
+            args: ["path": .string("clients/apple/Oppi/Features/Chat/Support/WorkspaceReviewFileDetailView.swift")],
+            expandedItemIDs: [], fullOutput: "", isLoadingOutput: false,
+            callSegments: [.init(text: "read ", style: .bold), .init(text: "Producer title", style: .accent)]
         )
-
-        #expect(config.segmentAttributedTitle == nil)
-        #expect(config.title == "clients/apple/Oppi/Features/Chat/Support/WorkspaceReviewFileDetailView.swift")
-        #expect(config.titleLineBreakMode == .byTruncatingMiddle)
+        context.inputPresentation = ToolFileFactsFixture.readInput
+        context.outputPresentation = .init(kind: "fileContent", provenance: "result")
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "read", argsSummary: "misleading path", outputPreview: "",
+            isError: false, isDone: true, context: context
+        )
+        #expect(config.segmentAttributedTitle?.string == "Producer title")
+        #expect(config.title == "Producer title")
+        #expect(config.toolNamePrefix == "file-content")
     }
 
     @Test("read expanded shows code with start line")
@@ -564,7 +563,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "line content",
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string("server.ts"), "offset": .number(42)],
+                fileOperation: "read", args: ["path": .string("server.ts"), "offset": .number(42)],
                 expanded: ["t1"],
                 fullOutput: "full content here"
             )
@@ -588,7 +587,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "",
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string("server.ts")],
+                fileOperation: "read", args: ["path": .string("server.ts")],
                 expanded: ["t1"],
                 isLoadingOutput: true
             )
@@ -598,7 +597,7 @@ struct ToolPresentationBuilderTests {
             Issue.record("Expected .status content for loading state")
             return
         }
-        #expect(text == "Loading read output…")
+        #expect(text == "Loading output…")
     }
 
     // MARK: - Edit
@@ -610,7 +609,7 @@ struct ToolPresentationBuilderTests {
             argsSummary: "path: file.swift",
             outputPreview: "",
             isError: false, isDone: true,
-            context: emptyContext(args: [
+            context: emptyContext(fileOperation: "edit", args: [
                 "path": .string("file.swift"),
                 "edits": .array([
                     .object([
@@ -621,7 +620,8 @@ struct ToolPresentationBuilderTests {
             ])
         )
 
-        #expect(config.toolNamePrefix == "edit")
+        #expect(config.toolNamePrefix == "file-diff")
+        #expect(config.trailing == "Requested")
         #expect(config.editAdded != nil)
         #expect(config.editRemoved != nil)
     }
@@ -634,7 +634,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "",
             isError: false, isDone: true,
             context: emptyContext(
-                args: [
+                fileOperation: "edit", args: [
                     "path": .string("file.swift"),
                     "edits": .array([
                         .object([
@@ -675,7 +675,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "Successfully replaced 1 block(s).",
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string("clients/apple/Oppi/Core/Theme/AppFontConstants.swift")],
+                fileOperation: "edit", args: ["path": .string("clients/apple/Oppi/Core/Theme/AppFontConstants.swift")],
                 details: details
             )
         )
@@ -704,7 +704,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "Successfully replaced 1 block(s).",
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string("clients/apple/Oppi/Core/Theme/AppFontConstants.swift")],
+                fileOperation: "edit", args: ["path": .string("clients/apple/Oppi/Core/Theme/AppFontConstants.swift")],
                 details: details,
                 expanded: ["t1"]
             )
@@ -725,6 +725,7 @@ struct ToolPresentationBuilderTests {
     func completedWriteCurrentFileIntentEligibility() {
         func build(
             tool: String = "write",
+            fileOperation: String? = "write",
             path: JSONValue? = .string("docs/current.md"),
             isError: Bool = false,
             isDone: Bool = true,
@@ -740,7 +741,7 @@ struct ToolPresentationBuilderTests {
                 isError: isError,
                 isDone: isDone,
                 isInterrupted: isInterrupted,
-                context: emptyContext(args: args, expanded: ["current-file-\(tool)"])
+                context: emptyContext(fileOperation: fileOperation, args: args, expanded: ["current-file-\(tool)"])
             )
         }
 
@@ -756,9 +757,11 @@ struct ToolPresentationBuilderTests {
         #expect(build(isDone: false).currentFileOpenIntent == nil)
         #expect(build(isError: true).currentFileOpenIntent == nil)
         #expect(build(isInterrupted: true).currentFileOpenIntent == nil)
-        #expect(build(tool: "read").currentFileOpenIntent == nil)
-        #expect(build(tool: "edit").currentFileOpenIntent == nil)
-        #expect(build(tool: "extensions.write").currentFileOpenIntent == nil)
+        #expect(build(tool: "read", fileOperation: "read").currentFileOpenIntent == nil)
+        #expect(build(tool: "edit", fileOperation: "edit").currentFileOpenIntent == nil)
+        #expect(build(tool: "put_file").currentFileOpenIntent?.path == "docs/current.md")
+        #expect(build(tool: "extensions.write", fileOperation: nil).currentFileOpenIntent == nil)
+        #expect(build(fileOperation: nil).currentFileOpenIntent == nil)
         #expect(build(path: .string("image.png")).currentFileOpenIntent == nil)
         #expect(build(path: .string("archive.zip")).currentFileOpenIntent == nil)
     }
@@ -770,11 +773,12 @@ struct ToolPresentationBuilderTests {
             argsSummary: "path: new-file.ts",
             outputPreview: "wrote 42 bytes",
             isError: false, isDone: true,
-            context: emptyContext(args: ["path": .string("src/new-file.ts")])
+            context: emptyContext(fileOperation: "write", args: ["path": .string("src/new-file.ts")])
         )
 
         #expect(config.title == "src/new-file.ts")
-        #expect(config.toolNamePrefix == "write")
+        #expect(config.toolNamePrefix == "file-mutation")
+        #expect(config.trailing == "Requested")
     }
 
     @Test("write collapsed shows language badge")
@@ -784,7 +788,7 @@ struct ToolPresentationBuilderTests {
             argsSummary: "path: app.swift",
             outputPreview: "wrote 100 bytes",
             isError: false, isDone: true,
-            context: emptyContext(args: [
+            context: emptyContext(fileOperation: "write", args: [
                 "path": .string("src/app.swift"),
                 "content": .string("import Foundation"),
             ])
@@ -802,7 +806,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "wrote 30 bytes",
             isError: false, isDone: true,
             context: emptyContext(
-                args: [
+                fileOperation: "write", args: [
                     "path": .string("src/index.ts"),
                     "content": .string(content),
                 ],
@@ -878,7 +882,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "",
             isError: false, isDone: false,
             context: emptyContext(
-                args: [
+                fileOperation: "write", args: [
                     "path": .string("src/index.ts"),
                 ],
                 expanded: ["t1"]
@@ -890,7 +894,7 @@ struct ToolPresentationBuilderTests {
             Issue.record("Expected .status placeholder content")
             return
         }
-        #expect(message == "Writing…")
+        #expect(message == "Waiting for output…")
         #expect(config.copyOutputText == nil)
     }
 
@@ -903,7 +907,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "",
             isError: false, isDone: false,
             context: emptyContext(
-                args: [
+                fileOperation: "write", args: [
                     "path": .string("README.md"),
                     "content": .string(content),
                 ],
@@ -934,7 +938,7 @@ struct ToolPresentationBuilderTests {
             argsSummary: "path: docs/guide.md",
             outputPreview: "",
             isError: false, isDone: false,
-            context: emptyContext(args: args, expanded: ["t1"])
+            context: emptyContext(fileOperation: "write", args: args, expanded: ["t1"])
         )
         #expect(modeName(streaming.expandedContent) == "markdown",
                 "Streaming write of .md should use markdown mode (incremental pipeline)")
@@ -946,7 +950,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "wrote 28 bytes",
             isError: false, isDone: true,
             context: emptyContext(
-                args: args,
+                fileOperation: "write", args: args,
                 expanded: ["t1"],
                 fullOutput: "Successfully wrote 28 bytes to docs/guide.md"
             )
@@ -964,7 +968,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "wrote 28 bytes",
             isError: false, isDone: true,
             context: emptyContext(
-                args: [
+                fileOperation: "write", args: [
                     "path": .string("README.md"),
                     "content": .string(content),
                 ],
@@ -980,7 +984,7 @@ struct ToolPresentationBuilderTests {
         #expect(text == content)
     }
 
-    @Test("write expanded falls back to code viewer when content missing")
+    @Test("completed write without requested bytes opens current file, not the result message")
     func writeExpandedFallback() {
         let config = ToolPresentationBuilder.build(
             itemID: "t1", tool: "write",
@@ -988,18 +992,19 @@ struct ToolPresentationBuilderTests {
             outputPreview: "wrote 10 bytes",
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string("file.txt")],
+                fileOperation: "write", args: ["path": .string("file.txt")],
                 expanded: ["t1"],
                 fullOutput: "Successfully wrote 10 bytes to file.txt"
             )
         )
 
-        guard case .code(let text, _, _, let filePath) = config.expandedContent else {
-            Issue.record("Expected .code content for write fallback")
+        guard case .status(let text) = config.expandedContent else {
+            Issue.record("Expected current-file activation surface without invented requested bytes")
             return
         }
-        #expect(text == "Successfully wrote 10 bytes to file.txt")
-        #expect(filePath == "file.txt")
+        #expect(text == "Open current file")
+        #expect(config.currentFileOpenIntent?.path == "file.txt")
+        #expect(config.copyOutputText == nil)
     }
 
     @Test("content-based mode routing stays aligned across read/write/extension")
@@ -1010,7 +1015,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "# Header",
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string("README.md")],
+                fileOperation: "read", args: ["path": .string("README.md")],
                 expanded: ["read-md"],
                 fullOutput: "# Header\n\nBody"
             )
@@ -1022,7 +1027,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "",
             isError: false, isDone: true,
             context: emptyContext(
-                args: [
+                fileOperation: "write", args: [
                     "path": .string("README.md"),
                     "content": .string("# Header\n\nBody"),
                 ],
@@ -1052,7 +1057,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "func app() {}",
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string("App.swift")],
+                fileOperation: "read", args: ["path": .string("App.swift")],
                 expanded: ["read-code"],
                 fullOutput: "func app() {}"
             )
@@ -1064,7 +1069,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "",
             isError: false, isDone: true,
             context: emptyContext(
-                args: [
+                fileOperation: "write", args: [
                     "path": .string("App.swift"),
                     "content": .string("func app() {}"),
                 ],
@@ -1098,7 +1103,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "",
             isError: false, isDone: true,
             context: emptyContext(
-                args: [
+                fileOperation: "edit", args: [
                     "path": .string("App.swift"),
                     "edits": .array([
                         .object([
@@ -1135,7 +1140,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "",
             isError: false, isDone: true,
             context: emptyContext(
-                args: [
+                fileOperation: "edit", args: [
                     "path": .string("App.swift"),
                     "edits": .array([
                         .object([
@@ -1183,7 +1188,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: csv,
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string("rides.csv")],
+                fileOperation: "read", args: ["path": .string("rides.csv")],
                 expanded: ["read-csv"],
                 fullOutput: csv
             )
@@ -1194,7 +1199,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "",
             isError: false, isDone: true,
             context: emptyContext(
-                args: [
+                fileOperation: "write", args: [
                     "path": .string("rides.csv"),
                     "content": .string(csv),
                 ],
@@ -1208,7 +1213,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: tsv,
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string("splits.tsv")],
+                fileOperation: "read", args: ["path": .string("splits.tsv")],
                 expanded: ["read-tsv"],
                 fullOutput: tsv
             )
@@ -1219,7 +1224,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "",
             isError: false, isDone: true,
             context: emptyContext(
-                args: [
+                fileOperation: "write", args: [
                     "path": .string("splits.tsv"),
                     "content": .string(tsv),
                 ],
@@ -1275,7 +1280,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: park,
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string("park.geojson")],
+                fileOperation: "read", args: ["path": .string("park.geojson")],
                 expanded: ["read-park"],
                 fullOutput: park
             )
@@ -1286,7 +1291,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "",
             isError: false, isDone: true,
             context: emptyContext(
-                args: [
+                fileOperation: "write", args: [
                     "path": .string("park.geojson"),
                     "content": .string(park),
                 ],
@@ -1300,7 +1305,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: places,
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string("places.json")],
+                fileOperation: "read", args: ["path": .string("places.json")],
                 expanded: ["read-places"],
                 fullOutput: places
             )
@@ -1311,7 +1316,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "",
             isError: false, isDone: true,
             context: emptyContext(
-                args: [
+                fileOperation: "write", args: [
                     "path": .string("places.json"),
                     "content": .string(places),
                 ],
@@ -2283,7 +2288,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: output,
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string("icon.png")],
+                fileOperation: "read", args: ["path": .string("icon.png")],
                 fullOutput: output
             )
         )
@@ -2301,7 +2306,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "const x = 1;",
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string("server.ts")],
+                fileOperation: "read", args: ["path": .string("server.ts")],
                 fullOutput: "const x = 1;"
             )
         )
@@ -2318,7 +2323,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "Read image file [image/png]",
             isError: false, isDone: false,
             context: emptyContext(
-                args: ["path": .string("icon.png")],
+                fileOperation: "read", args: ["path": .string("icon.png")],
                 fullOutput: "Read image file [image/png]"
             )
         )
@@ -2337,7 +2342,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: output,
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string("icon.png")],
+                fileOperation: "read", args: ["path": .string("icon.png")],
                 expanded: ["t1"],
                 fullOutput: output
             )
@@ -2375,7 +2380,7 @@ struct ToolPresentationBuilderTests {
             outputPreview: "",
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["path": .string("icon.png")],
+                fileOperation: "read", args: ["path": .string("icon.png")],
                 details: details,
                 expanded: ["t1"],
                 fullOutput: ""

@@ -27,6 +27,7 @@ struct SessionOutlineView: View {
     var loadTree: ((SessionTreeFilterMode) async throws -> SessionTreeSnapshot)? = nil
     var initialOutlineSnapshot: SessionOutlineSnapshot? = nil
     var loadOutline: (() async throws -> SessionOutlineSnapshot)? = nil
+    var toolDetails: (String) -> JSONValue? = { _ in nil }
 
     @Environment(ToolArgsStore.self) private var toolArgsStore
     @Environment(\.dismiss) private var dismiss
@@ -1050,9 +1051,10 @@ struct SessionOutlineView: View {
     }
 
     private func outlineDiffStats(for item: ChatItem) -> ToolCallFormatting.DiffStats? {
-        guard case .toolCall(let id, let tool, _, _, _, _, _) = item,
-              ToolCallFormatting.isEditTool(tool) else { return nil }
-        return ToolCallFormatting.editDiffStats(from: toolArgsStore.args(for: id))
+        guard case .toolCall(let id, _, _, let output, _, let isError, let isDone) = item else { return nil }
+        return ToolFileInspection.resolve(args: toolArgsStore.args(for: id),
+            input: toolArgsStore.inputPresentation(for: id), output: toolArgsStore.outputPresentation(for: id),
+            details: toolDetails(id), text: output, isDone: isDone, isError: isError)?.stats
     }
 
     // MARK: - Classification Helpers

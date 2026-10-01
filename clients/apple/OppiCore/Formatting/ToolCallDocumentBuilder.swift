@@ -7,7 +7,7 @@ enum ToolCallDocumentBuilder {
                       nestedCalls: NestedToolCalls?, output: String, rawOutput: String,
                       details: JSONValue?, isDone: Bool, previewOnly: Bool = false, totalBytes: Int? = nil, toolName: String? = nil) -> ToolContentDescriptor.Markdown? {
         var sections: [(String, String)] = []
-        let hints = inputPresentation?.fields.filter { $0.value.role == "code" || $0.value.role == "command" }.mapValues(\.language) ?? [:]
+        let hints = inputPresentation?.fields.filter { $0.value.role == "code" || $0.value.role == "command" }.compactMapValues(\.language) ?? [:]
         let input = (toolName.map { "**Tool**\n\n" + inlineCode($0) + "\n\n" } ?? "") + input(args ?? [:], hints: hints)
         if !input.isEmpty { sections.append(("Input", input)) }
         if let nestedCalls { sections.append(("Calls", calls(nestedCalls))) }

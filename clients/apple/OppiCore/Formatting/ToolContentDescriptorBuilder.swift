@@ -112,6 +112,30 @@ enum ToolContentDescriptorBuilder {
                 copyOutputText: output.isEmpty ? nil : output
             )
         }
+        if let file = ToolFileInspection.resolve(args: context.args, input: context.inputPresentation,
+                                                  output: context.outputPresentation, details: context.details,
+                                                  text: output, isDone: isDone, isError: isError) {
+            let leaf: ToolContentDescriptor?
+            if !includeOutput { leaf = nil }
+            else if isError {
+                leaf = ToolCallDocumentBuilder.build(args: context.args, inputPresentation: context.inputPresentation,
+                    nestedCalls: context.nestedCalls, output: output, rawOutput: output, details: context.details,
+                    isDone: isDone, previewOnly: previewOnly, totalBytes: totalBytes).map { .markdown($0) }
+            } else if file.operation == .edits, isDone, let lines = file.diff {
+                leaf = .diff(.init(lines: lines, path: file.path))
+            } else if !file.text.isEmpty || !mediaAttachments(from: context.details).isEmpty {
+                leaf = .file(.init(text: file.text, filePath: file.path, fileType: file.fileType,
+                                  language: file.fileType?.syntaxLanguage, startLine: file.startLine,
+                                  attachments: file.operation == .content ? mediaAttachments(from: context.details) : []))
+            } else { leaf = .status(message: context.isLoadingOutput ? "Loading output…" : "Waiting for output…") }
+            let copy = if isError { output } else if file.operation == .edits, isDone, let lines = file.diff {
+                DiffEngine.formatUnified(lines)
+            } else { file.text }
+            return .init(inspection: .init(input: input, calls: context.nestedCalls, output: leaf.map { [$0] } ?? [],
+                                          raw: output, previewOnly: previewOnly, totalBytes: totalBytes,
+                                          terminalOutput: false, file: file), copyCommandText: nil,
+                         copyOutputText: copy.isEmpty ? nil : copy)
+        }
         // Collapsed rows need semantic input and glyph facts, not a JSON/Markdown
         // document rebuilt for every delta. Preserve the existing lazy output path.
         if !includeOutput {
@@ -120,20 +144,6 @@ enum ToolContentDescriptorBuilder {
                          copyCommandText: nil, copyOutputText: nil)
         }
         let outputTrimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        let writeContent = ToolCallFormatting.writeContent(from: context.args)
-        let sniffContent: String? = switch normalizedTool {
-        case "read":
-            outputTrimmed.isEmpty ? nil : outputTrimmed
-        case "write":
-            writeContent
-        default:
-            nil
-        }
-        let fileMetadata = fileMetadata(
-            args: context.args,
-            argsSummary: argsSummary,
-            content: sniffContent
-        )
         let mediaAttachments = mediaAttachments(from: context.details)
         var copyOutput: String? = outputTrimmed.isEmpty ? nil : outputTrimmed
         var content: ToolContentDescriptor?
@@ -141,83 +151,6 @@ enum ToolContentDescriptorBuilder {
         switch normalizedTool {
         case "ask":
             break
-
-        case "read":
-            if !outputTrimmed.isEmpty || !mediaAttachments.isEmpty {
-                let startLine = ToolCallFormatting.readStartLine(from: context.args)
-                content = fileDescriptor(
-                    text: outputTrimmed,
-                    metadata: fileMetadata,
-                    startLine: startLine,
-                    attachments: mediaAttachments
-                )
-            } else if context.isLoadingOutput {
-                content = .status(message: "Loading read output…")
-            }
-
-        case "write":
-            if let writeContent, !writeContent.isEmpty {
-                copyOutput = writeContent
-                content = fileDescriptor(
-                    text: writeContent,
-                    metadata: fileMetadata,
-                    startLine: 1,
-                    attachments: []
-                )
-            } else if !outputTrimmed.isEmpty {
-                content = isDone
-                    ? .code(
-                        ToolContentDescriptor.Code(
-                            text: outputTrimmed,
-                            language: fileMetadata.language,
-                            startLine: nil,
-                            filePath: fileMetadata.filePath
-                        )
-                    )
-                    : .terminal(.init(output: outputTrimmed, language: nil))
-            }
-
-        case "edit":
-            if !isError {
-                let editText = ToolCallFormatting.editOldAndNewText(from: context.args)
-                if isDone {
-                    let changes = ToolCallFormatting.editTextChanges(from: context.args)
-                    let lines = ToolCallFormatting.editResultDiffLines(from: context.details) ?? changes.flatMap { change in
-                        DiffEngine.compute(old: change.oldText, new: change.newText)
-                    }
-                    if !lines.isEmpty {
-                        let diffPath = fileMetadata.filePath
-                            ?? ToolCallFormatting.displayFilePath(
-                                tool: normalizedTool, args: context.args, argsSummary: argsSummary
-                            )
-                        content = .diff(ToolContentDescriptor.Diff(lines: lines, path: diffPath))
-                        copyOutput = DiffEngine.formatUnified(lines)
-                    }
-                } else if let editText {
-                    let streamingText = streamingEditText(from: editText)
-                    if !streamingText.isEmpty {
-                        copyOutput = streamingText
-                        content = fileDescriptor(
-                            text: streamingText,
-                            metadata: fileMetadata,
-                            startLine: 1,
-                            attachments: []
-                        )
-                    }
-                }
-            }
-            if content == nil, !outputTrimmed.isEmpty {
-                content = isDone
-                    ? .code(
-                        ToolContentDescriptor.Code(
-                            text: outputTrimmed,
-                            language: fileMetadata.language,
-                            startLine: nil,
-                            filePath: fileMetadata.filePath
-                        )
-                    )
-                    : .terminal(.init(output: outputTrimmed, language: nil))
-            }
 
         default:
             let audioDetails = audioPresentation(from: context.details)
@@ -286,7 +219,7 @@ enum ToolContentDescriptorBuilder {
         }
 
         if content == nil, !isDone, normalizedTool != "ask" {
-            content = .status(message: pendingStatusMessage(normalizedTool: normalizedTool))
+            content = .status(message: "Waiting for output…")
         }
 
         return ToolContentPresentation(
@@ -424,39 +357,6 @@ enum ToolContentDescriptorBuilder {
 
     // MARK: - Private
 
-    private static func fileDescriptor(
-        text: String,
-        metadata: FileMetadata,
-        startLine: Int,
-        attachments: [ToolContentMediaAttachment]
-    ) -> ToolContentDescriptor {
-        let fileType = sniffedFileType(path: metadata.filePath, text: text, fallback: metadata.fileType)
-        return .file(
-            ToolContentDescriptor.File(
-                text: text,
-                filePath: metadata.filePath,
-                fileType: fileType,
-                language: fileType?.syntaxLanguage ?? metadata.language,
-                startLine: startLine,
-                attachments: attachments
-            )
-        )
-    }
-
-    private static func sniffedFileType(path: String?, text: String, fallback: FileType?) -> FileType? {
-        if let path {
-            return FileType.detect(from: path, content: text)
-        }
-        return GeographicJSONSniffer.fileType(from: text) ?? fallback
-    }
-
-    private static func streamingEditText(from editText: (oldText: String, newText: String)) -> String {
-        if !editText.newText.isEmpty {
-            return editText.newText
-        }
-        return editText.oldText
-    }
-
     private static func audioPresentationTranscript(
         output: String,
         details: AudioPresentation,
@@ -477,19 +377,6 @@ enum ToolContentDescriptorBuilder {
         return argText
     }
 
-    private static func pendingStatusMessage(normalizedTool: String) -> String {
-        switch normalizedTool {
-        case "read":
-            return "Reading…"
-        case "write":
-            return "Writing…"
-        case "edit":
-            return "Editing…"
-        default:
-            return "Waiting for output…"
-        }
-    }
-
     private static func resolvedFilePath(
         args: [String: JSONValue]?,
         argsSummary: String
@@ -503,18 +390,7 @@ enum ToolContentDescriptorBuilder {
         let trimmed = argsSummary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        let withoutToolPrefix: String
-        if trimmed.hasPrefix("read ") {
-            withoutToolPrefix = String(trimmed.dropFirst(5))
-        } else if trimmed.hasPrefix("write ") {
-            withoutToolPrefix = String(trimmed.dropFirst(6))
-        } else if trimmed.hasPrefix("edit ") {
-            withoutToolPrefix = String(trimmed.dropFirst(5))
-        } else {
-            withoutToolPrefix = trimmed
-        }
-
-        let candidate = withoutToolPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidate = trimmed
         guard !candidate.isEmpty else { return nil }
 
         if let range = candidate.range(of: #":\d+(?:-\d+)?$"#, options: .regularExpression) {

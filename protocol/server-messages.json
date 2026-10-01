@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 53
+    "messageCount": 54
   },
   "messages": {
     "connected": {
@@ -664,6 +664,23 @@
         "limit": 50
       },
       "toolCallId": "tc-seg-001",
+      "inputPresentation": {
+        "fields": {
+          "path": {
+            "role": "filePath"
+          },
+          "offset": {
+            "role": "lineOffset"
+          },
+          "limit": {
+            "role": "lineLimit"
+          }
+        }
+      },
+      "outputPresentation": {
+        "kind": "fileContent",
+        "provenance": "result"
+      },
       "callSegments": [
         {
           "text": "read ",
@@ -689,11 +706,17 @@
       "toolCallId": "tc-update-001",
       "inputPresentation": {
         "fields": {
+          "path": {
+            "role": "filePath"
+          },
           "content": {
-            "role": "code",
-            "language": "markdown"
+            "role": "fileContent"
           }
         }
+      },
+      "outputPresentation": {
+        "kind": "fileContent",
+        "provenance": "requested"
       }
     },
     "tool_update_with_display": {
@@ -778,6 +801,22 @@
           "style": "muted"
         }
       ]
+    },
+    "tool_end_file_diff": {
+      "type": "tool_end",
+      "tool": "edit",
+      "toolCallId": "tc-edit-001",
+      "isError": false,
+      "outputPresentation": {
+        "kind": "diffOfEdits",
+        "provenance": "result"
+      },
+      "outputAvailability": {
+        "complete": true
+      },
+      "details": {
+        "diff": "-42 old\n+42 actual"
+      }
     },
     "queue_state": {
       "type": "queue_state",

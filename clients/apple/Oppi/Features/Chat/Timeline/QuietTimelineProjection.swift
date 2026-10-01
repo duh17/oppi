@@ -331,7 +331,9 @@ struct QuietTimelineProjection: Equatable {
             counts[kind, default: 0] += 1
 
             if kind == .edit {
-                if let stats = ToolCallFormatting.editDiffStats(from: toolArgs(id)) {
+                let lines = ToolFileInspection.requestedDiffLines(toolArgs(id)?["edits"]?.arrayValue ?? [])
+                if !lines.isEmpty {
+                    let stats = DiffEngine.stats(lines)
                     editAdded += stats.added
                     editRemoved += stats.removed
                 } else {

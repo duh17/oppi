@@ -1,477 +1,55 @@
 import Testing
-import Foundation
 @testable import Oppi
 
 @Suite("ToolCallFormatting")
 struct ToolCallFormattingTests {
-
-    // MARK: - Tool Type Detection
-
-    @Test func isReadTool() {
-        #expect(ToolCallFormatting.isReadTool("Read"))
-        #expect(ToolCallFormatting.isReadTool("read"))
-        #expect(ToolCallFormatting.isReadTool("functions.read"))
-        #expect(ToolCallFormatting.isReadTool("tools/read"))
-        #expect(!ToolCallFormatting.isReadTool("Write"))
-        #expect(!ToolCallFormatting.isReadTool("bash"))
-    }
-
-    @Test func isWriteTool() {
-        #expect(ToolCallFormatting.isWriteTool("Write"))
-        #expect(ToolCallFormatting.isWriteTool("write"))
-        #expect(ToolCallFormatting.isWriteTool("functions.write"))
-        #expect(ToolCallFormatting.isWriteTool("tools/write"))
-        #expect(!ToolCallFormatting.isWriteTool("Read"))
-    }
-
-    @Test func isEditTool() {
-        #expect(ToolCallFormatting.isEditTool("Edit"))
-        #expect(ToolCallFormatting.isEditTool("edit"))
-        #expect(ToolCallFormatting.isEditTool("functions.edit"))
-        #expect(!ToolCallFormatting.isEditTool("Write"))
-    }
-
     @Test func normalizedCanonicalizesNamespacedTools() {
-        #expect(ToolCallFormatting.normalized("  BASH\n") == "bash")
-        #expect(ToolCallFormatting.normalized("functions.read") == "read")
-        #expect(ToolCallFormatting.normalized("tools/write") == "write")
-        #expect(ToolCallFormatting.normalized("mcp:extensions.lookup") == "lookup")
+        #expect(ToolCallFormatting.normalized(" functions.ask ") == "ask")
+        #expect(ToolCallFormatting.normalized("tools/bash") == "bash")
+        #expect(ToolCallFormatting.normalized("") == "")
     }
-
-    // MARK: - Arg Extraction
-
-    @Test func filePathFromStructuredArgs() {
-        let args: [String: JSONValue] = ["path": .string("/src/main.swift")]
-        #expect(ToolCallFormatting.filePath(from: args) == "/src/main.swift")
-    }
-
-    @Test func filePathIgnoresLegacyFilePathKey() {
-        let args: [String: JSONValue] = ["file_path": .string("/src/index.ts")]
-        #expect(ToolCallFormatting.filePath(from: args) == nil)
-    }
-
-    @Test func filePathReadsCanonicalPath() {
-        let args: [String: JSONValue] = [
-            "path": .string("/preferred"),
-            "file_path": .string("/fallback"),
-        ]
-        #expect(ToolCallFormatting.filePath(from: args) == "/preferred")
-    }
-
-    @Test func filePathNilWhenMissing() {
-        let args: [String: JSONValue] = ["command": .string("ls")]
-        #expect(ToolCallFormatting.filePath(from: args) == nil)
-    }
-
-    @Test func filePathNilArgs() {
+    @Test func filePathReadsCanonicalPathOnly() {
+        #expect(ToolCallFormatting.filePath(from: ["path": .string("src/main.swift")]) == "src/main.swift")
+        #expect(ToolCallFormatting.filePath(from: ["filePath": .string("legacy")]) == nil)
         #expect(ToolCallFormatting.filePath(from: nil) == nil)
     }
-
-    @Test func readStartLineFromOffset() {
-        let args: [String: JSONValue] = ["offset": .number(42)]
-        #expect(ToolCallFormatting.readStartLine(from: args) == 42)
+    @Test func breadcrumbAndFileNamePreserveLineRange() {
+        #expect(ToolCallFormatting.breadcrumbDisplayPath("~/workspace/oppi/src/main.swift:100-149") == "~/w/o/s/main.swift:100-149")
+        #expect(ToolCallFormatting.fileNameDisplayPath("~/workspace/main.swift:100-149") == "main.swift:100-149")
     }
-
-    @Test func readStartLineDefaultsToOne() {
-        let args: [String: JSONValue] = ["path": .string("file.txt")]
-        #expect(ToolCallFormatting.readStartLine(from: args) == 1)
+    @Test func parseArgValue() {
+        #expect(ToolCallFormatting.parseArgValue("command", from: "command: ls -la, timeout: 30") == "ls -la")
+        #expect(ToolCallFormatting.parseArgValue("missing", from: "path: file") == nil)
     }
-
-    @Test func readStartLineNilArgs() {
-        #expect(ToolCallFormatting.readStartLine(from: nil) == 1)
-    }
-
-    // MARK: - Display File Path
-
-    @Test func displayFilePathKeepsFullShortenedPath() {
-        let args: [String: JSONValue] = ["path": .string("/Users/dev/workspace/project/src/main.swift")]
-        let result = ToolCallFormatting.displayFilePath(tool: "Read", args: args, argsSummary: "")
-        #expect(result == "~/workspace/project/src/main.swift")
-    }
-
-    @Test func displayFilePathWithLineRange() {
-        let args: [String: JSONValue] = [
-            "path": .string("file.swift"),
-            "offset": .number(10),
-            "limit": .number(20),
-        ]
-        let result = ToolCallFormatting.displayFilePath(tool: "Read", args: args, argsSummary: "")
-        #expect(result.contains(":10-29"))
-    }
-
-    @Test func displayFilePathWithLineRangeForNamespacedReadTool() {
-        let args: [String: JSONValue] = [
-            "path": .string("file.swift"),
-            "offset": .number(5),
-            "limit": .number(3),
-        ]
-        let result = ToolCallFormatting.displayFilePath(tool: "functions.read", args: args, argsSummary: "")
-        #expect(result.contains(":5-7"))
-    }
-
-    @Test func displayFilePathShowsFullPathAndLineRangeForAbsolutePath() {
-        let args: [String: JSONValue] = [
-            "path": .string("/Users/dev/workspace/myproject/ios/Oppi/Features/Chat/ToolTimelineRowContent.swift"),
-            "offset": .number(1),
-            "limit": .number(120),
-        ]
-        let result = ToolCallFormatting.displayFilePath(tool: "Read", args: args, argsSummary: "")
-        #expect(result == "~/workspace/myproject/ios/Oppi/Features/Chat/ToolTimelineRowContent.swift:1-120")
-    }
-
-    @Test func displayFilePathOffsetOnly() {
-        let args: [String: JSONValue] = [
-            "path": .string("file.swift"),
-            "offset": .number(50),
-        ]
-        let result = ToolCallFormatting.displayFilePath(tool: "Read", args: args, argsSummary: "")
-        #expect(result.contains(":50"))
-        #expect(!result.contains("-"))
-    }
-
-    @Test func displayFilePathLimitOnlyDefaultsToStartLineOne() {
-        let args: [String: JSONValue] = [
-            "path": .string("file.swift"),
-            "limit": .number(20),
-        ]
-        let result = ToolCallFormatting.displayFilePath(tool: "Read", args: args, argsSummary: "")
-        #expect(result == "file.swift:1-20")
-    }
-
-    @Test func displayFilePathNoRangeForWrite() {
-        let args: [String: JSONValue] = [
-            "path": .string("file.swift"),
-            "offset": .number(10),
-            "limit": .number(20),
-        ]
-        let result = ToolCallFormatting.displayFilePath(tool: "Write", args: args, argsSummary: "")
-        #expect(!result.contains(":10"))
-    }
-
-    @Test func displayFilePathFallsBackToSummary() {
-        let result = ToolCallFormatting.displayFilePath(tool: "Read", args: nil, argsSummary: "some summary")
-        #expect(result == "some summary")
-    }
-
-    @Test func breadcrumbDisplayPathKeepsFileNameAndLineRange() {
-        let result = ToolCallFormatting.breadcrumbDisplayPath(
-            "clients/apple/Oppi/Features/Chat/ScheduleEditView.swift:10-29"
-        )
-        #expect(result == "c/a/O/F/C/ScheduleEditView.swift:10-29")
-    }
-
-    @Test func fileNameDisplayPathKeepsLineRange() {
-        let result = ToolCallFormatting.fileNameDisplayPath(
-            "clients/apple/Oppi/Features/Chat/ScheduleEditView.swift:10-29"
-        )
-        #expect(result == "ScheduleEditView.swift:10-29")
-    }
-
-    @Test func compactReadDisplayTitleShowsSkillName() {
-        let args: [String: JSONValue] = [
-            "path": .string("/Users/dev/.pi/agent/skills/oppi-dev/SKILL.md"),
-            "offset": .number(1),
-            "limit": .number(220),
-        ]
-        let result = ToolCallFormatting.compactReadDisplayTitle(
-            tool: "read",
-            args: args,
-            argsSummary: ""
-        )
-        #expect(result == "[skill] oppi-dev:1-220")
-    }
-
-    @Test func compactReadDisplayTitleIgnoresRegularMarkdown() {
-        let args: [String: JSONValue] = [
-            "path": .string("/Users/dev/workspace/oppi/README.md"),
-        ]
-        let result = ToolCallFormatting.compactReadDisplayTitle(
-            tool: "read",
-            args: args,
-            argsSummary: ""
-        )
-        #expect(result == nil)
-    }
-
-    @Test func compactReadDisplayTitleRequiresReadTool() {
-        let args: [String: JSONValue] = [
-            "path": .string("/Users/dev/.pi/agent/skills/oppi-dev/SKILL.md"),
-        ]
-        let result = ToolCallFormatting.compactReadDisplayTitle(
-            tool: "write",
-            args: args,
-            argsSummary: ""
-        )
-        #expect(result == nil)
-    }
-
-    // MARK: - Parse Arg Value
-
-    @Test func parseArgValueSimple() {
-        let result = ToolCallFormatting.parseArgValue("path", from: "path: /src/main.swift")
-        #expect(result == "/src/main.swift")
-    }
-
-    @Test func parseArgValueWithComma() {
-        let result = ToolCallFormatting.parseArgValue("path", from: "path: /src/main.swift, offset: 10")
-        #expect(result == "/src/main.swift")
-    }
-
-    @Test func parseArgValueMissing() {
-        let result = ToolCallFormatting.parseArgValue("missing", from: "path: /src/main.swift")
-        #expect(result == nil)
-    }
-
-    // MARK: - Edit Diff Stats
-
-    @Test func editDiffStatsCountsReplacements() {
-        let args: [String: JSONValue] = [
-            "edits": .array([
-                .object([
-                    "oldText": .string("let value = 1\n"),
-                    "newText": .string("let value = 2\n"),
-                ]),
-            ]),
-        ]
-
-        let stats = ToolCallFormatting.editDiffStats(from: args)
-        #expect(stats?.added == 1)
-        #expect(stats?.removed == 1)
-    }
-
-    @Test func editDiffStatsCountsInsertionsAndDeletions() {
-        let args: [String: JSONValue] = [
-            "edits": .array([
-                .object([
-                    "oldText": .string("a\nb\nc\n"),
-                    "newText": .string("a\nb\n"),
-                ]),
-            ]),
-        ]
-
-        let stats = ToolCallFormatting.editDiffStats(from: args)
-        #expect(stats?.added == 0)
-        #expect(stats?.removed == 1)
-    }
-
-    @Test func editDiffStatsUsesLCSAndDoesNotOvercountShiftedInsertions() {
-        let args: [String: JSONValue] = [
-            "edits": .array([
-                .object([
-                    "oldText": .string("a\nb\nc\nd\n"),
-                    "newText": .string("a\ninserted\nb\nc\nd\n"),
-                ]),
-            ]),
-        ]
-
-        let stats = ToolCallFormatting.editDiffStats(from: args)
-        #expect(stats?.added == 1)
-        #expect(stats?.removed == 0)
-    }
-
-    @Test func editOldAndNewTextIgnoresLegacyAliasKeys() {
-        let args: [String: JSONValue] = [
-            "beforeText": .string("old"),
-            "after": .string("new"),
-        ]
-
-        let pair = ToolCallFormatting.editOldAndNewText(from: args)
-        #expect(pair == nil)
-    }
-
-    @Test func editDiffStatsIgnoresLegacySnakeCaseVariants() {
-        let args: [String: JSONValue] = [
-            "old_text": .string("a\nb\n"),
-            "new_text": .string("a\nb\nc\n"),
-        ]
-
-        let stats = ToolCallFormatting.editDiffStats(from: args)
-        #expect(stats == nil)
-    }
-
-    @Test func editDiffStatsNilWhenArgsMissing() {
-        #expect(ToolCallFormatting.editDiffStats(from: nil) == nil)
-        #expect(ToolCallFormatting.editDiffStats(from: ["oldText": .string("a")]) == nil)
-    }
-
-    // MARK: - Edits Array Format
-
-    @Test func editOldAndNewTextFromEditsArray() {
-        let args: [String: JSONValue] = [
-            "path": .string("file.swift"),
-            "edits": .array([
-                .object(["oldText": .string("let a = 1"), "newText": .string("let a = 2")]),
-            ]),
-        ]
-
-        let pair = ToolCallFormatting.editOldAndNewText(from: args)
-        #expect(pair?.oldText == "let a = 1")
-        #expect(pair?.newText == "let a = 2")
-    }
-
-    @Test func editOldAndNewTextFromEditsArrayMultiEdit() {
-        let args: [String: JSONValue] = [
-            "path": .string("file.swift"),
-            "edits": .array([
-                .object(["oldText": .string("a"), "newText": .string("b")]),
-                .object(["oldText": .string("x"), "newText": .string("y")]),
-            ]),
-        ]
-
-        let pair = ToolCallFormatting.editOldAndNewText(from: args)
-        #expect(pair?.oldText == "a\nx")
-        #expect(pair?.newText == "b\ny")
-    }
-
-    @Test func editDiffStatsFromEditsArray() {
-        let args: [String: JSONValue] = [
-            "path": .string("file.swift"),
-            "edits": .array([
-                .object(["oldText": .string("let a = 1\n"), "newText": .string("let a = 2\n")]),
-            ]),
-        ]
-
-        let stats = ToolCallFormatting.editDiffStats(from: args)
-        #expect(stats?.added == 1)
-        #expect(stats?.removed == 1)
-    }
-
-    @Test func editOldAndNewTextRequiresEditsArray() {
-        let args: [String: JSONValue] = [
-            "oldText": .string("legacy_old"),
-            "newText": .string("legacy_new"),
-        ]
-
-        let pair = ToolCallFormatting.editOldAndNewText(from: args)
-        #expect(pair == nil)
-    }
-
-    @Test func editOldAndNewTextNilForEmptyEditsArray() {
-        let args: [String: JSONValue] = [
-            "path": .string("file.swift"),
-            "edits": .array([]),
-        ]
-
-        #expect(ToolCallFormatting.editOldAndNewText(from: args) == nil)
-    }
-
-    @Test func editResultDiffLinesParsesPiPatchLineNumbers() throws {
-        let details: JSONValue = .object([
-            "patch": .string("""
-            --- App.swift
-            +++ App.swift
-            @@ -314,3 +314,4 @@
-             var body: some View {
-                 HStack(spacing: 5) {
-            +        Image(systemName: \"terminal.fill\")
-                 if isAnimated {
-            """),
-        ])
-
-        let lines = try #require(ToolCallFormatting.editResultDiffLines(from: details))
-        #expect(lines.map(\.kind) == [.context, .context, .added, .context])
-        #expect(lines[0].oldLineNumber == 314)
-        #expect(lines[0].newLineNumber == 314)
-        #expect(lines[2].oldLineNumber == nil)
-        #expect(lines[2].newLineNumber == 316)
-        #expect(lines[2].text == "        Image(systemName: \"terminal.fill\")")
-    }
-
-    @Test func editResultDiffLinesIgnoresNumberedDiffWithoutPatch() {
-        let details: JSONValue = .object([
-            "diff": .string("""
-              314 var body: some View {
-              315     HStack(spacing: 5) {
-            + 316         Image(systemName: \"terminal.fill\")
-              317         if isAnimated {
-            """),
-        ])
-
-        #expect(ToolCallFormatting.editResultDiffLines(from: details) == nil)
-    }
-
-    @Test func editResultDiffLinesDoesNotFlattenMultiFilePatch() {
-        let details: JSONValue = .object([
-            "patch": .string("""
-            --- a/A.swift
-            +++ b/A.swift
-            @@ -1 +1 @@
-            -old-a
-            +new-a
-            --- a/B.swift
-            +++ b/B.swift
-            @@ -1 +1 @@
-            -old-b
-            +new-b
-            """),
-        ])
-
-        #expect(ToolCallFormatting.editResultDiffLines(from: details) == nil)
-    }
-
-    // MARK: - Format Bytes
-
-    @Test func formatBytesSmall() {
+    @Test func formatBytes() {
         #expect(ToolCallFormatting.formatBytes(42) == "42 B")
-        #expect(ToolCallFormatting.formatBytes(1023) == "1023 B")
-    }
-
-    @Test func formatBytesKilobytes() {
         #expect(ToolCallFormatting.formatBytes(1024) == "1.0 KB")
-        #expect(ToolCallFormatting.formatBytes(10240) == "10.0 KB")
-    }
-
-    @Test func formatBytesMegabytes() {
         #expect(ToolCallFormatting.formatBytes(1048576) == "1.0 MB")
-        #expect(ToolCallFormatting.formatBytes(5242880) == "5.0 MB")
     }
-
-    // MARK: - Ask Formatting
-
-    @Test func askSymbolUsesQuestionMark() {
+    @Test func glyphsUseTranslatedSemanticsNotFileToolNames() {
+        #expect(ToolCallFormatting.sfSymbolName(for: "file-content") == "magnifyingglass")
+        #expect(ToolCallFormatting.sfSymbolName(for: "file-mutation") == "pencil")
+        #expect(ToolCallFormatting.sfSymbolName(for: "file-diff") == "arrow.left.arrow.right")
+        for name in ["read", "write", "edit", "put_file"] { #expect(ToolCallFormatting.sfSymbolName(for: name) == nil) }
         #expect(ToolCallFormatting.sfSymbolName(for: "ask") == "questionmark")
     }
-
     @Test func askCollapsedTitleUsesQuestionCountOnly() {
-        let args: [String: JSONValue] = [
-            "questions": .array([
-                .object([
-                    "id": .string("scope"),
-                    "question": .string("Which scope should I use?")
-                ]),
-                .object([
-                    "id": .string("details"),
-                    "question": .string("Which details should be preserved?")
-                ])
-            ])
-        ]
-
+        let args: [String: JSONValue] = ["questions": .array([
+            .object(["id": .string("scope"), "question": .string("Which scope?")]),
+            .object(["id": .string("details"), "question": .string("Which details?")])
+        ])]
         #expect(ToolCallFormatting.askCollapsedTitle(args: args, details: nil, argsSummary: "") == "2 questions")
     }
-
     @Test func askAnswerSummaryRendersOptionsWithSelectedLabelChecked() {
         let details: JSONValue = .object([
-            "questions": .array([
-                .object([
-                    "id": .string("scope"),
-                    "question": .string("Which scope should I use?"),
-                    "options": .array([
-                        .object([
-                            "value": .string("minimal_patch"),
-                            "label": .string("Minimal patch"),
-                            "description": .string("Smallest safe change")
-                        ]),
-                        .object([
-                            "value": .string("full_refactor"),
-                            "label": .string("Full refactor")
-                        ]),
-                    ])
+            "questions": .array([.object([
+                "id": .string("scope"), "question": .string("Which scope should I use?"),
+                "options": .array([
+                    .object(["value": .string("minimal_patch"), "label": .string("Minimal patch"), "description": .string("Smallest safe change")]),
+                    .object(["value": .string("full_refactor"), "label": .string("Full refactor")])
                 ])
-            ]),
-            "answers": .object(["scope": .string("minimal_patch")]),
-            "allIgnored": .bool(false),
+            ])]), "answers": .object(["scope": .string("minimal_patch")]), "allIgnored": .bool(false)
         ])
-
         #expect(ToolCallFormatting.askAnswerSummary(details: details) == "**Q:** Which scope should I use?\n- [x] Minimal patch — Smallest safe change\n- [ ] Full refactor")
     }
 }

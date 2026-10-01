@@ -325,6 +325,7 @@ private func makeRequest(
     ExpandedToolOutputLoader.LoadRequest(
         itemID: itemID,
         tool: tool,
+        outputPresentation: tool == "read" ? .init(kind: "fileContent", provenance: "result") : nil,
         outputByteCount: 0,
         attempt: attempt,
         hasExistingOutput: hasExistingOutput,

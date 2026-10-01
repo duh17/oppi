@@ -2641,7 +2641,8 @@ struct ChatView: View {
                     routeScope: routeScope,
                     sessionId: sessionId
                 )
-            }
+            },
+            toolDetails: { reducer.toolDetailsStore.details(for: $0) }
         )
     }
 

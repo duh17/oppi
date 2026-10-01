@@ -38,7 +38,14 @@ struct ToolDisplay: Codable, Equatable, Sendable {
 struct ToolInputPresentation: Codable, Equatable, Sendable {
     struct Field: Codable, Equatable, Sendable {
         var role: String
-        var language: String
+        var language: String? = nil
+        private enum CodingKeys: String, CodingKey { case role, language }
+        init(role: String, language: String? = nil) { self.role = role; self.language = language }
+        init(from decoder: Decoder) throws {
+            let c = try? decoder.container(keyedBy: CodingKeys.self)
+            role = (try? c?.decode(String.self, forKey: .role)) ?? ""
+            language = try? c?.decode(String.self, forKey: .language)
+        }
     }
     var fields: [String: Field]
 
@@ -53,11 +60,13 @@ struct ToolInputPresentation: Codable, Equatable, Sendable {
 /// Unknown semantics degrade to the generic document, never a name fallback.
 struct ToolOutputPresentation: Codable, Equatable, Sendable {
     var kind: String
-    init(kind: String) { self.kind = kind }
-    private enum CodingKeys: String, CodingKey { case kind }
+    var provenance: String? = nil
+    init(kind: String, provenance: String? = nil) { self.kind = kind; self.provenance = provenance }
+    private enum CodingKeys: String, CodingKey { case kind, provenance }
     init(from decoder: Decoder) throws {
         let c = try? decoder.container(keyedBy: CodingKeys.self)
         kind = (try? c?.decode(String.self, forKey: .kind)) ?? ""
+        provenance = try? c?.decode(String.self, forKey: .provenance)
     }
 }
 

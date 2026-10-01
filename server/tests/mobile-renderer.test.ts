@@ -13,6 +13,38 @@ function styleOf(segs: StyledSegment[] | undefined, index: number): string | und
 }
 
 describe("MobileRendererRegistry", () => {
+  it("declares file roles and requested/result semantics independently of summaries", () => {
+    const reg = new MobileRendererRegistry();
+    expect(reg.inputPresentation("read")).toEqual({
+      fields: {
+        path: { role: "filePath" },
+        offset: { role: "lineOffset" },
+        limit: { role: "lineLimit" },
+      },
+    });
+    expect(reg.inputPresentation("write")).toEqual({
+      fields: {
+        path: { role: "filePath" },
+        content: { role: "fileContent" },
+      },
+    });
+    expect(reg.inputPresentation("edit")).toEqual({
+      fields: { path: { role: "filePath" }, edits: { role: "edits" } },
+    });
+    expect(reg.outputPresentation("read")).toEqual({ kind: "fileContent", provenance: "result" });
+    expect(reg.outputPresentation("write")).toEqual({
+      kind: "fileContent",
+      provenance: "requested",
+    });
+    expect(reg.outputPresentation("edit")).toEqual({ kind: "diffOfEdits", provenance: "result" });
+    for (const name of ["Read", "functions.read", "tools/write", "mcp__x__edit"]) {
+      expect(reg.inputPresentation(name)).toBeUndefined();
+      expect(reg.outputPresentation(name)).toBeUndefined();
+    }
+    expect(
+      textOf(reg.renderCall("read", { path: "/skills/testing/SKILL.md", offset: 3, limit: 5 })),
+    ).toBe("read [skill] testing:3-7");
+  });
   it("has built-in renderers for all standard tools", () => {
     const reg = new MobileRendererRegistry();
     for (const tool of [
@@ -164,7 +196,10 @@ describe("oppi renderer", () => {
       args: ["session", "trace-page", "sess-1", "--target-events", "20"],
       title: "oppi session trace-page",
     },
-    { args: ["session", "wait", "sess-1", "--for", "idle"], title: "oppi session wait sess-1 · idle" },
+    {
+      args: ["session", "wait", "sess-1", "--for", "idle"],
+      title: "oppi session wait sess-1 · idle",
+    },
     {
       args: ["session", "create", "--workspace", "ws-1", "--prompt", "Review"],
       title: "oppi session create",

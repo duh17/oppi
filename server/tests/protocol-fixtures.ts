@@ -265,6 +265,14 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     tool: "read",
     args: { path: "src/main.ts", offset: 1, limit: 50 },
     toolCallId: "tc-seg-001",
+    inputPresentation: {
+      fields: {
+        path: { role: "filePath" },
+        offset: { role: "lineOffset" },
+        limit: { role: "lineLimit" },
+      },
+    },
+    outputPresentation: { kind: "fileContent", provenance: "result" },
     callSegments: [
       { text: "read ", style: "bold" },
       { text: "src/main.ts", style: "accent" },
@@ -276,7 +284,8 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     tool: "write",
     args: { path: "README.md", content: "hello" },
     toolCallId: "tc-update-001",
-    inputPresentation: { fields: { content: { role: "code", language: "markdown" } } },
+    inputPresentation: { fields: { path: { role: "filePath" }, content: { role: "fileContent" } } },
+    outputPresentation: { kind: "fileContent", provenance: "requested" },
   },
   tool_output: {
     type: "tool_output",
@@ -300,6 +309,15 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     toolCallId: "tc-001",
     outputPresentation: { kind: "terminal" },
     outputAvailability: { complete: false, totalBytes: 32768, source: "sidecar" },
+  },
+  tool_end_file_diff: {
+    type: "tool_end",
+    tool: "edit",
+    toolCallId: "tc-edit-001",
+    isError: false,
+    outputPresentation: { kind: "diffOfEdits", provenance: "result" },
+    outputAvailability: { complete: true },
+    details: { diff: "-42 old\n+42 actual" },
   },
   tool_end_with_details: {
     type: "tool_end",
@@ -641,6 +659,7 @@ const SERVER_MESSAGE_ORDER = [
   "tool_output_preview",
   "tool_end",
   "tool_end_with_details",
+  "tool_end_file_diff",
   "queue_state",
   "queue_item_started",
   "turn_ack",

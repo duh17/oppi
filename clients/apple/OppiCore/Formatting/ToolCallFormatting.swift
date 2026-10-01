@@ -6,21 +6,6 @@ import Foundation
 /// view instantiation. Maps structured args to display strings.
 enum ToolCallFormatting {
 
-    // MARK: - Tool Type Detection
-
-    static func isReadTool(_ name: String) -> Bool {
-        normalized(name) == "read"
-    }
-
-    // periphery:ignore - used by OppiTests via @testable import
-    static func isWriteTool(_ name: String) -> Bool {
-        normalized(name) == "write"
-    }
-
-    static func isEditTool(_ name: String) -> Bool {
-        normalized(name) == "edit"
-    }
-
     // MARK: - Arg Extraction
 
     /// Extract file path from structured args.
@@ -28,89 +13,7 @@ enum ToolCallFormatting {
         args?["path"]?.stringValue
     }
 
-    /// Extract read offset (defaults to 1).
-    static func readStartLine(from args: [String: JSONValue]?) -> Int {
-        args?["offset"]?.numberValue.map { Int($0) } ?? 1
-    }
-
-    /// Extract file content from write tool args.
-    static func writeContent(from args: [String: JSONValue]?) -> String? {
-        args?["content"]?.stringValue
-    }
-
     // MARK: - Display Formatting
-
-    /// Format file path for header display with optional read line range.
-    ///
-    /// Keeps the full (shortened) path string so collapsed rows can use
-    /// middle truncation (showing both prefix and filename), while expanded
-    /// rows can wrap to reveal the complete path.
-    static func displayFilePath(
-        tool: String,
-        args: [String: JSONValue]?,
-        argsSummary: String
-    ) -> String {
-        let raw = filePath(from: args)
-            ?? parseArgValue("path", from: argsSummary)
-        guard let path = raw else { return argsSummary }
-
-        var display = normalizedDisplayPath(path)
-
-        if isReadTool(tool) {
-            display += readLineRangeSuffix(from: args)
-        }
-
-        return display
-    }
-
-    /// Compact title for read calls that point at well-known pi resource files.
-    ///
-    /// Mirrors pi TUI's compact `SKILL.md` handling: collapsed reads of a
-    /// skill's instruction file should identify the skill instead of spending
-    /// the whole row on an implementation path.
-    static func compactReadDisplayTitle(
-        tool: String,
-        args: [String: JSONValue]?,
-        argsSummary: String
-    ) -> String? {
-        guard isReadTool(tool),
-              let path = filePath(from: args) ?? parseArgValue("path", from: argsSummary),
-              let skillName = skillNameFromReadPath(path) else {
-            return nil
-        }
-
-        return "[skill] \(skillName)\(readLineRangeSuffix(from: args))"
-    }
-
-    private static func skillNameFromReadPath(_ rawPath: String) -> String? {
-        let components = normalizedPathComponents(rawPath)
-        guard components.last == "SKILL.md",
-              components.count >= 2 else {
-            return nil
-        }
-
-        let parent = components[components.count - 2]
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return parent.isEmpty ? nil : parent
-    }
-
-    private static func normalizedPathComponents(_ rawPath: String) -> [String] {
-        rawPath
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "\\", with: "/")
-            .split(separator: "/")
-            .map(String.init)
-    }
-
-    static func readLineRangeSuffix(from args: [String: JSONValue]?) -> String {
-        let offset = args?["offset"]?.numberValue.map(Int.init)
-        let limit = args?["limit"]?.numberValue.map(Int.init)
-        guard offset != nil || limit != nil else { return "" }
-
-        let start = offset ?? 1
-        let end = limit.map { start + $0 - 1 }
-        return ":\(start)\(end.map { "-\($0)" } ?? "")"
-    }
 
     /// Collapse directory components to initials while keeping the final file name intact.
     static func breadcrumbDisplayPath(_ displayPath: String) -> String {
@@ -158,24 +61,6 @@ enum ToolCallFormatting {
             String(displayPath[..<range.lowerBound]),
             String(displayPath[range.lowerBound...])
         )
-    }
-
-    private static func normalizedDisplayPath(_ rawPath: String) -> String {
-        var normalized = shortenedPath(rawPath).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return rawPath }
-
-        while normalized.count > 1 && normalized.hasSuffix("/") {
-            normalized.removeLast()
-        }
-
-        return normalized
-    }
-
-    private static func shortenedPath(_ rawPath: String) -> String {
-        guard rawPath.hasPrefix("/Users/") else { return rawPath }
-        let parts = rawPath.split(separator: "/", maxSplits: 3)
-        guard parts.count > 2 else { return rawPath }
-        return "~/" + parts.dropFirst(2).joined(separator: "/")
     }
 
     /// Parse a value from the flat argsSummary string.
@@ -252,11 +137,11 @@ enum ToolCallFormatting {
         switch toolName {
         case "$":
             return "dollarsign"
-        case "read", "Read":
+        case "file-content":
             return "magnifyingglass"
-        case "write", "Write":
+        case "file-mutation":
             return "pencil"
-        case "edit", "Edit":
+        case "file-diff":
             return "arrow.left.arrow.right"
         case "voice_speak", "voice_create", "Voice_speak", "Voice_create":
             return "speaker.wave.2.fill"
@@ -488,62 +373,6 @@ enum ToolCallFormatting {
     struct DiffStats {
         let added: Int
         let removed: Int
-    }
-
-    struct EditTextChange {
-        let oldText: String
-        let newText: String
-    }
-
-    static func editTextChanges(from args: [String: JSONValue]?) -> [EditTextChange] {
-        guard let editsArray = args?["edits"]?.arrayValue, !editsArray.isEmpty else { return [] }
-
-        var changes: [EditTextChange] = []
-        changes.reserveCapacity(editsArray.count)
-
-        for edit in editsArray {
-            guard let editObj = edit.objectValue,
-                  let old = editObj["oldText"]?.stringValue,
-                  let new = editObj["newText"]?.stringValue else {
-                continue
-            }
-            changes.append(EditTextChange(oldText: old, newText: new))
-        }
-
-        return changes
-    }
-
-    static func editOldAndNewText(from args: [String: JSONValue]?) -> (oldText: String, newText: String)? {
-        let changes = editTextChanges(from: args)
-        guard !changes.isEmpty else { return nil }
-
-        return (
-            oldText: changes.map(\.oldText).joined(separator: "\n"),
-            newText: changes.map(\.newText).joined(separator: "\n")
-        )
-    }
-
-    static func editResultDiffLines(from details: JSONValue?) -> [DiffLine]? {
-        guard let object = details?.objectValue else { return nil }
-
-        guard let patch = object["patch"]?.stringValue,
-              let document = UnifiedPatchParser.parse(patch, options: .strict),
-              !document.isMultiFile,
-              let file = document.files.first,
-              !file.lines.isEmpty else {
-            return nil
-        }
-        return file.lines
-    }
-
-    static func editDiffStats(from args: [String: JSONValue]?) -> DiffStats? {
-        guard let editText = editOldAndNewText(from: args) else { return nil }
-
-        // Keep collapsed +N/-N badges aligned with the expanded diff renderer.
-        // Both should use the same LCS diff implementation.
-        let lines = DiffEngine.compute(old: editText.oldText, new: editText.newText)
-        let stats = DiffEngine.stats(lines)
-        return DiffStats(added: stats.added, removed: stats.removed)
     }
 
 }

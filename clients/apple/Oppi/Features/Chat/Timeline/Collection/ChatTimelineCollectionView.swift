@@ -1651,6 +1651,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             let request = ExpandedToolOutputLoader.LoadRequest(
                 itemID: itemID,
                 tool: tool,
+                outputPresentation: toolArgsStore?.outputPresentation(for: itemID),
                 outputByteCount: outputByteCount,
                 attempt: attempt,
                 hasExistingOutput: {

@@ -40,7 +40,7 @@ Example:
 
 ### Added
 
-- **Client:** Generic iOS tool rows expand to an Input / Calls / Output document with highlighted code inputs, recorded nested calls, and readable JSON forms and tables. Double-tap opens the same document with a Rendered / Raw toggle; Copy output still copies raw tool text. Read/write/edit/ask and media presentations are unchanged. Empty generic output renders structured details without executing Pi TUI hooks. Raw identifies previews and loads full output from an available sidecar.
+- **Client:** Generic iOS tool rows expand to an Input / Calls / Output document with highlighted code inputs, recorded nested calls, and readable JSON forms and tables. Double-tap opens the same document with a Rendered / Raw toggle; Copy output still copies raw tool text. Ask and media presentations are unchanged; file and diff inspection uses producer facts. Empty generic output renders structured details without executing Pi TUI hooks. Raw identifies previews and loads full output from an available sidecar.
 - **Server/Protocol:** Additive input field roles and output-kind facts on tool start/update and trace calls, plus Pi's bounded `nestedCalls` and output availability on tool end and trace results. Mobile-renderer sidecars can declare command fields and terminal output for any exact tool name. Live and history resolve facts through the same registry.
 - **Client:** Bash inspection now uses server facts, not its tool name. Any tool with command-input and terminal-output facts gets the same command panel, streamed tail previews, server summary title, and full-output paging. A server without those facts falls back to the generic document.
 - **Client/Protocol:** Tool calls and recorded Calls can show producer-resolved names such as `coros · Get activity detail`, with raw identity retained in Input/Raw. Existing summary segments are unchanged. MCP-provided titles are not shown yet because Pi drops them before its public session boundary; display uses definition labels, result metadata, or MCP name conventions instead. No icons are carried or fetched.
@@ -82,6 +82,8 @@ Example:
 
 ### Changed
 
+- **Client:** File and diff inspection now uses server facts for read/write/edit and equivalent extension tools. Requested write content and args-derived edit diffs are labeled Requested; result diffs drive both the viewer and change counts. Collapsed file titles use server summaries. Older servers without facts show the generic document.
+- **Protocol:** Added file-path, content, edit-pair, and read-range field roles plus file-content/diff output semantics and requested/result provenance. Managed sessions, mirrors, and history use the same renderer registry.
 - **Client:** In Threads, tapping a thread's root row opens that session's chat and the new labelled Thread strip opens the thread; swiping either never navigates. Thread detail remembers its Outline, Waterfall, or Timeline view on this device. A thread strip with no cost data no longer shows `$0.00`.
 - **Client:** Session status uses one palette everywhere: working is blue, done or idle is green, needs you (a question) is orange, stopped is grey, and errors are red. Question pills were blue, the same as Working. Thread graphs color each lane by its session's status, and cross-thread links are purple.
 

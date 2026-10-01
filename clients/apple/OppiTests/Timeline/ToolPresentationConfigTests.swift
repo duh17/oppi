@@ -6,44 +6,15 @@ import UIKit
 @Suite("Tool presentation configuration")
 @MainActor
 struct ToolPresentationConfigTests {
-    @Test func inlineMediaWarningHeuristicDoesNotFlagParityTools() {
-        let sample = "let sample = \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==\""
-
-        #expect(
-            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "read",
-                outputPreview: sample,
-                fullOutput: ""
-            )
-        )
-        #expect(
-            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "functions.read",
-                outputPreview: "",
-                fullOutput: sample
-            )
-        )
-        #expect(
-            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "write",
-                outputPreview: sample,
-                fullOutput: ""
-            )
-        )
-        #expect(
-            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "tools/write",
-                outputPreview: "",
-                fullOutput: sample
-            )
-        )
-        #expect(
-            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "edit",
-                outputPreview: sample,
-                fullOutput: ""
-            )
-        )
+    private func seedFacts(_ harness: TimelineTestHarness, _ id: String, _ operation: String) {
+        guard let (input, output) = ToolFileFactsFixture.facts(operation) else { return }
+        harness.toolArgsStore.setInputPresentation(input, for: id)
+        harness.toolArgsStore.setOutputPresentation(output, for: id)
+    }
+    @Test(arguments: ["read", "functions.read", "write", "tools/write", "edit"])
+    func missingFileFactsDoesNotSuppressMediaWarning(tool: String) {
+        #expect(ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
+            normalizedTool: tool, outputPreview: "data:image/png;base64,sample", fullOutput: ""))
     }
 
     @Test func missingTerminalFactsDoesNotInferFromName() {
@@ -108,7 +79,7 @@ struct ToolPresentationConfigTests {
             )
         )
         #expect(
-            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
+            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
                 normalizedTool: "edit",
                 outputPreview: sample,
                 fullOutput: ""
@@ -376,11 +347,12 @@ struct ToolPresentationConfigTests {
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         #expect(config.editAdded == nil)
         #expect(config.editRemoved == nil)
-        #expect(config.trailing == "modified")
+        #expect(config.trailing == nil, "No facts must not invent edit semantics")
     }
 
     @Test func expandedSuccessfulWriteCarriesCompositionOwnedCurrentFileAction() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
+        seedFacts(harness, "write-current", "write")
         harness.reducer.expandedItemIDs.insert("write-current")
         harness.toolArgsStore.set([
             "path": .string("docs/current.md"),
@@ -423,6 +395,7 @@ struct ToolPresentationConfigTests {
 
     @Test func expandedEditToolUsesNativeDiffLines() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
+        seedFacts(harness, "edit-diff", "edit")
         harness.reducer.expandedItemIDs.insert("edit-diff")
         harness.toolArgsStore.set([
             "edits": .array([
@@ -465,6 +438,7 @@ struct ToolPresentationConfigTests {
 
     @Test func expandedStreamingEditUsesCheapFileSurfaceUntilDone() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
+        seedFacts(harness, "edit-streaming", "edit")
         harness.reducer.expandedItemIDs.insert("edit-streaming")
         harness.toolArgsStore.set([
             "edits": .array([
@@ -500,6 +474,7 @@ struct ToolPresentationConfigTests {
 
     @Test func expandedEditToolFallbackOutputKeepsSyntaxLanguageFromPath() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
+        seedFacts(harness, "edit-fallback", "edit")
         harness.reducer.expandedItemIDs.insert("edit-fallback")
         harness.toolArgsStore.set([
             "path": .string("src/feature.ts"),
@@ -516,14 +491,14 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
-        // Error edit falls back to code viewer with language from file path
-        guard case .code(_, let language, _, let filePath) = config.expandedContent else { Issue.record("Expected .code for error edit fallback"); return }
-        #expect(language == .typescript)
-        #expect(filePath == "src/feature.ts")
+        guard case .markdown(let document, _) = config.expandedContent else { Issue.record("Expected generic error document"); return }
+        #expect(document.contains("const value = 1"))
+        #expect(config.editAdded == nil)
     }
 
     @Test func expandedEditFallbackKeepsCodeRendererForMarkdownPaths() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
+        seedFacts(harness, "edit-md-fallback", "edit")
         harness.reducer.expandedItemIDs.insert("edit-md-fallback")
         harness.toolArgsStore.set([
             "path": .string("docs/README.md"),
@@ -540,17 +515,17 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
-        guard case .code(let text, let language, _, let filePath) = config.expandedContent else {
-            Issue.record("Expected .code for edit markdown fallback")
+        guard case .markdown(let text, _) = config.expandedContent else {
+            Issue.record("Expected generic error document")
             return
         }
-        #expect(text == "# Title")
-        #expect(language == nil)
-        #expect(filePath == "docs/README.md")
+        #expect(text.contains("# Title"))
+        #expect(config.editAdded == nil)
     }
 
     @Test func expandedReadToolDetectsSyntaxLanguageFromFilePath() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
+        seedFacts(harness, "read-swift", "read")
         harness.reducer.expandedItemIDs.insert("read-swift")
         harness.toolArgsStore.set([
             "path": .string("Runtime/TimelineReducer.swift"),
@@ -577,7 +552,7 @@ struct ToolPresentationConfigTests {
         if case .code(_, _, _, let filePath) = config.expandedContent { #expect(filePath == "Runtime/TimelineReducer.swift") }
     }
 
-    @Test func expandedReadToolFallsBackToArgsSummaryPathWhenArgsMissing() throws {
+    @Test func oldServerReadDoesNotInferFileFromArgsSummary() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
         harness.reducer.expandedItemIDs.insert("read-fallback")
 
@@ -592,14 +567,18 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
-        if case .code(_, _, let startLine, _) = config.expandedContent { #expect(startLine == 1) }
-        if case .code(_, _, _, let filePath) = config.expandedContent { #expect(filePath == "Sources/Agent.swift") }
+        guard case .markdown(let text, let path) = config.expandedContent else {
+            Issue.record("Missing facts must render a generic document"); return
+        }
+        #expect(text.contains("let value = 1"))
+        #expect(path == nil)
+        #expect(config.currentFileOpenIntent == nil)
     }
 
     @Test func collapsedReadImageToolStaysHeaderOnly() throws {
-        // End-to-end: image reads should collapse like normal file reads.
-        // The image is available after expansion, but the collapsed row stays compact.
+        // Composition integration: fact-declared images keep a compact collapsed header.
         let harness = makeTimelineHarness(sessionId: "session-a")
+        seedFacts(harness, "read-img", "read")
         let fakeBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
         let serverOutput = "Read image file [image/png]\ndata:image/png;base64,\(fakeBase64)"
 
@@ -641,8 +620,9 @@ struct ToolPresentationConfigTests {
         #expect(config.collapsedImageBase64 == nil, "No image preview before output arrives")
     }
 
-    @Test func expandedWriteToolDetectsSyntaxLanguageFromPath() throws {
+    @Test func completedWriteWithoutRequestedBytesOpensCurrentFile() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
+        seedFacts(harness, "write-swift", "write")
         harness.reducer.expandedItemIDs.insert("write-swift")
         harness.toolArgsStore.set([
             "path": .string("Sources/Generated.swift"),
@@ -659,14 +639,16 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
-        // Write without content arg falls back to code viewer with language from file path
-        guard case .code(_, let language, _, let filePath) = config.expandedContent else { Issue.record("Expected .code for write fallback"); return }
-        #expect(language == .swift)
-        #expect(filePath == "Sources/Generated.swift")
+        guard case .status(let message) = config.expandedContent else { Issue.record("Expected current-file activation surface"); return }
+        #expect(message == "Open current file")
+        #expect(config.languageBadge == "Swift")
+        #expect(config.currentFileOpenIntent?.path == "Sources/Generated.swift")
+        #expect(config.copyOutputText == nil)
     }
 
     @Test func expandedWriteMarkdownUsesMarkdownRendererLikeRead() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
+        seedFacts(harness, "write-md", "write")
         harness.reducer.expandedItemIDs.insert("write-md")
         harness.toolArgsStore.set([
             "path": .string("docs/README.md"),
@@ -691,6 +673,7 @@ struct ToolPresentationConfigTests {
 
     @Test func expandedStreamingWriteMarkdownUsesIncrementalMarkdownPipeline() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
+        seedFacts(harness, "write-md-streaming", "write")
         harness.reducer.expandedItemIDs.insert("write-md-streaming")
         harness.toolArgsStore.set([
             "path": .string("docs/README.md"),
@@ -718,6 +701,7 @@ struct ToolPresentationConfigTests {
 
     @Test func expandedReadMarkdownUsesMarkdownRendererAndSkipsCodeLineNumbers() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
+        seedFacts(harness, "read-md", "read")
         harness.reducer.expandedItemIDs.insert("read-md")
         harness.toolArgsStore.set([
             "path": .string("docs/README.md"),
@@ -960,6 +944,7 @@ struct ToolPresentationConfigTests {
 
     @Test func expandedReadImageToolConfigurationUsesMediaRenderer() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
+        seedFacts(harness, "read-image-1", "read")
         harness.reducer.expandedItemIDs.insert("read-image-1")
         harness.toolArgsStore.set(["path": .string("screens/harness-initial.png")], for: "read-image-1")
         harness.toolOutputStore.append(
@@ -1070,7 +1055,7 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
-        #expect(config.languageBadge == "Swift")
+        #expect(config.languageBadge == "⚠︎media", "Missing facts must not infer a file language from the summary")
     }
 
     @Test func expandedBashToolConfigurationPrefersUnwrappedOutput() throws {

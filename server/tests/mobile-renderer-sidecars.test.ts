@@ -64,6 +64,34 @@ describe("discoverRenderers", () => {
 });
 
 describe("loadRenderer", () => {
+  it("loads write-equivalent file facts for an arbitrary tool without requiring language", async () => {
+    const filePath = join(tempDir, "files.ts");
+    writeFileSync(
+      filePath,
+      `export default { put_file: {
+      inputPresentation: { fields: { path: { role: "filePath" }, content: { role: "fileContent" } } },
+      outputPresentation: { kind: "fileContent", provenance: "requested" },
+      renderCall(args) { return [{ text: "write ", style: "bold" }, { text: args.path, style: "accent" }]; },
+      renderResult() { return []; }
+    } };`,
+    );
+    const reg = new MobileRendererRegistry();
+    expect(await reg.loadRenderer(filePath)).toEqual({ loaded: ["put_file"], errors: [] });
+    expect(reg.inputPresentation("put_file")).toEqual(reg.inputPresentation("write"));
+    expect(reg.outputPresentation("put_file")).toEqual({
+      kind: "fileContent",
+      provenance: "requested",
+    });
+    expect(reg.outputPresentation("functions.put_file")).toBeUndefined();
+    expect(
+      reg.outputPresentation("put_file", {
+        outputPresentation: { kind: "diffOfEdits", provenance: "result" },
+      }),
+    ).toEqual({ kind: "diffOfEdits", provenance: "result" });
+    expect(reg.outputPresentation("put_file", { outputPresentation: { kind: "future" } })).toEqual({
+      kind: "structured",
+    });
+  });
   it("loads terminal facts for an arbitrary exact tool name from a sidecar", async () => {
     const filePath = join(tempDir, "terminal.ts");
     writeFileSync(

@@ -604,10 +604,10 @@ struct TraceRenderingTests {
             "offset": .number(100),
             "limit": .number(50),
         ]
-        let display = ToolCallFormatting.displayFilePath(tool: "read", args: args, argsSummary: "")
-        #expect(display.contains("main.swift"))
-        #expect(display.contains(":100"))
-        #expect(display.contains("-149"))
+        let file = ToolFileInspection.resolve(args: args, input: ToolFileFactsFixture.readInput,
+            output: .init(kind: "fileContent", provenance: "result"), details: nil, text: "", isDone: true, isError: false)
+        #expect(file?.path == "/work/src/main.swift")
+        #expect(file?.startLine == 100)
     }
 
     @Test func toolCallFormattingFormatBytes() {
@@ -623,24 +623,4 @@ struct TraceRenderingTests {
         #expect(ToolCallFormatting.parseArgValue("missing", from: summary) == nil)
     }
 
-    @Test func toolCallFormattingReadStartLine() {
-        let args: [String: JSONValue] = ["offset": .number(42)]
-        #expect(ToolCallFormatting.readStartLine(from: args) == 42)
-        #expect(ToolCallFormatting.readStartLine(from: nil) == 1)
-        #expect(ToolCallFormatting.readStartLine(from: [:]) == 1)
-    }
-
-    @Test func toolCallFormattingToolTypeDetection() {
-        #expect(ToolCallFormatting.isReadTool("Read"))
-        #expect(ToolCallFormatting.isReadTool("read"))
-        #expect(!ToolCallFormatting.isReadTool("bash"))
-
-        #expect(ToolCallFormatting.isWriteTool("Write"))
-        #expect(ToolCallFormatting.isWriteTool("write"))
-        #expect(!ToolCallFormatting.isWriteTool("bash"))
-
-        #expect(ToolCallFormatting.isEditTool("Edit"))
-        #expect(ToolCallFormatting.isEditTool("edit"))
-        #expect(!ToolCallFormatting.isEditTool("bash"))
-    }
 }

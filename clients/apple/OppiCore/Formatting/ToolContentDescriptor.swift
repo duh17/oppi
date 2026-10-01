@@ -126,6 +126,7 @@ struct ToolInspection: Equatable, Sendable {
     var totalBytes: Int?
     /// Resolved semantics for the painter, not tool identity.
     var terminalOutput: Bool
+    var file: ToolFileInspection? = nil
     var commandText: String? { input.first { $0.role == "command" }?.value.stringValue }
     var commandLanguageBadge: String? {
         guard terminalOutput,

@@ -79,7 +79,8 @@ enum ToolPresentationBuilder {
             includeOutput: isExpanded || Self.toolAudioPresentationDetails(from: context.details) != nil
         )
         let isTerminal = presentation.inspection.terminalOutput
-        let hasInlineMediaDataURI = !isTerminal && shouldWarnInlineMediaForToolOutput(
+        let file = presentation.inspection.file
+        let hasInlineMediaDataURI = !isTerminal && file == nil && shouldWarnInlineMediaForToolOutput(
             normalizedTool: normalizedTool,
             outputPreview: outputPreview,
             fullOutput: context.fullOutput
@@ -97,10 +98,9 @@ enum ToolPresentationBuilder {
             isDone: isDone,
             outputPreview: outputPreview,
             display: context.callSegments?.isEmpty != false ? context.display : nil,
-            terminalOutput: isTerminal
+            terminalOutput: isTerminal,
+            file: file
         )
-
-        let isBuiltInFileTool = normalizedTool == "read" || normalizedTool == "write" || normalizedTool == "edit"
         let isVoicePresentationResult = Self.toolAudioPresentationDetails(from: context.details) != nil
 
         // Expanded presentation
@@ -132,7 +132,7 @@ enum ToolPresentationBuilder {
         }
 
         var title = collapsed.title
-        let shouldCapTitleLength = !(normalizedTool == "read" || normalizedTool == "write" || normalizedTool == "edit")
+        let shouldCapTitleLength = file == nil
         if shouldCapTitleLength, title.count > 240 {
             title = String(title.prefix(239)) + "…"
         }
@@ -146,11 +146,11 @@ enum ToolPresentationBuilder {
         // belongs to the separate command panel. Generic extensions retain
         // their name per the non-segment fallback behavior.
         let segmentAttributedTitle: NSAttributedString?
-        if isVoicePresentationResult || isBuiltInFileTool || normalizedTool == "ask" {
+        if isVoicePresentationResult || normalizedTool == "ask" {
             segmentAttributedTitle = nil
         } else if let callSegs = context.callSegments, !callSegs.isEmpty {
             let prefix = SegmentRenderer.toolNamePrefix(from: callSegs)
-            if isTerminal || Self.toolPrefixIconReplacesName(prefix) {
+            if isTerminal || file != nil || Self.toolPrefixIconReplacesName(prefix) {
                 segmentAttributedTitle = SegmentRenderer.attributedStringStrippingPrefix(from: callSegs)
             } else {
                 segmentAttributedTitle = SegmentRenderer.attributedString(from: callSegs)
@@ -159,10 +159,10 @@ enum ToolPresentationBuilder {
             segmentAttributedTitle = nil
         }
 
-        if isTerminal, let segmentAttributedTitle { title = segmentAttributedTitle.string }
+        if isTerminal || file != nil, let segmentAttributedTitle { title = segmentAttributedTitle.string }
 
         let segmentAttributedTrailing: NSAttributedString?
-        if isInterrupted {
+        if isInterrupted || file?.provenance == .requested {
             segmentAttributedTrailing = nil
         } else if let resultSegs = context.resultSegments, !resultSegs.isEmpty {
             segmentAttributedTrailing = SegmentRenderer.trailingAttributedString(from: resultSegs)
@@ -174,16 +174,14 @@ enum ToolPresentationBuilder {
         let segmentToolNameColor = SegmentRenderer.toolNameColor(from: context.callSegments ?? [])
 
         let currentFileOpenIntent = currentFileOpenIntent(
-            rawTool: tool,
-            normalizedTool: normalizedTool,
-            args: args,
+            file: file,
             isDone: isDone,
             isError: isError,
             isInterrupted: isInterrupted
         )
         let expandedContent: ToolExpandedContent? = if isExpanded,
                                                        currentFileOpenIntent != nil,
-                                                       expanded.content == nil {
+                                                       file?.text.isEmpty == true {
             // Successful empty writes still need a visible expanded surface
             // from which the user can open the actual current file.
             .status(message: "Open current file")
@@ -192,7 +190,7 @@ enum ToolPresentationBuilder {
         }
 
         let toolNamePrefix = segmentAttributedTitle != nil
-            ? (isTerminal ? collapsed.toolNamePrefix : (segmentToolNamePrefix ?? collapsed.toolNamePrefix))
+            ? (isTerminal || file != nil ? collapsed.toolNamePrefix : (segmentToolNamePrefix ?? collapsed.toolNamePrefix))
             : collapsed.toolNamePrefix
         // A dollar in legacy or structured summary text is not a terminal fact.
         let glyphPrefix = !isTerminal && toolNamePrefix == "$" ? nil : toolNamePrefix
@@ -208,7 +206,7 @@ enum ToolPresentationBuilder {
             titleLineBreakMode: segmentAttributedTitle != nil ? .byTruncatingTail : collapsed.titleLineBreakMode,
             toolNamePrefix: glyphPrefix,
             toolNameColor: segmentAttributedTitle != nil
-                ? (isTerminal ? collapsed.toolNameColor : (segmentToolNameColor ?? collapsed.toolNameColor))
+                ? (isTerminal || file != nil ? collapsed.toolNameColor : (segmentToolNameColor ?? collapsed.toolNameColor))
                 : collapsed.toolNameColor,
             editAdded: isInterrupted ? nil : collapsed.editAdded,
             editRemoved: isInterrupted ? nil : collapsed.editRemoved,
@@ -230,21 +228,18 @@ enum ToolPresentationBuilder {
     }
 
     private static func currentFileOpenIntent(
-        rawTool: String,
-        normalizedTool: String,
-        args: [String: JSONValue]?,
+        file: ToolFileInspection?,
         isDone: Bool,
         isError: Bool,
         isInterrupted: Bool
     ) -> ToolCurrentFileOpenIntent? {
-        guard normalizedTool == "write",
-              rawTool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "write",
+        guard let file, file.operation == .mutation,
               isDone,
               !isError,
               !isInterrupted,
-              let path = ToolCallFormatting.filePath(from: args),
+              let path = file.path,
               !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              FileType.detect(from: path).previewCategory == .text else {
+              file.fileType?.previewCategory == .text else {
             return nil
         }
         return ToolCurrentFileOpenIntent(path: path)
@@ -275,7 +270,8 @@ enum ToolPresentationBuilder {
         isDone: Bool,
         outputPreview: String,
         display: ToolDisplay?,
-        terminalOutput: Bool
+        terminalOutput: Bool,
+        file: ToolFileInspection?
     ) -> CollapsedPresentation {
         var result = CollapsedPresentation(title: tool)
 
@@ -285,51 +281,24 @@ enum ToolPresentationBuilder {
             return result
         }
 
+        if let file {
+            // The server's segments supply the title below; without segments use
+            // the producer display/ordinary fallback, never reconstruct a tool call.
+            result.title = display?.label(fallback: tool) ?? (argsSummary.isEmpty ? tool : "\(tool) \(argsSummary)")
+            result.toolNamePrefix = file.prefix
+            result.titleLineBreakMode = .byTruncatingMiddle
+            result.languageBadge = file.fileType == .markdown || file.fileType == .image
+                ? file.fileType?.displayLabel : file.fileType?.syntaxLanguage?.displayName
+            if !isError {
+                result.editTrailingFallback = file.provenance == .requested ? "Requested" : nil
+                if file.operation == .edits, let stats = file.stats {
+                    result.editAdded = stats.added
+                    result.editRemoved = stats.removed
+                }
+            }
+            return result
+        }
         switch normalizedTool {
-        case "read", "write", "edit":
-            let displayPath = ToolCallFormatting.displayFilePath(
-                tool: normalizedTool, args: args, argsSummary: argsSummary
-            )
-            let fileMetadata = filePresentationMetadata(args: args, argsSummary: argsSummary)
-            result.toolNamePrefix = normalizedTool
-            result.toolNameColor = UIColor(Color.themeCyan)
-
-            if normalizedTool == "read",
-               !isExpanded,
-               let compactTitle = ToolCallFormatting.compactReadDisplayTitle(
-                   tool: normalizedTool,
-                   args: args,
-                   argsSummary: argsSummary
-               ) {
-                result.title = compactTitle
-                result.titleLineBreakMode = .byTruncatingTail
-                result.languageBadge = nil
-            } else {
-                result.title = displayPath.isEmpty ? normalizedTool : displayPath
-                result.titleLineBreakMode = .byTruncatingMiddle
-
-                if fileMetadata.fileType == .markdown || fileMetadata.fileType == .image {
-                    result.languageBadge = fileMetadata.fileType?.displayLabel
-                } else {
-                    result.languageBadge = fileMetadata.language?.displayName
-                }
-            }
-
-            if normalizedTool == "edit" {
-                if !isDone {
-                    result.editTrailingFallback = "editing"
-                } else if let stats = ToolCallFormatting.editDiffStats(from: args) {
-                    result.editAdded = stats.added
-                    result.editRemoved = stats.removed
-                } else if let lines = ToolCallFormatting.editResultDiffLines(from: details) {
-                    let stats = DiffEngine.stats(lines)
-                    result.editAdded = stats.added
-                    result.editRemoved = stats.removed
-                } else {
-                    result.editTrailingFallback = "modified"
-                }
-            }
-
         case "ask":
             result.title = ToolCallFormatting.askCollapsedTitle(
                 args: args,
@@ -476,7 +445,7 @@ enum ToolPresentationBuilder {
     /// Tools whose icon replaces the textual tool name in collapsed title rendering.
     private static func toolPrefixIconReplacesName(_ prefix: String?) -> Bool {
         switch prefix {
-        case "read", "write", "edit", "ask", "voice_speak", "voice_create": true
+        case "ask", "voice_speak", "voice_create": true
         default: false
         }
     }
@@ -485,18 +454,6 @@ enum ToolPresentationBuilder {
         let filePath: String?
         let fileType: FileType?
         let language: SyntaxLanguage?
-    }
-
-    private static func filePresentationMetadata(
-        args: [String: JSONValue]?,
-        argsSummary: String
-    ) -> FilePresentationMetadata {
-        let metadata = ToolContentDescriptorBuilder.fileMetadata(args: args, argsSummary: argsSummary)
-        return FilePresentationMetadata(
-            filePath: metadata.filePath,
-            fileType: metadata.fileType,
-            language: metadata.language
-        )
     }
 
     private static func expandedFileContent(
@@ -547,36 +504,9 @@ enum ToolPresentationBuilder {
         outputPreview: String,
         fullOutput: String
     ) -> Bool {
-        let tool = ToolCallFormatting.normalized(normalizedTool)
-        switch tool {
-        case "read", "write", "edit":
-            return false
-        default:
-            break
-        }
-
         let outputSample = fullOutput.isEmpty ? outputPreview : fullOutput
         guard !outputSample.isEmpty else { return false }
         return containsInlineMediaDataURI(outputSample)
-    }
-
-    /// Extract the first image data URI for collapsed inline preview.
-    /// Only returns data for "read" tool calls on image file types.
-    private static func collapsedImagePreview(
-        normalizedTool: String,
-        args: [String: JSONValue]?,
-        argsSummary: String,
-        output: String
-    ) -> (base64: String, mimeType: String)? {
-        guard normalizedTool == "read",
-              readOutputFileType(args: args, argsSummary: argsSummary) == .image,
-              !output.isEmpty else {
-            return nil
-        }
-        guard let first = ImageExtractor.extract(from: output).first else {
-            return nil
-        }
-        return (first.base64, first.mimeType ?? "image/png")
     }
 
     private static func containsInlineMediaDataURI(_ text: String) -> Bool {

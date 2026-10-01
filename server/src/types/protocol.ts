@@ -27,12 +27,20 @@ export interface NestedToolCalls extends Omit<PiNestedToolCalls, "calls"> {
 /** How clients present a tool call's arguments. */
 export interface ToolInputPresentation {
   /** Argument field name → semantic role and source language. */
-  fields: Record<string, { role: "code" | "command"; language: string }>;
+  fields: Record<
+    string,
+    {
+      role: "code" | "command" | "filePath" | "fileContent" | "edits" | "lineOffset" | "lineLimit";
+      language?: string;
+    }
+  >;
 }
 
 /** Result semantics, not a requested viewer or layout. */
 export interface ToolOutputPresentation {
-  kind: "terminal" | "structured";
+  kind: "terminal" | "structured" | "fileContent" | "diffOfEdits";
+  /** Requested bytes are input, never evidence of the resulting file. */
+  provenance?: "requested" | "result";
 }
 
 /** Pi result text completeness; source uses toolCallId, never a private path.

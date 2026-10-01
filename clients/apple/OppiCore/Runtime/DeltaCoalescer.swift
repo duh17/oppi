@@ -595,11 +595,16 @@ final class DeltaCoalescer {
 
         case .toolStart(_, _, let tool, let args, let callSegments, let inputPresentation, let display, let outputPresentation),
              .toolUpdate(_, _, let tool, let args, let callSegments, let inputPresentation, let display, let outputPresentation):
+            let inputBytes = inputPresentation?.fields.reduce(into: 0) { total, field in
+                total += field.key.utf8.count + field.value.role.utf8.count
+                total += field.value.language?.utf8.count ?? 0
+            } ?? 0
             return tool.utf8.count
                 + estimatedPayloadBytes(args)
                 + estimatedPayloadBytes(callSegments)
                 + (outputPresentation?.kind.utf8.count ?? 0)
-                + (inputPresentation?.fields.reduce(0) { $0 + $1.key.utf8.count + $1.value.role.utf8.count + $1.value.language.utf8.count } ?? 0)
+                + (outputPresentation?.provenance?.utf8.count ?? 0)
+                + inputBytes
                 + (display?.title.utf8.count ?? 0) + (display?.group?.utf8.count ?? 0)
 
         case .toolOutput(let payload):

@@ -265,7 +265,9 @@ When changing protocol messages:
 
 ### Tool inspection facts
 
-`MobileRendererRegistry` owns terminal tool identity and matches Pi's exact tool name. Built-in `bash` and arbitrary renderer sidecars declare command fields through `inputPresentation.fields` (`role: "command"`, `language: "shell"`) and terminal output through `outputPresentation.kind`. Session protocol projection and trace replay consume these facts; neither keeps a shell-name list. History resolves facts from the current registry even when summary segments are not requested.
+`MobileRendererRegistry` owns terminal and file tool identity and matches Pi's exact tool name. Built-in `bash` and arbitrary renderer sidecars declare command fields through `inputPresentation.fields` (`role: "command"`, `language: "shell"`) and terminal output through `outputPresentation.kind`. Session protocol projection and trace replay consume these facts; neither keeps a shell-name list. History resolves facts from the current registry even when summary segments are not requested.
+
+Built-in read/write/edit declare `filePath`, `fileContent`, `edits` (oldText/newText pairs), and optional `lineOffset`/`lineLimit` roles. Output kinds `fileContent` and `diffOfEdits` carry optional `provenance: requested | result`; write content is requested, read content and result diffs are results. Args-derived edit previews remain requested. Sidecars can declare the same facts for any exact tool name. Apple models tolerate missing/unknown fields and use generic inspection without facts.
 
 Explicit result `details.outputPresentation` overrides the static declaration. `details.expandedText` also overrides it: terminal format keeps terminal semantics; other formats emit structured semantics so clients clear an earlier terminal declaration. Unknown explicit kinds degrade to structured output. Missing facts on old servers select generic inspection, not a client tool-name fallback.
 

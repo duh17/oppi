@@ -167,8 +167,8 @@ struct ToolRowViewportPolicy {
             return .diff
         case .code:
             return .code
-        case .markdown:
-            return .markdown(isCustomTool: isCustomMarkdownToolPrefix(toolNamePrefix))
+        case .markdown(_, let filePath):
+            return .markdown(isCustomTool: filePath == nil)
         case .readMedia(let output, let filePath, _, let attachments):
             return .readMedia(output: output, filePath: filePath, attachments: attachments)
         case .audioMessage:
@@ -252,9 +252,4 @@ struct ToolRowViewportPolicy {
         kind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
-    private static func isCustomMarkdownToolPrefix(_ prefix: String?) -> Bool {
-        let builtInPrefixes: Set<String> = ["$", "read", "write", "edit"]
-        guard let prefix else { return true }
-        return !builtInPrefixes.contains(prefix)
-    }
 }

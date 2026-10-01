@@ -16,9 +16,10 @@ struct ToolCallDocumentPreview: View {
 
     private struct Reader: Identifiable { let id = UUID(); let content: FullScreenCodeContent }
     @State private var reader: Reader?
+    @State private var fixturePath: String?
 
     private var fixture: [String: JSONValue]? {
-        guard let path = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_FIXTURE"],
+        guard let path = fixturePath ?? ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_FIXTURE"],
               let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let json = try? JSONDecoder().decode(JSONValue.self, from: data) else { return nil }
         return (direct ? json.objectValue?["direct"] : json)?.objectValue
@@ -59,6 +60,13 @@ struct ToolCallDocumentPreview: View {
             }
             config.toolOutputSidecarSource = .init(loadFirst: { window(0) }, loadNext: { window($0) })
         }
+        // The run-local file replaces the HTTP boundary, not the row's activation policy.
+        if let intent = config.currentFileOpenIntent, let path = fixture["currentFileFixture"]?.stringValue {
+            config.openCurrentFile = {
+                let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? "QA current-file fixture unavailable"
+                reader = Reader(content: .fromText(text, filePath: intent.path))
+            }
+        }
         config.openFullScreen = { payload in
             if case .document(let content, _) = payload.kind { reader = Reader(content: content) }
         }
@@ -69,12 +77,16 @@ struct ToolCallDocumentPreview: View {
         VStack(alignment: .leading, spacing: 16) {
             Text(fixture?["label"]?.stringValue ?? (direct ? "Direct MCP sample" : "Tool inspection sample"))
                 .font(.headline).foregroundStyle(.themeFg)
+                .accessibilityIdentifier("screenshot.ready")
             if let configuration { PreviewRow(configuration: configuration) }
             else { Text("Missing run-local tool call fixture").accessibilityIdentifier("tool-document.fixture-missing") }
+            if let next = fixture?["nextFixture"]?.stringValue {
+                Button("Complete tool") { fixturePath = next }
+                    .accessibilityIdentifier("tool-document.advance")
+            }
             Spacer()
         }
         .padding(.horizontal, 12).padding(.top, 30).background(.themeBg)
-        .accessibilityIdentifier("screenshot.ready")
         .onAppear {
             if fixture?["fullscreen"]?.boolValue == true, let configuration,
                let content = ToolTimelineRowFullScreenSupport.staticFullScreenContent(

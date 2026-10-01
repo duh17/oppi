@@ -399,7 +399,7 @@ For tool rows, Oppi uses this order:
 3. server-provided `StyledSegment[]` summaries for the collapsed row
 4. generic rendering from tool `content` and `details`
 
-On iOS, generic expanded tool rows show one Markdown document with **Input**, optional **Calls**, and **Output** sections. Terminal-kind rows use a separate command panel and streaming terminal viewport. Read/write/edit/ask rows and audio/image/media presentations keep their own renderers. Section labels appear only when the document has more than one section.
+On iOS, generic expanded tool rows show one Markdown document with **Input**, optional **Calls**, and **Output** sections. Terminal-kind rows use a separate command panel and streaming terminal viewport. File and diff facts select the existing native file viewers. Ask rows and audio/image/media presentations keep their own renderers. Section labels appear only when the document has more than one section.
 
 Input shows non-empty arguments as a form table, source-code fences, or labeled text/JSON blocks. Calls shows Pi's recorded nested calls with status, literal compact arguments, duration, and errors. An incomplete record shows a notice.
 
@@ -416,13 +416,21 @@ Expanded output uses this order:
 
 JSON objects become form tables in wire key order. Scalar object arrays become tables when they have at most eight columns. Other arrays become lists of forms. JSON strings, MCP content wrappers, and Promise.allSettled results are unwrapped without tool-name checks. Rendered previews are bounded; the full-screen reader's **Raw** toggle retains all arguments, including null/empty fields, and available raw output. Raw identifies output previews and their total byte count when known. Raw loads full output by tool-call ID when a source is available, including in stopped sessions. If that source is unavailable, the preview notice remains. Double-tap opens the same document with a **Rendered / Raw** toggle. Copy output still copies the tool's raw text.
 
-Sidecars provide short collapsed summaries and optional semantic facts. Each tool renderer can declare source-code or command fields:
+Sidecars provide short collapsed summaries and optional semantic facts. Each tool renderer can declare source-code, command, or file fields:
 
 ```typescript
 export default {
   custom: {
     inputPresentation: { fields: { source: { role: "code", language: "python" } } },
     renderCall(args) { return [{ text: "custom ", style: "bold" }]; },
+    renderResult(details, isError) { return []; },
+  },
+  put_file: {
+    inputPresentation: { fields: { target: { role: "filePath" }, payload: { role: "fileContent" } } },
+    outputPresentation: { kind: "fileContent", provenance: "requested" },
+    renderCall(args) {
+      return [{ text: "store ", style: "bold" }, { text: String(args.target ?? ""), style: "accent" }];
+    },
     renderResult(details, isError) { return []; },
   },
   run_thing: {
@@ -438,7 +446,9 @@ export default {
 
 `run_thing` receives the same iOS command panel and terminal viewport as built-in `bash`. The registry matches Pi's exact tool name; aliases such as `functions.bash` do not inherit facts. The server sends `outputPresentation` on live start/update and history calls, and resolves it again on results. Explicit `details.outputPresentation` wins over the static declaration. `details.expandedText` also wins: `presentationFormat: "terminal"` keeps terminal semantics; other formats select the generic document. Unknown explicit kinds degrade to structured output.
 
-Every tool result carries `outputAvailability: { complete, totalBytes?, source? }`, derived from Pi's `details.truncation` and `details.fullOutputPath`. `source: "sidecar"` enables full-output reads by tool-call ID; the fact never contains the private path. Streaming terminal output over 8 KB uses bounded replace-mode tail previews. The iOS reader pages the advertised sidecar; a stopped session can lose that source and keeps its preview. Without terminal facts, a new app renders the generic document even for a tool named `bash`. Old apps ignore the additive facts.
+File facts use `filePath`, `fileContent`, and `edits` input roles. `edits` is an array of `{ oldText, newText }` pairs. Optional `lineOffset` and `lineLimit` fields describe one-based read ranges. File roles do not require a language. `outputPresentation.kind` can be `fileContent` or `diffOfEdits`; `provenance: "requested"` identifies input content, and `"result"` identifies tool-result content. Built-in read declares result file content; write declares requested file content; edit declares result diffs. The app uses a result patch or Pi's numbered `details.diff` when available, otherwise it labels an args-derived diff **Requested**. Partial write/edit arguments stay previewable while running. A successful requested-file-content operation offers **Open Current File**, which reads the file as it is now, not the historical requested bytes. The same facts work for any exact tool name, including `put_file`. Missing facts on an older server select the generic document, including for read/write/edit.
+
+Every tool result carries `outputAvailability: { complete, totalBytes?, source? }`, derived from Pi's `details.truncation` and `details.fullOutputPath`. `source: "sidecar"` enables full-output reads by tool-call ID; the fact never contains the private path. Streaming terminal output over 8 KB uses bounded replace-mode tail previews. The iOS reader loads full output when a source is available, including in stopped sessions. If that source is unavailable, it keeps the preview notice. Without terminal facts, a new app renders the generic document even for a tool named `bash`. Old apps ignore the additive facts.
 
 Oppi sends `inputPresentation` on live tool start/update and history tool calls. History resolves hints against the current renderer registry, not a saved per-call declaration. The built-in codemode hint declares `code` as JavaScript. Invalid hints are omitted and logged. Segment style is a closed semantic set: `bold`, `muted`, `dim`, `accent`, `success`, `warning`, or `error`. Invalid sidecar segments are also omitted and logged. Put rich output in `details.expandedText`, not sidecar summary lines.
 
