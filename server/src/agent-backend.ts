@@ -1,9 +1,7 @@
 import type {
   BranchSummaryEntry,
   CompactionResult,
-  ModelCycleResult,
   SessionStats,
-  ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
 import type { CacheMissModelPriceSource } from "./cache-miss.js";
@@ -20,6 +18,8 @@ import type { SessionTreeManager } from "./session-tree.js";
 import type { ThinkingLevel } from "./thinking-levels.js";
 import type { LiveEntryRendererSet } from "./trace.js";
 import type { SessionPromptCacheWarmer } from "./types.js";
+
+type BackendToolDefinition = { label?: string; namespace?: { name: string } };
 
 /** Managed-session capabilities. No live Pi AgentSession escapes this seam. */
 export interface AgentBackend {
@@ -82,7 +82,9 @@ export interface AgentBackend {
     thinkingLevel?: string;
     error?: string;
   }>;
-  cycleModel(direction?: "forward" | "backward"): Promise<ModelCycleResult | undefined>;
+  cycleModel(
+    direction?: "forward" | "backward",
+  ): Promise<{ model: { provider: string; id: string }; thinkingLevel: ThinkingLevel } | undefined>;
   setThinkingLevel(level: ThinkingLevel, options?: { persist?: boolean }): void;
   cycleThinkingLevel(): ThinkingLevel | undefined;
   setSessionName(name: string): void;
@@ -92,7 +94,7 @@ export interface AgentBackend {
   forkMessages(): Array<{ entryId: string; text: string }>;
   sessionTree(): SessionTreeManager & CanonicalSessionTree;
   leafId(): string | null;
-  toolDefinition(name: string): ToolDefinition | undefined;
+  toolDefinition(name: string): BackendToolDefinition | undefined;
   navigateTree(
     targetId: string,
     options?: {

@@ -3,18 +3,15 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
 import { __shareSessionTestUtils, shareSession } from "../src/session-share.js";
 
-function makeSession(sessionFile: string | undefined): AgentSession {
+function makeSession(sessionFile: string | undefined): Parameters<typeof shareSession>[0] {
   return {
-    getSessionStats: () => ({
-      sessionFile,
-    }),
+    getStateSnapshot: () => ({ sessionFile }),
     exportToHtml: async () => "",
-  } as unknown as AgentSession;
+  };
 }
 
 function buildExportHtmlWithSessionData(sessionData: Record<string, unknown>): string {
@@ -41,8 +38,34 @@ describe("shareSession", () => {
     ).rejects.toThrow("[share:session_not_persisted]");
   });
 
+  it("prepares a persisted session even when statistics enrichment fails", async () => {
+    const session = makeSession("/tmp/session.jsonl");
+    const getSessionStats = vi.fn(() => {
+      throw new Error("skill enrichment failed");
+    });
+    Object.assign(session, {
+      getSessionStats,
+      getStateSnapshot: () => ({ sessionFile: "/tmp/session.jsonl" }),
+    });
+    const exportSessionToHtml = vi.fn(async (_session: unknown, outputPath: string) => {
+      writeFileSync(outputPath, "<html><body>ok</body></html>", "utf-8");
+    });
+    const createSecretGist = vi.fn();
+
+    const result = await shareSession(
+      session,
+      { exportSessionToHtml, createSecretGist },
+      { action: "prepare" },
+    );
+
+    expect(result).toMatchObject({ phase: "prepared", canPublish: true });
+    expect(exportSessionToHtml).toHaveBeenCalledOnce();
+    expect(getSessionStats).not.toHaveBeenCalled();
+    expect(createSecretGist).not.toHaveBeenCalled();
+  });
+
   it("uploads the default export as session.html for the share viewer", async () => {
-    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+    const exportSessionToHtml = vi.fn(async (_session: unknown, outputPath: string) => {
       writeFileSync(outputPath, "<html><body>ok</body></html>", "utf-8");
     });
 
@@ -68,7 +91,7 @@ describe("shareSession", () => {
 
   it("auto-redacts sensitive content before gist upload", async () => {
     const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
-    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+    const exportSessionToHtml = vi.fn(async (_session: unknown, outputPath: string) => {
       const openAiKey = `sk-${"A".repeat(24)}`;
       const html = `<html><body>${openAiKey} alice@example.com /Users/alice/workspace/oppi</body></html>`;
       writeFileSync(outputPath, html, "utf-8");
@@ -120,7 +143,7 @@ describe("shareSession", () => {
     const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
     const openAiKey = `sk-${"B".repeat(24)}`;
     const expandedSkill = `<skill name="writing" location="/Users/alice/.pi/agent/skills/writing/SKILL.md">\nUse the writing skill.\nKeep prose tight.\n</skill>\n\nemail alice@example.com key ${openAiKey}`;
-    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+    const exportSessionToHtml = vi.fn(async (_session: unknown, outputPath: string) => {
       const html = buildExportHtmlWithSessionData({
         header: {
           cwd: "/Users/alice/workspace/oppi",
@@ -273,7 +296,7 @@ describe("shareSession", () => {
 
   it("keeps skill metadata when skill redaction is turned off", async () => {
     const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
-    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+    const exportSessionToHtml = vi.fn(async (_session: unknown, outputPath: string) => {
       const html = buildExportHtmlWithSessionData({
         entries: [
           {
@@ -341,7 +364,7 @@ describe("shareSession", () => {
 
   it("removes all embedded entries when the session has no user message", async () => {
     const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
-    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+    const exportSessionToHtml = vi.fn(async (_session: unknown, outputPath: string) => {
       const html = buildExportHtmlWithSessionData({
         entries: [
           {
@@ -413,7 +436,7 @@ describe("shareSession", () => {
 
   it("fails closed when embedded share payload cannot be decoded", async () => {
     const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
-    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+    const exportSessionToHtml = vi.fn(async (_session: unknown, outputPath: string) => {
       writeFileSync(
         outputPath,
         '<html><body><script id="session-data" type="application/json">not-valid-json</script></body></html>',
@@ -443,7 +466,7 @@ describe("shareSession", () => {
 
   it("still strips share-only structure when auto-redaction is disabled", async () => {
     const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
-    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+    const exportSessionToHtml = vi.fn(async (_session: unknown, outputPath: string) => {
       const html = buildExportHtmlWithSessionData({
         header: {
           cwd: "/Users/alice/workspace/oppi",
@@ -533,7 +556,7 @@ describe("shareSession", () => {
 
   it("can block publish when secrets remain after redaction and blocking is enabled", async () => {
     const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
-    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+    const exportSessionToHtml = vi.fn(async (_session: unknown, outputPath: string) => {
       writeFileSync(outputPath, "<html><body>contains key</body></html>", "utf-8");
     });
 
@@ -553,7 +576,7 @@ describe("shareSession", () => {
 
   it("respects configured deterministic redaction toggles and keeps secrets always-on", async () => {
     const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
-    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+    const exportSessionToHtml = vi.fn(async (_session: unknown, outputPath: string) => {
       const openAiKey = `sk-${"A".repeat(24)}`;
       const html = `<html><body>${openAiKey} alice@example.com +1 (415) 555-0199 John Appleseed</body></html>`;
       writeFileSync(outputPath, html, "utf-8");
@@ -609,7 +632,7 @@ describe("shareSession", () => {
 
   it("supports prepare mode without GitHub authentication and includes redaction summary", async () => {
     const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
-    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+    const exportSessionToHtml = vi.fn(async (_session: unknown, outputPath: string) => {
       writeFileSync(outputPath, "<html><body>alice@example.com</body></html>", "utf-8");
     });
 

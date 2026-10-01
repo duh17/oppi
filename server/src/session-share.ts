@@ -13,9 +13,7 @@ import { spawn, spawnSync } from "node:child_process";
 
 import type { AgentBackend } from "./agent-backend.js";
 
-type ShareSessionSource = Pick<AgentBackend, "exportToHtml"> & {
-  getSessionStats(): { sessionFile?: string };
-};
+type ShareSessionSource = Pick<AgentBackend, "exportToHtml" | "getStateSnapshot">;
 import {
   autoRedactionEnabled,
   blockOnSecretFindings,
@@ -298,7 +296,7 @@ export async function shareSession(
   const shouldBlockOnSecrets = deps.shouldBlockOnSecrets ?? blockOnSecretFindings;
   const redactionPolicy = normalizeRedactionPolicy(options.redactionPolicy);
 
-  const sessionFile = session.getSessionStats().sessionFile;
+  const sessionFile = session.getStateSnapshot().sessionFile;
   if (!sessionFile) {
     throw shareError(
       "session_not_persisted",
