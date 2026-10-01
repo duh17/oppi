@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 
 import { RouteHandler, type RouteContext } from "../src/routes/index.js";
+import { makeRouteSessions } from "./harness/route-test-helpers.js";
 
 interface MockResponse {
   statusCode: number;
@@ -43,6 +44,7 @@ describe("provider auth routes", () => {
 
     const refreshModelCatalog = vi.fn(async () => undefined);
     const routes = new RouteHandler({
+      sessions: makeRouteSessions(),
       providerAuth,
       refreshModelCatalog,
     } as unknown as RouteContext);
@@ -72,7 +74,10 @@ describe("provider auth routes", () => {
       startFlow: vi.fn(),
     } as unknown as RouteContext["providerAuth"];
 
-    const routes = new RouteHandler({ providerAuth } as unknown as RouteContext);
+    const routes = new RouteHandler({
+      providerAuth,
+      sessions: makeRouteSessions(),
+    } as unknown as RouteContext);
     const res = makeResponse();
 
     await routes.dispatch(
@@ -103,7 +108,10 @@ describe("provider auth routes", () => {
       })),
     } as unknown as RouteContext["providerAuth"];
 
-    const routes = new RouteHandler({ providerAuth } as unknown as RouteContext);
+    const routes = new RouteHandler({
+      providerAuth,
+      sessions: makeRouteSessions(),
+    } as unknown as RouteContext);
     const res = makeResponse();
 
     await routes.dispatch(

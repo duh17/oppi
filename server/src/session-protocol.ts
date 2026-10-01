@@ -528,7 +528,7 @@ export interface TranslationContext {
   /** Current thinking block content index from thinking_start, used when deltas omit it. */
   currentThinkingContentIndex?: number;
   /** Mobile renderer registry for pre-rendering tool call/result summaries. */
-  mobileRenderers?: MobileRendererRegistry;
+  mobileRenderers: MobileRendererRegistry;
   getToolDefinition?: (
     name: string,
   ) => { label?: string; namespace?: { name: string } } | undefined;
@@ -936,18 +936,16 @@ export function translatePiEvent(
 
           // Augment streaming tool_update with callSegments so iOS can keep
           // file-tool titles current as streamed args become more complete.
-          if (ctx.mobileRenderers) {
-            const callSegments = ctx.mobileRenderers.renderCall(
-              toolCallUpdate.tool,
-              toolCallUpdate.args,
-            );
-            if (callSegments) {
-              toolCallUpdate.callSegments = callSegments;
-            }
+          const callSegments = ctx.mobileRenderers.renderCall(
+            toolCallUpdate.tool,
+            toolCallUpdate.args,
+          );
+          if (callSegments) {
+            toolCallUpdate.callSegments = callSegments;
           }
-          const inputPresentation = ctx.mobileRenderers?.inputPresentation(toolCallUpdate.tool);
+          const inputPresentation = ctx.mobileRenderers.inputPresentation(toolCallUpdate.tool);
           if (inputPresentation) toolCallUpdate.inputPresentation = inputPresentation;
-          const outputPresentation = ctx.mobileRenderers?.outputPresentation(toolCallUpdate.tool);
+          const outputPresentation = ctx.mobileRenderers.outputPresentation(toolCallUpdate.tool);
           if (outputPresentation) toolCallUpdate.outputPresentation = outputPresentation;
           const display = resolveToolDisplay(
             toolCallUpdate.tool,
@@ -967,9 +965,9 @@ export function translatePiEvent(
 
     case "tool_execution_start": {
       const toolCallId = resolveToolCallId(event);
-      const callSegments = ctx.mobileRenderers?.renderCall(event.toolName, event.args || {});
-      const inputPresentation = ctx.mobileRenderers?.inputPresentation(event.toolName);
-      const outputPresentation = ctx.mobileRenderers?.outputPresentation(event.toolName);
+      const callSegments = ctx.mobileRenderers.renderCall(event.toolName, event.args || {});
+      const inputPresentation = ctx.mobileRenderers.inputPresentation(event.toolName);
+      const outputPresentation = ctx.mobileRenderers.outputPresentation(event.toolName);
       const display = resolveToolDisplay(event.toolName, ctx.getToolDefinition?.(event.toolName));
       // Track tool name for shell preview decisions in subsequent updates.
       if (toolCallId) {
@@ -1010,8 +1008,8 @@ export function translatePiEvent(
 
       const messages: ServerMessage[] = [];
       const shellTool =
-        ctx.mobileRenderers?.outputPresentation(toolName, updateDetails)?.kind === "terminal";
-      const producerAvailability = ctx.mobileRenderers?.outputAvailability(
+        ctx.mobileRenderers.outputPresentation(toolName, updateDetails)?.kind === "terminal";
+      const producerAvailability = ctx.mobileRenderers.outputAvailability(
         event.partialResult?.details,
       );
       const audioDetails = audioPresentationDetails(updateDetails);
@@ -1131,7 +1129,7 @@ export function translatePiEvent(
       const lastText = ctx.partialResults.get(key) ?? "";
       const toolName = ctx.toolNames.get(key) ?? event.toolName ?? "";
       const shellTool =
-        ctx.mobileRenderers?.outputPresentation(toolName, event.result?.details)?.kind ===
+        ctx.mobileRenderers.outputPresentation(toolName, event.result?.details)?.kind ===
         "terminal";
 
       // Ask tool output is only for the LLM — suppress it from iOS broadcast.
@@ -1139,7 +1137,7 @@ export function translatePiEvent(
       // renders them as a user message. This avoids scattered output suppression
       // checks on the iOS side (processInternal, processBatch, trace replay).
       const isAskTool = toolName === "ask";
-      const producerAvailability = ctx.mobileRenderers?.outputAvailability(event.result?.details);
+      const producerAvailability = ctx.mobileRenderers.outputAvailability(event.result?.details);
       const wasPreviewed = ctx.shellPreviewLastSent.has(key);
       let finalText = "";
 
@@ -1213,7 +1211,7 @@ export function translatePiEvent(
       if (display && args && JSON.stringify(display) !== JSON.stringify(startDisplay)) {
         // A result can restore a sanitized/truncated MCP name when the live
         // definition is unavailable. Update the existing call, never add a row.
-        const inputPresentation = ctx.mobileRenderers?.inputPresentation(event.toolName);
+        const inputPresentation = ctx.mobileRenderers.inputPresentation(event.toolName);
         messages.push({
           type: "tool_update",
           tool: event.toolName,
@@ -1253,24 +1251,19 @@ export function translatePiEvent(
       const nestedCalls = validatedNestedCalls(asRecord(event.result)?.nestedCalls, (name) =>
         resolveToolDisplay(name, ctx.getToolDefinition?.(name)),
       );
-      const resultSegments = ctx.mobileRenderers?.renderResult(
+      const resultSegments = ctx.mobileRenderers.renderResult(
         event.toolName,
         details,
         !!event.isError,
       );
+      const outputPresentation = ctx.mobileRenderers.outputPresentation(
+        event.toolName,
+        event.result?.details,
+      );
       messages.push({
         type: "tool_end",
-        ...(ctx.mobileRenderers
-          ? { outputAvailability: ctx.mobileRenderers.outputAvailability(event.result?.details) }
-          : {}),
-        ...(ctx.mobileRenderers?.outputPresentation(event.toolName, event.result?.details)
-          ? {
-              outputPresentation: ctx.mobileRenderers.outputPresentation(
-                event.toolName,
-                event.result?.details,
-              ),
-            }
-          : {}),
+        outputAvailability: ctx.mobileRenderers.outputAvailability(event.result?.details),
+        ...(outputPresentation ? { outputPresentation } : {}),
         ...(nestedCalls ? { nestedCalls } : {}),
         tool: event.toolName,
         toolCallId,

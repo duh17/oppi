@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 
@@ -52,7 +53,9 @@ describe("PiTuiMirrorRuntime rejection logging", () => {
         getConfig: () => ({ dataDir: "/tmp/oppi-mirror-test-config" }),
         getDataDir: () => "/tmp/oppi-mirror-test-config",
       };
-      const runtime = new PiTuiMirrorRuntime(storage as never);
+      const runtime = new PiTuiMirrorRuntime(storage as never, {
+        mobileRenderers: new MobileRendererRegistry(),
+      });
 
       for (let index = 0; index < 3; index += 1) {
         const ws = new FakeBridgeWebSocket();

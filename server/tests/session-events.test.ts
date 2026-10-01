@@ -1,3 +1,4 @@
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { SERVER_METRIC_REGISTRY } from "../src/server-metric-registry.js";
@@ -51,6 +52,7 @@ describe("SessionEventProcessor", () => {
     try {
       const metrics = new MockMetrics();
       const processor = new SessionEventProcessor({
+        mobileRenderers: new MobileRendererRegistry(),
         storage: {} as never,
         broadcast: vi.fn(),
         persistSessionNow: vi.fn(),
@@ -114,6 +116,7 @@ describe("SessionEventProcessor", () => {
   it("omits thinking and provider/model tags when they are missing or unsafe", () => {
     const metrics = new MockMetrics();
     const processor = new SessionEventProcessor({
+      mobileRenderers: new MobileRendererRegistry(),
       storage: {} as never,
       broadcast: vi.fn(),
       persistSessionNow: vi.fn(),
@@ -160,6 +163,7 @@ describe("SessionEventProcessor", () => {
     try {
       const metrics = new MockMetrics();
       const processor = new SessionEventProcessor({
+        mobileRenderers: new MobileRendererRegistry(),
         storage: {} as never,
         broadcast: vi.fn(),
         persistSessionNow: vi.fn(),
@@ -249,6 +253,7 @@ describe("SessionEventProcessor", () => {
     try {
       const metrics = new MockMetrics();
       const processor = new SessionEventProcessor({
+        mobileRenderers: new MobileRendererRegistry(),
         storage: {} as never,
         broadcast: vi.fn(),
         persistSessionNow: vi.fn(),
@@ -329,6 +334,7 @@ describe("SessionEventProcessor", () => {
   it("attributes multi-round usage to the session-configured route at each event", () => {
     const metrics = new MockMetrics();
     const processor = new SessionEventProcessor({
+      mobileRenderers: new MobileRendererRegistry(),
       storage: {} as never,
       broadcast: vi.fn(),
       persistSessionNow: vi.fn(),
@@ -399,7 +405,7 @@ describe("SessionEventProcessor", () => {
         const storage = { getWorkspace: vi.fn(() => undefined) };
         const processor = new SessionEventProcessor({
           storage: storage as never,
-          mobileRenderers: {} as never,
+          mobileRenderers: new MobileRendererRegistry(),
           broadcast: vi.fn(),
           persistSessionNow: vi.fn(),
           markSessionDirty: vi.fn(),
@@ -431,7 +437,7 @@ describe("SessionEventProcessor", () => {
         const storage = { getWorkspace: vi.fn(() => undefined) };
         const processor = new SessionEventProcessor({
           storage: storage as never,
-          mobileRenderers: {} as never,
+          mobileRenderers: new MobileRendererRegistry(),
           broadcast: vi.fn(),
           persistSessionNow: vi.fn(),
           markSessionDirty: vi.fn(),
@@ -459,7 +465,7 @@ describe("SessionEventProcessor", () => {
     const markSessionDirty = vi.fn();
     const processor = new SessionEventProcessor({
       storage: {} as never,
-      mobileRenderers: {} as never,
+      mobileRenderers: new MobileRendererRegistry(),
       broadcast: vi.fn(),
       persistSessionNow,
       markSessionDirty,
@@ -480,7 +486,7 @@ describe("SessionEventProcessor", () => {
     const persistSessionNow = vi.fn();
     const processor = new SessionEventProcessor({
       storage: {} as never,
-      mobileRenderers: {} as never,
+      mobileRenderers: new MobileRendererRegistry(),
       broadcast: vi.fn(),
       persistSessionNow,
       markSessionDirty: vi.fn(),
@@ -502,6 +508,7 @@ describe("SessionEventProcessor", () => {
     try {
       const broadcast = vi.fn();
       const processor = new SessionEventProcessor({
+        mobileRenderers: new MobileRendererRegistry(),
         storage: {} as never,
         broadcast,
         persistSessionNow: vi.fn(),
@@ -546,6 +553,7 @@ describe("SessionEventProcessor", () => {
   it("counts a successful compaction_end and records success", () => {
     const metrics = new MockMetrics();
     const processor = new SessionEventProcessor({
+      mobileRenderers: new MobileRendererRegistry(),
       storage: {} as never,
       broadcast: vi.fn(),
       persistSessionNow: vi.fn(),
@@ -574,6 +582,7 @@ describe("SessionEventProcessor", () => {
   it("does not count a failed compaction_end as success", () => {
     const metrics = new MockMetrics();
     const processor = new SessionEventProcessor({
+      mobileRenderers: new MobileRendererRegistry(),
       storage: {} as never,
       broadcast: vi.fn(),
       persistSessionNow: vi.fn(),
@@ -603,6 +612,7 @@ describe("SessionEventProcessor", () => {
   it("classifies combined compaction_end flags as aborted, then failed, then will_retry", () => {
     const metrics = new MockMetrics();
     const processor = new SessionEventProcessor({
+      mobileRenderers: new MobileRendererRegistry(),
       storage: {} as never,
       broadcast: vi.fn(),
       persistSessionNow: vi.fn(),

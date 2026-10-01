@@ -15,7 +15,7 @@ import { RouteHandler } from "../src/routes/index.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
-import { makeRequest } from "./harness/route-test-helpers.js";
+import { makeRequest, makeRouteSessions } from "./harness/route-test-helpers.js";
 
 type RequestPrincipal =
   | { kind: "owner" }
@@ -217,6 +217,7 @@ async function dispatchViewSession(options: {
   }) => Promise<DesktopCompanionViewSession>;
 }): Promise<{ statusCode: number; headers: Record<string, string>; body: Buffer }> {
   const routes = new RouteHandler({
+    sessions: makeRouteSessions(),
     storage: {
       listDevices: () => [{ id: "dev-paired-1", name: "Chen iPhone" }],
     },

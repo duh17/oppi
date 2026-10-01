@@ -14,7 +14,7 @@ import { createAgentRoutes } from "../src/routes/agents.js";
 import { RouteHandler } from "../src/routes/index.js";
 import type { RouteContext } from "../src/routes/types.js";
 import type { Session } from "../src/types.js";
-import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+import { makeRequest, makeResponse, makeRouteSessions } from "./harness/route-test-helpers.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -302,6 +302,7 @@ describe("agent routes", () => {
     try {
       const agent = store.createAgent({ name: "Reviewer" });
       const ctx = {
+        sessions: makeRouteSessions(),
         storage: {
           getAgentDefinitionStore: () => store,
         },

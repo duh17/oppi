@@ -211,7 +211,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       send({ ...message, sessionId: key });
   }
 
-  get mobileRenderer(): Pick<MobileRendererRegistry, "renderCall" | "renderResult"> {
+  get mobileRenderer(): MobileRendererRegistry {
     return this.mobileRenderers;
   }
 

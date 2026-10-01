@@ -1,3 +1,4 @@
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -262,7 +263,9 @@ describe("Pi-native session identity cutover", () => {
         getConfig: () => ({ dataDir: "/tmp/mirror-data" }),
       } as unknown as Storage;
 
-      const runtime = new PiTuiMirrorRuntime(storage);
+      const runtime = new PiTuiMirrorRuntime(storage, {
+        mobileRenderers: new MobileRendererRegistry(),
+      });
       const ws = new FakeBridgeWebSocket();
       runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
       ws.receive({

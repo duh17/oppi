@@ -1,6 +1,7 @@
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { RouteHandler, type RouteContext } from "../src/routes/index.js";
+import { makeRouteSessions } from "./harness/route-test-helpers.js";
 
 interface MockResponse {
   statusCode: number;
@@ -30,7 +31,7 @@ function makeRequest(body?: unknown): Readable {
 
 describe("retired workspace routes", () => {
   it("GET /workspaces/:id/policy is not exposed", async () => {
-    const routes = new RouteHandler({} as RouteContext);
+    const routes = new RouteHandler({ sessions: makeRouteSessions() } as RouteContext);
     const res = makeResponse();
 
     await routes.dispatch(
@@ -46,7 +47,7 @@ describe("retired workspace routes", () => {
   });
 
   it("PATCH /workspaces/:id/policy is not exposed", async () => {
-    const routes = new RouteHandler({} as RouteContext);
+    const routes = new RouteHandler({ sessions: makeRouteSessions() } as RouteContext);
     const res = makeResponse();
 
     await routes.dispatch(
@@ -62,7 +63,7 @@ describe("retired workspace routes", () => {
   });
 
   it("DELETE /workspaces/:id/policy/permissions/:id is not exposed", async () => {
-    const routes = new RouteHandler({} as RouteContext);
+    const routes = new RouteHandler({ sessions: makeRouteSessions() } as RouteContext);
     const res = makeResponse();
 
     await routes.dispatch(

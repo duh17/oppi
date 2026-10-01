@@ -1,3 +1,4 @@
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -166,7 +167,7 @@ function makeHarness(root: string) {
     getDataDir: () => join(root, ".oppi-test-data"),
   } as unknown as Storage;
 
-  const mirror = new PiTuiMirrorRuntime(storage);
+  const mirror = new PiTuiMirrorRuntime(storage, { mobileRenderers: new MobileRendererRegistry() });
   const managed = {
     sendPrompt: vi.fn(async () => {}),
     sendSteer: vi.fn(async () => {}),

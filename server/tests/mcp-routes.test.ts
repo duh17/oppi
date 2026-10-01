@@ -1,6 +1,7 @@
 import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { RouteHandler, type RouteContext } from "../src/routes/index.js";
+import { makeRouteSessions } from "./harness/route-test-helpers.js";
 
 const targets = [
   ["POST", "/mcp/scopes/global/servers"],
@@ -20,7 +21,7 @@ function harness() {
     logout: vi.fn(),
     auth: { submit: vi.fn(), cancel: vi.fn() },
   };
-  const routes = new RouteHandler({ mcp } as unknown as RouteContext);
+  const routes = new RouteHandler({ mcp, sessions: makeRouteSessions() } as unknown as RouteContext);
   const response = {
     statusCode: 0,
     payload: "",

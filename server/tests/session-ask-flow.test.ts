@@ -1,3 +1,4 @@
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { SessionEventProcessor, type EventProcessorSessionState } from "../src/session-events.js";
@@ -55,7 +56,7 @@ function createHarness(): {
 
   const processor = new SessionEventProcessor({
     storage: {} as never,
-    mobileRenderers: {} as never,
+    mobileRenderers: new MobileRendererRegistry(),
     broadcast,
     persistSessionNow: () => {},
     markSessionDirty: () => {},

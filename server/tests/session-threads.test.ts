@@ -1,3 +1,4 @@
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
@@ -59,6 +60,7 @@ function routes(
   } = {},
 ) {
   const ctx = {
+    sessions: { mobileRenderer: new MobileRendererRegistry() },
     storage: store,
     sessionRuntimes: {
       sendSteer,

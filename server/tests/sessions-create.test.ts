@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { createSessionRoutes } from "../src/routes/sessions.js";
+import { makeRouteSessions } from "./harness/route-test-helpers.js";
 import type { RouteContext, RouteHelpers } from "../src/routes/types.js";
 import { getPiSessionsRoot } from "../src/local-sessions.js";
 import { Storage } from "../src/storage.js";
@@ -57,7 +58,7 @@ interface MockRouteContext {
   helpers: RouteHelpers;
   responses: Array<{ data: unknown; status: number }>;
   errors: Array<{ status: number; message: string }>;
-  sessions: {
+  sessions: ReturnType<typeof makeRouteSessions> & {
     startSession: ReturnType<typeof vi.fn>;
     sendPrompt: ReturnType<typeof vi.fn>;
     isActive: ReturnType<typeof vi.fn>;
@@ -127,6 +128,7 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
   };
 
   const sessions = {
+    ...makeRouteSessions(),
     startSession: vi
       .fn()
       .mockImplementation(async (sessionId: string) =>

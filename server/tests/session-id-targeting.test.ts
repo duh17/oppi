@@ -1,3 +1,4 @@
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,7 +55,7 @@ describe("session targeting uses Pi-native Session.id", () => {
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
           getDataDir: vi.fn(() => tmpdir()),
         },
-        sessions: { startSession },
+        sessions: { mobileRenderer: new MobileRendererRegistry(), startSession },
         sessionRuntimes: {
           isSessionConnected: vi.fn(() => false),
           refreshSessionState: vi.fn(async () => undefined),
@@ -115,6 +116,7 @@ describe("session targeting uses Pi-native Session.id", () => {
       });
       const getSession = vi.fn((id: string) => (id === session.id ? session : undefined));
       const ctx = {
+        sessions: { mobileRenderer: new MobileRendererRegistry() },
         storage: {
           getSession,
           getDataDir: vi.fn(() => tmpdir()),
@@ -158,6 +160,7 @@ describe("session targeting uses Pi-native Session.id", () => {
       const session = makeSession();
       const getSession = vi.fn((id: string) => (id === session.id ? session : undefined));
       const ctx = {
+        sessions: { mobileRenderer: new MobileRendererRegistry() },
         storage: {
           getSession,
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),

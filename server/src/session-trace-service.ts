@@ -10,7 +10,7 @@ import {
   computeLineDiffStatsFromLines,
   reconstructBaselineFromCurrent,
 } from "./diff-core.js";
-import { MobileRendererRegistry, resolveToolDisplay } from "./mobile-renderer.js";
+import { type MobileRendererRegistry, resolveToolDisplay } from "./mobile-renderer.js";
 import type { SessionRuntimes } from "./runtime-router.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import { WorkspaceWorktreeError } from "./worktrees.js";
@@ -116,13 +116,7 @@ export interface SessionTraceServiceDeps {
   };
   ensureSessionContextWindow: (session: Session) => Session;
   getMcpServerNames?: (session: Session) => readonly string[];
-  mobileRenderers?: Pick<MobileRendererRegistry, "renderCall" | "renderResult"> &
-    Partial<
-      Pick<
-        MobileRendererRegistry,
-        "inputPresentation" | "outputPresentation" | "outputAvailability"
-      >
-    >;
+  mobileRenderers: MobileRendererRegistry;
 }
 
 /**
@@ -133,16 +127,10 @@ export interface SessionTraceServiceDeps {
  * and live runtime refresh metadata.
  */
 export class SessionTraceService {
-  private readonly mobileRenderers: Pick<MobileRendererRegistry, "renderCall" | "renderResult"> &
-    Partial<
-      Pick<
-        MobileRendererRegistry,
-        "inputPresentation" | "outputPresentation" | "outputAvailability"
-      >
-    >;
+  private readonly mobileRenderers: MobileRendererRegistry;
 
   constructor(private readonly deps: SessionTraceServiceDeps) {
-    this.mobileRenderers = deps.mobileRenderers ?? new MobileRendererRegistry();
+    this.mobileRenderers = deps.mobileRenderers;
   }
 
   async getSessionWithTrace(params: {
@@ -603,8 +591,8 @@ export class SessionTraceService {
         const callSegments = includeSegments
           ? this.mobileRenderers.renderCall(tool, event.args ?? {})
           : undefined;
-        const inputPresentation = this.mobileRenderers.inputPresentation?.(tool);
-        const outputPresentation = this.mobileRenderers.outputPresentation?.(
+        const inputPresentation = this.mobileRenderers.inputPresentation(tool);
+        const outputPresentation = this.mobileRenderers.outputPresentation(
           tool,
           resultDetails.get(event.id),
         );
@@ -623,14 +611,14 @@ export class SessionTraceService {
         const tool = event.toolName ?? toolNames.get(event.toolCallId ?? "");
         // Project availability from server-owned details before stripping paths
         // at the client boundary, including results whose call is not in this page.
-        const outputAvailability = this.mobileRenderers.outputAvailability?.(event.details);
+        const outputAvailability = this.mobileRenderers.outputAvailability(event.details);
         const details = sanitizeToolResultDetails(event.details).details;
         const resultSegments =
           includeSegments && tool
             ? this.mobileRenderers.renderResult(tool, details, event.isError === true)
             : undefined;
         const outputPresentation = tool
-          ? this.mobileRenderers.outputPresentation?.(tool, event.details)
+          ? this.mobileRenderers.outputPresentation(tool, event.details)
           : undefined;
         return {
           ...event,

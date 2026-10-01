@@ -8,7 +8,7 @@ import {
 } from "../src/server-resource-service.js";
 import { RouteHandler } from "../src/routes/index.js";
 import type { RouteContext } from "../src/routes/types.js";
-import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+import { makeRequest, makeResponse, makeRouteSessions } from "./harness/route-test-helpers.js";
 
 const FILE_REVISION = "a".repeat(64);
 
@@ -79,6 +79,7 @@ function makeRoutes() {
   };
   return {
     routes: new RouteHandler({
+      sessions: makeRouteSessions(),
       serverResources,
       storage,
       refreshModelCatalog,

@@ -1,3 +1,4 @@
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -67,6 +68,7 @@ describe("sessions module", () => {
         getDataDir: vi.fn(() => tmpdir()),
       },
       sessions: {
+        mobileRenderer: new MobileRendererRegistry(),
         getActiveSessionIds: vi.fn(() => new Set()),
         getActiveSession: vi.fn(() => undefined),
       },
@@ -118,6 +120,7 @@ describe("sessions module", () => {
     };
     const sendSteer = vi.fn(async () => undefined);
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
         getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
         getSession: vi.fn(() => session),
@@ -205,6 +208,7 @@ describe("sessions module", () => {
       cost: 0,
     };
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
         getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
         getSession: vi.fn(() => session),
@@ -249,6 +253,7 @@ describe("sessions module", () => {
       Object.assign(session, structuredClone(updated));
     });
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
         getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
         getSession: vi.fn(() => session),
@@ -303,6 +308,7 @@ describe("sessions module", () => {
         getDataDir: vi.fn(() => tmpdir()),
       },
       sessions: {
+        mobileRenderer: new MobileRendererRegistry(),
         getActiveSessionIds: vi.fn(() => new Set(["active-1"])),
         getActiveSession: vi.fn(() => activeSession),
       },
@@ -363,6 +369,7 @@ describe("sessions module", () => {
           claimSessionLaunchRecovery: vi.fn(() => undefined),
         },
         sessions: {
+          mobileRenderer: new MobileRendererRegistry(),
           startSession: vi.fn(async () => session),
           sendPrompt: vi.fn(async () => undefined),
         },
@@ -427,6 +434,7 @@ describe("sessions module", () => {
         claimSessionLaunchRecovery: vi.fn(() => undefined),
       },
       sessions: {
+        mobileRenderer: new MobileRendererRegistry(),
         startSession: vi.fn(async () => {
           throw modelError;
         }),
@@ -504,7 +512,11 @@ describe("sessions module", () => {
             persisted.set(value.id, value);
           }),
         },
-        sessions: { startSession, stopSession: vi.fn(async () => {}) },
+        sessions: {
+          mobileRenderer: new MobileRendererRegistry(),
+          startSession,
+          stopSession: vi.fn(async () => {}),
+        },
         sessionRuntimes: {
           isSessionConnected: vi.fn(() => false),
           getActiveSession: vi.fn(() => undefined),
@@ -551,7 +563,11 @@ describe("sessions module", () => {
         getWorkspace: vi.fn(() => ({ id: "ws-1" })),
         getSession: vi.fn(() => ({ id: "ready-1", workspaceId: "ws-1" })),
       },
-      sessions: { startSession: vi.fn(), stopSession: vi.fn() },
+      sessions: {
+        mobileRenderer: new MobileRendererRegistry(),
+        startSession: vi.fn(),
+        stopSession: vi.fn(),
+      },
       sessionRuntimes: {
         isSessionConnected: vi.fn(() => false),
         getActiveSession: vi.fn(() => undefined),
@@ -578,6 +594,7 @@ describe("sessions module", () => {
 
   it("returns 404 for workspace sessions in nonexistent workspace", async () => {
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
         getWorkspace: vi.fn(() => undefined),
       },
@@ -603,6 +620,7 @@ describe("sessions module", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-generic-session-attachment-"));
     try {
       const ctx = {
+        sessions: { mobileRenderer: new MobileRendererRegistry() },
         storage: {
           getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
           getDataDir: vi.fn(() => dataDir),
@@ -630,6 +648,7 @@ describe("sessions module", () => {
 
   it("returns 404 for tool output with missing session", async () => {
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
         getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
         getSession: vi.fn(() => undefined),
@@ -673,6 +692,7 @@ describe("sessions module", () => {
       );
 
       const ctx = {
+        sessions: { mobileRenderer: new MobileRendererRegistry() },
         storage: {
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
           getSession: vi.fn(() => ({
@@ -728,6 +748,7 @@ describe("sessions module", () => {
           getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
         },
         sessions: {
+          mobileRenderer: new MobileRendererRegistry(),
           getToolFullOutputPath: vi.fn(() => fullOutputPath),
         },
         sessionRuntimes: {
@@ -773,6 +794,7 @@ describe("sessions module", () => {
           getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
         },
         sessions: {
+          mobileRenderer: new MobileRendererRegistry(),
           getToolFullOutputPath: vi.fn(() => fullOutputPath),
         },
         sessionRuntimes: {
@@ -816,6 +838,7 @@ describe("sessions module", () => {
           getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
         },
         sessions: {
+          mobileRenderer: new MobileRendererRegistry(),
           getToolFullOutputPath: vi.fn(() => fullOutputPath),
         },
         sessionRuntimes: {
@@ -862,6 +885,7 @@ describe("sessions module", () => {
           getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
         },
         sessions: {
+          mobileRenderer: new MobileRendererRegistry(),
           getToolFullOutputPath: vi.fn(() => fullOutputPath),
         },
         sessionRuntimes: {
@@ -893,6 +917,7 @@ describe("sessions module", () => {
 
   it("lists session changes on the resource-shaped route", async () => {
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
         getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
         getSession: vi.fn(() => ({
@@ -966,6 +991,7 @@ describe("sessions module", () => {
         piSessionFile: tracePath,
       };
       const ctx = {
+        sessions: { mobileRenderer: new MobileRendererRegistry() },
         storage: {
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test", hostMount: workspaceRoot })),
           getSession: vi.fn(() => session),
@@ -1036,6 +1062,7 @@ describe("sessions module", () => {
         piSessionFiles: [tracePath],
       };
       const ctx = {
+        sessions: { mobileRenderer: new MobileRendererRegistry() },
         storage: {
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
           getSession: vi.fn(() => session),
@@ -1100,6 +1127,7 @@ describe("sessions module", () => {
         getSession: vi.fn(() => session),
       },
       sessions: {
+        mobileRenderer: new MobileRendererRegistry(),
         getCatchUp: managedGetCatchUp,
       },
       sessionRuntimes: {
@@ -1128,6 +1156,7 @@ describe("sessions module", () => {
 
   it("validates since param on session events", async () => {
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
         getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
         getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
@@ -1174,6 +1203,7 @@ describe("sessions module", () => {
       cost: 0,
     };
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
         listSessions: vi.fn(() => [storedSession]),
       },
@@ -1218,6 +1248,7 @@ describe("sessions module", () => {
       "019e2000-4444": session("019e2000-4444", 40, "busy"),
     };
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
         listSessions: vi.fn(() => [
           session("019e1fff-1111", 10),
@@ -1282,6 +1313,7 @@ describe("sessions module", () => {
         stopSession: vi.fn(async () => undefined),
       },
       sessions: {
+        mobileRenderer: new MobileRendererRegistry(),
         stopSession,
       },
       ensureSessionContextWindow: vi.fn((s: unknown) => s),
@@ -1407,6 +1439,7 @@ describe("sessions module", () => {
         piSessionFile: tracePath,
       };
       const ctx = {
+        sessions: { mobileRenderer: new MobileRendererRegistry() },
         storage: {
           getSession: vi.fn(() => session),
           getDataDir: vi.fn(() => dataDir),
@@ -1455,6 +1488,7 @@ describe("sessions module", () => {
 
   it("lists pending user-reply dialogs on the generic session dialogs route", async () => {
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
         getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
       },
@@ -1514,6 +1548,7 @@ describe("sessions module", () => {
 
   it("returns 404 for dialogs on a missing session", async () => {
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: { getSession: vi.fn(() => undefined) },
     } as unknown as RouteContext;
 
@@ -1536,6 +1571,7 @@ describe("sessions module", () => {
     const sendFollowUp = vi.fn(async () => undefined);
     const sendAbort = vi.fn(async () => undefined);
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: { getSession: vi.fn(() => session) },
       sessionRuntimes: { sendFollowUp, sendAbort },
       ensureSessionContextWindow: vi.fn((s: unknown) => s),
@@ -1573,6 +1609,7 @@ describe("sessions module", () => {
     const session = { id: "s1", workspaceId: "ws-1", status: "busy" };
     const respondToUIRequest = vi.fn(() => true);
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: { getSession: vi.fn(() => session) },
       sessionRuntimes: { respondToUIRequest },
       ensureSessionContextWindow: vi.fn((s: unknown) => s),
@@ -1616,7 +1653,10 @@ describe("sessions module", () => {
   });
 
   it("returns false for unrelated routes", async () => {
-    const dispatch = createSessionRoutes({} as RouteContext, createRouteHelpers());
+    const dispatch = createSessionRoutes(
+      { sessions: { mobileRenderer: new MobileRendererRegistry() } } as RouteContext,
+      createRouteHelpers(),
+    );
 
     const handled = await dispatch({
       method: "GET",

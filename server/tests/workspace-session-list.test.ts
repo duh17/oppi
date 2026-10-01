@@ -25,6 +25,7 @@ vi.mock("../src/local-sessions.js", () => ({
 }));
 
 import { createSessionRoutes } from "../src/routes/sessions.js";
+import { makeRouteSessions } from "./harness/route-test-helpers.js";
 
 function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   return {
@@ -78,7 +79,7 @@ interface MockRouteContext {
     listSessions: ReturnType<typeof vi.fn>;
     getDataDir: ReturnType<typeof vi.fn>;
   };
-  sessions: {
+  sessions: ReturnType<typeof makeRouteSessions> & {
     getActiveSessionIds: ReturnType<typeof vi.fn>;
     getActiveSession: ReturnType<typeof vi.fn>;
     getPendingUIRequestMessages: ReturnType<typeof vi.fn>;
@@ -120,6 +121,7 @@ function createMockContext(workspace: Workspace = makeWorkspace()): MockRouteCon
   };
 
   const sessions = {
+    ...makeRouteSessions(),
     getActiveSessionIds: vi.fn().mockReturnValue([]),
     getActiveSession: vi.fn(),
     getPendingUIRequestMessages: vi.fn().mockReturnValue([]),

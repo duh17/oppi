@@ -8,6 +8,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import { translatePiEvent, type TranslationContext } from "../src/session-protocol.js";
 import { PROTOCOL_DIR } from "./protocol-fixtures.js";
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 
 const PI_EVENTS_FILE = resolve(PROTOCOL_DIR, "pi-events.json");
 
@@ -54,6 +55,7 @@ type PiEventsFixture = {
 function makeCtx(): TranslationContext {
   return {
     sessionId: "pi-events-fixture",
+    mobileRenderers: new MobileRendererRegistry(),
     partialResults: new Map(),
     streamedAssistantText: "",
     toolNames: new Map(),

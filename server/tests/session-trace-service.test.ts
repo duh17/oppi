@@ -1,3 +1,4 @@
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
@@ -68,6 +69,7 @@ function makeService(options: {
   entryRenderers?: LiveEntryRendererSet;
 }): { service: SessionTraceService; deps: SessionTraceServiceDeps } {
   const deps: SessionTraceServiceDeps = {
+    mobileRenderers: new MobileRendererRegistry(),
     storage: {
       getDataDir: vi.fn(() => options.dataDir),
       getSession: vi.fn(() => options.storedSession),

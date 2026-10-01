@@ -362,6 +362,7 @@ describe("tool call document producer", () => {
       );
       const session = { id: "s", piSessionFile: path, status: "stopped" } as Session;
       const service = new SessionTraceService({
+        mobileRenderers: new MobileRendererRegistry(),
         storage: {
           getDataDir: () => dir,
           getSession: () => session,

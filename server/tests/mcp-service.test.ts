@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpCli } from "../src/mcp-cli.js";
 import { McpService } from "../src/mcp-service.js";
 import { RouteHandler, type RouteContext } from "../src/routes/index.js";
+import { makeRouteSessions } from "./harness/route-test-helpers.js";
 import { validateMcpCallback } from "../src/mcp-auth.js";
 import {
   patchMcpConfig,
@@ -69,7 +70,7 @@ async function listen(server: Server): Promise<string> {
   return `http://127.0.0.1:${address.port}`;
 }
 async function routes(service: McpService) {
-  const handler = new RouteHandler({ mcp: service } as RouteContext);
+  const handler = new RouteHandler({ mcp: service, sessions: makeRouteSessions() } as RouteContext);
   return listen(
     createServer((req, res) => {
       const url = new URL(req.url!, "http://127.0.0.1");

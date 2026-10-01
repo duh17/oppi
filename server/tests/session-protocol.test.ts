@@ -19,6 +19,7 @@ import {
 function makeCtx(overrides?: Partial<TranslationContext>): TranslationContext {
   return {
     sessionId: "test-session",
+    mobileRenderers: new MobileRendererRegistry(),
     partialResults: new Map(),
     streamedAssistantText: "",
     toolNames: new Map(),
@@ -1909,7 +1910,7 @@ describe("translatePiEvent", () => {
       expect(result[0]!.type).toBe("tool_end");
     });
 
-    it("clears context maps after processing", () => {
+    it("retains completed terminal output until turn_end and clears call maps", () => {
       const ctx = makeCtx();
       ctx.partialResults.set("tc-1", "data");
       ctx.toolNames.set("tc-1", "bash");
@@ -1920,15 +1921,18 @@ describe("translatePiEvent", () => {
           type: "tool_execution_end",
           toolCallId: "tc-1",
           toolName: "bash",
-          result: { content: [] },
+          result: { content: [{ type: "text", text: "completed output" }] },
           isError: false,
         } as AgentSessionEvent,
         ctx,
       );
 
-      expect(ctx.partialResults.has("tc-1")).toBe(false);
+      expect(ctx.partialResults.get("tc-1")).toBe("completed output");
       expect(ctx.toolNames.has("tc-1")).toBe(false);
       expect(ctx.shellPreviewLastSent.has("tc-1")).toBe(false);
+
+      translatePiEvent({ type: "turn_end" } as AgentSessionEvent, ctx);
+      expect(ctx.partialResults.size).toBe(0);
     });
 
     it("emits tool_end with isError when tool errored", () => {

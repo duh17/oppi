@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { RouteHandler, type RouteContext } from "../src/routes/index.js";
+import { makeRouteSessions } from "./harness/route-test-helpers.js";
 import type { Session, Workspace } from "../src/types.js";
 
 interface MockResponse {
@@ -127,6 +128,7 @@ describe("GET /workspaces/:wid/sessions/:id/diff", () => {
       writeFileSync(join(traceDir, "20260211_uuid.jsonl"), `${jsonl}\n`, "utf8");
 
       const ctx = {
+        sessions: makeRouteSessions(),
         storage: {
           getSession: (sessionId: string) => (sessionId === session.id ? session : undefined),
           getWorkspace: () => makeWorkspace(baseDir, session),
@@ -209,6 +211,7 @@ describe("GET /workspaces/:wid/sessions/:id/diff", () => {
       writeFileSync(join(traceDir, "20260211_uuid.jsonl"), "", "utf8");
 
       const ctx = {
+        sessions: makeRouteSessions(),
         storage: {
           getSession: () => session,
           getWorkspace: () => makeWorkspace(baseDir, session),
@@ -239,6 +242,7 @@ describe("GET /workspaces/:wid/sessions/:id/diff", () => {
 
     try {
       const ctx = {
+        sessions: makeRouteSessions(),
         storage: {
           getSession: () => session,
           getWorkspace: () => makeWorkspace(baseDir, session),
@@ -311,6 +315,7 @@ describe("GET /workspaces/:wid/sessions/:id/diff", () => {
       writeFileSync(join(traceDir, "20260211_uuid.jsonl"), `${jsonl}\n`, "utf8");
 
       const ctx = {
+        sessions: makeRouteSessions(),
         storage: {
           getSession: (sessionId: string) => (sessionId === session.id ? session : undefined),
           getWorkspace: () => makeWorkspace(baseDir, session),
@@ -388,6 +393,7 @@ describe("GET /workspaces/:wid/sessions/:id/diff", () => {
       writeFileSync(join(traceDir, "20260211_uuid.jsonl"), `${jsonl}\n`, "utf8");
 
       const ctx = {
+        sessions: makeRouteSessions(),
         storage: {
           getSession: (sessionId: string) => (sessionId === session.id ? session : undefined),
           getWorkspace: () => makeWorkspace(baseDir, session),

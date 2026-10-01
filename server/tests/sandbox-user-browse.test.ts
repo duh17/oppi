@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createWorkspaceFileRoutes } from "../src/routes/workspace-files.js";
 import type { RouteContext } from "../src/routes/types.js";
@@ -41,6 +42,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 
 function makeTraceService(dataDir: string, workspace: Workspace): SessionTraceService {
   const deps: SessionTraceServiceDeps = {
+    mobileRenderers: new MobileRendererRegistry(),
     storage: {
       getDataDir: vi.fn(() => dataDir),
       getSession: vi.fn(() => undefined),
@@ -49,6 +51,7 @@ function makeTraceService(dataDir: string, workspace: Workspace): SessionTraceSe
     sessionRuntimes: {
       refreshSessionState: vi.fn(async () => null),
       getToolFullOutputPath: vi.fn(() => null),
+      getToolPartialOutput: vi.fn(() => null),
     },
     ensureSessionContextWindow: vi.fn((session) => session),
   };

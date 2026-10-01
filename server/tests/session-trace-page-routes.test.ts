@@ -1,3 +1,4 @@
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -127,6 +128,7 @@ describe("workspace session trace page route", () => {
       firstMessage: "Hello from summary",
     };
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
         getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
         getSession: vi.fn(() => session),
@@ -179,6 +181,7 @@ describe("workspace session trace page route", () => {
       cost: 0,
     };
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
         getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
         getSession: vi.fn(() => session),
@@ -235,6 +238,7 @@ describe("workspace session trace page route", () => {
       cost: 0,
     };
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
         getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
         getSession: vi.fn(() => session),
@@ -286,6 +290,7 @@ describe("workspace session trace page route", () => {
       piSessionFile: tracePath,
     };
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
         getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
         getSession: vi.fn(() => session),
@@ -331,6 +336,7 @@ describe("workspace session trace page route", () => {
       piSessionFile: tracePath,
     };
     const ctx = {
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
         getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
         getSession: vi.fn(() => session),

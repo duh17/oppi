@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 
 import { RouteHandler, type RouteContext } from "../src/routes/index.js";
+import { makeRouteSessions } from "./harness/route-test-helpers.js";
 import { createWorkspaceWorktree, listWorkspaceWorktrees } from "../src/worktrees.js";
 import type {
   Session,
@@ -99,7 +100,6 @@ function makeQuickActionContext(
       getSession: () => undefined,
       createSession: vi.fn(),
     },
-    sessions: { startSession: vi.fn() },
     sessionRuntimes: {
       getActiveSessionIds: () => new Set<string>(),
       getActiveSession: () => undefined,
@@ -116,6 +116,7 @@ function makeQuickActionContext(
     },
     ensureSessionContextWindow: (session: Session) => session,
     ...overrides,
+    sessions: { ...makeRouteSessions(), startSession: vi.fn(), ...overrides.sessions },
   } as unknown as RouteContext;
 }
 
@@ -141,6 +142,7 @@ describe("GET /workspaces/:wid/git/diff", () => {
       );
 
       const ctx = {
+        sessions: makeRouteSessions(),
         storage: {
           getWorkspace: (workspaceId: string) =>
             workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
@@ -194,6 +196,7 @@ describe("GET /workspaces/:wid/git/diff", () => {
       initRepo(repoDir);
 
       const ctx = {
+        sessions: makeRouteSessions(),
         storage: {
           getWorkspace: (workspaceId: string) =>
             workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,

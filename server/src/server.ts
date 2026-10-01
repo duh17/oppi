@@ -575,6 +575,7 @@ export class Server {
     this.sessions.skillPathResolver = (names: string[]) => this.resolveSkillPaths(names);
 
     this.mirrorRuntime = new PiTuiMirrorRuntime(this.storage, {
+      mobileRenderers: this.sessions.mobileRenderer,
       isOppiSessionActive: (sessionId) => this.sessions.getActiveSession(sessionId) !== undefined,
       stopOppiSession: (sessionId) => this.sessions.stopSession(sessionId),
     });

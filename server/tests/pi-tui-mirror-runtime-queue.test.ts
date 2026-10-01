@@ -1,3 +1,4 @@
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -135,6 +136,7 @@ function makeRuntime(
 
   return {
     runtime: new PiTuiMirrorRuntime(storage, {
+      mobileRenderers: new MobileRendererRegistry(),
       isOppiSessionActive: options.isOppiSessionActive,
       stopOppiSession: options.stopOppiSession,
     }),

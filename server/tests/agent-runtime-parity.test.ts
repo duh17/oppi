@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 
 import { PiTuiMirrorRuntime } from "../src/pi-tui-mirror-runtime.js";
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import type { SessionBackendEvent } from "../src/pi-events.js";
 import {
   SessionAgentEventCoordinator,
@@ -64,7 +65,7 @@ function makeActiveSession(): SessionAgentEventState {
   };
 }
 
-function makeManagedHarness(): {
+function makeManagedHarness(mobileRenderers: MobileRendererRegistry): {
   received: ServerMessage[];
   session: Session;
   ingest: (event: AgentSessionEvent) => void;
@@ -72,6 +73,7 @@ function makeManagedHarness(): {
   const active = makeActiveSession();
   const received: ServerMessage[] = [];
   const eventProcessor = new SessionEventProcessor({
+    mobileRenderers,
     storage: { getWorkspace: vi.fn(() => null) } as unknown as Storage,
     broadcast: (_key, message) => received.push(message),
     persistSessionNow: vi.fn(),
@@ -93,7 +95,7 @@ function makeManagedHarness(): {
   };
 }
 
-function makeMirrorHarness(): {
+function makeMirrorHarness(mobileRenderers: MobileRendererRegistry): {
   received: ServerMessage[];
   session: () => Session;
   ingest: (event: AgentSessionEvent) => void;
@@ -120,7 +122,7 @@ function makeMirrorHarness(): {
     getConfig: vi.fn(() => ({ dataDir: "/tmp/oppi-runtime-parity-config" })),
     getDataDir: vi.fn(() => "/tmp/oppi-runtime-parity-config"),
   } as unknown as Storage;
-  const runtime = new PiTuiMirrorRuntime(storage);
+  const runtime = new PiTuiMirrorRuntime(storage, { mobileRenderers });
   const ws = new FakeBridgeWebSocket();
   runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
   ws.receive({
@@ -182,8 +184,9 @@ function expectRuntimeParity(events: AgentSessionEvent[]): {
   managed: ReturnType<typeof makeManagedHarness>;
   mirror: ReturnType<typeof makeMirrorHarness>;
 } {
-  const managed = makeManagedHarness();
-  const mirror = makeMirrorHarness();
+  const mobileRenderers = new MobileRendererRegistry();
+  const managed = makeManagedHarness(mobileRenderers);
+  const mirror = makeMirrorHarness(mobileRenderers);
 
   for (const event of events) {
     managed.ingest(event);
@@ -279,6 +282,56 @@ describe("managed and mirror runtime event parity", () => {
         isError: false,
       },
     ] as AgentSessionEvent[]);
+  });
+
+  it("previews terminal output and publishes terminal facts in both runtimes", () => {
+    const output = "terminal output line\n".repeat(600);
+    const { managed, mirror } = expectRuntimeParity([
+      {
+        type: "tool_execution_start",
+        toolCallId: "terminal-1",
+        toolName: "bash",
+        args: { command: "emit logs" },
+      },
+      {
+        type: "tool_execution_update",
+        toolCallId: "terminal-1",
+        toolName: "bash",
+        partialResult: { content: [{ type: "text", text: output }] },
+      },
+      {
+        type: "tool_execution_end",
+        toolCallId: "terminal-1",
+        toolName: "bash",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: output }],
+          details: {
+            truncation: { truncated: true, totalBytes: 100_000 },
+            fullOutputPath: "/tmp/runtime-parity-full.log",
+          },
+        },
+      },
+    ] as AgentSessionEvent[]);
+    for (const harness of [managed, mirror]) {
+      expect(harness.received.find((message) => message.type === "tool_start")).toMatchObject({
+        outputPresentation: { kind: "terminal" },
+      });
+      const outputs = harness.received.filter((message) => message.type === "tool_output");
+      expect(outputs).toHaveLength(2);
+      for (const preview of outputs) {
+        expect(preview).toMatchObject({
+          mode: "replace",
+          truncated: true,
+          outputAvailability: { complete: false, source: "sidecar" },
+        });
+        expect(preview.output).not.toBe(output);
+      }
+      expect(harness.received.find((message) => message.type === "tool_end")).toMatchObject({
+        outputPresentation: { kind: "terminal" },
+        outputAvailability: { complete: false, totalBytes: 100_000, source: "sidecar" },
+      });
+    }
   });
 
   it("projects assistant error finalization identically", () => {

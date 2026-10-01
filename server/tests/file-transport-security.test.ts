@@ -11,6 +11,7 @@ import { createSessionFileHandlers } from "../src/routes/session-files.js";
 import { SessionTraceService } from "../src/session-trace-service.js";
 import type { RouteContext, RouteHelpers } from "../src/routes/types.js";
 import type { Session, Workspace } from "../src/types.js";
+import { makeRouteSessions } from "./harness/route-test-helpers.js";
 
 class MockWritableResponse extends PassThrough {
   statusCode = 0;
@@ -76,6 +77,7 @@ function makeContext(
 ): RouteContext {
   const workspaces = [workspace, ...extraWorkspaces];
   return {
+    sessions: makeRouteSessions(),
     storage: {
       getWorkspace: (workspaceId: string) => workspaces.find((item) => item.id === workspaceId),
       getSession: (sessionId: string) => (sessionId === session.id ? session : undefined),

@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { WebSocket, type RawData } from "ws";
 
+import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import { trustedSessionAttachmentSourceRoots } from "./chat-attachments.js";
 import { navigationCreatedBranchSummary, resetCacheMissTracker } from "./cache-miss.js";
 import {
@@ -515,6 +516,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 export interface PiTuiMirrorRuntimeOptions {
+  mobileRenderers: MobileRendererRegistry;
   isOppiSessionActive?: (sessionId: string) => boolean;
   stopOppiSession?: (sessionId: string) => Promise<void>;
 }
@@ -538,7 +540,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
   constructor(
     private readonly storage: Storage,
-    private readonly options: PiTuiMirrorRuntimeOptions = {},
+    private readonly options: PiTuiMirrorRuntimeOptions,
   ) {
     super();
     this.bridgeCommandDriver = new MirrorBridgeCommandDriver(undefined, {
@@ -550,6 +552,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       saveSession: (session) => this.storage.saveSession(session),
     });
     this.eventProcessor = new SessionEventProcessor({
+      mobileRenderers: options.mobileRenderers,
       storage: this.storage,
       broadcast: (sessionId, message) => this.broadcast(sessionId, message),
       persistSessionNow: (_sessionId, session) => this.storage.saveSession(session),

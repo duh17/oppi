@@ -1,5 +1,11 @@
 import type { IncomingMessage } from "node:http";
 import { PassThrough, Readable } from "node:stream";
+import { MobileRendererRegistry } from "../../src/mobile-renderer.js";
+
+/** Mounted route fixtures need the same required registry contract as SessionManager. */
+export function makeRouteSessions(): { mobileRenderer: MobileRendererRegistry } {
+  return { mobileRenderer: new MobileRendererRegistry() };
+}
 
 export interface MockResponse {
   statusCode: number;

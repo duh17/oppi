@@ -180,7 +180,7 @@ export interface EventProcessorSessionState extends ExtensionUIState {
 
 export interface SessionEventProcessorDeps {
   storage: Storage;
-  mobileRenderers?: MobileRendererRegistry;
+  mobileRenderers: MobileRendererRegistry;
   broadcast: (key: string, message: ServerMessage) => void;
   persistSessionNow: (key: string, session: Session) => void;
   markSessionDirty: (key: string) => void;

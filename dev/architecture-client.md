@@ -137,7 +137,7 @@ Pi's nested `tool_execution_start/update/end` events carry `parentToolCallId`. O
 The terminal slice does not remove these deferred policies:
 
 - **Mac collapsed switch** — `OppiMac/Views/MacSessionTimelineViews.swift`: migrate in the Mac inspection/chrome slice.
-- **Session-outline bash summary** — `OppiMac/Views/MacSessionOutlineView.swift` and `OppiMac/Formatting/MacLegacyToolCallFormatting.swift`: migrate in the Mac inspection/chrome slice.
+- **Session-outline bash summary** — `Oppi/Features/Chat/Support/SessionOutlineView.swift`, `case "bash", "Bash"`: migrate to producer-driven outline summaries in the iOS inspection/chrome slice. `OppiMac/Formatting/MacLegacyToolCallFormatting.swift` remains part of the deferred Mac inspection/chrome slice.
 - **Live Activity bash labels** — `Oppi/Core/Services/LiveActivityManager.swift`: migrate in the semantic activity-label slice.
 - **Read/write/edit/ask branches** — `OppiCore/Formatting/ToolContentDescriptorBuilder.swift` and `Oppi/Features/Chat/Output/ToolPresentationBuilder.swift`: remove file/edit branches in file-mutation inspection slices and ask branches in the interactive-input slice.
 - **Formatting helpers and built-in glyph/title aliases** — `OppiCore/Formatting/ToolCallFormatting.swift`: retire alongside the corresponding file/edit/input and Mac title migrations; `isBashTool` remains for Mac until then.
