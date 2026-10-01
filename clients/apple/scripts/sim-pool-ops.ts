@@ -64,6 +64,7 @@ export type PoolConfig = {
   bootTimeout: number;
   bootRetries: number;
   silenceTimeout: number;
+  completionTimeout: number;
   heartbeatInterval: number;
   hangRetries: number;
   keepBooted: boolean;
@@ -292,6 +293,11 @@ export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: strin
       env.OPPI_SIM_POOL_SILENCE_TIMEOUT ?? "180",
       "OPPI_SIM_POOL_SILENCE_TIMEOUT",
       0,
+    ),
+    completionTimeout: parsePositiveInt(
+      env.OPPI_SIM_POOL_COMPLETION_TIMEOUT ?? "30",
+      "OPPI_SIM_POOL_COMPLETION_TIMEOUT",
+      1,
     ),
     heartbeatInterval: parsePositiveInt(
       env.OPPI_SIM_POOL_HEARTBEAT_INTERVAL ?? "60",
@@ -873,6 +879,58 @@ function writeJsonArtifact(input: ArtifactInput): void {
   writeFileSync(input.artifactPath, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
+type TestCompletion = {
+  outcome: "passed" | "failed";
+  tests: number;
+  suites: number;
+  issues: number;
+  summary: string;
+};
+
+/**
+ * A Swift Testing summary is per test process, not per xcodebuild invocation.
+ * Only trust this repository's single-bundle, non-repeating unit lane, after
+ * XCTest also finished. In particular, XCTest's zero-test prelude alone is
+ * not completion, nor is one worker's summary in a parallel/repeated run.
+ */
+function finishedUnitTests(argv: string[], logText: string): TestCompletion | undefined {
+  const project = extractFlagValue("-project", argv);
+  if (
+    (project != null && resolve(project) !== resolve("Oppi.xcodeproj")) ||
+    !argv.some((arg) => arg === "test" || arg === "test-without-building") ||
+    extractFlagValue("-scheme", argv) !== "OppiUnitTests" ||
+    !onlyTestingTargetsAre("OppiTests", argv) ||
+    argv.some((arg) => /^(?:-test-iterations|-retry-tests-on-failure|-run-tests-until-failure|-test-repetition-relaunch-enabled|-testPlan|-xctestrun|-testProductsPath|-workspace)(?:=|$)/.test(arg)) ||
+    (argv.some((arg) => arg.startsWith("-parallel-testing-enabled=") || arg === "-parallel-testing-enabled") &&
+      extractFlagValue("-parallel-testing-enabled", argv) !== "NO")
+  ) {
+    return undefined;
+  }
+  const starts = [...logText.matchAll(/^◇ Test run started\.\r?$/gm)];
+  const ends = [...logText.matchAll(/^(✔|✘) Test run with ([1-9][0-9]*) tests? in ([1-9][0-9]*) suites? (passed|failed) after [0-9]+(?:\.[0-9]+)? seconds(?: with ([1-9][0-9]*) issues?)?\.\r?$/gm)];
+  if (starts.length !== 1 || ends.length !== 1 || ends[0].index! < starts[0].index!) {
+    return undefined;
+  }
+  const end = ends[0];
+  const prelude = logText.slice(0, starts[0].index);
+  if (
+    !/^Test Suite '(?:All tests|Selected tests)' passed at .+\r?\n[ \t]+Executed [0-9]+ tests?, with 0 failures \(0 unexpected\) in .+ seconds\r?$/m.test(prelude) ||
+    /^Test Suite .+ failed at /m.test(logText) ||
+    extractCompilerLinkerErrors(logText).length > 0 ||
+    (end[4] === "passed" && /^Testing failed:|^\*\* TEST FAILED \*\*/m.test(logText)) ||
+    /^[◇✔✘] (?:Test |Suite )/m.test(logText.slice(end.index! + end[0].length))
+  ) {
+    return undefined;
+  }
+  const outcome = end[4] as TestCompletion["outcome"];
+  const issues = Number(end[5] ?? 0);
+  if ((outcome === "passed" && (end[1] !== "✔" || issues !== 0)) ||
+      (outcome === "failed" && (end[1] !== "✘" || issues === 0))) {
+    return undefined;
+  }
+  return { outcome, tests: Number(end[2]), suites: Number(end[3]), issues, summary: end[0].trim() };
+}
+
 function logTestFailureLines(logText: string): string[] {
   return [
     ...new Set(
@@ -927,6 +985,7 @@ function printSummary(input: {
   artifactPath: string;
   videoPath?: string;
   derivedData?: string;
+  completion?: TestCompletion;
 }): boolean {
   const duration = input.endedAt - input.startedAt;
   const totalDuration = input.totalEndedAt - input.totalStartedAt;
@@ -948,7 +1007,11 @@ function printSummary(input: {
   if (timing.length > 0) {
     lines.push("", ...timing);
   }
-  if (input.hangDetected) {
+  if (input.completion) {
+    lines.push("Completion hang: tests finished; stopped owned xcodebuild without retry.");
+    lines.push(input.completion.summary);
+    lines.push("Result bundle/coverage may be incomplete; the test result above comes from the finished test run.");
+  } else if (input.hangDetected) {
     lines.push(`Hang detection: triggered (no log or DerivedData growth for timeout)`);
   }
   lines.push("");
@@ -1000,7 +1063,14 @@ async function runXcodebuildAttempt(input: {
   derivedData: string;
   udid: string;
   extraSettings: string[];
-}): Promise<{ code: number; hung: boolean; stop: StopResult }> {
+}): Promise<{
+  code: number;
+  hung: boolean;
+  stop: StopResult;
+  completion?: TestCompletion;
+  rawCode?: number | null;
+  rawSignal?: NodeJS.Signals | null;
+}> {
   writeFileSync(input.logFile, "");
   const logFd = openSync(input.logFile, "a");
   const spawned = await input.session.spawn(
@@ -1027,6 +1097,9 @@ async function runXcodebuildAttempt(input: {
   let lastHeartbeat = start;
   let lastMtime = 0;
   let hung = false;
+  let completion: TestCompletion | undefined;
+  let completionSince = 0;
+  let lastLogSize = -1;
   const exitPromise = spawned.owned.exit;
   const pollMs = Math.max(50, Math.floor(input.config.progressPollSeconds * 1000));
   while (true) {
@@ -1043,6 +1116,20 @@ async function runXcodebuildAttempt(input: {
     }
     const nowMs = Date.now();
     const now = Math.floor(nowMs / 1000);
+    const size = fileSize(input.logFile);
+    if (size !== lastLogSize) {
+      lastLogSize = size;
+      const next = finishedUnitTests(input.argv, readFileSync(input.logFile, "utf8"));
+      if (next?.summary !== completion?.summary) {
+        completionSince = next ? nowMs : 0;
+      }
+      completion = next;
+    }
+    if (completion && nowMs - completionSince >= input.config.completionTimeout * 1000) {
+      log(`[sim-pool] completion hang: ${completion.summary} — xcodebuild still alive after ${input.config.completionTimeout}s; stopping owned group without retry (pid ${spawned.owned.pid})`);
+      hung = true;
+      break;
+    }
     const current = progressMtime(input.logFile, input.derivedData);
     if (current > lastMtime) {
       lastMtime = current;
@@ -1072,7 +1159,18 @@ async function runXcodebuildAttempt(input: {
   if (hung && !completed.stop.quiescent) {
     return { code: 1, hung: true, stop: completed.stop };
   }
-  return { code: waitExitStatus(completed.wait), hung, stop: completed.stop };
+  // Cancellation, uncertain cleanup, and real nonzero xcodebuild exits must
+  // never become passes. Keep the signal separately when recovering a result.
+  const recovered = hung && completion && !input.session.canceled && completed.stop.quiescent
+    ? completion : undefined;
+  let code = waitExitStatus(completed.wait);
+  if (recovered) {
+    code = recovered.outcome === "failed" ? 65 : completed.wait.code ?? 0;
+  }
+  return {
+    code, hung, stop: completed.stop,
+    ...(recovered ? { completion: recovered, rawCode: completed.wait.code, rawSignal: completed.wait.signal } : {}),
+  };
 }
 
 function pruneOldLogs(logDir: string): void {
@@ -1198,6 +1296,8 @@ export async function commandRun(config: PoolConfig, rawArgs: string[]): Promise
   let exitCode = 1;
   let hangDetected = false;
   let attemptsUsed = 0;
+  let testCompletion: TestCompletion | undefined;
+  let completionMetadata: Record<string, unknown> = {};
   let prepStart = runStart;
   let prepEnd = runStart;
   let simPrep = 0;
@@ -1279,6 +1379,13 @@ export async function commandRun(config: PoolConfig, rawArgs: string[]): Promise
       });
       exitCode = result.code;
       hangDetected = hangDetected || result.hung;
+      testCompletion = result.completion;
+      completionMetadata = result.completion ? {
+        completion_hang_detected: true,
+        test_completion: result.completion,
+        xcodebuild_exit_code: result.rawCode,
+        xcodebuild_signal: result.rawSignal,
+      } : {};
       if (!result.stop.quiescent) {
         uncertain = true;
         exitCode = exitCode || 1;
@@ -1293,6 +1400,7 @@ export async function commandRun(config: PoolConfig, rawArgs: string[]): Promise
         attemptNumber: attemptsUsed,
         attemptCount: attemptsUsed,
         hangDetected: result.hung,
+        extra: completionMetadata,
         slot: owned.slot,
         udid: simUdId,
         derivedData,
@@ -1300,7 +1408,7 @@ export async function commandRun(config: PoolConfig, rawArgs: string[]): Promise
         exitCode,
       });
       attemptArtifacts.push(artifactFile);
-      if (result.hung && attempt < config.hangRetries) {
+      if (result.hung && !result.completion && attempt < config.hangRetries) {
         log("[sim-pool] Retrying after simulator hang recovery...");
         attempt += 1;
         continue;
@@ -1396,6 +1504,7 @@ export async function commandRun(config: PoolConfig, rawArgs: string[]): Promise
           logFile,
           exitCode,
           extra: {
+            ...completionMetadata,
             attempt_artifacts: attemptArtifacts,
             ...(videoPath ? { video_path: videoPath } : {}),
             ...(videoRecording ? { video_recording: videoRecording } : {}),
@@ -1432,6 +1541,7 @@ export async function commandRun(config: PoolConfig, rawArgs: string[]): Promise
           artifactPath: finalArtifact,
           videoPath,
           derivedData,
+          completion: testCompletion,
         });
       } catch {
         uncertain = true;

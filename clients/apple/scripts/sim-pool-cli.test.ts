@@ -122,6 +122,73 @@ function runtimesJson(): string {
 }`;
 }
 
+const swiftTestPrelude = `Test Suite 'All tests' passed at 2026-10-01 13:10:19.718.
+\t Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+◇ Test run started.
+`;
+const swiftPassed = "✔ Test run with 9 tests in 1 suite passed after 11.224 seconds.\n";
+const swiftFailed = "✘ Test run with 9 tests in 1 suite failed after 11.224 seconds with 3 issues.\n";
+
+function runCompletionFixture(text: string, options: {
+  extraArgs?: string[];
+  afterLog?: string;
+  failQuery?: boolean;
+} = {}) {
+  const root = tempDir("completion");
+  const fake = join(root, "fake");
+  const bin = join(root, "bin");
+  mkdirSync(fake);
+  mkdirSync(join(root, "home"));
+  initCheckout(root);
+  writeFileSync(join(fake, "devices.json"), devicesJson());
+  writeFileSync(join(fake, "runtimes.json"), runtimesJson());
+  writeFakeXcrun(bin, fake);
+  writeFileSync(join(bin, "xcodebuild"), `#!/bin/sh
+set -eu
+echo attempt >> "${fake}/attempts"
+cat <<'TEST_LOG'
+${text}TEST_LOG
+: > "${fake}/started"
+${options.afterLog ?? "exec /bin/sleep 30"}
+`, { mode: 0o755 });
+  if (options.failQuery) {
+    writeFileSync(join(bin, "pgrep"), `#!/bin/sh
+if [ -f "${fake}/started" ]; then exit 2; fi
+exec /usr/bin/pgrep "$@"
+`, { mode: 0o755 });
+  }
+  const run = spawnSync("bun", [cli, "run", "--", "xcodebuild", "-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests", ...(options.extraArgs ?? [])], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 15_000,
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      HOME: join(root, "home"),
+      OPPI_ROOT: root,
+      OPPI_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-18-5",
+      OPPI_SIM_POOL_LOCK_DIR: join(root, "locks"),
+      OPPI_SIM_POOL_COUNT: "1",
+      OPPI_SIM_POOL_WAIT: "0",
+      OPPI_SIM_SLIM: "0",
+      OPPI_SIM_POOL_HANG_RETRIES: "1",
+      OPPI_SIM_POOL_SILENCE_TIMEOUT: "1",
+      OPPI_SIM_POOL_COMPLETION_TIMEOUT: "1",
+      OPPI_SIM_POOL_PROGRESS_POLL: "0.05",
+      ...(options.failQuery ? { OPPI_SIM_POOL_PGREP: join(bin, "pgrep") } : {}),
+    },
+  });
+  const logs = join(root, "clients", "apple", ".build", "logs");
+  const summary = JSON.parse(readFileSync(join(logs, readdirSync(logs).find((name) => name.endsWith(".summary.json"))!), "utf8"));
+  return {
+    run, summary,
+    attempts: readFileSync(join(fake, "attempts"), "utf8").trim().split("\n"),
+    calls: readFileSync(join(fake, "xcrun.calls"), "utf8"),
+    state: readSlotState(join(root, "locks"), 0),
+    attempt: summary.attempt_artifacts?.[0] ? JSON.parse(readFileSync(summary.attempt_artifacts[0], "utf8")) : undefined,
+  };
+}
+
 afterEach(() => {
   for (const child of procs.splice(0)) {
     if (child.exitCode == null && child.signalCode == null) {
@@ -404,7 +471,8 @@ describe("sim-pool CLI", () => {
     expect(result.stderr).toMatch(/busy or quarantined|busy, quarantined|in-flight/);
   });
 
-  test("TERM during xcodebuild fails the run and frees the slot once the child group is idle", async () => {
+  for (const finished of [false, true]) {
+  test(`TERM ${finished ? "after test completion" : "during xcodebuild"} fails the run and frees the slot once the child group is idle`, async () => {
     const root = tempDir("run-term");
     const fake = join(root, "fake");
     const bin = join(root, "bin");
@@ -419,6 +487,8 @@ describe("sim-pool CLI", () => {
       join(bin, "xcodebuild"),
       `#!/usr/bin/env bash
 set -euo pipefail
+cat <<'TEST_LOG'
+${finished ? swiftTestPrelude + swiftPassed : ""}TEST_LOG
 printf 'started\n' > "${fake}/xcodebuild.started"
 sleep 30
 `,
@@ -438,7 +508,7 @@ sleep 30
       OPPI_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-18-5",
     };
     delete env.PIOS_ROOT;
-    const child = spawn("bun", [cli, "run", "--", "xcodebuild", "-scheme", "Oppi", "build"], {
+    const child = spawn("bun", [cli, "run", "--", "xcodebuild", "-scheme", finished ? "OppiUnitTests" : "Oppi", finished ? "test" : "build", "-only-testing:OppiTests"], {
       cwd: join(root, "clients", "apple"),
       env,
       stdio: "ignore",
@@ -451,13 +521,15 @@ sleep 30
     expect(existsSync(join(fake, "xcodebuild.started"))).toBe(true);
     child.kill("SIGTERM");
     const code = await new Promise<number | null>((resolve) => child.once("exit", (value) => resolve(value)));
-    expect(code).not.toBe(0);
+    expect(code).toBe(143);
     const reuse = tryAcquireSlot({ lockDir: join(root, "locks"), slot: 0, argv: ["run"] });
     expect(reuse.ok).toBe(true);
     if (reuse.ok) {
       releaseReusable(reuse.owned);
     }
   });
+
+  }
 
   test("run uses OPPI_ROOT checkout even when launched from another clients/apple", () => {
     const mainRoot = tempDir("main-checkout");
@@ -831,6 +903,91 @@ sleep 30
     const state = readSlotState(join(root, "locks"), 0);
     expect(state === "unreadable" ? undefined : state?.status).toBe("reusable");
   }, 15000);
+
+  for (const [text, code, outcome, issues] of [
+    [swiftPassed, 0, "passed", 0],
+    [swiftFailed, 65, "failed", 3],
+    [swiftFailed + "** TEST FAILED **\n", 65, "failed", 3],
+  ] as const) {
+    test(`finished-then-hung ${outcome}${text.includes("** TEST FAILED **") ? " after Xcode footer" : ""} keeps the test result and never retries or erases`, () => {
+      const result = runCompletionFixture(swiftTestPrelude + text);
+      expect(result.run.status).toBe(code);
+      expect(result.attempts).toHaveLength(1);
+      expect(result.calls).not.toMatch(/simctl (shutdown|erase)/);
+      expect(result.summary).toMatchObject({
+        exit_code: code, attempt_count: 1, hang_detected: true,
+        completion_hang_detected: true, xcodebuild_exit_code: null, xcodebuild_signal: "SIGTERM",
+        test_completion: { outcome, tests: 9, suites: 1, issues, summary: text.split("\n")[0] },
+      });
+      expect(result.attempt.test_completion).toEqual(result.summary.test_completion);
+      expect(result.attempt.completion_hang_detected).toBe(true);
+      expect(result.run.stdout).toContain(text.split("\n")[0]);
+      expect(result.run.stdout).toContain("Result bundle/coverage may be incomplete");
+      expect(result.state === "unreadable" ? undefined : result.state?.status).toBe("reusable");
+    }, 15_000);
+  }
+
+  test("completion deadline is not postponed by continuing app log output", () => {
+    const result = runCompletionFixture(swiftTestPrelude + swiftPassed, {
+      afterLog: "while :; do echo app-heartbeat; /bin/sleep 0.1; done",
+    });
+    expect(result.run.status).toBe(0);
+    expect(result.summary.completion_hang_detected).toBe(true);
+    expect(result.run.stderr).toContain("completion hang:");
+    expect(result.attempts).toHaveLength(1);
+  }, 15_000);
+
+  const completionGuards = [
+    { name: "pre-test launch stall", text: "Build succeeded; launching test host...\n" },
+    { name: "foreign project", text: swiftTestPrelude + swiftPassed, extraArgs: ["-project", "/tmp/Other.xcodeproj"] },
+    { name: "suite result without run completion", text: swiftTestPrelude + "✔ Suite example passed after 1.0 seconds.\n" },
+    { name: "zero tests", text: swiftTestPrelude + swiftPassed.replace("9 tests", "0 tests") },
+    { name: "truncated terminal line", text: swiftTestPrelude + swiftPassed.replace("seconds.", "seconds") },
+    { name: "no XCTest completion", text: "◇ Test run started.\n" + swiftPassed },
+    { name: "later test activity", text: swiftTestPrelude + swiftPassed + "◇ Test unfinished() started.\n" },
+    { name: "multiple test processes", text: swiftTestPrelude + swiftPassed + swiftTestPrelude + swiftPassed },
+    { name: "multiple bundles", text: swiftTestPrelude + swiftPassed, extraArgs: ["-only-testing:OppiE2ETests"] },
+    { name: "repeated tests", text: swiftTestPrelude + swiftPassed, extraArgs: ["-test-iterations", "2"] },
+    { name: "parallel workers", text: swiftTestPrelude + swiftPassed, extraArgs: ["-parallel-testing-enabled", "YES"] },
+    { name: "XCTest failures", text: swiftTestPrelude.replace("with 0 failures", "with 1 failures") + swiftPassed },
+    { name: "infrastructure failure", text: swiftTestPrelude + swiftPassed + "Testing failed:\nrunner disconnected\n" },
+  ];
+  for (const guard of completionGuards) {
+    test(`${guard.name} cannot turn an incomplete hang into a pass`, () => {
+      const result = runCompletionFixture(guard.text, { extraArgs: guard.extraArgs });
+      expect(result.run.status).toBe(143);
+      expect(result.attempts).toHaveLength(2);
+      expect(result.summary.hang_detected).toBe(true);
+      expect(result.summary.completion_hang_detected).toBeUndefined();
+      expect(result.summary.test_completion).toBeUndefined();
+      expect(result.calls).toContain("simctl erase");
+    }, 15_000);
+  }
+
+  test("real nonzero xcodebuild exit after a passed test summary is not masked", () => {
+    const result = runCompletionFixture(swiftTestPrelude + swiftPassed, { afterLog: "exit 65" });
+    expect(result.run.status).toBe(65);
+    expect(result.summary.hang_detected).toBe(false);
+    expect(result.attempts).toHaveLength(1);
+  });
+
+  test("nonzero exit racing completion-hang cleanup is not masked", () => {
+    const result = runCompletionFixture(swiftTestPrelude + swiftPassed, {
+      afterLog: "trap 'exit 65' TERM; while :; do /bin/sleep 0.1; done",
+    });
+    expect(result.run.status).toBe(65);
+    expect(result.summary.xcodebuild_exit_code).toBe(65);
+    expect(result.attempts).toHaveLength(1);
+  }, 15_000);
+
+  test("finished tests with uncertain process-group cleanup cannot pass or retry", () => {
+    const result = runCompletionFixture(swiftTestPrelude + swiftPassed, { failQuery: true });
+    expect(result.run.status).toBe(1);
+    expect(result.attempts).toHaveLength(1);
+    expect(result.summary.incomplete).toBe(true);
+    expect(result.summary.test_completion).toBeUndefined();
+    expect(result.state === "unreadable" ? undefined : result.state?.status).toBe("uncertain");
+  }, 15_000);
 
   test("full-path xcodebuild keeps argv after the executable", () => {
     const root = tempDir("fullpath");
