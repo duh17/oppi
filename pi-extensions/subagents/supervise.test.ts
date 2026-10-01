@@ -6,6 +6,7 @@ import {
 	isSettledStatus,
 	launchPlan,
 	launchReceipt,
+	missingModelError,
 	needsAttention,
 	nextStall,
 	parentDelivery,
@@ -174,6 +175,20 @@ describe("supervision loop", () => {
 		});
 		expect(parentDelivery("attention").customType).toBe("subagent-attention");
 		expect(parentDelivery("failure").triggerTurn).toBe(true);
+	});
+});
+
+describe("subagent model requirement", () => {
+	test("rejects a launch that would silently inherit the parent's model", () => {
+		expect(missingModelError({})).toContain("Pass model");
+		expect(missingModelError({ model: "  " })).toContain("Pass model");
+		expect(missingModelError({ agent: "workspace_default" })).toContain("Pass model");
+	});
+
+	test("accepts an explicit model, or a saved agent that brings its own default", () => {
+		expect(missingModelError({ model: "openai/gpt-6.1-sol" })).toBeNull();
+		expect(missingModelError({ model: "openai/gpt-6-astra", agent: "workspace_default" })).toBeNull();
+		expect(missingModelError({ agent: "LHSj_iDJ" })).toBeNull();
 	});
 });
 

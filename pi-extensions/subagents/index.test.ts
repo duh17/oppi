@@ -74,7 +74,7 @@ describe("subagent refresh", () => {
 		};
 		handlers.get("session_start")?.({}, ctx);
 		expect(tool).toBeDefined();
-		await tool!.execute("call-1", { action: "launch", workspace: "oppi", prompt: "Hello", name: "child" }, null, null, ctx);
+		await tool!.execute("call-1", { action: "launch", workspace: "oppi", prompt: "Hello", name: "child", model: "test/model" }, null, null, ctx);
 		expect(getChildren).toHaveLength(1);
 		const waitChild = waitChildren[0];
 		expect(waitChild).toBeDefined();

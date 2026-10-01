@@ -30,6 +30,7 @@ import {
 	hasPendingSupervision,
 	isFailedWaitEnvelope,
 	launchPlan,
+	missingModelError,
 	launchReceipt,
 	parentDelivery,
 	readWait,
@@ -501,7 +502,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			workspace: Type.Optional(Type.String({ description: "Workspace id or unique name. Required for launch." })),
 			prompt: Type.Optional(Type.String({ description: "Child prompt. Required for launch." })),
 			name: Type.Optional(Type.String({ description: "Session name." })),
-			model: Type.Optional(Type.String({ description: "Exact provider/model id." })),
+			model: Type.Optional(Type.String({ description: "Exact provider/model id. Required unless agent is a saved agent with its own default model." })),
 			thinking: Type.Optional(Type.String({ description: "Thinking level." })),
 			agent: Type.Optional(Type.String({ description: "Saved agent id, or workspace_default." })),
 			worktree: Type.Optional(Type.String({ description: "Worktree id when the work may land." })),
@@ -539,6 +540,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			if (!params.workspace?.trim() || !params.prompt?.trim()) {
 				return { content: [{ type: "text", text: "workspace and prompt are required to launch." }], isError: true };
 			}
+			const modelError = missingModelError({ model: params.model, agent: params.agent });
+			if (modelError) return { content: [{ type: "text", text: modelError }], isError: true };
 			const plan = launchPlan({
 				workspace: params.workspace,
 				prompt: params.prompt,

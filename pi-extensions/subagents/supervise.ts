@@ -273,6 +273,18 @@ export function settlementText(items: SettlementItem[]): string {
 	return `Subagent settled. Read this follow-up; do not relaunch and do not call oppi session wait.\n${blocks.join("\n")}`;
 }
 
+/**
+ * A launch with no model and no saved agent inherits the parent's model, silently skipping
+ * routing (a coordinator's reviewers all became Opus with full tools). Saved agents carry
+ * their own default model; `workspace_default` does not.
+ */
+export function missingModelError(input: Pick<LaunchPlanInput, "model" | "agent">): string | null {
+	if (input.model?.trim()) return null;
+	const agent = input.agent?.trim();
+	if (agent && agent !== "workspace_default") return null;
+	return "Pass model: a launch without model or a saved agent inherits this session's model and skips routing. Pick the route with the agent-workflow skill's scripts/route.ts <role>, or pass a saved agent whose profile sets a default model.";
+}
+
 export function launchPlan(input: LaunchPlanInput): LaunchPlan {
 	const supervise = input.supervise !== false;
 	const args = ["session", "create", "--workspace", input.workspace, "--json", "--prompt", "@-"];
