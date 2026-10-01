@@ -1,6 +1,6 @@
 # Networking and connection routing
 
-Oppi's supported remote transport is authenticated HTTPS/WSS. Automatic Apple routing uses one mode: paired/Tailscale HTTPS first (embed SOCKS when the in-app node has published its proxy, otherwise the system resolver including an official Tailscale VPN), then verified LAN HTTPS as fallback. There is no user-facing route picker. The local CLI uses an owner-only Unix socket.
+Oppi's supported remote transport is authenticated HTTPS/WSS. iOS tries verified LAN HTTPS first on Wi-Fi or Ethernet, then in-app Tailscale, then the system resolver (including an official Tailscale VPN). There is no user-facing route picker. The local CLI uses an owner-only Unix socket. The Share extension has no Bonjour browser or embedded node.
 
 ## Supported routes
 
@@ -14,6 +14,17 @@ Oppi's supported remote transport is authenticated HTTPS/WSS. Automatic Apple ro
 Device authentication uses a per-device P-256 signing key, short-lived HTTPS access token, single-use refresh challenge, and HTTP/WSS token refresh. The owner `sk_` credential is accepted only on the Unix socket. Legacy `dt_` credentials are rejected; old clients must update and re-pair. Device revocation removes its access tokens and closes matching live WebSockets. No automatic credential migration runs on either side.
 
 Older persisted connections without an HTTPS endpoint are unsupported and must be paired again over HTTPS/Tailscale. They never fall back to plaintext.
+
+## iOS connection policy
+
+- Cold preparation waits up to 500 ms for the first verified Bonjour endpoint on a local path. An unknown startup path can use the same bounded wait; LAN is not attempted until the path is Wi-Fi or Ethernet.
+- A LAN bootstrap has a 1-second total deadline. The endpoint must match the paired server fingerprint and pass the existing leaf-pin or exact paired-port Tailscale public-CA checks. Cellular paths and endpoints removed by Bonjour are not LAN candidates.
+- For paired Tailscale names, an enabled in-app node has up to 6 seconds to publish its current-generation SOCKS proxy before the client uses the system resolver. This reuses the same proxy wait as same-user pairing. A disabled or failed node does not block system routing.
+- A tailnet route notification does not rebuild LAN, a current-generation SOCKS connection, or an in-flight coordinator preparation. The winning HTTP client's atomic proxy/generation snapshot is shared with focused, app-event, and dictation streams, including streams built later. If the proxy changes during HTTP bootstrap, the connection starts a fresh candidate pass before binding streams. Preparation checks the current route again before returning.
+- Bonjour discovery promotes a remote connection only when no work is active (a starting/running/stopping session, a pending turn send, or a live dictation recording). Promotion triggers are Bonjour arrival or the next foreground, never while work is active; finishing work does not switch the route in place. A network path change, Bonjour removal, or persistent stream-health failure demotes LAN. One HTTP availability failure does not demote a connected LAN WebSocket. After a stream-health demotion, LAN is eligible again at a path or foreground boundary, not on a timer.
+- Route preparation and routine refresh keep the host badge connected when there is a viable configured transport or a prior successful sync. Initial preparation, offline states, and sync failures remain visible.
+
+Client logs include `Verified LAN discovery` (`discoveryMs`, browse start to first verified paired endpoint; emitted when the path is known to be local) and `Route committed` (`route`, `pathType`, `sinceLaunchMs`). App-event reconnect metrics and WebSocket logs include the route captured by their transport. No new server metric names are required.
 
 ## Pairing and recovery
 
@@ -38,7 +49,7 @@ Public-domain invites omit the origin leaf pin. Apple clients use system CA on t
 
 iOS can join the tailnet itself through the official userspace TailscaleKit (`github.com/tailscale/libtailscale`, `swift/`), with no Network Extension, VPN entitlement, or auth key. `TailnetNodeController` runs the node after the user connects from Settings → Network → Tailscale. Login and run state come from the IPN bus (`BrowseToURL`, `State`); the machine list comes from LocalAPI status (`TailscaleNode.statusJSON()`), not from `NWPathMonitor`. Node state lives in Application Support/Tailscale, excluded from backup.
 
-While the node is Running, `TailnetTransportRoute` adds the node's loopback SOCKS5 proxy (user `tsnet`, per-node credential) to every Oppi HTTPS/WSS URLSession, scoped by `matchDomains` to `ts.net` and `beta.tailscale.net`. `Running` can land before `publishRoute` finishes; same-user pairing waits for the current-generation proxy before it builds a bootstrap URLSession. LAN IPs and public hosts stay direct; failover keeps a system Tailscale VPN usable if the loopback listener is gone. TLS and leaf pinning are unchanged end to end. Transports read the route only when they build a session, so each route change rebuilds paired `*.ts.net` servers that are not on LAN (`ConnectionCoordinator.handleTailnetRouteChange`). The share extension runs in its own process without the node.
+While the node is Running, `TailnetTransportRoute` adds the node's loopback SOCKS5 proxy (user `tsnet`, per-node credential) to every Oppi HTTPS/WSS URLSession, scoped by `matchDomains` to `ts.net` and `beta.tailscale.net`. `Running` can land before `publishRoute` finishes; same-user pairing waits for the current-generation proxy before it builds a bootstrap URLSession. LAN IPs and public hosts stay direct; failover keeps a system Tailscale VPN usable if the loopback listener is gone. TLS and leaf pinning are unchanged end to end. Transports read the route only when they build a session. A route change rebuilds paired `*.ts.net` servers only when they are not on LAN or already configured for the published SOCKS generation (`ConnectionCoordinator.handleTailnetRouteChange`). The share extension runs in its own process without the node.
 
 `POST /pair/tailscale` proves same-user identity with `tailscale whois --json` `UserProfile.LoginName` (not `User.LoginName`) on the socket peer, off the request thread, with admission before spawn. Tagged identities and trusted-proxy ingress fail closed. Invites advertise only `tls.mode=tailscale` MagicDNS names.
 

@@ -304,6 +304,7 @@ actor APIClient: ClientLogUploading {
     let baseURL: URL
     let token: String
     let environment: OppiClientEnvironment
+    nonisolated let tailnetRoute: TailnetTransportRoute.Snapshot
     /// Device-key auth session. When set, the bearer comes from this session and
     /// a 401 triggers a single-flight refresh with exactly one retry.
     nonisolated private let authSessionBox = DeviceAuthSessionBox()
@@ -324,6 +325,7 @@ actor APIClient: ClientLogUploading {
         environment: OppiClientEnvironment,
         availabilityObserver: APIClientAvailabilityObserver? = nil
     ) {
+        self.tailnetRoute = .forHost(environment.baseURL.host)
         self.environment = environment
         self.baseURL = environment.baseURL
         self.token = environment.bearerToken
@@ -334,7 +336,7 @@ actor APIClient: ClientLogUploading {
             expectedServerName: environment.tlsServerName
         )
 
-        let config = TailnetTransportRoute.defaultSessionConfiguration()
+        let config = TailnetTransportRoute.defaultSessionConfiguration(route: tailnetRoute)
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 30
         session = URLSession(
@@ -350,6 +352,7 @@ actor APIClient: ClientLogUploading {
         tlsCertFingerprint: String? = nil,
         availabilityObserver: APIClientAvailabilityObserver? = nil
     ) {
+        self.tailnetRoute = .forHost(baseURL.host)
         let environment = OppiClientEnvironment(
             baseURL: baseURL,
             bearerToken: token,
@@ -365,7 +368,7 @@ actor APIClient: ClientLogUploading {
             expectedServerName: environment.tlsServerName
         )
 
-        let config = TailnetTransportRoute.defaultSessionConfiguration()
+        let config = TailnetTransportRoute.defaultSessionConfiguration(route: tailnetRoute)
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 30
         session = URLSession(
@@ -382,6 +385,7 @@ actor APIClient: ClientLogUploading {
         configuration: URLSessionConfiguration,
         availabilityObserver: APIClientAvailabilityObserver? = nil
     ) {
+        self.tailnetRoute = .forHost(environment.baseURL.host)
         self.environment = environment
         self.baseURL = environment.baseURL
         self.token = environment.bearerToken
@@ -407,6 +411,7 @@ actor APIClient: ClientLogUploading {
         tlsCertFingerprint: String? = nil,
         availabilityObserver: APIClientAvailabilityObserver? = nil
     ) {
+        self.tailnetRoute = .forHost(baseURL.host)
         let environment = OppiClientEnvironment(
             baseURL: baseURL,
             bearerToken: token,

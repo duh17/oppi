@@ -58,6 +58,65 @@ final class ServerConnection {
         try await client.serverInfo(bootstrapDeadline: deadline)
     }
     private var transportFailureDisposition: TransportFailureDisposition?
+    var networkPathType: () -> String = { NetworkPathTelemetry.pathType }
+    var lanBootstrapDeadline: ServerConnectionBootstrapDeadlineFactory = { .after(.seconds(1)) }
+    var prepareTailnetProxy: @MainActor () async throws -> Void = {
+        guard AppPreferences.Tailnet.isEnabled else { return }
+        let node = TailnetNodeController.shared
+        node.startIfEnabled()
+        try await node.waitUntilCurrentGenerationProxyReady(timeout: .seconds(6))
+    }
+    private var configuredTailnetRoute: TailnetTransportRoute.Snapshot = .direct
+    var configuredSOCKSGeneration: UInt64 { configuredTailnetRoute.generation }
+    private var lanDemotionTask: (id: UUID, task: Task<Void, Never>)?
+    private var pendingLANPromotion = false
+    private var lanDemoted = false
+    /// Automatic rebuilds spent chasing a moving SOCKS generation in the current
+    /// configuration. Past the budget the bootstrap is kept and the next route
+    /// notification rebuilds, so a flapping node cannot loop forever.
+    private static let maxTailnetRestarts = 2
+    private var tailnetRestartsUsed = 0
+    /// Captured when a configuration starts, before the transport-generation
+    /// fence fails pending sends: LAN promotion is deferred for active work, so
+    /// this pass must not pick LAN.
+    private var lanDeferredForActiveWork = false
+
+    var needsTailnetRouteRebuild: Bool {
+        credentials == nil || (transportPath != .lan && configuredTailnetRoute != .current)
+    }
+
+    /// Live dictation socket handed out by `makeDictationStreamClient`. Promotion
+    /// is deferred while it is open (rather than rebinding it mid-recording), so
+    /// a recording never straddles two routes.
+    private weak var activeDictationClient: DictationStreamClient?
+
+    /// Work a route rebuild must never interrupt: a starting/busy/stopping
+    /// session, a turn send that has not been acknowledged yet (the session is
+    /// not `.busy` until `agentStart`), or a live dictation recording.
+    private var hasActiveWork: Bool {
+        sessionStore.sessions.contains { $0.status == .starting || $0.status.isRunning }
+            || !commands.pendingTurnSendsByRequestId.isEmpty
+            || (activeDictationClient?.status ?? .disconnected) != .disconnected
+    }
+
+    /// Promotion triggers are only Bonjour arrival (`setDiscoveredLANEndpoint`)
+    /// and foreground (`retryLANAtForegroundBoundary`); both are gated by
+    /// `hasActiveWork`. There is no idle-edge resume: work that ends leaves the
+    /// remote route in place until the next foreground.
+    func promoteLANAtIdleBoundary() async {
+        guard pendingLANPromotion, !hasActiveWork,
+              NetworkPathTelemetry.allowsLAN(pathType: networkPathType()) else { return }
+        pendingLANPromotion = false
+        await reevaluateNetworkEndpointAtBoundary()
+    }
+
+    func retryLANAtForegroundBoundary() async {
+        if lanDemoted {
+            lanDemoted = false
+            pendingLANPromotion = discoveredLANEndpoint != nil && transportPath != .lan
+        }
+        await promoteLANAtIdleBoundary()
+    }
 
     var canAutomaticallyRetryInitialTransport: Bool {
         transportFailureDisposition != .failClosed
@@ -292,6 +351,7 @@ final class ServerConnection {
 
     /// Test seam: observe app-event stream start without opening a real socket.
     var _startAppEventStreamForTesting: ((URL) -> Void)?
+    var _appEventWebSocketFactoryForTesting: ((URLRequest) -> AppEventWebSocketTransport)?
 
     /// Test seam: override the cache actor used by list refresh paths.
     var _cacheForTesting: TimelineCache?
@@ -490,9 +550,13 @@ final class ServerConnection {
         serverInfoBootstrap: @escaping ServerConnectionInfoBootstrap = { client, deadline in
             try await client.serverInfo(bootstrapDeadline: deadline)
         },
-        deviceCredentialDidChange: ServerConnectionDeviceCredentialObserver? = nil
+        deviceCredentialDidChange: ServerConnectionDeviceCredentialObserver? = nil,
+        tailnetRestartsUsed: Int = 0,
+        lanDeferredForActiveWork: Bool? = nil
     ) async -> Bool {
         usesSynchronousCompatibilityConfiguration = false
+        self.tailnetRestartsUsed = tailnetRestartsUsed
+        self.lanDeferredForActiveWork = lanDeferredForActiveWork ?? (pendingLANPromotion && hasActiveWork)
         transportConfigurationGeneration &+= 1
         let generation = transportConfigurationGeneration
         activeTransportConfigurationGenerations.insert(generation)
@@ -527,9 +591,11 @@ final class ServerConnection {
         serverInfoBootstrap: @escaping ServerConnectionInfoBootstrap = { client, deadline in
             try await client.serverInfo(bootstrapDeadline: deadline)
         },
-        deviceCredentialDidChange: ServerConnectionDeviceCredentialObserver? = nil
+        deviceCredentialDidChange: ServerConnectionDeviceCredentialObserver? = nil,
+        tailnetRestartsUsed: Int = 0
     ) async -> Bool {
         let focusedTarget = (sessionId: focusedSessionStreamSessionId, routeScope: focusedSessionStreamRouteScope)
+        let lanDeferred = pendingLANPromotion && hasActiveWork
         isTransportDemoting = true
         streamConsumptionTask?.cancel()
         streamConsumptionTask = nil
@@ -544,7 +610,9 @@ final class ServerConnection {
             httpBootstrapDeadline: httpBootstrapDeadline,
             apiClientFactory: apiClientFactory,
             serverInfoBootstrap: serverInfoBootstrap,
-            deviceCredentialDidChange: deviceCredentialDidChange
+            deviceCredentialDidChange: deviceCredentialDidChange,
+            tailnetRestartsUsed: tailnetRestartsUsed,
+            lanDeferredForActiveWork: lanDeferred
         )
         guard configured else { return false }
         if let sessionId = focusedTarget.sessionId, let routeScope = focusedTarget.routeScope {
@@ -565,14 +633,32 @@ final class ServerConnection {
         serverInfoBootstrap: @escaping ServerConnectionInfoBootstrap
     ) async -> Bool {
         do {
+            // A rebuild (e.g. a tailnet route change) is not a promotion trigger:
+            // while promotion is deferred for active work it must not pick LAN.
+            // A failover pass (non-empty exclusions) may still use LAN.
+            let deferLAN = lanDeferredForActiveWork && excluding.isEmpty
             let candidates = try ServerTransportPlanResolver.candidates(
                 credentials: credentials,
-                discoveredLANEndpoint: discoveredLANEndpoint,
-                excluding: excluding
+                discoveredLANEndpoint: lanDemoted || deferLAN ? nil : discoveredLANEndpoint,
+                excluding: excluding,
+                pathType: networkPathType()
             )
             var lastError: Error?
             for candidate in candidates {
                 guard transportConfigurationGeneration == configurationGeneration else { return false }
+                if candidate.transportPath == .paired,
+                   ServerTLSTrustPolicy.isTailscaleHostname(credentials.host) {
+                    do { try await prepareTailnetProxy() }
+                    catch is CancellationError { return false }
+                    catch {
+                        ClientLog.info("Network", "In-app Tailscale not ready; using system resolver", metadata: [
+                            "reason": String(describing: type(of: error)),
+                        ])
+                    }
+                    guard !Task.isCancelled,
+                          transportConfigurationGeneration == configurationGeneration else { return false }
+                }
+                let candidateLANGeneration = lanCandidateGeneration
                 let prepared = makeCandidateAPIClient(
                     credentials: credentials,
                     selection: candidate,
@@ -580,16 +666,43 @@ final class ServerConnection {
                     configurationGeneration: configurationGeneration,
                     apiClientFactory: apiClientFactory
                 )
+                let route = prepared.client.tailnetRoute
                 let handshakeStarted = ContinuousClock.now
                 do {
-                    let info = try await serverInfoBootstrap(prepared.client, httpBootstrapDeadline())
+                    let info = try await serverInfoBootstrap(
+                        prepared.client,
+                        candidate.transportPath == .lan ? lanBootstrapDeadline() : httpBootstrapDeadline()
+                    )
                     let handshakeMs = Double((ContinuousClock.now - handshakeStarted) / .milliseconds(1))
                     NetworkPathTelemetry.recordHandshake(
                         selection: candidate,
                         durationMs: handshakeMs,
-                        success: true
+                        success: true,
+                        socksGeneration: route.generation
                     )
                     guard transportConfigurationGeneration == configurationGeneration else { return false }
+                    if candidate.transportPath == .lan,
+                       candidateLANGeneration != lanCandidateGeneration || !NetworkPathTelemetry.allowsLAN(pathType: networkPathType()) {
+                        continue
+                    }
+                    if candidate.transportPath == .paired,
+                       ServerTLSTrustPolicy.isTailscaleHostname(credentials.host),
+                       route != .current,
+                       tailnetRestartsUsed < Self.maxTailnetRestarts {
+                        // The API session already captured its proxy. Never bind streams
+                        // from a newer generation to that old HTTP route.
+                        tailnetRestartsUsed += 1
+                        return await configureForUseAttempt(
+                            credentials: credentials,
+                            excluding: excluding,
+                            configurationGeneration: configurationGeneration,
+                            httpBootstrapDeadline: httpBootstrapDeadline,
+                            apiClientFactory: apiClientFactory,
+                            serverInfoBootstrap: serverInfoBootstrap
+                        )
+                    }
+                    if candidate.transportPath == .lan { pendingLANPromotion = false }
+                    NetworkPathTelemetry.recordRouteCommitted(selection: candidate, socksGeneration: route.generation)
                     await commitCandidate(
                         credentials: credentials,
                         selection: candidate,
@@ -607,8 +720,16 @@ final class ServerConnection {
                         selection: candidate,
                         durationMs: handshakeMs,
                         success: false,
-                        error: error
+                        error: error,
+                        socksGeneration: route.generation
                     )
+                    if candidate.transportPath == .lan,
+                       transportConfigurationGeneration == configurationGeneration {
+                        // Same eligibility rule as a demotion: no further LAN
+                        // attempts until a path or foreground boundary.
+                        lanDemoted = true
+                        pendingLANPromotion = false
+                    }
                     lastError = error
                     continue
                 }
@@ -640,6 +761,21 @@ final class ServerConnection {
 
     private func finishTransportConfiguration(_ result: Bool, generation: UInt64) async -> Bool {
         activeTransportConfigurationGenerations.remove(generation)
+        if result, transportConfigurationGeneration == generation,
+           let credentials, ServerTLSTrustPolicy.isTailscaleHostname(credentials.host),
+           needsTailnetRouteRebuild,
+           tailnetRestartsUsed < Self.maxTailnetRestarts {
+            let rebuilt = await reconfigureForExplicitRetry(
+                credentials: credentials,
+                httpBootstrapDeadline: configuredHTTPBootstrapDeadlineFactory,
+                apiClientFactory: configuredAPIClientFactory,
+                serverInfoBootstrap: configuredServerInfoBootstrap,
+                deviceCredentialDidChange: configuredDeviceCredentialObserver,
+                tailnetRestartsUsed: tailnetRestartsUsed + 1
+            )
+            if !rebuilt { isTransportDemoting = false }
+            return rebuilt
+        }
         return result
     }
 
@@ -770,6 +906,7 @@ final class ServerConnection {
             endpointSelection: selection,
             transportPath: selection.transportPath
         )
+        configuredTailnetRoute = apiClient.tailnetRoute
         installedAPIClientIdentity = apiIdentity
         installedAPIClientConfigurationGeneration = configurationGeneration
         installAPIClient(apiClient)
@@ -786,7 +923,8 @@ final class ServerConnection {
             diagnosticRemoteIdentity: nil,
             tlsCertFingerprint: tlsCertFingerprint,
             tlsServerName: selection.tlsServerName,
-            authSession: httpAuthSession
+            authSession: httpAuthSession,
+            tailnetRoute: configuredTailnetRoute
         )
         wsClient.onTransportHealthFailure = { @MainActor [weak self, weak wsClient] failure in
             guard let self,
@@ -874,11 +1012,17 @@ final class ServerConnection {
     func setDiscoveredLANEndpoint(
         _ endpoint: LANDiscoveredEndpoint?
     ) -> Task<Void, Never>? {
-        guard endpoint != discoveredLANEndpoint else { return nil }
+        guard endpoint != discoveredLANEndpoint else {
+            return endpoint == nil && transportPath == .lan ? lanDemotionTask?.task : nil
+        }
         discoveredLANEndpoint = endpoint
         lanCandidateGeneration &+= 1
         guard transportFailureDisposition != .failClosed else { return nil }
         guard let credentials else { return nil }
+        if endpoint == nil, transportPath == .lan {
+            lanDemoted = true
+            pendingLANPromotion = false
+        }
 
         if usesSynchronousCompatibilityConfiguration, endpoint == nil, transportPath == .lan {
             guard let paired = LANEndpointSelection.select(
@@ -894,7 +1038,7 @@ final class ServerConnection {
            let candidate = LANEndpointSelection.select(
                credentials: credentials,
                discoveredEndpoint: endpoint
-           ), endpointSelection == candidate {
+           ), endpointSelection == candidate, !isTransportDemoting, lanDemotionTask == nil {
             return nil
         }
         guard endpoint != nil || transportPath == .lan else {
@@ -902,10 +1046,32 @@ final class ServerConnection {
             return nil
         }
 
-        let exclusions: Set<ServerRouteCandidateKind> = endpoint == nil ? [.lan] : []
-        return Task { @MainActor [weak self] in
-            await self?.reevaluateNetworkEndpointAtBoundary(excluding: exclusions)
+        if let endpoint {
+            guard LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: endpoint)?.transportPath == .lan else { return nil }
+            guard NetworkPathTelemetry.allowsLAN(pathType: networkPathType()), !lanDemoted else { return nil }
+            pendingLANPromotion = true
+            guard !hasActiveWork else { return nil }
+        } else {
+            pendingLANPromotion = false
         }
+        if endpoint == nil { return scheduleLANDemotion() }
+        return Task { @MainActor [weak self] in
+            await self?.promoteLANAtIdleBoundary()
+        }
+    }
+
+    private func scheduleLANDemotion() -> Task<Void, Never> {
+        if let demotion = lanDemotionTask { return demotion.task }
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.lanDemotionTask?.id == id { self.lanDemotionTask = nil }
+            }
+            await self.reevaluateNetworkEndpointAtBoundary(excluding: [.lan])
+        }
+        lanDemotionTask = (id, task)
+        return task
     }
 
     #if DEBUG
@@ -949,6 +1115,8 @@ final class ServerConnection {
     /// dead LAN IP, then fully disconnect — requiring an app restart.
     func handleNetworkPathChange() {
         let wasOnLAN = transportPath == .lan
+        lanDemoted = false
+        pendingLANPromotion = false
 
         if transportFailureDisposition == .failClosed {
             discoveredLANEndpoint = nil
@@ -969,17 +1137,15 @@ final class ServerConnection {
             }
 
             let transition = setDiscoveredLANEndpoint(nil)
+            // This boundary invalidates the old advertisement; fresh Bonjour
+            // results on the new path may be eligible again.
+            lanDemoted = false
             if transition == nil {
-                if apiClient != nil {
-                    // Synchronous HTTP seam already rebound composition.
+                if transportPath != .lan, apiClient != nil {
+                    // Only an actual synchronous route commit completed rebind.
                     isTransportDemoting = false
                 } else {
-                    // Endpoint already cleared or HTTPS not currently requested — still
-                    // force a demotion pass so we do not return with the socket down
-                    // and no replacement scheduled.
-                    Task { @MainActor [weak self] in
-                        await self?.reevaluateNetworkEndpointAtBoundary(excluding: [.lan])
-                    }
+                    _ = scheduleLANDemotion()
                 }
             }
             return
@@ -1254,6 +1420,13 @@ final class ServerConnection {
             return
         }
 
+        // One failed HTTP operation is not stream-health evidence. A healthy
+        // LAN WebSocket remains installed; the operation itself is never replayed.
+        if transportPath == .lan,
+           wsClient?.status == .connected || appEventStreamTransportState == .connected {
+            return
+        }
+
         // The failed operation is not replayed. Recovery only prepares a route
         // for future work and is coalesced with stream health failures.
         await handlePersistentStreamHealthFailure(
@@ -1338,7 +1511,8 @@ final class ServerConnection {
         guard let route else { return }
 
         if route == .lan {
-            discoveredLANEndpoint = nil
+            lanDemoted = true
+            pendingLANPromotion = false
             lanCandidateGeneration &+= 1
         }
         await performAutomaticRouteRecovery(excluding: [route])
@@ -2443,14 +2617,17 @@ final class ServerConnection {
             currentTokenProvider = nil
             refreshTokenProvider = nil
         }
-        return DictationStreamClient(
+        let client = DictationStreamClient(
             baseURL: selection.baseURL,
             token: credentials.effectiveAccessToken,
             tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
             tlsServerName: selection.tlsServerName,
+            tailnetRoute: configuredTailnetRoute,
             currentTokenProvider: currentTokenProvider,
             refreshTokenProvider: refreshTokenProvider
         )
+        activeDictationClient = client
+        return client
     }
 
     func startAppEventStreamIfAvailable() {
@@ -2482,15 +2659,23 @@ final class ServerConnection {
             currentTokenProvider = nil
             refreshTokenProvider = nil
         }
+        #if DEBUG
+        let webSocketFactory = _appEventWebSocketFactoryForTesting
+        #else
+        let webSocketFactory: ((URLRequest) -> AppEventWebSocketTransport)? = nil
+        #endif
         let client = AppEventStreamClient(
             url: streamURL,
             token: credentials.effectiveAccessToken,
             tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
             tlsServerName: selection.tlsServerName,
+            transportPath: selection.transportPath,
+            tailnetRoute: configuredTailnetRoute,
             diagnosticRemoteIdentity: nil,
             leftoverExpiresAtMs: credentials.deviceCredential?.expiresAt,
             currentTokenProvider: currentTokenProvider,
-            refreshTokenProvider: refreshTokenProvider
+            refreshTokenProvider: refreshTokenProvider,
+            webSocketFactory: webSocketFactory
         )
         client.onTransportHealthFailure = { @MainActor [weak self, weak client] failure in
             guard let self,

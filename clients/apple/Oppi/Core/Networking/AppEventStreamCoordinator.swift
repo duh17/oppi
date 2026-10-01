@@ -27,6 +27,8 @@ final class AppEventStreamCoordinator {
         return !consumptionTask.isCancelled
     }
 
+    var tailnetRoute: TailnetTransportRoute.Snapshot? { client?.tailnetRoute }
+
     func isCurrentClient(_ candidate: AppEventStreamClient) -> Bool {
         client === candidate
     }
@@ -36,7 +38,7 @@ final class AppEventStreamCoordinator {
         client nextClient: AppEventStreamClient,
         streamURL nextURL: URL
     ) {
-        if isRunning, streamURL == nextURL {
+        if isRunning, streamURL == nextURL, tailnetRoute == nextClient.tailnetRoute {
             return
         }
 

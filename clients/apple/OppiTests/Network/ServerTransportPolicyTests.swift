@@ -14,7 +14,7 @@ struct ServerTransportPolicyTests {
         #expect(candidates[0].baseURL.scheme == "https")
     }
 
-    @Test func pairedHTTPSPrecedesDiscoveredLANHTTPS() throws {
+    @Test func verifiedLANHTTPSPrecedesPairedHTTPSOnWiFi() throws {
         let discovered = LANDiscoveredEndpoint(
             host: "192.168.1.42",
             port: 443,
@@ -23,11 +23,21 @@ struct ServerTransportPolicyTests {
         )
         let candidates = try ServerTransportPlanResolver.candidates(
             credentials: makeCredentials(),
-            discoveredLANEndpoint: discovered
+            discoveredLANEndpoint: discovered,
+            pathType: "wifi"
         )
 
-        #expect(candidates.map(\.transportPath) == [.paired, .lan])
+        #expect(candidates.map(\.transportPath) == [.lan, .paired])
         #expect(candidates.allSatisfy { $0.baseURL.scheme == "https" })
+    }
+
+    @Test(arguments: ["cell", "unknown", "other"]) func nonLocalPathsSkipLAN(path: String) throws {
+        let candidates = try ServerTransportPlanResolver.candidates(
+            credentials: makeCredentials(),
+            discoveredLANEndpoint: LANDiscoveredEndpoint(host: "192.168.1.42", port: 443, serverFingerprintPrefix: "server", tlsCertFingerprintPrefix: nil),
+            pathType: path
+        )
+        #expect(candidates.map(\.transportPath) == [.paired])
     }
 
     @Test func plaintextHTTPIsRejected() throws {

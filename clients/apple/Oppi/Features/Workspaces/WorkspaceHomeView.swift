@@ -687,7 +687,10 @@ enum HostSwitcherBadgeState {
             hasSyncFailure: connection.workspaceStore.lastSyncFailed
                 || connection.sessionStore.lastSyncFailed,
             isPreparing: coordinator.preparingServerIds.contains(server.id),
-            isFocusedStreamRecovering: connection.isFocusedSessionStreamRecovering
+            isFocusedStreamRecovering: connection.isFocusedSessionStreamRecovering,
+            hasConnectionEvidence: connection.hasViableConfiguredTransport
+                || connection.workspaceStore.lastSuccessfulSyncAt != nil
+                || connection.sessionStore.lastSuccessfulSyncAt != nil
         )
     }
 }

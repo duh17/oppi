@@ -47,9 +47,11 @@ enum TailnetSameUserPairing {
         timeout: Duration = .seconds(10),
         generation: () -> UInt64,
         nodeState: () -> TailnetNodeState,
-        proxy: () -> TailnetSOCKSProxy?
+        proxy: () -> TailnetSOCKSProxy?,
+        now: () -> ContinuousClock.Instant = { .now },
+        sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) async throws {
-        let deadline = ContinuousClock.now + timeout
+        let deadline = now() + timeout
         while true {
             guard generation() == expectedGeneration else {
                 throw Failure.nodeNotRunning
@@ -61,10 +63,10 @@ enum TailnetSameUserPairing {
             if state == .running, proxy() != nil {
                 return
             }
-            if ContinuousClock.now >= deadline {
+            if now() >= deadline {
                 throw Failure.proxyNotReady
             }
-            try await Task.sleep(for: .milliseconds(20))
+            try await sleep(.milliseconds(20))
         }
     }
 

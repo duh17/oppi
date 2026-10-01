@@ -348,6 +348,13 @@ struct WorkspaceServerStatusPresentationTests {
 @Suite("Server Badge Connection State")
 @MainActor
 struct ServerBadgeConnectionStateTests {
+    @Test(arguments: [true, false]) func refreshWithPriorConnectionEvidenceStaysConnected(isPreparing: Bool) {
+        let presentation = WorkspaceServerStatusPresentation(state: .syncing, label: "", isUnreachable: false)
+        #expect(ServerBadgeConnectionState(presentation, isPreparing: isPreparing, hasConnectionEvidence: true) == .connected)
+        #expect(ServerBadgeConnectionState(presentation, isPreparing: isPreparing, hasConnectionEvidence: false) == .connecting)
+        #expect(ServerBadgeConnectionState(presentation, hasSyncFailure: true, hasConnectionEvidence: true) == .syncFailed)
+    }
+
     @Test func connectedPresentationMapsToConnectedBadge() {
         let presentation = WorkspaceServerStatusPresentation.derive(
             freshnessState: .offline,
@@ -498,7 +505,7 @@ struct ServerBadgeConnectionStateTests {
             ("paired.test", true, false, "Connected via paired HTTPS")
         ]
         for (host, hasProxy, usesLAN, expectedTitle) in cases {
-            TailnetTransportRoute.publish(hasProxy ? proxy : nil)
+            TailnetTransportRoute.publish(hasProxy ? proxy : nil, generation: hasProxy ? 1 : 0)
             let credentials = laneCredentials(host: host)
             let server = try #require(PairedServer(from: credentials, sortOrder: 0))
             let connection = ServerConnection()

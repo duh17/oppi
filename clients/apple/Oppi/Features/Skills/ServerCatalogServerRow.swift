@@ -93,18 +93,6 @@ struct ServerCatalogServerRow: View {
     }
 
     private func connectionState(for server: PairedServer) -> ServerBadgeConnectionState {
-        guard let connection = coordinator.connection(for: server.id) else {
-            return .disconnected
-        }
-        let skillsFailed = connection.serverResourceStore
-            .syncState(for: .skills, serverId: server.id).lastSyncFailed
-        let extensionsFailed = connection.serverResourceStore
-            .syncState(for: .extensions, serverId: server.id).lastSyncFailed
-        return ServerBadgeConnectionState(
-            WorkspaceServerStatusPresentation.derive(
-                health: connection.serverHealth(forServer: server.id)
-            ),
-            hasSyncFailure: skillsFailed && extensionsFailed
-        )
+        HostSwitcherBadgeState.make(for: server, coordinator: coordinator)
     }
 }

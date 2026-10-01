@@ -487,7 +487,7 @@ struct ConnectionCoordinatorPathChangeTests {
         }
     }
 
-    @Test func simulateTailscaleToLAN_noDisruption() async {
+    @Test func simulateTailscaleToLAN_defersPromotionDuringActiveTurn() async {
         let (coordinator, _) = makeCoordinator()
 
         let server = makeServer(
@@ -515,9 +515,12 @@ struct ConnectionCoordinatorPathChangeTests {
         #expect(conn.transportPath == .paired,
                 "Should stay paired until Bonjour discovers LAN endpoint")
 
-        // Later, Bonjour discovers LAN endpoint.
-        // Keep the working paired transport until the socket reconnects so
-        // REST calls don't jump to raw-IP TLS while WS is still on Tailscale.
+        // A Bonjour promotion must not interrupt an active turn, even when
+        // the new LAN endpoint is verified and the paired socket is healthy.
+        conn.networkPathType = { "wifi" }
+        var session = makeTestSession(id: "active-turn", workspaceId: "w1")
+        session.status = .busy
+        conn.sessionStore.upsert(session)
         conn.setDiscoveredLANEndpoint(
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
@@ -527,9 +530,9 @@ struct ConnectionCoordinatorPathChangeTests {
             )
         )
         #expect(conn.transportPath == .paired,
-                "Healthy paired transport should stay active until reconnect")
+                "Active turn should keep its paired transport")
         #expect(await conn.apiClient?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749",
-                "API client should stay on paired hostname until reconnect")
+                "API and stream must remain on the active turn's route")
     }
 
     // MARK: - Helpers
@@ -539,6 +542,7 @@ struct ConnectionCoordinatorPathChangeTests {
         KeychainService.deleteAllServers()
         let store = ServerStore()
         let coordinator = ConnectionCoordinator(serverStore: store)
+        coordinator.networkPathType = { "wifi" }
         return (coordinator, store)
     }
 

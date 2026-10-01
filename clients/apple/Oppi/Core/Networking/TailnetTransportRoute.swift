@@ -23,7 +23,24 @@ enum TailnetTransportRoute {
     /// accepts the same public-CA names.
     static let matchDomains = ["ts.net", "beta.tailscale.net"]
 
-    private static let published = Mutex<(proxy: TailnetSOCKSProxy?, generation: UInt64)>((nil, 0))
+    /// A connection shares this immutable route across HTTP and all streams.
+    /// Read proxy + generation atomically; neither can change mid-composition.
+    struct Snapshot: Sendable, Equatable {
+        let proxy: TailnetSOCKSProxy?
+        let generation: UInt64
+
+        static var current: Self { TailnetTransportRoute.snapshot }
+        static let direct = Self(proxy: nil, generation: 0)
+
+        static func forHost(_ host: String?) -> Self {
+            guard let host, ServerTLSTrustPolicy.isTailscaleHostname(host) else { return .direct }
+            return .current
+        }
+    }
+
+    private static let published = Mutex<Snapshot>(.direct)
+
+    static var snapshot: Snapshot { published.withLock { $0 } }
 
     static var proxy: TailnetSOCKSProxy? {
         published.withLock { $0.proxy }
@@ -34,7 +51,7 @@ enum TailnetTransportRoute {
     }
 
     static func publish(_ proxy: TailnetSOCKSProxy?, generation: UInt64 = 0) {
-        published.withLock { $0 = (proxy, proxy == nil ? 0 : generation) }
+        published.withLock { $0 = Snapshot(proxy: proxy, generation: proxy == nil ? 0 : generation) }
     }
 
     /// Routes `configuration` through the currently published node proxy, if any.
@@ -57,9 +74,9 @@ enum TailnetTransportRoute {
     }
 
     /// `URLSessionConfiguration.default` routed for Oppi server transports.
-    static func defaultSessionConfiguration() -> URLSessionConfiguration {
+    static func defaultSessionConfiguration(route: Snapshot = .current) -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.default
-        apply(to: configuration)
+        apply(to: configuration, proxy: route.proxy)
         return configuration
     }
 }

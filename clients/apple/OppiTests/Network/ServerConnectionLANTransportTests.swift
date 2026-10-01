@@ -34,8 +34,12 @@ struct ServerConnectionLANTransportTests {
         #expect(await connection.apiClient?.baseURL.absoluteString == "https://192.168.1.42:7749")
     }
 
-    @Test func matchingLANDiscoveryDoesNotFlipAPIClientWhilePairedSocketIsHealthy() async {
+    @Test func activeTurnKeepsPairedCompositionWhenLANIsDiscovered() async {
         let connection = ServerConnection()
+        connection.networkPathType = { "wifi" }
+        var session = makeTestSession(id: "active", workspaceId: "w1")
+        session.status = .busy
+        connection.sessionStore.upsert(session)
         let credentials = makeCredentials()
         #expect(connection.configure(credentials: credentials) == true)
 

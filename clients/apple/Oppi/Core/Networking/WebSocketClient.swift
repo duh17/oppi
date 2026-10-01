@@ -110,6 +110,7 @@ final class WebSocketClient {
     private var appliedAccessToken: String = ""
     var configuredTLSServerName: String? { trustDelegate.expectedServerName }
     private var preferredEndpoint: EndpointSelection?
+    let tailnetRoute: TailnetTransportRoute.Snapshot
     private var streamURL: URL?
     private var diagnosticSessionId: String?
     private var diagnosticWorkspaceId: String?
@@ -142,12 +143,14 @@ final class WebSocketClient {
         tlsCertFingerprint: String? = nil,
         tlsServerName: String? = nil,
         authSession: DeviceAuthSession? = nil,
+        tailnetRoute: TailnetTransportRoute.Snapshot? = nil,
         pingInterval: Duration = WebSocketRecoveryPolicy.pingInterval,
         pingTimeout: Duration = WebSocketRecoveryPolicy.pingTimeout,
         waitForConnectionTimeout: Duration = .seconds(3),
         sendTimeout: Duration = .seconds(5),
         webSocketFactory: ((URLRequest) -> FocusedWebSocketTransport)? = nil
     ) {
+        self.tailnetRoute = tailnetRoute ?? .forHost(preferredEndpoint?.baseURL.host ?? credentials.host)
         self.credentials = credentials
         self.authSession = authSession
         self.preferredEndpoint = preferredEndpoint
@@ -162,7 +165,7 @@ final class WebSocketClient {
             pinnedLeafFingerprint: pinnedFingerprint,
             expectedServerName: tlsServerName
         )
-        let config = TailnetTransportRoute.defaultSessionConfiguration()
+        let config = TailnetTransportRoute.defaultSessionConfiguration(route: self.tailnetRoute)
         // No timeout for WebSocket — we handle keepalive ourselves
         config.timeoutIntervalForRequest = 60
         let urlSession = URLSession(
@@ -507,6 +510,7 @@ final class WebSocketClient {
         metadata["status"] = String(describing: status)
         metadata["connectionID"] = String(connectionID)
         metadata["transportPath"] = preferredEndpoint?.transportPath.rawValue ?? ConnectionTransportPath.paired.rawValue
+        metadata.merge(NetworkPathTelemetry.tags(selection: preferredEndpoint, socksGeneration: tailnetRoute.generation)) { current, _ in current }
         metadata["streamRole"] = diagnosticRole
         if let diagnosticSessionId {
             metadata["sessionId"] = diagnosticSessionId
@@ -871,7 +875,7 @@ final class WebSocketClient {
                 case .succeeded:
                     consecutiveFailures = 0
                     let rttMs = Double((ContinuousClock.now - pingStarted) / .milliseconds(1))
-                    NetworkPathTelemetry.recordPingRttMs(rttMs, selection: self.preferredEndpoint)
+                    NetworkPathTelemetry.recordPingRttMs(rttMs, selection: self.preferredEndpoint, socksGeneration: self.tailnetRoute.generation)
                     continue
 
                 case .failed:

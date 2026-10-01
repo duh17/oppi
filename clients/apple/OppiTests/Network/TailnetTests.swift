@@ -157,6 +157,39 @@ struct TailnetStatusProjectionTests {
 @MainActor
 @Suite("Tailnet same-user pairing")
 struct TailnetSameUserPairingTests {
+    @Test func proxyWaitExpiresAtBoundedVirtualDeadline() async {
+        var now = ContinuousClock.now
+        var polls = 0
+        await #expect(throws: TailnetSameUserPairing.Failure.proxyNotReady) {
+            try await TailnetSameUserPairing.waitForCurrentGenerationProxy(
+                expectedGeneration: 7,
+                timeout: .seconds(6),
+                generation: { 7 },
+                nodeState: { .running },
+                proxy: { nil },
+                now: { now },
+                sleep: { _ in polls += 1; now += .seconds(2) }
+            )
+        }
+        #expect(polls == 3)
+    }
+
+    @Test func proxyWaitAcceptsPublicationFromCurrentGeneration() async throws {
+        var proxy: TailnetSOCKSProxy?
+        var polls = 0
+        try await TailnetSameUserPairing.waitForCurrentGenerationProxy(
+            expectedGeneration: 7,
+            generation: { 7 },
+            nodeState: { .running },
+            proxy: { proxy },
+            sleep: { _ in
+                polls += 1
+                proxy = TailnetSOCKSProxy(host: "127.0.0.1", port: 1080, credential: "fixture")
+            }
+        )
+        #expect(polls == 1)
+    }
+
     @Test func probeOrderIsConfigDefaultThenHTTPS() throws {
         let urls = TailnetSameUserPairing.probeURLs(dnsName: "mac-studio.tail1234.ts.net")
         #expect(urls.map(\.absoluteString) == [

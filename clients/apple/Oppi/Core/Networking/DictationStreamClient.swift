@@ -85,6 +85,7 @@ final class DictationStreamClient: DictationTransport {
         token: String,
         tlsCertFingerprint: String?,
         tlsServerName: String? = nil,
+        tailnetRoute: TailnetTransportRoute.Snapshot? = nil,
         currentTokenProvider: (@Sendable () async throws -> String)? = nil,
         refreshTokenProvider: (@Sendable () async throws -> String)? = nil,
         webSocketFactory: ((URLRequest) -> DictationWebSocketTransport)? = nil
@@ -100,7 +101,7 @@ final class DictationStreamClient: DictationTransport {
         self.currentTokenProvider = currentTokenProvider
         self.refreshTokenProvider = refreshTokenProvider
 
-        let config = TailnetTransportRoute.defaultSessionConfiguration()
+        let config = TailnetTransportRoute.defaultSessionConfiguration(route: tailnetRoute ?? .forHost(baseURL.host))
         config.timeoutIntervalForRequest = 60
         self.urlSession = URLSession(
             configuration: config,
@@ -291,6 +292,11 @@ final class DictationStreamClient: DictationTransport {
         try await task.send(.data(data))
         if status == .connecting { status = .connected }
     }
+
+    #if DEBUG
+    // periphery:ignore - used by OppiTests via @testable import
+    func _setStatusForTesting(_ status: Status) { self.status = status }
+    #endif
 
     func closeDictationTransport() {
         disconnect()

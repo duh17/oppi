@@ -100,12 +100,16 @@ final class AppEventStreamClient {
     /// terminal, so a server that keeps rejecting freshly-issued tokens cannot
     /// recurse into an unbounded refresh/reconnect loop.
     private var didForceRefreshForConnection = false
+    private let routeTags: [String: String]
+    let tailnetRoute: TailnetTransportRoute.Snapshot
 
     init(
         url: URL,
         token: String,
         tlsCertFingerprint: String? = nil,
         tlsServerName: String? = nil,
+        transportPath: ConnectionTransportPath = .paired,
+        tailnetRoute: TailnetTransportRoute.Snapshot? = nil,
         diagnosticRemoteIdentity: String? = nil,
         leftoverExpiresAtMs: Int64? = nil,
         currentTokenProvider: (@Sendable () async throws -> String)? = nil,
@@ -117,6 +121,9 @@ final class AppEventStreamClient {
         webSocketFactory: ((URLRequest) -> AppEventWebSocketTransport)? = nil
     ) {
         self.url = url
+        let route = tailnetRoute ?? .forHost(url.host)
+        self.tailnetRoute = route
+        self.routeTags = NetworkPathTelemetry.tags(selection: EndpointSelection(baseURL: url, transportPath: transportPath), socksGeneration: route.generation)
         self.token = token
         self.leftoverExpiresAtMs = leftoverExpiresAtMs
         self.currentTokenProvider = currentTokenProvider
@@ -130,7 +137,7 @@ final class AppEventStreamClient {
             pinnedLeafFingerprint: tlsCertFingerprint,
             expectedServerName: tlsServerName
         )
-        let config = TailnetTransportRoute.defaultSessionConfiguration()
+        let config = TailnetTransportRoute.defaultSessionConfiguration(route: route)
         config.timeoutIntervalForRequest = 60
         let urlSession = URLSession(configuration: config, delegate: trustDelegate, delegateQueue: nil)
         self.urlSession = urlSession
@@ -466,6 +473,7 @@ final class AppEventStreamClient {
             "reason": reason,
             "attempt": WebSocketRecoveryPolicy.reconnectAttemptTag(attempt),
         ]
+        tags.merge(routeTags) { current, _ in current }
         if let closeCode {
             tags["close_code"] = closeCode
         }
@@ -487,11 +495,11 @@ final class AppEventStreamClient {
     }
 
     private func streamLogMetadata(extra: [String: String] = [:]) -> [String: String] {
-        var metadata: [String: String]
+        var metadata: [String: String] = routeTags
         if let diagnosticRemoteIdentity {
-            metadata = ["remoteIdentity": diagnosticRemoteIdentity]
+            metadata["remoteIdentity"] = diagnosticRemoteIdentity
         } else {
-            metadata = ClientLog.endpointMetadata(url, prefix: "appStream")
+            metadata.merge(ClientLog.endpointMetadata(url, prefix: "appStream")) { current, _ in current }
         }
         metadata["streamRole"] = "app_event_stream"
         metadata["status"] = String(describing: status)

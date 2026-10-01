@@ -82,6 +82,7 @@ struct ServerConnectionLifecycleTests {
 
     @Test func unavailableLANCandidateDoesNotOverwritePairedRoute() async {
         let conn = ServerConnection()
+        conn.networkPathType = { "wifi" }
         let credentials = ServerCredentials(
             host: "my-server.tail00000.ts.net",
             port: 7749,
@@ -110,13 +111,14 @@ struct ServerConnectionLifecycleTests {
         ))
         await transition?.value
 
-        #expect(lanBootstraps == 0)
+        #expect(lanBootstraps == 1)
         #expect(conn.transportPath == .paired)
         #expect(await conn.apiClient?.baseURL.host == "my-server.tail00000.ts.net")
     }
 
-    @Test func dnsMissOnPairedAdvancesToLANCandidate() async {
+    @Test func freshVerifiedLANConnectsWithoutTryingPaired() async {
         let conn = ServerConnection()
+        conn.networkPathType = { "wifi" }
         let credentials = makeHTTPOnlyCredentials()
         conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
         var lanBootstraps = 0
@@ -133,28 +135,29 @@ struct ServerConnectionLifecycleTests {
             }
         ))
         #expect(lanBootstraps == 1)
-        #expect(pairedBootstraps == 1)
+        #expect(pairedBootstraps == 0)
         #expect(conn.transportPath == .lan)
         #expect(conn.canAutomaticallyRetryInitialTransport)
         #expect(await conn.apiClient?.baseURL.host == "192.168.1.42")
     }
 
-    @Test func tlsOnPairedFallsBackToLANCandidate() async {
+    @Test func tlsOnLANFallsBackToPairedCandidate() async {
         let conn = ServerConnection()
+        conn.networkPathType = { "wifi" }
         let credentials = makeHTTPOnlyCredentials()
         conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
         #expect(await conn.configureForUse(
             credentials: credentials,
             serverInfoBootstrap: { client, _ in
                 if await client.baseURL.host == "192.168.1.42" {
-                    return successfulServerInfo()
+                    throw URLError(.serverCertificateUntrusted)
                 }
-                throw URLError(.serverCertificateUntrusted)
+                return successfulServerInfo()
             }
         ))
-        #expect(conn.transportPath == .lan)
+        #expect(conn.transportPath == .paired)
         #expect(conn.canAutomaticallyRetryInitialTransport)
-        #expect(await conn.apiClient?.baseURL.host == "192.168.1.42")
+        #expect(await conn.apiClient?.baseURL.host == credentials.host)
     }
 
     @Test func pairedOnlyDNSMissStaysRetryableAndRecoversOnNextBootstrap() async {
@@ -187,6 +190,7 @@ struct ServerConnectionLifecycleTests {
 
     @Test func replacingLANCandidateCannotAdoptStaleBootstrapResult() async {
         let conn = ServerConnection()
+        conn.networkPathType = { "wifi" }
         let credentials = makeHTTPOnlyCredentials()
         let gate = LANCandidateProbeGate(
             reachableHost: "192.168.1.43",
@@ -226,6 +230,7 @@ struct ServerConnectionLifecycleTests {
 
     @Test func repeatedIdenticalLANCandidateStartsOneBootstrap() async {
         let conn = ServerConnection()
+        conn.networkPathType = { "wifi" }
         let credentials = makeHTTPOnlyCredentials()
         let counter = LANProbeCounter()
         let candidate = makeLANCandidate(host: "192.168.1.42")

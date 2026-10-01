@@ -209,10 +209,11 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
         _ presentation: WorkspaceServerStatusPresentation,
         hasSyncFailure: Bool = false,
         isPreparing: Bool = false,
-        isFocusedStreamRecovering: Bool = false
+        isFocusedStreamRecovering: Bool = false,
+        hasConnectionEvidence: Bool = false
     ) {
         if isPreparing {
-            self = hasSyncFailure ? .recovering : .connecting
+            self = hasSyncFailure ? .recovering : (hasConnectionEvidence ? .connected : .connecting)
             return
         }
         if hasSyncFailure {
@@ -224,7 +225,7 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
         case .live, .stale:
             self = isFocusedStreamRecovering ? .recovering : .connected
         case .syncing:
-            self = .connecting
+            self = hasConnectionEvidence ? .connected : .connecting
         case .offline:
             self = .disconnected
         }
@@ -272,7 +273,7 @@ enum ServerConnectionLanePresentation {
         state: ServerBadgeConnectionState,
         isPreparing: Bool
     ) -> String {
-        if isPreparing {
+        if isPreparing, state != .connected {
             return ServerTLSTrustPolicy.isTailscaleHostname(server.host)
                 ? "Connecting over Tailscale"
                 : "Connecting over HTTPS/WSS"
@@ -287,7 +288,7 @@ enum ServerConnectionLanePresentation {
         // Mid Wi‑Fi→cell demotion keeps a stale transportPath (.lan) while
         // composition is nil. Don't claim "via local network" in that hole.
         if connection.isTransportDemoting {
-            return "Recovering connection"
+            return state == .connected ? "Connected" : "Recovering connection"
         }
 
         if connection.isFocusedSessionStreamRecovering {
@@ -319,7 +320,7 @@ enum ServerConnectionLanePresentation {
         guard ServerTLSTrustPolicy.isTailscaleHostname(host) else {
             return "paired HTTPS"
         }
-        return TailnetTransportRoute.proxy != nil ? "in-app Tailscale" : "Tailscale"
+        return connection.configuredSOCKSGeneration != 0 ? "in-app Tailscale" : "Tailscale"
     }
 }
 

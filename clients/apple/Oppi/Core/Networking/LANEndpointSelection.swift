@@ -100,7 +100,7 @@ enum LANEndpointSelection {
             return paired
         }
 
-        logger.warning("LAN selected: \(lanHost, privacy: .public):\(discoveredEndpoint.port) (discovered: \(discoveredEndpoint.host, privacy: .public))")
+        logger.warning("LAN selected: \(lanHost, privacy: .private):\(discoveredEndpoint.port) (discovered: \(discoveredEndpoint.host, privacy: .private))")
 
         return EndpointSelection(
             baseURL: lanBaseURL,
@@ -185,7 +185,8 @@ enum ServerTransportPlanResolver {
     static func candidates(
         credentials: ServerCredentials,
         discoveredLANEndpoint: LANDiscoveredEndpoint?,
-        excluding: Set<ServerRouteCandidateKind> = []
+        excluding: Set<ServerRouteCandidateKind> = [],
+        pathType: String = NetworkPathTelemetry.pathType
     ) throws -> [EndpointSelection] {
         guard credentials.resolvedScheme == .https else {
             throw APIError.server(status: 403, message: "HTTPS required")
@@ -193,16 +194,16 @@ enum ServerTransportPlanResolver {
         guard let paired = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: nil) else {
             throw APIError.server(status: 400, message: "Unsupported HTTPS server endpoint")
         }
-        // One mode: paired/Tailscale first (embed SOCKS if published, else
-        // system VPN/resolver). Verified LAN HTTPS is fallback only.
+        // Discovery is valid only in the current local-network context.
         var result: [EndpointSelection] = []
-        if !excluding.contains(.paired) { result.append(paired) }
-        if let discoveredLANEndpoint,
+        if NetworkPathTelemetry.allowsLAN(pathType: pathType),
+           let discoveredLANEndpoint,
            !excluding.contains(.lan),
            let lan = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: discoveredLANEndpoint),
            lan.transportPath == .lan {
             result.append(lan)
         }
+        if !excluding.contains(.paired) { result.append(paired) }
         return result
     }
 }

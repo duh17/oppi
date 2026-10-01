@@ -1475,19 +1475,154 @@ struct ConnectionCoordinatorTests {
         #expect(builtHosts == ["studio.tail1234.ts.net"])
     }
 
+    @Test func tailnetRouteChangeKeepsLANAndCurrentGenerationConnections() async {
+        let (coordinator, _) = makeCoordinator()
+        let lan = makeServer(id: "sha256:lan-route-generation", name: "LAN", host: "lan.tail1234.ts.net")
+        let socks = makeServer(id: "sha256:socks-route-generation", name: "SOCKS", host: "socks.tail1234.ts.net")
+        coordinator.serverStore.addOrUpdate(lan)
+        coordinator.serverStore.addOrUpdate(socks)
+        let oldProxy = TailnetTransportRoute.proxy
+        let oldGeneration = TailnetTransportRoute.generation
+        defer { TailnetTransportRoute.publish(oldProxy, generation: oldGeneration) }
+        TailnetTransportRoute.publish(TailnetSOCKSProxy(host: "127.0.0.1", port: 1080, credential: "fixture"), generation: 42)
+        coordinator._initialLANEndpointForTesting = { id in
+            id == lan.id ? LANDiscoveredEndpoint(host: "192.168.1.42", port: 7749, serverFingerprintPrefix: "lan-route-generation", tlsCertFingerprintPrefix: nil) : nil
+        }
+        var builds = 0
+        coordinator._apiClientFactoryForTesting = { environment, observer in
+            builds += 1
+            return APIClient(environment: environment, availabilityObserver: observer)
+        }
+        let lanConnection = await coordinator.ensureConnectionReady(for: lan)
+        let socksConnection = await coordinator.ensureConnectionReady(for: socks)
+        #expect(lanConnection.transportPath == .lan)
+        #expect(socksConnection.configuredSOCKSGeneration == 42)
+        let lanSocket = lanConnection.wsClient
+        let socksSocket = socksConnection.wsClient
+        let priorBuilds = builds
+        await coordinator.handleTailnetRouteChange()
+        #expect(builds == priorBuilds)
+        #expect(lanConnection.wsClient === lanSocket)
+        #expect(socksConnection.wsClient === socksSocket)
+        lanConnection.disconnectAppEventStream()
+        socksConnection.disconnectAppEventStream()
+    }
+
+    @Test func routeNotificationDuringBootstrapConvergesHTTPAndBothStreams() async throws {
+        let (coordinator, _) = makeCoordinator()
+        let server = makeServer(id: "sha256:route-convergence", name: "Convergence", host: "studio.tail1234.ts.net")
+        coordinator.serverStore.addOrUpdate(server)
+        let connection = coordinator.activatePairedServerShell(server)
+        connection.prepareTailnetProxy = { }
+        connection._appEventWebSocketFactoryForTesting = { _ in
+            AppEventWebSocketTransport(
+                identity: connection,
+                resume: {}, receive: { throw CancellationError() },
+                sendPing: { $0(nil) }, cancel: { _, _ in },
+                state: { .running }, response: { nil }, closeCode: { .invalid }
+            )
+        }
+        let original = TailnetTransportRoute.snapshot
+        defer {
+            connection._appEventWebSocketFactoryForTesting = nil
+            connection.disconnectAppEventStream()
+            connection.disconnectStream()
+            TailnetTransportRoute.publish(original.proxy, generation: original.generation)
+        }
+        let proxy = TailnetSOCKSProxy(host: "127.0.0.1", port: 1080, credential: "fixture")
+        TailnetTransportRoute.publish(proxy, generation: 51)
+        var attemptedGenerations: [UInt64] = []
+        coordinator._serverInfoBootstrapForTesting = { client, _ in
+            attemptedGenerations.append(client.tailnetRoute.generation)
+            if attemptedGenerations.count == 1 {
+                TailnetTransportRoute.publish(proxy, generation: 52)
+                await coordinator.handleTailnetRouteChange()
+            }
+            return successfulServerInfo(appEvents: true)
+        }
+
+        let prepared = await coordinator.ensureConnectionReady(for: server)
+        let api = try #require(prepared.apiClient)
+        #expect(prepared === connection)
+        #expect(attemptedGenerations == [51, 52])
+        #expect(api.tailnetRoute.generation == 52)
+        #expect(prepared.wsClient?.tailnetRoute == api.tailnetRoute)
+        #expect(prepared.appEventStreamCoordinator.tailnetRoute == api.tailnetRoute)
+        #expect(!prepared.needsTailnetRouteRebuild)
+    }
+
+    @Test func verifiedDiscoveryBeforePathClassificationLogsOnceWhenPathBecomesLocal() {
+        let discovery = LANDiscovery(browsesBonjour: false)
+        let (coordinator, _) = makeCoordinator(lanDiscovery: discovery)
+        let server = makeServer(id: "sha256:discovery-before-path", name: "Discovery", host: "studio.tail1234.ts.net")
+        coordinator.serverStore.addOrUpdate(server)
+        var path = "unknown"
+        coordinator.networkPathType = { path }
+        var latencies: [Double] = []
+        var recordedPaths: [String] = []
+        coordinator.recordLANDiscoveryLatency = { latency, path in
+            latencies.append(latency)
+            recordedPaths.append(path)
+        }
+        coordinator.startLANDiscovery()
+        defer { discovery.stop() }
+        discovery.publishForTesting([LANDiscoveredEndpoint(
+            host: "192.168.1.42", port: 7749,
+            serverFingerprintPrefix: "discovery-before-path", tlsCertFingerprintPrefix: nil
+        )])
+        #expect(latencies.isEmpty)
+        path = "wifi"
+        coordinator._handleNetworkPathStateForTesting(signature: "wifi:en0", isSatisfied: true)
+        coordinator._handleNetworkPathStateForTesting(signature: "wifi:en0", isSatisfied: true)
+        #expect(latencies.count == 1)
+        #expect(latencies.allSatisfy { $0 >= 0 })
+        #expect(recordedPaths == ["wifi"])
+    }
+
+    @Test func coldPreparationWaitsForBonjourAndUsesLANOnItsFirstCandidatePass() async {
+        let discovery = LANDiscovery(browsesBonjour: false)
+        let (coordinator, _) = makeCoordinator(lanDiscovery: discovery)
+        let server = makeServer(id: "sha256:cold-lan-first", name: "Cold", host: "studio.tail1234.ts.net")
+        coordinator.serverStore.addOrUpdate(server)
+        coordinator._initialLANEndpointForTesting = nil
+        let gate = CoordinatorPreparationGate()
+        coordinator.initialLANDiscoveryDeadline = { .init(wait: { await gate.suspendPreparation() }) }
+        var hosts: [String] = []
+        coordinator._serverInfoBootstrapForTesting = { client, _ in
+            hosts.append(await client.baseURL.host ?? "")
+            return successfulServerInfo()
+        }
+        let preparation = Task { await coordinator.ensureConnectionReady(for: server) }
+        await gate.waitUntilStarted()
+        #expect(hosts.isEmpty)
+        discovery.publishForTesting([LANDiscoveredEndpoint(
+            host: "192.168.1.42", port: 7749,
+            serverFingerprintPrefix: "cold-lan-first", tlsCertFingerprintPrefix: nil
+        )])
+        let connection = await preparation.value
+        await gate.release()
+        #expect(hosts == ["192.168.1.42"])
+        #expect(connection.transportPath == .lan)
+        discovery.stop()
+        await connection.setDiscoveredLANEndpoint(nil)?.value
+        connection.disconnectStream()
+        connection.disconnectAppEventStream()
+    }
+
     // MARK: - Helpers
 
-    private func makeCoordinator() -> (ConnectionCoordinator, ServerStore) {
+    private func makeCoordinator(lanDiscovery: LANDiscovery = LANDiscovery()) -> (ConnectionCoordinator, ServerStore) {
         UserDefaults.standard.removeObject(forKey: "pairedServerIds")
         KeychainService.deleteAllServers()
         let store = ServerStore()
-        let coordinator = ConnectionCoordinator(serverStore: store)
+        let coordinator = ConnectionCoordinator(serverStore: store, lanDiscovery: lanDiscovery)
+        coordinator.networkPathType = { "wifi" }
         coordinator._initialLANEndpointForTesting = { _ in nil }
         coordinator._serverInfoBootstrapForTesting = { _, _ in successfulServerInfo() }
         return (coordinator, store)
     }
 
-    private func successfulServerInfo() -> ServerInfo {
+    private func successfulServerInfo(appEvents: Bool = false) -> ServerInfo {
         ServerInfo(
             name: "Test",
             version: "1.0.0",
@@ -1504,7 +1639,7 @@ struct ConnectionCoordinatorTests {
             capabilities: .init(
                 sessionStream: .init(version: 1),
                 dictationStream: nil,
-                appEventStream: nil,
+                appEventStream: appEvents ? .init(version: 1) : nil,
                 extensionNativeUI: nil,
                 controlSessions: nil
             ),

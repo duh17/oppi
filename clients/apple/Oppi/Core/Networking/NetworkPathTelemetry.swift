@@ -22,9 +22,21 @@ enum NetworkPathTelemetry {
 
     private static let interfaceKind = Mutex<String>("unknown")
 
+    static func allowsLAN(pathType: String) -> Bool {
+        pathType == "wifi" || pathType == "eth"
+    }
+
+    static func recordRouteCommitted(selection: EndpointSelection, socksGeneration: UInt64) {
+        var metadata = tags(selection: selection, socksGeneration: socksGeneration)
+        metadata["sinceLaunchMs"] = String(Int(max(0, (CFAbsoluteTimeGetCurrent() - ChatSessionTelemetry.processStartTime) * 1_000)))
+        ClientLog.info("Network", "Route committed", metadata: metadata)
+    }
+
     static func note(path: NWPath) {
         let kind: String
-        if path.usesInterfaceType(.cellular) {
+        if path.status != .satisfied {
+            kind = "unknown"
+        } else if path.usesInterfaceType(.cellular) {
             kind = "cell"
         } else if path.usesInterfaceType(.wifi) {
             kind = "wifi"
@@ -62,16 +74,20 @@ enum NetworkPathTelemetry {
         return .paired
     }
 
-    static func tags(selection: EndpointSelection?) -> [String: String] {
+    static func tags(
+        selection: EndpointSelection?,
+        socksGeneration: UInt64 = TailnetTransportRoute.generation
+    ) -> [String: String] {
         let host = selection?.baseURL.host ?? ""
         return [
             "route": routeKind(
                 transportPath: selection?.transportPath ?? .paired,
-                host: host
+                host: host,
+                socksPublished: socksGeneration != 0
             ).rawValue,
             "hostKind": hostKind(for: host).rawValue,
             "pathType": pathType,
-            "socksGeneration": String(TailnetTransportRoute.generation),
+            "socksGeneration": String(socksGeneration),
             "transport": selection?.transportPath.rawValue ?? ConnectionTransportPath.paired.rawValue,
         ]
     }
@@ -90,9 +106,10 @@ enum NetworkPathTelemetry {
         selection: EndpointSelection,
         durationMs: Double,
         success: Bool,
-        error: Error? = nil
+        error: Error? = nil,
+        socksGeneration: UInt64 = TailnetTransportRoute.generation
     ) {
-        var tags = tags(selection: selection)
+        var tags = tags(selection: selection, socksGeneration: socksGeneration)
         tags["status"] = success ? "ok" : "error"
         if let error {
             tags["failReason"] = failReason(for: error)
@@ -110,9 +127,13 @@ enum NetworkPathTelemetry {
         }
     }
 
-    static func recordPingRttMs(_ durationMs: Double, selection: EndpointSelection?) {
+    static func recordPingRttMs(
+        _ durationMs: Double,
+        selection: EndpointSelection?,
+        socksGeneration: UInt64 = TailnetTransportRoute.generation
+    ) {
         guard durationMs.isFinite, durationMs >= 0 else { return }
-        let tags = tags(selection: selection)
+        let tags = tags(selection: selection, socksGeneration: socksGeneration)
         Task.detached(priority: .utility) {
             await ChatMetricsService.shared.record(
                 metric: .networkWsPingRttMs,

@@ -19,13 +19,52 @@ final class LANDiscovery: NSObject {
 
     private var netServiceBrowser: NetServiceBrowser?
     private var discoveredServices: [NetService] = []
+    private(set) var browseStartedAt: ContinuousClock.Instant?
+    private var waiters: [UUID: (select: UpdateSelection, continuation: CheckedContinuation<LANDiscoveredEndpoint?, Never>)] = [:]
+    typealias UpdateSelection = @MainActor ([LANDiscoveredEndpoint]) -> LANDiscoveredEndpoint?
 
-    override init() {
+    /// Event-driven first-result wait; the deadline also owns cancellation.
+    func waitForEndpoint(
+        deadline: APIClient.BootstrapDeadline,
+        select: @escaping UpdateSelection
+    ) async -> LANDiscoveredEndpoint? {
+        if let endpoint = select(endpoints) { return endpoint }
+        let id = UUID()
+        let expiry = Task { @MainActor [weak self] in
+            do { try await deadline.waitForExpiry() } catch { return }
+            self?.finishWaiter(id, endpoint: nil)
+        }
+        defer { expiry.cancel() }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled {
+                    continuation.resume(returning: nil)
+                } else {
+                    waiters[id] = (select, continuation)
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.finishWaiter(id, endpoint: nil) }
+        }
+    }
+
+    private func finishWaiter(_ id: UUID, endpoint: LANDiscoveredEndpoint?) {
+        waiters.removeValue(forKey: id)?.continuation.resume(returning: endpoint)
+    }
+
+    /// Tests that inject endpoints via `publishForTesting` pass `false` so a real
+    /// Bonjour browser on the host network cannot replace the synthetic list.
+    private let browsesBonjour: Bool
+
+    init(browsesBonjour: Bool = true) {
+        self.browsesBonjour = browsesBonjour
         super.init()
     }
 
     func start() {
         guard netServiceBrowser == nil else { return }
+        browseStartedAt = .now
+        guard browsesBonjour else { return }
 
         let browser = NetServiceBrowser()
         browser.delegate = self
@@ -43,6 +82,7 @@ final class LANDiscovery: NSObject {
         }
         discoveredServices.removeAll()
         publish([])
+        for id in Array(waiters.keys) { finishWaiter(id, endpoint: nil) }
     }
 
     private func publish(_ next: [LANDiscoveredEndpoint]) {
@@ -50,7 +90,18 @@ final class LANDiscovery: NSObject {
         endpoints = next
         logger.debug("LAN endpoints changed: count=\(next.count)")
         onUpdate?(next)
+        reevaluateWaiters()
     }
+
+    func reevaluateWaiters() {
+        for (id, waiter) in waiters {
+            if let endpoint = waiter.select(endpoints) { finishWaiter(id, endpoint: endpoint) }
+        }
+    }
+
+    #if DEBUG
+    func publishForTesting(_ endpoints: [LANDiscoveredEndpoint]) { publish(endpoints) }
+    #endif
 
     /// Rebuild the endpoint list from all resolved services.
     private func rebuildEndpoints() {

@@ -94,7 +94,18 @@ final class ConnectionCoordinator {
     var _apiClientFactoryForTesting: ServerConnectionAPIClientFactory?
     #endif
 
-    private let lanDiscovery = LANDiscovery()
+    private let lanDiscovery: LANDiscovery
+    var networkPathType: () -> String = { NetworkPathTelemetry.pathType }
+    var initialLANDiscoveryDeadline: ServerConnectionBootstrapDeadlineFactory = { .after(.milliseconds(500)) }
+    private var initialLANWaitCompleted: Set<String> = []
+    private var loggedLANDiscoveryServerIds: Set<String> = []
+    private var pendingLANDiscoveryLatencies: [String: Double] = [:]
+    var recordLANDiscoveryLatency: (Double, String) -> Void = { milliseconds, pathType in
+        ClientLog.info("Network", "Verified LAN discovery", metadata: [
+            "discoveryMs": String(Int(milliseconds)),
+            "pathType": pathType,
+        ])
+    }
 
     /// NWPathMonitor detects network interface changes (WiFi→cellular, LAN→Tailscale)
     /// so we can clear stale LAN endpoints and force-reconnect immediately instead of
@@ -110,8 +121,9 @@ final class ConnectionCoordinator {
     // periphery:ignore - used by RestorationStateTests via @testable import
     var connection: ServerConnection { activeConnection }
 
-    init(serverStore: ServerStore) {
+    init(serverStore: ServerStore, lanDiscovery: LANDiscovery = LANDiscovery()) {
         self.serverStore = serverStore
+        self.lanDiscovery = lanDiscovery
         lanDiscovery.onUpdate = { [weak self] endpoints in
             self?.applyLANDiscovery(endpoints)
         }
@@ -416,8 +428,16 @@ final class ConnectionCoordinator {
             return await testEndpoint(server.id)
         }
         #endif
-        return endpoint
+        guard endpoint == nil,
+              (NetworkPathTelemetry.allowsLAN(pathType: networkPathType()) || networkPathType() == "unknown"),
+              initialLANWaitCompleted.insert(server.id).inserted else { return endpoint }
+        startLANDiscovery()
+        return await lanDiscovery.waitForEndpoint(deadline: initialLANDiscoveryDeadline()) { [weak self] endpoints in
+            self?.bestLANEndpoint(forServerId: server.id, candidates: endpoints)
+        }
     }
+
+    private static let maxLANReconcileIterations = 3
 
     private func reconcileLANDiscoveredDuringTransportSetup(
         connection: ServerConnection,
@@ -426,7 +446,9 @@ final class ConnectionCoordinator {
         preparationID: UUID
     ) async {
         var reconciledEndpoint = initialEndpoint
-        while true {
+        // Bounded: a flapping advertisement must not hold preparation open.
+        // Later changes reach the stored connection through applyLANDiscovery.
+        for _ in 0..<Self.maxLANReconcileIterations {
             let latestEndpoint = await initialLANEndpoint(for: server)
             guard isCurrentPreparation(preparationID, serverId: server.id) else { return }
             guard latestEndpoint != reconciledEndpoint else { return }
@@ -437,6 +459,7 @@ final class ConnectionCoordinator {
             await transition?.value
             reconciledEndpoint = latestEndpoint
         }
+        logger.warning("LAN discovery kept changing during transport setup; deferring to later updates")
     }
 
     /// A refresh during bootstrap can land in the store before `credentials`
@@ -452,6 +475,7 @@ final class ConnectionCoordinator {
         preservingPersistentStreams: Bool = false,
         preparationID: UUID
     ) async -> Bool {
+        connection.networkPathType = networkPathType
         let deviceCredentialObserver: ServerConnectionDeviceCredentialObserver = { [weak self, weak connection] result in
             guard let self, let connection,
                   let serverId = credentials.normalizedServerFingerprint,
@@ -556,6 +580,7 @@ final class ConnectionCoordinator {
 
     private func handleNetworkPathUpdate(_ path: NWPath) {
         NetworkPathTelemetry.note(path: path)
+        lanDiscovery.reevaluateWaiters()
         handleNetworkPathState(
             signature: Self.interfaceSignature(path),
             isSatisfied: path.status == .satisfied
@@ -563,6 +588,7 @@ final class ConnectionCoordinator {
     }
 
     private func handleNetworkPathState(signature: String, isSatisfied: Bool) {
+        if isSatisfied { recordVerifiedLANDiscovery(lanDiscovery.endpoints) }
         // Skip the initial callback, but retain satisfaction independently of
         // interface identity. A transient unsatisfied path can recover with the
         // exact same interfaces and still requires a transport boundary.
@@ -632,6 +658,8 @@ final class ConnectionCoordinator {
         //    stop() publishes [] which clears LAN endpoints (already done above).
         //    start() begins a fresh Bonjour search on the current interface.
         lanDiscovery.stop()
+        loggedLANDiscoveryServerIds.removeAll()
+        pendingLANDiscoveryLatencies.removeAll()
         lanDiscovery.start()
     }
 
@@ -641,7 +669,8 @@ final class ConnectionCoordinator {
     func handleTailnetRouteChange() async {
         let serverIds = serverStore.servers
             .filter { ServerTLSTrustPolicy.isTailscaleHostname($0.host) }
-            .filter { connections[$0.id]?.transportPath != .lan }
+            .filter { !preparingServerIds.contains($0.id) }
+            .filter { connections[$0.id]?.needsTailnetRouteRebuild ?? true }
             .map(\.id)
         // Rebuild concurrently; one slow server must not delay the others.
         let retries = serverIds.map { serverId in
@@ -680,7 +709,26 @@ final class ConnectionCoordinator {
         lanDiscovery.start()
     }
 
+    private func recordVerifiedLANDiscovery(_ endpoints: [LANDiscoveredEndpoint]) {
+        guard let started = lanDiscovery.browseStartedAt else { return }
+        for server in serverStore.servers where !loggedLANDiscoveryServerIds.contains(server.id) {
+            guard bestLANEndpoint(forServerId: server.id, candidates: endpoints, requiresLocalPath: false) != nil else {
+                pendingLANDiscoveryLatencies.removeValue(forKey: server.id)
+                continue
+            }
+            if pendingLANDiscoveryLatencies[server.id] == nil {
+                pendingLANDiscoveryLatencies[server.id] = Double((ContinuousClock.now - started) / .milliseconds(1))
+            }
+            if NetworkPathTelemetry.allowsLAN(pathType: networkPathType()),
+               let latency = pendingLANDiscoveryLatencies.removeValue(forKey: server.id) {
+                loggedLANDiscoveryServerIds.insert(server.id)
+                recordLANDiscoveryLatency(latency, networkPathType())
+            }
+        }
+    }
+
     private func applyLANDiscovery(_ endpoints: [LANDiscoveredEndpoint]) {
+        recordVerifiedLANDiscovery(endpoints)
         for server in serverStore.servers {
             let endpoint = bestLANEndpoint(forServerId: server.id, candidates: endpoints)
             if let conn = connections[server.id] {
@@ -709,8 +757,13 @@ final class ConnectionCoordinator {
     }
 #endif
 
-    private func bestLANEndpoint(forServerId serverId: String, candidates: [LANDiscoveredEndpoint]? = nil) -> LANDiscoveredEndpoint? {
-        guard let server = serverStore.server(for: serverId) else {
+    private func bestLANEndpoint(
+        forServerId serverId: String,
+        candidates: [LANDiscoveredEndpoint]? = nil,
+        requiresLocalPath: Bool = true
+    ) -> LANDiscoveredEndpoint? {
+        guard !requiresLocalPath || NetworkPathTelemetry.allowsLAN(pathType: networkPathType()),
+              let server = serverStore.server(for: serverId) else {
             return nil
         }
 
