@@ -22,7 +22,7 @@ export const MOBILE_OUTPUT_GUIDE = [
   "- Fenced mermaid blocks render flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, xyChart, journey, quadrantChart, gitGraph, sankey, and kanban. Other Mermaid types show an unsupported placeholder.",
   "- Fenced geojson and topojson blocks render as an interactive map with a JSON source toggle.",
   "- LaTeX renders inline, display, and fenced latex blocks.",
-  "- File targets must be real relative, absolute, or ~ paths. Do not cite secrets, credentials, private runtime state, or dump credential files. Sandbox sessions should keep using sandbox-visible paths.",
+  "- File targets must be real relative, absolute, or ~ paths. Relative targets resolve from this session's workspace checkout root (its worktree, if any), not the shell's cwd; link files outside it, including other repos, with ~/ or absolute paths. Do not cite secrets, credentials, private runtime state, or dump credential files. Sandbox sessions should keep using sandbox-visible paths.",
 ].join("\n");
 
 export function buildMobileOutputGuide(): string {
