@@ -258,7 +258,8 @@ final class LiveActivityManager {
         case .toolStart(let sessionId, _, let tool, let args, _, let input, let display, let output, let parent):
             guard parent == nil else { break }
             let inspection = ToolContentDescriptorBuilder.inspect(tool: tool,
-                context: .init(args: args, inputPresentation: input, display: display, outputPresentation: output), includeOutput: false)
+                context: .init(args: args, inputPresentation: input, display: display, outputPresentation: output),
+                includeOutput: false, includeFileContent: false)
             var entry = upsertSession(sessionId)
             let now = Date()
             entry.status = .busy
@@ -271,7 +272,8 @@ final class LiveActivityManager {
             entry.updatedAt = now
             snapshot.sessionsById[sessionId] = entry
 
-        case .toolEnd(let sessionId, _, _, _, _, _, _, _, _):
+        case .toolEnd(let sessionId, _, _, _, _, _, _, _, let parent):
+            guard parent == nil else { break }
             var entry = upsertSession(sessionId)
             entry.activeTool = nil
             entry.updatedAt = Date()

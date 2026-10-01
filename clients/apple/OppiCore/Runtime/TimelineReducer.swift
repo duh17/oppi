@@ -137,15 +137,24 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 fullOutput: toolOutputStore.fullOutput(for: id), inputPresentation: toolArgsStore.inputPresentation(for: id),
                 nestedCalls: toolDetailsStore.nestedCalls(for: id), previewOnly: toolOutputStore.hasPreviewOnlyOutput(for: id),
                 display: toolArgsStore.display(for: id), outputPresentation: toolArgsStore.outputPresentation(for: id),
-                outputAvailability: toolArgsStore.outputAvailability(for: id)), includeOutput: includeOutput)
+                outputAvailability: toolArgsStore.outputAvailability(for: id)), includeOutput: includeOutput,
+            includeFileContent: includeOutput)
     }
 
-    private func isInteractiveTool(_ id: String) -> Bool {
-        guard let index = indexForID(id) else {
-            // Retained producer metadata can outlive a trimmed row.
-            return toolArgsStore.outputPresentation(for: id)?.isInteractive == true
+    /// Fact-only gates never need file content or diffs on replay/output load.
+    func resolvedToolOutputPresentation(for id: String) -> ToolOutputPresentation? {
+        let output = toolArgsStore.outputPresentation(for: id)
+        guard let index = indexForID(id), case .toolCall(_, let tool, _, _, _, _, _) = items[index] else {
+            return output
         }
-        return toolInspection(for: items[index])?.isInteractive == true
+        return BuiltInToolFacts.resolve(tool: tool, context: .init(
+            inputPresentation: toolArgsStore.inputPresentation(for: id),
+            outputPresentation: output
+        )).outputPresentation
+    }
+
+    func isInteractiveTool(_ id: String) -> Bool {
+        resolvedToolOutputPresentation(for: id)?.isInteractive == true
     }
 
     /// O(1) item lookup by ID — avoids linear scans on every streaming upsert.

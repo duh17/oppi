@@ -343,16 +343,15 @@ struct SessionOutlineView: View {
         let inspection = snapshot.isTool ? ToolContentDescriptorBuilder.inspect(tool: snapshot.tool ?? "tool",
             isError: snapshot.isError == true, isDone: true,
             context: .init(args: snapshot.args, details: snapshot.details, inputPresentation: snapshot.inputPresentation,
-                display: snapshot.display, outputPresentation: snapshot.outputPresentation), includeOutput: false) : nil
+                display: snapshot.display, outputPresentation: snapshot.outputPresentation),
+            includeOutput: false, includeFileContent: false) : nil
         return OutlineEntry(
             id: snapshot.id,
             item: nil,
             kind: OutlineEntryKind(rawValue: snapshot.kind) ?? .system,
             tool: snapshot.tool,
             timestamp: outlineTimestamp(snapshot.timestamp),
-            summary: inspection?.terminalOutput == true || inspection?.file != nil
-                ? inspection?.outlineSummary(argsSummary: "") ?? snapshot.summary
-                : inspection?.display != nil ? inspection?.title ?? snapshot.summary : snapshot.summary,
+            summary: inspection?.outlineSummary(argsSummary: "", fallback: snapshot.summary) ?? snapshot.summary,
             diffStats: inspection?.file?.stats,
             diffRequested: inspection?.file?.provenance == .requested,
             glyph: inspection?.glyph,

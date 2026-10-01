@@ -21,7 +21,8 @@ struct ToolFileInspection: Equatable, Sendable {
     }
 
     static func resolve(args: [String: JSONValue]?, input: ToolInputPresentation?, output: ToolOutputPresentation?,
-                        details: JSONValue?, text: String, isDone: Bool, isError: Bool) -> Self? {
+                        details: JSONValue?, text: String, isDone: Bool, isError: Bool,
+                        includeContent: Bool = true) -> Self? {
         guard output?.provenance == nil || output?.provenance == "requested" || output?.provenance == "result" else { return nil }
         guard output?.kind == "fileContent" || output?.kind == "diffOfEdits" else { return nil }
         func field(_ role: String) -> JSONValue? {
@@ -34,8 +35,10 @@ struct ToolFileInspection: Equatable, Sendable {
         let requested = output?.provenance == "requested"
         let operation: Operation = output?.kind == "diffOfEdits" ? .edits : (requested ? .mutation : .content)
         let changes = field("edits")?.arrayValue ?? []
-        let requestedDiff = requestedDiffLines(changes)
-        let resultDiff = isDone && !isError ? resultDiffLines(details) : nil
+        let resultDiff = operation == .edits && isDone && !isError ? resultDiffLines(details) : nil
+        // Authoritative result patches need no requested LCS calculation.
+        let requestedDiff = operation == .edits && resultDiff == nil && !isError
+            ? requestedDiffLines(changes) : []
         let body: String
         let diff: [DiffLine]?
         let provenance: Provenance
@@ -43,14 +46,17 @@ struct ToolFileInspection: Equatable, Sendable {
             diff = isError ? nil : (resultDiff ?? (requestedDiff.isEmpty ? nil : requestedDiff))
             provenance = resultDiff != nil ? .result : .requested
             // Partial newText remains previewable before a complete old/new pair exists.
-            body = changes.compactMap { $0.objectValue?["newText"]?.stringValue ?? $0.objectValue?["oldText"]?.stringValue }.joined(separator: "\n")
+            body = includeContent ? changes.compactMap { $0.objectValue?["newText"]?.stringValue ?? $0.objectValue?["oldText"]?.stringValue }.joined(separator: "\n") : ""
         } else {
-            body = requested ? (field("fileContent")?.stringValue ?? "") : text
+            body = includeContent ? (requested ? (field("fileContent")?.stringValue ?? "") : text) : ""
             diff = nil
             provenance = requested ? .requested : .result
         }
         // Geographic JSON is the single documented content sniff, owned here (including ambiguous .json).
-        let fileType = path.map { FileType.detect(from: $0, content: body) } ?? GeographicJSONSniffer.fileType(from: body)
+        // Summary consumers need operation/path/provenance/stats, not file bytes
+        // or geographic JSON parsing. Painters keep the full resolution path.
+        let fileType = includeContent
+            ? (path.map { FileType.detect(from: $0, content: body) } ?? GeographicJSONSniffer.fileType(from: body)) : nil
         return .init(operation: operation, path: path, fileType: fileType, startLine: startLine,
                      text: body, diff: diff, provenance: provenance)
     }

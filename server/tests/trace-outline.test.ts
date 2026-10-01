@@ -17,11 +17,19 @@ afterEach(() => {
   }
 });
 
-function tempJsonlFiles(files: unknown[][]): string[] {
+function tempJsonlFiles(files: unknown[][], spacedRoles = false): string[] {
   tmpDir = mkdtempSync(join(tmpdir(), "trace-outline-test-"));
   return files.map((lines, index) => {
     const path = join(tmpDir ?? tmpdir(), `session-${index + 1}.jsonl`);
-    writeFileSync(path, lines.map((line) => JSON.stringify(line)).join("\n"));
+    writeFileSync(
+      path,
+      lines
+        .map((line) => {
+          const encoded = JSON.stringify(line);
+          return spacedRoles ? encoded.replace('"role":', '"role": ') : encoded;
+        })
+        .join("\n"),
+    );
     return path;
   });
 }
@@ -83,6 +91,49 @@ describe("trace outline projection", () => {
     });
     expect(JSON.stringify(result.outline)).not.toContain("xxxxx");
   });
+  it.each([false, true])(
+    "keeps optional metadata within a session budget (spaced roles: %s)",
+    async (spacedRoles) => {
+      const registry = new MobileRendererRegistry();
+      const calls = Array.from({ length: 200 }, (_, index) => ({
+        type: "toolCall",
+        id: `write-${index}`,
+        name: "write",
+        arguments: {
+          path: `Sources/File${index}.swift`,
+          content: "PRIVATE_WRITTEN_CONTENT".repeat(5000),
+        },
+      }));
+      const lines = [messageEntry("a", null, "assistant", calls)];
+      for (let index = 0; index < calls.length; index++) {
+        lines.push(
+          messageEntry(`r-${index}`, index ? `r-${index - 1}` : "a", "toolResult", "done", {
+            toolCallId: `write-${index}`,
+            toolName: "write",
+            details: { diff: "-1 a\n+1 " + "b".repeat(4000) },
+          }),
+        );
+      }
+      const result = await readSessionTraceOutlineFromFiles(tempJsonlFiles([lines], spacedRoles), {
+        mobileRenderers: registry,
+      });
+      const encoded = JSON.stringify(result.outline);
+      expect(result.outline.entries).toHaveLength(200);
+      expect(result.outline.entries.every((entry) => entry.summary.includes("File"))).toBe(true);
+      expect(encoded).not.toContain("PRIVATE_WRITTEN_CONTENT");
+      const metadataBytes = result.outline.entries.reduce(
+        (bytes, entry) =>
+          bytes +
+          Buffer.byteLength(JSON.stringify(entry.args ?? {})) +
+          Buffer.byteLength(JSON.stringify(entry.details ?? {})),
+        0,
+      );
+      expect(metadataBytes).toBeLessThan(66 * 1024);
+      expect(Buffer.byteLength(encoded)).toBeLessThan(256 * 1024);
+      expect(result.outline.entries.some((entry) => entry.args === undefined)).toBe(true);
+    },
+  );
+
   it("returns an explicit empty snapshot when no trace files exist", async () => {
     const result = await readSessionTraceOutlineFromFiles([], {
       mobileRenderers: new MobileRendererRegistry(),

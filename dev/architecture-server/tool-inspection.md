@@ -18,6 +18,6 @@ Result `outputAvailability` projects Pi truncation and full-output-source availa
 
 The registry also declares `outputPresentation.settingEffect: "voiceReplyMode"` for session-setting producers. Explicit result details can override content semantics, but cannot grant themselves a setting effect. Managed events, mirror events, and history use the same declaration.
 
-Lightweight trace outlines use this registry too. They carry bounded arguments, input/output facts, display metadata, and selected diff details so clients outside the local trace window do not classify raw tool names. Compaction is a separate session entry, not a synthetic tool.
+Lightweight trace outlines use this registry too. They carry input/output facts, display metadata, and optional path/command/range/edit arguments and selected result details so clients outside the local trace window do not classify raw tool names. File-content and code blobs are excluded. Optional arguments and retained result details share a 64 KiB per-request budget with an 8 KiB per-object cap; over-budget metadata is omitted, never truncated. Clients retain the producer summary when arguments are absent. Compaction is a separate session entry, not a synthetic tool.
 
 Neither the session runtime nor the terminal mirror captures Pi tool-result TUI render snapshots. Generic output with empty text renders structured result details using the client document renderer. This does not remove the separate terminal mirror runtime or its owner-socket protocol.

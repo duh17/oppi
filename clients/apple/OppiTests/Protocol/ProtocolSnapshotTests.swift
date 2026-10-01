@@ -62,6 +62,13 @@ struct ProtocolSnapshotTests {
         #expect(nested?.calls.first?.display == startDisplay)
     }
 
+    @Test func settingAuthoritySurvivesWireDecode() throws {
+        guard case .toolEnd(_, _, _, _, _, _, let output, _, _) = try decodeMessage("tool_end_setting") else {
+            Issue.record("Expected setting tool result"); return
+        }
+        #expect(output?.settingEffect == "voiceReplyMode")
+    }
+
     @Test func snapshotFileExists() throws {
         #expect(
             FileManager.default.fileExists(atPath: snapshotURL.path),

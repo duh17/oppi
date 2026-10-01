@@ -107,12 +107,15 @@ extension ChatTimelineCollectionHost.Controller {
             totalItems: reducer.items.count
         )
 
+        let expandedTurnsBeforeScroll = ownedClock.expandedQuietTurnIDs
         var projection = makeOwnedProjection(reducer: reducer, configuration: config)
         consumeOwnedScrollTargetIfNeeded(
             reducer: reducer,
             projection: projection
         )
-        projection = makeOwnedProjection(reducer: reducer, configuration: config)
+        if ownedClock.expandedQuietTurnIDs != expandedTurnsBeforeScroll {
+            projection = makeOwnedProjection(reducer: reducer, configuration: config)
+        }
 
         var window = ownedClock.renderWindow
         if let command = ownedClock.pendingScrollCommand, command.anchor == .top,
@@ -142,7 +145,8 @@ extension ChatTimelineCollectionHost.Controller {
         consumeOwnedScrollToBottomIfNeeded(bottomItemID: bottomItemID)
 
         if ownedClock.renderWindow != window || ownedClock.pendingScrollCommand != nil {
-            projection = makeOwnedProjection(reducer: reducer, configuration: config)
+            // A viewport change only filters the projection; it cannot change
+            // tool semantics or folded groups.
             let nextRenderedIDs = Set(reducer.items.suffix(ownedClock.renderWindow).map(\.id))
             visibleRows = projection.rows(forRenderedItemIDs: nextRenderedIDs)
         }
@@ -345,6 +349,7 @@ extension ChatTimelineCollectionHost.Controller {
             expandedTurnIDs: ownedClock.expandedQuietTurnIDs,
             displayStyle: configuration.workStripStyle,
             toolInspection: { reducer.toolInspection(for: $0) },
+            isInteractiveTool: { reducer.isInteractiveTool($0) },
             settledEnds: ownedClock.quietSettledEnds
         )
     }

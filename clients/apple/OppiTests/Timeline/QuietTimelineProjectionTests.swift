@@ -36,7 +36,7 @@ struct QuietTimelineProjectionTests {
         let workLine = try #require(workLines(in: projection).first)
         #expect(workLine.sourceItemIDs == ["think-1", "tool-1", "tool-error"])
         #expect(workLine.buckets == [.init(kind: .terminal, count: 2)])
-        #expect(workLine.wordsSummary(now: timestamp) == "run 2 tools")
+        #expect(workLine.wordsSummary(now: timestamp) == "run 2 commands")
     }
 
     @Test func failedToolStaysInOneStripBetweenAssistantMessages() throws {
@@ -134,7 +134,7 @@ struct QuietTimelineProjectionTests {
             .init(kind: .read, count: 1),
             .init(kind: .terminal, count: 1), .init(kind: .tooling, count: 3),
         ])
-        #expect(line.wordsSummary(now: timestamp) == "read 1 file  run 1 tool  run 3 tools")
+        #expect(line.wordsSummary(now: timestamp) == "read 1 file  run 1 command  run 3 tools")
     }
 
     @Test func editSummaryUsesStoredStatsWhenEveryEditHasArgs() throws {
@@ -155,7 +155,7 @@ struct QuietTimelineProjectionTests {
 
         let line = try #require(workLines(in: projection).first)
         #expect(line.buckets == [
-            .init(kind: .edit, count: 2, editStats: .init(added: 3, removed: 2), requestedStats: true),
+            .init(kind: .edit, count: 2, editStats: .init(added: 3, removed: 2), statsProvenance: .requested),
         ])
         #expect(line.wordsSummary(now: timestamp) == "Requested edit +3 −2")
     }
@@ -173,7 +173,7 @@ struct QuietTimelineProjectionTests {
         )
 
         let line = try #require(workLines(in: projection).first)
-        #expect(line.buckets == [.init(kind: .edit, count: 2, requestedStats: true)])
+        #expect(line.buckets == [.init(kind: .edit, count: 2, statsProvenance: .requested)])
         #expect(line.wordsSummary(now: timestamp) == "edit 2")
     }
 
@@ -281,9 +281,9 @@ struct QuietTimelineProjectionTests {
         let line = try #require(workLines(in: projection).last)
         #expect(line.isLive)
         #expect(line.liveStartedAt == Date(timeIntervalSince1970: 1_000))
-        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 1_007)) == "run 1 tool · 7s")
-        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 1_075)) == "run 1 tool · 1m 15s")
-        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 4_723)) == "run 1 tool · 1h 2m 3s")
+        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 1_007)) == "run 1 command · 7s")
+        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 1_075)) == "run 1 command · 1m 15s")
+        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 4_723)) == "run 1 command · 1h 2m 3s")
     }
 
     @Test func historicalStripFreezesDurationBetweenAssistantTimestamps() throws {
@@ -302,7 +302,7 @@ struct QuietTimelineProjectionTests {
         #expect(!line.isLive)
         #expect(line.liveStartedAt == Date(timeIntervalSince1970: 1_000))
         #expect(line.intervalEndedAt == Date(timeIntervalSince1970: 1_037))
-        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 9_999)) == "run 1 tool · 37s")
+        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 9_999)) == "run 1 command · 37s")
     }
 
     @Test func trailingSettledStripFreezesDurationWithoutFollowingRow() throws {
@@ -370,7 +370,7 @@ struct QuietTimelineProjectionTests {
         let line = try #require(workLines(in: projection).last)
         #expect(line.isLive)
         #expect(line.liveStartedAt == Date(timeIntervalSince1970: 2_003))
-        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 2_007)) == "run 1 tool · 4s")
+        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 2_007)) == "run 1 command · 4s")
     }
 
     @Test func busyVisibleInterruptionDoesNotRelightPreviousStrip() throws {

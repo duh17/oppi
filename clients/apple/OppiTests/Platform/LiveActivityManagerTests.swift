@@ -71,11 +71,15 @@ struct LiveActivityStateTests {
         mgr.sync(connectionId: "c1", sessions: [session])
 
         mgr.recordEvent(connectionId: "c1", event: .toolStart(
-            sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:], display: .init(title: "Bash", verbatim: true)
+            sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]
         ))
-        #expect(mgr.currentState.primaryTool == "Bash")
-        #expect(mgr.currentState.primaryLastActivity == "Running Bash")
+        #expect(mgr.currentState.primaryTool == "bash")
+        #expect(mgr.currentState.primaryLastActivity == "Running bash")
         #expect(mgr.currentState.primaryPhase == .working)
+        mgr.recordEvent(connectionId: "c1", event: .toolEnd(sessionId: "s1", toolEventId: "child", parentToolCallId: "t1"))
+        #expect(mgr.currentState.primaryTool == "bash", "Nested completion must not clear its running parent")
+        mgr.recordEvent(connectionId: "c1", event: .toolEnd(sessionId: "s1", toolEventId: "t1"))
+        #expect(mgr.currentState.primaryTool == nil)
     }
 
     @Test("sync carries primary change stats into content state")

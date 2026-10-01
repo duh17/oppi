@@ -11,6 +11,7 @@ struct QuietWorkStripPreview: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                mixedEditSession
                 mixedInspectionSession
                 chatSequence(style: .icons, title: "Icons")
                 chatSequence(style: .words, title: "Words")
@@ -20,6 +21,21 @@ struct QuietWorkStripPreview: View {
         }
         .background(Color.themeBg.ignoresSafeArea())
         .accessibilityIdentifier("screenshot.ready")
+    }
+
+    private var mixedEditSession: some View {
+        let edits = inspectionFixture.items.filter { inspectionFixture.toolInspection(for: $0)?.activityKind == .fileDiff }
+        let projection = QuietTimelineProjection.make(items: edits, isQuiet: true, isBusy: false,
+            expandedTurnIDs: [], toolInspection: { inspectionFixture.toolInspection(for: $0) },
+            isInteractiveTool: { inspectionFixture.isInteractiveTool($0) })
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Mixed requested/result edit totals").font(.caption.weight(.semibold))
+            ForEach(projection.rows) { row in
+                if case .quietWork(let line) = row {
+                    QuietWorkStripRowPreview(workLine: line, style: .words).frame(height: 44)
+                }
+            }
+        }
     }
 
     private var mixedInspectionSession: some View {

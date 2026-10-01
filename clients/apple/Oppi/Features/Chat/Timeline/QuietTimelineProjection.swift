@@ -51,13 +51,21 @@ struct QuietWorkBucket: Equatable {
     let kind: QuietWorkBucketKind
     let count: Int
     let editStats: EditStats?
-    let requestedStats: Bool
+    enum StatsProvenance: Equatable { case result, requested, mixed }
+    let statsProvenance: StatsProvenance
+    var editStatsTitle: String {
+        switch statsProvenance {
+        case .result: return "edit"
+        case .requested: return "Requested edit"
+        case .mixed: return "edit (includes Requested)"
+        }
+    }
 
-    init(kind: QuietWorkBucketKind, count: Int, editStats: EditStats? = nil, requestedStats: Bool = false) {
+    init(kind: QuietWorkBucketKind, count: Int, editStats: EditStats? = nil, statsProvenance: StatsProvenance = .result) {
         self.kind = kind
         self.count = count
         self.editStats = editStats
-        self.requestedStats = requestedStats
+        self.statsProvenance = statsProvenance
     }
 
     var words: String {
@@ -68,12 +76,14 @@ struct QuietWorkBucket: Equatable {
             return "write \(count) \(count == 1 ? "file" : "files")"
         case .edit:
             if let editStats {
-                return "\(requestedStats ? "Requested edit" : "edit") +\(editStats.added) −\(editStats.removed)"
+                return "\(editStatsTitle) +\(editStats.added) −\(editStats.removed)"
             }
             return "edit \(count)"
         case .media:
             return "media \(count)"
-        case .terminal, .tooling:
+        case .terminal:
+            return "run \(count) \(count == 1 ? "command" : "commands")"
+        case .tooling:
             return "run \(count) \(count == 1 ? "tool" : "tools")"
         }
     }
@@ -186,6 +196,7 @@ struct QuietTimelineProjection: Equatable {
         expandedTurnIDs: Set<String>,
         displayStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons,
         toolInspection: (ChatItem) -> ToolInspection? = { _ in nil },
+        isInteractiveTool: ((String) -> Bool)? = nil,
         now: Date = Date(),
         settledEnds: [String: Date] = [:]
     ) -> Self {
@@ -200,12 +211,22 @@ struct QuietTimelineProjection: Equatable {
         var rows: [TimelineDisplayRow] = []
         rows.reserveCapacity(items.count)
         var pending: [ChatItem] = []
+        // One snapshot per tool per projection, including for callers that only
+        // provide the inspection port. Production visibility uses cheap facts.
+        var inspections: [String: ToolInspection?] = [:]
+        func inspection(for item: ChatItem) -> ToolInspection? {
+            guard case .toolCall = item else { return nil }
+            if let cached = inspections[item.id] { return cached }
+            let resolved = toolInspection(item)
+            inspections.updateValue(resolved, forKey: item.id)
+            return resolved
+        }
 
         func appendWorkLine(endedAt: Date?) {
             guard let firstSourceID = pending.first?.id else { return }
             defer { pending.removeAll(keepingCapacity: true) }
 
-            let buckets = Self.buckets(for: pending, toolInspection: toolInspection)
+            let buckets = Self.buckets(for: pending, toolInspection: inspection)
             let hasThinking = pending.contains {
                 if case .thinking = $0 { return true }
                 return false
@@ -237,7 +258,13 @@ struct QuietTimelineProjection: Equatable {
 
         var precedingTimestamp: Date?
         for item in items {
-            if isQuietlyCollapsible(item, inspection: toolInspection(item)) {
+            let interactive: Bool
+            if case .toolCall = item, let isInteractiveTool {
+                interactive = isInteractiveTool(item.id)
+            } else {
+                interactive = inspection(for: item)?.isInteractive == true
+            }
+            if isQuietlyCollapsible(item, isInteractive: interactive) {
                 pending.append(item)
                 continue
             }
@@ -326,7 +353,8 @@ struct QuietTimelineProjection: Equatable {
         var editAdded = 0
         var editRemoved = 0
         var hasCompleteEditStats = true
-        var requestedStats = false
+        var hasRequestedStats = false
+        var hasResultStats = false
 
         for item in items {
             guard case .toolCall = item else { continue }
@@ -346,7 +374,8 @@ struct QuietTimelineProjection: Equatable {
                 if let stats = inspection?.file?.stats {
                     editAdded += stats.added
                     editRemoved += stats.removed
-                    requestedStats = requestedStats || inspection?.file?.provenance == .requested
+                    if inspection?.file?.provenance == .requested { hasRequestedStats = true }
+                    else { hasResultStats = true }
                 } else {
                     hasCompleteEditStats = false
                 }
@@ -361,15 +390,18 @@ struct QuietTimelineProjection: Equatable {
             } else {
                 editStats = nil
             }
-            return QuietWorkBucket(kind: kind, count: count, editStats: editStats, requestedStats: kind == .edit && requestedStats)
+            let provenance: QuietWorkBucket.StatsProvenance = hasRequestedStats
+                ? (hasResultStats ? .mixed : .requested) : .result
+            return QuietWorkBucket(kind: kind, count: count, editStats: editStats,
+                statsProvenance: kind == .edit ? provenance : .result)
         }
     }
 
-    private static func isQuietlyCollapsible(_ item: ChatItem, inspection: ToolInspection?) -> Bool {
+    private static func isQuietlyCollapsible(_ item: ChatItem, isInteractive: Bool) -> Bool {
         switch item {
         case .toolCall:
             // Every declared interaction stays visible, whatever its raw name.
-            return inspection?.isInteractive != true
+            return !isInteractive
         case .thinking:
             return true
         case .userMessage, .assistantMessage, .audioClip, .systemEvent,

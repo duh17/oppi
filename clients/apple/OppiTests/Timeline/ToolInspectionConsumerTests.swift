@@ -46,8 +46,69 @@ struct ToolInspectionConsumerTests {
         let projection = QuietTimelineProjection.make(items: reducer.items, isQuiet: true, isBusy: false,
             expandedTurnIDs: [], toolInspection: { reducer.toolInspection(for: $0) })
         guard case .quietWork(let line) = projection.rows.first else { Issue.record("Missing work strip"); return }
-        #expect(line.buckets == [.init(kind: .edit, count: 1, editStats: .init(added: resultPatch ? 1 : 3, removed: 1), requestedStats: !resultPatch)])
+        #expect(line.buckets == [.init(kind: .edit, count: 1, editStats: .init(added: resultPatch ? 1 : 3, removed: 1), statsProvenance: resultPatch ? .result : .requested)])
         #expect(line.workSummary == (resultPatch ? "edit +1 −1" : "Requested edit +3 −1"))
+    }
+
+    @Test(arguments: [0, 1, 2])
+    func quietStatsDiscloseMixedRequestedAndResultProvenance(resultCount: Int) throws {
+        let reducer = TimelineReducer()
+        for index in 0..<2 {
+            let id = "edit-\(index)"
+            reducer.process(.toolStart(sessionId: "s", toolEventId: id, tool: "edit",
+                args: ["path": "Example.swift", "edits": [["oldText": "a", "newText": "b"]]]))
+            reducer.process(.toolEnd(sessionId: "s", toolEventId: id,
+                details: index < resultCount ? ["diff": "- 1 a\n+ 1 b"] : nil))
+        }
+        let projection = QuietTimelineProjection.make(items: reducer.items, isQuiet: true, isBusy: false,
+            expandedTurnIDs: [], toolInspection: { reducer.toolInspection(for: $0) },
+            isInteractiveTool: { reducer.isInteractiveTool($0) })
+        guard case .quietWork(let line) = projection.rows.first else { Issue.record("Missing work strip"); return }
+        #expect(line.workSummary == [
+            "Requested edit +2 −2", "edit (includes Requested) +2 −2", "edit +2 −2"
+        ][resultCount])
+    }
+
+    @Test func quietVisibilityUsesFactsAndResolvesEachFoldedToolOnce() {
+        let reducer = TimelineReducer()
+        reducer.process(.toolStart(sessionId: "s", toolEventId: "t", tool: "edit",
+            args: ["path": "Example.swift", "edits": [["oldText": "a", "newText": "b"]]]))
+        reducer.process(.toolStart(sessionId: "s", toolEventId: "q", tool: "ask", args: [:]))
+        var resolvedIDs: [String] = []
+        let projection = QuietTimelineProjection.make(items: reducer.items, isQuiet: true, isBusy: true,
+            expandedTurnIDs: [], toolInspection: { item in
+                resolvedIDs.append(item.id)
+                return reducer.toolInspection(for: item)
+            }, isInteractiveTool: { reducer.isInteractiveTool($0) })
+        #expect(projection.rows.map(\.id) == ["quiet-work-line:t", "q"])
+        #expect(resolvedIDs == ["t"], "Interaction visibility must not build content or resolve a folded tool twice")
+    }
+
+    @Test func summaryInspectionDefersFileBytesAndTypesButKeepsFacts() throws {
+        let reducer = TimelineReducer()
+        let content = "{\"type\":\"FeatureCollection\",\"features\":[]}"
+        reducer.process(.toolStart(sessionId: "s", toolEventId: "t", tool: "write",
+            args: ["path": "map.json", "content": .string(content)]))
+        let item = try #require(reducer.items.first)
+        let summary = try #require(reducer.toolInspection(for: item))
+        #expect(summary.file?.path == "map.json")
+        #expect(summary.file?.operation == .mutation)
+        #expect(summary.file?.provenance == .requested)
+        #expect(summary.file?.text == "")
+        #expect(summary.file?.fileType == nil)
+        #expect(summary.output.isEmpty)
+        #expect(reducer.resolvedToolOutputPresentation(for: "t")?.kind == "fileContent")
+        let rendered = try #require(reducer.toolInspection(for: item, includeOutput: true))
+        #expect(rendered.file?.text == content)
+        #expect(rendered.file?.fileType == .geojson)
+        #expect(rendered.copyOutputText == content)
+        #expect(!rendered.output.isEmpty)
+    }
+
+    @Test(arguments: ["bash", "read", "write", "edit"])
+    func outlineKeepsProducerSummaryWhenBoundedArgumentsAreAbsent(tool: String) {
+        let inspection = ToolContentDescriptorBuilder.inspect(tool: tool, context: .init(), includeOutput: false)
+        #expect(inspection.outlineSummary(argsSummary: "", fallback: "$ ls -la / retained path") == "$ ls -la / retained path")
     }
 
     @Test func arbitraryInteractionStaysVisibleAndNonBuiltInNamesStayGeneric() throws {

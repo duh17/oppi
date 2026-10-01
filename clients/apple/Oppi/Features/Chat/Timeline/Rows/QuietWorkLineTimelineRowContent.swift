@@ -347,7 +347,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
             }
             if bucket.kind == .edit, let stats = bucket.editStats {
                 result.append(NSAttributedString(
-                    string: bucket.requestedStats ? "Requested edit " : "edit ",
+                    string: bucket.editStatsTitle + " ",
                     attributes: [.font: font, .foregroundColor: foreground]
                 ))
                 Self.appendEditStats(stats, to: result, font: font)

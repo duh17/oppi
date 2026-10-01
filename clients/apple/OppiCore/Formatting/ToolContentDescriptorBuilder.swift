@@ -75,19 +75,21 @@ enum ToolContentDescriptorBuilder {
 
     static func inspect(tool: String, argsSummary: String = "", outputPreview: String = "",
                         isError: Bool = false, isDone: Bool = false, context: Context,
-                        includeOutput: Bool = true) -> ToolInspection {
+                        includeOutput: Bool = true, includeFileContent: Bool = true) -> ToolInspection {
         build(tool: tool, argsSummary: argsSummary, outputPreview: outputPreview,
-              isError: isError, isDone: isDone, context: context, includeOutput: includeOutput).inspection
+              isError: isError, isDone: isDone, context: context, includeOutput: includeOutput,
+              includeFileContent: includeFileContent).inspection
     }
 
     /// The legacy presentation is a Mac adapter; all translated facts and copy
     /// payloads live in its single inspection value.
     static func build(tool: String, argsSummary: String, outputPreview: String,
                       isError: Bool, isDone: Bool, context: Context,
-                      includeOutput: Bool = true) -> ToolContentPresentation {
+                      includeOutput: Bool = true, includeFileContent: Bool = true) -> ToolContentPresentation {
         let context = BuiltInToolFacts.resolve(tool: tool, context: context)
         var result = buildContent(tool: tool, argsSummary: argsSummary, outputPreview: outputPreview,
-                                  isError: isError, isDone: isDone, context: context, includeOutput: includeOutput)
+                                  isError: isError, isDone: isDone, context: context, includeOutput: includeOutput,
+                                  includeFileContent: includeOutput || includeFileContent)
         result.inspection.display = context.display
         result.inspection.title = context.display?.label(fallback: tool) ?? tool
         result.inspection.isInteractive = context.outputPresentation?.isInteractive == true
@@ -110,7 +112,8 @@ enum ToolContentDescriptorBuilder {
         isError: Bool,
         isDone: Bool,
         context: Context,
-        includeOutput: Bool = true
+        includeOutput: Bool = true,
+        includeFileContent: Bool = true
     ) -> ToolContentPresentation {
         let output = context.fullOutput.isEmpty ? outputPreview : context.fullOutput
         let input = (context.args ?? [:]).keys.sorted().compactMap { key -> ToolInspection.Field? in
@@ -137,7 +140,8 @@ enum ToolContentDescriptorBuilder {
         }
         if let file = ToolFileInspection.resolve(args: context.args, input: context.inputPresentation,
                                                   output: context.outputPresentation, details: context.details,
-                                                  text: includeOutput ? output : outputPreview, isDone: isDone, isError: isError) {
+                                                  text: includeOutput ? output : outputPreview, isDone: isDone, isError: isError,
+                                                  includeContent: includeFileContent) {
             let leaf: ToolContentDescriptor?
             if !includeOutput { leaf = nil }
             else if isError {
@@ -151,7 +155,7 @@ enum ToolContentDescriptorBuilder {
                                   language: file.fileType?.syntaxLanguage, startLine: file.startLine,
                                   attachments: file.operation == .content ? mediaAttachments(from: context.details) : []))
             } else { leaf = .status(message: context.isLoadingOutput ? "Loading output…" : "Waiting for output…") }
-            let copy = if isError { output } else if file.operation == .edits, isDone, let lines = file.diff {
+            let copy = if !includeFileContent { "" } else if isError { output } else if file.operation == .edits, isDone, let lines = file.diff {
                 DiffEngine.formatUnified(lines)
             } else { file.text }
             return .init(inspection: .init(input: input, calls: context.nestedCalls, output: leaf.map { [$0] } ?? [],

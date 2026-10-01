@@ -62,6 +62,41 @@ interface TraceOutlineSource {
 }
 
 const MAX_SUMMARY_CHARS = 160;
+const MAX_OUTLINE_METADATA_BYTES = 64 * 1024;
+const MAX_ROW_METADATA_BYTES = 8 * 1024;
+type OutlineMetadataBudget = { remaining: number };
+
+function takeOutlineMetadata<T extends Record<string, unknown>>(
+  value: T | undefined,
+  budget: OutlineMetadataBudget,
+): T | undefined {
+  if (!value) return undefined;
+  const bytes = Buffer.byteLength(JSON.stringify(value), "utf8");
+  if (bytes > MAX_ROW_METADATA_BYTES || bytes > budget.remaining) return undefined;
+  budget.remaining -= bytes;
+  return value;
+}
+
+function outlineArguments(
+  tool: string,
+  args: Record<string, unknown> | undefined,
+  registry: MobileRendererRegistry,
+  budget: OutlineMetadataBudget,
+): Record<string, unknown> | undefined {
+  if (!args) return undefined;
+  const fields = registry.inputPresentation(tool)?.fields ?? {};
+  // The outline needs paths, commands, ranges and bounded edit pairs, never
+  // fileContent/code blobs. Omitted metadata keeps the producer summary.
+  const selected = Object.fromEntries(
+    Object.entries(fields).flatMap(([key, fact]) =>
+      ["filePath", "command", "lineOffset", "lineLimit", "edits"].includes(fact.role) &&
+      args[key] !== undefined
+        ? [[key, args[key]]]
+        : [],
+    ),
+  );
+  return Object.keys(selected).length ? takeOutlineMetadata(selected, budget) : undefined;
+}
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function readSessionTraceOutlineFromFiles(
@@ -76,6 +111,9 @@ export async function readSessionTraceOutlineFromFiles(
   const sessionEntries: SessionEntry[] = [];
   const entries: TraceOutlineEntry[] = [];
   const toolRowsByCallId = new Map<string, TraceOutlineEntry>();
+  // Bounds retained details across all branches and optional response args
+  // together, not merely each row in a potentially very long session.
+  const metadataBudget: OutlineMetadataBudget = { remaining: MAX_OUTLINE_METADATA_BYTES };
   let rawEntryCount = 0;
   let readMs = 0;
   let parseMs = 0;
@@ -95,7 +133,7 @@ export async function readSessionTraceOutlineFromFiles(
       }
 
       const parseStart = performance.now();
-      const entry = parseOutlineEntryLine(trimmed);
+      const entry = parseOutlineEntryLine(trimmed, metadataBudget);
       parseMs += elapsed(parseStart);
       if (!entry) {
         continue;
@@ -108,7 +146,14 @@ export async function readSessionTraceOutlineFromFiles(
 
   const projectStart = performance.now();
   for (const entry of currentSessionEntryPath(sessionEntries)) {
-    projectEntry(entry, entries, toolRowsByCallId, options.mobileRenderers, options.entryRenderers);
+    projectEntry(
+      entry,
+      entries,
+      toolRowsByCallId,
+      options.mobileRenderers,
+      metadataBudget,
+      options.entryRenderers,
+    );
   }
   projectMs += elapsed(projectStart);
 
@@ -172,7 +217,10 @@ function appendRendererVersion(base: string, rendererVersion: string): string {
   return base ? `${base}:r${rendererVersion}` : `r${rendererVersion}`;
 }
 
-function parseOutlineEntryLine(line: string): SessionEntry | null {
+function parseOutlineEntryLine(
+  line: string,
+  metadataBudget: OutlineMetadataBudget,
+): SessionEntry | null {
   if (line.includes('"role":"toolResult"')) {
     const toolCallId = readJsonStringField(line, "toolCallId");
     if (!toolCallId) return null;
@@ -187,13 +235,23 @@ function parseOutlineEntryLine(line: string): SessionEntry | null {
         toolCallId,
         toolName: readJsonStringField(line, "toolName"),
         isError: line.includes('"isError":true'),
-        details: readBoundedObjectField(line, "details"),
+        details: takeOutlineMetadata(readBoundedObjectField(line, "details"), metadataBudget),
       },
     };
   }
 
   try {
-    return JSON.parse(line) as SessionEntry;
+    const entry = JSON.parse(line) as SessionEntry;
+    // Noncompact JSONL takes the general parser. Apply the same retained-detail
+    // budget here; whitespace must not bypass the lightweight outline contract.
+    if (entry.message?.role === "toolResult") {
+      entry.message.content = "";
+      entry.message.details = takeOutlineMetadata(
+        asRecord(entry.message.details) ?? undefined,
+        metadataBudget,
+      );
+    }
+    return entry;
   } catch {
     return null;
   }
@@ -208,7 +266,7 @@ function readBoundedObjectField(line: string, field: string): Record<string, unk
   let depth = 0,
     inString = false,
     escaped = false;
-  for (let index = start; index < line.length && index - start < 256 * 1024; index++) {
+  for (let index = start; index < line.length && index - start < MAX_ROW_METADATA_BYTES; index++) {
     const ch = line[index];
     if (inString) {
       if (escaped) escaped = false;
@@ -284,6 +342,7 @@ function projectEntry(
   entries: TraceOutlineEntry[],
   toolRowsByCallId: Map<string, TraceOutlineEntry>,
   mobileRenderers: MobileRendererRegistry,
+  metadataBudget: OutlineMetadataBudget,
   renderers?: LiveEntryRendererSet | null,
 ): void {
   if (typeof entry.id !== "string" || entry.id.length === 0) return;
@@ -292,7 +351,14 @@ function projectEntry(
 
   switch (entry.type) {
     case "message":
-      projectMessageEntry(entry, entries, toolRowsByCallId, timestamp, mobileRenderers);
+      projectMessageEntry(
+        entry,
+        entries,
+        toolRowsByCallId,
+        timestamp,
+        mobileRenderers,
+        metadataBudget,
+      );
       return;
 
     case "compaction":
@@ -369,6 +435,7 @@ function projectMessageEntry(
   toolRowsByCallId: Map<string, TraceOutlineEntry>,
   timestamp: string,
   mobileRenderers: MobileRendererRegistry,
+  metadataBudget: OutlineMetadataBudget,
 ): void {
   const message = entry.message;
   if (!message) return;
@@ -391,7 +458,14 @@ function projectMessageEntry(
     }
 
     case "assistant":
-      projectAssistantEntry(entry, entries, toolRowsByCallId, timestamp, mobileRenderers);
+      projectAssistantEntry(
+        entry,
+        entries,
+        toolRowsByCallId,
+        timestamp,
+        mobileRenderers,
+        metadataBudget,
+      );
       return;
 
     case "toolResult": {
@@ -427,7 +501,12 @@ function projectMessageEntry(
         id: entry.id,
         kind: "tool",
         tool: "bash",
-        args: { command: String((message as Record<string, unknown>).command || "") },
+        args: outlineArguments(
+          "bash",
+          { command: String((message as Record<string, unknown>).command || "") },
+          mobileRenderers,
+          metadataBudget,
+        ),
         inputPresentation: mobileRenderers.inputPresentation("bash"),
         outputPresentation: mobileRenderers.outputPresentation("bash"),
         summary: `$ ${summary}`,
@@ -450,6 +529,7 @@ function projectAssistantEntry(
   toolRowsByCallId: Map<string, TraceOutlineEntry>,
   timestamp: string,
   mobileRenderers: MobileRendererRegistry,
+  metadataBudget: OutlineMetadataBudget,
 ): void {
   const content = entry.message?.content;
   if (typeof content === "string") {
@@ -533,7 +613,7 @@ function projectAssistantEntry(
             ?.map((segment) => segment.text)
             .join("") ??
           (summarizeArgs(args ?? {}) ? `${tool}: ${summarizeArgs(args ?? {})}` : tool),
-        args: args && JSON.stringify(args).length <= 256 * 1024 ? args : undefined,
+        args: outlineArguments(tool, args, mobileRenderers, metadataBudget),
         display: resolveToolDisplay(tool),
         inputPresentation: mobileRenderers.inputPresentation(tool),
         outputPresentation: mobileRenderers.outputPresentation(tool),

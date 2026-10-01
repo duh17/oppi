@@ -140,7 +140,10 @@ struct ToolInspection: Equatable, Sendable {
         return .generic
     }
     /// Summary consumers use the same selected path/diff/input as the tool row.
-    func outlineSummary(argsSummary: String) -> String {
+    func outlineSummary(argsSummary: String, fallback: String? = nil) -> String {
+        // Older or size-capped outline snapshots can lack the arguments while
+        // retaining a useful producer summary. Do not replace it with a bare name.
+        if commandText?.isEmpty != false, file?.path?.isEmpty != false, let fallback { return fallback }
         if terminalOutput, let commandText { return "$ " + String(commandText.replacingOccurrences(of: "\n", with: " ").prefix(100)) }
         if let path = file?.path { return title + " " + path }
         return argsSummary.isEmpty ? title : title + ": " + String(argsSummary.prefix(80))
