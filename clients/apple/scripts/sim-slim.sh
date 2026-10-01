@@ -21,10 +21,11 @@ sim_is_slim() {
   local udid="$1"
   local disabled
   disabled=$(xcrun simctl spawn "$udid" launchctl print-disabled system 2>/dev/null || true)
-  # PosterBoard is the original marker. routined was added later; require
-  # both so already-slim pool sims pick up the Watch/MDM label pass.
+  # Older passes disabled navd. Its missing navigationService can leave the
+  # Maps widget retrying/logging continuously; require that override restored.
   grep -Eq '"com.apple.PosterBoard" => (disabled|true)' <<<"$disabled" \
-    && grep -Eq '"com.apple.routined" => (disabled|true)' <<<"$disabled"
+    && grep -Eq '"com.apple.routined" => (disabled|true)' <<<"$disabled" \
+    && ! grep -Eq '"com.apple.navd" => (disabled|true)' <<<"$disabled"
 }
 
 slim_disable_labels() {
@@ -92,6 +93,11 @@ slim_simulator() {
 
   echo "[sim-slim] Slimming unused simulator daemons on $udid" >&2
   slim_disable_labels "$udid"
+  # Removing a label from the list does not clear persistent launchd overrides.
+  # Re-enable navd before the owned-device reboot: loading it into a live slot
+  # alone does not quiet an already-spinning Maps widget navigation proxy.
+  xcrun simctl spawn "$udid" launchctl enable system/com.apple.navd >/dev/null 2>&1 \
+    || die "simulator $udid failed to restore navd navigation service"
   echo "[sim-slim] Rebooting $udid to apply slim overrides" >&2
   xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
   xcrun simctl boot "$udid" >/dev/null 2>&1 || true

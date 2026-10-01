@@ -27,6 +27,7 @@ function selfTest(): number {
     "./clients/apple/scripts/sim-pool-shutdown.test.ts",
     "./clients/apple/scripts/sim-pool-prune.test.ts",
     "./clients/apple/scripts/sim-pool-cutover.test.ts",
+    "./clients/apple/scripts/sim-slim.test.ts",
   ];
   for (const path of files) {
     if (!existsSync(join(repoRoot, path))) {

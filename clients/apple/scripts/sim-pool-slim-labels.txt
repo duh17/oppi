@@ -4,6 +4,7 @@
 #
 # Kept on purpose (not listed here):
 #   com.apple.chronod, com.apple.liveactivitiesd  Live Activities / widgets
+#   com.apple.navd                               Maps widget navigationService dependency
 #   com.apple.corespeechd, com.apple.voiced       dictation / speech
 #   com.apple.assetsd                             Photos picker
 #   com.apple.apsd                                push
@@ -152,7 +153,6 @@ com.apple.avatarsd
 com.apple.stickersd
 com.apple.sociallayerd
 com.apple.announced
-com.apple.navd
 com.apple.findmy.findmylocated
 com.apple.sharingd
 com.apple.ap.adprivacyd
