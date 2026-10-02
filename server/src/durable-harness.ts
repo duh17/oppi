@@ -14,6 +14,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { DurableSandboxTools } from "./durable-sandbox-tools.js";
+import { DurableAsk } from "../extensions/durable/ask/durable.js";
+import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
+import { DurableUI } from "../extensions/durable/durable-ui.js";
 
 /** Persist the execution boundary so a resumed conversation cannot change runtime. */
 export const DurableRuntime = defineDoc<{ kind: "host" | "sandbox"; workspaceId?: string }>({
@@ -70,6 +73,11 @@ export class DurableHarness {
       const { harness } = await this.open();
       await (await harness.conversation(id, BACKGROUND_CONTEXT))?.abort(BACKGROUND_CONTEXT);
     }
+    const { harness } = await this.open();
+    const conversation = await harness.conversation(id, BACKGROUND_CONTEXT);
+    await conversation?.commit(async (tx) => {
+      (await tx.doc(DurableUI, id)).requests = {};
+    }, BACKGROUND_CONTEXT);
     // Task cancellation alone is not guest Stop confirmation.
     await this.sandboxEnvs.get(id)?.cleanup(BACKGROUND_CONTEXT);
   }
@@ -107,6 +115,8 @@ export class DurableHarness {
     const registry = createRegistry();
     registry.install(CodingTools);
     registry.install(DurableSandboxTools);
+    registry.install(DurableAsk);
+    registry.install(DurableWorkingWords);
     const directory = join(this.dataDir, "durable");
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     // Bun-based CLI commands must not load node:sqlite when the experiment is
@@ -154,6 +164,12 @@ export class DurableHarness {
     }
     for (const { record } of live.tasks) {
       if (ids.has(record.conversationId)) await harness.abortTask(record.id, BACKGROUND_CONTEXT);
+    }
+    for (const id of ids) {
+      const conversation = await harness.conversation(id, BACKGROUND_CONTEXT);
+      await conversation?.commit(async (tx) => {
+        (await tx.doc(DurableUI, id)).requests = {};
+      }, BACKGROUND_CONTEXT);
     }
   }
 

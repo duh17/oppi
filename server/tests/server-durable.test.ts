@@ -22,6 +22,7 @@ import {
   type AgentEvent,
   type ConversationId,
   type ToolRegistration,
+  defineTool,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
@@ -40,6 +41,11 @@ import {
   recordLiveSessionsForRestart,
 } from "../src/session-restart-resume.js";
 import type { ChatAttachmentRef, ServerMessage, Session } from "../src/types.js";
+import { DurableAsk } from "../extensions/durable/ask/durable.js";
+import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
+import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
+import { DurableUI, requestUI, type UIResponse } from "../extensions/durable/durable-ui.js";
+import { buildExtensionUIRequestMessage } from "../src/extension-ui-contract.js";
 
 const managers: SessionManager[] = [];
 const harnesses: Harness[] = [];
@@ -137,6 +143,8 @@ async function openHarness(
 ): Promise<Harness> {
   const registry = createRegistry();
   registry.install(CodingTools);
+  registry.install(DurableAsk);
+  registry.install(DurableWorkingWords);
   if (tool) registry.install({ name: "restart-proof", tools: [tool] });
   const harness = await Harness.open(
     await openNodeSqliteStorage(join(dir, "restart.sqlite")),
@@ -262,6 +270,530 @@ async function crashedQueuedTools(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe("server durable managed runtime", () => {
+  const questions = [
+    {
+      id: "color",
+      question: "Favorite color?",
+      options: [
+        { value: "red", label: "Red" },
+        { value: "blue", label: "Blue" },
+      ],
+    },
+    {
+      id: "extras",
+      question: "Which extras?",
+      options: [
+        { value: "tests", label: "Tests" },
+        { value: "docs", label: "Docs" },
+      ],
+      multiSelect: true,
+    },
+  ];
+  const askResponse = { color: "red", extras: ["tests", "custom extra"] };
+  const askStep = () =>
+    fauxAssistantMessage([fauxToolCall("ask", { questions })], { stopReason: "toolUse" });
+
+  it("projects SDK-identical ask fields, replays pending on reconnect, and commits only the first answer", async () => {
+    const f = await fixture([askStep(), fauxAssistantMessage("ANSWER_RECEIVED")]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    const request = observed.next((m) => m.type === "extension_ui_request" && m.method === "ask");
+    await f.manager.sendPrompt(f.session.id, "Ask both questions");
+    const shown = (await request) as Extract<ServerMessage, { type: "extension_ui_request" }>;
+    let classic: ServerMessage | undefined;
+    const bridge = new SdkUiBridge(
+      (event) => {
+        if (event.type === "extension_ui_request")
+          classic = buildExtensionUIRequestMessage(f.session.id, event);
+      },
+      () => false,
+    );
+    const ui = bridge.createContext() as unknown as {
+      ask: (questions: typeof questions) => Promise<unknown>;
+    };
+    const classicAnswer = ui.ask(questions);
+    expect(JSON.parse(JSON.stringify(shown))).toEqual(
+      JSON.parse(
+        JSON.stringify({
+          ...classic,
+          id: shown.id,
+          extensionScopeId: "repo:ask",
+          extensionDisplayName: "Ask",
+        }),
+      ),
+      // SDK provenance comes from its caller stack (Vitest here, not ask).
+      // All other wire fields are compared without overrides.
+    );
+    expect(f.manager.getPendingUIRequestMessages(f.session.id)).toContainEqual(shown);
+    const end = observed.next((m) => m.type === "agent_end");
+    const replies = await Promise.all([
+      f.manager.respondToUIRequest(f.session.id, {
+        type: "extension_ui_response",
+        id: shown.id,
+        value: JSON.stringify(askResponse),
+      }),
+      f.manager.respondToUIRequest(f.session.id, {
+        type: "extension_ui_response",
+        id: shown.id,
+        value: JSON.stringify({ color: "blue" }),
+      }),
+    ]);
+    expect(replies).toEqual([true, false]);
+    await end;
+    expect(
+      f.manager
+        .getPendingUIRequestMessages(f.session.id)
+        .filter((m) => m.type === "extension_ui_request"),
+    ).toEqual([]);
+    const history = (await f.manager.runCommand(f.session.id, { type: "get_messages" })) as Array<{
+      role: string;
+      toolName?: string;
+      details?: unknown;
+    }>;
+    expect(history.filter((m) => m.role === "toolResult" && m.toolName === "ask")).toEqual([
+      expect.objectContaining({ details: { questions, answers: askResponse, allIgnored: false } }),
+    ]);
+    expect(
+      observed.messages.filter((m) => m.type === "extension_ui_settled" && m.id === shown.id),
+    ).toHaveLength(1);
+    bridge.dispose();
+    await classicAnswer;
+  });
+
+  it("restores the same pending ask after reopening SQLite, then completes the original call once", async () => {
+    const f = await fixture([askStep(), fauxAssistantMessage("RESTART_ANSWER_RECEIVED")]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    let observed = observe(f.manager, f.session.id);
+    const request = observed.next((m) => m.type === "extension_ui_request" && m.method === "ask");
+    await f.manager.sendPrompt(f.session.id, "Ask and survive", { clientTurnId: "ask-restart" });
+    const shown = (await request) as Extract<ServerMessage, { type: "extension_ui_request" }>;
+    recordLiveSessionsForRestart(f.storage, [f.manager.getActiveSession(f.session.id)!]);
+    await f.manager.close();
+    managers.splice(managers.indexOf(f.manager), 1);
+    f.manager = new SessionManager(new Storage(f.dir));
+    managers.push(f.manager);
+    await f.manager.resumeDurableSessions();
+    expect(f.manager.getPendingUIRequestMessages(f.session.id)).toContainEqual(
+      expect.objectContaining({ id: shown.id, questions }),
+    );
+    observed = observe(f.manager, f.session.id);
+    const end = observed.next((m) => m.type === "agent_end");
+    expect(
+      await f.manager.respondToUIRequest(f.session.id, {
+        type: "extension_ui_response",
+        id: shown.id,
+        value: JSON.stringify(askResponse),
+      }),
+    ).toBe(true);
+    await end;
+    const history = (await f.manager.runCommand(f.session.id, { type: "get_messages" })) as Array<{
+      role: string;
+      toolName?: string;
+      isError?: boolean;
+    }>;
+    expect(history.filter((m) => m.role === "user")).toHaveLength(1);
+    expect(history.filter((m) => m.role === "toolResult" && m.toolName === "ask")).toEqual([
+      expect.objectContaining({ isError: false }),
+    ]);
+    expect(f.faux.state.callCount).toBe(2);
+    expect(
+      await f.manager.respondToUIRequest(f.session.id, {
+        type: "extension_ui_response",
+        id: shown.id,
+        cancelled: true,
+      }),
+    ).toBe(false);
+  });
+
+  it.each(["abort", "stop"])(
+    "%s cancels the pending ask without running the answer turn",
+    async (action) => {
+      const f = await fixture([askStep(), fauxAssistantMessage("MUST_NOT_RUN")]);
+      await f.manager.startSession(f.session.id, f.workspace);
+      const observed = observe(f.manager, f.session.id);
+      const request = observed.next((m) => m.type === "extension_ui_request" && m.method === "ask");
+      await f.manager.sendPrompt(f.session.id, "Ask until stopped");
+      const shown = (await request) as Extract<ServerMessage, { type: "extension_ui_request" }>;
+      if (action === "abort") await f.manager.sendAbort(f.session.id);
+      else await f.manager.stopSession(f.session.id);
+      expect(
+        f.manager
+          .getPendingUIRequestMessages(f.session.id)
+          .filter((m) => m.type === "extension_ui_request"),
+      ).toEqual([]);
+      expect(
+        await f.manager.respondToUIRequest(f.session.id, {
+          type: "extension_ui_response",
+          id: shown.id,
+          value: "{}",
+        }),
+      ).toBe(false);
+      expect(f.faux.state.callCount).toBe(1);
+      expect(observed.messages).toContainEqual(
+        expect.objectContaining({ type: "extension_ui_settled", id: shown.id }),
+      );
+    },
+  );
+
+  it("allows only one ask in a model turn but allows ask again in the next turn", async () => {
+    const f = await fixture([
+      fauxAssistantMessage(
+        [
+          fauxToolCall("ask", { questions }, { id: "first" }),
+          fauxToolCall("ask", { questions }, { id: "second" }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      askStep(),
+      fauxAssistantMessage("DONE"),
+    ]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    let request = observed.next((m) => m.type === "extension_ui_request" && m.method === "ask");
+    await f.manager.sendPrompt(f.session.id, "Two calls in one turn, another next turn");
+    const first = (await request) as Extract<ServerMessage, { type: "extension_ui_request" }>;
+    request = observed.next((m) => m.type === "extension_ui_request" && m.method === "ask");
+    await f.manager.respondToUIRequest(f.session.id, {
+      type: "extension_ui_response",
+      id: first.id,
+      cancelled: true,
+    });
+    const second = (await request) as Extract<ServerMessage, { type: "extension_ui_request" }>;
+    expect(second.id).not.toBe(first.id);
+    const end = observed.next((m) => m.type === "agent_end");
+    await f.manager.respondToUIRequest(f.session.id, {
+      type: "extension_ui_response",
+      id: second.id,
+      cancelled: true,
+    });
+    await end;
+    const history = (await f.manager.runCommand(f.session.id, { type: "get_messages" })) as Array<{
+      role: string;
+      toolName?: string;
+      isError?: boolean;
+      content?: unknown;
+    }>;
+    const results = history.filter((m) => m.role === "toolResult" && m.toolName === "ask");
+    expect(results).toHaveLength(3);
+    expect(results.filter((m) => m.isError)).toEqual([
+      expect.objectContaining({
+        content: expect.arrayContaining([
+          expect.objectContaining({ text: expect.stringContaining("Only one ask call per turn") }),
+        ]),
+      }),
+    ]);
+  });
+  it("survives a crash after answer commit but before the tool records its answer memo", async () => {
+    const native = DurableAsk.tools![0]!;
+    let saving!: () => void;
+    const savingMemo = new Promise<void>((resolve) => {
+      saving = resolve;
+    });
+    const wrapped: ToolRegistration = {
+      ...native,
+      async execute(args, api, ctx) {
+        const memo = new Proxy(api.memo, {
+          apply(target, receiver, values) {
+            if (String(values[0]).startsWith("ui-answer:") && values.length === 3) {
+              saving();
+              return new Promise((_resolve, reject) => {
+                ctx.abortSignal!.addEventListener("abort", () => reject(ctx.abortSignal!.reason), {
+                  once: true,
+                });
+              });
+            }
+            return Reflect.apply(target, receiver, values);
+          },
+        });
+        return native.execute(args as never, { ...api, memo }, ctx);
+      },
+    };
+    const f = await fixture([askStep(), fauxAssistantMessage("MEMO_GAP_RECOVERED")]);
+    let harness = await openHarness(f.dir, f.models, wrapped);
+    const conversation = await harness.createConversation(
+      {
+        ownership: { kind: "ownerless" },
+        agent: { model: { provider: "faux", modelId: "faux-1" }, tools: [wrapped], cwd: f.dir },
+      },
+      context,
+    );
+    f.session.serverDurable = { conversationId: conversation.id };
+    const owner = new DurableHarness(f.dir);
+    vi.spyOn(owner, "open").mockResolvedValue({ harness, models: f.models });
+    await owner.releaseResume();
+    let shown!: UIResponse;
+    let show!: () => void;
+    const displayed = new Promise<void>((resolve) => {
+      show = resolve;
+    });
+    const first = await DurableBackend.create({
+      harness,
+      owner,
+      models: f.models,
+      session: f.session,
+      dataDir: f.dir,
+      persistBinding: () => {},
+      onEvent: (event) => {
+        if (event.type === "extension_ui_request" && event.method === "ask") {
+          shown = { id: event.id, value: JSON.stringify(askResponse) };
+          show();
+        }
+      },
+    });
+    first.startEvents();
+    await first.prompt("Ask and cross the answer/memo crash window");
+    await displayed;
+    expect(await first.respondToExtensionUIRequest(shown)).toBe(true);
+    await savingMemo;
+    await first.detachForRestart();
+    await harness.close(context);
+    harnesses.splice(harnesses.indexOf(harness), 1);
+    harness = await openHarness(f.dir, f.models);
+    const resumed = await backend(harness, f.models, f.session, f.dir);
+    harness.resume();
+    await (await harness.conversation(conversation.id, context))!.waitForIdle(context);
+    const results = resumed.messages().filter((m) => m.role === "toolResult") as Array<{
+      details?: unknown;
+      isError?: boolean;
+    }>;
+    expect(results).toEqual([
+      expect.objectContaining({
+        isError: false,
+        details: { questions, answers: askResponse, allIgnored: false },
+      }),
+    ]);
+    expect(f.faux.state.callCount).toBe(2);
+    await resumed.dispose();
+  });
+
+  it.each(["select", "confirm", "input", "editor"] as const)(
+    "relays generic %s with committed answers and reconnect state",
+    async (method) => {
+      const fields = {
+        title: "Choose",
+        message: "Continue?",
+        options: ["A", "B"],
+        placeholder: "Type",
+        prefill: "Draft",
+      };
+      const probe = defineTool({
+        name: "ui_probe",
+        description: "Generic UI proof",
+        parameters: Type.Object({}),
+        replay: "safe",
+        async execute(_args, api, ctx) {
+          const response = await requestUI(
+            api,
+            { id: `probe:${api.taskId}`, method, ...fields },
+            ctx,
+          );
+          return { content: [{ type: "text", text: JSON.stringify(response) }] };
+        },
+      });
+      const f = await fixture([
+        fauxAssistantMessage([fauxToolCall(probe.name, {})], { stopReason: "toolUse" }),
+        fauxAssistantMessage("GENERIC_UI_DONE"),
+      ]);
+      const harness = await openHarness(f.dir, f.models, probe);
+      vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+      await f.manager.startSession(f.session.id, f.workspace);
+      const conversation = (await harness.conversation(
+        f.storage.getSession(f.session.id)!.serverDurable!.conversationId!,
+        context,
+      ))!;
+      await conversation.configure(
+        { extensions: { add: [{ name: "restart-proof", tools: [probe] }] }, tools: [probe] },
+        context,
+      );
+      const observed = observe(f.manager, f.session.id);
+      const request = observed.next(
+        (m) => m.type === "extension_ui_request" && m.method === method,
+      );
+      await f.manager.sendPrompt(f.session.id, "Run generic UI");
+      const shown = (await request) as Extract<ServerMessage, { type: "extension_ui_request" }>;
+      expect(shown).toMatchObject({ method, ...fields });
+      expect(f.manager.getPendingUIRequestMessages(f.session.id)).toContainEqual(shown);
+      const end = observed.next((m) => m.type === "agent_end");
+      expect(
+        await f.manager.respondToUIRequest(f.session.id, {
+          type: "extension_ui_response",
+          id: shown.id,
+          value: "A",
+          confirmed: true,
+        }),
+      ).toBe(true);
+      await end;
+      const messages = (await f.manager.runCommand(f.session.id, {
+        type: "get_messages",
+      })) as Array<{ role: string; toolName?: string; content?: unknown }>;
+      expect(
+        messages.find((m) => m.toolName === probe.name && m.role === "toolResult"),
+      ).toMatchObject({
+        content: [
+          { type: "text", text: JSON.stringify({ id: shown.id, value: "A", confirmed: true }) },
+        ],
+      });
+    },
+  );
+
+  it("replays generic native widgets/status and working words, sanitizes fields, and explicitly clears slots", async () => {
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+    const f = await fixture([askStep(), fauxAssistantMessage("DONE")]);
+    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    await f.manager.startSession(f.session.id, f.workspace);
+    const { harness } = await opening.mock.results[0]!.value;
+    const id = f.storage.getSession(f.session.id)!.serverDurable!.conversationId!;
+    const conversation = (await harness.conversation(id, context))!;
+    const observed = observe(f.manager, f.session.id);
+    const request = observed.next((m) => m.type === "extension_ui_request" && m.method === "ask");
+    await f.manager.sendPrompt(f.session.id, "Hold a working turn");
+    await request;
+    const notifications = f.manager
+      .getPendingUIRequestMessages(f.session.id)
+      .filter((m) => m.type === "extension_ui_notification");
+    expect(notifications).toContainEqual(
+      expect.objectContaining({
+        method: "setStatus",
+        statusKey: "working-words",
+        statusText: "shuffled · 16 phrases",
+      }),
+    );
+    expect(notifications).toContainEqual(
+      expect.objectContaining({
+        method: "setWorkingIndicator",
+        workingIndicator: { frames: ["·", "•", "●", "•"], intervalMs: 120 },
+      }),
+    );
+    expect(notifications).toContainEqual(
+      expect.objectContaining({ method: "setWorkingMessage", message: expect.any(String) }),
+    );
+    random.mockReturnValue(0.75);
+    const rotation = await observed.next(
+      (m) =>
+        m.type === "extension_ui_notification" &&
+        m.method === "setWorkingMessage" &&
+        m.message === "Comparing options…",
+    );
+    expect(rotation).toMatchObject({ method: "setWorkingMessage", message: "Comparing options…" });
+    const widget = observed.next(
+      (m) => m.type === "extension_ui_notification" && m.widgetKey === "arbitrary-widget",
+    );
+    await conversation.commit(async (tx) => {
+      const ui = await tx.doc(DurableUI, id);
+      ui.notifications["widget:arbitrary-widget"] = {
+        id: "widget-update",
+        method: "setWidget",
+        widgetKey: "arbitrary-widget",
+        widgetPlacement: "belowEditor",
+        widgetLines: ["\u001b[31mReadable\u001b[0m"],
+        extensionScopeId: "repo:arbitrary",
+        extensionDisplayName: "Arbitrary",
+        nativeSurface: {
+          version: 1,
+          id: "widget:arbitrary-widget",
+          source: "widget",
+          presentation: { style: "surfacePanel", title: "Generic panel" },
+          blocks: [{ type: "text", spans: [{ text: "Readable" }] }],
+          fallback: { lines: ["Readable"] },
+        },
+      };
+    }, context);
+    expect(await widget).toMatchObject({
+      widgetLines: ["Readable"],
+      widgetPlacement: "belowEditor",
+      extensionDisplayName: "Arbitrary",
+      nativeSurface: { presentation: { title: "Generic panel" } },
+    });
+    expect(f.manager.getPendingUIRequestMessages(f.session.id)).toContainEqual(
+      expect.objectContaining({ widgetKey: "arbitrary-widget" }),
+    );
+    const cleared = observed.next(
+      (m) =>
+        m.type === "extension_ui_notification" &&
+        m.widgetKey === "arbitrary-widget" &&
+        !m.nativeSurface,
+    );
+    await conversation.commit(async (tx) => {
+      (await tx.doc(DurableUI, id)).notifications["widget:arbitrary-widget"] = {
+        id: "widget-clear",
+        method: "setWidget",
+        widgetKey: "arbitrary-widget",
+      };
+    }, context);
+    await cleared;
+    const replayClear = f.manager
+      .getPendingUIRequestMessages(f.session.id)
+      .find(
+        (message) =>
+          message.type === "extension_ui_notification" &&
+          message.method === "setWidget" &&
+          message.widgetKey === "arbitrary-widget",
+      );
+    expect(replayClear).toMatchObject({
+      method: "setWidget",
+      widgetKey: "arbitrary-widget",
+      widgetLines: undefined,
+    });
+    expect(replayClear).not.toHaveProperty("nativeSurface");
+    await f.manager.sendAbort(f.session.id);
+  });
+
+  it("commits timeout cancellation and rejects a late generic answer", async () => {
+    const probe = defineTool({
+      name: "timeout_probe",
+      description: "UI deadline proof",
+      parameters: Type.Object({}),
+      replay: "safe",
+      async execute(_args, api, ctx) {
+        const response = await requestUI(
+          api,
+          { id: `timeout:${api.taskId}`, method: "confirm", title: "Expires", timeout: 25 },
+          ctx,
+        );
+        return { content: [{ type: "text", text: response.cancelled ? "TIMED_OUT" : "ANSWERED" }] };
+      },
+    });
+    const f = await fixture([
+      fauxAssistantMessage([fauxToolCall(probe.name, {})], { stopReason: "toolUse" }),
+      fauxAssistantMessage("AFTER_TIMEOUT"),
+    ]);
+    const harness = await openHarness(f.dir, f.models, probe);
+    vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+    await f.manager.startSession(f.session.id, f.workspace);
+    const conversation = (await harness.conversation(
+      f.storage.getSession(f.session.id)!.serverDurable!.conversationId!,
+      context,
+    ))!;
+    await conversation.configure(
+      { extensions: { add: [{ name: "restart-proof", tools: [probe] }] }, tools: [probe] },
+      context,
+    );
+    const observed = observe(f.manager, f.session.id);
+    const request = observed.next(
+      (m) => m.type === "extension_ui_request" && m.method === "confirm",
+    );
+    const end = observed.next((m) => m.type === "agent_end");
+    await f.manager.sendPrompt(f.session.id, "Expire a UI request");
+    const shown = (await request) as Extract<ServerMessage, { type: "extension_ui_request" }>;
+    expect(shown).toMatchObject({ timeout: 25, timeoutAt: expect.any(Number) });
+    await end;
+    expect(
+      await f.manager.respondToUIRequest(f.session.id, {
+        type: "extension_ui_response",
+        id: shown.id,
+        confirmed: true,
+      }),
+    ).toBe(false);
+    const history = (await f.manager.runCommand(f.session.id, { type: "get_messages" })) as Array<{
+      role: string;
+      toolName?: string;
+      content?: unknown;
+    }>;
+    expect(history.find((m) => m.role === "toolResult" && m.toolName === probe.name)).toMatchObject(
+      { content: [{ type: "text", text: "TIMED_OUT" }] },
+    );
+  });
+
   const compactionSettings = {
     compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 100, backgroundTokens: 0 },
     retry: { enabled: true, maxRetries: 2, baseDelayMs: 20 },
@@ -677,6 +1209,7 @@ describe("server durable managed runtime", () => {
       "write",
       "edit",
       "bash",
+      "ask",
       "ls",
       "find",
       "grep",

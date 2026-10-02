@@ -30,6 +30,8 @@ export interface AgentBackend {
   readonly isQueueReconciliationRequired: boolean;
   /** Native abort atomically withdraws its inbox; no host queue replacement. */
   readonly abortClearsQueuedModelTurns?: boolean;
+  /** Abort owns UI cancellation; don't answer the waiting tool just before stopping it. */
+  readonly cancelsExtensionUIOnAbort?: boolean;
   readonly showCacheMissNotices: boolean;
   readonly cacheMissModelPriceSource: CacheMissModelPriceSource;
 
@@ -76,7 +78,7 @@ export interface AgentBackend {
   ): Promise<QueuedModelTurnsAuthority | undefined>;
   clearQueuedModelTurns(permit: SessionRuntimeTransactionPermit): void;
   queuedMessages(): { steering: readonly string[]; followUp: readonly string[] };
-  respondToExtensionUIRequest(response: ExtensionUIResponsePayload): boolean;
+  respondToExtensionUIRequest(response: ExtensionUIResponsePayload): boolean | Promise<boolean>;
   reloadResources(reloadRuntimeConfig?: () => void): Promise<{ success: true }>;
   setModel(
     modelId: string,

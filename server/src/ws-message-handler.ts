@@ -153,7 +153,7 @@ export class WsMessageHandler {
 
       case "extension_ui_response": {
         recordE2EUIResponse(session.id, msg);
-        const ok = this.deps.sessions.respondToUIRequest(session.id, {
+        const ok = await this.deps.sessions.respondToUIRequest(session.id, {
           type: "extension_ui_response",
           id: msg.id,
           value: msg.value,

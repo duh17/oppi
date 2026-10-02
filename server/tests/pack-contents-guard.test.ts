@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   checkPackContents,
   checkPackedRouteContents,
+  checkPackedRelativeImports,
   extractRegistryPaths,
   sourceCandidatesForPackedJs,
 } from "../scripts/check-pack-contents.mjs";
@@ -90,9 +91,7 @@ describe("npm pack contents guard", () => {
           "src/routes/server-resources.js": `path === "/server/resources/skills"`,
         },
       }),
-    ).toEqual([
-      "routes/server-resources.js does not include /server/mobile-output-guide",
-    ]);
+    ).toEqual(["routes/server-resources.js does not include /server/mobile-output-guide"]);
   });
 
   it("fails when packed dist is missing a source registry path", () => {
@@ -118,6 +117,24 @@ describe("npm pack contents guard", () => {
     ).toEqual([]);
   });
 
+  it("rejects missing native extension imports in a packed dependency closure", () => {
+    const dist = {
+      "src/durable-harness.js": 'import { Native } from "../extensions/durable/native.js";',
+      "extensions/durable/native.js": 'import { UI } from "./ui.js";',
+    };
+    expect(checkPackedRelativeImports(dist)).toEqual([
+      "extensions/durable/native.js: packed relative import is missing extensions/durable/ui.js",
+    ]);
+    expect(
+      checkPackedRelativeImports({ ...dist, "extensions/durable/ui.js": "export const UI = {};" }),
+    ).toEqual([]);
+    expect(
+      checkPackedRelativeImports({
+        "src/loader.js": 'await import("../extensions/durable/native.js");',
+      }),
+    ).toEqual(["src/loader.js: packed relative import is missing extensions/durable/native.js"]);
+  });
+
   it("runs as a CLI against a dist tree", () => {
     const root = mkdtempSync(path.join(tmpdir(), "oppi-pack-contents-"));
     const scriptPath = path.join(root, "scripts", "check-pack-contents.mjs");
@@ -132,10 +149,7 @@ describe("npm pack contents guard", () => {
       );
       writeFileSync(path.join(root, "src", "routes", "server-resources.ts"), "export {};\n");
       writeFileSync(path.join(root, "dist", "src", "cli.js"), "export {};\n");
-      writeFileSync(
-        path.join(root, "dist", "src", "routes", "registry.js"),
-        'path: "/health";\n',
-      );
+      writeFileSync(path.join(root, "dist", "src", "routes", "registry.js"), 'path: "/health";\n');
       writeFileSync(
         path.join(root, "dist", "src", "routes", "server-resources.js"),
         'if (path === "/server/mobile-output-guide") {}\n',

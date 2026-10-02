@@ -50,7 +50,10 @@ export interface ExtensionUIResponse extends ExtensionUIResponsePayload {
 }
 
 export interface ExtensionUIResponseDeliveryOptions {
-  deliver: (response: ExtensionUIResponse, request: ExtensionUIRequest) => boolean;
+  deliver: (
+    response: ExtensionUIResponse,
+    request: ExtensionUIRequest,
+  ) => boolean | Promise<boolean>;
   metrics?: ServerMetricCollector;
   now?: () => number;
   broadcastSettled?: (message: ServerMessage) => void;
@@ -59,30 +62,43 @@ export interface ExtensionUIResponseDeliveryOptions {
 export function respondToExtensionUIRequest(
   active: ExtensionUIState | undefined,
   response: ExtensionUIResponse,
+  options: ExtensionUIResponseDeliveryOptions & {
+    deliver: (response: ExtensionUIResponse, request: ExtensionUIRequest) => boolean;
+  },
+): boolean;
+export function respondToExtensionUIRequest(
+  active: ExtensionUIState | undefined,
+  response: ExtensionUIResponse,
   options: ExtensionUIResponseDeliveryOptions,
-): boolean {
+): boolean | Promise<boolean>;
+export function respondToExtensionUIRequest(
+  active: ExtensionUIState | undefined,
+  response: ExtensionUIResponse,
+  options: ExtensionUIResponseDeliveryOptions,
+): boolean | Promise<boolean> {
   const req = active?.pendingUIRequests.get(response.id);
   if (!active || !req) {
     return false;
   }
 
-  if (!options.deliver(response, req)) {
-    return false;
-  }
-
-  settleExtensionUIRequest(active, response.id, {
-    cancelled: !!response.cancelled,
-    metrics: options.metrics,
-    now: options.now,
-    broadcastSettled: options.broadcastSettled,
-  });
-  return true;
+  const finish = (delivered: boolean): boolean => {
+    if (!delivered) return false;
+    settleExtensionUIRequest(active, response.id, {
+      cancelled: !!response.cancelled,
+      metrics: options.metrics,
+      now: options.now,
+      broadcastSettled: options.broadcastSettled,
+    });
+    return true;
+  };
+  const delivered = options.deliver(response, req);
+  return typeof delivered === "boolean" ? finish(delivered) : delivered.then(finish);
 }
 
 export function cancelPendingAskRequest(
   active: ExtensionUIState | undefined,
   options: ExtensionUIResponseDeliveryOptions,
-): boolean {
+): boolean | Promise<boolean> {
   const ask = active?.pendingAsk;
   if (!active || !ask) {
     return false;
@@ -97,17 +113,17 @@ export function cancelPendingAskRequest(
     },
     options,
   );
-  if (delivered) {
-    return true;
-  }
-
-  settleExtensionUIRequest(active, ask.requestId, {
-    cancelled: true,
-    metrics: options.metrics,
-    now: options.now,
-    broadcastSettled: options.broadcastSettled,
-  });
-  return false;
+  const finish = (ok: boolean): boolean => {
+    if (ok) return true;
+    settleExtensionUIRequest(active, ask.requestId, {
+      cancelled: true,
+      metrics: options.metrics,
+      now: options.now,
+      broadcastSettled: options.broadcastSettled,
+    });
+    return false;
+  };
+  return typeof delivered === "boolean" ? finish(delivered) : delivered.then(finish);
 }
 
 function notificationReplayKey(req: ExtensionUIRequest): string | undefined {

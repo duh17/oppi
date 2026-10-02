@@ -222,7 +222,7 @@ export interface AgentRuntimeCommandTransport {
   /** True when this runtime currently owns a live process/bridge for the session. */
   isSessionConnected(sessionId: string): boolean;
   getActiveSession(sessionId: string): Session | undefined;
-  respondToUIRequest(sessionId: string, response: ExtensionUIResponse): boolean;
+  respondToUIRequest(sessionId: string, response: ExtensionUIResponse): boolean | Promise<boolean>;
   forwardClientCommand(
     sessionId: string,
     message: RuntimeClientCommand,

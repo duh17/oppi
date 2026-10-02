@@ -117,6 +117,8 @@ const GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_FULL_FILES = new Set([
   "server/src/live-activity.ts",
   "server/src/pi-tui-mirror-runtime.ts",
   "server/src/sdk-ui-bridge.ts",
+  "server/src/durable-ui-projection.ts",
+  "pi-extensions/durable-ui.ts",
   "server/src/session-attention.ts",
   "server/src/stream.ts",
 ]);

@@ -43,6 +43,13 @@ import {
 } from "./session-runtime-transaction.js";
 import { isThinkingLevel, THINKING_LEVELS, type ThinkingLevel } from "./thinking-levels.js";
 import type { Session, Workspace } from "./types.js";
+import { DurableAsk } from "../extensions/durable/ask/durable.js";
+import {
+  DurableWorkingWords,
+  ensureWorkingWords,
+} from "../extensions/durable/working-words/durable.js";
+import { DurableUIProjection } from "./durable-ui-projection.js";
+import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 
 export class DurableNotSupportedError extends Error {
   readonly code = "server_durable_not_supported";
@@ -68,12 +75,14 @@ const RequestContent = defineDocFamily<{ content: string }, null>({
 export class DurableBackend implements AgentBackend {
   private readonly transactions = new SessionRuntimeTransaction();
   private readonly projection: DurableEventProjection;
+  private ui!: DurableUIProjection;
   private disposed = false;
   private eventsStarted = false;
   private admissions: Promise<void> = Promise.resolve();
   private detaching?: Promise<void>;
   private readonly registry: ModelRegistry;
   readonly abortClearsQueuedModelTurns = true;
+  readonly cancelsExtensionUIOnAbort = true;
   readonly isQueueReconciliationRequired = false;
   readonly showCacheMissNotices = false;
 
@@ -130,6 +139,43 @@ export class DurableBackend implements AgentBackend {
           "A bound server durable session cannot switch execution runtime or sandbox workspace",
         );
       conversation = existing;
+      // Bound conversations store exact extension/tool names. Enroll the native
+      // UI ports on attachment too, without overriding their launch tool policy.
+      await conversation.configure(
+        { extensions: { add: [DurableAsk, DurableWorkingWords] } },
+        BACKGROUND_CONTEXT,
+      );
+      const agent = await conversation.agent(BACKGROUND_CONTEXT);
+      const policy = session.launch?.tools;
+      const selected = new Set(agent.tools.map((tool) => tool.name));
+      const additions = [DurableAsk, DurableWorkingWords]
+        .flatMap((extension) => extension.tools ?? [])
+        .filter(
+          (tool) =>
+            !selected.has(tool.name) &&
+            !policy?.noTools &&
+            (!policy?.allowed || policy.allowed.includes(tool.name)) &&
+            !policy?.excluded?.includes(tool.name),
+        );
+      if (additions.length) {
+        const definitions = new Map(
+          agent.extensions.flatMap((extension) =>
+            (extension.tools ?? []).map((tool) => [tool.name, tool] as const),
+          ),
+        );
+        await conversation.configure(
+          {
+            tools: [
+              ...agent.tools.flatMap((tool) => {
+                const definition = definitions.get(tool.name);
+                return definition ? [definition] : [];
+              }),
+              ...additions,
+            ],
+          },
+          BACKGROUND_CONTEXT,
+        );
+      }
     } else {
       const registry = new ModelRegistry(models);
       const settings = SettingsManager.create(hostCwd, getAgentDir(), { projectTrusted: false });
@@ -149,6 +195,7 @@ export class DurableBackend implements AgentBackend {
       const policy = session.launch?.tools;
       const tools = [
         ...(CodingTools.tools ?? []),
+        ...(DurableAsk.tools ?? []),
         ...(sandbox ? (DurableSandboxTools.tools ?? []) : []),
       ].filter(
         (tool) =>
@@ -172,7 +219,9 @@ export class DurableBackend implements AgentBackend {
             if (sandbox) runtime.workspaceId = workspace.id;
           },
           agent: {
-            extensions: sandbox ? [CodingTools, DurableSandboxTools] : [CodingTools],
+            extensions: sandbox
+              ? [CodingTools, DurableSandboxTools, DurableAsk, DurableWorkingWords]
+              : [CodingTools, DurableAsk, DurableWorkingWords],
             model: { provider: model.provider, modelId: model.id },
             thinkingLevel:
               session.thinkingLevel !== undefined && isThinkingLevel(session.thinkingLevel)
@@ -207,10 +256,11 @@ export class DurableBackend implements AgentBackend {
       const env = new GondolinExecutionEnv(vm, workspace.id, cwd);
       options.owner.bindSandboxEnv(conversation.id, env);
     }
+    await conversation.commit((tx) => ensureWorkingWords(tx, conversation.id), BACKGROUND_CONTEXT);
     const view = await conversation.viewState(BACKGROUND_CONTEXT);
     try {
       const events = await watchEvents(harness, conversation.id, BACKGROUND_CONTEXT);
-      return new DurableBackend(
+      const backend = new DurableBackend(
         harness,
         options.owner,
         conversation,
@@ -220,6 +270,8 @@ export class DurableBackend implements AgentBackend {
         events,
         options.onEvent,
       );
+      backend.ui = await DurableUIProjection.create(harness, conversation, options.onEvent);
+      return backend;
     } catch (error) {
       view.dispose();
       throw error;
@@ -230,6 +282,8 @@ export class DurableBackend implements AgentBackend {
   startEvents(): void {
     if (this.eventsStarted) return;
     this.eventsStarted = true;
+    this.ui.start();
+    if (!this.owner.isResumeHeld) this.harness.resume();
     for (const event of this.projection.snapshot(this.events.snapshot, this.owner.isResumeHeld))
       this.onEvent(event);
     this.events.start(async (events) => {
@@ -413,6 +467,7 @@ export class DurableBackend implements AgentBackend {
   detachForRestart(): Promise<void> {
     return (this.detaching ??= (async () => {
       this.disposed = true;
+      await this.ui.stop();
       await this.events.stop();
       this.view.dispose();
     })());
@@ -611,8 +666,9 @@ export class DurableBackend implements AgentBackend {
   clearQueuedModelTurns(): never {
     return this.unsupported("clearQueuedModelTurns");
   }
-  respondToExtensionUIRequest(): never {
-    return this.unsupported("respondToExtensionUIRequest");
+  respondToExtensionUIRequest(response: ExtensionUIResponsePayload): Promise<boolean> {
+    this.assertOpen();
+    return this.ui.respond(response);
   }
   reloadResources(): never {
     return this.unsupported("reloadResources");

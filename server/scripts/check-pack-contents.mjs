@@ -24,9 +24,7 @@ export function sourceCandidatesForPackedJs(jsRelPath) {
 
 export function extractRegistryPaths(registrySource) {
   return [
-    ...new Set(
-      [...registrySource.matchAll(/path:\s*"(\/[^"]+)"/g)].map((match) => match[1]),
-    ),
+    ...new Set([...registrySource.matchAll(/path:\s*"(\/[^"]+)"/g)].map((match) => match[1])),
   ];
 }
 
@@ -65,11 +63,25 @@ export function checkPackedRouteContents({ registrySource, distJsByRelativePath 
   return failures;
 }
 
+export function checkPackedRelativeImports(distJsByRelativePath) {
+  const failures = [];
+  for (const [relativePath, source] of Object.entries(distJsByRelativePath)) {
+    const imports = source.matchAll(/(?:from\s*|import\s*\()\s*["'](\.{1,2}\/[^"']+\.js)["']/gu);
+    for (const [, specifier] of imports) {
+      const target = path.posix.normalize(
+        path.posix.join(path.posix.dirname(relativePath), specifier),
+      );
+      if (!Object.hasOwn(distJsByRelativePath, target))
+        failures.push(`${relativePath}: packed relative import is missing ${target}`);
+    }
+  }
+  return failures;
+}
+
 export function packedJsRelPathsFromTarListing(names) {
   return names
     .filter(
-      (name) =>
-        name.startsWith(PACKED_JS_PREFIX) && name.endsWith(".js") && !name.endsWith("/"),
+      (name) => name.startsWith(PACKED_JS_PREFIX) && name.endsWith(".js") && !name.endsWith("/"),
     )
     .map((name) => name.slice(PACKED_JS_PREFIX.length));
 }
@@ -106,7 +118,9 @@ function parseArgs(argv) {
       i += 1;
       continue;
     }
-    throw new Error(flag === "--tarball" ? "--tarball requires a path" : `Unknown argument: ${flag}`);
+    throw new Error(
+      flag === "--tarball" ? "--tarball requires a path" : `Unknown argument: ${flag}`,
+    );
   }
   return args;
 }
@@ -152,6 +166,7 @@ function runCli() {
         registrySource: readFileSync(path.join(srcDir, "routes", "registry.ts"), "utf8"),
         distJsByRelativePath,
       }),
+      ...checkPackedRelativeImports(distJsByRelativePath),
     ];
 
     if (failures.length > 0) {

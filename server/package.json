@@ -45,7 +45,7 @@
     "typecheck": "node node_modules/@typescript/native/bin/tsc --noEmit",
     "build": "bash -c 'npm run clean && npm run compile && node scripts/copy-oppi-docs.mjs && chmod +x dist/src/cli.js'",
     "prepare": "bash -c 'npm run clean && npm run compile && node scripts/copy-oppi-docs.mjs && chmod +x dist/src/cli.js'",
-    "dev": "tsx watch src/cli.ts serve",
+    "dev": "tsx --preserve-symlinks watch src/cli.ts serve",
     "start": "node dist/src/cli.js serve",
     "prepublishOnly": "npm run build",
     "prepack": "npm run build && npm run check:pi-release-versions && npm run check:pack-contents",

@@ -336,7 +336,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
    * Send extension_ui_response back to pi (in-process gate).
    * Called by server.ts when phone responds to a UI dialog.
    */
-  respondToUIRequest(sessionId: string, response: ExtensionUIResponse): boolean {
+  respondToUIRequest(sessionId: string, response: ExtensionUIResponse): boolean | Promise<boolean> {
     const key = this.sessionKey(sessionId);
     const active = this.active.get(key);
     if (!active) {
@@ -811,9 +811,15 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       return;
     }
 
+    if (active.sdkBackend.cancelsExtensionUIOnAbort) return;
     cancelPendingAskRequest(active, {
       metrics: this.opsMetrics ?? undefined,
-      deliver: (payload) => active.sdkBackend.respondToExtensionUIRequest(payload),
+      deliver: (payload) => {
+        const delivered = active.sdkBackend.respondToExtensionUIRequest(payload);
+        if (typeof delivered !== "boolean")
+          throw new Error("Backends with async UI answers must own Abort cancellation");
+        return delivered;
+      },
       broadcastSettled: (message) => this.broadcast(key, message),
     });
   }
