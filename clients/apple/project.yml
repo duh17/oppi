@@ -521,6 +521,8 @@ targets:
         type: group
     dependencies:
       - target: Oppi
+      - framework: Vendor/GhosttyVt/ghostty-vt.xcframework
+        embed: false
       - package: swift-nio
         product: NIOCore
       - package: swift-nio

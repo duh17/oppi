@@ -23,6 +23,13 @@ struct ScreenshotPreviewView: View {
         switch ScreenshotPreviewConfig.screen {
         case "workspace-edit":
             WorkspaceEditPreview()
+        case "ssh-terminal-settings":
+            // Real Settings/setup surfaces, not a mocked SSH connection. This
+            // makes enrollment/refusal QA reachable without pairing a server.
+            NavigationStack { SettingsView() }
+                .environment(ThemeStore())
+                .environment(AppNavigation())
+                .accessibilityIdentifier("screenshot.ready")
         case "whats-new-build52-light", "whats-new-build51-light", "whats-new-build50-light", "whats-new-build49-light":
             WhatsNewScreenshotPreview(themeID: .light)
         case "whats-new-build52-dark", "whats-new-build51-dark", "whats-new-build50-dark", "whats-new-build49-dark":

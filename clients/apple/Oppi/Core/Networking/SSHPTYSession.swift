@@ -15,6 +15,35 @@ enum SSHPTYEvent: Sendable, Equatable {
 
 typealias SSHPTYByteSink = @Sendable (SSHPTYEvent) -> Void
 
+/// Consumer-owned flow control for inbound terminal output.
+///
+/// The PTY child channel reads on demand. While the consumer is paused no new
+/// read is issued, so received bytes stay in NIOSSH's window-limited buffer, no
+/// window adjust is sent, and the remote stops at the end of the receive window.
+/// Pause and resume may be called from any thread.
+final class SSHPTYInboundFlow: Sendable {
+    private struct State {
+        var paused = false
+        var wake: (@Sendable () -> Void)?
+    }
+
+    private let state = Mutex(State())
+
+    func pause() { state.withLock { $0.paused = true } }
+
+    func resume() {
+        let wake: (@Sendable () -> Void)? = state.withLock { state in
+            guard state.paused else { return nil }
+            state.paused = false
+            return state.wake
+        }
+        wake?()
+    }
+
+    fileprivate var isPaused: Bool { state.withLock { $0.paused } }
+    fileprivate func attach(_ wake: (@Sendable () -> Void)?) { state.withLock { $0.wake = wake } }
+}
+
 struct SSHPTYConfiguration: Sendable {
     let username: String
     let identity: SSHIdentity
@@ -24,6 +53,8 @@ struct SSHPTYConfiguration: Sendable {
     var rows = 24
     var pixelWidth = 0
     var pixelHeight = 0
+    /// Optional consumer backpressure. Without it output is read as it arrives.
+    var inboundFlow: SSHPTYInboundFlow?
 }
 
 enum SSHPTYSessionError: Error, Equatable, Sendable {
@@ -103,14 +134,20 @@ final class SSHPTYSession: @unchecked Sendable {
             parent = try await ClientBootstrap(group: loop)
                 .channelInitializer { channel in
                     channel.eventLoop.makeCompletedFuture {
+                        var client = SSHClientConfiguration(
+                            userAuthDelegate: PublicKeyAuthDelegate(
+                                username: configuration.username,
+                                identity: configuration.identity
+                            ),
+                            serverAuthDelegate: PTYHostKeyDelegate(saved: configuration.savedHostKey)
+                        )
+                        // NIOSSH advertises a 64-packet receive window. The 128 KiB
+                        // default makes that 8 MiB, which one read can deliver at
+                        // once; the minimum keeps it at 2 MiB so read backpressure
+                        // bounds what the consumer must hold.
+                        client.maximumPacketSize = 32 * 1024
                         let ssh = NIOSSHHandler(
-                            role: .client(.init(
-                                userAuthDelegate: PublicKeyAuthDelegate(
-                                    username: configuration.username,
-                                    identity: configuration.identity
-                                ),
-                                serverAuthDelegate: PTYHostKeyDelegate(saved: configuration.savedHostKey)
-                            )),
+                            role: .client(client),
                             allocator: channel.allocator,
                             inboundChildChannelInitializer: nil
                         )
@@ -385,6 +422,12 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
     private let sink: SSHPTYByteSink
     private var openingState = OpeningState.waitingForPTY
     private var reportedEOF = false
+    /// True from a `read()` until the batch it asks for has been delivered.
+    private var readOutstanding = false
+    /// Exit reports wait for the next delivered read batch (or close). Requests
+    /// bypass NIOSSH's data buffer, so reporting one immediately could pass
+    /// output that arrived before it but is not delivered yet.
+    private var heldExitEvents = [SSHPTYEvent]()
 
     init(configuration: SSHPTYConfiguration, ready: EventLoopPromise<Void>, sink: @escaping SSHPTYByteSink) {
         self.configuration = configuration
@@ -400,6 +443,19 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
                 throw ChannelError.operationUnsupported
             }
             try options.setOption(ChannelOptions.allowRemoteHalfClosure, value: true)
+            // Reads are issued on demand so the consumer can apply backpressure.
+            try options.setOption(ChannelOptions.autoRead, value: false)
+            if let flow = configuration.inboundFlow {
+                let eventLoop = context.eventLoop
+                let handler = NIOLoopBound(self, eventLoop: eventLoop)
+                let box = NIOLoopBound(context, eventLoop: eventLoop)
+                flow.attach {
+                    eventLoop.execute {
+                        guard box.value.channel.isActive else { return }
+                        handler.value.requestRead(context: box.value)
+                    }
+                }
+            }
         } catch {
             ready.fail(error)
             context.close(promise: nil)
@@ -420,7 +476,30 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
         requestWrite.futureResult.whenFailure { [ready] error in ready.fail(error) }
         context.triggerUserOutboundEvent(request, promise: requestWrite)
         context.fireChannelActive()
+        requestRead(context: context)
     }
+
+    private func requestRead(context: ChannelHandlerContext) {
+        guard !readOutstanding, configuration.inboundFlow?.isPaused != true else { return }
+        readOutstanding = true
+        context.read()
+    }
+
+    func channelReadComplete(context: ChannelHandlerContext) {
+        // Everything buffered has now been delivered to the sink.
+        readOutstanding = false
+        flushHeldExitEvents()
+        context.fireChannelReadComplete()
+        requestRead(context: context)
+    }
+
+    private func flushHeldExitEvents() {
+        let held = heldExitEvents
+        heldExitEvents.removeAll()
+        for event in held { sink(event) }
+    }
+
+
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         switch event {
@@ -452,9 +531,9 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
             }
             context.close(promise: nil)
         case let status as SSHChannelRequestEvent.ExitStatus:
-            sink(.exitStatus(status.exitStatus))
+            heldExitEvents.append(.exitStatus(status.exitStatus))
         case let signal as SSHChannelRequestEvent.ExitSignal:
-            sink(.exitSignal(signal.signalName))
+            heldExitEvents.append(.exitSignal(signal.signalName))
         case let channelEvent as ChannelEvent where channelEvent == .inputClosed:
             reportEOF()
             context.fireUserInboundEventTriggered(event)
@@ -481,12 +560,14 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
 
     func channelInactive(context: ChannelHandlerContext) {
         ready.fail(ChannelError.eof)
+        flushHeldExitEvents()
         reportEOF()
         sink(.closed)
         context.fireChannelInactive()
     }
 
     func handlerRemoved(context: ChannelHandlerContext) {
+        configuration.inboundFlow?.attach(nil)
         ready.fail(ChannelError.ioOnClosedChannel)
     }
 

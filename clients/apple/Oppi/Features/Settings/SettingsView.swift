@@ -394,6 +394,13 @@ struct SettingsView: View {
                     }
                 }
                 .accessibilityIdentifier("settings.tailscale")
+
+                NavigationLink {
+                    SSHTerminalSetupView()
+                } label: {
+                    Label("SSH Terminal", systemImage: "terminal")
+                }
+                .accessibilityIdentifier("settings.sshTerminal")
             } header: {
                 Text("Network")
             } footer: {

@@ -193,6 +193,69 @@ struct SSHPTYSessionTests {
         await session.cancel()
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func slowConsumerBackpressuresRemoteOutputInsteadOfOverflowingOrDroppingBytes() async throws {
+        let fixture = try await SSHFixture.start(maximumPacketSize: 32 * 1024)
+        defer { fixture.close() }
+        // 12 MiB is three times the queue's fail-loud ceiling. The consumer is far
+        // slower than loopback, so without read backpressure the queue overflows.
+        let queue = SSHTerminalEventQueue()
+        let session = try await fixture.connect(flow: queue.flow, sink: queue.push)
+        let total = 12 * 1024 * 1024
+        let chunkSize = 64 * 1024
+
+        let sender = Task {
+            var offset = 0
+            while offset < total {
+                var chunk = Data(count: chunkSize)
+                chunk.withUnsafeMutableBytes { buffer in
+                    for index in 0..<buffer.count { buffer[index] = backpressurePattern(at: offset + index) }
+                }
+                try await fixture.send(chunk)
+                offset += chunkSize
+            }
+            fixture.finishTerminal(exitStatus: 0)
+        }
+
+        var received = 0
+        var mismatches = 0
+        var receivedWhenExitReported: Int?
+        var events = [SSHPTYEvent]()
+        var firstBatch = true
+        for await _ in queue.wake {
+            let items = queue.drain()
+            var batchBytes = 0
+            for item in items {
+                switch item {
+                case .event(.data(let bytes)):
+                    for (index, byte) in bytes.enumerated() where byte != backpressurePattern(at: received + index) { mismatches += 1 }
+                    received += bytes.count
+                    batchBytes += bytes.count
+                case .event(let event):
+                    events.append(event)
+                    if case .exitStatus = event { receivedWhenExitReported = received }
+                case .overflow:
+                    Issue.record("Queue overflowed: remote output was not slowed by backpressure")
+                }
+            }
+            // A stalled main actor on the first batch, then a slow consumer.
+            try await Task.sleep(for: firstBatch ? .milliseconds(1500) : .milliseconds(20))
+            firstBatch = false
+            queue.release(bytes: batchBytes)
+        }
+        try await sender.value
+
+        #expect(received == total)
+        #expect(mismatches == 0)
+        // Exit status is reported only after every byte that preceded it.
+        #expect(receivedWhenExitReported == total)
+        #expect(events.contains(.exitStatus(0)))
+        #expect(events.last == .closed)
+        // Bounded by the low-water mark plus one 2 MiB receive window, not by the volume.
+        #expect(queue.peakQueuedBytes < 3 * 1024 * 1024)
+        await session.cancel()
+    }
+
     @Test func simulatorIdentityIsPersistentExportableAndExplicitlySoftwareBacked() throws {
         let storage = MemorySSHIdentityStorage()
         let first = try SSHIdentityKeyStore.loadOrCreate(storage: storage)
@@ -228,6 +291,10 @@ struct SSHPTYSessionTests {
             try await session.send(Data([1]))
         }
     }
+}
+
+private func backpressurePattern(at offset: Int) -> UInt8 {
+    UInt8(truncatingIfNeeded: offset ^ (offset >> 8) ^ (offset >> 16))
 }
 
 private final class MemorySSHIdentityStorage: SSHIdentitySealedStorage, @unchecked Sendable {
@@ -359,11 +426,13 @@ private final class SSHFixture: @unchecked Sendable {
         )
     }
 
-    func connect(sink: @escaping SSHPTYByteSink) async throws -> SSHPTYSession {
-        try await SSHPTYSession.connect(
-            configuration: clientConfiguration(
-                savedHostKey: SSHHostKey(openSSH: String(openSSHPublicKey: hostKey.publicKey))
-            ),
+    func connect(flow: SSHPTYInboundFlow? = nil, sink: @escaping SSHPTYByteSink) async throws -> SSHPTYSession {
+        var configuration = clientConfiguration(
+            savedHostKey: SSHHostKey(openSSH: String(openSSHPublicKey: hostKey.publicKey))
+        )
+        configuration.inboundFlow = flow
+        return try await SSHPTYSession.connect(
+            configuration: configuration,
             socket: clientSocket,
             sink: sink
         )
