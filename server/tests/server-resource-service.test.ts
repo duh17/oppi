@@ -295,6 +295,41 @@ describe("ServerResourceService catalogs", () => {
   });
 });
 
+describe("ServerResourceService optional Pi tools", () => {
+  it("discovers tools registered off, honors -builtin settings, and validates defaultTools against them", async () => {
+    const fixture = makeFixture();
+    mkdirSync(join(fixture.agentDir, "extensions"), { recursive: true });
+    writeFileSync(
+      join(fixture.agentDir, "extensions", "opt-in.js"),
+      "export default function (pi) { pi.registerTool({ name: 'opt_in_tool', label: 'Opt in', description: 'Off until enabled', defaultActive: false, parameters: { type: 'object', properties: {} }, execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }) }); }\n",
+    );
+    const service = makeService(fixture);
+
+    expect((await service.listExtensions()).optionalTools.map((tool) => tool.name)).toEqual([
+      "codemode",
+      "opt_in_tool",
+      "tool_search",
+    ]);
+    expect(await service.setPiDefaultTools(["+codemode", "-bash", "+opt_in_tool"])).toEqual({
+      defaultTools: ["+codemode", "-bash", "+opt_in_tool"],
+    });
+
+    writeFileSync(
+      join(fixture.agentDir, "settings.json"),
+      JSON.stringify({ extensions: ["-builtin:codemode"], defaultTools: ["read"] }),
+    );
+    expect((await service.listExtensions()).optionalTools.map((tool) => tool.name)).toEqual([
+      "opt_in_tool",
+      "tool_search",
+    ]);
+    await expect(service.setPiDefaultTools(["read", "codemode"])).rejects.toThrow(/built-in/i);
+    expect(JSON.parse(readFileSync(join(fixture.agentDir, "settings.json"), "utf8"))).toEqual({
+      extensions: ["-builtin:codemode"],
+      defaultTools: ["read"],
+    });
+  });
+});
+
 describe("ServerResourceService mutations and skill details", () => {
   it("persists the Pi default provider and model without replacing other settings", async () => {
     const fixture = makeFixture();

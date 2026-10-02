@@ -33,6 +33,8 @@ enum AgentManagementPresentation {
         "Uses Pi's standard built-in tools. Extension tools stay enabled."
     static let piToolsExactFooter =
         "Only the selected built-in tools are available. Extension tools stay enabled."
+    static let piOptionalToolsFooter =
+        "Pi and its extensions register these tools off; turning one on adds it to Pi's defaultTools. MCP servers can still turn on codemode or tool_search when their exposure needs it."
 
     static func rows(savedAgents: [AgentDefinitionSummary]) -> [AgentManagementRow] {
         [.pi] + savedAgents.map(AgentManagementRow.saved)
@@ -108,10 +110,12 @@ enum AgentManagementPresentation {
         leaveHasLoadedTools: Bool,
         leaveMode: AgentToolSelectionMode,
         leaveSelectedNames: Set<String>,
+        leaveOptionalNames: Set<String>,
         laterHasLoadedTools _: Bool,
         laterMode _: AgentToolSelectionMode,
         laterSelectedNames _: Set<String>,
         builtInTools: [ServerToolSummary],
+        optionalTools: [ServerToolSummary],
         pickerWasPresented: Bool,
         pickerIsPresented: Bool,
         selectionChangedAfterLoad: Bool,
@@ -125,10 +129,72 @@ enum AgentManagementPresentation {
         if namesChanged && leaveMode == .inherit { return .skip }
         let dismissedPicker = pickerWasPresented && !pickerIsPresented
         guard dismissedPicker || selectionChangedAfterLoad else { return .skip }
-        let desired: [String]? = leaveMode == .exact
-            ? piExactToolNames(selectedNames: leaveSelectedNames, builtInTools: builtInTools)
-            : nil
-        return .write(desired)
+        return .write(piDefaultTools(
+            mode: leaveMode,
+            selectedNames: leaveSelectedNames,
+            optionalNames: leaveOptionalNames,
+            builtInTools: builtInTools,
+            optionalTools: optionalTools
+        ))
+    }
+
+    struct PiToolsSelection: Equatable {
+        let mode: AgentToolSelectionMode
+        let builtInNames: Set<String>
+        /// Turned-on tools that Pi extensions register off, such as `codemode`.
+        let optionalNames: Set<String>
+    }
+
+    /// Reads Pi's `defaultTools` the way Pi resolves it: plain names replace the standard
+    /// tools, then `+name` / `-name` apply in order. A modifier-only list that leaves the
+    /// built-ins standard, like Pi's documented `["+codemode"]`, stays on Pi defaults.
+    static func piToolsSelection(
+        defaultTools: [String]?,
+        builtInTools: [ServerToolSummary],
+        optionalTools: [ServerToolSummary]
+    ) -> PiToolsSelection {
+        let standard = builtInTools.filter { $0.defaultEnabled == true }.map(\.name)
+        guard let defaultTools else {
+            return PiToolsSelection(mode: .inherit, builtInNames: Set(standard), optionalNames: [])
+        }
+        let plain = defaultTools.filter { !isPiToolModifier($0) }
+        let modifiesStandard = plain.isEmpty && !defaultTools.isEmpty
+        var resolved = modifiesStandard ? standard : plain
+        for entry in defaultTools where isPiToolModifier(entry) {
+            let name = String(entry.dropFirst())
+            if entry.hasPrefix("+") {
+                if !name.isEmpty, !resolved.contains(name) { resolved.append(name) }
+            } else if let index = resolved.firstIndex(of: name) {
+                resolved.remove(at: index)
+            }
+        }
+        let resolvedSet = Set(resolved)
+        let builtInNames = resolvedSet.intersection(builtInTools.map(\.name))
+        return PiToolsSelection(
+            mode: modifiesStandard && builtInNames == Set(standard) ? .inherit : .exact,
+            builtInNames: builtInNames,
+            optionalNames: resolvedSet.intersection(optionalTools.map(\.name))
+        )
+    }
+
+    /// `defaultTools` for a Pi Tools selection. On Pi defaults, optional tools are written as
+    /// `+name` so the standard built-ins keep following Pi.
+    static func piDefaultTools(
+        mode: AgentToolSelectionMode,
+        selectedNames: Set<String>,
+        optionalNames: Set<String>,
+        builtInTools: [ServerToolSummary],
+        optionalTools: [ServerToolSummary]
+    ) -> [String]? {
+        let optional = optionalTools.map(\.name).filter { optionalNames.contains($0) }
+        guard mode == .exact else {
+            return optional.isEmpty ? nil : optional.map { "+\($0)" }
+        }
+        return piExactToolNames(selectedNames: selectedNames, builtInTools: builtInTools) + optional
+    }
+
+    private static func isPiToolModifier(_ entry: String) -> Bool {
+        entry.hasPrefix("+") || entry.hasPrefix("-")
     }
 
     /// Skip replacing the in-memory selection while a write is in flight or the picker is open.
@@ -145,7 +211,11 @@ enum AgentManagementPresentation {
 
     static func piToolsSummary(defaultTools: [String]?) -> String {
         guard let defaultTools else { return piStandardToolsSummary }
-        return defaultTools.isEmpty ? "None" : defaultTools.joined(separator: ", ")
+        if defaultTools.isEmpty { return "None" }
+        if defaultTools.allSatisfy(isPiToolModifier) {
+            return ([piStandardToolsSummary] + defaultTools).joined(separator: " ")
+        }
+        return defaultTools.joined(separator: ", ")
     }
 
     static func piExactToolNames(
@@ -321,8 +391,10 @@ struct PiAgentDetailView: View {
     @State private var prompt: PiSystemPromptSnapshot?
     @State private var defaultTools: [String]?
     @State private var builtInTools: [ServerToolSummary] = []
+    @State private var optionalTools: [ServerToolSummary] = []
     @State private var toolSelectionMode: AgentToolSelectionMode = .inherit
     @State private var selectedToolNames: Set<String> = []
+    @State private var selectedOptionalToolNames: Set<String> = []
     @State private var hasLoadedTools = false
     @State private var isApplyingLoadedTools = false
     @State private var toolsSave = AgentManagementPresentation.PiToolsSaveCoordinator()
@@ -412,7 +484,7 @@ struct PiAgentDetailView: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("agents.pi.tools")
             } footer: {
-                Text("Chooses Pi's built-in tools. Extension tools stay enabled.")
+                Text("Chooses Pi's built-in tools and optional tools such as codemode. Extension tools stay enabled.")
             }
 
             Section {
@@ -435,9 +507,12 @@ struct PiAgentDetailView: View {
                 selectedNames: $selectedToolNames,
                 builtInTools: builtInTools,
                 defaultSelection: defaultBuiltInSelection,
+                optionalTools: optionalTools,
+                selectedOptionalNames: $selectedOptionalToolNames,
                 title: "Pi Tools",
                 inheritFooter: AgentManagementPresentation.piToolsInheritFooter,
-                exactFooter: AgentManagementPresentation.piToolsExactFooter
+                exactFooter: AgentManagementPresentation.piToolsExactFooter,
+                optionalToolsFooter: AgentManagementPresentation.piOptionalToolsFooter
             )
         }
         .task {
@@ -468,6 +543,14 @@ struct PiAgentDetailView: View {
                 pickerIsPresented: isShowingPiTools,
                 selectionChangedAfterLoad: true,
                 namesChanged: true
+            )
+        }
+        .onChange(of: selectedOptionalToolNames) { _, _ in
+            syncDisplayedDefaultTools()
+            saveCurrentTools(
+                pickerWasPresented: isShowingPiTools,
+                pickerIsPresented: isShowingPiTools,
+                selectionChangedAfterLoad: true
             )
         }
         .sheet(isPresented: $isShowingSystemPromptSession) {
@@ -529,12 +612,13 @@ struct PiAgentDetailView: View {
 
     private func syncDisplayedDefaultTools() {
         guard hasLoadedTools else { return }
-        defaultTools = toolSelectionMode == .exact
-            ? AgentManagementPresentation.piExactToolNames(
-                selectedNames: selectedToolNames,
-                builtInTools: builtInTools
-            )
-            : nil
+        defaultTools = AgentManagementPresentation.piDefaultTools(
+            mode: toolSelectionMode,
+            selectedNames: selectedToolNames,
+            optionalNames: selectedOptionalToolNames,
+            builtInTools: builtInTools,
+            optionalTools: optionalTools
+        )
     }
 
     @MainActor
@@ -551,6 +635,7 @@ struct PiAgentDetailView: View {
             let (resolvedPrompt, resolvedTools, catalog) = try await (fetchedPrompt, fetchedTools, fetchedCatalog)
             prompt = resolvedPrompt
             builtInTools = catalog.builtInTools
+            optionalTools = catalog.optionalTools ?? []
             applyLoadedDefaultTools(resolvedTools.defaultTools)
             error = nil
         } catch {
@@ -575,13 +660,14 @@ struct PiAgentDetailView: View {
         isApplyingLoadedTools = true
         toolsSave = AgentManagementPresentation.PiToolsSaveCoordinator(persisted: loaded)
         defaultTools = loaded
-        if let loaded {
-            toolSelectionMode = .exact
-            selectedToolNames = Set(loaded)
-        } else {
-            toolSelectionMode = .inherit
-            selectedToolNames = defaultBuiltInSelection
-        }
+        let selection = AgentManagementPresentation.piToolsSelection(
+            defaultTools: loaded,
+            builtInTools: builtInTools,
+            optionalTools: optionalTools
+        )
+        toolSelectionMode = selection.mode
+        selectedToolNames = selection.builtInNames
+        selectedOptionalToolNames = selection.optionalNames
         hasLoadedTools = true
         Task { @MainActor in
             isApplyingLoadedTools = false
@@ -598,10 +684,12 @@ struct PiAgentDetailView: View {
             leaveHasLoadedTools: hasLoadedTools,
             leaveMode: toolSelectionMode,
             leaveSelectedNames: selectedToolNames,
+            leaveOptionalNames: selectedOptionalToolNames,
             laterHasLoadedTools: hasLoadedTools,
             laterMode: toolSelectionMode,
             laterSelectedNames: selectedToolNames,
             builtInTools: builtInTools,
+            optionalTools: optionalTools,
             pickerWasPresented: pickerWasPresented,
             pickerIsPresented: pickerIsPresented,
             selectionChangedAfterLoad: selectionChangedAfterLoad,

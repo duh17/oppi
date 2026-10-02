@@ -80,11 +80,16 @@ export function readPiDefaultTools(agentDir: string): PiDefaultToolsSnapshot {
   return { defaultTools: parseDefaultTools(settings.defaultTools) };
 }
 
+/**
+ * `optionalToolNames` are tools loaded extensions register off (Pi's `codemode`, `tool_search`).
+ * Entries may carry Pi's `+name` / `-name` modifiers, which change Pi's standard selection.
+ */
 export function writePiDefaultTools(
   agentDir: string,
   defaultTools: string[] | null,
+  optionalToolNames: readonly string[] = [],
 ): PiDefaultToolsSnapshot {
-  const validated = validateDefaultTools(defaultTools);
+  const validated = validateDefaultTools(defaultTools, optionalToolNames);
   let snapshot: PiDefaultToolsSnapshot = { defaultTools: validated };
   // Match Pi FileSettingsStorage.withLock so Oppi and Pi serialize settings.json writes.
   // ServerResourceService.withMutationLock only serializes Oppi writers.
@@ -258,19 +263,27 @@ function parseDefaultTools(value: unknown): string[] {
   return [...value];
 }
 
-function validateDefaultTools(value: string[] | null): string[] | null {
+function validateDefaultTools(
+  value: string[] | null,
+  optionalToolNames: readonly string[],
+): string[] | null {
   if (value === null) return null;
+  const invalid = (): PiGlobalConfigError =>
+    new PiGlobalConfigError(
+      "validation",
+      "defaultTools must be null or an array of built-in Pi tool names or optional tools Pi registers off",
+    );
   if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
-    throw new PiGlobalConfigError(
-      "validation",
-      "defaultTools must be null or an array of built-in Pi tool names",
-    );
+    throw invalid();
   }
-  if (value.some((name) => !BUILTIN_TOOL_NAME_SET.has(name))) {
-    throw new PiGlobalConfigError(
-      "validation",
-      "defaultTools must be null or an array of built-in Pi tool names",
-    );
+  const optional = new Set(optionalToolNames);
+  const isKnown = (name: string): boolean => BUILTIN_TOOL_NAME_SET.has(name) || optional.has(name);
+  if (
+    value.some((entry) =>
+      entry.startsWith("+") || entry.startsWith("-") ? !isKnown(entry.slice(1)) : !isKnown(entry),
+    )
+  ) {
+    throw invalid();
   }
   return [...value];
 }

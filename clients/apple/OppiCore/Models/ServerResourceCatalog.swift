@@ -248,12 +248,17 @@ struct PiDefaultToolsSnapshot: Codable, Sendable, Equatable {
 struct ServerExtensionCatalog: Codable, Sendable, Equatable {
     let extensions: [ServerExtensionSummary]
     let builtInTools: [ServerToolSummary]
+    /// Tools Pi extensions register off (`codemode`, `tool_search`); `defaultTools` turns them on.
+    /// Absent from servers that predate discovery.
+    let optionalTools: [ServerToolSummary]?
 
     init(
         extensions: [ServerExtensionSummary],
-        builtInTools: [ServerToolSummary] = []
+        builtInTools: [ServerToolSummary] = [],
+        optionalTools: [ServerToolSummary]? = nil
     ) {
         self.extensions = extensions
         self.builtInTools = builtInTools
+        self.optionalTools = optionalTools
     }
 }

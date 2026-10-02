@@ -713,6 +713,10 @@ struct AgentToolSelectionView: View {
     var exactFooter =
         "Only selected names are available. This freezes both built-in and extension tools until the Agent is edited again."
     var showsExtensionTools = true
+    /// Tools Pi extensions register off. Shown in every mode when a binding is supplied.
+    var optionalTools: [ServerToolSummary] = []
+    var selectedOptionalNames: Binding<Set<String>>?
+    var optionalToolsFooter = ""
 
     private var selectableModes: [AgentToolSelectionMode] {
         existingPolicySummary == nil
@@ -807,6 +811,18 @@ struct AgentToolSelectionView: View {
                     }
                 }
             }
+
+            if let selectedOptionalNames, !optionalTools.isEmpty {
+                Section {
+                    ForEach(optionalTools) { tool in
+                        optionalToolToggle(tool, selection: selectedOptionalNames)
+                    }
+                } header: {
+                    Text("Optional Pi Tools")
+                } footer: {
+                    Text(optionalToolsFooter)
+                }
+            }
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
@@ -825,6 +841,37 @@ struct AgentToolSelectionView: View {
                 }
             }
         }
+    }
+
+    private func optionalToolToggle(
+        _ tool: ServerToolSummary,
+        selection: Binding<Set<String>>
+    ) -> some View {
+        Toggle(isOn: Binding(
+            get: { selection.wrappedValue.contains(tool.name) },
+            set: { isOn in
+                if isOn {
+                    selection.wrappedValue.insert(tool.name)
+                } else {
+                    selection.wrappedValue.remove(tool.name)
+                }
+            }
+        )) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(tool.name)
+                    .foregroundStyle(.themeFg)
+                if let description = tool.description, !description.isEmpty {
+                    Text(description)
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
+                        .lineLimit(2)
+                }
+            }
+        }
+        .tint(.themeBlue)
+        .frame(minHeight: 44)
+        .accessibilityHint(tool.description ?? "")
+        .accessibilityIdentifier("agent.nativeEdit.optionalTool.\(tool.name)")
     }
 
     private func toolButton(
@@ -884,9 +931,12 @@ extension AgentToolSelectionView {
         selectedNames: Binding<Set<String>>,
         builtInTools: [ServerToolSummary],
         defaultSelection: Set<String>,
+        optionalTools: [ServerToolSummary],
+        selectedOptionalNames: Binding<Set<String>>,
         title: String,
         inheritFooter: String,
-        exactFooter: String
+        exactFooter: String,
+        optionalToolsFooter: String
     ) {
         self.init(
             mode: mode,
@@ -900,7 +950,10 @@ extension AgentToolSelectionView {
             title: title,
             inheritFooter: inheritFooter,
             exactFooter: exactFooter,
-            showsExtensionTools: false
+            showsExtensionTools: false,
+            optionalTools: optionalTools,
+            selectedOptionalNames: selectedOptionalNames,
+            optionalToolsFooter: optionalToolsFooter
         )
     }
 }

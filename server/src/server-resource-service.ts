@@ -22,6 +22,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import {
+  availableMcpBuiltinNames,
+  BUILTIN_EXTENSION_PATH_PREFIX,
+  createMcpBuiltinExtensions,
+} from "./host-mcp-extensions.js";
+import {
   canonicalServerResourcePath as canonicalPath,
   serverResourceId as resourceId,
 } from "./server-resource-id.js";
@@ -41,6 +46,8 @@ import {
 
 const MAX_MESSAGE_LENGTH = 2048;
 const MAX_WARNINGS = 8;
+/** Pi built-in extensions a managed host session loads; `-builtin:<name>` still disables one. */
+const HOST_BUILTIN_EXTENSION_NAMES = availableMcpBuiltinNames({ managed: true, sandbox: false });
 
 export type ResourceProvenanceKind =
   | "builtIn"
@@ -116,6 +123,8 @@ interface ResolutionContext {
   settingsManager: SettingsManager;
   skills: ResolvedResource[];
   extensions: ResolvedResource[];
+  /** `builtin:<name>` paths Pi's `extensions` setting leaves enabled. */
+  enabledBuiltinExtensionPaths: string[];
   configuredPackages: Array<{ source: string; canonicalRoot: string }>;
 }
 
@@ -132,6 +141,12 @@ interface ExtensionCatalogEntry {
   resource?: ResolvedResource;
   canonicalPath?: string;
   summary: ServerExtensionSummary;
+}
+
+interface ExtensionCatalog {
+  entries: ExtensionCatalogEntry[];
+  /** Tools loaded extensions register with `defaultActive: false`; `defaultTools` can turn them on. */
+  optionalTools: ServerToolSummary[];
 }
 
 export class ServerResourceServiceError extends Error {
@@ -175,11 +190,15 @@ export class ServerResourceService {
   async listExtensions(): Promise<{
     extensions: ServerExtensionSummary[];
     builtInTools: ServerToolSummary[];
+    optionalTools: ServerToolSummary[];
   }> {
-    const entries = await this.buildExtensionCatalog(await this.resolveContext());
+    const { entries, optionalTools } = await this.buildExtensionCatalog(
+      await this.resolveContext(),
+    );
     return {
       extensions: entries.map((entry) => copyExtensionSummary(entry.summary)),
       builtInTools: builtInToolSummaries(this.catalogCwd),
+      optionalTools: optionalTools.map(copyToolSummary),
     };
   }
 
@@ -234,7 +253,7 @@ export class ServerResourceService {
     const context = await this.resolveContext();
     this.findResourceById("extension", context.extensions, id);
     const inspectToolIds = inspectTools ? new Set([id]) : new Set<string>();
-    const entry = (await this.buildExtensionCatalog(context, inspectToolIds)).find(
+    const entry = (await this.buildExtensionCatalog(context, inspectToolIds)).entries.find(
       (candidate) => candidate.summary.id === id,
     );
     if (!entry) throw new ServerResourceNotFoundError("extension");
@@ -282,8 +301,14 @@ export class ServerResourceService {
 
   async setPiDefaultTools(defaultTools: string[] | null): Promise<PiDefaultToolsSnapshot> {
     return this.withMutationLock(async () => {
+      const optionalToolNames =
+        defaultTools === null
+          ? []
+          : (await this.buildExtensionCatalog(await this.resolveContext())).optionalTools.map(
+              (tool) => tool.name,
+            );
       try {
-        return writePiDefaultTools(this.agentDir, defaultTools);
+        return writePiDefaultTools(this.agentDir, defaultTools, optionalToolNames);
       } catch (cause: unknown) {
         throw mapPiGlobalConfigError(cause);
       }
@@ -309,7 +334,7 @@ export class ServerResourceService {
       this.writeResourceEnabled(context, resource, "extensions", enabled);
       await this.finishSettingsWrite(context.settingsManager);
       const authoritative = await this.buildExtensionCatalog(await this.resolveContext());
-      const current = authoritative.find((entry) => entry.summary.id === id);
+      const current = authoritative.entries.find((entry) => entry.summary.id === id);
       if (!current) throw new ServerResourceNotFoundError("extension");
       return copyExtensionSummary(current.summary);
     });
@@ -325,6 +350,7 @@ export class ServerResourceService {
       cwd: this.catalogCwd,
       agentDir: this.agentDir,
       settingsManager,
+      builtinExtensions: [...HOST_BUILTIN_EXTENSION_NAMES],
     });
     let resolvedPaths;
     try {
@@ -336,12 +362,19 @@ export class ServerResourceService {
       );
     }
     this.throwSettingsErrors(settingsManager.drainErrors(), "resolve");
+    const isBuiltin = (resource: ResolvedResource): boolean =>
+      resource.path.startsWith(BUILTIN_EXTENSION_PATH_PREFIX);
     return {
       cwd: this.catalogCwd,
       agentDir: this.agentDir,
       settingsManager,
       skills: resolvedPaths.skills.filter((resource) => resource.metadata.scope === "user"),
-      extensions: resolvedPaths.extensions.filter((resource) => resource.metadata.scope === "user"),
+      extensions: resolvedPaths.extensions.filter(
+        (resource) => resource.metadata.scope === "user" && !isBuiltin(resource),
+      ),
+      enabledBuiltinExtensionPaths: resolvedPaths.extensions
+        .filter((resource) => isBuiltin(resource) && resource.enabled)
+        .map((resource) => resource.path),
       configuredPackages: packageManager.listConfiguredPackages().flatMap((configured) =>
         configured.scope === "user" && configured.installedPath
           ? [
@@ -427,7 +460,7 @@ export class ServerResourceService {
   private async buildExtensionCatalog(
     context: ResolutionContext,
     inspectToolIds: ReadonlySet<string> = new Set(),
-  ): Promise<ExtensionCatalogEntry[]> {
+  ): Promise<ExtensionCatalog> {
     const resourcesByCanonicalPath = new Map<
       string,
       { resource: ResolvedResource; canonicalPath: string }
@@ -454,7 +487,9 @@ export class ServerResourceService {
       cwd: context.cwd,
       agentDir: context.agentDir,
       settingsManager: SettingsManager.inMemory({}, { projectTrusted: false }),
-      additionalExtensionPaths: enabledPaths,
+      // Built-ins load only to discover the tools they register off (codemode, tool_search).
+      extensionFactories: createMcpBuiltinExtensions(HOST_BUILTIN_EXTENSION_NAMES),
+      additionalExtensionPaths: [...enabledPaths, ...context.enabledBuiltinExtensionPaths],
       noExtensions: true,
       noSkills: true,
       noPromptTemplates: true,
@@ -523,7 +558,7 @@ export class ServerResourceService {
       return { resource, canonicalPath: path, summary };
     });
     normal.sort((a, b) => compareSummaries(a.summary, b.summary));
-    return normal;
+    return { entries: normal, optionalTools: optionalToolSummaries(extensions) };
   }
 
   private findResourceById(
@@ -857,6 +892,23 @@ function builtInToolSummaries(cwd: string): ServerToolSummary[] {
     ...(tool.description ? { description: boundMessage(tool.description) } : {}),
     defaultEnabled: defaultToolNames.has(tool.name),
   }));
+}
+
+function optionalToolSummaries(extensions: Extension[]): ServerToolSummary[] {
+  const byName = new Map<string, ServerToolSummary>();
+  for (const extension of extensions) {
+    for (const [name, tool] of extension.tools) {
+      if (tool.definition.defaultActive !== false || byName.has(name)) continue;
+      byName.set(name, {
+        name,
+        ...(tool.definition.description
+          ? { description: boundMessage(tool.definition.description) }
+          : {}),
+        defaultEnabled: false,
+      });
+    }
+  }
+  return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name, "en-US"));
 }
 
 function copyToolSummary(summary: ServerToolSummary): ServerToolSummary {

@@ -106,6 +106,7 @@ Oppi follows Pi's own setup:
 - Servers come from Pi's global `~/.pi/agent/mcp.json` (and a project `.pi/mcp.json` once Pi trusts the project). Credentials live in Pi's `~/.pi/agent/mcp-auth.json`. Oppi keeps no second store.
 - Tools are named `mcp__<server>__<tool>` and follow each server's `exposure` setting (`codemode` by default, so tools are reached through the `codemode` tool). Every call, including calls made from codemode scripts, goes through the normal tool pipeline, so permission extensions apply.
 - `"extensions": ["-builtin:mcp"]` (or `-builtin:codemode`, `-builtin:tool-search`) in Pi settings turns one off in discovery mode. An exact-selection Agent that explicitly selects a built-in overrides this exclusion.
+- `codemode` and `tool_search` are registered off. MCP servers turn them on when their exposure needs them. To keep one on in every session, switch it on under **Pi → Tools → Optional Pi Tools** in the app, which writes Pi's `defaultTools` (`["+codemode"]` while Pi's standard tools are in use). That section lists every tool the loaded extensions register off, so a built-in turned off with `-builtin:<name>` disappears from it.
 - Stdio servers run as processes on the host with your authority. Configure only servers you trust. A normal session stop closes its stdio servers. If another extension's shutdown handler hangs past five seconds, Oppi force-disposes the session and Pi does not get to close MCP servers, so a stdio server can outlive the session; stop it from a host shell.
 
 Limits:
