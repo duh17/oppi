@@ -30,6 +30,7 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
     private let trailingLabel = UILabel()
     private let elapsedLabel = UILabel()
     private let bodyStack = UIStackView()
+    private let terminalNoticeLabel = UILabel()
     private let borderView = UIView()
     private let featureTipPresentationOwnerID = UUID()
 
@@ -121,6 +122,9 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
         trailingStack.addArrangedSubview(languageBadgeIconView)
 
         bodyStackCollapsedHeightConstraint = ToolTimelineRowViewStyler.styleBodyStack(bodyStack)
+        terminalNoticeLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        terminalNoticeLabel.numberOfLines = 0
+        bodyStack.addArrangedSubview(terminalNoticeLabel)
 
         borderView.addSubview(statusImageView)
         borderView.addSubview(toolImageView)
@@ -214,7 +218,10 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
 
         updateElapsedTimer(configuration: chrome)
         scheduleFeatureEducationTipIfNeeded(configuration: chrome)
-        let showBody = featureTipView != nil
+        terminalNoticeLabel.text = chrome.terminalNotice
+        terminalNoticeLabel.textColor = UIColor(ThemeRuntimeState.currentPalette().comment)
+        terminalNoticeLabel.isHidden = chrome.terminalNotice == nil
+        let showBody = featureTipView != nil || !terminalNoticeLabel.isHidden
         bodyStackCollapsedHeightConstraint?.isActive = !showBody
         bodyStack.isHidden = !showBody
     }

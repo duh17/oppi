@@ -16,6 +16,7 @@ enum ToolContentDescriptorBuilder {
         var display: ToolDisplay?
         var outputPresentation: ToolOutputPresentation?
         var outputAvailability: ToolOutputAvailability?
+        var terminalResolved: Bool
 
         init(
             args: [String: JSONValue]? = nil,
@@ -28,7 +29,8 @@ enum ToolContentDescriptorBuilder {
             totalBytes: Int? = nil,
             display: ToolDisplay? = nil,
             outputPresentation: ToolOutputPresentation? = nil,
-            outputAvailability: ToolOutputAvailability? = nil
+            outputAvailability: ToolOutputAvailability? = nil,
+            terminalResolved: Bool = false
         ) {
             self.args = args
             self.details = details
@@ -41,6 +43,7 @@ enum ToolContentDescriptorBuilder {
             self.display = display
             self.outputPresentation = outputPresentation
             self.outputAvailability = outputAvailability
+            self.terminalResolved = terminalResolved
         }
     }
 
@@ -115,7 +118,7 @@ enum ToolContentDescriptorBuilder {
         includeOutput: Bool = true,
         includeFileContent: Bool = true
     ) -> ToolContentPresentation {
-        let output = context.fullOutput.isEmpty ? outputPreview : context.fullOutput
+        let output = context.terminalResolved || !context.fullOutput.isEmpty ? context.fullOutput : outputPreview
         let input = (context.args ?? [:]).keys.sorted().compactMap { key -> ToolInspection.Field? in
             guard let value = context.args?[key] else { return nil }
             let fact = context.inputPresentation?.fields[key]
@@ -127,9 +130,11 @@ enum ToolContentDescriptorBuilder {
         if context.outputPresentation?.kind == "terminal" {
             // Input and output stay separate before execution and through deltas.
             // Preserve whitespace in terminal output and replace-mode tails.
-            let terminalText = context.details?.objectValue?["expandedText"]?.stringValue.flatMap {
+            // A live owner is the authoritative resolved ring, including an empty
+            // snapshot. Legacy details may contain a stale/unbounded cumulative copy.
+            let terminalText = context.terminalResolved ? output : (context.details?.objectValue?["expandedText"]?.stringValue.flatMap {
                 $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
-            } ?? output
+            } ?? output)
             let leaf = ToolContentDescriptor.terminal(.init(output: terminalText.isEmpty ? nil : terminalText, language: nil))
             return ToolContentPresentation(
                 inspection: .init(input: input, calls: context.nestedCalls, output: [leaf], raw: output,

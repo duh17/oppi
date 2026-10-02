@@ -151,7 +151,7 @@ struct InteractiveMediaInspectionTests {
         guard case .toolStart(_, _, _, _, _, _, _, let parent) = decoded else { Issue.record("Expected start"); return }
         #expect(parent == "p")
         let malformed = try ServerMessage.decode(from: #"{"type":"tool_end","tool":"raw","parentToolCallId":42}"#)
-        guard case .toolEnd(_, _, _, _, _, _, _, _, let missing) = malformed else { Issue.record("Expected end"); return }
+        guard case .toolEnd(_, _, _, _, _, _, _, _, let missing, _) = malformed else { Issue.record("Expected end"); return }
         #expect(missing == nil)
         let correlator = ToolCallCorrelator()
         _ = correlator.start(sessionId: "s", tool: "parent", args: [:], toolCallId: "p")

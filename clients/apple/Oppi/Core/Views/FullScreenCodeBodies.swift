@@ -1997,6 +1997,11 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     )
     private let palette: ThemePalette
     private let stream: TerminalTraceStream?
+    private let liveOwner: TerminalOutputStream?
+    private let completionSidecarSource: ToolOutputSidecarWindowSource?
+    private var ownerObserverID: UUID?
+    private var usingCompletedSidecar = false
+    private let streamNoticeLabel = UILabel()
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private var readerPreferences: FullScreenReaderPreferences
@@ -2065,6 +2070,8 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     ) {
         self.palette = palette
         self.stream = stream
+        self.liveOwner = stream?.owner
+        self.completionSidecarSource = stream?.completionSidecarSource
         self.sidecarSource = sidecarSource
         var preferences = readerPreferences
         if let outputWrapped {
@@ -2074,8 +2081,9 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
 
-        let initialSnapshot = stream?.snapshot
-            ?? TerminalTraceStream.Snapshot(output: content, command: command, isDone: true)
+        let initialSnapshot = stream?.owner.map {
+            TerminalTraceStream.Snapshot(output: $0.formatted, command: command, isDone: $0.state == .complete)
+        } ?? stream?.snapshot ?? TerminalTraceStream.Snapshot(output: content, command: command, isDone: true)
         latestSnapshot = initialSnapshot
 
         super.init(frame: .zero)
@@ -2084,8 +2092,13 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         render(snapshot: initialSnapshot)
         startSidecarLoadingIfNeeded()
 
-        streamObserverID = stream?.addObserver { [weak self] snapshot in
-            self?.handleStreamUpdate(snapshot)
+        if let liveOwner {
+            ownerObserverID = liveOwner.addObserver { [weak self] in self?.handleOwnerUpdate() }
+            handleOwnerUpdate()
+        } else {
+            streamObserverID = stream?.addObserver { [weak self] snapshot in
+                self?.handleStreamUpdate(snapshot)
+            }
         }
     }
 
@@ -2096,6 +2109,10 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         renderTask?.cancel()
         sidecarTask?.cancel()
         chunkRenderTasks.values.forEach { $0.cancel() }
+        if let ownerObserverID {
+            let owner = liveOwner
+            Task { @MainActor in owner?.removeObserver(ownerObserverID) }
+        }
         if let streamObserverID {
             let stream = stream
             Task { @MainActor in
@@ -2177,7 +2194,12 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         addSubview(virtualizedCollectionView)
         scrollView.addSubview(stack)
 
+        streamNoticeLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        streamNoticeLabel.textColor = UIColor(palette.comment)
+        streamNoticeLabel.numberOfLines = 0
+        streamNoticeLabel.isHidden = true
         stack.addArrangedSubview(commandView)
+        stack.addArrangedSubview(streamNoticeLabel)
         stack.addArrangedSubview(outputView)
 
         let stackWidth = stack.widthAnchor.constraint(
@@ -2203,6 +2225,23 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
             stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
             stackWidth,
         ])
+    }
+
+    private func handleOwnerUpdate() {
+        guard let owner = liveOwner, !usingCompletedSidecar else { return }
+        let notice = owner.state.notice ?? (owner.omittedBytes > 0 ? "Earlier output omitted (\(owner.omittedBytes) bytes)" : nil)
+        if streamNoticeLabel.text != notice { renderedSnapshot = nil }
+        streamNoticeLabel.text = notice
+        streamNoticeLabel.isHidden = notice == nil
+        if !usingCompletedSidecar {
+            latestSnapshot = .init(output: owner.formatted, command: latestSnapshot.command, isDone: owner.state == .complete)
+            render(snapshot: latestSnapshot)
+        }
+        if owner.state == .complete, sidecarTask == nil,
+           let source = completionSidecarSource {
+            sidecarSource = source
+            startSidecarLoadingIfNeeded()
+        }
     }
 
     private func handleStreamUpdate(_ snapshot: TerminalTraceStream.Snapshot) {
@@ -2231,6 +2270,12 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
             commandView.text = nil
         }
 
+        if let notice = streamNoticeLabel.text, !streamNoticeLabel.isHidden {
+            let header = NSMutableAttributedString(attributedString: virtualizedCommand ?? NSAttributedString())
+            if header.length > 0 { header.append(NSAttributedString(string: "\n")) }
+            header.append(NSAttributedString(string: notice, attributes: [.font: codeFont, .foregroundColor: UIColor(palette.comment)]))
+            virtualizedCommand = header
+        }
         renderTerminalOutput(snapshot.output, isStreaming: !snapshot.isDone)
         tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
     }
@@ -2243,7 +2288,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
             leaveVirtualizedMode()
             let resolved: String
             do {
-                resolved = try TerminalLogEngine.render(content)
+                resolved = liveOwner != nil && !usingCompletedSidecar ? content : try TerminalLogEngine.render(content)
             } catch {
                 resolved = "Terminal rendering failed: \(error)"
             }
@@ -2271,6 +2316,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     /// Clipboard output shares the painted terminal semantics. Materialize a
     /// complete sidecar before interpretation; never independently strip windows.
     func resolvedCopyText() async -> String? {
+        if let owner = liveOwner, sidecarSource == nil { return ANSIParser.strip(owner.formatted) }
         let heldSource = virtualizedSource.isEmpty ? latestSnapshot.output : virtualizedSource
         var source = heldSource
         if let sidecarSource {
@@ -2358,6 +2404,9 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     }
 
     private func applyFirstSidecarWindow(_ window: ToolOutputSidecarWindow) {
+        usingCompletedSidecar = true
+        streamNoticeLabel.text = nil
+        streamNoticeLabel.isHidden = true
         sidecarExpectsMore = !window.isComplete
         sidecarHasPendingAppend = false
         latestSnapshot = TerminalTraceStream.Snapshot(
@@ -2421,6 +2470,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
             return
         }
         let generation = virtualizedGeneration
+        let terminalResolved = liveOwner != nil && !usingCompletedSidecar
         let chunkLineLimit = Self.virtualizedChunkLineLimit
         let chunkByteLimit = Self.virtualizedChunkByteLimit
         let visualLineLimit = Self.virtualizedChunkVisualLineLimit
@@ -2438,7 +2488,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
                     let start = CACurrentMediaTime()
                     let resolved: String
                     do {
-                        resolved = try TerminalLogEngine.render(source)
+                        resolved = terminalResolved ? source : try TerminalLogEngine.render(source)
                     } catch {
                         resolved = "Terminal rendering failed: \(error)"
                     }

@@ -11,6 +11,7 @@ struct BashRenderInput {
     let isStreaming: Bool
     let sessionId: String?
     let resourcePressure: StreamingRenderPolicy.ResourcePressure
+    let terminalResolved: Bool
 
     init(
         command: String?,
@@ -19,7 +20,8 @@ struct BashRenderInput {
         isError: Bool,
         isStreaming: Bool,
         sessionId: String? = nil,
-        resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
+        resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal,
+        terminalResolved: Bool = false
     ) {
         self.command = command
         self.output = output
@@ -28,6 +30,7 @@ struct BashRenderInput {
         self.isStreaming = isStreaming
         self.sessionId = sessionId
         self.resourcePressure = resourcePressure
+        self.terminalResolved = terminalResolved
     }
 }
 
@@ -195,7 +198,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                 isError: input.isError,
                 unwrapped: input.unwrapped,
                 isStreaming: input.isStreaming
-            )
+            ) ^ (input.terminalResolved ? 0x5354524D : 0)
 
             if signature != outputRenderSignature {
                 let startNs = ChatTimelinePerf.timestampNs()
@@ -220,14 +223,21 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                         signature: signature,
                         outputColor: outputColor,
                         unwrapped: input.unwrapped,
-                        sessionId: input.sessionId
+                        sessionId: input.sessionId,
+                        terminalResolved: input.terminalResolved
                     )
                 } else {
                     cancelDeferredANSIHighlight()
                     do {
-                        let engine = try terminalEngine ?? TerminalLogEngine()
-                        terminalEngine = engine
-                        let resolved = try engine.update(displayOutput)
+                        let resolved: String
+                        if input.terminalResolved {
+                            terminalEngine = nil
+                            resolved = displayOutput
+                        } else {
+                            let engine = try terminalEngine ?? TerminalLogEngine()
+                            terminalEngine = engine
+                            resolved = try engine.update(displayOutput)
+                        }
                         let attributed = ToolRowTextRenderer.ansiHighlighted(
                             resolved, baseForeground: input.isError ? .themeRed : .themeFg
                         )
@@ -500,17 +510,18 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         let unwrapped: Bool
         let sessionId: String?
         let themeID: ThemeID
+        let terminalResolved: Bool
     }
 
     private var pendingDeferredANSIRequest: DeferredANSIRequest?
 
     private func scheduleDeferredANSIHighlight(
         text: String, isError: Bool, signature: Int, outputColor: UIColor,
-        unwrapped: Bool, sessionId: String?
+        unwrapped: Bool, sessionId: String?, terminalResolved: Bool = false
     ) {
         let request = DeferredANSIRequest(text: text, isError: isError,
             signature: signature, outputColor: outputColor, unwrapped: unwrapped,
-            sessionId: sessionId, themeID: ThemeRuntimeState.currentThemeID())
+            sessionId: sessionId, themeID: ThemeRuntimeState.currentThemeID(), terminalResolved: terminalResolved)
         if deferredANSITask != nil {
             // Keep one useful worker and only the latest cumulative snapshot.
             if deferredANSISignature != signature { pendingDeferredANSIRequest = request }
@@ -528,7 +539,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
             let attributed: NSAttributedString
             let succeeded: Bool
             do {
-                let resolved = try TerminalLogEngine.render(text)
+                let resolved = terminalResolved ? text : try TerminalLogEngine.render(text)
                 attributed = ToolRowTextRenderer.ansiHighlighted(
                     resolved, baseForeground: isError ? .themeRed : .themeFg
                 )
@@ -574,7 +585,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                 if let pending {
                     self.scheduleDeferredANSIHighlight(text: pending.text, isError: pending.isError,
                         signature: pending.signature, outputColor: pending.outputColor,
-                        unwrapped: pending.unwrapped, sessionId: pending.sessionId)
+                        unwrapped: pending.unwrapped, sessionId: pending.sessionId, terminalResolved: pending.terminalResolved)
                 }
             }
         }

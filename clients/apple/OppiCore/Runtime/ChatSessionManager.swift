@@ -307,7 +307,7 @@ final class ChatSessionManager {
         return nil
     }
 
-    private func resolveRouteScope() -> SessionRouteScope? {
+    func resolveRouteScope() -> SessionRouteScope? {
         if routeScopeHint == .control
             || effectsStatePort.session(id: sessionId)?.control != nil {
             return .control
@@ -329,6 +329,7 @@ final class ChatSessionManager {
 
         log.debug("State transition for \(self.sessionId, privacy: .public): \(oldState.logDescription, privacy: .public) -> \(newState.logDescription, privacy: .public)")
         entryState = newState
+        if case .disconnected = newState { reducer.terminalOutputStreams.markReconnecting() }
         switch newState {
         case .streaming:
             resumeStreamingWaiters(with: .success(()))
@@ -1264,15 +1265,15 @@ final class ChatSessionManager {
                 toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation, parentToolCallId: parent
             ))
 
-        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details, let outputAvailability, let parent):
+        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details, let outputAvailability, let parent, let outputStream):
             coalescer.receive(toolCallCorrelator.output(
                 sessionId: sessionId, output: output, isError: isError,
                 toolCallId: toolCallId, mode: mode,
                 truncated: truncated, totalBytes: totalBytes,
-                details: details, outputAvailability: outputAvailability, parentToolCallId: parent
+                details: details, outputAvailability: outputAvailability, parentToolCallId: parent, outputStream: outputStream
             ))
 
-        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability, let parent):
+        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability, let parent, let outputStream):
             // Only registry-declared setting producers may mutate preferences.
             // The payload still validates kind/mode; arbitrary result details cannot opt in.
             if !isError, outputPresentation?.settingEffect == "voiceReplyMode" {
@@ -1282,7 +1283,7 @@ final class ChatSessionManager {
                 sessionId: sessionId, toolCallId: toolCallId,
                 details: details, isError: isError,
                 resultSegments: resultSegments, nestedCalls: nestedCalls,
-                outputPresentation: outputPresentation, outputAvailability: outputAvailability, parentToolCallId: parent
+                outputPresentation: outputPresentation, outputAvailability: outputAvailability, parentToolCallId: parent, outputStream: outputStream
             ))
 
         case .messageEnd(let role, let content, _, _):

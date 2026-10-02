@@ -60,6 +60,51 @@ struct TerminalLogEngineTests {
         #expect(ANSIParser.strip(try TerminalLogEngine.render(input)) == "beforeafter")
     }
 
+    @Test("byte chunks preserve CR, cursor, SGR and split UTF-8", arguments: [
+        "before\r\u{1B}[2Kafter\n",
+        "first\nStep: pending\n\u{1B}[1A\r\u{1B}[2KStep: complete\n",
+        "\u{1B}[32mgreen\n中文 e\u{301} 🙂\u{1B}[0m\n",
+        String(repeating: "line\n", count: 30) + String(repeating: "w", count: 250) + "\nend\n",
+        "\u{1B}[32m" + String(repeating: "green\n", count: 30) + String(repeating: "w", count: 250) + "\nend\u{1B}[0m\n"
+    ])
+    func byteChunkInvariance(_ source: String) throws {
+        let engine = try TerminalLogEngine(live: true)
+        let bytes = Data(source.utf8)
+        for offset in stride(from: 0, to: bytes.count, by: 3) {
+            try engine.feed(bytes.subdata(in: offset..<min(bytes.count, offset + 3)))
+            _ = try engine.paint()
+        }
+        let actual = try engine.paint()
+        let expected = try TerminalLogEngine.render(source)
+        #expect(ANSIParser.strip(actual) == ANSIParser.strip(expected))
+        #expect(ANSIParser.attributedString(from: actual).isEqual(to: ANSIParser.attributedString(from: expected)))
+    }
+
+    @Test("clear scrollback rebuilds committed cache")
+    func clearScrollbackCache() throws {
+        let engine = try TerminalLogEngine(live: true)
+        let initial = String(repeating: "old\n", count: 60)
+        try engine.feed(Data(initial.utf8))
+        _ = try engine.paint()
+        let clear = "\u{1B}[3J\u{1B}[2J\u{1B}[Hnew\n"
+        try engine.feed(Data(clear.utf8))
+        #expect(ANSIParser.strip(try engine.paint()) == ANSIParser.strip(try TerminalLogEngine.render(initial + clear)))
+    }
+
+    @Test("pruning at a full scrollback cap drops stale formatted rows")
+    func boundedLiveRing() throws {
+        let engine = try TerminalLogEngine(live: true)
+        for batch in 0..<30 {
+            let text = (batch * 100..<(batch + 1) * 100).map { "line \($0)\n" }.joined()
+            try engine.feed(Data(text.utf8))
+            _ = try engine.paint()
+        }
+        let tail = ANSIParser.strip(try engine.paint())
+        #expect(!tail.contains("line 0\n"))
+        #expect(tail.hasSuffix("line 2999\n"))
+        #expect(tail.split(separator: "\n", omittingEmptySubsequences: false).count <= 2000)
+    }
+
     @Test("long history preserves both ends rather than the default tail")
     func completeHistory() throws {
         let input = "\u{1B}[32mbegin\n" + String(repeating: "green line\n", count: 20_000) + "end\n"

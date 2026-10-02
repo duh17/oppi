@@ -6,6 +6,41 @@ import UIKit
 @MainActor
 @Suite("Native full-screen terminal sidecar windows")
 struct NativeFullScreenTerminalWindowTests {
+    @Test func liveReaderKeepsCallOwnerWhenItsRowStreamIsReused() async throws {
+        struct UnexpectedSidecar: Error {}
+        let owner = TerminalOutputStream { _ in throw UnexpectedSidecar() }
+        let stream = TerminalTraceStream(output: "", command: nil, isDone: false)
+        stream.owner = owner
+        let body = NativeFullScreenTerminalBody(content: "", command: nil, stream: stream,
+            palette: ThemeRuntimeState.currentThemeID().palette,
+            reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil)
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        body.frame = host.bounds
+        host.addSubview(body)
+        owner.receive(.init(epoch: 1, offset: 0, bytes: 4), output: "old\r")
+        owner.receive(.init(epoch: 1, offset: 4, bytes: 4), output: "new\n")
+        let painted = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.layoutIfNeeded()
+            return Self.textViews(in: body).contains { $0.textStorage.string == "new\n" }
+        }
+        #expect(painted)
+        owner.markReconnecting()
+        func showsResyncNotice(_ view: UIView) -> Bool {
+            if let label = view as? UILabel, !label.isHidden, label.text == "Resyncing terminal output…" { return true }
+            return view.subviews.contains { showsResyncNotice($0) }
+        }
+        #expect(showsResyncNotice(body))
+        #expect(await body.resolvedCopyText() == "new\n")
+        // Simulate the reusable row being rebound to a different call.
+        let other = TerminalOutputStream { _ in throw UnexpectedSidecar() }
+        stream.owner = other
+        stream.update(output: "wrong call", command: nil, isDone: false)
+        owner.receive(.init(epoch: 1, offset: 8, bytes: 5), output: "tail\n")
+        owner.finish(.init(epoch: 1, totalBytes: 13))
+        #expect(await body.resolvedCopyText() == "new\ntail\n")
+        #expect(!Self.textViews(in: body).contains { $0.textStorage.string.contains("wrong call") })
+    }
+
     @Test func terminalBodyPaintsFirstWindowAndLaterCursorRewrite() async throws {
         let previousTheme = ThemeRuntimeState.currentThemeID()
         defer { ThemeRuntimeState.setThemeID(previousTheme) }

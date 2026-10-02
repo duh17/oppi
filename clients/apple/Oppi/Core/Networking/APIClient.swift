@@ -1912,6 +1912,28 @@ actor APIClient: ClientLogUploading {
         }
     }
 
+    /// Raw byte Range for the terminal stream owner's gap recovery. Do not
+    /// decode/re-encode these bytes: invalid UTF-8 still occupies wire offsets.
+    func getTerminalOutputRange(
+        scope: SessionRouteScope, sessionId: String, toolCallId: String, range: Range<Int>
+    ) async throws -> TerminalOutputRange {
+        guard !range.isEmpty, range.lowerBound >= 0 else { throw APIError.invalidResponse }
+        let path = fullToolOutputPath(scope: scope, sessionId: sessionId, toolCallId: toolCallId)
+        let (data, response) = try await performAuthorized {
+            var req = try URLRequest(url: self.makeURL(path: path))
+            req.httpMethod = "GET"
+            req.setValue("bytes=\(range.lowerBound)-\(range.upperBound - 1)", forHTTPHeaderField: "Range")
+            return req
+        }
+        try checkStatus(response, data: data)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 206,
+              let parsed = ToolOutputSidecarHTTP.parseContentRange(http.value(forHTTPHeaderField: "Content-Range")),
+              parsed.end < parsed.total, data.count == parsed.end - parsed.start + 1 else {
+            throw APIError.invalidResponse
+        }
+        return TerminalOutputRange(data: data, start: parsed.start, end: parsed.end + 1)
+    }
+
     func getFullToolOutputSidecarWindow(
         scope: SessionRouteScope,
         sessionId: String,

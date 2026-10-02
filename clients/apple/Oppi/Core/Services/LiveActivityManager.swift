@@ -272,7 +272,7 @@ final class LiveActivityManager {
             entry.updatedAt = now
             snapshot.sessionsById[sessionId] = entry
 
-        case .toolEnd(let sessionId, _, _, _, _, _, _, _, let parent):
+        case .toolEnd(let sessionId, _, _, _, _, _, _, _, let parent, _):
             guard parent == nil else { break }
             var entry = upsertSession(sessionId)
             entry.activeTool = nil

@@ -488,6 +488,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var previousWorkLineByID: [String: QuietTimelineWorkLine] = [:]
         private var workLineReplacementIDByPreviousID: [String: String] = [:]
         private var previousItemByID: [String: ChatItem] = [:]
+        private var previousTerminalStreams: [String: (owner: TerminalOutputStream, revision: UInt64)] = [:]
         private var previousStreamingAssistantID: String?
         private var previousHiddenCount = 0
         private var previousHasOlderServerPage = false
@@ -861,6 +862,25 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         func apply(configuration: Configuration, to collectionView: UICollectionView) {
             let sessionScopeChanged = context.didChangeSessionScope(for: configuration)
             let agentPresentationChanged = context.didChangeAgentPresentation(for: configuration)
+            // A bounded ring's tail/status can change without changing the 500-character
+            // ChatItem preview. Track owned paints independently of canonical item equality.
+            var terminalChangedIDs = Set(previousTerminalStreams.keys)
+            var nextTerminalStreams: [String: (owner: TerminalOutputStream, revision: UInt64)] = [:]
+            for item in configuration.items {
+                guard let owner = configuration.reducer.terminalOutputStreams.owner(for: item.id) else { continue }
+                nextTerminalStreams[item.id] = (owner, owner.presentationRevision)
+                if let previous = previousTerminalStreams[item.id], previous.owner === owner,
+                   previous.revision == owner.presentationRevision {
+                    terminalChangedIDs.remove(item.id)
+                } else {
+                    terminalChangedIDs.insert(item.id)
+                }
+            }
+            previousTerminalStreams = nextTerminalStreams
+            if !terminalChangedIDs.isEmpty {
+                (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?
+                    .removeCachedHeights(for: terminalChangedIDs)
+            }
 
             hiddenCount = configuration.hiddenCount
             hasOlderServerPage = configuration.hasOlderServerPage
@@ -971,6 +991,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 lastPrefetchDirection = 0
             }
             let structurallyUnchanged = nextDisplayIDs == previousDisplayIDs
+                && terminalChangedIDs.isEmpty
                 && configuration.streamingAssistantID == previousStreamingAssistantID
                 && configuration.isBusy == isTimelineBusy
                 && configuration.showsWorkingIndicator == previousShowsWorkingIndicator
@@ -1214,7 +1235,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             currentIDs = applyPlan.nextIDs
             currentItemByID = applyPlan.nextItemByID
 
-            var forceReconfigureIDs: [String] = []
+            var forceReconfigureIDs = Array(terminalChangedIDs)
             if agentPresentationChanged {
                 forceReconfigureIDs.append(contentsOf:
                     TimelineSnapshotApplier.assistantPresentationItemIDs(
@@ -1632,6 +1653,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             attempt: Int = 0
         ) {
             guard let toolOutputStore else { return }
+            // The terminal owner supplies the live/done ring. Full history is
+            // fetched by the reader/copy sidecar, not the cumulative store.
+            guard reducer?.terminalOutputStreams.owner(for: itemID) == nil else { return }
 
             let fetchToolOutput: ExpandedToolOutputLoader.FetchToolOutput
             #if DEBUG

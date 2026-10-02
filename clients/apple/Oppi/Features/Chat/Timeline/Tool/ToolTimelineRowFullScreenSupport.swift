@@ -1,5 +1,5 @@
 enum ToolTimelineRowFullScreenSupport {
-    static func fullScreenContent(
+    @MainActor static func fullScreenContent(
         configuration: ToolTimelineRowConfiguration,
         outputCopyText: String?,
         interactionPolicy: ToolTimelineRowInteractionPolicy?,
@@ -10,6 +10,15 @@ enum ToolTimelineRowFullScreenSupport {
               let content = configuration.expandedContent else {
             return nil
         }
+
+        // Reader identity belongs to the tool call, not the reusable cell.
+        let terminalStream = configuration.terminalOutputStream.map { owner in
+            let stream = TerminalTraceStream(output: owner.formatted, command: configuration.copyCommandText,
+                isDone: owner.state == .complete)
+            stream.owner = owner
+            stream.completionSidecarSource = configuration.toolOutputSidecarSource
+            return stream
+        } ?? terminalStream
 
         guard interactionPolicy?.supportsFullScreenPreview ?? true else { return nil }
 

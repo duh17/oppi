@@ -67,6 +67,11 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var currentFileOpenIntent: ToolCurrentFileOpenIntent? = nil
     var openCurrentFile: (() -> Void)? = nil
     var openFullScreen: ((ChatReaderPayload) -> Void)? = nil
+    var terminalOutputStream: TerminalOutputStream? = nil
+    @MainActor var terminalNotice: String? {
+        guard let owner = terminalOutputStream else { return nil }
+        return owner.state.notice ?? (owner.omittedBytes > 0 ? "Earlier output omitted (\(owner.omittedBytes) bytes)" : nil)
+    }
     var toolOutputSidecarSource: ToolOutputSidecarWindowSource? = nil
     /// Copy/share fetches the complete sidecar. Expand must not use this path.
     var fetchCompleteToolOutput: (() async throws -> String?)? = nil
@@ -172,6 +177,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let elapsedLabel = UILabel()
     private let bodyStack = UIStackView()
     private let previewLabel = UILabel()
+    private let terminalNoticeLabel = UILabel()
     let bashToolRowView = BashToolRowView()
     let expandedContainer = UIView()
     let expandedScrollView = HorizontalPanPassthroughScrollView()
@@ -1011,6 +1017,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         markdownSurface.mount(in: expandedSurfaceHostView)
         hostedSurface.mount(in: expandedSurfaceHostView)
         compactHostedSurfaceHostView.isHidden = true
+        terminalNoticeLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        terminalNoticeLabel.numberOfLines = 0
+        bodyStack.addArrangedSubview(terminalNoticeLabel)
         bodyStack.addArrangedSubview(previewLabel)
         bodyStack.addArrangedSubview(imagePreviewContainer)
         bodyStack.addArrangedSubview(bashToolRowView)
@@ -1107,6 +1116,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedContainer: expandedContainer
         )
         bashToolRowView.applyTheme(palette)
+        terminalNoticeLabel.text = configuration.terminalNotice
+        terminalNoticeLabel.textColor = UIColor(palette.comment)
+        terminalNoticeLabel.isHidden = configuration.terminalNotice == nil
+        fullScreenTerminalStream.owner = configuration.terminalOutputStream
+        fullScreenTerminalStream.completionSidecarSource = configuration.toolOutputSidecarSource
 
         let terminalStreamOutput: String
         if case .text(let text, _) = configuration.expandedContent {
@@ -1159,7 +1173,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     isError: configuration.isError,
                     isStreaming: !configuration.isDone,
                     sessionId: perfSessionId,
-                    resourcePressure: configuration.resourcePressure
+                    resourcePressure: configuration.resourcePressure,
+                    terminalResolved: configuration.terminalOutputStream != nil
                 )
                 let result = bashToolRowView.apply(
                     input: input,
@@ -1512,7 +1527,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         let showImagePreview = !imagePreviewContainer.isHidden
         let showBody = showPreview || showImagePreview || showExpanded || showCommand || showOutput
-            || inspectionSupplementView?.isHidden == false
+            || inspectionSupplementView?.isHidden == false || !terminalNoticeLabel.isHidden
         bodyStackCollapsedHeightConstraint?.isActive = !showBody
         bodyStack.isHidden = !showBody
         updateViewportHeightsIfNeeded()
@@ -2108,6 +2123,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             } catch {
                 // Keep the already-held preview rather than failing copy.
             }
+        }
+        if let owner = configuration.terminalOutputStream {
+            await owner.waitForRecovery()
+            return ANSIParser.strip(owner.formatted)
         }
         guard let preview = configuration.copyOutputText else { return nil }
         return await resolveTerminalCopy(preview, content: configuration.expandedContent)

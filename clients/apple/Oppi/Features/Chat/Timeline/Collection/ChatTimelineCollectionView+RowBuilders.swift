@@ -253,16 +253,17 @@ extension ChatTimelineCollectionHost.Controller {
 
         let details = toolDetailsStore?.details(for: itemID)
         let isExpanded = reducer?.expandedItemIDs.contains(itemID) == true
-        let outputBytes = toolOutputStore?.outputByteCount(for: itemID) ?? 0
+        let outputBytes = reducer?.terminalOutputStreams.owner(for: itemID)?.cursor ?? toolOutputStore?.outputByteCount(for: itemID) ?? 0
         let inspection = ToolContentDescriptorBuilder.inspect(tool: tool, argsSummary: argsSummary,
             outputPreview: outputPreview, isError: isError, isDone: isDone,
             context: .init(args: toolArgsStore?.args(for: itemID), details: details,
-                fullOutput: toolOutputStore?.fullOutput(for: itemID) ?? "",
+                fullOutput: reducer?.terminalOutputStreams.owner(for: itemID)?.formatted ?? toolOutputStore?.fullOutput(for: itemID) ?? "",
                 isLoadingOutput: toolOutputLoader.isLoading(itemID), inputPresentation: toolArgsStore?.inputPresentation(for: itemID),
                 nestedCalls: toolDetailsStore?.nestedCalls(for: itemID),
                 previewOnly: toolOutputStore?.hasCompleteOutput(for: itemID) != true,
                 totalBytes: outputBytes > 0 ? outputBytes : nil, display: toolArgsStore?.display(for: itemID),
-                outputPresentation: toolArgsStore?.outputPresentation(for: itemID), outputAvailability: toolArgsStore?.outputAvailability(for: itemID)),
+                outputPresentation: toolArgsStore?.outputPresentation(for: itemID), outputAvailability: toolArgsStore?.outputAvailability(for: itemID),
+                terminalResolved: reducer?.terminalOutputStreams.owner(for: itemID) != nil),
             includeOutput: isExpanded)
         let hasCanonicalAudioDetails = inspection.audioOutput
         let hasLifecycleVoicePresentation = audioLifecycleCoordinator.map {
@@ -322,7 +323,7 @@ extension ChatTimelineCollectionHost.Controller {
         )
         context.inspection = inspection
         context.display = inspection.display
-        let chrome = ToolPresentationBuilder.build(
+        var chrome = ToolPresentationBuilder.build(
             itemID: itemID,
             tool: tool,
             argsSummary: argsSummary,
@@ -332,6 +333,7 @@ extension ChatTimelineCollectionHost.Controller {
             isInterrupted: reducer?.isToolInterrupted(itemID) == true,
             context: context
         )
+        chrome.terminalOutputStream = reducer?.terminalOutputStreams.owner(for: itemID)
         return CollapsedToolTimelineRowConfiguration(chrome: chrome)
     }
 
@@ -349,7 +351,7 @@ extension ChatTimelineCollectionHost.Controller {
             args: toolArgsStore?.args(for: itemID),
             details: details,
             expandedItemIDs: reducer?.expandedItemIDs ?? [],
-            fullOutput: toolOutputStore?.fullOutput(for: itemID) ?? "",
+            fullOutput: reducer?.terminalOutputStreams.owner(for: itemID)?.formatted ?? toolOutputStore?.fullOutput(for: itemID) ?? "",
             isLoadingOutput: toolOutputLoader.isLoading(itemID),
             callSegments: toolSegmentStore?.callSegments(for: itemID),
             resultSegments: toolSegmentStore?.resultSegments(for: itemID),
@@ -422,6 +424,7 @@ extension ChatTimelineCollectionHost.Controller {
             fallback: configuration.expandedContent
         )
         configuration.resourcePressure = resourcePressure
+        configuration.terminalOutputStream = reducer?.terminalOutputStreams.owner(for: itemID)
         if let intent = configuration.currentFileOpenIntent,
            let onOpenCurrentFile {
             configuration.openCurrentFile = {
@@ -439,12 +442,14 @@ extension ChatTimelineCollectionHost.Controller {
                 configuration.sourceFilePath = trimmed
             }
         }
-        if let access = toolOutputAccess, context.outputAvailability?.hasSidecar == true {
+        if let access = toolOutputAccess,
+           context.outputAvailability?.hasSidecar == true || configuration.terminalOutputStream != nil {
             configuration.toolOutputSidecarSource = access.sidecarSource(toolCallId: itemID)
             configuration.fetchCompleteToolOutput = access.completeOutputFetch(
-                availability: context.outputAvailability,
+                availability: configuration.terminalOutputStream != nil
+                    ? .init(complete: false, source: "sidecar") : context.outputAvailability,
                 toolCallId: itemID,
-                store: toolOutputStore
+                store: configuration.terminalOutputStream != nil ? nil : toolOutputStore
             )
         }
         return configuration

@@ -358,7 +358,7 @@ struct ToolCallDocumentTests {
         let end = try ServerMessage.decode(from: #"{"type":"tool_end","tool":"arbitrary","toolCallId":"t","nestedCalls":{"calls":[{"id":"t/1","name":"nested","status":"future"}],"complete":false}}"#)
         let live = TimelineReducer(); let correlator = ToolCallCorrelator()
         guard case .toolStart(let tool, let args, let id, let segments, let hints, let display, _, _) = start,
-              case .toolEnd(_, _, _, _, _, let nested, _, _, _) = end else { Issue.record("protocol case"); return }
+              case .toolEnd(_, _, _, _, _, let nested, _, _, _, _) = end else { Issue.record("protocol case"); return }
         live.process(correlator.start(sessionId: "s", tool: tool, args: args, toolCallId: id, callSegments: segments, inputPresentation: hints, display: display))
         live.process(correlator.output(sessionId: "s", output: #"{"z":1,"a":2}"#, isError: false, toolCallId: "t"))
         live.process(correlator.end(sessionId: "s", toolCallId: "t"))

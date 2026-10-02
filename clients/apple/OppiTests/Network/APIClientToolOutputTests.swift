@@ -32,6 +32,44 @@ struct APIClientToolOutputTests {
         return (data, response)
     }
 
+    @Test(arguments: [SessionRouteScope.workspace("ws-1"), .control])
+    func terminalRecoveryRequestsExactRawByteRange(_ scope: SessionRouteScope) async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        let bytes = Data([0xFF, 0xC3, 0x28, 0x1B])
+        var requests = 0
+        MockURLProtocol.handler = { request in
+            requests += 1
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.query == "full=true")
+            #expect(request.value(forHTTPHeaderField: "Range") == "bytes=6-9")
+            #expect(request.url?.path == (scope == .control
+                ? "/control-sessions/s1/tool-output/tc-1" : "/workspaces/ws-1/sessions/s1/tool-output/tc-1"))
+            return (bytes, HTTPURLResponse(url: request.url!, statusCode: 206, httpVersion: nil,
+                headerFields: ["Content-Range": "bytes 6-9/10"])!)
+        }
+        let range = try await client.getTerminalOutputRange(scope: scope, sessionId: "s1", toolCallId: "tc-1", range: 6..<10)
+        #expect(requests == 1)
+        #expect(range.start == 6)
+        #expect(range.end == 10)
+        #expect(range.data == bytes) // invalid UTF-8 must not be re-encoded
+    }
+
+    @Test func terminalRecoveryRejectsUnrangedResponse() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        MockURLProtocol.handler = { request in
+            (Data([65]), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Range": "bytes 0-0/1"])!)
+        }
+        do {
+            _ = try await client.getTerminalOutputRange(scope: .control, sessionId: "s1", toolCallId: "tc-1", range: 0..<1)
+            Issue.record("Expected an invalid ranged response to fail")
+        } catch {
+            guard case APIError.invalidResponse = error else { Issue.record("Unexpected error: \(error)"); return }
+        }
+    }
+
     @Test func getNonEmptyFullToolOutputDecodesEntireJSONSidecar() async throws {
         let client = makeClient()
         defer { cleanup() }

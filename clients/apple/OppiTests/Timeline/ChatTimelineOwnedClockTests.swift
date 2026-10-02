@@ -8,6 +8,62 @@ import UIKit
 @Suite("Chat timeline UIKit-owned clock")
 @MainActor
 struct ChatTimelineOwnedClockTests {
+    @Test func terminalPaintReconfiguresRowWhenPreviewIsUnchanged() async throws {
+        let fixture = makeHostedOwnedTimeline(isBusy: true)
+        defer { fixture.tearDown() }
+        fixture.reducer.expandedItemIDs.insert("terminal")
+        fixture.reducer.processBatch([
+            .agentStart(sessionId: fixture.sessionId),
+            .textDelta(sessionId: fixture.sessionId, delta: "Hello"),
+            .toolStart(sessionId: fixture.sessionId, toolEventId: "terminal", tool: "arbitrary", args: [:],
+                outputPresentation: .init(kind: "terminal")),
+            .toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: "ready\n", isError: false,
+                outputStream: .init(epoch: 1, offset: 0, bytes: 6)))
+        ])
+        let owner = try #require(fixture.reducer.terminalOutputStreams.owner(for: "terminal"))
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                fixture.host.view.layoutIfNeeded()
+                func ready(in view: UIView) -> Bool {
+                    if let text = view as? UITextView, text.textStorage.string.contains("ready") { return true }
+                    return view.subviews.contains { ready(in: $0) }
+                }
+                return ready(in: fixture.host.view)
+            }
+        })
+        let before = fixture.reducer.items
+        owner.markReconnecting()
+        // The canonical ChatItem need not change when only recovery state changes.
+        #expect(fixture.reducer.items == before)
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                fixture.host.view.layoutIfNeeded()
+                func notice(in view: UIView) -> Bool {
+                    if let label = view as? UILabel, !label.isHidden, label.text == "Resyncing terminal output…" { return true }
+                    return view.subviews.contains { notice(in: $0) }
+                }
+                return notice(in: fixture.host.view)
+            }
+        })
+        let prefix = String(repeating: "x\n", count: 1200)
+        fixture.reducer.process(.toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: prefix,
+            isError: false, outputStream: .init(epoch: 1, offset: 6, bytes: prefix.utf8.count))))
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run { Self.containsTerminalText("x\nx\nx\nx", in: fixture.host.view) }
+        })
+        let tail = "last line\n"
+        fixture.reducer.process(.toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: tail,
+            isError: false, outputStream: .init(epoch: 1, offset: 6 + prefix.utf8.count, bytes: tail.utf8.count))))
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run { Self.containsTerminalText(tail, in: fixture.host.view) }
+        })
+    }
+
+    private static func containsTerminalText(_ text: String, in view: UIView) -> Bool {
+        if let output = view as? UITextView, output.textStorage.string.contains(text) { return true }
+        return view.subviews.contains { containsTerminalText(text, in: $0) }
+    }
+
     @Test func ownedClockIgnoresSwiftUIRowSnapshot() async {
         let windowed = makeWindowedTimelineHarness(sessionId: "owned-ignore-snapshot")
         windowed.reducer.processBatch([

@@ -30,7 +30,7 @@ struct ToolCallCorrelatorTests {
         #expect(!payload.isError)
 
         let endEvent = mapper.end(sessionId: "s1")
-        guard case .toolEnd(_, let endId, _, _, _, _, _, _, _) = endEvent else {
+        guard case .toolEnd(_, let endId, _, _, _, _, _, _, _, _) = endEvent else {
             Issue.record("Expected toolEnd")
             return
         }
@@ -57,7 +57,7 @@ struct ToolCallCorrelatorTests {
         #expect(payload.toolEventId == updateId)
 
         let endEvent = mapper.end(sessionId: "s1")
-        guard case .toolEnd(_, let endId, _, _, _, _, _, _, _) = endEvent else {
+        guard case .toolEnd(_, let endId, _, _, _, _, _, _, _, _) = endEvent else {
             Issue.record("Expected toolEnd")
             return
         }
@@ -107,7 +107,7 @@ struct ToolCallCorrelatorTests {
         let mapper = ToolCallCorrelator()
 
         let event = mapper.end(sessionId: "s1")
-        guard case .toolEnd(_, let id, _, _, _, _, _, _, _) = event else {
+        guard case .toolEnd(_, let id, _, _, _, _, _, _, _, _) = event else {
             Issue.record("Expected toolEnd")
             return
         }
@@ -177,7 +177,7 @@ struct ToolCallCorrelatorTests {
         #expect(payload.sessionId == "session-42")
 
         let end = mapper.end(sessionId: "session-42")
-        guard case .toolEnd(let sid3, _, _, _, _, _, _, _, _) = end else {
+        guard case .toolEnd(let sid3, _, _, _, _, _, _, _, _, _) = end else {
             Issue.record("Expected toolEnd")
             return
         }
@@ -236,7 +236,7 @@ struct ToolCallCorrelatorTests {
         #expect(payload.toolEventId == "server-tc-1", "Output should use server-provided toolCallId")
 
         let endEvent = mapper.end(sessionId: "s1", toolCallId: "server-tc-1")
-        guard case .toolEnd(_, let endId, _, _, _, _, _, _, _) = endEvent else {
+        guard case .toolEnd(_, let endId, _, _, _, _, _, _, _, _) = endEvent else {
             Issue.record("Expected toolEnd")
             return
         }

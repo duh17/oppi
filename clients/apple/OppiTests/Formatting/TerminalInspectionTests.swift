@@ -141,7 +141,7 @@ struct TerminalInspectionTests {
             inputPresentation: input, outputPresentation: terminal))
         let json = #"{"type":"tool_output","toolCallId":"tc","output":"tail","mode":"replace","truncated":true,"totalBytes":20480,"outputAvailability":{"complete":false,"totalBytes":20480,"source":"sidecar"}}"#
         let message = try ServerMessage.decode(from: json)
-        guard case .toolOutput(let text, let error, let id, let mode, let truncated, let bytes, let details, let source, _) = message else {
+        guard case .toolOutput(let text, let error, let id, let mode, let truncated, let bytes, let details, let source, _, _) = message else {
             Issue.record("Expected preview output"); return
         }
         coalescer.receive(correlator.output(sessionId: "s", output: text, isError: error, toolCallId: id, mode: mode,

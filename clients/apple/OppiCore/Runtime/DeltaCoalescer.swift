@@ -188,7 +188,7 @@ final class DeltaCoalescer {
                 deliverImmediately(event)
             }
 
-        case .toolEnd(let sessionId, let toolEventId, _, _, _, _, _, _, _):
+        case .toolEnd(let sessionId, let toolEventId, _, _, _, _, _, _, _, _):
             activeToolStarts.remove(ToolStartKey(sessionId: sessionId, toolEventId: toolEventId))
             previewToolStarts.remove(ToolStartKey(sessionId: sessionId, toolEventId: toolEventId))
             deliverImmediately(event)
@@ -336,6 +336,10 @@ final class DeltaCoalescer {
             appendChunkedText(delta) { chunk in
                 .thinkingDelta(sessionId: sessionId, delta: chunk, contentIndex: contentIndex)
             }
+        case .toolOutput(let payload) where payload.outputStream != nil:
+            // Offset-bearing chunks are atomic, including the empty attach marker.
+            // Do not split UTF-8 strings or apply legacy last-write-wins semantics.
+            appendBuffered(event)
         case .toolOutput(let payload) where payload.mode == .replace:
             appendOrReplaceBufferedToolOutput(payload)
         case .toolOutput(let payload) where payload.mode == .append:
@@ -489,6 +493,7 @@ final class DeltaCoalescer {
         if let lastIndex = buffer.indices.last,
            case .toolOutput(let previous) = buffer[lastIndex],
            previous.mode == .replace,
+           previous.outputStream == nil,
            previous.sessionId == payload.sessionId,
            previous.toolEventId == payload.toolEventId {
             let mergedEvent = AgentEvent.toolOutput(.init(
@@ -613,7 +618,7 @@ final class DeltaCoalescer {
             return payload.output.utf8.count
                 + estimatedPayloadBytes(payload.details)
 
-        case .toolEnd(_, _, let details, _, let resultSegments, let nestedCalls, _, _, _):
+        case .toolEnd(_, _, let details, _, let resultSegments, let nestedCalls, _, _, _, _):
             return estimatedPayloadBytes(details)
                 + estimatedPayloadBytes(resultSegments)
                 + ((try? JSONEncoder().encode(nestedCalls).count) ?? 0)

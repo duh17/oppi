@@ -101,6 +101,11 @@ final class ThinkingTraceStream {
 
 @MainActor
 final class TerminalTraceStream {
+    // The live reader observes this call owner directly, so cell reuse cannot
+    // redirect it to a different tool's snapshot stream.
+    var owner: TerminalOutputStream?
+    var completionSidecarSource: ToolOutputSidecarWindowSource?
+
     struct Snapshot: Equatable {
         let output: String
         let command: String?
@@ -115,7 +120,8 @@ final class TerminalTraceStream {
     }
 
     var snapshot: Snapshot {
-        snapshotStorage
+        if let owner { return Snapshot(output: owner.formatted, command: snapshotStorage.command, isDone: owner.state == .complete) }
+        return snapshotStorage
     }
 
     func update(output: String, command: String?, isDone: Bool) {

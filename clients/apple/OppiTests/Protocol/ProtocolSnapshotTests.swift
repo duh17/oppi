@@ -55,7 +55,7 @@ struct ProtocolSnapshotTests {
         let end = try decodeMessage("tool_end_with_details")
         guard case .toolStart(let raw, _, _, _, _, let startDisplay, _, _) = start,
               case .toolUpdate(_, _, _, _, _, let updateDisplay, _, _) = update,
-              case .toolEnd(_, _, _, _, _, let nested, _, _, _) = end else { Issue.record("Display fixtures"); return }
+              case .toolEnd(_, _, _, _, _, let nested, _, _, _, _) = end else { Issue.record("Display fixtures"); return }
         #expect(raw == "mcp__coros__getActivityDetail")
         #expect(startDisplay == updateDisplay)
         #expect(startDisplay?.label(fallback: raw) == "coros · Get activity detail")
@@ -63,7 +63,7 @@ struct ProtocolSnapshotTests {
     }
 
     @Test func settingAuthoritySurvivesWireDecode() throws {
-        guard case .toolEnd(_, _, _, _, _, _, let output, _, _) = try decodeMessage("tool_end_setting") else {
+        guard case .toolEnd(_, _, _, _, _, _, let output, _, _, _) = try decodeMessage("tool_end_setting") else {
             Issue.record("Expected setting tool result"); return
         }
         #expect(output?.settingEffect == "voiceReplyMode")
@@ -287,7 +287,7 @@ struct ProtocolSnapshotTests {
 
         // tool_output
         let outputMsg = try decodeMessage("tool_output")
-        guard case .toolOutput(let output, let isError, _, _, _, _, _, _, _) = outputMsg else {
+        guard case .toolOutput(let output, let isError, _, _, _, _, _, _, _, _) = outputMsg else {
             Issue.record("Expected .toolOutput")
             return
         }
@@ -296,7 +296,7 @@ struct ProtocolSnapshotTests {
 
         // tool_output_preview (replace mode)
         let previewMsg = try decodeMessage("tool_output_preview")
-        guard case .toolOutput(let previewOutput, _, _, let mode, let truncated, let totalBytes, _, let availability, _) = previewMsg else {
+        guard case .toolOutput(let previewOutput, _, _, let mode, let truncated, let totalBytes, _, let availability, _, _) = previewMsg else {
             Issue.record("Expected .toolOutput (preview)")
             return
         }
@@ -308,7 +308,7 @@ struct ProtocolSnapshotTests {
 
         // tool_end
         let endMsg = try decodeMessage("tool_end")
-        guard case .toolEnd(let endTool, _, _, _, _, _, _, _, _) = endMsg else {
+        guard case .toolEnd(let endTool, _, _, _, _, _, _, _, _, _) = endMsg else {
             Issue.record("Expected .toolEnd")
             return
         }
@@ -316,7 +316,7 @@ struct ProtocolSnapshotTests {
 
         // tool_end_with_details
         let detailsMsg = try decodeMessage("tool_end_with_details")
-        guard case .toolEnd(let detTool, _, let details, let isError, let resultSegs, _, _, _, _) = detailsMsg else {
+        guard case .toolEnd(let detTool, _, let details, let isError, let resultSegs, _, _, _, _, _) = detailsMsg else {
             Issue.record("Expected .toolEnd with details")
             return
         }
