@@ -49,7 +49,7 @@ import type { SearchIndex } from "./search-index.js";
 import { updateSearchIndexForSessionEvent } from "./session-search-indexing.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 import { SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS, SdkBackend } from "./sdk-backend.js";
-import type { LiveEntryRendererSet } from "./trace.js";
+import type { LiveEntryRendererSet, TraceEvent } from "./trace.js";
 import type { SessionStopTimers } from "./session-stop.js";
 import { notifySandboxWorkspaceActivity } from "./workspace-sandbox-lifecycle.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
@@ -471,6 +471,17 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     if (!active) return null;
 
     return this.stateCoordinator.refreshSessionState(key, active as SessionStateActiveSession);
+  }
+
+  async getServerDurableTrace(
+    sessionId: string,
+    view: "context" | "full",
+  ): Promise<TraceEvent[] | null> {
+    const id = this.storage.getSession(sessionId)?.serverDurable?.conversationId;
+    if (id === undefined || !this.durableHarness) return null;
+    const { harness } = await (await this.durableHarness).open();
+    const { readDurableTrace } = await import("./durable-history.js");
+    return readDurableTrace(harness, id as ConversationId, view);
   }
 
   /**

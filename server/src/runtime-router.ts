@@ -2,7 +2,7 @@ import type { AgentRuntimeTransport } from "./agent-runtime-transport.js";
 import type { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
 import type { SessionManager } from "./sessions.js";
 import type { Storage } from "./storage.js";
-import type { LiveEntryRendererSet } from "./trace.js";
+import type { LiveEntryRendererSet, TraceEvent } from "./trace.js";
 import type { ServerMessage, Session } from "./types.js";
 
 /**
@@ -86,6 +86,10 @@ export class SessionRuntimes implements AgentRuntimeTransport {
       sessionFile: snapshot.piSessionFile,
       sessionId: snapshot.id,
     };
+  }
+
+  getServerDurableTrace(sessionId: string, view: "context" | "full"): Promise<TraceEvent[] | null> {
+    return this.oppi.getServerDurableTrace(sessionId, view);
   }
 
   /** Startup belongs to Oppi, including a disconnected mirror promoted during open. */

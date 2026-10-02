@@ -113,6 +113,7 @@ export interface SessionTraceServiceDeps {
     "getToolFullOutputPath" | "getToolPartialOutput" | "refreshSessionState"
   > & {
     getEntryRenderers?: SessionRuntimes["getEntryRenderers"];
+    getServerDurableTrace?: SessionRuntimes["getServerDurableTrace"];
   };
   ensureSessionContextWindow: (session: Session) => Session;
   getMcpServerNames?: (session: Session) => readonly string[];
@@ -146,7 +147,9 @@ export class SessionTraceService {
     const baseDir = this.traceBaseDir();
     const entryRenderers = this.liveEntryRenderers(params.session.id);
 
-    let trace = this.loadSessionTrace(hydratedSession, traceView, liveLeafId, entryRenderers);
+    let trace =
+      (await this.deps.sessionRuntimes.getServerDurableTrace?.(params.session.id, traceView)) ??
+      this.loadSessionTrace(hydratedSession, traceView, liveLeafId, entryRenderers);
 
     if (!trace || trace.length === 0) {
       const traceOptions = this.traceReadOptions({

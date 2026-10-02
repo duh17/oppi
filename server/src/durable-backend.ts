@@ -26,7 +26,7 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import type { AgentDefinition } from "./agent-launch-service.js";
 import type { AgentBackend } from "./agent-backend.js";
 import type { DurableHarness } from "./durable-harness.js";
-import { adaptDurableEvent, createAdapterState, snapshotEvents } from "./durable-event-adapter.js";
+import { DurableEventProjection } from "./durable-event-projection.js";
 import type { PiMessage, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import type { SdkBackendDisposeResult } from "./sdk-backend.js";
 import { resolveSessionSeedModel, resolveSdkSessionCwd } from "./sdk-backend.js";
@@ -60,7 +60,7 @@ const RequestContent = defineDocFamily<{ content: string }, null>({
 /** An AgentBackend over a conversation; the Harness owns execution and queues. */
 export class DurableBackend implements AgentBackend {
   private readonly transactions = new SessionRuntimeTransaction();
-  private readonly adapter = createAdapterState();
+  private readonly projection: DurableEventProjection;
   private disposed = false;
   private eventsStarted = false;
   private admissions: Promise<void> = Promise.resolve();
@@ -81,6 +81,7 @@ export class DurableBackend implements AgentBackend {
     private readonly onEvent: (event: SessionBackendEvent) => void,
   ) {
     this.registry = new ModelRegistry(models);
+    this.projection = new DurableEventProjection(harness, () => owner.retrySettings ?? {});
   }
 
   static async create(options: {
@@ -193,14 +194,18 @@ export class DurableBackend implements AgentBackend {
   startEvents(): void {
     if (this.eventsStarted) return;
     this.eventsStarted = true;
-    for (const event of snapshotEvents(this.events.snapshot, this.adapter)) this.onEvent(event);
+    for (const event of this.projection.snapshot(this.events.snapshot, this.owner.isResumeHeld))
+      this.onEvent(event);
     this.events.start(async (events) => {
       if (this.disposed) return;
+      for (const pi of await this.projection.batch(events)) {
+        if (this.disposed) return;
+        this.onEvent(pi);
+      }
       for (const event of events) {
-        for (const pi of adaptDurableEvent(event, this.adapter)) this.onEvent(pi);
         if (event.type === "inbox_update")
           this.onEvent({ type: "queue_update", ...this.queuedMessages() });
-        if (event.type === "task_failed")
+        if (event.type === "task_failed" && event.kind !== "pi.compaction")
           this.onEvent({ type: "prompt_error", error: event.message });
       }
     });
@@ -401,7 +406,9 @@ export class DurableBackend implements AgentBackend {
     };
   }
   messages(): PiMessage[] {
-    return this.view.value.entries.flatMap((entry) => entry.model ?? []);
+    return this.view.value.entries.flatMap((entry) =>
+      this.projection.recoveredEntryIds.has(entry.id) ? [] : (entry.model ?? []),
+    );
   }
   getStateSnapshot(): PiStateSnapshot {
     const model = this.agent.model;

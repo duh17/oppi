@@ -30,6 +30,7 @@ import { SessionManager } from "../src/sessions.js";
 import { DurableHarness } from "../src/durable-harness.js";
 import { SessionTraceService } from "../src/session-trace-service.js";
 import { SessionStopCoordinator } from "../src/session-stop.js";
+import { SessionMessageQueueCoordinator } from "../src/session-queue.js";
 import {
   queueOrphanedSessionsForRestart,
   recordLiveSessionsForRestart,
@@ -44,7 +45,10 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function fixture(responses: FauxResponseStep[], options?: { slow?: boolean }) {
+async function fixture(
+  responses: FauxResponseStep[],
+  options?: { slow?: boolean; settings?: Parameters<typeof SettingsManager.inMemory>[0] },
+) {
   const dir = mkdtempSync(join(tmpdir(), "oppi-server-durable-test-"));
   console.info(`Durable integration artifacts: ${dir}`);
   const models = await ModelRuntime.create({
@@ -67,6 +71,7 @@ async function fixture(responses: FauxResponseStep[], options?: { slow?: boolean
       defaultModel: "faux-1",
       defaultThinkingLevel: "off",
       compaction: { enabled: false },
+      ...options?.settings,
     }),
   );
   const storage = new Storage(dir);
@@ -253,6 +258,329 @@ async function crashedQueuedTools(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe("server durable managed runtime", () => {
+  const compactionSettings = {
+    compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 100, backgroundTokens: 0 },
+    retry: { enabled: true, maxRetries: 2, baseDelayMs: 20 },
+  };
+
+  async function answer(
+    f: Awaited<ReturnType<typeof fixture>>,
+    observed: ReturnType<typeof observe>,
+    text: string,
+  ) {
+    const end = observed.next((message) => message.type === "agent_end");
+    await f.manager.sendPrompt(f.session.id, text);
+    await end;
+  }
+
+  it.each([false, true])(
+    "projects one retry loop end with configured attempts (exhaust=%s)",
+    async (exhaust) => {
+      const failure = () =>
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "429 overloaded" });
+      const f = await fixture(
+        [failure(), failure(), exhaust ? failure() : fauxAssistantMessage("RECOVERED")],
+        {
+          settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 20 } },
+        },
+      );
+      await f.manager.startSession(f.session.id, f.workspace);
+      const observed = observe(f.manager, f.session.id);
+      await answer(f, observed, "retry");
+      const starts = observed.messages.filter((message) => message.type === "retry_start");
+      expect(starts).toHaveLength(2);
+      expect(starts).toMatchObject([
+        { attempt: 1, maxAttempts: 2 },
+        { attempt: 2, maxAttempts: 2 },
+      ]);
+      for (const start of starts) expect(start.delayMs).toBeGreaterThanOrEqual(0);
+      expect(observed.messages.filter((message) => message.type === "retry_end")).toEqual([
+        expect.objectContaining({
+          success: !exhaust,
+          attempt: 2,
+          ...(exhaust ? { finalError: "429 overloaded" } : {}),
+        }),
+      ]);
+      observed.unsubscribe();
+    },
+  );
+
+  it("projects manual summary and start-time context tokens and resets cache state", async () => {
+    const flush = vi.spyOn(
+      SessionMessageQueueCoordinator.prototype,
+      "schedulePostCompactionQueueFlush",
+    );
+    const f = await fixture(
+      [
+        fauxAssistantMessage("Earlier context ".repeat(50)),
+        fauxAssistantMessage("Latest context"),
+        fauxAssistantMessage("## Goal\nPreserve names"),
+      ],
+      { settings: compactionSettings },
+    );
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    await answer(f, observed, "first");
+    await answer(f, observed, "second");
+    const active = (
+      f.manager as unknown as { active: Map<string, { cacheMissTracker: { previous?: unknown } }> }
+    ).active.get(f.session.id);
+    // Existing SDK coordinator owns cache reset; verify the projected result reaches it.
+    expect(active?.cacheMissTracker.previous).toBeDefined();
+    const end = observed.next((message) => message.type === "compaction_end");
+    await f.manager.runCommand(f.session.id, { type: "compact" });
+    expect(await end).toMatchObject({
+      aborted: false,
+      willRetry: false,
+      summary: "## Goal\nPreserve names",
+      tokensBefore: expect.any(Number),
+    });
+    expect(active?.cacheMissTracker.previous).toBeUndefined();
+    expect(flush).toHaveBeenCalledTimes(1);
+    const message = observed.messages.find((item) => item.type === "compaction_end");
+    expect(message?.type === "compaction_end" && message.tokensBefore).toBeGreaterThan(0);
+    expect(f.manager.getActiveSession(f.session.id)?.changeStats?.compactionCount).toBe(1);
+    observed.unsubscribe();
+  });
+
+  it("suppresses recoverable overflow errors and projects compact-and-retry", async () => {
+    const flush = vi.spyOn(
+      SessionMessageQueueCoordinator.prototype,
+      "schedulePostCompactionQueueFlush",
+    );
+    const f = await fixture(
+      [
+        fauxAssistantMessage("Old context ".repeat(50)),
+        fauxAssistantMessage("", {
+          stopReason: "error",
+          errorMessage: "prompt is too long: 999999 tokens",
+        }),
+        fauxAssistantMessage("Overflow summary"),
+        fauxAssistantMessage("FRESH ANSWER"),
+      ],
+      { settings: compactionSettings },
+    );
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    await answer(f, observed, "first");
+    await answer(f, observed, "overflow");
+    expect(observed.messages.filter((message) => message.type === "error")).toEqual([]);
+    expect(flush).not.toHaveBeenCalled();
+    expect(observed.messages.filter((message) => message.type === "compaction_end")).toEqual([
+      expect.objectContaining({
+        aborted: false,
+        willRetry: true,
+        summary: "Overflow summary",
+        tokensBefore: expect.any(Number),
+      }),
+    ]);
+    expect(
+      observed.messages.filter(
+        (message) => message.type === "message_end" && message.role === "assistant",
+      ),
+    ).toHaveLength(2);
+    expect(f.manager.getActiveSession(f.session.id)?.changeStats?.compactionCount).toBe(1);
+    observed.unsubscribe();
+  });
+
+  it("holds compaction_end until a busy conversation places its later summary write", async () => {
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const f = await fixture(
+      [
+        fauxAssistantMessage("Old context ".repeat(50)),
+        fauxAssistantMessage("Recent"),
+        async (_transcript, options) => {
+          entered();
+          await Promise.race([
+            held,
+            new Promise<void>((_resolve, reject) => {
+              options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
+                once: true,
+              });
+            }),
+          ]);
+          return fauxAssistantMessage("Finished turn");
+        },
+        fauxAssistantMessage("Later summary"),
+      ],
+      { settings: compactionSettings },
+    );
+    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    await answer(f, observed, "first");
+    await answer(f, observed, "second");
+    const turnEnd = observed.next((message) => message.type === "agent_end");
+    await f.manager.sendPrompt(f.session.id, "held generation");
+    await started;
+    const { harness } = await opening.mock.results[0]!.value;
+    const conversation = await harness.conversation(
+      f.storage.getSession(f.session.id)!.serverDurable!.conversationId,
+      context,
+    );
+    const compactEnd = observed.next((message) => message.type === "compaction_end");
+    const id = await conversation.compact(undefined, context);
+    const task = await harness.waitForTask(id, context);
+    expect(task.state.outcome.status).toBe("completed");
+    expect(observed.messages.filter((message) => message.type === "compaction_end")).toHaveLength(
+      0,
+    );
+    release();
+    await turnEnd;
+    expect(await compactEnd).toMatchObject({
+      summary: "Later summary",
+      aborted: false,
+      willRetry: false,
+      tokensBefore: expect.any(Number),
+    });
+    expect(
+      observed.messages.filter(
+        (message) => message.type === "message_end" && message.role === "user",
+      ),
+    ).toHaveLength(3);
+    observed.unsubscribe();
+  });
+
+  it("projects failed compaction without counting it", async () => {
+    const f = await fixture(
+      [
+        fauxAssistantMessage("Old context ".repeat(50)),
+        fauxAssistantMessage("Latest"),
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid summary request" }),
+      ],
+      { settings: compactionSettings },
+    );
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    await answer(f, observed, "first");
+    await answer(f, observed, "second");
+    const end = observed.next((message) => message.type === "compaction_end");
+    await expect(f.manager.runCommand(f.session.id, { type: "compact" })).rejects.toThrow();
+    expect(await end).toMatchObject({
+      aborted: false,
+      willRetry: false,
+      errorMessage: expect.stringContaining("invalid summary request"),
+    });
+    expect(f.manager.getActiveSession(f.session.id)?.changeStats?.compactionCount).toBeUndefined();
+    observed.unsubscribe();
+  });
+
+  it("projects cancelled compaction without counting it", async () => {
+    let entered!: () => void;
+    const summarizing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    const f = await fixture(
+      [
+        fauxAssistantMessage("Old context ".repeat(50)),
+        fauxAssistantMessage("Latest"),
+        async (_transcript, options) => {
+          entered();
+          return new Promise((_resolve, reject) => {
+            options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
+              once: true,
+            });
+          });
+        },
+      ],
+      { settings: compactionSettings },
+    );
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    await answer(f, observed, "first");
+    await answer(f, observed, "second");
+    const end = observed.next((message) => message.type === "compaction_end");
+    const compact = f.manager.runCommand(f.session.id, { type: "compact" });
+    const rejected = expect(compact).rejects.toThrow();
+    await summarizing;
+    const { harness } = await opening.mock.results[0]!.value;
+    const task = (await harness.inspect(context)).tasks.find(
+      (item: { record: { kind: string } }) => item.record.kind === "pi.compaction",
+    );
+    expect(task).toBeDefined();
+    await harness.abortTask(task!.record.id, context);
+    expect(await end).toMatchObject({ aborted: true, willRetry: false });
+    await rejected;
+    expect(f.manager.getActiveSession(f.session.id)?.changeStats?.compactionCount).toBeUndefined();
+    observed.unsubscribe();
+  });
+
+  it.each(["crash", "stop", "crash-then-stop"])(
+    "hides crash-retried partials but keeps user Stop in live and trace (%s)",
+    async (mode) => {
+      const stop = mode === "stop";
+      const f = await fixture(
+        [
+          fauxAssistantMessage("INTERRUPTED partial ".repeat(100)),
+          fauxAssistantMessage("FRESH COMPLETE"),
+        ],
+        { slow: true },
+      );
+      await f.manager.startSession(f.session.id, f.workspace);
+      let observed = observe(f.manager, f.session.id);
+      const partial = observed.next((message) => message.type === "text_delta");
+      await f.manager.sendPrompt(f.session.id, "original");
+      await partial;
+      if (stop) {
+        const end = observed.next((message) => message.type === "agent_end");
+        await f.manager.sendAbort(f.session.id);
+        await end;
+      } else {
+        recordLiveSessionsForRestart(f.storage, [f.manager.getActiveSession(f.session.id)!]);
+        await f.manager.close();
+        managers.splice(managers.indexOf(f.manager), 1);
+        const models = f.faux;
+        models.setResponses([
+          fauxAssistantMessage(
+            mode === "crash-then-stop" ? "FRESH regenerated partial ".repeat(100) : "FRESH",
+          ),
+        ]);
+        const restarted = new SessionManager(new Storage(f.dir));
+        managers.push(restarted);
+        let end!: Promise<ServerMessage>;
+        let retriedPartial!: Promise<ServerMessage>;
+        const start = restarted.startSession.bind(restarted);
+        vi.spyOn(restarted, "startSession").mockImplementation(async (id, workspace) => {
+          const result = await start(id, workspace);
+          observed = observe(restarted, id);
+          end = observed.next((message) => message.type === "agent_end");
+          if (mode === "crash-then-stop")
+            retriedPartial = observed.next((message) => message.type === "text_delta");
+          return result;
+        });
+        await restarted.resumeDurableSessions();
+        if (mode === "crash-then-stop") {
+          await retriedPartial;
+          await restarted.sendAbort(f.session.id);
+        }
+        await end;
+        f.manager = restarted;
+      }
+      const ends = observed.messages.filter(
+        (message) => message.type === "message_end" && message.role === "assistant",
+      );
+      expect(ends).toHaveLength(1);
+      const service = new SessionTraceService({
+        storage: f.storage,
+        sessionRuntimes: f.manager,
+        ensureSessionContextWindow: (session) => session,
+        mobileRenderers: f.manager.mobileRenderer,
+      });
+      const result = await service.getSessionWithTrace({ session: f.session });
+      const assistants = result.trace.filter((event) => event.type === "assistant");
+      expect(assistants).toHaveLength(1);
+      expect(assistants[0]?.text).toContain(stop ? "INTE" : "FRES");
+      observed.unsubscribe();
+    },
+  );
   it("gates an early HTTP-equivalent open and prompt before bootstrap even begins", async () => {
     const f = await fixture([]);
     const crashed = await crashedQueuedTools(f);

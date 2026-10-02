@@ -20,6 +20,11 @@ export class DurableHarness {
   // harness-wide scheduler until startup has resolved every persisted binding.
   private resumeHeld = true;
   private readonly pausedAborts = new Set<Promise<void>>();
+  private runSettings?: HarnessSettings;
+
+  get retrySettings(): HarnessSettings["retry"] {
+    return this.runSettings?.retry;
+  }
 
   get isResumeHeld(): boolean {
     return this.resumeHeld;
@@ -71,6 +76,7 @@ export class DurableHarness {
     });
     // Run policy is global to the Harness, not the first workspace to open it.
     const settings = SettingsManager.create(homedir(), agentDir, { projectTrusted: false });
+    this.runSettings = harnessSettings(settings);
     const registry = createRegistry();
     registry.install(CodingTools);
     const directory = join(this.dataDir, "durable");
@@ -84,7 +90,7 @@ export class DurableHarness {
       {
         models,
         registry,
-        settings: harnessSettings(settings),
+        settings: this.runSettings,
         env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? homedir() }),
       },
       BACKGROUND_CONTEXT,

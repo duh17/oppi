@@ -1,5 +1,5 @@
 // Maps committed Durable events into the existing Pi session projection pipeline.
-// Based on the pi-durable host spike; compaction/retry detail parity is deferred.
+// Durable backoff and compaction receipts need batch-level correlation before Pi projection.
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { AgentEvent, MessageChange, SnapshotEvent } from "@earendil-works/pi-durable";
 import type { AssistantMessage, AssistantMessageEvent, Usage } from "@earendil-works/pi-ai";
@@ -131,30 +131,11 @@ export function adaptDurableEvent(event: AgentEvent, state: AdapterState): Agent
       return adaptToolEnd(event, state);
     case "compaction_start":
       return [asPi({ type: "compaction_start", reason: event.reason })];
+    // These are resolved by DurableEventProjection using task receipts and the whole batch.
     case "compaction_end":
-      // Durable compaction_end has no aborted/willRetry/result. [INFERENCE] zeros.
-      return [
-        asPi({
-          type: "compaction_end",
-          reason: event.reason,
-          result: undefined,
-          aborted: false,
-          willRetry: false,
-        }),
-      ];
     case "auto_retry_start":
-      return [
-        asPi({
-          type: "auto_retry_start",
-          attempt: event.attempt,
-          maxAttempts: 0,
-          delayMs: Math.max(0, event.at - Date.now()),
-          errorMessage: event.errorMessage,
-        }),
-      ];
     case "auto_retry_end":
-      // Durable auto_retry_end has only attempt. [INFERENCE] success=true.
-      return [asPi({ type: "auto_retry_end", success: true, attempt: event.attempt })];
+      return [];
     default:
       return [];
   }
