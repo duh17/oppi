@@ -7,10 +7,14 @@ import Synchronization
 protocol SSHTerminalConnection: Sendable {
     func send(_ bytes: Data) async throws
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws
+    /// One-shot command on the same connection, outside the terminal's PTY.
+    func run(_ command: String) async throws -> SSHExecResult
     func cancel() async
 }
 
-extension SSHPTYSession: SSHTerminalConnection {}
+extension SSHPTYSession: SSHTerminalConnection {
+    func run(_ command: String) async throws -> SSHExecResult { try await run(command, maximumOutputBytes: 2 * 1024 * 1024, timeout: .seconds(10)) }
+}
 
 /// Bounded hand-off from the NIO event loop to the main actor.
 ///
@@ -136,6 +140,9 @@ final class SSHTerminalChannel {
         }
     }
     private var connection: (any SSHTerminalConnection)?
+    /// The startup command running instead of a shell, if any. Exit reasons
+    /// name it so a finished `herdr` attach is not reported as a shell exit.
+    private(set) var command: String?
     private var writable = true
     private var writabilityRevision = 0
     private var pending = [Data]()
@@ -150,8 +157,9 @@ final class SSHTerminalChannel {
         target = self
     }
 
-    func opened(_ connection: any SSHTerminalConnection) {
+    func opened(_ connection: any SSHTerminalConnection, command: String? = nil) {
         self.connection = connection
+        self.command = command
         connected = true
         connecting = false
         reason = "Connected"
@@ -167,8 +175,8 @@ final class SSHTerminalChannel {
             writabilityRevision &+= 1
             writable = value
             if value { startPump() }
-        case .exitStatus(let status): close(reason: "Shell exited with status \(status).")
-        case .exitSignal(let signal): close(reason: "Shell exited on signal \(signal).")
+        case .exitStatus(let status): close(reason: "\(exitSubject) exited with status \(status).")
+        case .exitSignal(let signal): close(reason: "\(exitSubject) exited on signal \(signal).")
         case .eof: closeInput()
         case .closed: close(reason: "The SSH connection closed.")
         }
@@ -208,6 +216,14 @@ final class SSHTerminalChannel {
         }
         interpret(run)
         queue.release(bytes: dataBytes)
+    }
+
+    private var exitSubject: String { command.map { "`\($0)`" } ?? "Shell" }
+
+    /// Runs a structured side command on this terminal's connection.
+    func run(_ command: String) async throws -> SSHExecResult {
+        guard connected, let connection else { throw SSHPTYSessionError.notConnected }
+        return try await connection.run(command)
     }
 
     private func interpret(_ bytes: Data) {
@@ -250,6 +266,11 @@ final class SSHTerminalChannel {
     func key(_ key: GhosttyKey, text: String = "", modifiers: GhosttyMods = 0) {
         guard connected, !inputClosed else { send(Data()); return }
         send(engine.key(key, text: text, modifiers: modifiers))
+    }
+
+    func mouse(_ input: SSHTerminalEngine.MouseInput, column: Int, row: Int) {
+        guard connected, !inputClosed else { return }
+        send(engine.mouse(input, column: column, row: row))
     }
 
     func paste(_ text: String, confirmed: Bool = false) throws {

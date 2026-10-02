@@ -53,6 +53,18 @@ struct SSHTerminalSetupView: View {
                 Text("One host. Remote Login (sshd) must be enabled. When Oppi’s Tailscale node is running, *.ts.net hosts use it; other hosts use your current network.")
             }.disabled(connecting)
 
+            Section {
+                TextField("Login shell", text: Binding(
+                    get: { profile.startupCommand ?? "" },
+                    set: { profile.startupCommand = $0 }
+                ))
+                .font(.system(.body, design: .monospaced))
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                .accessibilityIdentifier("sshTerminal.startupCommand")
+            } header: { Text("Run on Connect") } footer: {
+                Text("Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. Enter `herdr` to attach your Herdr session. The connection ends when the command exits (for Herdr, detach with Ctrl-B Q). The command must be on the PATH that SSH commands see.")
+            }.disabled(connecting)
+
             if profile.authentication == .deviceKey {
                 Section {
                     if let identity {
@@ -217,6 +229,8 @@ struct SSHTerminalSetupView: View {
         result.host = target
         result.username = profile.username.trimmingCharacters(in: .whitespacesAndNewlines)
         result.port = port ?? 22
+        let command = profile.startupCommand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        result.startupCommand = command.isEmpty ? nil : command
         if result.authentication == .deviceKey { result.savesPassword = false }
         return result
     }
@@ -314,6 +328,7 @@ struct SSHTerminalSetupView: View {
                 do {
                     session = try await SSHPTYSession.connect(
                         username: value.username, savedHostKey: savedKey, inboundFlow: queue.flow,
+                        command: value.startupCommand,
                         prepareAuthentication: {
                             switch value.authentication {
                             case .password:
@@ -332,7 +347,7 @@ struct SSHTerminalSetupView: View {
                     )
                 } catch { queue.finish(); throw error }
                 guard !Task.isCancelled, runID == id else { queue.finish(); await session.cancel(); return }
-                owner.opened(session)
+                owner.opened(session, command: value.startupCommand)
                 connecting = false
                 showsTerminal = true
                 // Sign-in's task (and its password capture) ends here. The

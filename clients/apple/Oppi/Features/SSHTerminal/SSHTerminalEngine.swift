@@ -37,6 +37,7 @@ final class SSHTerminalEngine {
     private var rowIterator: GhosttyRenderStateRowIterator?
     private var cells: GhosttyRenderStateRowCells?
     private var encoder: GhosttyKeyEncoder?
+    private var mouseEncoder: GhosttyMouseEncoder?
     private var replies = [Data]()
     private var live = true
     private var titleChanged = false
@@ -58,7 +59,8 @@ final class SSHTerminalEngine {
               ghostty_render_state_new(nil, &render) == GHOSTTY_SUCCESS,
               ghostty_render_state_row_iterator_new(nil, &rowIterator) == GHOSTTY_SUCCESS,
               ghostty_render_state_row_cells_new(nil, &cells) == GHOSTTY_SUCCESS,
-              ghostty_key_encoder_new(nil, &encoder) == GHOSTTY_SUCCESS else {
+              ghostty_key_encoder_new(nil, &encoder) == GHOSTTY_SUCCESS,
+              ghostty_mouse_encoder_new(nil, &mouseEncoder) == GHOSTTY_SUCCESS else {
             throw SSHTerminalError.engineUnavailable
         }
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, Unmanaged.passUnretained(self).toOpaque())
@@ -68,6 +70,7 @@ final class SSHTerminalEngine {
     }
 
     isolated deinit {
+        ghostty_mouse_encoder_free(mouseEncoder)
         ghostty_key_encoder_free(encoder)
         ghostty_render_state_row_cells_free(cells)
         ghostty_render_state_row_iterator_free(rowIterator)
@@ -203,6 +206,62 @@ final class SSHTerminalEngine {
             guard result == GHOSTTY_SUCCESS else { return Data() }
             return output.withUnsafeBytes { Data($0.prefix(length)) }
         }
+    }
+
+    /// True while the remote application asked for mouse reports (Herdr, tmux
+    /// with `mouse on`, vim, …). Touches then belong to it, not local history.
+    var mouseTracking: Bool {
+        var value = false
+        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING, &value)
+        return live && value
+    }
+
+    enum MouseInput {
+        case click
+        case wheelUp
+        case wheelDown
+    }
+
+    /// Encodes a touch as mouse report(s) at a viewport cell, in the protocol
+    /// and tracking mode the application selected. Empty when it did not ask.
+    func mouse(_ input: MouseInput, column: Int, row: Int) -> Data {
+        guard mouseTracking else { return Data() }
+        ghostty_mouse_encoder_setopt_from_terminal(mouseEncoder, terminal)
+        var size = GhosttyMouseEncoderSize()
+        size.size = MemoryLayout<GhosttyMouseEncoderSize>.size
+        size.screen_width = UInt32(geometry.pixelWidth)
+        size.screen_height = UInt32(geometry.pixelHeight)
+        size.cell_width = UInt32(max(1, geometry.cellWidth))
+        size.cell_height = UInt32(max(1, geometry.cellHeight))
+        ghostty_mouse_encoder_setopt(mouseEncoder, GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size)
+        let column = min(max(0, column), geometry.columns - 1)
+        let row = min(max(0, row), geometry.rows - 1)
+        let position = GhosttyMousePosition(x: Float((Double(column) + 0.5) * Double(geometry.cellWidth)),
+                                            y: Float((Double(row) + 0.5) * Double(geometry.cellHeight)))
+        let events: [(GhosttyMouseAction, GhosttyMouseButton)] = switch input {
+        case .click: [(GHOSTTY_MOUSE_ACTION_PRESS, GHOSTTY_MOUSE_BUTTON_LEFT), (GHOSTTY_MOUSE_ACTION_RELEASE, GHOSTTY_MOUSE_BUTTON_LEFT)]
+        case .wheelUp: [(GHOSTTY_MOUSE_ACTION_PRESS, GHOSTTY_MOUSE_BUTTON_FOUR)]
+        case .wheelDown: [(GHOSTTY_MOUSE_ACTION_PRESS, GHOSTTY_MOUSE_BUTTON_FIVE)]
+        }
+        var output = Data()
+        for (action, button) in events {
+            var event: GhosttyMouseEvent?
+            guard ghostty_mouse_event_new(nil, &event) == GHOSTTY_SUCCESS else { return Data() }
+            defer { ghostty_mouse_event_free(event) }
+            ghostty_mouse_event_set_action(event, action)
+            ghostty_mouse_event_set_button(event, button)
+            ghostty_mouse_event_set_position(event, position)
+            var pressed = action == GHOSTTY_MOUSE_ACTION_PRESS && input == .click
+            ghostty_mouse_encoder_setopt(mouseEncoder, GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &pressed)
+            var buffer = [CChar](repeating: 0, count: 64)
+            var length = 0
+            let result = buffer.withUnsafeMutableBufferPointer {
+                ghostty_mouse_encoder_encode(mouseEncoder, event, $0.baseAddress, $0.count, &length)
+            }
+            guard result == GHOSTTY_SUCCESS else { continue }
+            output.append(buffer.withUnsafeBytes { Data($0.prefix(length)) })
+        }
+        return output
     }
 
     static func pasteIsSafe(_ text: String) -> Bool {

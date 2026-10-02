@@ -91,6 +91,25 @@ struct SSHPTYSessionTests {
         await session.cancel()
     }
 
+    @Test func startupCommandReplacesTheShellAndSideCommandsUseTheirOwnChannel() async throws {
+        let fixture = try await SSHFixture.start()
+        let collector = EventCollector()
+        let session = try await fixture.connect(command: "herdr", sink: collector.receive)
+        defer { fixture.close() }
+        #expect(fixture.channelRequests.prefix(2).elementsEqual(["pty", "exec:herdr"]))
+
+        let result = try await session.run("herdr api snapshot")
+        #expect(result == SSHExecResult(output: Data("ran herdr api snapshot".utf8), errorOutput: Data("warn".utf8), exitStatus: 3))
+        #expect(!fixture.channelRequests.contains("shell"))
+        // The side command's close does not end the terminal.
+        try await session.send(Data("still here".utf8))
+        #expect(!collector.events.contains(.closed))
+        await #expect(throws: SSHPTYSessionError.commandOutputTooLarge) {
+            try await session.run("big", maximumOutputBytes: 4)
+        }
+        await session.cancel()
+    }
+
     @Test func rejectedPublicKeyNeverFallsBackToPassword() async throws {
         let fixture = try await SSHFixture.start(auth: .rejectPublicKey)
         defer { fixture.close() }
@@ -600,11 +619,12 @@ private final class SSHFixture: @unchecked Sendable {
         )
     }
 
-    func connect(flow: SSHPTYInboundFlow? = nil, sink: @escaping SSHPTYByteSink) async throws -> SSHPTYSession {
+    func connect(flow: SSHPTYInboundFlow? = nil, command: String? = nil, sink: @escaping SSHPTYByteSink) async throws -> SSHPTYSession {
         var configuration = clientConfiguration(
             savedHostKey: SSHHostKey(openSSH: String(openSSHPublicKey: hostKey.publicKey))
         )
         configuration.inboundFlow = flow
+        configuration.command = command
         return try await SSHPTYSession.connect(
             configuration: configuration,
             socket: clientSocket,
@@ -752,6 +772,16 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
                 sawPTY = true
                 context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
             }
+        case let exec as SSHChannelRequestEvent.ExecRequest:
+            state.channelRequests.withLock { $0.append("exec:\(exec.command)") }
+            context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
+            guard !sawPTY else { return } // a startup command behaves like a shell
+            // A one-shot side command: stdout, stderr, exit status, close.
+            let channel = context.channel
+            channel.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(channel.allocator.buffer(string: "ran \(exec.command)"))), promise: nil)
+            channel.writeAndFlush(SSHChannelData(type: .stdErr, data: .byteBuffer(channel.allocator.buffer(string: "warn"))), promise: nil)
+            channel.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitStatus(exitStatus: 3), promise: nil)
+            channel.close(promise: nil)
         case is SSHChannelRequestEvent.ShellRequest:
             state.channelRequests.withLock { $0.append("shell") }
             if sawPTY {

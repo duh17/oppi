@@ -1140,6 +1140,7 @@
 		98E6458E95AB87B44EDE7DA3 /* TerminalMirrorIndicatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B65FEE66FAB328B15B0F651 /* TerminalMirrorIndicatorView.swift */; };
 		99064FF37F463580F1829BD0 /* FullScreenCodeBodies.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95B3589E8059066D1C93C3AF /* FullScreenCodeBodies.swift */; };
 		9908DA7FB631604890F7F036 /* DocumentRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07455A7D1D33D7830E8197C5 /* DocumentRenderer.swift */; };
+		991B7385A7DA35752252B1E6 /* HerdrRemote.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F897DE13278A8879D439C6 /* HerdrRemote.swift */; };
 		9921F5BF5CF52D0D4A7BEF4B /* MacWorkspaceShellViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA29533A62DA87EF07DBEB4A /* MacWorkspaceShellViews.swift */; };
 		9935CC9CA0F134E807A42E06 /* StreamRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD1BED11F1546666FD197EE7 /* StreamRecoveryTests.swift */; };
 		994F70E0402A80985EB0171B /* SessionListSearchPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DA02C1DD3C1177385403458 /* SessionListSearchPresentationTests.swift */; };
@@ -1474,6 +1475,7 @@
 		C2DFDDC83245E0AE9DEBE09B /* MermaidERParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABA5130567D8BB2FF99C2F37 /* MermaidERParser.swift */; };
 		C3177AEB555B50F4D4D2F6BD /* MermaidFlowchartRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05867D89410F8026ABA59F5 /* MermaidFlowchartRenderer.swift */; };
 		C355A73491D9DEB884C8AF64 /* TableBodyLeakParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04FECF5D52D24E3E5498F0D4 /* TableBodyLeakParserTests.swift */; };
+		C3703E915262A9D71F9A3FCC /* HerdrAgentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6F6185F644E55021D87123F /* HerdrAgentsView.swift */; };
 		C39D78C513D315E8EA457AB9 /* SessionOutline.swift in Sources */ = {isa = PBXBuildFile; fileRef = B53A89D135E833A09DFE8C42 /* SessionOutline.swift */; };
 		C3A01460782EC7BFD4EC835A /* OppiDictationProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFE933D38E38DE964B1DF64E /* OppiDictationProvider.swift */; };
 		C3B0198EB8D40EC5B45D9C8B /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DD77BDE6A67F9FFC42DD099 /* QRScannerView.swift */; };
@@ -2283,6 +2285,7 @@
 		27560F6067A16918331DF012 /* ComposerDraftStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerDraftStore.swift; sourceTree = "<group>"; };
 		27806A6C72201BADCF5532F9 /* BottomOverlapScrollGapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BottomOverlapScrollGapTests.swift; sourceTree = "<group>"; };
 		27EC22F73FBBAADDEA1F10A3 /* ServerMessageEffects.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerMessageEffects.swift; sourceTree = "<group>"; };
+		27F897DE13278A8879D439C6 /* HerdrRemote.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrRemote.swift; sourceTree = "<group>"; };
 		28098DCC60A1715D243FACB1 /* MacQuickSessionPaneTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacQuickSessionPaneTests.swift; sourceTree = "<group>"; };
 		2810372B3C2B96381C2D995C /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		289020DB12617C97F6B318B1 /* FullScreenMarkdownStressCorpusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenMarkdownStressCorpusTests.swift; sourceTree = "<group>"; };
@@ -3056,6 +3059,7 @@
 		A611224FA3D4A0EB405C7E11 /* ScrollStressTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollStressTests.swift; sourceTree = "<group>"; };
 		A62F1D29853F66CA5E208ABF /* AuthenticatedMediaSourceShareTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticatedMediaSourceShareTests.swift; sourceTree = "<group>"; };
 		A6CAAE9CE09DF2D28BCF715E /* Preferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Preferences.swift; sourceTree = "<group>"; };
+		A6F6185F644E55021D87123F /* HerdrAgentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrAgentsView.swift; sourceTree = "<group>"; };
 		A6F8B0D1C42982F06361F169 /* NativeMarkdownVideoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMarkdownVideoView.swift; sourceTree = "<group>"; };
 		A702D62ECC72CCD39D080D84 /* MacSessionTraceStoreModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionTraceStoreModelTests.swift; sourceTree = "<group>"; };
 		A70DC58E52119EFF3D2E7045 /* InlineMediaPlayback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineMediaPlayback.swift; sourceTree = "<group>"; };
@@ -5801,6 +5805,8 @@
 		C17B2D509F6C65D42EE4422B /* SSHTerminal */ = {
 			isa = PBXGroup;
 			children = (
+				A6F6185F644E55021D87123F /* HerdrAgentsView.swift */,
+				27F897DE13278A8879D439C6 /* HerdrRemote.swift */,
 				19C13455DFB1AB9447182559 /* SSHDirectTCP.swift */,
 				353DCB2C42D2506A8FB1E917 /* SSHTerminalChannel.swift */,
 				555E01FCFE0ADCEA18DD9236 /* SSHTerminalEngine.swift */,
@@ -8381,6 +8387,8 @@
 				50490A353D237A3633B59A3F /* HTMLPreviewView.swift in Sources */,
 				32B03D2332F17B7998BB01F2 /* HardwareKeybindingAdapter.swift in Sources */,
 				72FE027EE9A58D28C49D3096 /* HardwareKeybindingResponder.swift in Sources */,
+				C3703E915262A9D71F9A3FCC /* HerdrAgentsView.swift in Sources */,
+				991B7385A7DA35752252B1E6 /* HerdrRemote.swift in Sources */,
 				439551DD2905ACD7AD8E3C84 /* HorizontalPanPassthroughScrollView.swift in Sources */,
 				BB355B8755937E98D064A766 /* HostDirectory.swift in Sources */,
 				47B73E553EC1285F6B496269 /* IOSChatSessionRuntimeAdapter.swift in Sources */,

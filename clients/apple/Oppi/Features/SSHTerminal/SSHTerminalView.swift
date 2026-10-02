@@ -13,6 +13,9 @@ struct SSHTerminalView: View {
     @State private var detached = false
     @State private var pasteNotice: String?
     @State private var pasteNoticeTask: Task<Void, Never>?
+    @State private var keyboardRequest = 0
+    @State private var herdr = HerdrMonitor()
+    @State private var showsHerdr = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,7 +52,7 @@ struct SSHTerminalView: View {
                 Text(pasteNotice).font(.footnote).foregroundStyle(.themeOrange)
                     .accessibilityIdentifier("sshTerminal.pasteNotice")
             }
-            SSHTerminalSurface(channel: channel, themeID: themeID,
+            SSHTerminalSurface(channel: channel, themeID: themeID, keyboardRequest: keyboardRequest,
                                paste: requestPaste, followChanged: { detached = !$0 })
                 .overlay(alignment: .bottomTrailing) {
                     if detached {
@@ -69,6 +72,36 @@ struct SSHTerminalView: View {
                 Text(channel.title.isEmpty ? "SSH Terminal" : channel.title)
                     .font(.headline).foregroundStyle(.themeFg).lineLimit(1)
             }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if herdr.available {
+                    Button { showsHerdr = true } label: {
+                        Image(systemName: "square.grid.2x2")
+                            .overlay(alignment: .topTrailing) {
+                                if let count = herdr.snapshot?.needsAttention, count > 0 {
+                                    Text("\(count)").font(.caption2.bold()).foregroundStyle(.white)
+                                        .padding(.horizontal, 4).background(.themeOrange, in: .capsule)
+                                        .offset(x: 8, y: -6)
+                                }
+                            }
+                    }
+                    .accessibilityLabel("Herdr agents")
+                    .accessibilityValue(herdr.snapshot.map { "\($0.needsAttention) need you" } ?? "")
+                    .accessibilityIdentifier("sshTerminal.herdr")
+                }
+                Button("Show Keyboard", systemImage: "keyboard") { keyboardRequest += 1 }
+                    .disabled(!channel.connected)
+                    .accessibilityIdentifier("sshTerminal.showKeyboard")
+            }
+        }
+        .sheet(isPresented: $showsHerdr) {
+            HerdrAgentsView(monitor: herdr, channel: channel)
+                .presentationDetents([.medium, .large])
+        }
+        .onChange(of: showsHerdr) { _, open in herdr.watching = open }
+        // One poller per connected generation; it ends with the connection.
+        .task(id: channel.connected) {
+            guard channel.connected else { return }
+            await herdr.run(on: channel)
         }
         // The terminal paints with the app theme, not the system appearance.
         // Keep the bar's title and back chevron legible against it in both.
@@ -134,16 +167,25 @@ struct SSHTerminalView: View {
 private struct SSHTerminalSurface: UIViewRepresentable {
     let channel: SSHTerminalChannel
     let themeID: ThemeID
+    /// Bumped by the toolbar's keyboard button. In a mouse-reporting app a tap
+    /// clicks, so the keyboard needs an entry point that is not a tap.
+    let keyboardRequest: Int
     let paste: () -> Void
     let followChanged: (Bool) -> Void
 
     func makeUIView(context: Context) -> SSHTerminalGridView {
-        SSHTerminalGridView(channel: channel, paste: paste, followChanged: followChanged)
+        let view = SSHTerminalGridView(channel: channel, paste: paste, followChanged: followChanged)
+        view.keyboardRequest = keyboardRequest
+        return view
     }
 
     func updateUIView(_ view: SSHTerminalGridView, context: Context) {
         view.applyTheme(themeID)
         view.needsPaint = true
+        if view.keyboardRequest != keyboardRequest {
+            view.keyboardRequest = keyboardRequest
+            view.becomeFirstResponder()
+        }
     }
 }
 
@@ -155,6 +197,7 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     let requestPaste: () -> Void
     let followChanged: (Bool) -> Void
     var needsPaint = true
+    var keyboardRequest = 0
     var paintedChangeCount = -1
     private let font = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
     private var cellSize = CGSize(width: 8, height: 17)
@@ -183,8 +226,8 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         isOpaque = true
         clipsToBounds = true
         accessibilityIdentifier = "sshTerminal.grid"
-        accessibilityLabel = "SSH terminal. Tap to show or hide the keyboard. Drag to read local history."
-        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(toggleKeyboard)))
+        accessibilityLabel = "SSH terminal. Tap to hide or show the keyboard. Drag to scroll."
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped(_:))))
         addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(scrollHistory(_:))))
         bar = makeAccessoryBar()
         applyTheme(ThemeRuntimeState.currentThemeID())
@@ -311,8 +354,22 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         ctrlButton?.setTitle(ctrl.armed ? "Ctrl \u{2713}" : "Ctrl", for: .normal)
         ctrlButton?.accessibilityValue = ctrl.armed ? "On" : "Off"
     }
-    @objc private func toggleKeyboard() {
-        if isFirstResponder { _ = resignFirstResponder() } else { becomeFirstResponder() }
+    /// A tap first dismisses the keyboard. With it down, a tap is a click for
+    /// an app that asked for mouse reports (Herdr tabs, panes and agents) and
+    /// otherwise brings the keyboard back.
+    @objc private func tapped(_ gesture: UITapGestureRecognizer) {
+        if isFirstResponder {
+            _ = resignFirstResponder()
+        } else if channel.connected, channel.engine.mouseTracking {
+            let cell = self.cell(at: gesture.location(in: self))
+            channel.mouse(.click, column: cell.column, row: cell.row)
+        } else {
+            becomeFirstResponder()
+        }
+    }
+
+    private func cell(at point: CGPoint) -> (column: Int, row: Int) {
+        (Int(point.x / cellSize.width), Int(point.y / cellSize.height))
     }
     override func paste(_ sender: Any?) {
         guard hardwarePresses.isEmpty else { return }
@@ -376,6 +433,22 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     }
 
     @objc private func scrollHistory(_ gesture: UIPanGestureRecognizer) {
+        // A mouse-reporting app owns its own history (Herdr panes, pi, less):
+        // send wheel notches where the finger is instead of moving the local
+        // viewport, which an alternate-screen app never fills.
+        if channel.engine.mouseTracking {
+            if gesture.state == .began { scrollRemainder = 0 }
+            scrollRemainder -= gesture.translation(in: self).y
+            gesture.setTranslation(.zero, in: self)
+            let rows = Int(scrollRemainder / cellSize.height)
+            guard rows != 0 else { return }
+            scrollRemainder -= CGFloat(rows) * cellSize.height
+            let cell = self.cell(at: gesture.location(in: self))
+            for _ in 0..<abs(rows) {
+                channel.mouse(rows < 0 ? .wheelUp : .wheelDown, column: cell.column, row: cell.row)
+            }
+            return
+        }
         if gesture.state == .began {
             scrollRemainder = 0
             channel.engine.scroll(rows: 0)

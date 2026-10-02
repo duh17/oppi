@@ -10,6 +10,9 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable {
     var username = ""
     var authentication: Authentication = .password
     var savesPassword = false
+    /// Optional command run on the PTY instead of a login shell, like
+    /// `ssh -t host 'command'`. Optional so older saved profiles still decode.
+    var startupCommand: String?
 
     var isConfigured: Bool {
         !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && port > 0

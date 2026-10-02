@@ -288,6 +288,46 @@ struct SSHTerminalTests {
         #expect(channel.engine.frame().rows[0].prefix(6).map(\.text).joined() == "onetwo")
     }
 
+    @Test func touchesBecomeMouseReportsOnlyWhileTheAppAsksForThem() throws {
+        let engine = try SSHTerminalEngine(geometry: .init(columns: 20, rows: 10)) { _ in }
+        #expect(!engine.mouseTracking)
+        #expect(engine.mouse(.click, column: 3, row: 2).isEmpty)
+        // Herdr's own request: normal + button + any-event tracking, SGR format.
+        engine.receive(Data("\u{1b}[?1000h\u{1b}[?1002h\u{1b}[?1003h\u{1b}[?1006h".utf8))
+        #expect(engine.mouseTracking)
+        #expect(engine.mouse(.click, column: 3, row: 2) == Data("\u{1b}[<0;4;3M\u{1b}[<0;4;3m".utf8))
+        #expect(engine.mouse(.wheelUp, column: 0, row: 0) == Data("\u{1b}[<64;1;1M".utf8))
+        #expect(engine.mouse(.wheelDown, column: 99, row: 99) == Data("\u{1b}[<65;20;10M".utf8)) // clamped
+        engine.receive(Data("\u{1b}[?1003l\u{1b}[?1002l\u{1b}[?1000l".utf8))
+        #expect(engine.mouse(.click, column: 3, row: 2).isEmpty)
+    }
+
+    @Test func startupCommandExitIsReportedAsTheCommandNotTheShell() throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture(), command: "herdr")
+        channel.event(.exitStatus(0))
+        #expect(channel.reason == "`herdr` exited with status 0.")
+    }
+
+    @Test func herdrSnapshotStatusAndFailuresAreRead() throws {
+        let json = #"{"id":"cli:api:snapshot","result":{"snapshot":{"agents":[{"agent":"pi","agent_status":"blocked","focused":false,"pane_id":"w1:p2","revision":3,"tab_id":"w1:t1","terminal_id":"t","workspace_id":"w1","terminal_title_stripped":"pi - dotfiles"},{"name":"rev","agent_status":"compacting","focused":true,"pane_id":"w2:p1","revision":1,"tab_id":"w2:t1","terminal_id":"u","workspace_id":"w2"}],"tabs":[{"agent_status":"unknown","focused":true,"label":"1","number":1,"pane_count":1,"tab_id":"w1:t1","workspace_id":"w1"}],"workspaces":[{"active_tab_id":"w1:t1","agent_status":"blocked","focused":true,"label":"dotfiles","number":1,"pane_count":1,"tab_count":1,"workspace_id":"w1"}]},"type":"session_snapshot"}}"#
+        let snapshot = try HerdrRemote.snapshot(from: .init(output: Data(json.utf8), errorOutput: Data(), exitStatus: 0))
+        #expect(snapshot.needsAttention == 1)
+        #expect(snapshot.agents(in: snapshot.workspaces[0]).map(\.displayName) == ["pi"])
+        #expect(snapshot.agents[1].status == .unknown) // a newer state does not break decoding
+        #expect(snapshot.tabLabel("w1:t1") == "1")
+
+        #expect(throws: HerdrRemoteError.notInstalled) {
+            try HerdrRemote.snapshot(from: .init(output: Data(), errorOutput: Data("fish: Unknown command: herdr".utf8), exitStatus: 127))
+        }
+        let refused = #"{"id":"x","error":{"code":"server_not_running","message":"no herdr server is running"}}"#
+        #expect(throws: HerdrRemoteError.rejected("no herdr server is running")) {
+            try HerdrRemote.snapshot(from: .init(output: Data(refused.utf8), errorOutput: Data(), exitStatus: 1))
+        }
+        #expect(HerdrRemote.focusCommand(.agent("w1:p2")) == "herdr agent focus w1:p2")
+        #expect(HerdrRemote.focusCommand(.workspace("w1; rm -rf ~")) == nil)
+    }
+
     @Test func pasteLineCountIgnoresATrailingTerminator() {
         #expect(SSHTerminalEngine.pasteLineCount("echo one\recho two\r") == 2)
         #expect(SSHTerminalEngine.pasteLineCount("echo one\necho two\n") == 2)
@@ -388,6 +428,7 @@ private actor TerminalConnectionFixture: SSHTerminalConnection {
         resizeSink.yield(.init(columns: columns, rows: rows,
                               cellWidth: pixelWidth / columns, cellHeight: pixelHeight / rows))
     }
+    func run(_ command: String) async throws -> SSHExecResult { throw SSHPTYSessionError.commandRequestRejected }
     func cancel() {
         suspendedSend?.resume(throwing: SSHPTYSessionError.connectionClosed)
         suspendedSend = nil

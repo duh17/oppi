@@ -17,9 +17,21 @@ For example, on a Mac with an Ed25519 host key:
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-After you save a host, **Terminal** appears directly below **MCP Servers** in the workspace sidebar. Tap it to open the host page, then tap **Connect**; opening the page never dials or asks for Face ID. **Edit Host** returns to setup.
+After you save a host, **Terminal** appears directly below **MCP Servers** in the workspace sidebar. Tap it to open the host page, then tap **Connect**; opening the page never dials or asks for Face ID. **Edit Host** returns to setup. Turning the experiment off hides both entry points and does not create a key. **Tailscale → Check a Mac** remains available independently.
 
-In the terminal, tap the screen to show or hide the keyboard. Drag to read local history. Turning the experiment off hides both entry points and does not create a key. **Tailscale → Check a Mac** remains available independently.
+## Run on Connect
+
+**Run on Connect** runs one command in the terminal instead of a login shell. This is the same exec-with-TTY request as `ssh -t host 'command'` or OpenSSH `RemoteCommand` with `RequestTTY yes`. Enter `herdr` to attach your Herdr session, or `tmux new -A -s main` for tmux. The connection ends when the command exits and the status names the command; **Reconnect** runs it again. The command must be on the `PATH` that non-interactive SSH commands see. Leave it empty for a normal login shell.
+
+## Touch and keyboard
+
+- Tap the terminal to hide the keyboard. With the keyboard hidden, a tap shows it again, unless the app asked for mouse input.
+- When an app asks for mouse input (Herdr, tmux with `mouse on`, many TUIs), a tap with the keyboard hidden is a click at that cell, and dragging sends scroll-wheel steps to the app. The keyboard button in the navigation bar shows the keyboard.
+- Otherwise, dragging reads local history; **Back to Live** returns to the bottom.
+
+## Herdr
+
+When `herdr` is on the host, the terminal checks Herdr's API (`herdr api snapshot`) every few seconds over the same SSH connection, in a separate command channel. A grid button appears in the navigation bar, with a count of agents waiting at an approval or question prompt. It opens a list of workspaces and agents showing whether each is working, needs you, done, or idle. Tapping a row runs `herdr workspace focus` or `herdr agent focus` on the host. Hosts without `herdr` are checked once per connection and then left alone.
 
 ## Credentials and host trust
 
@@ -40,7 +52,7 @@ Entering the background disconnects the shell. On return, tap **Reconnect**. A W
 
 ## Limits
 
-- One host profile. No private-key import, keyboard-interactive, forwarding, or automatic `tmux` attachment.
+- One host profile. No private-key import, keyboard-interactive, or forwarding.
 - The SSH library supports Ed25519/ECDSA host and user keys, Curve25519/ECDH key exchange, and AES-GCM encryption. RSA-only and legacy-only servers fail with an unsupported-algorithm error. A server that offers only keyboard-interactive cannot accept password sign-in here.
 - Connection, authentication, and terminal-opening waits are bounded. A rejected credential, changed host key, unreachable host, or unsupported algorithm produces a visible error.
 - Secure Enclave and biometric approval need physical-device testing. A simulator software key is not evidence of hardware protection.
