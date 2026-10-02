@@ -276,15 +276,22 @@ export class DurableEventProjection {
     // Receipts are immutable once the task ends. Resolve them before iterating
     // entries: blocking compaction appends its summary BEFORE compaction_end in
     // the same commit, and a held summary can be followed by a new run in its batch.
-    for (const event of events) {
-      if (event.type !== "compaction_end") continue;
-      const active = this.compacting.get(event.taskId);
+    const receipts = events.flatMap<{ event: AgentEvent; taskId: TaskId }>((event) => {
+      if (event.type === "compaction_end") return [{ event, taskId: event.taskId }];
+      if (event.type !== "snapshot") return [];
+      // Backlog replacement discards the terminal commit too. Absence from live
+      // compactions must reconcile every start we emitted, even without a receipt.
+      return [...this.compacting.keys()]
+        .filter((taskId) => !event.compactions.some((status) => status.taskId === taskId))
+        .map((taskId) => ({ event, taskId }));
+    });
+    for (const { event, taskId } of receipts) {
+      const active = this.compacting.get(taskId);
       if (!active) continue;
-      const task = await this.harness.getTask(event.taskId as TaskId<CompactionResult>, context);
+      const task = await this.harness.getTask(taskId as TaskId<CompactionResult>, context);
       const outcome = task && "outcome" in task.state ? task.state.outcome : undefined;
-      const failure = events.find(
-        (item) => item.type === "task_failed" && item.taskId === event.taskId,
-      );
+      if (!outcome) continue;
+      const failure = events.find((item) => item.type === "task_failed" && item.taskId === taskId);
       if (outcome?.status === "completed") {
         active.result = outcome.result;
         if (outcome.result.entryId !== undefined || outcome.result.submissionId !== undefined)
@@ -308,7 +315,7 @@ export class DurableEventProjection {
           willRetry: false,
         }),
       );
-      this.compacting.delete(event.taskId);
+      this.compacting.delete(taskId);
     }
     // Only placement-relevant publications can advance a queued write. Never
     // poll a submission on the serialized consumer for each streamed partial.

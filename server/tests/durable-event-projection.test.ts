@@ -125,6 +125,101 @@ async function fixture(responses: FauxResponseStep[], settings: HarnessSettings)
 const compaction = { enabled: true, keepRecentTokens: 1, reserveTokens: 100, backgroundTokens: 0 };
 
 describe("durable watch projection", () => {
+  it.each(["success", "failed", "aborted"] as const)(
+    "closes a %s compaction exactly once when a real watch backlog swallows its receipt",
+    async (outcome) => {
+      const summary = heldAnswer(outcome === "failed" ? "" : "Summary recovered from backlog");
+      const nextRun = heldAnswer("Answer after backlog");
+      const f = await fixture(
+        [
+          fauxAssistantMessage("Earlier context ".repeat(50)),
+          fauxAssistantMessage("Recent"),
+          outcome === "failed"
+            ? async (transcript, options) => {
+                await summary.response(transcript, options);
+                return fauxAssistantMessage("", {
+                  stopReason: "error",
+                  errorMessage: "summary provider failed",
+                });
+              }
+            : summary.response,
+          nextRun.response,
+        ],
+        { compaction, retry: { enabled: false } },
+      );
+      await f.answer("first");
+      await f.answer("second");
+      const tap = await watchEvents(f.harness, f.conversation.id, context);
+      const projection = new DurableEventProjection(f.harness, () => ({}));
+      projection.snapshot(tap.snapshot, false);
+      let started!: () => void;
+      let unblock!: () => void;
+      let replaced!: () => void;
+      const start = new Promise<void>((resolve) => (started = resolve));
+      const blocked = new Promise<void>((resolve) => (unblock = resolve));
+      const replacement = new Promise<void>((resolve) => (replaced = resolve));
+      const delivered: AgentEvent[] = [];
+      const messages = [] as ReturnType<typeof translatePiEvent>;
+      tap.start(async (events) => {
+        delivered.push(...events);
+        messages.push(
+          ...(await projection.batch(events)).flatMap((event) => translatePiEvent(event, f.ctx)),
+        );
+        if (events.some((event) => event.type === "compaction_start")) {
+          started();
+          await blocked;
+        }
+        if (events.some((event) => event.type === "snapshot")) replaced();
+      });
+      try {
+        const taskId = await f.conversation.compact(undefined, context);
+        await Promise.all([start, summary.started]);
+        if (outcome === "aborted") await f.harness.abortTask(taskId, context);
+        else summary.release();
+        const task = await f.harness.waitForTask(taskId, context);
+        expect(task.state.outcome.status).toBe(outcome === "success" ? "completed" : outcome);
+        await f.conversation.submit({ type: "input", content: "new run" }, context);
+        await nextRun.started;
+        // The real CommittedWatch replaces >100 undelivered publications. Hold
+        // its consumer after start so the terminal receipt is among those lost.
+        for (let index = 0; index < 101; index++)
+          await f.conversation.configure({ instructions: `backlog-${index}` }, context);
+        unblock();
+        await replacement;
+        expect(delivered.some((event) => event.type === "compaction_end")).toBe(false);
+        const snapshot = delivered.find((event) => event.type === "snapshot")!;
+        expect(snapshot.compactions).toEqual([]);
+        expect(snapshot.run).toBeDefined();
+        const ends = messages.filter((message) => message.type === "compaction_end");
+        expect(ends).toHaveLength(1);
+        expect(messages.findIndex((message) => message.type === "compaction_end")).toBeLessThan(
+          messages.findIndex((message) => message.type === "agent_start"),
+        );
+        if (outcome === "success") {
+          expect(ends[0]).toMatchObject({
+            aborted: false,
+            summary: "Summary recovered from backlog",
+          });
+          expect(ends[0]!.tokensBefore).toBeGreaterThan(0);
+        } else if (outcome === "failed") {
+          expect(ends[0]).toMatchObject({
+            aborted: false,
+            errorMessage: "Summarization failed: summary provider failed",
+          });
+        } else expect(ends[0]).toMatchObject({ aborted: true });
+        expect(
+          (await projection.batch([snapshot])).filter((event) => event.type === "compaction_end"),
+        ).toEqual([]);
+      } finally {
+        unblock();
+        await tap.stop();
+        await f.conversation.abort(context);
+        await f.stream.stop();
+      }
+    },
+    10000,
+  );
+
   it("does not read queued summary receipts on pure partial-update batches", async () => {
     const held = heldAnswer("Streaming body ".repeat(1500));
     const f = await fixture(
