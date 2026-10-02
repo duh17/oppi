@@ -41,6 +41,54 @@ struct NativeFullScreenTerminalWindowTests {
         #expect(!Self.textViews(in: body).contains { $0.textStorage.string.contains("wrong call") })
     }
 
+    @Test func openLiveReaderRebindsAfterHistoryReloadWithoutFollowingOtherCalls() async throws {
+        let reducer = TimelineReducer()
+        let store = reducer.terminalOutputStreams
+        let owner = store.ensureOwner(for: "call")
+        let stream = TerminalTraceStream(output: "", command: nil, isDone: false)
+        stream.owner = owner
+        stream.ownerStore = store
+        stream.ownerToolCallId = "call"
+        let body = NativeFullScreenTerminalBody(content: "", command: nil, stream: stream,
+            palette: ThemeRuntimeState.currentThemeID().palette,
+            reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil)
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        body.frame = host.bounds
+        host.addSubview(body)
+        owner.receive(.init(epoch: 1, offset: 0, bytes: 4), output: "old\n")
+        let initialPaint = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.layoutIfNeeded()
+            return Self.textViews(in: body).contains { $0.textStorage.string == "old\n" }
+        }
+        #expect(initialPaint)
+        #expect(owner.state == .live)
+        #expect(await body.resolvedCopyText() == "old\n")
+
+        // A full trace rebuild discards the owner while the reader stays open.
+        reducer.loadSession([])
+        #expect(Self.showsReloadNotice(body))
+        let other = store.ensureOwner(for: "other")
+        other.receive(.init(epoch: 1, offset: 0, bytes: 6), output: "wrong\n")
+        other.finish(.init(epoch: 1, totalBytes: 6))
+        #expect(Self.showsReloadNotice(body))
+        let replacement = store.ensureOwner(for: "call")
+        replacement.receive(.init(epoch: 1, offset: 0, bytes: 4), output: "new\n")
+        replacement.finish(.init(epoch: 1, totalBytes: 4))
+        let painted = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.layoutIfNeeded()
+            return Self.textViews(in: body).contains { $0.textStorage.string == "new\n" }
+        }
+        #expect(painted)
+        #expect(await body.resolvedCopyText() == "new\n")
+        #expect(!Self.showsReloadNotice(body))
+    }
+
+    private static func showsReloadNotice(_ view: UIView) -> Bool {
+        if let label = view as? UILabel, !label.isHidden,
+           label.text == "Terminal output reloaded; waiting for live stream…" { return true }
+        return view.subviews.contains { showsReloadNotice($0) }
+    }
+
     @Test func terminalBodyPaintsFirstWindowAndLaterCursorRewrite() async throws {
         let previousTheme = ThemeRuntimeState.currentThemeID()
         defer { ThemeRuntimeState.setThemeID(previousTheme) }

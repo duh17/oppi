@@ -68,6 +68,7 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var openCurrentFile: (() -> Void)? = nil
     var openFullScreen: ((ChatReaderPayload) -> Void)? = nil
     var terminalOutputStream: TerminalOutputStream? = nil
+    var terminalOutputStreamStore: TerminalOutputStreamStore? = nil
     @MainActor var terminalNotice: String? {
         guard let owner = terminalOutputStream else { return nil }
         return owner.state.notice ?? (owner.omittedBytes > 0 ? "Earlier output omitted (\(owner.omittedBytes) bytes)" : nil)

@@ -296,6 +296,25 @@ struct ServerMessageTests {
         #expect(toolCallId == nil)
     }
 
+    @Test func decodesOutputChunkAttachMarkerAndEnd() throws {
+        for (text, bytes) in [("raw", 3), ("", 0)] {
+            let message = try ServerMessage.decode(from: """
+            {"type":"tool_output","output":"\(text)","toolCallId":"t","outputStream":{"epoch":2,"offset":41,"bytes":\(bytes)}}
+            """)
+            guard case .toolOutput(let output, _, _, let mode, _, _, _, _, _, let stream) = message else {
+                Issue.record("Expected output"); return
+            }
+            #expect(output == text)
+            #expect(mode == .append)
+            #expect(stream == .init(epoch: 2, offset: 41, bytes: bytes))
+        }
+        let end = try ServerMessage.decode(from: #"{"type":"tool_end","tool":"arbitrary","outputStream":{"epoch":2,"totalBytes":44}}"#)
+        guard case .toolEnd(_, _, _, _, _, _, _, _, _, let stream) = end else {
+            Issue.record("Expected end"); return
+        }
+        #expect(stream == .init(epoch: 2, totalBytes: 44))
+    }
+
     @Test func decodesToolOutputWithToolCallId() throws {
         let json = """
         {"type":"tool_output","output":"data","toolCallId":"tc-42"}

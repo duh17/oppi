@@ -104,6 +104,8 @@ final class TerminalTraceStream {
     // The live reader observes this call owner directly, so cell reuse cannot
     // redirect it to a different tool's snapshot stream.
     var owner: TerminalOutputStream?
+    var ownerStore: TerminalOutputStreamStore?
+    var ownerToolCallId: String?
     var completionSidecarSource: ToolOutputSidecarWindowSource?
 
     struct Snapshot: Equatable {

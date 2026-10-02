@@ -425,6 +425,7 @@ extension ChatTimelineCollectionHost.Controller {
         )
         configuration.resourcePressure = resourcePressure
         configuration.terminalOutputStream = reducer?.terminalOutputStreams.owner(for: itemID)
+        configuration.terminalOutputStreamStore = reducer?.terminalOutputStreams
         if let intent = configuration.currentFileOpenIntent,
            let onOpenCurrentFile {
             configuration.openCurrentFile = {

@@ -1997,7 +1997,9 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     )
     private let palette: ThemePalette
     private let stream: TerminalTraceStream?
-    private let liveOwner: TerminalOutputStream?
+    private var liveOwner: TerminalOutputStream?
+    private let ownerStore: TerminalOutputStreamStore?
+    private var storeObserverID: UUID?
     private let completionSidecarSource: ToolOutputSidecarWindowSource?
     private var ownerObserverID: UUID?
     private var usingCompletedSidecar = false
@@ -2071,6 +2073,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         self.palette = palette
         self.stream = stream
         self.liveOwner = stream?.owner
+        self.ownerStore = stream?.ownerStore
         self.completionSidecarSource = stream?.completionSidecarSource
         self.sidecarSource = sidecarSource
         var preferences = readerPreferences
@@ -2092,6 +2095,11 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         render(snapshot: initialSnapshot)
         startSidecarLoadingIfNeeded()
 
+        if let ownerStore, let id = stream?.ownerToolCallId {
+            storeObserverID = ownerStore.addOwnerObserver(for: id) { [weak self] owner in
+                self?.bindOwner(owner)
+            }
+        }
         if let liveOwner {
             ownerObserverID = liveOwner.addObserver { [weak self] in self?.handleOwnerUpdate() }
             handleOwnerUpdate()
@@ -2109,6 +2117,10 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         renderTask?.cancel()
         sidecarTask?.cancel()
         chunkRenderTasks.values.forEach { $0.cancel() }
+        if let storeObserverID {
+            let store = ownerStore
+            Task { @MainActor in store?.removeOwnerObserver(storeObserverID) }
+        }
         if let ownerObserverID {
             let owner = liveOwner
             Task { @MainActor in owner?.removeObserver(ownerObserverID) }
@@ -2225,6 +2237,29 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
             stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
             stackWidth,
         ])
+    }
+
+    private func bindOwner(_ owner: TerminalOutputStream?) {
+        if let ownerObserverID { liveOwner?.removeObserver(ownerObserverID) }
+        ownerObserverID = nil
+        liveOwner = owner
+        stream?.owner = owner
+        stream?.update(output: latestSnapshot.output, command: latestSnapshot.command, isDone: false)
+        sidecarTask?.cancel()
+        sidecarTask = nil
+        sidecarSource = nil
+        usingCompletedSidecar = false
+        sidecarExpectsMore = false
+        renderedSnapshot = nil
+        if let owner {
+            ownerObserverID = owner.addObserver { [weak self] in self?.handleOwnerUpdate() }
+            handleOwnerUpdate()
+        } else {
+            // Keep the last readable snapshot, but never imply that it is live.
+            streamNoticeLabel.text = "Terminal output reloaded; waiting for live stream…"
+            streamNoticeLabel.isHidden = false
+            render(snapshot: latestSnapshot)
+        }
     }
 
     private func handleOwnerUpdate() {

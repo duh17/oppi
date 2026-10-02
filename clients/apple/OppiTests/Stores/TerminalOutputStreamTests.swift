@@ -257,22 +257,35 @@ struct TerminalOutputStreamTests {
         #expect(reducer.toolOutputStore.fullOutput(for: "child").isEmpty)
     }
 
-    @Test func decodesOutputChunkAttachMarkerAndEnd() throws {
-        for (text, bytes) in [("raw", 3), ("", 0)] {
-            let message = try ServerMessage.decode(from: """
-            {"type":"tool_output","output":"\(text)","toolCallId":"t","outputStream":{"epoch":2,"offset":41,"bytes":\(bytes)}}
-            """)
-            guard case .toolOutput(let output, _, _, let mode, _, _, _, _, _, let stream) = message else {
-                Issue.record("Expected output"); return
+    @Test(arguments: [true, false])
+    func rangePastServableBytesRetriesVisiblyAndRemainsBounded(fileCatchesUp: Bool) async {
+        actor LaggingSidecar {
+            var requests = 0
+            let fileCatchesUp: Bool
+            init(fileCatchesUp: Bool) { self.fileCatchesUp = fileCatchesUp }
+            func fetch(_ range: Range<Int>) throws -> TerminalOutputRange {
+                requests += 1
+                guard fileCatchesUp, requests == 3 else {
+                    throw APIError.server(status: 416, message: "Range past servable bytes")
+                }
+                return .init(data: Data("done\n".utf8), start: 0, end: 5)
             }
-            #expect(output == text)
-            #expect(mode == .append)
-            #expect(stream == .init(epoch: 2, offset: 41, bytes: bytes))
         }
-        let end = try ServerMessage.decode(from: #"{"type":"tool_end","tool":"arbitrary","outputStream":{"epoch":2,"totalBytes":44}}"#)
-        guard case .toolEnd(_, _, _, _, _, _, _, _, _, let stream) = end else {
-            Issue.record("Expected end"); return
+        let sidecar = LaggingSidecar(fileCatchesUp: fileCatchesUp)
+        let owner = TerminalOutputStream { try await sidecar.fetch($0) }
+        owner.finish(.init(epoch: 1, totalBytes: 5))
+        #expect(owner.state == .resyncing)
+        #expect(owner.state.notice != nil)
+        await owner.waitForRecovery()
+        #expect(await sidecar.requests == 3)
+        if fileCatchesUp {
+            #expect(owner.state == .complete)
+            #expect(owner.cursor == 5)
+            #expect(ANSIParser.strip(owner.formatted) == "done\n")
+        } else {
+            #expect(owner.state == .resyncFailed)
+            #expect(owner.state.notice == "Terminal output resync failed")
+            #expect(owner.cursor == 0)
         }
-        #expect(stream == .init(epoch: 2, totalBytes: 44))
     }
 }

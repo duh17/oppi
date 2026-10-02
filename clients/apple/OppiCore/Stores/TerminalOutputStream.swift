@@ -179,7 +179,7 @@ final class TerminalOutputStream {
                     let target = self.recoveryTarget
                     let tail = target - self.cursor > Self.maximumGap
                     let start = tail ? target - Self.maximumGap : self.cursor
-                    let result = try await self.fetchRange(start..<target)
+                    let result = try await self.fetchRecoveryRange(start..<target)
                     try Task.checkCancellation()
                     guard token == self.generation else { return }
                     guard result.end == target, result.start >= start,
@@ -221,6 +221,24 @@ final class TerminalOutputStream {
                 self.fail()
             }
         }
+    }
+
+    /// Pi's file can temporarily lag the published cursor. Keep the visible
+    /// resync state through a bounded 416 retry; never accept a shorter Range.
+    private func fetchRecoveryRange(_ range: Range<Int>) async throws -> TerminalOutputRange {
+        for attempt in 0..<3 {
+            do { return try await fetchRange(range) }
+            catch {
+                let status: Int?
+                switch error as? APIError {
+                case .server(let code, _), .codedServer(let code, _, _): status = code
+                default: status = nil
+                }
+                guard status == 416, attempt < 2 else { throw error }
+                try await Task.sleep(for: .milliseconds(100 * (attempt + 1)))
+            }
+        }
+        throw RecoveryFailure()
     }
 
     private struct RecoveryFailure: Error {}
@@ -283,10 +301,24 @@ final class TerminalOutputStream {
 @MainActor
 final class TerminalOutputStreamStore {
     private var owners: [String: TerminalOutputStream] = [:]
+    private var ownerObservers: [UUID: (id: String, notify: (TerminalOutputStream?) -> Void)] = [:]
     var fetchRange: (@Sendable (_ toolCallId: String, _ range: Range<Int>) async throws -> TerminalOutputRange)?
     var onChange: ((String) -> Void)?
 
     func owner(for id: String) -> TerminalOutputStream? { owners[id] }
+
+    /// Readers retain call identity across a full trace rebuild, not cell identity.
+    @discardableResult
+    func addOwnerObserver(for id: String, _ notify: @escaping (TerminalOutputStream?) -> Void) -> UUID {
+        let token = UUID()
+        ownerObservers[token] = (id, notify)
+        return token
+    }
+    func removeOwnerObserver(_ token: UUID) { ownerObservers.removeValue(forKey: token) }
+    private func notifyOwnerObservers(for id: String) {
+        for observer in ownerObservers.values where observer.id == id { observer.notify(owners[id]) }
+    }
+
     func ensureOwner(for id: String) -> TerminalOutputStream {
         if let existing = owners[id] { return existing }
         let owner = TerminalOutputStream { [weak self] range in
@@ -295,12 +327,15 @@ final class TerminalOutputStreamStore {
         }
         owner.addObserver { [weak self] in self?.onChange?(id) }
         owners[id] = owner
+        notifyOwnerObservers(for: id)
         return owner
     }
     func markReconnecting() { for owner in owners.values { owner.markReconnecting() } }
     func clearAll() {
+        let ids = Array(owners.keys)
         for owner in owners.values { owner.discard() }
         owners.removeAll()
+        for id in ids { notifyOwnerObservers(for: id) }
     }
     private struct SidecarUnavailable: Error {}
 }
