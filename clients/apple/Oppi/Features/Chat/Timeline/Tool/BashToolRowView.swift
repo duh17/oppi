@@ -620,10 +620,15 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                     // The reader detached from a painted live tail while this
                     // job ran. Same rule as apply: keep the tail still and land
                     // the newest input when they settle back at the tail.
-                    if self.frozenLiveOutput == nil, let source = request.source {
-                        self.frozenLiveOutput = (source, request.outputColor)
+                    // Only the latest job's input may be withheld; an earlier
+                    // coalesced job is superseded by the pending one, and a
+                    // withheld apply input in the slot is newer than either.
+                    if isLatest {
+                        if self.frozenLiveOutput == nil, let source = request.source {
+                            self.frozenLiveOutput = (source, request.outputColor)
+                        }
+                        self.outputRenderSignature = nil
                     }
-                    if isLatest { self.outputRenderSignature = nil }
                 } else if request.themeID == ThemeRuntimeState.currentThemeID(),
                    isLatest || (succeeded && isEarlierAppend) {
                     self.outputLabel.attributedText = result.attributed

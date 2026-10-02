@@ -539,6 +539,50 @@ struct BashToolRowViewTests {
         #expect(row.outputLabel.textStorage.string.hasPrefix("deferred 10001\n"))
         #expect(row.outputShouldAutoFollow)
     }
+
+    @Test("settling after a detach lands the newest of two coalesced deferred snapshots")
+    func coalescedDeferredSnapshotsLandNewest() async throws {
+        let owner = TerminalOutputStream { _ in throw CancellationError() }
+        let pad = String(repeating: "=", count: 48)
+        func lines(_ count: Int) -> String { (1...count).map { "coalesced \($0 + 10_000) \(pad)" }.joined(separator: "\n") }
+        // Both snapshots render off-main, fit inside the live tail, and the
+        // second extends the first, so the first job is an earlier append.
+        #expect(lines(10).utf8.count < BashToolRowView.deferredANSIByteThreshold)
+        #expect(lines(100).utf8.count > BashToolRowView.deferredANSIByteThreshold)
+        #expect(110 < BashToolRowView.liveTailLineLimit)
+        func configuration(_ output: String) -> ToolTimelineRowConfiguration {
+            var configuration = makeTimelineToolConfiguration(
+                expandedContent: .bash(command: "run", output: output, unwrapped: false),
+                isExpanded: true, isDone: false)
+            configuration.terminalOutputStream = owner
+            return configuration
+        }
+        let view = ToolTimelineRowContentView(configuration: configuration(lines(10)))
+        _ = fittedTimelineSize(for: view, width: 390)
+        let row = view.bashToolRowView
+        let scroll = row.outputScrollView
+        let painted = row.outputLabel.textStorage.string
+        #expect(painted.hasSuffix("coalesced 10010 \(pad)"))
+
+        view.configuration = configuration(lines(100)) // in flight
+        view.configuration = configuration(lines(110)) // coalesced behind it
+        scroll.draggingOverrideForTesting = true
+        row.scrollViewWillBeginDragging(scroll)
+        scroll.draggingOverrideForTesting = false
+        row.scrollViewDidEndDragging(scroll, willDecelerate: true)
+        #expect(!row.outputShouldAutoFollow)
+        let withheld = await waitForMainActorCondition(timeout: .seconds(3)) { row.outputRenderSignature == nil }
+        #expect(withheld)
+        #expect(row.outputLabel.textStorage.string == painted)
+
+        scroll.deceleratingOverrideForTesting = false
+        row.scrollViewDidEndDecelerating(scroll) // settles at the tail
+        let newest = await waitForMainActorCondition(timeout: .seconds(3)) {
+            row.outputLabel.textStorage.string.hasSuffix("coalesced 10110 \(pad)")
+        }
+        #expect(newest)
+        #expect(row.outputShouldAutoFollow)
+    }
 }
 
 private func uniqueForegroundColorCount(_ attributed: NSAttributedString) -> Int {
