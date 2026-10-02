@@ -8,6 +8,7 @@ import Network
 @MainActor
 struct ServerConnectionReconnectTests {
 
+
     /// Real URLSession upgrades and the installed ServerConnection health callback:
     /// lose an established socket, reject three upgrades, then accept the next one.
     @Test func threeTransient503sThenAcceptReconnectsWithoutWatchdog() async throws {
@@ -30,6 +31,24 @@ struct ServerConnectionReconnectTests {
         #expect(!conn.isTransportDemoting)
         #expect(conn.isFocusedStreamBindReady())
         #expect(ContinuousClock.now - started < .seconds(8))
+    }
+
+    @Test func definitive401EndsSessionSocketWithoutRetry() async throws {
+        let fixture = try await ReconnectWebSocketFixture.start()
+        defer { fixture.stop() }
+        let conn = try await makeLoopbackConnection(fixture)
+        defer { conn.disconnectStream() }
+        let client = try #require(conn.wsClient)
+        conn.connectStream()
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) { client.status == .connected })
+        fixture.rejectThenDisconnect([401])
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            fixture.rejectedStatuses == [401] && client.status == .disconnected
+        })
+        #expect(await waitForMainActorConditionToStayTrue(for: .seconds(1)) {
+            fixture.upgradeCount == 2 && client.status == .disconnected
+        })
+        #expect(!conn.isTransportDemoting)
     }
 
     private func makeLoopbackConnection(_ fixture: ReconnectWebSocketFixture) async throws -> ServerConnection {

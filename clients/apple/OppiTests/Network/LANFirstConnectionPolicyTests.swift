@@ -70,6 +70,15 @@ struct LANFirstConnectionPolicyTests {
         #expect(connection.transportPath == .lan)
         #expect(hosts == [endpoint.host])
 
+        // The same external fixture must answer the new auth-free readiness
+        // boundary before the existing authenticated route handoff is allowed.
+        connection.automaticRouteReachabilityProbe = { selection, credentials, route in
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [LANPolicyURLProtocol.self]
+            return await ServerConnection.probeAutomaticRoute(
+                selection, credentials: credentials, route: route, configuration: configuration
+            )
+        }
         await connection.handlePersistentStreamHealthFailure(.pingTimeout)
         #expect(connection.transportPath == .paired)
         #expect(connection.apiClient !== api)
@@ -424,7 +433,14 @@ private final class LANPolicyURLProtocol: URLProtocol, @unchecked Sendable {
     override func startLoading() {
         let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(#"{"workspaces":[],"sessions":[]}"#.utf8))
+        let body: String
+        if request.url?.path == "/health" {
+            #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+            body = #"{"ok":true,"protocol":2}"#
+        } else {
+            body = #"{"workspaces":[],"sessions":[]}"#
+        }
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() { }

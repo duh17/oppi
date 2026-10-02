@@ -9,11 +9,23 @@ import Security
 final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
     private let pinnedLeafFingerprint: String?
     private(set) var expectedServerName: String?
+    private let followsRedirects: Bool
 
-    init(pinnedLeafFingerprint: String?, expectedServerName: String? = nil) {
+    init(pinnedLeafFingerprint: String?, expectedServerName: String? = nil, followsRedirects: Bool = true) {
         self.pinnedLeafFingerprint = Self.normalizeFingerprint(pinnedLeafFingerprint)
         self.expectedServerName = expectedServerName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.followsRedirects = followsRedirects
         super.init()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        completionHandler(followsRedirects ? request : nil)
     }
 
     // Session-level challenge handler.

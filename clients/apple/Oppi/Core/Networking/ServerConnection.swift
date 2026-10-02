@@ -59,6 +59,11 @@ final class ServerConnection {
     }
     private var transportFailureDisposition: TransportFailureDisposition?
     var networkPathType: () -> String = { NetworkPathTelemetry.pathType }
+    var automaticRouteReachabilityProbe: @MainActor (
+        EndpointSelection, ServerCredentials, TailnetTransportRoute.Snapshot
+    ) async -> Bool = { selection, credentials, route in
+        await ServerConnection.probeAutomaticRoute(selection, credentials: credentials, route: route)
+    }
     var lanBootstrapDeadline: ServerConnectionBootstrapDeadlineFactory = { .after(.seconds(1)) }
     var prepareTailnetProxy: @MainActor () async throws -> Void = {
         guard AppPreferences.Tailnet.isEnabled else { return }
@@ -1545,38 +1550,98 @@ final class ServerConnection {
         }
     }
 
+    /// An auth-free readiness check for automatic recovery only. TLS uses the
+    /// paired pin/name policy; the body proves this is Oppi protocol 2. No bearer,
+    /// credential storage, redirects, APIClient, or device refresh is involved.
+    static func probeAutomaticRoute(
+        _ selection: EndpointSelection,
+        credentials: ServerCredentials,
+        route: TailnetTransportRoute.Snapshot,
+        configuration: URLSessionConfiguration? = nil
+    ) async -> Bool {
+        let configuration = configuration ?? .ephemeral
+        configuration.timeoutIntervalForRequest = 2
+        configuration.timeoutIntervalForResource = 2
+        configuration.urlCredentialStorage = nil
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        TailnetTransportRoute.apply(to: configuration, proxy: route.proxy)
+        let delegate = PinnedServerTrustDelegate(
+            pinnedLeafFingerprint: credentials.normalizedTLSCertFingerprint,
+            expectedServerName: selection.tlsServerName,
+            followsRedirects: false
+        )
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        struct Health: Decodable {
+            let ok: Bool
+            let `protocol`: Int
+        }
+        do {
+            let url = selection.baseURL.appendingPathComponent("health")
+            let (data, response) = try await session.data(for: URLRequest(url: url))
+            guard let response = response as? HTTPURLResponse, response.statusCode == 200,
+                  response.url == url,
+                  let health = try? JSONDecoder().decode(Health.self, from: data) else { return false }
+            return health.ok && health.protocol == 2
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
     private func performAutomaticRouteRecovery(
         excluding: Set<ServerRouteCandidateKind>
-    ) async {
-        guard let credentials, transportFailureDisposition != .failClosed else { return }
-        // With no other route, tearing the clients down would only discard the
-        // installed socket's capped reconnect backoff. A resolver throw falls
-        // through so the reconfigure below fails closed as before.
-        if let alternates = try? ServerTransportPlanResolver.candidates(
-            credentials: credentials,
-            discoveredLANEndpoint: lanDemoted ? nil : discoveredLANEndpoint,
-            excluding: excluding,
-            pathType: networkPathType()
-        ), alternates.isEmpty {
-            ClientLog.info("Network", "No alternate route; keeping socket backoff", metadata: [
-                "transport": transportPath.rawValue,
-            ])
-            return
+    ) async -> Bool {
+        guard let credentials, transportFailureDisposition != .failClosed else { return false }
+        let generation = transportConfigurationGeneration
+        guard !activeTransportConfigurationGenerations.contains(generation),
+              let candidates = try? ServerTransportPlanResolver.candidates(
+                credentials: credentials,
+                discoveredLANEndpoint: lanDemoted ? nil : discoveredLANEndpoint,
+                excluding: excluding,
+                pathType: networkPathType()
+              ) else { return false }
+
+        // An unavailable stream is not permission to destroy its last retry
+        // owner. Probe alternatives without creating auth sessions or consuming
+        // refresh challenges; an empty/unhealthy pass leaves socket backoff alone.
+        for candidate in candidates {
+            let lanGeneration = lanCandidateGeneration
+            let route = TailnetTransportRoute.Snapshot.forHost(candidate.baseURL.host)
+            let isTailnet = candidate.transportPath == .paired
+                && ServerTLSTrustPolicy.isTailscaleHostname(credentials.host)
+            guard !isTailnet || route == .current else { continue }
+            guard await automaticRouteReachabilityProbe(candidate, credentials, route) else { continue }
+            guard let latestCredentials = self.credentials,
+                  !Task.isCancelled,
+                  transportConfigurationGeneration == generation,
+                  transportFailureDisposition != .failClosed,
+                  latestCredentials.transportIdentity == credentials.transportIdentity,
+                  !isTailnet || route == .current,
+                  candidate.transportPath != .lan
+                    || (lanCandidateGeneration == lanGeneration
+                        && NetworkPathTelemetry.allowsLAN(pathType: networkPathType())) else { return false }
+            // No suspension between validating the probe and starting the
+            // existing explicit handoff. Its bootstrap/failure policy is unchanged.
+            let configured = await reconfigureForExplicitRetry(
+                credentials: latestCredentials,
+                excluding: excluding,
+                httpBootstrapDeadline: configuredHTTPBootstrapDeadlineFactory,
+                apiClientFactory: configuredAPIClientFactory,
+                serverInfoBootstrap: configuredServerInfoBootstrap,
+                deviceCredentialDidChange: configuredDeviceCredentialObserver
+            )
+            // Once a healthy alternative hands off, authenticated bootstrap and
+            // any failure keep the existing explicit-retry behavior. Do not replay.
+            guard configured else {
+                isTransportDemoting = false
+                return false
+            }
+            await refreshWorkspaceAndSessionLists(force: true, retryAfterJoinedFailure: true)
+            return true
         }
-        let configured = await reconfigureForExplicitRetry(
-            credentials: credentials,
-            excluding: excluding,
-            httpBootstrapDeadline: configuredHTTPBootstrapDeadlineFactory,
-            apiClientFactory: configuredAPIClientFactory,
-            serverInfoBootstrap: configuredServerInfoBootstrap,
-            deviceCredentialDidChange: configuredDeviceCredentialObserver
-        )
-        guard configured else {
-            isTransportDemoting = false
-            return
-        }
-        guard self.credentials == credentials else { return }
-        await refreshWorkspaceAndSessionLists(force: true, retryAfterJoinedFailure: true)
+        return false
     }
 
     private func invalidateTransportAfterTerminalFailure(_ error: Error) {

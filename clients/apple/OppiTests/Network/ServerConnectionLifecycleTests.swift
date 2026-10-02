@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import Oppi
 
-@Suite("ServerConnection Lifecycle")
+@Suite("ServerConnection Lifecycle", .serialized)
 @MainActor
 struct ServerConnectionLifecycleTests {
 
@@ -52,6 +52,7 @@ struct ServerConnectionLifecycleTests {
             tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF"
         )
         var hosts: [String] = []
+        conn.automaticRouteReachabilityProbe = { _, _, _ in true }
         #expect(await conn.configureForUse(
             credentials: credentials,
             serverInfoBootstrap: { client, _ in
@@ -74,6 +75,169 @@ struct ServerConnectionLifecycleTests {
 
         #expect(hosts == [credentials.host, "192.168.1.42"])
         #expect(conn.apiClient == nil)
+        #expect(!conn.isTransportDemoting)
+    }
+
+    @Test func unavailableAlternativeKeepsRetryOwnerThenHealthyProbeHandsOffOnce() async throws {
+        let conn = ServerConnection()
+        conn.networkPathType = { "wifi" }
+        conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
+        var pairedAvailable = false
+        var pairedProbes = 0
+        var bootstraps = 0
+        conn.automaticRouteReachabilityProbe = { _, _, _ in
+            pairedProbes += 1
+            if pairedAvailable {
+                // Focus can change while the auth-free probe is in flight.
+                conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s2", workspaceId: "w1")
+            }
+            return pairedAvailable
+        }
+        #expect(await conn.configureForUse(credentials: makeHTTPOnlyCredentials(), serverInfoBootstrap: { _, _ in
+            bootstraps += 1
+            return successfulServerInfo()
+        }))
+        defer { conn.disconnectStream() }
+        conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")
+        let oldClient = try #require(conn.wsClient)
+        oldClient._setStatusForTesting(.reconnecting(attempt: 4))
+        let oldAPI = conn.apiClient
+        var rebinds = 0
+        conn._connectStreamForTesting = {
+            rebinds += 1
+            return AsyncStream { _ in }
+        }
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+        #expect(pairedProbes == 1)
+        #expect(bootstraps == 1, "An unhealthy probe must not create an authenticated candidate")
+        #expect(conn.apiClient === oldAPI)
+        #expect(conn.wsClient === oldClient)
+        #expect(oldClient.status == .reconnecting(attempt: 4))
+        #expect(conn.isFocusedStreamBindReady())
+        #expect(rebinds == 0)
+
+        pairedAvailable = true
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 6))
+        #expect(pairedProbes == 2)
+        #expect(bootstraps == 2)
+        #expect(conn.transportPath == .paired)
+        #expect(conn.wsClient !== oldClient)
+        #expect(oldClient.status == .disconnected)
+        #expect(conn.focusedSessionStreamURLForTesting?.host == "my-server.tail00000.ts.net")
+        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/s2/stream")
+        #expect(rebinds == 1)
+        #expect(!conn.isTransportDemoting)
+    }
+
+    @Test func terminalFailureDuringAutomaticProbeCannotHandOffTransport() async {
+        let conn = ServerConnection()
+        conn.networkPathType = { "wifi" }
+        conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
+        var bootstraps = 0
+        #expect(await conn.configureForUse(credentials: makeHTTPOnlyCredentials(), serverInfoBootstrap: { _, _ in
+            bootstraps += 1
+            return successfulServerInfo()
+        }))
+        conn.automaticRouteReachabilityProbe = { _, _, _ in
+            conn.failTransportTerminallyForTesting()
+            return true
+        }
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+        #expect(bootstraps == 1)
+        #expect(conn.apiClient == nil)
+        #expect(conn.wsClient == nil)
+        #expect(!conn.canAutomaticallyRetryInitialTransport)
+        #expect(!conn.isTransportDemoting)
+    }
+
+    @Test func automaticProbeMakesNoAuthenticatedRequestOrCredentialWrite() async throws {
+        let conn = ServerConnection()
+        conn.networkPathType = { "wifi" }
+        conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
+        let device = DeviceCredential(deviceId: "probe-device", accessToken: "expired", expiresAt: 0, refreshChallenge: nil)
+        let credentials = makeHTTPOnlyCredentials().withDeviceCredential(device)
+        var bootstraps = 0
+        var credentialWrites = 0
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            serverInfoBootstrap: { _, _ in bootstraps += 1; return successfulServerInfo() },
+            deviceCredentialDidChange: { _ in credentialWrites += 1 }
+        ))
+        let oldAPI = conn.apiClient
+        let oldSocket = conn.wsClient
+        AutomaticProbeURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AutomaticProbeURLProtocol.self]
+        conn.automaticRouteReachabilityProbe = { selection, credentials, route in
+            await ServerConnection.probeAutomaticRoute(selection, credentials: credentials, route: route, configuration: configuration)
+        }
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+        let request = try #require(AutomaticProbeURLProtocol.requests.first)
+        #expect(AutomaticProbeURLProtocol.requests.count == 1)
+        #expect(request.url?.path == "/health")
+        #expect(request.httpMethod == "GET")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(bootstraps == 1, "An unhealthy Oppi response must not start authenticated bootstrap")
+        #expect(credentialWrites == 0)
+        #expect(conn.credentials == credentials)
+        #expect(conn.apiClient === oldAPI)
+        #expect(conn.wsClient === oldSocket)
+        #expect(!conn.isTransportDemoting)
+    }
+
+    @Test func staleTailnetProbeDoesNotSpendRestartBudgetOrReplaceSocket() async throws {
+        let original = TailnetTransportRoute.snapshot
+        defer { TailnetTransportRoute.publish(original.proxy, generation: original.generation) }
+        let proxy = TailnetSOCKSProxy(host: "127.0.0.1", port: 1080, credential: "fixture")
+        TailnetTransportRoute.publish(proxy, generation: 501)
+        let conn = ServerConnection()
+        conn.networkPathType = { "wifi" }
+        conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
+        var bootstraps = 0
+        var proxyPreparations = 0
+        conn.prepareTailnetProxy = { proxyPreparations += 1 }
+        #expect(await conn.configureForUse(credentials: makeHTTPOnlyCredentials(), serverInfoBootstrap: { _, _ in
+            bootstraps += 1
+            return successfulServerInfo()
+        }))
+        let oldSocket = try #require(conn.wsClient)
+        conn.automaticRouteReachabilityProbe = { _, _, captured in
+            #expect(captured.generation == 501)
+            TailnetTransportRoute.publish(proxy, generation: 502)
+            return true
+        }
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+        #expect(bootstraps == 1)
+        #expect(proxyPreparations == 0)
+        #expect(conn.wsClient === oldSocket)
+        #expect(conn.transportPath == .lan)
+        #expect(!conn.isTransportDemoting)
+    }
+
+    @Test func supersededProbeCannotTearDownExplicitReplacement() async throws {
+        let conn = ServerConnection()
+        conn.networkPathType = { "wifi" }
+        conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
+        var bootstraps = 0
+        #expect(await conn.configureForUse(credentials: makeHTTPOnlyCredentials(), serverInfoBootstrap: { _, _ in
+            bootstraps += 1
+            return successfulServerInfo()
+        }))
+        defer { conn.disconnectStream() }
+        conn._connectStreamForTesting = { AsyncStream { _ in } }
+        var replacement: WebSocketClient?
+        conn.automaticRouteReachabilityProbe = { _, _, _ in
+            #expect(await conn.reconfigureForExplicitRetry(
+                credentials: self.makeHTTPOnlyCredentials(),
+                serverInfoBootstrap: { _, _ in bootstraps += 1; return successfulServerInfo() }
+            ))
+            replacement = conn.wsClient
+            return true
+        }
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+        #expect(bootstraps == 2)
+        #expect(replacement != nil)
+        #expect(conn.wsClient === replacement)
         #expect(!conn.isTransportDemoting)
     }
 
@@ -832,6 +996,25 @@ private final class ListRefreshRequestLog: @unchecked Sendable {
         defer { lock.unlock() }
         return entries.filter { $0.host == host && $0.path.hasPrefix("/sessions/recent") }.count
     }
+}
+
+/// The health peer says HTTP 200 but not ready. Production must validate the
+/// body, leave installed auth alone, and avoid an authenticated candidate.
+private final class AutomaticProbeURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var recorded: [URLRequest] = []
+    static var requests: [URLRequest] { lock.withLock { recorded } }
+    static func reset() { lock.withLock { recorded = [] } }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.lock.withLock { Self.recorded.append(request) }
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(#"{"ok":false,"protocol":2}"#.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }
 
 private final class JoinPassStartCounter: @unchecked Sendable {
