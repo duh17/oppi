@@ -1652,7 +1652,15 @@ export function applyMessageEndToSession(session: Session, message: PiMessage): 
   // Track context usage for status display (matches pi TUI calculation).
   // Preserve the last non-zero snapshot when pi emits a synthetic aborted
   // assistant message with empty/zero usage at the end of a stopped session.
-  if (usage && (usage.contextTokens > 0 || session.contextTokens === undefined)) {
+  // Only the session's own assistant turns size the context: Pi also records the
+  // billed usage of codemode helper calls (`models.classify()`, `generateImages()`)
+  // on `toolResult` messages, and that small request is not the conversation.
+  // Cost/token totals above still count every billed call.
+  if (
+    role === "assistant" &&
+    usage &&
+    (usage.contextTokens > 0 || session.contextTokens === undefined)
+  ) {
     session.contextTokens = usage.contextTokens;
   }
 }

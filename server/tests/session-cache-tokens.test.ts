@@ -326,6 +326,34 @@ describe("cache tokens: contextTokens", () => {
     expect(session.contextTokens).toBe(180);
   });
 
+  it("a codemode helper call's toolResult usage bills the session but leaves contextTokens alone", () => {
+    const session = makeSession();
+
+    applyMessageEndToSession(
+      session,
+      makeAssistantMessage("real turn", {
+        input: 1_000,
+        output: 2_000,
+        cacheRead: 148_000,
+        cacheWrite: 1_000,
+        cost: { total: 0.5 },
+      }),
+    );
+    expect(session.contextTokens).toBe(152_000);
+
+    // Pi attaches the usage of models.classify()/generateImages() to the toolResult.
+    applyMessageEndToSession(session, {
+      role: "toolResult",
+      content: [{ type: "text", text: "ok" }],
+      usage: { input: 800, output: 100, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+    });
+
+    expect(session.contextTokens).toBe(152_000);
+    expect(session.cost).toBeCloseTo(0.51);
+    expect(session.tokens.input).toBe(1_800);
+    expect(session.tokens.output).toBe(2_100);
+  });
+
   it("contextTokens is not updated when usage is absent", () => {
     const session = makeSession();
 
