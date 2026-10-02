@@ -56,19 +56,42 @@ struct StartOppiSessionIntent: AppIntent {
             return .result(dialog: IntentDialog(stringLiteral: StartOppiSessionDialog.noServer))
         }
 
-        let outcome: CreateOutcome
+        // The prompt can come from a chained Shortcut (untrusted text), so the user
+        // confirms the exact prompt and destination before any connection or create.
+        let confirmationText = StartOppiSessionConfirmation.dialogText(
+            prompt: trimmedPrompt,
+            workspaceName: target.workspaceName,
+            serverName: target.serverName,
+            pairedServerCount: KeychainService.loadServers().count
+        )
+
+        let outcome: CreateOutcome?
         do {
-            outcome = try await ServerTransportAPIClient.withClient(for: paired) { api in
-                await createSession(
-                    api: api,
-                    workspaceId: target.workspaceId,
-                    prompt: trimmedPrompt,
-                    launchKey: launchKey
-                )
-            }
+            outcome = try await StartOppiSessionConfirmation.gated(
+                confirm: {
+                    try await requestConfirmation(
+                        actionName: .send,
+                        dialog: IntentDialog(stringLiteral: confirmationText)
+                    )
+                },
+                proceed: {
+                    try await ServerTransportAPIClient.withClient(for: paired) { api in
+                        await createSession(
+                            api: api,
+                            workspaceId: target.workspaceId,
+                            prompt: trimmedPrompt,
+                            launchKey: launchKey
+                        )
+                    }
+                }
+            )
         } catch {
             logger.error("Start-session transport failed before create: \(error.localizedDescription, privacy: .public)")
             return .result(dialog: IntentDialog(stringLiteral: StartOppiSessionDialog.cannotConnect))
+        }
+
+        guard let outcome else {
+            return .result(dialog: IntentDialog(stringLiteral: StartOppiSessionDialog.declined))
         }
 
         switch outcome {
@@ -285,7 +308,44 @@ struct StartOppiSessionIntent: AppIntent {
     }
 }
 
+/// Confirmation gate for Start Session: nothing connects, creates, or sends until the
+/// user confirms. A declined, cancelled, or failed confirmation never proceeds.
+enum StartOppiSessionConfirmation {
+    static let maxPromptCharacters = 280
+
+    static func dialogText(
+        prompt: String,
+        workspaceName: String,
+        serverName: String,
+        pairedServerCount: Int
+    ) -> String {
+        let shown = prompt.count > maxPromptCharacters
+            ? String(prompt.prefix(maxPromptCharacters)).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+            : prompt
+        let destination = pairedServerCount > 1
+            ? "\(workspaceName) on \(serverName)"
+            : workspaceName
+        return "Start a session in \(destination) and send this prompt?\n\n\(shown)"
+    }
+
+    /// Runs `proceed` only after `confirm` returns normally. Returns nil when the user
+    /// declined (or the confirmation could not complete); errors from `proceed` propagate.
+    @MainActor
+    static func gated<T>(
+        confirm: () async throws -> Void,
+        proceed: () async throws -> T
+    ) async rethrows -> T? {
+        do {
+            try await confirm()
+        } catch {
+            return nil
+        }
+        return try await proceed()
+    }
+}
+
 private enum StartOppiSessionDialog {
+    static let declined = "Canceled. Nothing was sent."
     static let missingPrompt = "What should Pi do?"
     static let noServer = "No paired server found. Open Oppi to pair first."
     static let noWorkspaces = "No workspaces configured on the server."

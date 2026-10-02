@@ -53,7 +53,7 @@ When the composer is empty during a busy turn, the primary action is **Stop**.
 
 ## Siri, Quick Session, and the share sheet
 
-**Siri** starts a session with a prompt and opens that live chat. Say "Start session in Oppi", "Open session in Oppi", or "New session in Oppi", and optionally "in <workspace>". If you don't give a prompt, Siri asks "What should Pi do?".
+**Siri** starts a session with a prompt and opens that live chat. Say "Start session in Oppi", "Open session in Oppi", or "New session in Oppi", and optionally "in <workspace>". If you don't give a prompt, Siri asks "What should Pi do?". Before anything is sent, Siri and Shortcuts ask you to confirm the prompt and the workspace (plus the server when you have more than one paired). Cancel creates no session and sends nothing. The same confirmation applies when the prompt comes from another Shortcut action.
 
 **Quick Session** opens the composer without creating a session yet. Launch it from Oppi, Control Center, the Action Button, or the Shortcuts **New Session** action. That action can add optional text and one image to the composer.
 

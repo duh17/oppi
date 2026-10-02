@@ -487,3 +487,81 @@ struct StartOppiSessionIntentTests {
         #expect(intent.server == nil)
     }
 }
+
+@Suite("StartOppiSessionConfirmation")
+@MainActor
+struct StartOppiSessionConfirmationTests {
+    private struct DeclinedError: Error {}
+    private struct CreateError: Error {}
+
+    @Test func declinedConfirmationNeverCreates() async throws {
+        var createCalls = 0
+        let result: Int? = try await StartOppiSessionConfirmation.gated(
+            confirm: { throw DeclinedError() },
+            proceed: {
+                createCalls += 1
+                return 1
+            }
+        )
+
+        #expect(result == nil)
+        #expect(createCalls == 0)
+    }
+
+    @Test func confirmedCreatesExactlyOnce() async throws {
+        var createCalls = 0
+        let result: Int? = try await StartOppiSessionConfirmation.gated(
+            confirm: {},
+            proceed: {
+                createCalls += 1
+                return 7
+            }
+        )
+
+        #expect(result == 7)
+        #expect(createCalls == 1)
+    }
+
+    @Test func createFailureAfterConfirmationPropagates() async {
+        await #expect(throws: CreateError.self) {
+            let _: Int? = try await StartOppiSessionConfirmation.gated(
+                confirm: {},
+                proceed: { throw CreateError() }
+            )
+        }
+    }
+
+    @Test func dialogShowsWorkspaceAndPromptButOnlyNamesServerWhenSeveralArePaired() {
+        let single = StartOppiSessionConfirmation.dialogText(
+            prompt: "Fix the build",
+            workspaceName: "Oppi",
+            serverName: "Studio",
+            pairedServerCount: 1
+        )
+        #expect(single.contains("Oppi"))
+        #expect(single.contains("Fix the build"))
+        #expect(!single.contains("Studio"))
+
+        let multi = StartOppiSessionConfirmation.dialogText(
+            prompt: "Fix the build",
+            workspaceName: "Oppi",
+            serverName: "Studio",
+            pairedServerCount: 2
+        )
+        #expect(multi.contains("Oppi on Studio"))
+        #expect(multi.contains("Fix the build"))
+    }
+
+    @Test func longPromptIsTruncatedInTheDialog() {
+        let prompt = String(repeating: "a", count: StartOppiSessionConfirmation.maxPromptCharacters + 50)
+        let text = StartOppiSessionConfirmation.dialogText(
+            prompt: prompt,
+            workspaceName: "Oppi",
+            serverName: "Studio",
+            pairedServerCount: 1
+        )
+
+        #expect(!text.contains(prompt))
+        #expect(text.hasSuffix(String(repeating: "a", count: StartOppiSessionConfirmation.maxPromptCharacters) + "…"))
+    }
+}
