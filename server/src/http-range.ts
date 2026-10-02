@@ -65,20 +65,38 @@ function isUtf8ContinuationByte(byte: number): boolean {
   return (byte & 0xc0) === 0x80;
 }
 
-function utf8SequenceLength(lead: number): number {
-  if ((lead & 0x80) === 0) return 1;
-  if ((lead & 0xe0) === 0xc0) return 2;
-  if ((lead & 0xf0) === 0xe0) return 3;
-  if ((lead & 0xf8) === 0xf0) return 4;
-  return 1;
+/** The chunker and sidecar share this rule: invalid leads are single raw bytes. */
+export function utf8SequenceLength(lead: number): number {
+  return lead >= 0xf5 ? 1 : lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc2 ? 2 : 1;
+}
+
+function sequenceAcrossBoundary(
+  boundary: number,
+  fileSize: number,
+  byteAt: (offset: number) => number,
+): { start: number; end: number } | undefined {
+  for (let back = 1; back <= 3 && back <= boundary; back += 1) {
+    const lead = boundary - back;
+    if (isUtf8ContinuationByte(byteAt(lead))) continue;
+    const length = utf8SequenceLength(byteAt(lead));
+    if (length <= back) return undefined;
+    const end = Math.min(fileSize, lead + length);
+    // Standalone continuation bytes and malformed sequences are raw bytes,
+    // not scalars whose boundaries should be moved.
+    for (let at = lead + 1; at < end; at += 1) {
+      if (!isUtf8ContinuationByte(byteAt(at))) return undefined;
+    }
+    return { start: lead, end };
+  }
+  return undefined;
 }
 
 /**
  * Tool-output Range responses never split a UTF-8 codepoint.
  *
- * `start` advances to the next leading byte if it lands on a continuation.
- * `end` (inclusive) retracts to the last complete codepoint. HEAD reports the
- * unclamped file/range length and must not read the sidecar.
+ * Move only boundaries inside a UTF-8 sequence. Invalid bytes stay in the
+ * raw byte space, and EOF retains partial bytes emitted by the final drain.
+ * HEAD reports the unclamped file/range length and must not read the sidecar.
  */
 export function clampUtf8CodepointRange(
   start: number,
@@ -98,23 +116,11 @@ export function clampUtf8CodepointRange(
     return { kind: "empty" };
   }
 
-  let clampedStart = start;
+  const clampedStart = sequenceAcrossBoundary(start, fileSize, byteAt)?.end ?? start;
   let clampedEnd = Math.min(end, fileSize - 1);
-  while (clampedStart <= clampedEnd && isUtf8ContinuationByte(byteAt(clampedStart))) {
-    clampedStart += 1;
-  }
-  if (clampedStart > clampedEnd) return { kind: "empty" };
-
-  let lead = clampedEnd;
-  while (lead > clampedStart && isUtf8ContinuationByte(byteAt(lead))) {
-    lead -= 1;
-  }
-  if (isUtf8ContinuationByte(byteAt(lead))) {
-    return { kind: "empty" };
-  }
-  const codepointEnd = lead + utf8SequenceLength(byteAt(lead)) - 1;
-  if (codepointEnd > clampedEnd) {
-    clampedEnd = lead - 1;
+  if (clampedEnd + 1 < fileSize) {
+    const sequence = sequenceAcrossBoundary(clampedEnd + 1, fileSize, byteAt);
+    if (sequence) clampedEnd = sequence.start - 1;
   }
   if (clampedEnd < clampedStart) return { kind: "empty" };
   return { start: clampedStart, end: clampedEnd };

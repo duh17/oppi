@@ -95,6 +95,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     private var commandRenderSignature: Int?
     private var commandShowsHighlight = false
     private var pendingFollowTail = false
+    private var ownsTerminalOutput = false
     private var perfSessionId: String?
 
     // MARK: - Deferred terminal rendering
@@ -140,6 +141,14 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        outputScrollView.layoutIfNeeded()
+        // A deferred paint dirties this view, not necessarily its parent row.
+        // Settle TextKit here so the final paint can follow without another delta.
+        flushDeferredScrollToBottom()
+    }
+
     // MARK: - Apply
 
     /// Refresh persistent UIKit chrome before rendering or revealing the row.
@@ -168,6 +177,8 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         wasOutputVisible: Bool
     ) -> BashRenderResult {
         perfSessionId = input.sessionId
+        ownsTerminalOutput = input.terminalResolved
+        outputScrollView.allowsVerticalPan = input.terminalResolved
         var showCommand = false
         var showOutput = false
 
@@ -331,6 +342,8 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         outputViewportHeightConstraint?.isActive = false
         outputUsesViewport = false
         outputShouldAutoFollow = true
+        ownsTerminalOutput = false
+        outputScrollView.allowsVerticalPan = false
         terminalEngine = nil
         ToolTimelineRowUIHelpers.resetScrollPosition(outputScrollView)
     }
@@ -594,7 +607,9 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     // MARK: - Vertical Lock
 
     func setOutputVerticalLockEnabled(_ enabled: Bool) {
-        outputLabelHeightLockConstraint?.isActive = enabled
+        // A live owned ring needs its full vertical extent to follow/browse
+        // the tail. The legacy horizontal-only preview keeps its height lock.
+        outputLabelHeightLockConstraint?.isActive = enabled && !ownsTerminalOutput
     }
 
     // MARK: - Width Update
@@ -631,13 +646,22 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     func flushDeferredScrollToBottom() {
         guard outputPendingScrollToBottom else { return }
         outputPendingScrollToBottom = false
-        ToolTimelineRowUIHelpers.scrollToBottom(outputScrollView, animated: false)
+        ToolTimelineRowUIHelpers.followTail(in: outputScrollView, contentLabel: outputLabel)
     }
 
     // MARK: - UIScrollViewDelegate
 
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard scrollView === outputScrollView, ownsTerminalOutput else { return }
+        outputShouldAutoFollow = false
+        pendingFollowTail = false
+        outputPendingScrollToBottom = false
+    }
+
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === outputScrollView else { return }
+        // Reflow/programmatic tail following must not detach the live clock.
+        if ownsTerminalOutput, !scrollView.isDragging, !scrollView.isDecelerating { return }
         if outputLabelHeightLockConstraint?.isActive == true {
             let lockedY = -outputScrollView.adjustedContentInset.top
             if abs(outputScrollView.contentOffset.y - lockedY) > 0.5 {

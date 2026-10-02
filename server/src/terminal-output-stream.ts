@@ -1,6 +1,7 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 
 import { createLogger } from "./logger.js";
+import { utf8SequenceLength } from "./http-range.js";
 
 const log = createLogger({ base: { component: "terminal_output_stream" } });
 
@@ -313,7 +314,7 @@ function alignedLength(buffer: Buffer, length: number, holdPartial: boolean): nu
   for (let back = 1; back <= 3 && back <= length; back += 1) {
     const byte = buffer[length - back] ?? 0;
     if ((byte & 0xc0) === 0x80) continue; // continuation: keep looking for its lead
-    const expected = byte >= 0xf5 ? 1 : byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc2 ? 2 : 1;
+    const expected = utf8SequenceLength(byte);
     return expected > back ? length - back : length;
   }
   return length;

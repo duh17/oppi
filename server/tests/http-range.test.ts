@@ -45,6 +45,30 @@ describe("UTF-8 codepoint range clamping", () => {
   const sidecar = Buffer.from("abc😀def", "utf8"); // 10 bytes: 61 62 63 F0 9F 98 80 64 65 66
   const byteAt = (offset: number) => sidecar[offset] ?? 0;
 
+  it.each([0xc0, 0xc1, 0xf5, 0xf6, 0xf7, 0x80, 0xbf])(
+    "preserves a chunk boundary after invalid byte %i",
+    (byte) => {
+      const raw = Buffer.from([0x61, byte, 0x62]);
+      expect(clampUtf8CodepointRange(0, 1, raw.length, (at) => raw[at]!)).toEqual({
+        start: 0,
+        end: 1,
+      });
+      expect(clampUtf8CodepointRange(1, 2, raw.length, (at) => raw[at]!)).toEqual({
+        start: 1,
+        end: 2,
+      });
+    },
+  );
+
+  it("serves trailing partial bytes at EOF, as the final drain does", () => {
+    for (const raw of [Buffer.from([0x61, 0xe2]), Buffer.from([0x61, 0xf0, 0x9f])]) {
+      expect(clampUtf8CodepointRange(0, raw.length - 1, raw.length, (at) => raw[at]!)).toEqual({
+        start: 0,
+        end: raw.length - 1,
+      });
+    }
+  });
+
   it("keeps ASCII ranges unchanged", () => {
     expect(clampUtf8CodepointRange(0, 2, sidecar.length, byteAt)).toEqual({
       start: 0,

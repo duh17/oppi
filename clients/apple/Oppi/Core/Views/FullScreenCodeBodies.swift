@@ -2004,6 +2004,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     private var ownerObserverID: UUID?
     private var usingCompletedSidecar = false
     private let streamNoticeLabel = UILabel()
+    private let streamNoticeContainer = UIStackView()
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private var readerPreferences: FullScreenReaderPreferences
@@ -2210,8 +2211,14 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         streamNoticeLabel.textColor = UIColor(palette.comment)
         streamNoticeLabel.numberOfLines = 0
         streamNoticeLabel.isHidden = true
+        streamNoticeLabel.accessibilityIdentifier = "terminal-output-status"
+        streamNoticeContainer.translatesAutoresizingMaskIntoConstraints = false
+        streamNoticeContainer.axis = .vertical
+        streamNoticeContainer.isLayoutMarginsRelativeArrangement = true
+        streamNoticeContainer.layoutMargins = .zero
+        streamNoticeContainer.addArrangedSubview(streamNoticeLabel)
+        addSubview(streamNoticeContainer)
         stack.addArrangedSubview(commandView)
-        stack.addArrangedSubview(streamNoticeLabel)
         stack.addArrangedSubview(outputView)
 
         let stackWidth = stack.widthAnchor.constraint(
@@ -2223,13 +2230,17 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.topAnchor.constraint(equalTo: streamNoticeContainer.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             virtualizedCollectionView.leadingAnchor.constraint(equalTo: leadingAnchor),
             virtualizedCollectionView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            virtualizedCollectionView.topAnchor.constraint(equalTo: topAnchor),
+            virtualizedCollectionView.topAnchor.constraint(equalTo: streamNoticeContainer.bottomAnchor),
             virtualizedCollectionView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            streamNoticeContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            streamNoticeContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            streamNoticeContainer.topAnchor.constraint(equalTo: topAnchor),
 
             stack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 10),
             stack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -10),
@@ -2254,21 +2265,32 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         if let owner {
             ownerObserverID = owner.addObserver { [weak self] in self?.handleOwnerUpdate() }
             handleOwnerUpdate()
+        } else if let source = completionSidecarSource {
+            // Finished trace-only calls will never create another live owner.
+            // Keep the readable ring while loading raw history from byte zero.
+            setStreamNotice("Loading terminal history…")
+            sidecarSource = source
+            startSidecarLoadingIfNeeded()
         } else {
-            // Keep the last readable snapshot, but never imply that it is live.
-            streamNoticeLabel.text = "Terminal output reloaded; waiting for live stream…"
-            streamNoticeLabel.isHidden = false
+            setStreamNotice("Terminal output reloaded; waiting for live stream…")
             render(snapshot: latestSnapshot)
         }
+    }
+
+    private func setStreamNotice(_ notice: String?) {
+        streamNoticeLabel.text = notice
+        streamNoticeLabel.isHidden = notice == nil
+        streamNoticeContainer.layoutMargins = notice == nil ? .zero : UIEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+        setNeedsLayout()
     }
 
     private func handleOwnerUpdate() {
         guard let owner = liveOwner, !usingCompletedSidecar else { return }
         let notice = owner.state.notice ?? (owner.omittedBytes > 0 ? "Earlier output omitted (\(owner.omittedBytes) bytes)" : nil)
-        if streamNoticeLabel.text != notice { renderedSnapshot = nil }
-        streamNoticeLabel.text = notice
-        streamNoticeLabel.isHidden = notice == nil
-        if !usingCompletedSidecar {
+        setStreamNotice(notice)
+        // A replacement owner has no paint yet. Do not clear mounted history
+        // during attachment/recovery; a live empty screen is still authoritative.
+        if !owner.formatted.isEmpty || (owner.state != .attaching && owner.state != .resyncing) {
             latestSnapshot = .init(output: owner.formatted, command: latestSnapshot.command, isDone: owner.state == .complete)
             render(snapshot: latestSnapshot)
         }
@@ -2305,12 +2327,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
             commandView.text = nil
         }
 
-        if let notice = streamNoticeLabel.text, !streamNoticeLabel.isHidden {
-            let header = NSMutableAttributedString(attributedString: virtualizedCommand ?? NSAttributedString())
-            if header.length > 0 { header.append(NSAttributedString(string: "\n")) }
-            header.append(NSAttributedString(string: notice, attributes: [.font: codeFont, .foregroundColor: UIColor(palette.comment)]))
-            virtualizedCommand = header
-        }
         renderTerminalOutput(snapshot.output, isStreaming: !snapshot.isDone)
         tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
     }
@@ -2399,14 +2415,9 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
                 guard !Task.isCancelled else { return }
                 var offset = 0
                 var total = 0
-                if let first, !first.text.isEmpty {
+                if let first {
                     let applied = await MainActor.run { () -> Bool in
-                        guard let self else { return false }
-                        let currentBytes = self.latestSnapshot.output.utf8.count
-                        if first.totalBytes > 0, currentBytes >= first.totalBytes {
-                            self.sidecarExpectsMore = false
-                            return false
-                        }
+                        guard let self, !Task.isCancelled else { return false }
                         self.applyFirstSidecarWindow(first)
                         return true
                     }
@@ -2414,6 +2425,8 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
                     offset = first.endByteOffset
                     total = first.totalBytes
                 } else {
+                    guard !Task.isCancelled else { return }
+                    self?.setStreamNotice("Terminal history unavailable")
                     return
                 }
                 while offset < total {
@@ -2421,6 +2434,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
                           !next.text.isEmpty else { break }
                     guard !Task.isCancelled else { return }
                     await MainActor.run {
+                        guard !Task.isCancelled else { return }
                         self?.appendOutputWindow(next.text)
                     }
                     offset = next.endByteOffset
@@ -2431,8 +2445,10 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
                     self?.sidecarExpectsMore = false
                 }
             } catch {
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
                     self?.sidecarExpectsMore = false
+                    self?.setStreamNotice("Terminal history unavailable")
                 }
             }
         }
@@ -2440,8 +2456,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
 
     private func applyFirstSidecarWindow(_ window: ToolOutputSidecarWindow) {
         usingCompletedSidecar = true
-        streamNoticeLabel.text = nil
-        streamNoticeLabel.isHidden = true
+        setStreamNotice(nil)
         sidecarExpectsMore = !window.isComplete
         sidecarHasPendingAppend = false
         latestSnapshot = TerminalTraceStream.Snapshot(
@@ -2779,8 +2794,16 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
                       ) else { return nil }
                 return (startLine + local.lowerBound - 1)...(startLine + local.upperBound - 1)
             }
+            if attributedChunkCache[chunkIndex] == nil, let chunk = virtualizedIndex?.chunks[chunkIndex] {
+                // A visible bounded chunk must not mount blank while async
+                // runway formatting catches up after a drag or index swap.
+                let attributed = fullScreenAttributedCodeText(
+                    from: ANSIParser.attributedString(from: chunk.leadingSGR + chunk.rawText, baseForeground: .themeFg),
+                    font: codeFont
+                )
+                cacheAttributedChunk(attributed, at: chunkIndex)
+            }
             cell.install(attributedChunkCache[chunkIndex])
-            scheduleChunkRender(chunkIndex)
         }
         return cell
     }

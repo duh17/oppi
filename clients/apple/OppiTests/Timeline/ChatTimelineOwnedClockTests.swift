@@ -15,7 +15,7 @@ struct ChatTimelineOwnedClockTests {
         fixture.reducer.processBatch([
             .agentStart(sessionId: fixture.sessionId),
             .textDelta(sessionId: fixture.sessionId, delta: "Hello"),
-            .toolStart(sessionId: fixture.sessionId, toolEventId: "terminal", tool: "arbitrary", args: [:],
+            .toolStart(sessionId: fixture.sessionId, toolEventId: "terminal", tool: "bash", args: ["command": .string("emit")],
                 outputPresentation: .init(kind: "terminal")),
             .toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: "ready\n", isError: false,
                 outputStream: .init(epoch: 1, offset: 0, bytes: 6)))
@@ -45,18 +45,43 @@ struct ChatTimelineOwnedClockTests {
                 return notice(in: fixture.host.view)
             }
         })
-        let prefix = String(repeating: "x\n", count: 1200)
+        let prefix = String(repeating: "x extra long\n", count: 1200)
         fixture.reducer.process(.toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: prefix,
             isError: false, outputStream: .init(epoch: 1, offset: 6, bytes: prefix.utf8.count))))
         #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
-            await MainActor.run { Self.containsTerminalText("x\nx\nx\nx", in: fixture.host.view) }
+            await MainActor.run { Self.containsTerminalText("x extra long\nx extra long", in: fixture.host.view) }
         })
         let tail = "last line\n"
         fixture.reducer.process(.toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: tail,
             isError: false, outputStream: .init(epoch: 1, offset: 6 + prefix.utf8.count, bytes: tail.utf8.count))))
         #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
-            await MainActor.run { Self.containsTerminalText(tail, in: fixture.host.view) }
+            await MainActor.run {
+                fixture.host.view.layoutIfNeeded()
+                guard let row = Self.terminalRow(in: fixture.host.view) else { return false }
+                return Self.containsTerminalText(tail, in: row)
+                    && ToolTimelineRowUIHelpers.isNearBottom(row.bashToolRowView.outputScrollView)
+                    && row.bashToolRowView.outputScrollView.contentOffset.y > 0
+            }
         })
+        let row = try #require(Self.terminalRow(in: fixture.host.view))
+        let scroll = row.bashToolRowView.outputScrollView
+        scroll.delegate?.scrollViewWillBeginDragging?(scroll)
+        scroll.setContentOffset(.zero, animated: false)
+        row.bashToolRowView.scrollViewDidScroll(scroll)
+        fixture.reducer.process(.toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: "detached tail\n",
+            isError: false, outputStream: .init(epoch: 1, offset: owner.cursor, bytes: 14))))
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                fixture.host.view.layoutIfNeeded()
+                return Self.containsTerminalText("detached tail", in: fixture.host.view)
+            }
+        })
+        #expect(abs(scroll.contentOffset.y) < 1)
+    }
+
+    private static func terminalRow(in view: UIView) -> ToolTimelineRowContentView? {
+        if let row = view as? ToolTimelineRowContentView { return row }
+        return view.subviews.compactMap { terminalRow(in: $0) }.first
     }
 
     private static func containsTerminalText(_ text: String, in view: UIView) -> Bool {

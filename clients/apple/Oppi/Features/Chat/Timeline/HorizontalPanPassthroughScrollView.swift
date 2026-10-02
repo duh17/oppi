@@ -11,6 +11,10 @@ import UIKit
 final class HorizontalPanPassthroughScrollView: UIScrollView {
     private static let horizontalIntentBias: CGFloat = 1.15
 
+    /// Owned terminal rings support browsing/detaching their inner tail.
+    /// Code/diff and legacy terminal previews retain outer vertical ownership.
+    var allowsVerticalPan = false
+
     #if DEBUG
     /// Unit tests cannot synthesize UIKit touch velocity. This seam still runs
     /// through the real nested scroll view's gestureRecognizerShouldBegin path.
@@ -31,7 +35,7 @@ final class HorizontalPanPassthroughScrollView: UIScrollView {
         #else
         let velocity = panGestureRecognizer.velocity(in: self)
         #endif
-        guard Self.shouldBeginHorizontalPan(with: velocity) else {
+        guard allowsVerticalPan || Self.shouldBeginHorizontalPan(with: velocity) else {
             return false
         }
 

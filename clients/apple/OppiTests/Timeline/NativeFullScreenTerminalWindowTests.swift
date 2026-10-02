@@ -72,6 +72,8 @@ struct NativeFullScreenTerminalWindowTests {
         other.finish(.init(epoch: 1, totalBytes: 6))
         #expect(Self.showsReloadNotice(body))
         let replacement = store.ensureOwner(for: "call")
+        #expect(Self.textViews(in: body).contains { $0.textStorage.string == "old\n" },
+            "A replacement owner must not clear the reader before its first paint")
         replacement.receive(.init(epoch: 1, offset: 0, bytes: 4), output: "new\n")
         replacement.finish(.init(epoch: 1, totalBytes: 4))
         let painted = await waitForMainActorCondition(timeout: .seconds(3)) {
@@ -87,6 +89,131 @@ struct NativeFullScreenTerminalWindowTests {
         if let label = view as? UILabel, !label.isHidden,
            label.text == "Terminal output reloaded; waiting for live stream…" { return true }
         return view.subviews.contains { showsReloadNotice($0) }
+    }
+
+    @Test func completionLoadsFullRawHistoryEvenWhenFormattedRingIsLarger() async throws {
+        let raw = "early history\n" + String(repeating: "\u{1B}[32mx\n", count: 2200)
+        struct Unavailable: Error {}
+        let owner = TerminalOutputStream { _ in throw Unavailable() }
+        owner.receive(.init(epoch: 1, offset: 0, bytes: raw.utf8.count), output: raw)
+        owner.finish(.init(epoch: 1, totalBytes: raw.utf8.count))
+        #expect(owner.formatted.utf8.count >= raw.utf8.count)
+        #expect(!owner.formatted.contains("early history"))
+        let stream = TerminalTraceStream(output: "", command: nil, isDone: true)
+        stream.owner = owner
+        stream.completionSidecarSource = .init(
+            loadFirst: { .init(text: raw, endByteOffset: raw.utf8.count, totalBytes: raw.utf8.count) },
+            loadNext: { _ in nil })
+        let body = NativeFullScreenTerminalBody(content: "", command: nil, stream: stream,
+            palette: ThemeRuntimeState.currentThemeID().palette,
+            reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil)
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        body.frame = host.bounds
+        host.addSubview(body)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            host.layoutIfNeeded()
+            return Self.textViews(in: body).contains { $0.textStorage.string.contains("early history") }
+        })
+    }
+
+    @Test func historyReloadWithoutReplacementLoadsSidecarInsteadOfWaiting() async throws {
+        let store = TerminalOutputStreamStore()
+        let owner = store.ensureOwner(for: "call")
+        let stream = TerminalTraceStream(output: "", command: nil, isDone: false)
+        stream.owner = owner
+        stream.ownerStore = store
+        stream.ownerToolCallId = "call"
+        stream.completionSidecarSource = .init(
+            loadFirst: { .init(text: "full history\n", endByteOffset: 13, totalBytes: 13) },
+            loadNext: { _ in nil })
+        let body = NativeFullScreenTerminalBody(content: "", command: nil, stream: stream,
+            palette: ThemeRuntimeState.currentThemeID().palette,
+            reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil)
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        body.frame = host.bounds
+        host.addSubview(body)
+        store.clearAll()
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.layoutIfNeeded()
+            return Self.textViews(in: body).contains { $0.textStorage.string == "full history\n" }
+        })
+        #expect(!Self.showsReloadNotice(body))
+    }
+
+    @Test func replacementOwnerCancelsReloadSidecarCommit() async throws {
+        actor SidecarGate {
+            var waiter: CheckedContinuation<Void, Never>?
+            var requested = false
+            func load() async -> ToolOutputSidecarWindow? {
+                await withCheckedContinuation { continuation in
+                    requested = true
+                    waiter = continuation
+                }
+                return .init(text: "stale history\n", endByteOffset: 14, totalBytes: 14)
+            }
+            func release() { waiter?.resume(); waiter = nil }
+        }
+        let gate = SidecarGate()
+        let store = TerminalOutputStreamStore()
+        let stream = TerminalTraceStream(output: "", command: nil, isDone: false)
+        stream.owner = store.ensureOwner(for: "call")
+        stream.ownerStore = store
+        stream.ownerToolCallId = "call"
+        stream.completionSidecarSource = .init(loadFirst: { await gate.load() }, loadNext: { _ in nil })
+        let body = NativeFullScreenTerminalBody(content: "", command: nil, stream: stream,
+            palette: ThemeRuntimeState.currentThemeID().palette,
+            reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil)
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        body.frame = host.bounds
+        host.addSubview(body)
+        store.clearAll()
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { await gate.requested })
+        let replacement = store.ensureOwner(for: "call")
+        replacement.receive(.init(epoch: 1, offset: 0, bytes: 5), output: "live\n")
+        await gate.release()
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.layoutIfNeeded()
+            return Self.textViews(in: body).contains { $0.textStorage.string == "live\n" }
+        })
+        #expect(!Self.textViews(in: body).contains { $0.textStorage.string.contains("stale history") })
+        replacement.discard()
+    }
+
+    @Test func resyncNoticeIsVisibleAtReaderTail() async throws {
+        let store = TerminalOutputStreamStore()
+        let owner = store.ensureOwner(for: "call")
+        let stream = TerminalTraceStream(output: "", command: nil, isDone: false)
+        stream.owner = owner
+        let body = NativeFullScreenTerminalBody(content: "", command: nil, stream: stream,
+            palette: ThemeRuntimeState.currentThemeID().palette,
+            reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil)
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        body.frame = host.bounds
+        host.addSubview(body)
+        let raw = String(repeating: "line of output\n", count: 1800)
+        owner.receive(.init(epoch: 1, offset: 0, bytes: raw.utf8.count), output: raw)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.layoutIfNeeded()
+            return (body.virtualizationDiagnosticsForTesting()?.mountedUTF16Count ?? 0) > 0
+        })
+        owner.markReconnecting()
+        host.layoutIfNeeded()
+        let scroll = try #require(body.subviews.compactMap { $0 as? UIScrollView }.first { !$0.isHidden })
+        scroll.setContentOffset(CGPoint(x: 0, y: max(0, scroll.contentSize.height - scroll.bounds.height)), animated: false)
+        host.layoutIfNeeded()
+        let notice = try #require(Self.labels(in: body).first { $0.text == "Resyncing terminal output…" })
+        #expect(!notice.isHidden)
+        #expect(notice.superview === body.subviews.first { $0 is UIStackView },
+            "The status line must be outside both scrolling content surfaces")
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.layoutIfNeeded()
+            return notice.bounds.width > 0 && notice.bounds.height > 0
+                && body.bounds.contains(notice.convert(notice.bounds, to: body))
+        })
+    }
+
+    private static func labels(in view: UIView) -> [UILabel] {
+        (view as? UILabel).map { [$0] } ?? view.subviews.flatMap { labels(in: $0) }
     }
 
     @Test func terminalBodyPaintsFirstWindowAndLaterCursorRewrite() async throws {
@@ -152,6 +279,9 @@ struct NativeFullScreenTerminalWindowTests {
         let collection = try #require(body.subviews.compactMap { $0 as? UICollectionView }.first)
         body.scrollViewWillBeginDragging(collection)
         collection.setContentOffset(CGPoint(x: 0, y: collection.contentSize.height / 2), animated: false)
+        host.layoutIfNeeded()
+        #expect(Self.visibleTextViews(in: collection).contains { !$0.textStorage.string.isEmpty },
+            "A newly mounted bounded chunk must be readable before yielding to cache warmup")
         let midpointPainted = await waitForMainActorCondition(timeout: .seconds(5)) {
             host.layoutIfNeeded()
             return (body.virtualizationDiagnosticsForTesting()?.mountedUTF16Count ?? 0) > 0

@@ -179,6 +179,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let bodyStack = UIStackView()
     private let previewLabel = UILabel()
     private let terminalNoticeLabel = UILabel()
+    private var noticeOwner: TerminalOutputStream?
+    private var noticeObserverID: UUID?
     let bashToolRowView = BashToolRowView()
     let expandedContainer = UIView()
     let expandedScrollView = HorizontalPanPassthroughScrollView()
@@ -292,6 +294,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     deinit {
+        if let noticeObserverID {
+            let owner = noticeOwner
+            Task { @MainActor in owner?.removeObserver(noticeObserverID) }
+        }
         elapsedTimer?.invalidate()
         imagePreviewDecodeTask?.cancel()
         expandedCodeDeferredHighlightTask?.cancel()
@@ -1020,6 +1026,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         compactHostedSurfaceHostView.isHidden = true
         terminalNoticeLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         terminalNoticeLabel.numberOfLines = 0
+        terminalNoticeLabel.accessibilityIdentifier = "terminal-output-status"
         bodyStack.addArrangedSubview(terminalNoticeLabel)
         bodyStack.addArrangedSubview(previewLabel)
         bodyStack.addArrangedSubview(imagePreviewContainer)
@@ -1117,9 +1124,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedContainer: expandedContainer
         )
         bashToolRowView.applyTheme(palette)
-        terminalNoticeLabel.text = configuration.terminalNotice
         terminalNoticeLabel.textColor = UIColor(palette.comment)
-        terminalNoticeLabel.isHidden = configuration.terminalNotice == nil
+        if noticeOwner !== configuration.terminalOutputStream {
+            if let noticeObserverID { noticeOwner?.removeObserver(noticeObserverID) }
+            noticeOwner = configuration.terminalOutputStream
+            noticeObserverID = noticeOwner?.addObserver { [weak self] in self?.updateTerminalNotice() }
+        }
+        updateTerminalNotice()
         fullScreenTerminalStream.owner = configuration.terminalOutputStream
         fullScreenTerminalStream.completionSidecarSource = configuration.toolOutputSidecarSource
 
@@ -1260,6 +1271,21 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     // MARK: - apply() decomposition
+
+    private func updateTerminalNotice() {
+        let notice = currentConfiguration.terminalNotice
+        let visibilityChanged = terminalNoticeLabel.isHidden != (notice == nil)
+        terminalNoticeLabel.text = notice
+        terminalNoticeLabel.isHidden = notice == nil
+        if notice != nil {
+            bodyStack.isHidden = false
+            bodyStackCollapsedHeightConstraint?.isActive = false
+        }
+        if visibilityChanged {
+            setNeedsLayout()
+            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        }
+    }
 
     /// Apply header elements: title, tool icon, language badge, trailing labels, preview.
     /// Returns whether the preview label is visible.

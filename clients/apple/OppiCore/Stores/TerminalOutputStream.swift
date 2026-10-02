@@ -69,6 +69,12 @@ final class TerminalOutputStream {
         let end = chunk.offset + chunk.bytes
         if chunk.bytes > 0, end <= cursor { return } // exact/subset duplicate
         if chunk.offset == cursor {
+            if output.utf8.count != chunk.bytes || output.contains("\u{FFFD}") {
+                // The JSON string is not a raw-byte authority. Recover this
+                // span before feeding anything, and queue later live chunks.
+                recover(to: end)
+                return
+            }
             do {
                 try feed(Data(output.utf8))
                 cursor = end // wire length, NOT decoded string length
@@ -227,20 +233,25 @@ final class TerminalOutputStream {
     /// resync state through a bounded 416 retry; never accept a shorter Range.
     private func fetchRecoveryRange(_ range: Range<Int>) async throws -> TerminalOutputRange {
         for attempt in 0..<3 {
-            do { return try await fetchRange(range) }
+            do {
+                let result = try await fetchRange(range)
+                if result.end < range.upperBound { throw ShortRange() }
+                return result
+            }
             catch {
                 let status: Int?
                 switch error as? APIError {
                 case .server(let code, _), .codedServer(let code, _, _): status = code
                 default: status = nil
                 }
-                guard status == 416, attempt < 2 else { throw error }
+                guard status == 416 || error is ShortRange, attempt < 2 else { throw error }
                 try await Task.sleep(for: .milliseconds(100 * (attempt + 1)))
             }
         }
         throw RecoveryFailure()
     }
 
+    private struct ShortRange: Error {}
     private struct RecoveryFailure: Error {}
 
     private func feed(_ data: Data) throws {

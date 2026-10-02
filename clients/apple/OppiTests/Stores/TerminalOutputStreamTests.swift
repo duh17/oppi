@@ -6,6 +6,7 @@ private actor StreamSidecar {
     let data: Data
     var requests: [Range<Int>] = []
     init(_ text: String) { data = Data(text.utf8) }
+    init(data: Data) { self.data = data }
     func fetch(_ range: Range<Int>) -> TerminalOutputRange {
         requests.append(range)
         return .init(data: data.subdata(in: range), start: range.lowerBound, end: range.upperBound)
@@ -45,12 +46,51 @@ struct TerminalOutputStreamTests {
         let owner = TerminalOutputStream { await sidecar.fetch($0) }
         owner.receive(chunk(0, 6), output: "first\n")
         owner.receive(chunk(0, 6), output: "first\n")
-        // U+FFFD may encode to three bytes; the raw producer length is one.
-        owner.receive(chunk(6, 1), output: "�")
-        #expect(owner.cursor == 7)
+        owner.receive(chunk(6, 7), output: "second\n")
+        #expect(owner.cursor == 13)
         #expect(owner.state == .live)
         #expect(await sidecar.requests.isEmpty)
         owner.discard()
+    }
+
+    @Test(arguments: [Data([0x9b, 0x32, 0x4a, 0x78, 0x0a]), Data("�\n".utf8), Data("raw\n".utf8)])
+    func lossyOrReplacementChunkUsesRawFileBytes(raw: Data) async throws {
+        let sidecar = StreamSidecar(data: raw)
+        let owner = TerminalOutputStream { await sidecar.fetch($0) }
+        let decoded = raw == Data("raw\n".utf8) ? "wrong\n" : String(decoding: raw, as: UTF8.self)
+        owner.receive(chunk(0, raw.count), output: decoded)
+        #expect(owner.state == .resyncing)
+        #expect(owner.cursor == 0)
+        await owner.waitForRecovery()
+        owner.finish(.init(epoch: 1, totalBytes: raw.count))
+        let reference = try TerminalLogEngine()
+        try reference.feed(raw)
+        #expect(owner.formatted == (try reference.paint()))
+        #expect(owner.cursor == raw.count)
+        #expect(await sidecar.requests == [0..<raw.count])
+    }
+
+    @Test(arguments: [true, false])
+    func short206RetriesWithoutFeedingPartialBytes(fileCatchesUp: Bool) async {
+        actor Sidecar {
+            var requests = 0
+            let catchesUp: Bool
+            init(_ catchesUp: Bool) { self.catchesUp = catchesUp }
+            func fetch() -> TerminalOutputRange {
+                requests += 1
+                if catchesUp, requests == 3 { return .init(data: Data("full\n".utf8), start: 0, end: 5) }
+                return .init(data: Data("bad".utf8), start: 0, end: 3)
+            }
+        }
+        let sidecar = Sidecar(fileCatchesUp)
+        let owner = TerminalOutputStream { _ in await sidecar.fetch() }
+        owner.finish(.init(epoch: 1, totalBytes: 5))
+        #expect(owner.state == .resyncing)
+        await owner.waitForRecovery()
+        #expect(await sidecar.requests == 3)
+        #expect(owner.state == (fileCatchesUp ? .complete : .resyncFailed))
+        #expect(owner.cursor == (fileCatchesUp ? 5 : 0))
+        #expect(ANSIParser.strip(owner.formatted) == (fileCatchesUp ? "full\n" : ""))
     }
 
     @Test func gapQueuesLiveChunksAndFetchesExactRange() async {

@@ -124,6 +124,7 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
         bodyStackCollapsedHeightConstraint = ToolTimelineRowViewStyler.styleBodyStack(bodyStack)
         terminalNoticeLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         terminalNoticeLabel.numberOfLines = 0
+        terminalNoticeLabel.accessibilityIdentifier = "terminal-output-status"
         bodyStack.addArrangedSubview(terminalNoticeLabel)
 
         borderView.addSubview(statusImageView)
