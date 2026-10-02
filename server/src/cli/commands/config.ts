@@ -36,6 +36,10 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
     type: "boolean",
     desc: "Append a concise Oppi CLI management hint to Oppi sessions",
   },
+  "experimental.serverDurable": {
+    type: "boolean",
+    desc: "Use server durable for new host sessions (experimental; default false; restart)",
+  },
   tls: { type: "json", desc: "TLS config JSON object" },
   "tls.mode": { type: "string", desc: "TLS mode" },
   "tls.certPath": { type: "string", desc: "Manual TLS certificate path" },
@@ -232,6 +236,7 @@ export function cmdConfig(
             key === "publicUrl" ||
             key === "proxy" ||
             key.startsWith("proxy.") ||
+            key.startsWith("experimental.") ||
             key === "providerQuotas" ||
             key.startsWith("providerQuotas.")
               ? "Restart the Oppi server for this change to take effect."

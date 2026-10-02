@@ -136,6 +136,7 @@ function normalizeConfig(
     "runtimeEnv",
     "oppiDocsPrompt",
     "oppiCliPrompt",
+    "experimental",
     "tls",
     "publicUrl",
     "proxy",
@@ -211,6 +212,22 @@ function normalizeConfig(
     }
     return value;
   };
+
+  if (obj.experimental !== undefined) {
+    if (!isRecord(obj.experimental)) {
+      errors.push("config.experimental: expected object");
+    } else {
+      for (const key of Object.keys(obj.experimental)) {
+        if (key !== "serverDurable" && strictUnknown)
+          errors.push(`config.experimental.${key}: unknown key`);
+      }
+      if (typeof obj.experimental.serverDurable !== "boolean") {
+        errors.push("config.experimental.serverDurable: expected boolean");
+      } else {
+        config.experimental = { serverDurable: obj.experimental.serverDurable };
+      }
+    }
+  }
 
   const configVersion = readNumber("configVersion", { min: 1 });
   if (configVersion !== undefined) {

@@ -258,6 +258,9 @@ export class SessionMessageQueueCoordinator {
   ): SessionAbortQueueClear | undefined {
     const active = this.deps.getActiveSession(key);
     if (!active) return undefined;
+    // Durable abort owns inbox withdrawal in the same operation as cancellation.
+    // Queue editing/compensation is intentionally unsupported for that backend.
+    if (active.sdkBackend.abortClearsQueuedModelTurns) return undefined;
     const queue = this.ensureQueueStore(active);
     this.assertQueueReconciled(active, queue);
     const clearedVersion = nextQueueVersion(queue.version);

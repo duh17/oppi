@@ -361,11 +361,29 @@ export class Storage {
 
   // ─── Sessions ───
 
-  createSession(name?: string, model?: string, options?: { id?: string }): Session {
-    return this.sessionStore.createSession(name, model, options);
+  createSession(
+    name?: string,
+    model?: string,
+    options?: { id?: string; durable?: false },
+  ): Session {
+    return this.sessionStore.createSession(name, model, {
+      id: options?.id,
+      serverDurable:
+        options?.durable !== false && this.getConfig().experimental?.serverDurable === true,
+    });
   }
 
   saveSession(session: Session): void {
+    // Idempotent launches mint their shell without createSession(). Enroll only
+    // on its first save; starting an existing SDK or terminal row never opts in.
+    if (
+      session.runtime === "oppi" &&
+      !session.piSessionFile &&
+      this.getConfig().experimental?.serverDurable === true &&
+      !this.sessionStore.getSession(session.id)
+    ) {
+      session.serverDurable ??= {};
+    }
     this.sessionStore.saveSession(session);
   }
 

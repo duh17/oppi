@@ -164,7 +164,10 @@ async function resumeOne(
     return { outcome: "failed", reason: safeErrorMessage(error) };
   }
 
-  if (!entry.wasBusy || deps.cancelled?.()) return { outcome: "resumed" };
+  // Durable continues the original submission; an extra continuation prompt
+  // would manufacture a second user turn after a crash.
+  if (session.serverDurable?.conversationId !== undefined || !entry.wasBusy || deps.cancelled?.())
+    return { outcome: "resumed" };
   // Input sent to the session or an explicit stop while this resume ran
   // cleared the entry: that person now directs it. Opening or reconnecting to
   // the session does not. No await separates this check from delivery below.

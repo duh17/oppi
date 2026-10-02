@@ -77,6 +77,22 @@ function makeDeps(
 }
 
 describe("session restart resume", () => {
+  it("rebinds a durable session without synthesizing a continuation user turn", async () => {
+    const { storage, workspace } = makeStorage();
+    saveSession(storage, "durable", {
+      workspaceId: workspace.id,
+      status: "stopped",
+      serverDurable: { conversationId: 1 },
+    });
+    storage.queueRestartResume([{ sessionId: "durable", wasBusy: true }], 1);
+    const deps = makeDeps(storage);
+    expect(await resumeSessionsAfterRestart(deps)).toEqual([
+      { sessionId: "durable", outcome: "resumed" },
+    ]);
+    expect(deps.resumed).toEqual(["durable"]);
+    expect(deps.sendPrompt).not.toHaveBeenCalled();
+    expect(deps.sendFollowUp).not.toHaveBeenCalled();
+  });
   it("queues sessions left running by a crash and marks every running one stopped", () => {
     const { storage, workspace } = makeStorage();
     const ws = { workspaceId: workspace.id };
@@ -389,9 +405,11 @@ describe("session restart resume", () => {
     saveSession(storage, "s1", { workspaceId: workspace.id, status: "stopped" });
     const { sdkBackend, dispose } = makeSdkBackendStub();
     let finishCreate!: () => void;
-    const create = vi.spyOn(SdkBackend, "create").mockImplementation(
-      () => new Promise((resolve) => (finishCreate = () => resolve(sdkBackend))),
-    );
+    const create = vi
+      .spyOn(SdkBackend, "create")
+      .mockImplementation(
+        () => new Promise((resolve) => (finishCreate = () => resolve(sdkBackend))),
+      );
     const manager = new SessionManager(storage);
     try {
       const start = manager.startSession("s1", workspace);

@@ -1608,6 +1608,7 @@ describe("SessionLifecycleService", () => {
 
         expect(createSession).toHaveBeenCalledWith("Imported Name", "openai-codex/gpt-5.6-sol", {
           id: "pi-session-1",
+          durable: false,
         });
         expect(saveSession).toHaveBeenCalledWith(
           expect.objectContaining({

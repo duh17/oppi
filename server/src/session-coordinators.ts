@@ -40,6 +40,7 @@ import type { ServerConfig, ServerMessage, Session } from "./types.js";
 import type { WorkspaceRuntime } from "./workspace-runtime.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
+import type { DurableHarness } from "./durable-harness.js";
 
 export type { SessionCatchUpResponse };
 
@@ -96,6 +97,7 @@ export interface SessionCoordinatorBundleDeps {
   onFirstMessage?: (session: Session) => void;
   /** Operational metrics collector for session lifecycle timing. */
   metrics?: ServerMetricCollector;
+  durableHarness?: Promise<DurableHarness>;
   onUIBridgeReady?: (key: string, bridge: SdkUiBridge | undefined) => void;
   hasUI?: (key: string) => boolean;
   takeStartupUIRequests?: (
@@ -156,6 +158,7 @@ export function createSessionCoordinatorBundle(
     storage: deps.storage,
     runtimeManager: deps.runtimeManager,
     config: deps.config,
+    durableHarness: deps.durableHarness,
     eventRingCapacity: deps.eventRingCapacity,
     getSkillPathResolver: () => deps.getSkillPathResolver(),
     onPiEvent: (key, event) => deps.onPiEvent(key, event),

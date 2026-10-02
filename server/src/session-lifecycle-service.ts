@@ -624,6 +624,7 @@ export class SessionLifecycleService {
     }
     const session = this.deps.storage.createSession(sessionName, modelSelection.model, {
       id: localHeader.sessionId,
+      durable: false,
     });
 
     session.workspaceId = params.workspace.id;
@@ -720,6 +721,8 @@ export class SessionLifecycleService {
       this.deps.storage.deleteSession(forkSession.id);
       throw error;
     }
+    // A v3 trace fork continues on the SDK, even when new sessions opt into Durable.
+    delete forkSession.serverDurable;
     forkSession.piSessionFile = forkedFile;
     forkSession.piSessionFiles = [forkedFile];
 

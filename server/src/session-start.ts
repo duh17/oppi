@@ -1,6 +1,8 @@
 import type { AgentDefinition } from "./agent-launch-service.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend } from "./sdk-backend.js";
+import { isServerDurableSession } from "./session-runtime-capabilities.js";
+import type { DurableHarness } from "./durable-harness.js";
 import type { AgentBackend } from "./agent-backend.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
 import {
@@ -33,6 +35,7 @@ export interface SessionStartCoordinatorDeps {
   /** True once the owning SessionManager is closed for server shutdown. */
   isClosed?: () => boolean;
   metrics?: ServerMetricCollector;
+  durableHarness?: Promise<DurableHarness>;
   onUIBridgeReady?: (key: string, bridge: SdkUiBridge | undefined) => void;
   hasUI?: (key: string) => boolean;
 }
@@ -63,19 +66,55 @@ export class SessionStartCoordinator {
       try {
         const createStart = Date.now();
         const agentDefinition = this.resolveAgentDefinition(session);
-        const sdkBackend = await SdkBackend.create({
-          session,
-          workspace,
-          agentDefinition,
-          onEvent: (event) => this.deps.onPiEvent(key, event),
-          onEnd: (reason) => this.deps.onSessionEnd(key, reason),
-          dataDir: this.deps.storage.getDataDir(),
-          getMobileOutputGuideSettings: () => this.deps.storage.getMobileOutputGuideSettings(),
-          metrics: this.deps.metrics,
-          serverConfig: this.deps.config,
-          onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
-          hasUI: () => this.deps.hasUI?.(key) ?? false,
-        });
+        const sandboxRequired =
+          workspace?.runtime === "sandbox" ||
+          session.launch?.target?.runtime === "sandbox" ||
+          agentDefinition?.launchConstraints?.requiredRuntime === "sandbox";
+        if (session.serverDurable && sandboxRequired) {
+          if (session.serverDurable.conversationId !== undefined)
+            throw new Error("A server durable session cannot switch to a sandbox");
+          delete session.serverDurable;
+          session.warnings = [
+            ...(session.warnings ?? []),
+            "Server durable is host-only; using the SDK backend for this sandbox session",
+          ];
+        }
+        if (session.serverDurable?.conversationId !== undefined && !this.deps.durableHarness) {
+          throw new Error(
+            "Enable experimental.serverDurable to resume this server durable session",
+          );
+        }
+        const useDurable =
+          this.deps.durableHarness && isServerDurableSession(session) && !session.piSessionFile;
+        const durableHarness = useDurable ? await this.deps.durableHarness : undefined;
+        const DurableBackend = useDurable
+          ? (await import("./durable-backend.js")).DurableBackend
+          : undefined;
+        const sdkBackend: AgentBackend =
+          DurableBackend && durableHarness
+            ? await DurableBackend.create({
+                ...(await durableHarness.open()),
+                session,
+                workspace,
+                agentDefinition,
+                dataDir: this.deps.storage.getDataDir(),
+                persistBinding: () => this.deps.persistSessionNow(key, session),
+                onEvent: (event) => this.deps.onPiEvent(key, event),
+              })
+            : await SdkBackend.create({
+                session,
+                workspace,
+                agentDefinition,
+                onEvent: (event) => this.deps.onPiEvent(key, event),
+                onEnd: (reason) => this.deps.onSessionEnd(key, reason),
+                dataDir: this.deps.storage.getDataDir(),
+                getMobileOutputGuideSettings: () =>
+                  this.deps.storage.getMobileOutputGuideSettings(),
+                metrics: this.deps.metrics,
+                serverConfig: this.deps.config,
+                onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
+                hasUI: () => this.deps.hasUI?.(key) ?? false,
+              });
         this.deps.metrics?.record("server.session_create_ms", Date.now() - createStart);
 
         // Shutdown already ran stopAll() and cannot see this runtime. Drop it
@@ -105,6 +144,12 @@ export class SessionStartCoordinator {
         this.deps.persistSessionNow(key, session);
         this.deps.resetIdleTimer(key);
 
+        if (DurableBackend && sdkBackend instanceof DurableBackend && durableHarness) {
+          sdkBackend.startEvents();
+          // submit/abort also enables the Harness-wide scheduler. Explicitly
+          // resume after attaching the projection, never via a new user prompt.
+          await durableHarness.resume();
+        }
         void this.deps.bootstrapSessionState(key);
 
         return session;

@@ -41,6 +41,7 @@ Example:
 
 ### Added
 
+- **Server:** Added an opt-in experimental durable backend for new managed host sessions (`oppi config set experimental.serverDurable true`, then restart). It persists turns and resumes interrupted work without sending a second user prompt. The default remains the SDK; sandbox sessions fall back with a warning. This slice provides coding tools and streaming, not extension, tree, or history parity.
 - **Client:** Exact built-in bash/read/write/edit/ask keep native inspection when an older server sends neither input nor output facts. One OppiCore fallback supplies the registry declarations before shared inspection. Producer facts always win, and aliases or custom tools without facts stay generic.
 - **Client/Server:** Compact turns, Session Outline, Live Activity, and copy output use the shared tool inspection facts. Quiet edit counts use result diffs when available, otherwise labeled requested edits; arbitrary interactive tools stay visible. Live Activity shows `Running <title>` without tool-name verbs. The server registry is split by job, and its full-output owner retains the uncut preview snapshot through the trace-append handoff.
 - **Client/Protocol:** Nested Calls retain completed grandchildren when an intermediate parent starts late, and keep the incomplete notice when live calls were dropped. Voice-mode changes require a registry-declared setting effect; unrelated tools cannot change preferences by returning a voice-mode-shaped result.

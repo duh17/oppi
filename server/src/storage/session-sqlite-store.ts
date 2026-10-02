@@ -218,7 +218,11 @@ export class SessionSqliteStore {
     this.db.close();
   }
 
-  createSession(name?: string, model?: string, options?: { id?: string }): Session {
+  createSession(
+    name?: string,
+    model?: string,
+    options?: { id?: string; serverDurable?: boolean },
+  ): Session {
     const now = Date.now();
     const id = options?.id ?? mintSessionId();
     const session: Session = {
@@ -232,6 +236,7 @@ export class SessionSqliteStore {
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       cost: 0,
       runtime: "oppi",
+      ...(options?.serverDurable ? { serverDurable: {} } : {}),
     };
 
     this.saveSession(session);
@@ -1247,6 +1252,13 @@ function normalizeDeclaredSession(session: Session): Session {
     normalized.thinkingLevel = session.thinkingLevel;
   }
   normalized.runtime = normalizeStoredSessionRuntimeKind(session.runtime) ?? "oppi";
+  if (session.serverDurable !== undefined) {
+    const id = session.serverDurable.conversationId;
+    if (id !== undefined && (!Number.isSafeInteger(id) || id <= 0)) {
+      throw new Error("Invalid server durable conversation binding");
+    }
+    normalized.serverDurable = id === undefined ? {} : { conversationId: id };
+  }
   if (session.control !== undefined && session.control !== null) {
     normalized.control = { ...session.control };
   }

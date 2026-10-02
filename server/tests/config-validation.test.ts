@@ -34,6 +34,27 @@ describe("Storage config validation", () => {
     expect(result.config?.images?.autoResize).toBe(false);
   });
 
+  it.each([true, false])("validates the opt-in durable boolean %s", (serverDurable) => {
+    const result = Storage.validateConfig(
+      { ...Storage.getDefaultConfig(dir), experimental: { serverDurable } },
+      dir,
+      true,
+    );
+    expect(result.valid).toBe(true);
+    expect(result.config?.experimental?.serverDurable).toBe(serverDurable);
+    expect(Storage.getDefaultConfig(dir).experimental?.serverDurable ?? false).toBe(false);
+  });
+
+  it.each(["true", 1, null, {}])("rejects malformed durable flag %j", (serverDurable) => {
+    const result = Storage.validateConfig(
+      { ...Storage.getDefaultConfig(dir), experimental: { serverDurable } },
+      dir,
+      true,
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("config.experimental.serverDurable: expected boolean");
+  });
+
   it("backfills self-signed TLS for a paired config that predates the tls key", () => {
     const { tls: _tls, ...legacy } = Storage.getDefaultConfig(dir);
     const paired = Storage.validateConfig({ ...legacy, token: "sk_legacy" }, dir, false);

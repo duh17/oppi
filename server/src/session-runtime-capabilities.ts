@@ -7,6 +7,12 @@ function isPiTuiSession(session: Pick<Session, "runtime">): boolean {
   return session.runtime === "pi-tui";
 }
 
+export function isServerDurableSession(
+  session: Pick<Session, "runtime" | "serverDurable">,
+): boolean {
+  return !isPiTuiSession(session) && session.serverDurable !== undefined;
+}
+
 export function runtimeLogTag(session: Pick<Session, "runtime">): SessionRuntimeKind {
   return isPiTuiSession(session) ? "pi-tui" : "oppi";
 }

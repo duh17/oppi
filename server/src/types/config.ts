@@ -82,6 +82,11 @@ export interface ServerConfig {
     enabled: boolean;
   };
 
+  /** Opt-in runtime experiments. Requires a server restart. */
+  experimental?: {
+    serverDurable: boolean;
+  };
+
   /** Provider quota display options. */
   providerQuotas?: {
     /**

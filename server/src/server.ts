@@ -971,6 +971,7 @@ export class Server {
     // Healing earlier let a second server that then failed the lock mark the
     // live server's sessions stopped. This runs before any request is served.
     queueOrphanedSessionsForRestart(this.storage);
+    await this.sessions.resumeDurableSessions();
     // Heal stale persisted contextWindow fallbacks. It saves sessions, so it
     // also waits for ownership; being synchronous, it finishes before the
     // socket serves a request.

@@ -28,6 +28,8 @@ export interface AgentBackend {
   readonly isCompacting: boolean;
   readonly isRuntimeLifecycleTransactionExclusive: boolean;
   readonly isQueueReconciliationRequired: boolean;
+  /** Native abort atomically withdraws its inbox; no host queue replacement. */
+  readonly abortClearsQueuedModelTurns?: boolean;
   readonly showCacheMissNotices: boolean;
   readonly cacheMissModelPriceSource: CacheMissModelPriceSource;
 
@@ -36,6 +38,7 @@ export interface AgentBackend {
     options?: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
       streamingBehavior?: "steer" | "followUp";
+      clientTurnId?: string;
       onPreflightAccepted?: () => void;
     },
     permit?: SessionRuntimeTransactionPermit,
@@ -85,8 +88,8 @@ export interface AgentBackend {
   cycleModel(
     direction?: "forward" | "backward",
   ): Promise<{ model: { provider: string; id: string }; thinkingLevel: ThinkingLevel } | undefined>;
-  setThinkingLevel(level: ThinkingLevel, options?: { persist?: boolean }): void;
-  cycleThinkingLevel(): ThinkingLevel | undefined;
+  setThinkingLevel(level: ThinkingLevel, options?: { persist?: boolean }): void | Promise<void>;
+  cycleThinkingLevel(): ThinkingLevel | undefined | Promise<ThinkingLevel | undefined>;
   setSessionName(name: string): void;
   getStateSnapshot(): PiStateSnapshot;
   getSessionStats(): SessionStats & Record<string, unknown>;

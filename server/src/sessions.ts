@@ -76,7 +76,13 @@ type ActiveSession = SessionStartActiveSession;
 
 // ─── Session Manager ───
 
+import type { DurableHarness } from "./durable-harness.js";
+import { isServerDurableSession } from "./session-runtime-capabilities.js";
+import type { ConversationId } from "@earendil-works/pi-durable";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+
 export class SessionManager extends EventEmitter implements AgentRuntimeTransport {
+  private readonly durableHarness?: Promise<DurableHarness>;
   private storage: Storage;
   private active: Map<string, ActiveSession> = new Map();
   private readonly config: ServerConfig;
@@ -118,6 +124,11 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     if (metrics) this.opsMetrics = metrics;
     const config = storage.getConfig();
     this.config = config;
+    if (config.experimental?.serverDurable === true) {
+      this.durableHarness = import("./durable-harness.js").then(
+        ({ DurableHarness }) => new DurableHarness(storage.getDataDir()),
+      );
+    }
     const runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(config));
     this.runtimeManager = runtimeManager;
     this.mobileRenderers = new MobileRendererRegistry();
@@ -126,6 +137,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const bundle = createSessionCoordinatorBundle({
       storage,
       config,
+      durableHarness: this.durableHarness,
       runtimeManager,
       active: this.active,
       mobileRenderers: this.mobileRenderers,
@@ -629,7 +641,47 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
    */
   async close(): Promise<void> {
     this.closed = true;
-    await this.stopAll();
+    try {
+      await this.stopAll();
+    } finally {
+      await (await this.durableHarness)?.close();
+    }
+  }
+
+  /** Attach every crash-resumed projection before enabling the shared scheduler. */
+  async resumeDurableSessions(): Promise<void> {
+    if (!this.durableHarness) return;
+    const bound = this.storage
+      .listSessions()
+      .filter(
+        (session) =>
+          isServerDurableSession(session) && session.serverDurable?.conversationId !== undefined,
+      );
+    if (!bound.length) return;
+    const durableHarness = await this.durableHarness;
+    durableHarness.holdResume();
+    const { harness } = await durableHarness.open();
+    const pending = new Set(this.storage.listRestartResume().map((entry) => entry.sessionId));
+    for (const session of bound) {
+      if (!pending.has(session.id)) continue;
+      const workspace = session.workspaceId
+        ? this.storage.getWorkspace(session.workspaceId)
+        : undefined;
+      if (session.workspaceId && !workspace) continue;
+      await this.startSession(session.id, workspace);
+    }
+    // A crash during an explicit stop can leave Durable work unfinished. The
+    // stored stop decision wins before resume; abort itself enables scheduling,
+    // so all resumable conversations have already attached above.
+    for (const session of bound) {
+      if (this.isActive(session.id)) continue;
+      const id = session.serverDurable?.conversationId;
+      if (id === undefined) continue;
+      const conversation = await harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
+      await conversation?.abort(BACKGROUND_CONTEXT);
+    }
+    for (const session of bound) this.storage.clearRestartResume(session.id);
+    await durableHarness.releaseResume();
   }
 
   async stopAll(): Promise<void> {

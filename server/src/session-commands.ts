@@ -134,18 +134,18 @@ export class SessionCommandCoordinator {
 
     [
       "set_thinking_level",
-      (backend, cmd) => {
+      async (backend, cmd) => {
         const level = readRequiredString(cmd.level, "level") as ThinkingLevel;
         if (readOptionalBoolean(cmd.persist) === true) {
-          backend.setThinkingLevel(level, { persist: true });
+          await backend.setThinkingLevel(level, { persist: true });
         } else {
-          backend.setThinkingLevel(level);
+          await backend.setThinkingLevel(level);
         }
         return { level };
       },
     ],
 
-    ["cycle_thinking_level", (backend) => ({ level: backend.cycleThinkingLevel() })],
+    ["cycle_thinking_level", async (backend) => ({ level: await backend.cycleThinkingLevel() })],
 
     ["reload", (backend) => backend.reloadResources()],
 
@@ -486,6 +486,7 @@ export class SessionCommandCoordinator {
         const options = {
           images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
           streamingBehavior: command.streamingBehavior as "steer" | "followUp" | undefined,
+          clientTurnId: command.clientTurnId as string | undefined,
           ...(onPreflightAccepted ? { onPreflightAccepted } : {}),
         };
         return permit
@@ -496,6 +497,7 @@ export class SessionCommandCoordinator {
         const options = {
           images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
           streamingBehavior: "steer" as const,
+          clientTurnId: command.clientTurnId as string | undefined,
           ...(onPreflightAccepted ? { onPreflightAccepted } : {}),
         };
         return permit
@@ -506,6 +508,7 @@ export class SessionCommandCoordinator {
         const options = {
           images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
           streamingBehavior: "followUp" as const,
+          clientTurnId: command.clientTurnId as string | undefined,
           ...(onPreflightAccepted ? { onPreflightAccepted } : {}),
         };
         return permit

@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+afterEach(() => vi.restoreAllMocks());
 
 import type { MobileOutputGuideSettingsSnapshot } from "../src/mobile-output-guide-settings.js";
 import { SdkBackend } from "../src/sdk-backend.js";
@@ -91,6 +93,27 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
 }
 
 describe("SessionStartCoordinator status persistence", () => {
+  it("never opens a durable Harness for the disabled SDK path", async () => {
+    const session = makeSession();
+    const deps = makeDeps(session);
+    const create = vi.spyOn(SdkBackend, "create").mockResolvedValue({} as SdkBackend);
+    await new SessionStartCoordinator(deps).startSessionInner("key", session.id, makeWorkspace());
+    expect(create).toHaveBeenCalledOnce();
+    expect(session.serverDurable).toBeUndefined();
+  });
+
+  it("falls back to the SDK for a sandbox enrollment and warns the client", async () => {
+    const session = makeSession({ serverDurable: {} });
+    const deps = makeDeps(session);
+    const workspace = { ...makeWorkspace(), runtime: "sandbox" as const };
+    const create = vi.spyOn(SdkBackend, "create").mockResolvedValue({} as SdkBackend);
+    await new SessionStartCoordinator(deps).startSessionInner("key", session.id, workspace);
+    expect(create).toHaveBeenCalledOnce();
+    expect(session.serverDurable).toBeUndefined();
+    expect(session.warnings).toContain(
+      "Server durable is host-only; using the SDK backend for this sandbox session",
+    );
+  });
   it("persists starting during SDK startup, then ready after registration", async () => {
     const session = makeSession({ status: "ready" });
     const deps = makeDeps(session);

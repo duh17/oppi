@@ -194,6 +194,9 @@ export interface Session {
   runtime?: SessionRuntimeKind;
   mirror?: PiTuiMirrorSessionMetadata;
 
+  /** Internal durable enrollment; the binding is saved before first submission. */
+  serverDurable?: { conversationId?: number };
+
   // Trace metadata (used for trace recovery/replay)
   // Local pi JSONL paths under ~/.pi/agent/sessions are deleted with the Oppi
   // session so deleted sessions are not rediscovered as importable local sessions.
