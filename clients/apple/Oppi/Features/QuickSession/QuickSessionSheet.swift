@@ -48,6 +48,7 @@ private struct AgentQuickSessionSubmitKey: Equatable {
     let workspaceId: String
     let worktreeId: String
     let agentId: String
+    let parentSessionId: String?
     let prompt: String
     let attachmentIds: [String]
     let modelId: String?
@@ -125,6 +126,8 @@ struct QuickSessionSheet: View {
     @State private var isLoadingAgents = false
     @State private var agentLoadGeneration: UInt64 = 0
     @State private var shouldRememberAgentSelection = true
+    /// Set when launched from a thread; the new session joins that thread.
+    @State private var threadParent: QuickSessionThreadParent?
     /// When an Agent is selected, model/thinking only apply if the user sets them.
     @State private var agentModelOverride: String?
     @State private var agentThinkingOverride: ThinkingLevel?
@@ -482,6 +485,9 @@ struct QuickSessionSheet: View {
                 if showsWorktreePicker {
                     worktreePickerPill
                 }
+                if let threadParent {
+                    threadParentPill(threadParent)
+                }
             }
             .padding(.horizontal, 16)
 
@@ -689,6 +695,9 @@ struct QuickSessionSheet: View {
             agentThinkingOverride = nil
             shouldRememberAgentSelection = true
         }
+        if threadParent?.serverId != serverId {
+            threadParent = nil
+        }
         selectedWorkspace = workspace
         selectedWorkspaceSelectionSource = "manual"
         selectedServerId = serverId
@@ -701,6 +710,45 @@ struct QuickSessionSheet: View {
         launchFailure = nil
         configureVoiceInputForSelectedServer()
         AppPreferences.QuickSession.saveWorkspaceId(workspace.id)
+    }
+
+    // MARK: - Thread parent
+
+    /// Shows which thread the new session joins. Tap to start a standalone session instead.
+    private func threadParentPill(_ parent: QuickSessionThreadParent) -> some View {
+        Button {
+            threadParent = nil
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.themeBlue)
+                    .frame(width: 16, height: 16)
+                Text(parent.title)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.themeFg)
+                    .lineLimit(1)
+                Image(systemName: "xmark")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+            }
+            .frame(minHeight: 17)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .glassEffect(.regular, in: Capsule())
+            .frame(minHeight: ComposerInputMetrics.controlDiameter)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("In thread \(parent.title)")
+        .accessibilityHint("Removes the thread so the session starts on its own")
+        .accessibilityIdentifier("quickSession.threadParent")
+    }
+
+    /// Parent id for a launch on `serverId`; a session id only means something on its own server.
+    private func threadParentSessionId(onServer serverId: String) -> String? {
+        guard let threadParent, threadParent.serverId == serverId else { return nil }
+        return threadParent.sessionId
     }
 
     // MARK: - Worktree Picker
@@ -804,6 +852,7 @@ struct QuickSessionSheet: View {
         let launchContext = navigation.pendingQuickSessionLaunchContext
         navigation.pendingQuickSessionLaunchContext = nil
         shouldRememberAgentSelection = launchContext?.agentId == nil
+        threadParent = launchContext?.threadParent
 
         // Inbox workspace+worktree beats last-used. Agent launch still filters
         // to that server, then last used > explicit default > first available.
@@ -1210,6 +1259,7 @@ struct QuickSessionSheet: View {
         let nav = navigation
         let serverId = selectedServerId ?? coordinator.activeServerId ?? "default"
         let attachments = pendingAttachments
+        let parentSessionId = threadParentSessionId(onServer: serverId)
 
         Task { @MainActor in
             do {
@@ -1230,7 +1280,8 @@ struct QuickSessionSheet: View {
                         workspaceId: workspace.id,
                         model: modelId,
                         thinking: thinking.rawValue,
-                        worktreeId: plan.worktreeId
+                        worktreeId: plan.worktreeId,
+                        parentSessionId: parentSessionId
                     )
                     session = response.session
                     autoSendMessage = plan.shouldAutoSend ? transportText : nil
@@ -1246,6 +1297,7 @@ struct QuickSessionSheet: View {
                         workspaceId: workspace.id,
                         worktreeId: plan.worktreeId,
                         agentId: agentId,
+                        parentSessionId: parentSessionId,
                         prompt: plan.prompt,
                         attachmentIds: attachments.map(\.id),
                         modelId: modelId,
@@ -1276,6 +1328,7 @@ struct QuickSessionSheet: View {
                                 worktreeId: plan.worktreeId,
                                 model: modelId,
                                 thinkingLevel: agentThinking,
+                                parentSessionId: parentSessionId,
                                 idempotencyKey: attempt.launchIdempotencyKey
                             )
                             // Create-only launch: prompt is sent after attachment upload.

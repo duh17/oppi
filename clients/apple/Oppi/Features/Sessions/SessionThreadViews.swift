@@ -501,6 +501,7 @@ struct SessionThreadDetailView: View {
     @State private var expandedFolds: Set<String> = []
     /// Only the newest load may replace the snapshot.
     @State private var loadGeneration = 0
+    @State private var composeBarColumnWidth: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var connection: ServerConnection? {
@@ -586,8 +587,14 @@ struct SessionThreadDetailView: View {
         }
         .listStyle(.insetGrouped)
         .themedListSurface()
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { composeBarColumnWidth = $0 }
         .navigationTitle("Thread")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let root = threadRoot, root.workspaceId != nil {
+                ToolbarItem(placement: .bottomBar) { composeBar(root: root) }
+            }
+        }
         .accessibilityIdentifier("thread.detail")
         .onChange(of: mode) { _, newMode in
             AppPreferences.SessionRows.setThreadDetailMode(newMode)
@@ -628,6 +635,48 @@ struct SessionThreadDetailView: View {
                 refreshError = "Couldn't refresh: \(error.localizedDescription)"
             }
         }
+    }
+
+    // MARK: Compose
+
+    private var threadRoot: Session? {
+        liveSnapshot.flatMap { thread in thread.sessions.first { $0.id == thread.rootSessionId } }
+    }
+
+    /// Same launcher as the session lists; the new session joins this thread
+    /// as a child of the root, in the root's workspace and checkout.
+    private func composeBar(root: Session) -> some View {
+        let hasActivePlayback = connection?.audioPlayer.hasActivePlayback ?? false
+        return SessionInboxCompactComposeBar(
+            showsDictation: SessionInboxComposeChrome.showsDictationShortcut(
+                voiceInputEnabled: ReleaseFeatures.voiceInputEnabled,
+                hasActivePlayback: hasActivePlayback
+            ),
+            hasActivePlayback: hasActivePlayback,
+            columnWidth: composeBarColumnWidth,
+            trailingReserve: SessionInboxComposeChrome.messageCapsuleSoloReserve,
+            placeholder: "New session in thread",
+            onStart: { startThreadSession(root: root, dictate: false) },
+            onDictate: { startThreadSession(root: root, dictate: true) }
+        )
+    }
+
+    private func startThreadSession(root: Session, dictate: Bool) {
+        guard let workspaceId = root.workspaceId else { return }
+        if dictate {
+            navigation.pendingQuickSessionStartDictation = true
+        }
+        navigation.pendingQuickSessionLaunchContext = QuickSessionLaunchContext(
+            serverId: target.serverId,
+            workspaceId: workspaceId,
+            worktreeId: root.worktreeId,
+            threadParent: QuickSessionThreadParent(
+                serverId: target.serverId,
+                sessionId: root.id,
+                title: root.displayTitle
+            )
+        )
+        navigation.showQuickSession = true
     }
 
     // MARK: Header

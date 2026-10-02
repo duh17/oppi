@@ -639,6 +639,57 @@ final class SessionThreadsE2ETests: E2ETestCase {
         try setInboxLayout("Threads")
     }
 
+    /// Thread detail's compose bar starts a session that joins the thread as a child of the root.
+    func testThreadComposeStartsSessionInThread() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let root = try id(Self.orchestratorKey)
+        let inbox = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
+        try setInboxLayout("Threads")
+
+        let strip = app.buttons["thread.nav.\(root)"]
+        XCTAssertTrue(reveal(strip, in: inbox, timeout: 20), "Orchestrator thread strip missing")
+        strip.tap()
+        XCTAssertTrue(app.staticTexts["thread.title"].waitForExistence(timeout: 15), "Thread detail did not open")
+        let before = try threadMemberIds(root: root)
+
+        tap(app.buttons["workspace.quickSession.start"], named: "thread compose bar")
+        let input = app.textViews["chat.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 30), "Quick Session did not open from the thread")
+        let threadPill = app.buttons["quickSession.threadParent"]
+        XCTAssertTrue(threadPill.waitForExistence(timeout: 5), "Quick Session does not show the thread it joins")
+        XCTAssertTrue(threadPill.label.contains("Investigate Unfinished Sonnet Worktree"), threadPill.label)
+        tap(input, named: "quick session input", timeout: 5)
+        input.typeText("E2E_THREAD_COMPOSE")
+        tap(app.buttons["chat.send"], named: "quick session send button", timeout: 5)
+        XCTAssertTrue(
+            app.buttons["chat.toolbar.files"].waitForExistence(timeout: 30),
+            "Chat did not open after starting a session from the thread"
+        )
+
+        let deadline = Date().addingTimeInterval(20)
+        var added: [String: Any]?
+        while added == nil, Date() < deadline {
+            added = try threadMembers(root: root).first { member in
+                guard let id = member["id"] as? String else { return false }
+                return !before.contains(id)
+            }
+            if added == nil { RunLoop.current.run(until: Date().addingTimeInterval(0.25)) }
+        }
+        let child = try XCTUnwrap(added, "New session never joined the thread")
+        XCTAssertEqual(child["parentSessionId"] as? String, root, "New session should be a child of the root")
+        XCTAssertEqual(child["workspaceName"] as? String, "oppi", "New session should run in the root's workspace")
+    }
+
+    private func threadMembers(root: String) throws -> [[String: Any]] {
+        let response = try e2eLabAPIJSON(method: "GET", path: "/sessions/\(root)/thread")
+        return response["sessions"] as? [[String: Any]] ?? []
+    }
+
+    private func threadMemberIds(root: String) throws -> Set<String> {
+        Set(try threadMembers(root: root).compactMap { $0["id"] as? String })
+    }
+
     /// Opens a workspace's session list from the sidebar with its stopped groups expanded.
     private func openWorkspaceList(_ name: String) throws -> XCUIElement {
         app.buttons["workspace.sidebar.open"].tap()
@@ -1103,10 +1154,11 @@ final class SessionThreadsE2ETests: E2ETestCase {
             let frame = element.frame
             return !frame.isEmpty && list.frame.contains(CGPoint(x: frame.minX + 4, y: frame.midY))
         }
-        // Inbox rows can sit under the bottom toolbar (compose bar), where taps and swipes land
-        // on the toolbar instead. Scroll such a row up before returning it.
+        // Inbox and thread rows can sit under the bottom toolbar (compose bar), where taps and
+        // swipes land on the toolbar instead. Scroll such a row up before returning it.
         func settled() -> Bool {
-            guard list.identifier == "workspace.sessionList", element.frame.height < list.frame.height / 2 else { return true }
+            guard ["workspace.sessionList", "thread.detail"].contains(list.identifier),
+                  element.frame.height < list.frame.height / 2 else { return true }
             for _ in 0..<3 where element.frame.maxY > list.frame.maxY - 150 {
                 let start = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
                 let end = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))

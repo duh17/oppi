@@ -1612,6 +1612,8 @@ struct QuickSessionLaunchContext: Equatable, Sendable {
     let agentId: String?
     let workspaceId: String?
     let worktreeId: String?
+    /// Thread launch: the new session becomes a child of this session.
+    let threadParent: QuickSessionThreadParent?
 
     /// Agent management launch. Workspace still follows last-used / default.
     init(serverId: String, agentId: String) {
@@ -1619,15 +1621,25 @@ struct QuickSessionLaunchContext: Equatable, Sendable {
         self.agentId = agentId
         self.workspaceId = nil
         self.worktreeId = nil
+        self.threadParent = nil
     }
 
-    /// Session-list launch. Pre-focuses Quick Session to this workspace and checkout.
-    init(serverId: String, workspaceId: String, worktreeId: String?) {
+    /// Session-list launch. Pre-focuses Quick Session to this workspace and
+    /// checkout; a thread launch also names the parent session.
+    init(serverId: String, workspaceId: String, worktreeId: String?, threadParent: QuickSessionThreadParent? = nil) {
         self.serverId = serverId
         self.agentId = nil
         self.workspaceId = workspaceId
         self.worktreeId = worktreeId
+        self.threadParent = threadParent
     }
+}
+
+/// Session a Quick Session launch attaches to, so the new session joins its thread.
+struct QuickSessionThreadParent: Equatable, Sendable {
+    let serverId: String
+    let sessionId: String
+    let title: String
 }
 
 /// Atomic navigation intent for quick session deep-link.

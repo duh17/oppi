@@ -169,6 +169,7 @@ extension APIClient {
         model: String? = nil,
         thinkingLevel: ThinkingLevel? = nil,
         sessionName: String? = nil,
+        parentSessionId: String? = nil,
         idempotencyKey: String = "ios-agent-launch-\(UUID().uuidString)"
     ) async throws -> AgentSessionLaunchResponse {
         struct PromptBody: Encodable {
@@ -187,6 +188,7 @@ extension APIClient {
             let target: TargetBody
             let overrides: OverridesBody?
             let sessionName: String?
+            let parentSessionId: String?
             let idempotencyKey: String
         }
 
@@ -200,6 +202,7 @@ extension APIClient {
             target: TargetBody(workspaceId: workspaceId, worktreeId: worktreeId?.nilIfBlank),
             overrides: overrides,
             sessionName: sessionName?.nilIfBlank,
+            parentSessionId: parentSessionId?.nilIfBlank,
             idempotencyKey: idempotencyKey
         )
         let (data, response) = try await request(

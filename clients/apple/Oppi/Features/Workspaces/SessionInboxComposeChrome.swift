@@ -17,6 +17,8 @@ enum SessionInboxComposeChrome {
     /// Trailing folder capsule plus bar gutters. The leading Message capsule
     /// uses the rest of the screen so it covers the session-row title.
     static let messageCapsuleFolderReserve: CGFloat = 120
+    /// Bar gutters only, for a bottom bar with no trailing folder capsule.
+    static let messageCapsuleSoloReserve: CGFloat = 40
     /// Narrowest expanded Message capsule on compact splits.
     static let messageCapsuleMinWidthFloor: CGFloat = 180
 
@@ -36,11 +38,12 @@ enum SessionInboxComposeChrome {
     /// stretching regular iPad to the remaining bar width.
     static func messageCapsuleMinWidth(
         screenWidth: CGFloat,
-        expands: Bool
+        expands: Bool,
+        reserve: CGFloat = messageCapsuleFolderReserve
     ) -> CGFloat? {
         guard expands else { return nil }
         guard screenWidth > 0 else { return messageCapsuleMinWidthFloor }
-        return max(messageCapsuleMinWidthFloor, screenWidth - messageCapsuleFolderReserve)
+        return max(messageCapsuleMinWidthFloor, screenWidth - reserve)
     }
 
     /// Mic is a one-tap path into Quick Session. Hide it when now-playing
@@ -74,6 +77,9 @@ struct SessionInboxCompactComposeBar: View {
     let showsDictation: Bool
     var hasActivePlayback: Bool = false
     var columnWidth: CGFloat = 0
+    /// Width kept free beside the capsule: the folder capsule by default.
+    var trailingReserve: CGFloat = SessionInboxComposeChrome.messageCapsuleFolderReserve
+    var placeholder: String = SessionInboxComposeChrome.compactBarPlaceholder
     var onIncognito: (() -> Void)? = nil
     let onStart: () -> Void
     let onDictate: () -> Void
@@ -88,7 +94,8 @@ struct SessionInboxCompactComposeBar: View {
         )
         let minWidth = SessionInboxComposeChrome.messageCapsuleMinWidth(
             screenWidth: columnWidth,
-            expands: expands
+            expands: expands,
+            reserve: trailingReserve
         )
 
         Button(action: onStart) {
@@ -123,7 +130,7 @@ struct SessionInboxCompactComposeBar: View {
     }
 
     private var placeholderLabel: some View {
-        Text(SessionInboxComposeChrome.compactBarPlaceholder)
+        Text(placeholder)
             .font(.subheadline)
             .foregroundStyle(.themeFgDim)
             .lineLimit(1)
