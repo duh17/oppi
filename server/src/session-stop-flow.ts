@@ -187,7 +187,7 @@ export class SessionStopFlowCoordinator {
     // poisons the runtime transaction outside the stuck owner, which lets any
     // transaction-waiting outer lock unwind while this request settles on time.
     const capturedEmergencyDisposal = active.sdkBackend.captureEmergencyDisposalForStop();
-    const emergencyDispose = (): SdkBackendDisposeResult =>
+    const emergencyDispose = (): SdkBackendDisposeResult | Promise<SdkBackendDisposeResult> =>
       capturedEmergencyDisposal(this.stopSessionBoundMs);
     const lifecycleDeadline = this.deps.stopCoordinator.armStopRequestLifecycleDeadline(
       key,

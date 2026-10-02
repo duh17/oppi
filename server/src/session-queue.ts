@@ -334,6 +334,13 @@ export class SessionMessageQueueCoordinator {
     this.broadcastQueueState(clear.key, queue);
   }
 
+  /** Native inbox changes (including abort) are authoritative, even while busy. */
+  refreshQueuedMessages(key: string): void {
+    const active = this.deps.getActiveSession(key);
+    if (!active) return;
+    this.broadcastQueueState(key, this.syncFromSdk(active));
+  }
+
   getQueue(key: string): MessageQueueState {
     const active = this.deps.getActiveSession(key);
     if (!active) throw new Error(`Session not active: ${key}`);

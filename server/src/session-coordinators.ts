@@ -89,7 +89,7 @@ export interface SessionCoordinatorBundleDeps {
     command: Record<string, unknown>,
     permit?: SessionRuntimeTransactionPermit,
     onPreflightAccepted?: () => void,
-  ) => void | Promise<void>;
+  ) => void | Promise<unknown>;
   sendCommandAsync: (key: string, command: Record<string, unknown>) => Promise<unknown>;
   broadcast: (key: string, message: ServerMessage) => void;
   stopSession: (sessionId: string) => Promise<void>;
@@ -256,6 +256,7 @@ export function createSessionCoordinatorBundle(
     broadcast: (key, message) => deps.broadcast(key, message),
     resetIdleTimer: (key) => deps.resetIdleTimer(key),
     handleSessionSettled: (key) => lifecycleCoordinator.handleSessionSettled(key),
+    refreshQueuedMessages: (key) => queueCoordinator.refreshQueuedMessages(key),
     markQueuedMessageStarted: (key, message) =>
       queueCoordinator.markQueuedMessageStarted(key, message),
     schedulePostCompactionQueueFlush: (key) =>

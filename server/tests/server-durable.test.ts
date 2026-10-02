@@ -11,14 +11,29 @@ import {
   fauxThinking,
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
-import { Harness, createRegistry, type ConversationId } from "@earendil-works/pi-durable";
+import { Type } from "typebox";
+import {
+  Harness,
+  createRegistry,
+  ToolTask,
+  AssistantEntry,
+  InboxDoc,
+  type ConversationId,
+  type ToolRegistration,
+} from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { DurableBackend, DurableNotSupportedError } from "../src/durable-backend.js";
 import { Storage } from "../src/storage.js";
 import { SessionManager } from "../src/sessions.js";
-import { queueOrphanedSessionsForRestart } from "../src/session-restart-resume.js";
+import { DurableHarness } from "../src/durable-harness.js";
+import { SessionTraceService } from "../src/session-trace-service.js";
+import { SessionStopCoordinator } from "../src/session-stop.js";
+import {
+  queueOrphanedSessionsForRestart,
+  recordLiveSessionsForRestart,
+} from "../src/session-restart-resume.js";
 import type { ServerMessage, Session } from "../src/types.js";
 
 const managers: SessionManager[] = [];
@@ -105,9 +120,14 @@ function observe(manager: SessionManager, sessionId: string) {
   };
 }
 
-async function openHarness(dir: string, models: ModelRuntime): Promise<Harness> {
+async function openHarness(
+  dir: string,
+  models: ModelRuntime,
+  tool?: ToolRegistration,
+): Promise<Harness> {
   const registry = createRegistry();
   registry.install(CodingTools);
+  if (tool) registry.install({ name: "restart-proof", tools: [tool] });
   const harness = await Harness.open(
     await openNodeSqliteStorage(join(dir, "restart.sqlite")),
     {
@@ -178,9 +198,11 @@ describe("server durable managed runtime", () => {
         entryId: expect.any(String),
       }),
     );
+    const count = f.manager.getActiveSession(f.session.id)!.messageCount;
     await f.manager.sendPrompt(f.session.id, "Write proof.txt, then report success", {
       clientTurnId: "apple-turn-1",
     });
+    expect(f.manager.getActiveSession(f.session.id)!.messageCount).toBe(count);
     const history = (await f.manager.runCommand(f.session.id, { type: "get_messages" })) as {
       role: string;
     }[];
@@ -230,9 +252,14 @@ describe("server durable managed runtime", () => {
     await f.manager.sendPrompt(f.session.id, "Stream slowly", { clientTurnId: "stop-turn" });
     await delta;
     await f.manager.sendFollowUp(f.session.id, "Do not run this", { clientTurnId: "queued-turn" });
+    expect(f.manager.getMessageQueue(f.session.id).followUp).toHaveLength(1);
     const confirmed = projection.next((message) => message.type === "stop_confirmed");
     await f.manager.sendAbort(f.session.id);
     await confirmed;
+    expect(f.manager.getMessageQueue(f.session.id)).toMatchObject({ steering: [], followUp: [] });
+    expect(
+      projection.messages.filter((message) => message.type === "queue_state").at(-1),
+    ).toMatchObject({ queue: { steering: [], followUp: [] } });
     expect(projection.messages.filter((message) => message.type === "stop_failed")).toHaveLength(0);
     await f.manager.stopSession(f.session.id);
     projection.unsubscribe();
@@ -245,6 +272,17 @@ describe("server durable managed runtime", () => {
     await restarted.resumeDurableSessions();
     expect(restarted.isActive(f.session.id)).toBe(false);
     expect(storage.getSession(f.session.id)?.status).toBe("stopped");
+    expect(f.faux.state.callCount).toBe(1);
+    await restarted.startSession(f.session.id, f.workspace);
+    await expect(
+      restarted.sendPrompt(f.session.id, "Do not run this", { clientTurnId: "queued-turn" }),
+    ).resolves.toBeUndefined();
+    await expect(
+      restarted.sendPrompt(f.session.id, "Changed withdrawn input", {
+        clientTurnId: "queued-turn",
+      }),
+    ).rejects.toThrow("clientTurnId conflict");
+    expect(restarted.getMessageQueue(f.session.id).followUp).toEqual([]);
     expect(f.faux.state.callCount).toBe(1);
   });
 
@@ -272,7 +310,7 @@ describe("server durable managed runtime", () => {
       ],
       { slow: true },
     );
-    // Real Harness close models a process loss (unlike manager.close, which must abort).
+    // Real Harness close models process loss without a recorded Oppi shutdown.
     let harness = await openHarness(f.dir, f.models);
     const first = await backend(harness, f.models, f.session, f.dir);
     const conversation = (await harness.conversation(
@@ -290,6 +328,9 @@ describe("server durable managed runtime", () => {
       if (batch.some((event) => event.type === "message_update")) partial();
     });
     await first.prompt("Continue exactly this original turn", { clientTurnId: "restart-turn" });
+    await expect(
+      first.prompt("Conflicting live text", { clientTurnId: "restart-turn" }),
+    ).rejects.toThrow("clientTurnId conflict");
     await started;
     const persisted = JSON.parse(JSON.stringify(f.session)) as Session;
     await events.stop();
@@ -319,10 +360,345 @@ describe("server durable managed runtime", () => {
             ),
         ),
     ).toHaveLength(1);
-    await resumed.prompt("Continue exactly this original turn", { clientTurnId: "restart-turn" });
+    const accepted = vi.fn();
+    await resumed.prompt("Continue exactly this original turn", {
+      clientTurnId: "restart-turn",
+      onPreflightAccepted: accepted,
+    });
+    expect(accepted).not.toHaveBeenCalled();
+    await expect(
+      resumed.prompt("Different text", {
+        clientTurnId: "restart-turn",
+        onPreflightAccepted: accepted,
+      }),
+    ).rejects.toThrow("clientTurnId conflict");
+    expect(accepted).not.toHaveBeenCalled();
     expect(f.faux.state.callCount).toBe(2);
     await resumed.dispose();
   }, 15_000);
+
+  it("marks two crashed stopped conversations while paused before the third runs its tool", async () => {
+    const f = await fixture([]);
+    const sessions = [
+      f.session,
+      f.storage.createSession("stopped-2", "faux/faux-1"),
+      f.storage.createSession("continue-3", "faux/faux-1"),
+    ];
+    const effects: number[] = [];
+    let recoveredAll!: () => void;
+    const allRecovered = new Promise<void>((resolve) => {
+      recoveredAll = resolve;
+    });
+    let recovering = false;
+    let entered = 0;
+    let allEntered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      allEntered = resolve;
+    });
+    const tool: ToolRegistration = {
+      name: "side_effect_counter",
+      description: "Deterministic restart probe",
+      parameters: Type.Object({}),
+      replay: "safe",
+      async execute(_args, api, callContext) {
+        if (!recovering) {
+          if (++entered === 3) allEntered();
+          await new Promise<void>((_resolve, reject) => {
+            callContext.abortSignal!.addEventListener(
+              "abort",
+              () => reject(callContext.abortSignal!.reason),
+              { once: true },
+            );
+          });
+        }
+        effects.push(api.conversationId);
+        if (effects.length === 3) recoveredAll();
+        return { content: [{ type: "text", text: "counted" }] };
+      },
+    };
+    let harness = await openHarness(f.dir, f.models, tool);
+    const taskIds = [];
+    for (const [index, session] of sessions.entries()) {
+      const conversation = await harness.createConversation(
+        {
+          ownership: { kind: "ownerless" },
+          agent: { model: { provider: "faux", modelId: "faux-1" }, tools: [tool], cwd: f.dir },
+        },
+        context,
+      );
+      session.workspaceId = f.workspace.id;
+      session.serverDurable = { conversationId: conversation.id };
+      session.status = index === 2 ? "busy" : "stopping";
+      f.storage.saveSession(session);
+      if (index < 2)
+        await conversation.commit(async (tx) => {
+          const inbox = await tx.doc(InboxDoc, conversation.id);
+          const input = await tx.createSubmission({
+            conversationId: conversation.id,
+            type: "input",
+            status: "queued",
+            requestId: `stopped-input-${index}`,
+          });
+          inbox.items.push({ id: input.id, mode: "followUp", content: "Never deliver" });
+        }, context);
+      taskIds.push(
+        await conversation.commit(async (tx) => {
+          const assistant = await tx.appendEntry(AssistantEntry, conversation.id, {
+            model: [
+              {
+                role: "assistant",
+                content: [fauxToolCall(tool.name, {}, { id: "counter" })],
+                api: "faux",
+                provider: "faux",
+                model: "faux-1",
+                usage: {
+                  input: 0,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  totalTokens: 0,
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+                },
+                stopReason: "toolUse",
+                timestamp: 1,
+              },
+            ],
+          });
+          return tx.createTask(
+            ToolTask,
+            { assistant: assistant.id, callId: "counter" },
+            { ownership: { kind: "conversation" } },
+          );
+        }, context),
+      );
+    }
+    harness.resume();
+    await started;
+    await harness.close(context);
+    harnesses.splice(harnesses.indexOf(harness), 1);
+    recovering = true;
+    harness = await openHarness(f.dir, f.models, tool);
+    expect((await harness.inspect(context)).scheduling).toBe("paused");
+    const idle = f.storage.createSession("Already idle stopped conversation", "faux/faux-1");
+    idle.status = "stopped";
+    idle.serverDurable = {
+      conversationId: (
+        await harness.createConversation({ ownership: { kind: "ownerless" } }, context)
+      ).id,
+    };
+    f.storage.saveSession(idle);
+    // The idle cleanup is first. A delayed next handle read is a plausible
+    // startup interleaving: if cleanup enabled scheduling, tools can run before
+    // the remaining stopped conversations have been marked.
+    vi.spyOn(f.storage, "listSessions").mockImplementation(() =>
+      [idle, ...sessions].map((session) => structuredClone(session)),
+    );
+    const conversation = harness.conversation.bind(harness);
+    vi.spyOn(harness, "conversation").mockImplementation(async (id, callContext) => {
+      if (
+        id === sessions[0]!.serverDurable!.conversationId &&
+        (await harness.inspect(context)).scheduling === "running"
+      )
+        await allRecovered;
+      return conversation(id, callContext);
+    });
+    vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+    queueOrphanedSessionsForRestart(f.storage);
+    await f.manager.resumeDurableSessions();
+    await Promise.all(taskIds.map((id) => harness.waitForTask(id, context)));
+    expect(effects).toEqual([sessions[2]!.serverDurable!.conversationId]);
+    expect((await harness.inspect(context)).submissions).toEqual([]);
+    expect(f.manager.isActive(sessions[0]!.id)).toBe(false);
+    expect(f.manager.isActive(sessions[1]!.id)).toBe(false);
+    expect(f.manager.isActive(sessions[2]!.id)).toBe(true);
+  });
+
+  it("rechecks the restart queue after an earlier attach so a startup stop wins", async () => {
+    const f = await fixture([]);
+    const harness = await openHarness(f.dir, f.models);
+    const second = f.storage.createSession("Stop during startup", "faux/faux-1");
+    for (const session of [f.session, second]) {
+      await backend(harness, f.models, session, f.dir);
+      session.workspaceId = f.workspace.id;
+      session.status = "busy";
+      f.storage.saveSession(session);
+    }
+    vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+    queueOrphanedSessionsForRestart(f.storage);
+    const ordered = f.storage
+      .listSessions()
+      .filter((session) => session.serverDurable?.conversationId !== undefined);
+    const stopped = ordered[1]!;
+    const start = f.manager.startSession.bind(f.manager);
+    const starts = vi.spyOn(f.manager, "startSession").mockImplementation(async (id, workspace) => {
+      await f.manager.stopSession(stopped.id);
+      return start(id, workspace);
+    });
+    await f.manager.resumeDurableSessions();
+    expect(starts.mock.calls.map(([id]) => id)).toEqual([ordered[0]!.id]);
+    expect(f.manager.isActive(stopped.id)).toBe(false);
+  });
+
+  it("continues the same submission once after graceful shutdown mid-tool", async () => {
+    const f = await fixture([
+      fauxAssistantMessage(
+        [
+          fauxToolCall(
+            "bash",
+            { command: "printf 'once\\n' >> graceful-effects.log; printf 'MID_TOOL\\n'; sleep 60" },
+            { id: "graceful-bash" },
+          ),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("GRACEFUL_RESUMED"),
+    ]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const projection = observe(f.manager, f.session.id);
+    const marker = projection.next(
+      (message) => message.type === "tool_output" && message.output.includes("MID_TOOL"),
+    );
+    await f.manager.sendPrompt(f.session.id, "Continue the original submission", {
+      clientTurnId: "graceful-turn",
+    });
+    await marker;
+    recordLiveSessionsForRestart(f.storage, [f.manager.getActiveSession(f.session.id)!]);
+    await f.manager.close();
+    managers.splice(managers.indexOf(f.manager), 1);
+    projection.unsubscribe();
+    const restarted = new SessionManager(new Storage(f.dir));
+    managers.push(restarted);
+    let observed!: ReturnType<typeof observe>;
+    let end!: Promise<ServerMessage>;
+    const start = restarted.startSession.bind(restarted);
+    vi.spyOn(restarted, "startSession").mockImplementation(async (id, workspace) => {
+      const result = await start(id, workspace);
+      observed = observe(restarted, id);
+      end = observed.next((message) => message.type === "agent_end");
+      return result;
+    });
+    await restarted.resumeDurableSessions();
+    await end;
+    const history = (await restarted.runCommand(f.session.id, { type: "get_messages" })) as {
+      role: string;
+      content: unknown;
+    }[];
+    expect(history.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(
+      history.filter(
+        (message) =>
+          message.role === "assistant" &&
+          JSON.stringify(message.content).includes("GRACEFUL_RESUMED"),
+      ),
+    ).toHaveLength(1);
+    expect(readFileSync(join(f.dir, "graceful-effects.log"), "utf8")).toBe("once\n");
+    const count = restarted.getActiveSession(f.session.id)!.messageCount;
+    await restarted.sendPrompt(f.session.id, "Continue the original submission", {
+      clientTurnId: "graceful-turn",
+    });
+    expect(restarted.getActiveSession(f.session.id)!.messageCount).toBe(count);
+    await expect(
+      restarted.sendPrompt(f.session.id, "Conflicting retry", { clientTurnId: "graceful-turn" }),
+    ).rejects.toThrow("clientTurnId conflict");
+    observed.unsubscribe();
+  });
+
+  it("loads trace for an active durable session without Pi tree metadata", async () => {
+    const f = await fixture([]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const service = new SessionTraceService({
+      storage: f.storage,
+      sessionRuntimes: f.manager,
+      ensureSessionContextWindow: (session) => session,
+      mobileRenderers: f.manager.mobileRenderer,
+    });
+    expect(await f.manager.refreshSessionState(f.session.id)).toMatchObject({ leafId: null });
+    await expect(service.getSessionWithTrace({ session: f.session })).resolves.toMatchObject({
+      session: { id: f.session.id },
+      trace: [],
+    });
+  });
+
+  it("refreshes the phone queue from durable inbox updates while busy", async () => {
+    const f = await fixture(
+      [fauxAssistantMessage("A deliberately long stream so queued input remains pending.")],
+      { slow: true },
+    );
+    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    await f.manager.startSession(f.session.id, f.workspace);
+    const projection = observe(f.manager, f.session.id);
+    const started = projection.next((message) => message.type === "text_delta");
+    await f.manager.sendPrompt(f.session.id, "Stream");
+    await started;
+    const { harness } = await opening.mock.results[0]!.value;
+    const conversation = (await harness.conversation(
+      f.storage.getSession(f.session.id)!.serverDurable!.conversationId! as ConversationId,
+      context,
+    ))!;
+    const queued = projection.next(
+      (message) =>
+        message.type === "queue_state" &&
+        message.queue.followUp.some((item) => item.message === "Native follow-up"),
+    );
+    await conversation.submit(
+      { type: "input", content: "Native follow-up", whenBusy: "followUp" },
+      context,
+    );
+    await queued;
+    expect(f.manager.getMessageQueue(f.session.id).followUp.map((item) => item.message)).toEqual([
+      "Native follow-up",
+    ]);
+    await f.manager.sendAbort(f.session.id);
+    projection.unsubscribe();
+  });
+
+  it("reports a failed emergency stop and retains the view when durable abort rejects", async () => {
+    const f = await fixture([]);
+    const harness = await openHarness(f.dir, f.models);
+    const conversation = await harness.createConversation(
+      { ownership: { kind: "ownerless" } },
+      context,
+    );
+    f.session.serverDurable = { conversationId: conversation.id };
+    vi.spyOn(conversation, "abort").mockRejectedValue(new Error("abort commit rejected"));
+    vi.spyOn(harness, "conversation").mockResolvedValue(conversation);
+    const activeBackend = await backend(harness, f.models, f.session, f.dir);
+    const active = { session: f.session, sdkBackend: activeBackend, pendingStop: undefined };
+    const broadcast = vi.fn();
+    const ended = vi.fn();
+    const coordinator = new SessionStopCoordinator(
+      {
+        getActiveSession: () => active,
+        persistSessionNow: () => {},
+        broadcast,
+        handleSessionEnd: ended,
+      },
+      100,
+      100,
+    );
+    coordinator.beginPendingStop(f.session.id, active, "terminate", "user");
+    await coordinator.forceTerminateSessionProcess(
+      f.session.id,
+      active,
+      "user",
+      undefined,
+      undefined,
+      () => activeBackend.captureEmergencyDisposalForStop()(100),
+    );
+    expect(ended).not.toHaveBeenCalled();
+    expect(broadcast.mock.calls.map(([, message]) => message)).toContainEqual(
+      expect.objectContaining({
+        type: "stop_failed",
+        reason: "Force stop failed: abort commit rejected",
+      }),
+    );
+    expect(broadcast.mock.calls.some(([, message]) => message.type === "stop_confirmed")).toBe(
+      false,
+    );
+    expect(activeBackend.isDisposed).toBe(false);
+    expect(activeBackend.messages()).toEqual([]);
+    await activeBackend.detachForRestart();
+  });
 
   it("keeps disabled creation and existing sessions on the SDK path without opening durable storage", async () => {
     const f = await fixture([]);

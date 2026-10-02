@@ -60,6 +60,7 @@ export interface SessionAgentEventCoordinatorDeps {
   resetIdleTimer: (key: string) => void;
   handleSessionSettled?: (key: string) => void;
   markQueuedMessageStarted?: (key: string, message: PiMessage) => void;
+  refreshQueuedMessages?: (key: string) => void;
   schedulePostCompactionQueueFlush?: (key: string) => void;
   resumeQueuedCompactions?: (key: string) => void;
   dataDir?: string;
@@ -109,6 +110,11 @@ export class SessionAgentEventCoordinator {
     }
 
     this.flushPendingCanonicalMessage(key, active);
+
+    if (data.type === "queue_update" && active.sdkBackend?.abortClearsQueuedModelTurns) {
+      this.deps.refreshQueuedMessages?.(key);
+      return;
+    }
 
     if (data.type === "extension_ui_request") {
       handleExtensionUIRequestState(active, data, {

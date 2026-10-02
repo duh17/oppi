@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AttachedReplicatedState } from "@earendil-works/chord";
 import {
@@ -9,6 +10,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   watchEvents,
+  InboxDoc,
+  defineDocFamily,
   type AgentEventStream,
   type Conversation,
   type ConversationView,
@@ -41,12 +44,26 @@ export class DurableNotSupportedError extends Error {
   }
 }
 
+// Submission records omit content after queued input withdrawal. Keep its
+// fingerprint durable too, so a later replay cannot silently change that input.
+const RequestContent = defineDocFamily<{ content: string }, null>({
+  kind: "oppi.request-content",
+  version: 1,
+  family: true,
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  initial: () => ({ content: "" }),
+});
+
 /** An AgentBackend over a conversation; the Harness owns execution and queues. */
 export class DurableBackend implements AgentBackend {
   private readonly transactions = new SessionRuntimeTransaction();
   private readonly adapter = createAdapterState();
   private disposed = false;
   private eventsStarted = false;
+  private admissions: Promise<void> = Promise.resolve();
+  private detaching?: Promise<void>;
   private readonly registry: ModelRegistry;
   readonly abortClearsQueuedModelTurns = true;
   readonly isQueueReconciliationRequired = false;
@@ -231,23 +248,75 @@ export class DurableBackend implements AgentBackend {
     message: string,
     options?: Parameters<AgentBackend["prompt"]>[1],
     permit?: SessionRuntimeTransactionPermit,
-  ): Promise<void> {
+  ): Promise<void | { duplicate: true }> {
     if (!permit)
       return this.withModelTurnAdmission("prompt", (token) => this.prompt(message, options, token));
     this.transactions.assertPermit(permit, "shared");
     this.assertOpen();
-    const submission = await this.conversation.submit(
-      {
-        type: "input",
-        content: options?.images?.length
-          ? [{ type: "text", text: message }, ...options.images]
-          : message,
-        requestId: options?.clientTurnId,
-        whenBusy: options?.streamingBehavior ?? "reject",
-      },
-      BACKGROUND_CONTEXT,
+    const content = options?.images?.length
+      ? [{ type: "text" as const, text: message }, ...options.images]
+      : message;
+    // Shared lifecycle permits allow concurrent prompts. Serialize only durable
+    // admission so two copies of one request cannot both append a local user row.
+    const admission = this.admissions.then(async () => {
+      this.assertOpen();
+      const existing = options?.clientTurnId
+        ? await this.conversation.commit(async (tx) => {
+            const record = await tx.submissionByRequest(
+              this.conversation.id,
+              options.clientTurnId!,
+            );
+            const queued =
+              record && record.entry === undefined
+                ? (await tx.doc(InboxDoc, this.conversation.id)).items.find(
+                    (item) => item.id === record.id,
+                  )
+                : undefined;
+            const stored =
+              record?.entry !== undefined
+                ? (await tx.entry(record.entry))?.model?.find((item) => item.role === "user")
+                    ?.content
+                : queued && queued.mode !== "write"
+                  ? queued.content
+                  : undefined;
+            const fingerprint = await tx.doc(
+              RequestContent,
+              this.conversation.id,
+              options.clientTurnId!,
+              null,
+            );
+            if (!record) {
+              fingerprint.content = JSON.stringify(content);
+              return undefined;
+            }
+            if (
+              stored !== undefined
+                ? !isDeepStrictEqual(content, stored)
+                : fingerprint.content !== JSON.stringify(content)
+            )
+              throw new Error(
+                "clientTurnId conflict: the stored durable submission has different content",
+              );
+            return record;
+          }, BACKGROUND_CONTEXT)
+        : undefined;
+      const submission = await this.conversation.submit(
+        {
+          type: "input",
+          content,
+          requestId: options?.clientTurnId,
+          whenBusy: options?.streamingBehavior ?? "reject",
+        },
+        BACKGROUND_CONTEXT,
+      );
+      if (!existing) options?.onPreflightAccepted?.();
+      return { submission, duplicate: existing !== undefined };
+    });
+    this.admissions = admission.then(
+      () => undefined,
+      () => undefined,
     );
-    options?.onPreflightAccepted?.();
+    const { submission, duplicate } = await admission;
     // Admission, not the whole generation, holds the permit. Abort must not
     // wait behind a stream, and a duplicate can find its settled submission.
     void submission
@@ -267,6 +336,7 @@ export class DurableBackend implements AgentBackend {
             error: error instanceof Error ? error.message : String(error),
           });
       });
+    if (duplicate) return { duplicate: true };
   }
 
   async abort(permit?: SessionRuntimeTransactionPermit): Promise<void> {
@@ -274,6 +344,7 @@ export class DurableBackend implements AgentBackend {
     this.transactions.assertPermit(permit, "exclusive");
     this.assertOpen();
     await this.conversation.abort(BACKGROUND_CONTEXT);
+    this.onEvent({ type: "queue_update", ...this.queuedMessages() });
   }
   abortBash(): never {
     return this.unsupported("abortBash (use abort)");
@@ -286,19 +357,23 @@ export class DurableBackend implements AgentBackend {
     if (this.disposed) return { disposal: "graceful" };
     this.transactions.assertPermit(permit, "exclusive");
     await this.conversation.abort(BACKGROUND_CONTEXT);
-    this.disposed = true;
-    await this.events.stop();
-    this.view.dispose();
+    await this.detachForRestart();
     return { disposal: "graceful" };
   }
-  captureEmergencyDisposalForStop(): (timeoutMs: number) => SdkBackendDisposeResult {
-    return (timeoutMs) => {
-      // Persist the abort mark even if a tool ignores cancellation. Detaching
-      // its projection is not an execution cancellation or a graceful disposal.
-      void this.conversation.abort(BACKGROUND_CONTEXT).catch(() => undefined);
+  /** Projection teardown only: the recorded original submission must survive shutdown. */
+  detachForRestart(): Promise<void> {
+    return (this.detaching ??= (async () => {
       this.disposed = true;
-      void this.events.stop();
+      await this.events.stop();
       this.view.dispose();
+    })());
+  }
+  captureEmergencyDisposalForStop(): (timeoutMs: number) => Promise<SdkBackendDisposeResult> {
+    return async (timeoutMs) => {
+      // Never report a successful stop until Durable has admitted cancellation.
+      // A rejected abort leaves the projection alive and propagates stop_failed.
+      await this.conversation.abort(BACKGROUND_CONTEXT);
+      await this.detachForRestart();
       this.transactions.poison(new Error("Server durable stop timed out"));
       return { disposal: "forced", cause: "lifecycle_timeout", operation: "stop", timeoutMs };
     };
@@ -495,8 +570,8 @@ export class DurableBackend implements AgentBackend {
   sessionTree(): never {
     return this.unsupported("sessionTree");
   }
-  leafId(): never {
-    return this.unsupported("leafId");
+  leafId(): null {
+    return null;
   }
   navigateTree(): never {
     return this.unsupported("navigateTree");
@@ -522,8 +597,8 @@ export class DurableBackend implements AgentBackend {
   abortRetry(): never {
     return this.unsupported("abortRetry");
   }
-  getEntryRenderers(): never {
-    return this.unsupported("getEntryRenderers");
+  getEntryRenderers(): undefined {
+    return undefined;
   }
   appendAssistantMessage(): never {
     return this.unsupported("appendAssistantMessage");

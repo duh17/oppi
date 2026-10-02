@@ -1679,6 +1679,18 @@ describe("SessionLifecycleService", () => {
   });
 
   describe("forkSession", () => {
+    it("rejects durable forks with a typed error before creating or rebinding anything", async () => {
+      const { service, createSession, refreshSessionState } = makeService();
+      await expect(
+        service.forkSession({
+          workspace: makeWorkspace(),
+          sourceSession: makeSession({ serverDurable: { conversationId: 1 } }),
+          entryId: "entry-1",
+        }),
+      ).rejects.toMatchObject({ code: "server_durable_not_supported", operation: "fork" });
+      expect(createSession).not.toHaveBeenCalled();
+      expect(refreshSessionState).not.toHaveBeenCalled();
+    });
     it("creates a timeline fork with source trace ancestry and inherited settings", async () => {
       const sourceSession = makeSession({
         id: "source-1",
@@ -1704,6 +1716,7 @@ describe("SessionLifecycleService", () => {
       expect(createSession).toHaveBeenCalledWith(
         "Fork: Original Session",
         "anthropic/claude-sonnet-4",
+        { durable: false },
       );
       expect(saveSession).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1736,7 +1749,7 @@ describe("SessionLifecycleService", () => {
         name: "  Custom fork name  ",
       });
 
-      expect(createSession).toHaveBeenCalledWith("Custom fork name", undefined);
+      expect(createSession).toHaveBeenCalledWith("Custom fork name", undefined, { durable: false });
     });
 
     it("returns a typed conflict error when the source has no trace file", async () => {
@@ -1843,6 +1856,27 @@ describe("SessionLifecycleService", () => {
   });
 
   describe("stopSession", () => {
+    it("aborts a not-connected durable conversation before persisting stopped", async () => {
+      const { service, stopSession, saveSession } = makeService();
+      await service.stopSession(
+        makeSession({ serverDurable: { conversationId: 1 }, status: "stopped" }),
+      );
+      expect(stopSession).toHaveBeenCalledWith("sess-1");
+      expect(stopSession.mock.invocationCallOrder[0]).toBeLessThan(
+        saveSession.mock.invocationCallOrder[0]!,
+      );
+    });
+    it("does not persist a stopped durable session when offline abort fails", async () => {
+      const { service, saveSession } = makeService({
+        stopError: new Error("durable abort failed"),
+      });
+      await expect(
+        service.stopSession(
+          makeSession({ serverDurable: { conversationId: 1 }, status: "stopped" }),
+        ),
+      ).rejects.toThrow("durable abort failed");
+      expect(saveSession).not.toHaveBeenCalled();
+    });
     it("stops connected terminal mirror sessions through the runtime", async () => {
       const session = makeSession({ runtime: "pi-tui", status: "busy" });
       const storedSession = makeSession({ runtime: "pi-tui", status: "stopped" });

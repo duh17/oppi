@@ -673,6 +673,10 @@ export class SessionLifecycleService {
     entryId: string;
     name?: string;
   }): Promise<ForkSessionResult> {
+    if (params.sourceSession.serverDurable) {
+      const { DurableNotSupportedError } = await import("./durable-backend.js");
+      throw new DurableNotSupportedError("fork");
+    }
     const binding = await this.ensureManagedWorktreeBinding(params.sourceSession, params.workspace);
     await this.deps.sessionRuntimes.refreshSessionState(params.sourceSession.id);
 
@@ -694,7 +698,9 @@ export class SessionLifecycleService {
     const forkModelSelection = resolveInitialChatModel({
       sourceSessionModel: latestSource.model,
     });
-    const forkSession = this.deps.storage.createSession(forkName, forkModelSelection.model);
+    const forkSession = this.deps.storage.createSession(forkName, forkModelSelection.model, {
+      durable: false,
+    });
 
     // Pi records file-level ancestry for forks in the JSONL header (`parentSession`).
     // Timeline forks stay independent root sessions in the workspace list.
@@ -721,8 +727,6 @@ export class SessionLifecycleService {
       this.deps.storage.deleteSession(forkSession.id);
       throw error;
     }
-    // A v3 trace fork continues on the SDK, even when new sessions opt into Durable.
-    delete forkSession.serverDurable;
     forkSession.piSessionFile = forkedFile;
     forkSession.piSessionFiles = [forkedFile];
 
@@ -812,6 +816,8 @@ export class SessionLifecycleService {
       } else if (this.deps.sessionRuntimes.isSessionConnected(session.id)) {
         await this.deps.sessionRuntimes.stopSession(session.id);
       } else {
+        if (session.serverDurable?.conversationId !== undefined)
+          await this.deps.sessions.stopSession(session.id);
         markStoredSessionStopped();
       }
     } catch (error: unknown) {

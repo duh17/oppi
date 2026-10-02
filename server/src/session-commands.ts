@@ -257,7 +257,7 @@ export class SessionCommandCoordinator {
     command: Record<string, unknown>,
     permit?: SessionRuntimeTransactionPermit,
     onPreflightAccepted?: () => void,
-  ): void | Promise<void> {
+  ): void | Promise<unknown> {
     const active = this.deps.getActiveSession(key);
     if (!active) return;
     return this.routeSdkCommand(active.sdkBackend, command, permit, onPreflightAccepted);
@@ -479,7 +479,7 @@ export class SessionCommandCoordinator {
     command: Record<string, unknown>,
     permit?: SessionRuntimeTransactionPermit,
     onPreflightAccepted?: () => void,
-  ): void | Promise<void> {
+  ): void | Promise<unknown> {
     const type = command.type as string;
     switch (type) {
       case "prompt": {

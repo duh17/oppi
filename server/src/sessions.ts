@@ -79,7 +79,6 @@ type ActiveSession = SessionStartActiveSession;
 import type { DurableHarness } from "./durable-harness.js";
 import { isServerDurableSession } from "./session-runtime-capabilities.js";
 import type { ConversationId } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 
 export class SessionManager extends EventEmitter implements AgentRuntimeTransport {
   private readonly durableHarness?: Promise<DurableHarness>;
@@ -551,7 +550,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     command: Record<string, unknown>,
     permit?: SessionRuntimeTransactionPermit,
     onPreflightAccepted?: () => void,
-  ): void | Promise<void> {
+  ): void | Promise<unknown> {
     const result = this.commandCoordinator.sendCommand(key, command, permit, onPreflightAccepted);
     this.resetIdleTimer(key);
     return result;
@@ -623,8 +622,17 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   // ─── Stop ───
 
-  async stopSession(sessionId: string): Promise<void> {
+  async stopSession(sessionId: string, preserveRestartResume = false): Promise<void> {
+    if (!preserveRestartResume) this.storage.clearRestartResume(sessionId);
     const key = this.sessionKey(sessionId);
+    if (!this.isActive(sessionId)) {
+      if (!this.durableHarness) return;
+      const id = this.storage.getSession(sessionId)?.serverDurable?.conversationId;
+      if (id !== undefined) {
+        await (await this.durableHarness).abortConversations(new Set([id as ConversationId]));
+      }
+      return;
+    }
     // cancelPendingAsk runs inside the session lock (via preStop callback)
     // so it serializes with respondToUIRequest, matching the sendAbort pattern.
     await this.stopFlowCoordinator.stopSession(key, sessionId, () => {
@@ -641,10 +649,23 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
    */
   async close(): Promise<void> {
     this.closed = true;
+    const pending = new Set(this.storage.listRestartResume().map((entry) => entry.sessionId));
+    const resumeIds = new Set<ConversationId>();
+    for (const sessionId of pending) {
+      const id = this.storage.getSession(sessionId)?.serverDurable?.conversationId;
+      if (id !== undefined) resumeIds.add(id as ConversationId);
+    }
     try {
-      await this.stopAll();
+      await Promise.all(
+        [...this.active.entries()].map(async ([key, active]) => {
+          if (pending.has(active.session.id) && active.sdkBackend.detachForRestart) {
+            await active.sdkBackend.detachForRestart();
+            await this.handleSessionEnd(key, "server_restart");
+          } else await this.stopSession(active.session.id, pending.has(active.session.id));
+        }),
+      );
     } finally {
-      await (await this.durableHarness)?.close();
+      await (await this.durableHarness)?.close(resumeIds);
     }
   }
 
@@ -660,26 +681,39 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     if (!bound.length) return;
     const durableHarness = await this.durableHarness;
     durableHarness.holdResume();
-    const { harness } = await durableHarness.open();
-    const pending = new Set(this.storage.listRestartResume().map((entry) => entry.sessionId));
+    await durableHarness.open();
+    // A mounted conversation can accept input, which itself enables scheduling.
+    // Fence known stops before exposing even the first resumable projection.
+    const queued = new Set(this.storage.listRestartResume().map((entry) => entry.sessionId));
+    await durableHarness.abortConversations(
+      new Set(
+        bound
+          .filter(
+            (session) =>
+              !queued.has(session.id) ||
+              (session.workspaceId && !this.storage.getWorkspace(session.workspaceId)),
+          )
+          .map((session) => session.serverDurable!.conversationId! as ConversationId),
+      ),
+    );
     for (const session of bound) {
-      if (!pending.has(session.id)) continue;
       const workspace = session.workspaceId
         ? this.storage.getWorkspace(session.workspaceId)
         : undefined;
       if (session.workspaceId && !workspace) continue;
+      if (!this.storage.listRestartResume().some((entry) => entry.sessionId === session.id))
+        continue;
       await this.startSession(session.id, workspace);
     }
-    // A crash during an explicit stop can leave Durable work unfinished. The
-    // stored stop decision wins before resume; abort itself enables scheduling,
-    // so all resumable conversations have already attached above.
-    for (const session of bound) {
-      if (this.isActive(session.id)) continue;
-      const id = session.serverDurable?.conversationId;
-      if (id === undefined) continue;
-      const conversation = await harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
-      await conversation?.abort(BACKGROUND_CONTEXT);
-    }
+    // Mark EVERY stopped conversation and withdraw its inbox while paused.
+    // Conversation.abort()/waitForIdle()/submit() enable the shared scheduler.
+    await durableHarness.abortConversations(
+      new Set(
+        bound
+          .filter((session) => !this.isActive(session.id))
+          .map((session) => session.serverDurable!.conversationId! as ConversationId),
+      ),
+    );
     for (const session of bound) this.storage.clearRestartResume(session.id);
     await durableHarness.releaseResume();
   }

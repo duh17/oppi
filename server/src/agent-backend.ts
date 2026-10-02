@@ -42,11 +42,15 @@ export interface AgentBackend {
       onPreflightAccepted?: () => void;
     },
     permit?: SessionRuntimeTransactionPermit,
-  ): Promise<void>;
+  ): Promise<void | { duplicate: true }>;
   abort(permit?: SessionRuntimeTransactionPermit): Promise<void>;
   abortBash(): void;
   dispose(permit?: SessionRuntimeTransactionPermit): Promise<SdkBackendDisposeResult>;
-  captureEmergencyDisposalForStop(): (timeoutMs: number) => SdkBackendDisposeResult;
+  captureEmergencyDisposalForStop(): (
+    timeoutMs: number,
+  ) => SdkBackendDisposeResult | Promise<SdkBackendDisposeResult>;
+  /** Detach projection without cancelling recorded restart work, when supported. */
+  detachForRestart?(): Promise<void>;
   withModelTurnAdmission<T>(
     commandType: string,
     operation: (permit: SessionRuntimeTransactionPermit) => Promise<T>,

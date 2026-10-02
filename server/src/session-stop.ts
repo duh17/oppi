@@ -204,7 +204,7 @@ export class SessionStopCoordinator {
     key: string,
     active: StopSessionState,
     timeoutMs: number,
-    emergencyDispose: () => SdkBackendDisposeResult,
+    emergencyDispose: () => SdkBackendDisposeResult | Promise<SdkBackendDisposeResult>,
   ): { completion: Promise<void>; cancel: () => void } {
     let resolveCompletion!: () => void;
     const completion = new Promise<void>((resolve) => {
@@ -289,7 +289,7 @@ export class SessionStopCoordinator {
     source: StopRequestSource,
     reason?: string,
     permit?: SessionRuntimeTransactionPermit,
-    emergencyDispose?: () => SdkBackendDisposeResult,
+    emergencyDispose?: () => SdkBackendDisposeResult | Promise<SdkBackendDisposeResult>,
   ): Promise<void> {
     const ownedPending = active.pendingStop;
     if (!ownedPending || ownedPending.mode !== "terminate") return;
@@ -303,7 +303,7 @@ export class SessionStopCoordinator {
 
     try {
       const disposal = emergencyDispose
-        ? emergencyDispose()
+        ? await emergencyDispose()
         : await active.sdkBackend.dispose(permit);
       if (active.pendingStop !== ownedPending) return;
       const forcedDisposalReason =

@@ -1,6 +1,11 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { ModelRuntime, SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Harness, createRegistry, type HarnessSettings } from "@earendil-works/pi-durable";
+import {
+  Harness,
+  createRegistry,
+  type HarnessSettings,
+  type ConversationId,
+} from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { mkdirSync } from "node:fs";
@@ -60,25 +65,40 @@ export class DurableHarness {
     return { harness, models };
   }
 
-  async close(): Promise<void> {
-    this.closed = true;
-    if (!this.opening) return;
-    const { harness } = await this.opening;
-    // close alone leaves pending work, exactly like a crash. Abort every bound
-    // conversation first, including ones that aren't currently mounted in Oppi.
-    const conversations = await harness.commit(async (tx) => {
-      const ids = [];
-      let cursor;
-      do {
-        const page = await tx.scanConversations({}, 100, cursor);
-        ids.push(...page.items.map((item) => item.id));
-        cursor = page.next;
-      } while (cursor !== undefined);
-      return ids;
-    }, BACKGROUND_CONTEXT);
-    for (const id of conversations) {
-      await (await harness.conversation(id, BACKGROUND_CONTEXT))?.abort(BACKGROUND_CONTEXT);
+  /** Mark cancellation without Conversation.abort(), which enables ALL scheduling. */
+  async abortConversations(ids: ReadonlySet<ConversationId>): Promise<void> {
+    const { harness } = await this.open();
+    const live = await harness.inspect(BACKGROUND_CONTEXT);
+    for (const submission of live.submissions) {
+      if (
+        ids.has(submission.conversationId) &&
+        submission.type === "input" &&
+        submission.status === "queued"
+      )
+        await harness.abortSubmission(submission.id, BACKGROUND_CONTEXT);
     }
+    for (const { record } of live.tasks) {
+      if (ids.has(record.conversationId)) await harness.abortTask(record.id, BACKGROUND_CONTEXT);
+    }
+  }
+
+  async close(resumeIds: ReadonlySet<ConversationId> = new Set()): Promise<void> {
+    if (!this.opening) {
+      this.closed = true;
+      return;
+    }
+    const { harness } = await this.opening;
+    const live = await harness.inspect(BACKGROUND_CONTEXT);
+    const stopped = new Set(
+      [
+        ...live.tasks.map(({ record }) => record.conversationId),
+        ...live.submissions.map((submission) => submission.conversationId),
+      ].filter((id) => !resumeIds.has(id)),
+    );
+    await this.abortConversations(stopped);
+    this.closed = true;
+    // Closing interrupts invocations without settling their tasks. Recorded
+    // restart work remains durable and is continued by the next Harness.open.
     await harness.close(BACKGROUND_CONTEXT);
   }
 }

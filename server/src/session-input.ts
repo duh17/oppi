@@ -298,6 +298,8 @@ export class SessionInputCoordinator {
     // Promise-returning runtimes resolve only after authoritative preflight acceptance.
     // Sync managed sendCommand still runs onPreflightAccepted first via the callback above.
     const data = isPromiseLike(commandResult) ? await commandResult : commandResult;
+    if (data && typeof data === "object" && "duplicate" in data && data.duplicate === true)
+      return { duplicate: true };
     acceptPreflight();
     if (this.deps.onCommandResult) {
       await this.deps.onCommandResult(key, cmd, data);
@@ -461,6 +463,8 @@ export class SessionInputCoordinator {
       dispatchAcceptedTurn();
     });
     const data = isPromiseLike(commandResult) ? await commandResult : commandResult;
+    if (data && typeof data === "object" && "duplicate" in data && data.duplicate === true)
+      return { duplicate: true };
     acceptPreflight();
     if (this.deps.onCommandResult) {
       await this.deps.onCommandResult(key, cmd, data);
