@@ -180,6 +180,77 @@ describe("custom entry timeline projection", () => {
     expect(events).toEqual([]);
   });
 
+  it.each(
+    ["title", "subtitle", "status", "body", "accent", "label", "value"].flatMap((field) =>
+      [
+        { shape: "array", value: ["info"] },
+        { shape: "number", value: 7 },
+        { shape: "object", value: { text: "info" } },
+      ].map((invalid) => ({ field, ...invalid })),
+    ),
+  )("does not project a $shape as card $field", ({ field, value }) => {
+    const card: Record<string, unknown> = {
+      title: "Decision",
+      at: Date.parse(TIMESTAMP),
+    };
+    if (field === "label" || field === "value") {
+      card.fields = [{ label: "Continuation", value: "1/5", [field]: value }];
+    } else {
+      card[field] = value;
+    }
+    const events = buildSessionContext([customEntry("c1", null, "any-extension", { card })]);
+    if (field === "title") {
+      expect(events).toEqual([]);
+    } else if (field === "label" || field === "value") {
+      expect(cardEvent(events)?.presentation).toEqual({
+        kind: "custom",
+        title: "Decision",
+        fields: [],
+      });
+    } else {
+      expect(cardEvent(events)?.presentation).toEqual({ kind: "custom", title: "Decision" });
+    }
+  });
+
+  it.each([[0], "0", { value: 0 }])("hides a card with a nonnumeric timestamp (%j)", (at) => {
+    expect(
+      buildSessionContext([
+        customEntry("c1", null, "any-extension", {
+          card: { title: "Decision", at },
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it.each([7, "fields", { label: "Continuation", value: "1/5" }])(
+    "omits a non-array fields container (%j)",
+    (fields) => {
+      const events = buildSessionContext([
+        customEntry("c1", null, "any-extension", {
+          card: { title: "Decision", at: 0, fields },
+        }),
+      ]);
+      expect(cardEvent(events)?.presentation).toEqual({ kind: "custom", title: "Decision" });
+    },
+  );
+
+  it("rejects non-record field rows even when an array has label and value properties", () => {
+    const events = buildSessionContext([
+      customEntry("c1", null, "any-extension", {
+        card: {
+          title: "Decision",
+          at: 0,
+          fields: [7, "field", Object.assign([], { label: "Continuation", value: "1/5" })],
+        },
+      }),
+    ]);
+    expect(cardEvent(events)?.presentation).toEqual({
+      kind: "custom",
+      title: "Decision",
+      fields: [],
+    });
+  });
+
   it("bounds transcript fields and UTF-8 body without leaking extra properties", () => {
     const events = buildSessionContext([
       customEntry("c1", null, "any-extension", {

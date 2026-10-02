@@ -43,14 +43,18 @@ export function sanitizeTranscriptCard(
   }
   if (Array.isArray(data.fields)) {
     card.fields = data.fields.slice(0, 8).flatMap((field) => {
-      if (!field || typeof field !== "object") return [];
+      if (!field || typeof field !== "object" || Array.isArray(field))
+        return [];
       const item = field as Record<string, unknown>;
       return typeof item.label === "string" && typeof item.value === "string"
         ? [{ label: fieldText(item.label), value: fieldText(item.value) }]
         : [];
     });
   }
-  if (["info", "success", "warning", "error"].includes(String(data.accent)))
+  if (
+    typeof data.accent === "string" &&
+    ["info", "success", "warning", "error"].includes(data.accent)
+  )
     card.accent = data.accent as TranscriptCard["accent"];
   return card;
 }

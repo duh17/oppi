@@ -308,7 +308,7 @@ try {
   );
   assert.equal(notes.length, 0, "decision evidence must not become user speech");
   assert.equal(history.filter((m) => m.role === "user").length, 2);
-  const snapshot = await post(`/sessions/${session.id}?view=full`, undefined, "GET");
+  const snapshot = await post(`/sessions/${session.id}/trace?view=full`, undefined, "GET");
   const cards = snapshot.trace.filter(
     (event: {
       type: string;
