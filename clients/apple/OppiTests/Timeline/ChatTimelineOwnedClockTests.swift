@@ -73,14 +73,15 @@ struct ChatTimelineOwnedClockTests {
         row.bashToolRowView.scrollViewDidScroll(scroll)
         #expect(ToolTimelineRowUIHelpers.isNearBottom(scroll))
         #expect(!row.bashToolRowView.outputShouldAutoFollow)
+        let revisionBeforeDetachedPaint = owner.presentationRevision
         fixture.reducer.process(.toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: "detached tail\n",
             isError: false, outputStream: .init(epoch: 1, offset: owner.cursor, bytes: 14))))
         #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
-            await MainActor.run {
-                fixture.host.view.layoutIfNeeded()
-                return Self.containsTerminalText("detached tail", in: fixture.host.view)
-            }
+            await MainActor.run { owner.presentationRevision != revisionBeforeDetachedPaint && owner.formatted.contains("detached tail") }
         })
+        fixture.host.view.layoutIfNeeded()
+        // A detached reader's text stays still: the paint is withheld, not laid out.
+        #expect(!Self.containsTerminalText("detached tail", in: row))
         #expect(abs(scroll.contentOffset.y - draggedY) < 1,
             "A streamed paint during an incremental tail drag must keep the viewport")
         scroll.draggingOverrideForTesting = false
@@ -92,6 +93,13 @@ struct ChatTimelineOwnedClockTests {
         scroll.deceleratingOverrideForTesting = false
         scroll.delegate?.scrollViewDidEndDecelerating?(scroll)
         #expect(row.bashToolRowView.outputShouldAutoFollow)
+        // Settling at the tail paints the withheld snapshot without waiting for more bytes.
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                fixture.host.view.layoutIfNeeded()
+                return Self.containsTerminalText("detached tail", in: row)
+            }
+        })
     }
 
     private static func terminalRow(in view: UIView) -> ToolTimelineRowContentView? {

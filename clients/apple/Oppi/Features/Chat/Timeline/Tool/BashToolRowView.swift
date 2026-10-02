@@ -97,6 +97,15 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     private var pendingFollowTail = false
     private var ownsTerminalOutput = false
     private var perfSessionId: String?
+    /// Latest live owned paint withheld while the reader is detached.
+    private var frozenLiveOutput: (input: BashRenderInput, outputColor: UIColor)?
+
+    /// A live inline row lays out its whole UITextView on every paint. The
+    /// owner's 2000-line ring made that O(ring) TextKit work at paint cadence,
+    /// which starved the main thread on fast streams. The inline row shows a
+    /// bounded tail; the full-screen reader keeps the ring.
+    nonisolated static let liveTailLineLimit = 200
+    nonisolated static let liveTailByteLimit = 64 * 1024
 
     // MARK: - Deferred terminal rendering
 
@@ -202,8 +211,21 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
         // MARK: Output
 
+        // While a finger or deceleration owns the viewport, or the reader has
+        // left the tail, keep the painted text still. Content must not move
+        // under the reader, and paints are skipped instead of laid out.
+        let freezeLiveOutput = input.terminalResolved && input.isStreaming
+            && !outputShouldAutoFollow && outputRenderSignature != nil
+        if freezeLiveOutput {
+            frozenLiveOutput = (input, outputColor)
+        } else {
+            frozenLiveOutput = nil
+        }
+
         if let output = input.output, !output.isEmpty {
-            let displayOutput = ToolTimelineRowRenderMetrics.displayOutputText(output)
+            let displayOutput = input.terminalResolved && input.isStreaming
+                ? String(Self.liveTail(of: output))
+                : ToolTimelineRowRenderMetrics.displayOutputText(output)
             let signature = ToolTimelineRowRenderMetrics.outputSignature(
                 displayOutput: displayOutput,
                 isError: input.isError,
@@ -211,7 +233,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                 isStreaming: input.isStreaming
             ) ^ (input.terminalResolved ? 0x5354524D : 0)
 
-            if signature != outputRenderSignature {
+            if signature != outputRenderSignature, !freezeLiveOutput {
                 let startNs = ChatTimelinePerf.timestampNs()
                 let didTextChange: Bool
                 let previousText = outputLabel.attributedText?.string ?? outputLabel.text ?? ""
@@ -343,6 +365,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         outputUsesViewport = false
         outputShouldAutoFollow = true
         ownsTerminalOutput = false
+        frozenLiveOutput = nil
         outputScrollView.allowsVerticalPan = false
         terminalEngine = nil
         ToolTimelineRowUIHelpers.resetScrollPosition(outputScrollView)
@@ -680,12 +703,54 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         guard scrollView === outputScrollView, ownsTerminalOutput, !decelerate else { return }
-        outputShouldAutoFollow = ToolTimelineRowUIHelpers.isNearBottom(scrollView)
+        settleLiveFollow()
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         guard scrollView === outputScrollView, ownsTerminalOutput else { return }
-        outputShouldAutoFollow = ToolTimelineRowUIHelpers.isNearBottom(scrollView)
+        settleLiveFollow()
+    }
+
+    /// Returning to the tail re-arms following and paints the newest withheld
+    /// snapshot now, so a quiet stream does not wait for its next byte.
+    private func settleLiveFollow() {
+        outputShouldAutoFollow = ToolTimelineRowUIHelpers.isNearBottom(outputScrollView)
+        guard outputShouldAutoFollow, let frozen = frozenLiveOutput else { return }
+        _ = apply(input: frozen.input, outputColor: frozen.outputColor, wasOutputVisible: true)
+        flushFollowTail()
+    }
+
+    /// Last `liveTailLineLimit` lines, further bounded to `liveTailByteLimit`.
+    /// Cuts land on line starts; the live engine formats each committed line
+    /// with its own SGR state, so a cut never inherits a dangling style.
+    nonisolated static func liveTail(of text: String) -> Substring {
+        let utf8 = text.utf8
+        var index = utf8.endIndex
+        var bytes = 0 // byte count of text[index...]
+        // A trailing newline terminates the last line; it does not start one.
+        if index > utf8.startIndex, utf8[utf8.index(before: index)] == 0x0A {
+            index = utf8.index(before: index)
+            bytes = 1
+        }
+        var start: String.Index?
+        var lines = 0
+        while index > utf8.startIndex {
+            let previous = utf8.index(before: index)
+            if utf8[previous] == 0x0A {
+                // `index` starts a line. Always keep the last line, even when
+                // it alone exceeds the byte budget.
+                if start != nil, bytes > liveTailByteLimit { break }
+                start = index
+                lines += 1
+                if lines == liveTailLineLimit { break }
+            }
+            index = previous
+            bytes += 1
+        }
+        guard let start, index > utf8.startIndex || bytes > liveTailByteLimit else {
+            return text[...]
+        }
+        return text[start...]
     }
 
     // MARK: - Private Helpers

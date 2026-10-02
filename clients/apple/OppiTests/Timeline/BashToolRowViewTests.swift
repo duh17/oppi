@@ -390,6 +390,33 @@ struct BashToolRowViewTests {
         let after = try #require(view.outputLabel.attributedText)
         #expect(uniqueForegroundColorCount(after) >= 2)
     }
+
+    // MARK: - Live owned tail
+
+    @Test("live tail keeps whole short output and the last N complete lines of long output")
+    func liveTailLineBound() {
+        #expect(BashToolRowView.liveTail(of: "a\nb\n") == "a\nb\n")
+        let limit = BashToolRowView.liveTailLineLimit
+        let lines = (1...(limit + 50)).map { "line \($0)" }
+        for text in [lines.joined(separator: "\n"), lines.joined(separator: "\n") + "\n"] {
+            let tail = BashToolRowView.liveTail(of: text)
+            #expect(tail.hasPrefix("line 51\n"))
+            #expect(tail.split(separator: "\n").count == limit)
+            #expect(text.hasSuffix(tail))
+        }
+    }
+
+    @Test("live tail cuts at a line start within the byte budget but always keeps the last line")
+    func liveTailByteBound() {
+        let limit = BashToolRowView.liveTailByteLimit
+        // 2/5 of the budget per line: two lines fit, three do not.
+        let wide = String(repeating: "é", count: limit / 5)
+        let tail = BashToolRowView.liveTail(of: "one\n\(wide)\n\(wide)\n\(wide)")
+        #expect(tail == "\(wide)\n\(wide)")
+        let giant = String(repeating: "x", count: limit * 2)
+        #expect(BashToolRowView.liveTail(of: "head\n\(giant)") == giant[...])
+        #expect(BashToolRowView.liveTail(of: giant) == giant[...])
+    }
 }
 
 private func uniqueForegroundColorCount(_ attributed: NSAttributedString) -> Int {
