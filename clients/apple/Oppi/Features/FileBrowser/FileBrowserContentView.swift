@@ -70,16 +70,11 @@ enum FileBrowserContentRenderingPolicy {
     }
 }
 
-/// `.task(id:)` restarts whenever SwiftUI re-shows this view, including after
-/// AVKit fullscreen (a UIKit full-screen modal) from a standalone or inline
-/// Markdown video. Reloading the same path there remounts the player or the
-/// whole reader, so every inline player restarts from zero.
-enum FileBrowserReloadPolicy {
+enum FileBrowserMediaLoadPolicy {
     enum Existing: Equatable {
         case none
         case video(path: String)
         case audio(path: String)
-        case text(path: String)
     }
 
     static func shouldReload(
@@ -89,7 +84,7 @@ enum FileBrowserReloadPolicy {
     ) -> Bool {
         if force { return true }
         switch existing {
-        case .video(let path), .audio(let path), .text(let path):
+        case .video(let path), .audio(let path):
             return path != requestedPath
         case .none:
             return true
@@ -174,7 +169,7 @@ struct FileBrowserContentView: View {
     @State private var fileTransitionDirection: FileBrowserNavigationDirection = .next
     @State private var content: FileContentPhase = .loading
     @State private var loadedMediaPath: String?
-    /// Path whose text `content` holds, so a re-shown view keeps its reader.
+    /// Path whose text `content` holds, so a re-shown view revalidates instead of rebuilding.
     @State private var loadedTextPath: String?
     @State private var loadedHostFilePath: String?
     @State private var isExpensiveNetwork = false
@@ -804,16 +799,16 @@ struct FileBrowserContentView: View {
         let requestedPath = requestedSelection.path
         let requestedExtension = (requestedPath as NSString).pathExtension.lowercased()
         let requestedCategory = FileType.detect(from: requestedPath).previewCategory
-        let existing: FileBrowserReloadPolicy.Existing = {
+        let existingMedia: FileBrowserMediaLoadPolicy.Existing = {
+            guard let loadedMediaPath else { return .none }
             switch content {
-            case .video: return loadedMediaPath.map { .video(path: $0) } ?? .none
-            case .audio: return loadedMediaPath.map { .audio(path: $0) } ?? .none
-            case .text: return loadedTextPath.map { .text(path: $0) } ?? .none
+            case .video: return .video(path: loadedMediaPath)
+            case .audio: return .audio(path: loadedMediaPath)
             default: return .none
             }
         }()
-        if !FileBrowserReloadPolicy.shouldReload(
-            existing: existing,
+        if !FileBrowserMediaLoadPolicy.shouldReload(
+            existing: existingMedia,
             requestedPath: requestedPath,
             force: force
         ) {
@@ -823,6 +818,26 @@ struct FileBrowserContentView: View {
         // Capture the API client while we know it's non-nil.
         // See loadedApiClient comment for why this is needed.
         loadedApiClient = api
+
+        // `.task(id:)` reruns whenever SwiftUI re-shows this view: after AVKit
+        // fullscreen from an inline Markdown video, or a pop back from a pushed
+        // wiki link. Rebuilding the reader there recreates every inline player,
+        // so re-read first and rebuild only when the shown text changed. A failed
+        // re-read keeps the reader that is already showing.
+        if !force, loadedTextPath == requestedPath, case .text(let shownText) = content {
+            do {
+                guard let read = try await readReaderBytes(
+                    api: api, path: requestedPath, category: requestedCategory
+                ) else { return }
+                if case .bytes(let data, let editedText, _) = read,
+                   readerPhase(data: data, editedText: editedText, path: requestedPath, category: requestedCategory)
+                    == .text(shownText) {
+                    return
+                }
+            } catch {
+                return
+            }
+        }
 
         // For text files with known size above threshold, show a warning first.
         if !force, requestedCategory == .text,
@@ -891,76 +906,25 @@ struct FileBrowserContentView: View {
                 loadedMediaPath = requestedPath
                 content = .usdz(handle)
             case .image, .pdf, .text, .binary:
-                let data: Data
-                var editedText: String?
-                if requestedCategory == .text,
-                   let identity = editIdentity(for: requestedPath),
-                   let capability = await api.workspaceFileEditingCapability() {
-                    // One tagged read: the edit base is exactly the displayed bytes.
-                    let snapshot: WorkspaceFileDiskSnapshot
-                    do {
-                        snapshot = try await api.readWorkspaceFileForEditing(
-                            workspaceId: workspaceId,
-                            path: requestedPath,
-                            worktreeId: worktreeId
-                        )
-                    } catch let error where Self.isNotFound(error) {
-                        // Gone on the server: a kept draft reopens in the
-                        // non-writing deleted state instead of an error page.
-                        guard isCurrentFile(requestedPath) else { return }
-                        guard let session = WorkspaceFileEditRecovery.sessionForMissingFile(
-                            identity: identity,
-                            maxBytes: capability.maxBytes,
-                            transport: .api(api)
-                        ) else { throw error }
-                        editMaxBytes = capability.maxBytes
-                        editSession = session
-                        isEditing = true
-                        content = .text(session.currentText)
-                        return
+                guard let read = try await readReaderBytes(
+                    api: api, path: requestedPath, category: requestedCategory
+                ) else { return }
+                switch read {
+                case .missingWithDraft(let session, let maxBytes):
+                    // Gone on the server: a kept draft reopens in the
+                    // non-writing deleted state instead of an error page.
+                    editMaxBytes = maxBytes
+                    editSession = session
+                    isEditing = true
+                    content = .text(session.currentText)
+                    return
+                case .bytes(let data, let editedText, let resolvedHostPath):
+                    if let resolvedHostPath {
+                        loadedHostFilePath = resolvedHostPath
                     }
-                    guard isCurrentFile(requestedPath) else { return }
-                    data = snapshot.bytes
-                    editedText = prepareEditing(
-                        identity: identity,
-                        snapshot: snapshot,
-                        maxBytes: capability.maxBytes,
-                        api: api
+                    content = readerPhase(
+                        data: data, editedText: editedText, path: requestedPath, category: requestedCategory
                     )
-                } else if source == .hostFile {
-                    let file = try await api.browseHostFileContent(
-                        path: requestedPath, controlSessionId: controlSessionId
-                    )
-                    guard isCurrentFile(requestedPath) else { return }
-                    data = file.data
-                    loadedHostFilePath = file.resolvedPath
-                } else {
-                    data = try await browseFile(api: api, path: requestedPath)
-                }
-                guard isCurrentFile(requestedPath) else { return }
-                if source == .hostFile, HostFilePreviewPolicy.usesStringFetchViewer(for: requestedPath) {
-                    if FileType.detect(from: requestedPath) == .html,
-                       let text = String(data: data, encoding: .utf8) {
-                        content = .text(text)
-                    } else {
-                        content = .image(data)
-                    }
-                    break
-                }
-                switch requestedCategory {
-                case .image: content = .image(data)
-                case .pdf: content = .pdf(data)
-                case .binary: content = .binary
-                case .text:
-                    if let editedText {
-                        content = .text(editedText)
-                    } else if let text = String(data: data, encoding: .utf8) {
-                        content = .text(text)
-                    } else {
-                        content = .binary
-                    }
-                default:
-                    content = .binary
                 }
             }
             if case .text = content {
@@ -969,6 +933,85 @@ struct FileBrowserContentView: View {
         } catch {
             guard isCurrentFile(requestedPath) else { return }
             content = .error(error.localizedDescription)
+        }
+    }
+
+    private enum ReaderRead {
+        case bytes(Data, editedText: String?, resolvedHostPath: String?)
+        case missingWithDraft(WorkspaceFileEditSession, maxBytes: Int)
+    }
+
+    /// One read of a document file. Editable text uses the tagged read and
+    /// `prepareEditing`, so a live or recovered draft wins over disk. Nil when
+    /// the person moved to another file meanwhile.
+    private func readReaderBytes(
+        api: APIClient,
+        path: String,
+        category: FilePreviewCategory
+    ) async throws -> ReaderRead? {
+        if category == .text,
+           let identity = editIdentity(for: path),
+           let capability = await api.workspaceFileEditingCapability() {
+            // One tagged read: the edit base is exactly the displayed bytes.
+            let snapshot: WorkspaceFileDiskSnapshot
+            do {
+                snapshot = try await api.readWorkspaceFileForEditing(
+                    workspaceId: workspaceId,
+                    path: path,
+                    worktreeId: worktreeId
+                )
+            } catch let error where Self.isNotFound(error) {
+                guard isCurrentFile(path) else { return nil }
+                guard let session = WorkspaceFileEditRecovery.sessionForMissingFile(
+                    identity: identity,
+                    maxBytes: capability.maxBytes,
+                    transport: .api(api)
+                ) else { throw error }
+                return .missingWithDraft(session, maxBytes: capability.maxBytes)
+            }
+            guard isCurrentFile(path) else { return nil }
+            let editedText = prepareEditing(
+                identity: identity,
+                snapshot: snapshot,
+                maxBytes: capability.maxBytes,
+                api: api
+            )
+            return .bytes(snapshot.bytes, editedText: editedText, resolvedHostPath: nil)
+        }
+        if source == .hostFile {
+            let file = try await api.browseHostFileContent(
+                path: path, controlSessionId: controlSessionId
+            )
+            guard isCurrentFile(path) else { return nil }
+            return .bytes(file.data, editedText: nil, resolvedHostPath: file.resolvedPath)
+        }
+        let data = try await browseFile(api: api, path: path)
+        guard isCurrentFile(path) else { return nil }
+        return .bytes(data, editedText: nil, resolvedHostPath: nil)
+    }
+
+    private func readerPhase(
+        data: Data,
+        editedText: String?,
+        path: String,
+        category: FilePreviewCategory
+    ) -> FileContentPhase {
+        if source == .hostFile, HostFilePreviewPolicy.usesStringFetchViewer(for: path) {
+            if FileType.detect(from: path) == .html,
+               let text = String(data: data, encoding: .utf8) {
+                return .text(text)
+            }
+            return .image(data)
+        }
+        switch category {
+        case .image: return .image(data)
+        case .pdf: return .pdf(data)
+        case .text:
+            if let editedText { return .text(editedText) }
+            if let text = String(data: data, encoding: .utf8) { return .text(text) }
+            return .binary
+        default:
+            return .binary
         }
     }
 

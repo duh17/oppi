@@ -323,6 +323,11 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
     // this asset so the failure card can explain a missing file honestly.
     private var responseErrorMessageStorage: String?
     var responseErrorMessage: String? { lock.withLock { responseErrorMessageStorage } }
+    /// A request that failed before the item became ready must not explain a
+    /// later, unrelated failure of the same item.
+    func clearResponseErrorMessage() {
+        lock.withLock { responseErrorMessageStorage = nil }
+    }
     private var liveTaskIds: Set<Int> = []
     private var networkLifetime: AuthenticatedMediaResourceLoader?
 #if DEBUG
@@ -1043,6 +1048,7 @@ final class AuthenticatedMediaPlaybackSession {
 
     private let loader: AuthenticatedMediaResourceLoader
     var responseErrorMessage: String? { loader.responseErrorMessage }
+    func clearResponseErrorMessage() { loader.clearResponseErrorMessage() }
     private let asset: AVURLAsset
     private var timeControlObservation: NSKeyValueObservation?
     private var bufferEmptyObservation: NSKeyValueObservation?
@@ -1462,6 +1468,7 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
                 case .readyToPlay:
                     self.isLoading = false
                     self.errorMessage = nil
+                    self.playbackSession?.clearResponseErrorMessage()
                     if self.recordedStartIdentity != source.identity {
                         self.recordedStartIdentity = source.identity
                         MediaPlaybackTelemetry.recordStart(

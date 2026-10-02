@@ -302,30 +302,80 @@ struct FileBrowserReviewCommentSelectionTests {
         })
     }
 
+    /// Re-showing the view (full-screen modal, or a pop back from a pushed
+    /// wiki link) must still pick up a file that changed while it was covered.
+    @Test func textReaderShowsChangedFileAfterFullScreenModalCover() async throws {
+        FileBrowserMutableTextURLProtocol.setBody("file-browser-revalidate-before")
+        let client = FileBrowserMutableTextURLProtocol.makeClient()
+        let host = UIHostingController(rootView:
+            FileBrowserContentView(
+                workspaceId: FileBrowserMutableTextURLProtocol.workspaceId,
+                filePath: FileBrowserMutableTextURLProtocol.filePath,
+                fileName: FileBrowserMutableTextURLProtocol.filePath,
+                chromeMode: .pushed
+            )
+            .environment(\.apiClient, client)
+        )
+        host.loadViewIfNeeded()
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let window = UIWindow(frame: host.view.frame)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        func showsText(_ needle: String) -> Bool {
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            guard let reader = firstFullScreenCodeViewController(in: host) else { return false }
+            reader.view.layoutIfNeeded()
+            return timelineAllTextViews(in: reader.view).contains {
+                timelineRenderedText(of: $0).contains(needle)
+            }
+        }
+
+        let mounted = await waitForMainActorCondition(timeout: .seconds(5)) {
+            showsText("file-browser-revalidate-before")
+        }
+        #expect(mounted)
+
+        let cover = UIViewController()
+        cover.modalPresentationStyle = .fullScreen
+        host.present(cover, animated: false)
+        let covered = await waitForMainActorCondition { host.view.window == nil }
+        #expect(covered, "full-screen modal did not take the reader out of the window")
+        FileBrowserMutableTextURLProtocol.setBody("file-browser-revalidate-after")
+        cover.dismiss(animated: false)
+
+        let refreshed = await waitForMainActorCondition(timeout: .seconds(5)) {
+            showsText("file-browser-revalidate-after")
+        }
+        #expect(refreshed, "returning to the file view kept stale text after the file changed")
+    }
+
     @Test func fileBrowserKeepsExistingMediaInsteadOfReloadingSamePath() {
         #expect(
-            FileBrowserReloadPolicy.shouldReload(
+            FileBrowserMediaLoadPolicy.shouldReload(
                 existing: .video(path: "clips/demo.mp4"),
                 requestedPath: "clips/demo.mp4",
                 force: false
             ) == false
         )
         #expect(
-            FileBrowserReloadPolicy.shouldReload(
+            FileBrowserMediaLoadPolicy.shouldReload(
                 existing: .video(path: "clips/demo.mp4"),
                 requestedPath: "clips/other.mp4",
                 force: false
             ) == true
         )
         #expect(
-            FileBrowserReloadPolicy.shouldReload(
+            FileBrowserMediaLoadPolicy.shouldReload(
                 existing: .video(path: "clips/demo.mp4"),
                 requestedPath: "clips/demo.mp4",
                 force: true
             ) == true
         )
         #expect(
-            FileBrowserReloadPolicy.shouldReload(
+            FileBrowserMediaLoadPolicy.shouldReload(
                 existing: .none,
                 requestedPath: "clips/demo.mp4",
                 force: false
@@ -1105,6 +1155,62 @@ private final class FileBrowserTextMountURLProtocol: URLProtocol, @unchecked Sen
             return
         }
         let body = Data(Self.needle.utf8)
+        guard let response = HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: [
+                "Content-Type": "text/plain; charset=utf-8",
+                "Content-Length": "\(body.count)",
+            ]
+        ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+/// Serves one text file whose body the test changes between reads.
+private final class FileBrowserMutableTextURLProtocol: URLProtocol, @unchecked Sendable {
+    static let host = "file-browser-mutable-text.test"
+    static let workspaceId = "ws-mutable-text"
+    static let filePath = "changing.txt"
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var body = ""
+
+    static func setBody(_ text: String) {
+        lock.withLock { body = text }
+    }
+
+    static func makeClient() -> APIClient {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [FileBrowserMutableTextURLProtocol.self]
+        return APIClient(
+            baseURL: URL(string: "https://\(host)") ?? URL(fileURLWithPath: "/"),
+            token: "test-token",
+            configuration: config
+        )
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == host
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        let body = Data(Self.lock.withLock { Self.body }.utf8)
         guard let response = HTTPURLResponse(
             url: url,
             statusCode: 200,
