@@ -95,7 +95,7 @@ struct ExtensionNativeBlockViewsTests {
             .blocks([.activityList(base: base("jobs"), rows: [
                 ExtensionUIActivityRow(
                     id: "bash-1", title: "bash-1", subtitle: "make", detail: nil,
-                    state: "running", progress: nil, link: "oppi://session/ignored", children: nil,
+                    state: "running", progress: nil, link: "oppi://session/child", children: nil,
                     blocks: [.terminal(base: base("output:bash-1"), lines: [], text: raw)]
                 ),
             ])])
@@ -111,6 +111,15 @@ struct ExtensionNativeBlockViewsTests {
         // The carriage return overwrote the progress text; the escape is styling, not text.
         #expect(paintedText(in: stack) == ["done"])
         #expect(opened.isEmpty)
+
+        // The row's link keeps its own button instead of competing for the row tap.
+        let linkButton = try #require(subviews(of: UIButton.self, in: stack).first {
+            $0.accessibilityIdentifier == "extension.native.activity.row.bash-1.link"
+        })
+        #expect(!linkButton.isHidden)
+        linkButton.sendActions(for: .touchUpInside)
+        #expect(opened == [URL(string: "oppi://session/child")])
+        #expect(paintedText(in: stack) == ["done"])
 
         // A replacement snapshot for the same row updates the open output in place.
         stack.apply(snapshot("done\nnext line"), context: context())

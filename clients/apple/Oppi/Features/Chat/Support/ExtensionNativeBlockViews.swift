@@ -788,8 +788,8 @@ final class ExtensionNativeActivityListView: UIView, ExtensionNativeBlockRenderi
 
 /// One activity row: state marker, title/subtitle/detail, optional progress,
 /// nested children, and navigation when the row carries a link. A row with
-/// `blocks` is a disclosure row instead: tapping shows or hides the blocks, which
-/// are built only while shown. Expansion survives snapshots because list views
+/// `blocks` is a disclosure row: tapping shows or hides the blocks, which are
+/// built only while shown, and a link moves to its own trailing button. Expansion survives snapshots because list views
 /// reuse row views by row id.
 final class ExtensionNativeActivityRowView: UIView {
     private let control = UIControl()
@@ -802,6 +802,7 @@ final class ExtensionNativeActivityRowView: UIView {
     private let childContainer = UIView()
     private var childList: ExtensionNativeActivityListView?
     private let detailContainer = UIView()
+    private let linkButton = UIButton(type: .system)
     private var detailStack: ExtensionNativeBlockStackView?
     private var isExpanded = false
     private lazy var minimumHeight = control.heightAnchor.constraint(greaterThanOrEqualToConstant: 34)
@@ -841,7 +842,14 @@ final class ExtensionNativeActivityRowView: UIView {
         control.addTarget(self, action: #selector(handleTap), for: .touchUpInside)
 
         detailContainer.isHidden = true
-        let column = UIStackView(arrangedSubviews: [control, detailContainer, childContainer])
+        linkButton.isHidden = true
+        linkButton.addTarget(self, action: #selector(handleLinkTap), for: .touchUpInside)
+        linkButton.setContentHuggingPriority(.required, for: .horizontal)
+        let header = UIStackView(arrangedSubviews: [control, linkButton])
+        header.axis = .horizontal
+        header.alignment = .center
+        header.spacing = 4
+        let column = UIStackView(arrangedSubviews: [header, detailContainer, childContainer])
         column.axis = .vertical
         column.spacing = 6
         column.translatesAutoresizingMaskIntoConstraints = false
@@ -864,6 +872,8 @@ final class ExtensionNativeActivityRowView: UIView {
             marker.heightAnchor.constraint(equalToConstant: 14),
             markerColumn.heightAnchor.constraint(greaterThanOrEqualToConstant: 17),
             progressBar.heightAnchor.constraint(equalToConstant: 4),
+            linkButton.widthAnchor.constraint(equalToConstant: 44),
+            linkButton.heightAnchor.constraint(equalToConstant: 44),
             minimumHeight,
         ])
     }
@@ -892,7 +902,10 @@ final class ExtensionNativeActivityRowView: UIView {
         let accent = ExtensionNativeBlockStyle.activityColor(tone, palette: palette)
         let detailBlocks = detailBlocks
         let hasDetail = !detailBlocks.isEmpty
-        let linkURL = hasDetail ? nil : linkURL
+        let rowLink = linkURL
+        // The row tap has one job: disclosure when the row has blocks, else
+        // navigation. A row with both keeps its link on a separate button.
+        let linkURL = hasDetail ? nil : rowLink
 
         marker.image = UIImage(
             systemName: Self.markerSymbol(tone),
@@ -937,6 +950,27 @@ final class ExtensionNativeActivityRowView: UIView {
         control.accessibilityHint = hasDetail
             ? (isExpanded ? "Hides details" : "Shows details")
             : linkURL.flatMap { url in
+            ExtensionSurfaceLinkRouting.accessibilityHint(
+                for: ExtensionSurfaceLinkRouting.action(
+                    for: url,
+                    serverID: context.linkContext.serverID,
+                    workspaceID: context.linkContext.workspaceID,
+                    currentSessionId: context.linkContext.sessionID ?? ""
+                )
+            )
+        }
+
+        let separateLink = hasDetail ? rowLink : nil
+        linkButton.isHidden = separateLink == nil
+        linkButton.setImage(UIImage(
+            systemName: "arrow.up.right",
+            withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption1, scale: .default)
+                .applying(UIImage.SymbolConfiguration(weight: .semibold))
+        ), for: .normal)
+        linkButton.tintColor = UIColor(palette.comment)
+        linkButton.accessibilityIdentifier = "extension.native.activity.row.\(row.id).link"
+        linkButton.accessibilityLabel = "Open \(row.title)"
+        linkButton.accessibilityHint = separateLink.flatMap { url in
             ExtensionSurfaceLinkRouting.accessibilityHint(
                 for: ExtensionSurfaceLinkRouting.action(
                     for: url,
@@ -1007,6 +1041,11 @@ final class ExtensionNativeActivityRowView: UIView {
             UIAccessibility.post(notification: .layoutChanged, argument: control)
             return
         }
+        guard let url = linkURL else { return }
+        context?.open(url)
+    }
+
+    @objc private func handleLinkTap() {
         guard let url = linkURL else { return }
         context?.open(url)
     }

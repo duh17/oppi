@@ -158,7 +158,7 @@ export interface ExtensionUIActivityRow {
 
 Use activity lists for persistent task state: running jobs, queued work, progress, substeps, and recent results. `link` is a generic row navigation target, such as `oppi://session/<id>`, and must route through app-level link handling.
 
-`blocks` makes the row a disclosure row: tapping it shows or hides those blocks under the row, and the row's `link` is not used for tap navigation. Clients build disclosure content only while it is shown, and keep a row open across snapshots while its `id` is stable. Disclosure blocks count against the same surface limits as top-level blocks, one nesting level below the list.
+`blocks` makes the row a disclosure row: tapping it shows or hides those blocks under the row. Disclosure blocks are ordinary native blocks, so they can mix markdown (with links), terminal output, code, progress, and nested activity lists. If the row also has a `link`, the link gets its own trailing button instead of competing for the row tap. Clients build disclosure content only while it is shown, and keep a row open across snapshots while its `id` is stable. Disclosure blocks count against the same surface limits as top-level blocks, one nesting level below the list.
 
 ### Terminal output
 
