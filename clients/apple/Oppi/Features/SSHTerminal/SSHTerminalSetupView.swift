@@ -3,7 +3,6 @@ import SwiftUI
 import UIKit
 
 struct SSHTerminalSetupView: View {
-    var connectOnOpen = false
     @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var experimentEnabled = false
     @Environment(\.scenePhase) private var scenePhase
     @State private var profile = SSHTerminalProfileStore().load() ?? SSHTerminalProfile()
@@ -115,8 +114,9 @@ struct SSHTerminalSetupView: View {
             if SSHTerminalProfileStore().hasStoredProfile && SSHTerminalProfileStore().load() == nil {
                 failure = "The saved host profile cannot be read. Delete Host to clear its saved password, then configure it again."
             }
+            // Opening never dials: Connect is always an explicit tap, so
+            // visiting the page never triggers a Face ID or password prompt.
             loadIdentityIfSelected()
-            if connectOnOpen && canConnect { connect() }
         }
         .onChange(of: profile.authentication) { loadIdentityIfSelected() }
         .onChange(of: profile.host) { hostFailure = nil; failure = nil }

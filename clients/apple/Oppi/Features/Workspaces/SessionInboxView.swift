@@ -563,7 +563,7 @@ struct SessionInboxView: View {
                 case .mcpServers:
                     McpServersView(scopeId: McpScopeSnapshot.globalId)
                 case .sshTerminal:
-                    SSHTerminalSetupView(connectOnOpen: true)
+                    SSHTerminalSetupView()
                 case .desktopStill:
                     DesktopCurrentStillViewerView()
                 case .manageServers:

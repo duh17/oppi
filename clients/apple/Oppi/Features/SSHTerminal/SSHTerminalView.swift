@@ -183,8 +183,8 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         isOpaque = true
         clipsToBounds = true
         accessibilityIdentifier = "sshTerminal.grid"
-        accessibilityLabel = "SSH terminal. Tap to type. Drag to read local history."
-        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(showKeyboard)))
+        accessibilityLabel = "SSH terminal. Tap to show or hide the keyboard. Drag to read local history."
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(toggleKeyboard)))
         addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(scrollHistory(_:))))
         bar = makeAccessoryBar()
         applyTheme(ThemeRuntimeState.currentThemeID())
@@ -311,7 +311,9 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         ctrlButton?.setTitle(ctrl.armed ? "Ctrl \u{2713}" : "Ctrl", for: .normal)
         ctrlButton?.accessibilityValue = ctrl.armed ? "On" : "Off"
     }
-    @objc private func showKeyboard() { becomeFirstResponder() }
+    @objc private func toggleKeyboard() {
+        if isFirstResponder { _ = resignFirstResponder() } else { becomeFirstResponder() }
+    }
     override func paste(_ sender: Any?) {
         guard hardwarePresses.isEmpty else { return }
         requestPaste()

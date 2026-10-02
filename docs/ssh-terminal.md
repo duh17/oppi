@@ -17,7 +17,9 @@ For example, on a Mac with an Ed25519 host key:
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-After you save a host, **Terminal** appears directly below **MCP Servers** in the workspace sidebar. Tap it to connect. **Edit Host** returns to setup. Turning the experiment off hides both entry points and does not create a key. **Tailscale → Check a Mac** remains available independently.
+After you save a host, **Terminal** appears directly below **MCP Servers** in the workspace sidebar. Tap it to open the host page, then tap **Connect**; opening the page never dials or asks for Face ID. **Edit Host** returns to setup.
+
+In the terminal, tap the screen to show or hide the keyboard. Drag to read local history. Turning the experiment off hides both entry points and does not create a key. **Tailscale → Check a Mac** remains available independently.
 
 ## Credentials and host trust
 
