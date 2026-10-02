@@ -36,9 +36,18 @@ struct StartOppiSessionIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let trimmedPrompt = try await resolvedPrompt()
-        guard let trimmedPrompt else {
+        let rawPrompt = try await resolvedPrompt()
+        guard let rawPrompt else {
             return .result(dialog: IntentDialog(stringLiteral: StartOppiSessionDialog.missingPrompt))
+        }
+
+        // Refuse a prompt too long to show whole before any connection or disambiguation.
+        let confirmable: StartOppiSessionConfirmation.ConfirmablePrompt
+        switch StartOppiSessionConfirmation.decide(rawPrompt: rawPrompt) {
+        case .tooLong:
+            return .result(dialog: IntentDialog(stringLiteral: StartOppiSessionDialog.tooLongToConfirm))
+        case .confirm(let prompt):
+            confirmable = prompt
         }
 
         let requestID = IntentSessionOpenTrigger.shared.issueRequestID()
@@ -56,30 +65,25 @@ struct StartOppiSessionIntent: AppIntent {
             return .result(dialog: IntentDialog(stringLiteral: StartOppiSessionDialog.noServer))
         }
 
-        // The prompt can come from a chained Shortcut (untrusted text), so the user
-        // confirms the exact prompt and destination before any connection or create.
-        let confirmationText = StartOppiSessionConfirmation.dialogText(
-            prompt: trimmedPrompt,
-            workspaceName: target.workspaceName,
-            serverName: target.serverName,
-            pairedServerCount: KeychainService.loadServers().count
-        )
-
         let outcome: CreateOutcome?
         do {
-            outcome = try await StartOppiSessionConfirmation.gated(
-                confirm: {
+            outcome = try await StartOppiSessionConfirmation.run(
+                prompt: confirmable,
+                workspaceName: target.workspaceName,
+                serverName: target.serverName,
+                pairedServerCount: KeychainService.loadServers().count,
+                confirm: { dialog in
                     try await requestConfirmation(
                         actionName: .send,
-                        dialog: IntentDialog(stringLiteral: confirmationText)
+                        dialog: IntentDialog(stringLiteral: dialog)
                     )
                 },
-                proceed: {
+                create: { confirmedPrompt in
                     try await ServerTransportAPIClient.withClient(for: paired) { api in
                         await createSession(
                             api: api,
                             workspaceId: target.workspaceId,
-                            prompt: trimmedPrompt,
+                            prompt: confirmedPrompt,
                             launchKey: launchKey
                         )
                     }
@@ -130,13 +134,14 @@ struct StartOppiSessionIntent: AppIntent {
         }
     }
 
+    /// The raw prompt, or nil when it is empty after normalization. Callers must send
+    /// `StartOppiSessionConfirmation.decide`'s text, never this raw value.
     private func resolvedPrompt() async throws -> String? {
-        var text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.isEmpty {
-            let requested = try await $prompt.requestValue(IntentDialog("What should Pi do?"))
-            text = requested.trimmingCharacters(in: .whitespacesAndNewlines)
+        var text = prompt
+        if StartOppiSessionConfirmation.normalized(text).isEmpty {
+            text = try await $prompt.requestValue(IntentDialog("What should Pi do?"))
         }
-        return text.isEmpty ? nil : text
+        return StartOppiSessionConfirmation.normalized(text).isEmpty ? nil : text
     }
 
     private func resolveTarget() async throws -> TargetResolution {
@@ -308,44 +313,85 @@ struct StartOppiSessionIntent: AppIntent {
     }
 }
 
-/// Confirmation gate for Start Session: nothing connects, creates, or sends until the
-/// user confirms. A declined, cancelled, or failed confirmation never proceeds.
+/// Confirmation gate for Start Session. The prompt can come from a chained Shortcut
+/// (untrusted text), so the user confirms the exact string that is then sent: one
+/// normalized prompt feeds both the dialog and the create call, and a prompt too long
+/// to show whole is refused instead of previewed. Nothing connects, creates, or sends
+/// until the user confirms; a declined, cancelled, or failed confirmation never proceeds.
 enum StartOppiSessionConfirmation {
     static let maxPromptCharacters = 280
+    static let maxPromptLines = 12
+
+    /// A normalized prompt short enough to be shown whole. Only `decide` makes one.
+    struct ConfirmablePrompt: Equatable, Sendable {
+        let text: String
+        fileprivate init(text: String) { self.text = text }
+    }
+
+    enum Decision: Equatable, Sendable {
+        case tooLong
+        case confirm(ConfirmablePrompt)
+    }
+
+    /// Removes Unicode format scalars (category Cf: zero-width, bidi controls, tags) that
+    /// render as nothing and can hide text, then trims the ends. No other rewriting.
+    static func normalized(_ raw: String) -> String {
+        var scalars = String.UnicodeScalarView()
+        scalars.append(contentsOf: raw.unicodeScalars.filter { $0.properties.generalCategory != .format })
+        return String(scalars).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func decide(rawPrompt: String) -> Decision {
+        let text = normalized(rawPrompt)
+        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).count
+        guard text.count <= maxPromptCharacters, lines <= maxPromptLines else {
+            return .tooLong
+        }
+        return .confirm(ConfirmablePrompt(text: text))
+    }
 
     static func dialogText(
-        prompt: String,
+        prompt: ConfirmablePrompt,
         workspaceName: String,
         serverName: String,
         pairedServerCount: Int
     ) -> String {
-        let shown = prompt.count > maxPromptCharacters
-            ? String(prompt.prefix(maxPromptCharacters)).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
-            : prompt
         let destination = pairedServerCount > 1
             ? "\(workspaceName) on \(serverName)"
             : workspaceName
-        return "Start a session in \(destination) and send this prompt?\n\n\(shown)"
+        return "Start a session in \(destination) and send this prompt?\n\n\(prompt.text)"
     }
 
-    /// Runs `proceed` only after `confirm` returns normally. Returns nil when the user
-    /// declined (or the confirmation could not complete); errors from `proceed` propagate.
+    /// Shows the dialog via `confirm`, then calls `create` with the same prompt text.
+    /// Returns nil when the user declined (or the confirmation could not complete);
+    /// errors from `create` propagate.
     @MainActor
-    static func gated<T>(
-        confirm: () async throws -> Void,
-        proceed: () async throws -> T
+    static func run<T>(
+        prompt: ConfirmablePrompt,
+        workspaceName: String,
+        serverName: String,
+        pairedServerCount: Int,
+        confirm: (String) async throws -> Void,
+        create: (String) async throws -> T
     ) async rethrows -> T? {
+        let dialog = dialogText(
+            prompt: prompt,
+            workspaceName: workspaceName,
+            serverName: serverName,
+            pairedServerCount: pairedServerCount
+        )
         do {
-            try await confirm()
+            try await confirm(dialog)
         } catch {
             return nil
         }
-        return try await proceed()
+        return try await create(prompt.text)
     }
 }
 
 private enum StartOppiSessionDialog {
     static let declined = "Canceled. Nothing was sent."
+    static let tooLongToConfirm = "That prompt is too long to confirm here. Open Oppi to send it."
     static let missingPrompt = "What should Pi do?"
     static let noServer = "No paired server found. Open Oppi to pair first."
     static let noWorkspaces = "No workspaces configured on the server."
