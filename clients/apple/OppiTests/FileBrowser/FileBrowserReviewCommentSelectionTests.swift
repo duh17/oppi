@@ -252,30 +252,80 @@ struct FileBrowserReviewCommentSelectionTests {
         })
     }
 
+    /// AVKit fullscreen from an inline Markdown video is a UIKit full-screen
+    /// modal over this view. SwiftUI reports disappear/appear around it, and a
+    /// same-path reload rebuilt the reader, replacing every inline player.
+    @Test func textReaderSurvivesFullScreenModalCoverWithoutRemount() async throws {
+        let client = FileBrowserTextMountURLProtocol.makeClient()
+        let host = UIHostingController(rootView:
+            FileBrowserContentView(
+                workspaceId: FileBrowserTextMountURLProtocol.workspaceId,
+                filePath: FileBrowserTextMountURLProtocol.filePath,
+                fileName: FileBrowserTextMountURLProtocol.fileName,
+                chromeMode: .pushed
+            )
+            .environment(\.apiClient, client)
+        )
+        host.loadViewIfNeeded()
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let window = UIWindow(frame: host.view.frame)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let mounted = await waitForMainActorCondition(timeout: .seconds(5)) {
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            return firstFullScreenCodeViewController(in: host) != nil
+        }
+        #expect(mounted)
+        let reader = try #require(firstFullScreenCodeViewController(in: host))
+
+        let cover = UIViewController()
+        cover.modalPresentationStyle = .fullScreen
+        host.present(cover, animated: false)
+        let covered = await waitForMainActorCondition { host.view.window == nil }
+        #expect(covered, "full-screen modal did not take the reader out of the window")
+        cover.dismiss(animated: false)
+        let uncovered = await waitForMainActorCondition { host.view.window != nil }
+        #expect(uncovered)
+
+        let kept = await waitForMainActorConditionToStayTrue(for: .seconds(1)) {
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            return firstFullScreenCodeViewController(in: host) === reader
+        }
+        #expect(kept, "returning from a full-screen modal remounted the file reader")
+        reader.view.layoutIfNeeded()
+        #expect(timelineAllTextViews(in: reader.view).contains {
+            timelineRenderedText(of: $0).contains(FileBrowserTextMountURLProtocol.needle)
+        })
+    }
+
     @Test func fileBrowserKeepsExistingMediaInsteadOfReloadingSamePath() {
         #expect(
-            FileBrowserMediaLoadPolicy.shouldReload(
+            FileBrowserReloadPolicy.shouldReload(
                 existing: .video(path: "clips/demo.mp4"),
                 requestedPath: "clips/demo.mp4",
                 force: false
             ) == false
         )
         #expect(
-            FileBrowserMediaLoadPolicy.shouldReload(
+            FileBrowserReloadPolicy.shouldReload(
                 existing: .video(path: "clips/demo.mp4"),
                 requestedPath: "clips/other.mp4",
                 force: false
             ) == true
         )
         #expect(
-            FileBrowserMediaLoadPolicy.shouldReload(
+            FileBrowserReloadPolicy.shouldReload(
                 existing: .video(path: "clips/demo.mp4"),
                 requestedPath: "clips/demo.mp4",
                 force: true
             ) == true
         )
         #expect(
-            FileBrowserMediaLoadPolicy.shouldReload(
+            FileBrowserReloadPolicy.shouldReload(
                 existing: .none,
                 requestedPath: "clips/demo.mp4",
                 force: false

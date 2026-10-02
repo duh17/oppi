@@ -70,11 +70,16 @@ enum FileBrowserContentRenderingPolicy {
     }
 }
 
-enum FileBrowserMediaLoadPolicy {
+/// `.task(id:)` restarts whenever SwiftUI re-shows this view, including after
+/// AVKit fullscreen (a UIKit full-screen modal) from a standalone or inline
+/// Markdown video. Reloading the same path there remounts the player or the
+/// whole reader, so every inline player restarts from zero.
+enum FileBrowserReloadPolicy {
     enum Existing: Equatable {
         case none
         case video(path: String)
         case audio(path: String)
+        case text(path: String)
     }
 
     static func shouldReload(
@@ -84,7 +89,7 @@ enum FileBrowserMediaLoadPolicy {
     ) -> Bool {
         if force { return true }
         switch existing {
-        case .video(let path), .audio(let path):
+        case .video(let path), .audio(let path), .text(let path):
             return path != requestedPath
         case .none:
             return true
@@ -169,6 +174,8 @@ struct FileBrowserContentView: View {
     @State private var fileTransitionDirection: FileBrowserNavigationDirection = .next
     @State private var content: FileContentPhase = .loading
     @State private var loadedMediaPath: String?
+    /// Path whose text `content` holds, so a re-shown view keeps its reader.
+    @State private var loadedTextPath: String?
     @State private var loadedHostFilePath: String?
     @State private var isExpensiveNetwork = false
 
@@ -797,16 +804,16 @@ struct FileBrowserContentView: View {
         let requestedPath = requestedSelection.path
         let requestedExtension = (requestedPath as NSString).pathExtension.lowercased()
         let requestedCategory = FileType.detect(from: requestedPath).previewCategory
-        let existingMedia: FileBrowserMediaLoadPolicy.Existing = {
-            guard let loadedMediaPath else { return .none }
+        let existing: FileBrowserReloadPolicy.Existing = {
             switch content {
-            case .video: return .video(path: loadedMediaPath)
-            case .audio: return .audio(path: loadedMediaPath)
+            case .video: return loadedMediaPath.map { .video(path: $0) } ?? .none
+            case .audio: return loadedMediaPath.map { .audio(path: $0) } ?? .none
+            case .text: return loadedTextPath.map { .text(path: $0) } ?? .none
             default: return .none
             }
         }()
-        if !FileBrowserMediaLoadPolicy.shouldReload(
-            existing: existingMedia,
+        if !FileBrowserReloadPolicy.shouldReload(
+            existing: existing,
             requestedPath: requestedPath,
             force: force
         ) {
@@ -826,6 +833,7 @@ struct FileBrowserContentView: View {
         }
 
         loadedMediaPath = nil
+        loadedTextPath = nil
         loadedHostFilePath = nil
         resetEditState()
         timedText = .empty
@@ -954,6 +962,9 @@ struct FileBrowserContentView: View {
                 default:
                     content = .binary
                 }
+            }
+            if case .text = content {
+                loadedTextPath = requestedPath
             }
         } catch {
             guard isCurrentFile(requestedPath) else { return }
