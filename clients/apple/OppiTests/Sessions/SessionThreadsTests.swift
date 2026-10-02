@@ -413,3 +413,58 @@ struct SessionThreadsTests {
         #expect(decoded.promptCache["child"]?.warmer?.state == .inactive)
     }
 }
+
+/// Session Threads is an opt-in experiment: a device that never turned it on
+/// must list every session flat, and the choice must survive a relaunch.
+@Suite("Session Threads experiment", .serialized)
+@MainActor
+struct SessionThreadsExperimentTests {
+    private func withCleanDefaults(_ body: () -> Void) {
+        let defaults = UserDefaults.standard
+        let key = AppPreferences.Experiments.sessionThreadsKey
+        let original = defaults.object(forKey: key)
+        defer {
+            if let original { defaults.set(original, forKey: key) } else { defaults.removeObject(forKey: key) }
+        }
+        defaults.removeObject(forKey: key)
+        body()
+    }
+
+    private func session(_ id: String, parent: String? = nil, created: TimeInterval) -> Session {
+        Session(
+            id: id,
+            workspaceId: "ws",
+            name: id,
+            status: .ready,
+            createdAt: Date(timeIntervalSince1970: created),
+            lastActivity: Date(timeIntervalSince1970: created + 1),
+            messageCount: 1,
+            tokens: TokenUsage(input: 0, output: 0),
+            cost: 0,
+            parentSessionId: parent
+        )
+    }
+
+    @Test func unsetExperimentListsFlatAndEnablingGroupsThreads() {
+        withCleanDefaults {
+            let sessions = [session("root", created: 10), session("child", parent: "root", created: 20)]
+
+            let fresh = AppNavigation()
+            #expect(!fresh.sessionThreadsEnabled)
+            let flat = SessionListEntries.entries(
+                threadsEnabled: fresh.sessionThreadsEnabled, listed: sessions, loaded: sessions
+            )
+            #expect(flat.map(\.id) == ["root", "child"])
+            #expect(flat.allSatisfy { $0.thread == nil && $0.outsideRoot == nil })
+
+            fresh.sessionThreadsEnabled = true
+            let relaunched = AppNavigation()
+            #expect(relaunched.sessionThreadsEnabled, "The opt-in is saved on this device")
+            let grouped = SessionListEntries.entries(
+                threadsEnabled: relaunched.sessionThreadsEnabled, listed: sessions, loaded: sessions
+            )
+            #expect(grouped.map(\.id) == ["root"])
+            #expect(grouped[0].thread?.members.map(\.id) == ["root", "child"])
+        }
+    }
+}

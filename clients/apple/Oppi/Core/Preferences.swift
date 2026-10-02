@@ -66,32 +66,28 @@ enum AppPreferences {
         }
     }
 
-    // MARK: - Inbox
+    // MARK: - Experiments
 
-    enum Inbox {
-        /// Key predates the Settings-only layout, when it held a next-launch default; kept so saved choices carry over.
-        private static let listModeKey = "\(AppIdentifiers.subsystem).inbox.defaultListMode"
+    /// Opt-in features, saved on this device. Every flag defaults to off.
+    enum Experiments {
+        static let sessionThreadsKey = "\(AppIdentifiers.subsystem).experiments.sessionThreads"
 
-        /// All Sessions layout, set in Settings → Session List.
-        static var listMode: SessionInboxListMode {
-            guard let raw = UserDefaults.standard.string(forKey: listModeKey),
-                  let mode = SessionInboxListMode(rawValue: raw)
-            else {
-                return .threads
-            }
-            return mode
+        /// Session Threads: launch-tree grouping, Thread strips, Thread detail, and
+        /// compose in every session list. Off lists every session as its own row.
+        static var sessionThreadsEnabled: Bool {
+            UserDefaults.standard.bool(forKey: sessionThreadsKey)
         }
 
-        static func setListMode(_ mode: SessionInboxListMode) {
-            UserDefaults.standard.set(mode.rawValue, forKey: listModeKey)
+        static func setSessionThreadsEnabled(_ enabled: Bool) {
+            UserDefaults.standard.set(enabled, forKey: sessionThreadsKey)
         }
     }
 
     // MARK: - Session Rows
 
     /// Device-local session list display: one saved row appearance and the
-    /// remembered thread detail view. Grouping (`Inbox.listMode`) stays
-    /// independent of both.
+    /// remembered thread detail view. Grouping (`Experiments.sessionThreadsEnabled`)
+    /// stays independent of both.
     enum SessionRows {
         static let displayKey = "\(AppIdentifiers.subsystem).sessionRows.display"
         static let threadDetailModeKey = "\(AppIdentifiers.subsystem).sessionRows.threadDetailMode"

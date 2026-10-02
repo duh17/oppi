@@ -221,20 +221,6 @@ struct SettingsView: View {
             }
 
             Section {
-                Picker("Layout", selection: Binding(
-                    get: { navigation.inboxListMode },
-                    set: { navigation.inboxListMode = $0 }
-                )) {
-                    ForEach(SessionInboxListMode.allCases) { mode in
-                        Label(mode.label, systemImage: mode.systemImage).tag(mode)
-                    }
-                }
-                .accessibilityIdentifier("settings.inboxListMode")
-
-                Text("Threads groups sessions under the session that launched them. Flat List shows every session as its own row.")
-                    .font(.footnote)
-                    .foregroundStyle(.themeComment)
-
                 Button {
                     presentsRowEditor = true
                 } label: {
@@ -242,7 +228,9 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings.customizeRows")
 
-                Text("Choose the details session rows and Thread strips show, in every session list.")
+                Text(navigation.sessionThreadsEnabled
+                    ? "Choose the details session rows and Thread strips show, in every session list."
+                    : "Choose the details session rows show, in every session list.")
                     .font(.footnote)
                     .foregroundStyle(.themeComment)
             } header: {
@@ -366,14 +354,21 @@ struct SettingsView: View {
                 )
             }
 
-            if ReleaseFeatures.liveActivitiesEnabled {
-                Section {
+            Section {
+                if ReleaseFeatures.liveActivitiesEnabled {
                     Toggle("Live Activities", isOn: liveActivityToggle)
-                } header: {
-                    Text("Experiments")
-                } footer: {
-                    Text("Early builds — expect rough edges.")
                 }
+
+                Toggle("Session Threads", isOn: Bindable(navigation).sessionThreadsEnabled)
+                    .accessibilityIdentifier("settings.sessionThreads")
+
+                Text("Groups sessions under the session that launched them, with Thread strips and a Thread view.")
+                    .font(.footnote)
+                    .foregroundStyle(.themeComment)
+            } header: {
+                Text("Experiments")
+            } footer: {
+                Text("Experimental: early builds with rough edges. Saved on this device.")
             }
 
             Section {

@@ -11,29 +11,6 @@ private struct SessionInboxItem: Identifiable {
 
 private typealias SessionInboxStoppedGroup = SessionInboxStoppedDayGroup<SessionListEntry>
 
-/// Session list layout, shared by All Sessions and workspace lists: launch-tree
-/// threads or the flat session list.
-enum SessionInboxListMode: String, CaseIterable, Identifiable {
-    case threads
-    case sessions
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .threads: "Threads"
-        case .sessions: "Flat List"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .threads: "point.3.connected.trianglepath.dotted"
-        case .sessions: "list.bullet"
-        }
-    }
-}
-
 private struct SessionInboxViewData {
     let yourTurn: [SessionListEntry]
     let working: [SessionListEntry]
@@ -352,9 +329,11 @@ struct SessionInboxView: View {
 
         // All Sessions lists every loaded session, so every thread root is here.
         let sessions = items.map(\.session)
-        let entries = listMode == .threads
-            ? SessionListEntries.threads(listed: sessions, loaded: sessions)
-            : SessionListEntries.flat(sessions)
+        let entries = SessionListEntries.entries(
+            threadsEnabled: navigation.sessionThreadsEnabled,
+            listed: sessions,
+            loaded: sessions
+        )
         let grouped = SessionInboxGrouping.make(
             items: entries,
             now: Date(),
@@ -372,11 +351,6 @@ struct SessionInboxView: View {
             isSearching: false,
             isEmpty: grouped.isEmpty
         )
-    }
-
-    /// Layout lives in Settings → Session List; the top bar stays free of view controls.
-    private var listMode: SessionInboxListMode {
-        navigation.inboxListMode
     }
 
     var body: some View {

@@ -38,6 +38,17 @@ final class SessionThreadsE2ETests: E2ETestCase {
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
     override var e2eRequiresFreshLaunch: Bool { true }
 
+    /// Session Threads is opt-in. Launch with the experiment set the way a saved
+    /// preference reads at startup: on for the thread tests, so they start where a
+    /// user who enabled it does, and explicitly off for the opt-in test (the
+    /// simulator keeps earlier tests' saved choice, so "unset" is a unit-test fact).
+    override func configureE2ELaunch(_ application: XCUIApplication) {
+        let enabled = !name.contains("testSessionThreadsStayOffUntilEnabledInSettings")
+        application.launchArguments += ["-\(Self.sessionThreadsDefaultsKey)", enabled ? "YES" : "NO"]
+    }
+
+    nonisolated private static let sessionThreadsDefaultsKey = "dev.chenda.Oppi.experiments.sessionThreads"
+
     override func seedE2EFixtures() throws {
         let bundle = Bundle(for: SessionThreadsE2ETests.self)
         let url = try XCTUnwrap(
@@ -177,7 +188,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         beat(1)
 
         // Flat List (Settings, Session List): children appear as their own rows.
-        try setInboxLayout("Flat List")
+        try setSessionThreads(false)
         XCTAssertTrue(
             reveal(app.buttons["session.nav.\(donkeyMaster)"], in: inbox),
             "Flat List should list the Donkey Master child row"
@@ -186,7 +197,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         for _ in 0..<3 { inbox.swipeDown(velocity: .fast) }
 
         // Threads: children fold under their root.
-        try setInboxLayout("Threads")
+        try setSessionThreads(true)
         let threadRow = app.buttons["thread.nav.\(orchestrator)"]
         XCTAssertTrue(reveal(threadRow, in: inbox), "Orchestrator thread row missing")
         XCTAssertFalse(
@@ -547,15 +558,17 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(app.buttons["thread.mode.timeline"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.buttons["thread.mode.timeline"].isSelected, "Thread view was not remembered on reopen")
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        try setInboxLayout("Flat List")
+        try setSessionThreads(false)
         let childRow = app.buttons["session.nav.\(donkeyMaster)"]
         XCTAssertTrue(reveal(childRow, in: inbox), "Flat List should list the child session as its own row")
 
+        // Relaunch on the saved choice: a launch argument would override it.
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
         app.terminate()
         app.launch()
         XCTAssertTrue(inbox.waitForExistence(timeout: 30), "Inbox did not return after relaunch")
         XCTAssertTrue(reveal(childRow, in: inbox, timeout: 30), "Saved Flat List layout did not survive relaunch")
-        try setInboxLayout("Threads")
+        try setSessionThreads(true)
         XCTAssertTrue(reveal(strip, in: inbox, timeout: 30), "Threads layout did not return")
         XCTAssertFalse(childRow.exists, "Threads should fold the child session under its root")
         XCTAssertTrue(reveal(rootBody, in: inbox, timeout: 30))
@@ -587,7 +600,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         let remoteChild = try id(Self.crossWorkspaceChildKey)
         let inbox = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
-        try setInboxLayout("Threads")
+        try setSessionThreads(true)
 
         // All Sessions: one thread row that names both workspaces.
         let inboxStrip = app.buttons["thread.nav.\(root)"]
@@ -628,7 +641,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         try returnToInbox()
 
         // Flat List reaches workspace lists too.
-        try setInboxLayout("Flat List")
+        try setSessionThreads(false)
         let flatList = try openWorkspaceList("oppi")
         XCTAssertTrue(
             reveal(app.buttons["session.nav.\(localChild)"], in: flatList, timeout: 20),
@@ -636,7 +649,58 @@ final class SessionThreadsE2ETests: E2ETestCase {
         )
         XCTAssertFalse(app.buttons["thread.nav.\(root)"].exists, "Flat List draws no Thread strip")
         try returnToInbox()
-        try setInboxLayout("Threads")
+        try setSessionThreads(true)
+    }
+
+    /// Session Threads is opt-in: with the experiment off All Sessions and workspace lists are
+    /// flat, Settings has no Layout picker, and Customize Rows has no Thread options. Turning the
+    /// Experiments toggle on brings back strips, Thread detail, and the Thread options.
+    func testSessionThreadsStayOffUntilEnabledInSettings() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let orchestrator = try id(Self.orchestratorKey)
+        let donkeyMaster = try id(Self.donkeyMasterKey)
+        let inbox = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
+
+        // Off: the child is its own row and nothing offers a thread.
+        XCTAssertTrue(
+            reveal(app.buttons["session.nav.\(donkeyMaster)"], in: inbox, timeout: 20),
+            "Child session should be its own row while Session Threads is off"
+        )
+        XCTAssertFalse(app.buttons["thread.nav.\(orchestrator)"].exists, "Thread strip drawn while Session Threads is off")
+        XCTAssertFalse(app.buttons["thread.link.\(donkeyMaster)"].exists, "In thread link drawn while Session Threads is off")
+
+        openSettings()
+        XCTAssertTrue(settingsSwitch("settings.sessionThreads").isHittable, "Experiments → Session Threads missing")
+        XCTAssertEqual(app.switches["settings.sessionThreads"].value as? String, "0")
+        XCTAssertFalse(app.buttons["settings.inboxListMode"].exists, "Layout picker should be gone")
+        // Reopen Settings from the top: the switch sits below Customize Rows.
+        try returnToInbox()
+        try openRowEditor()
+        XCTAssertTrue(toggle("cost").exists, "Row options missing")
+        XCTAssertFalse(toggle("laneGraph").exists, "Thread options shown while Session Threads is off")
+        XCTAssertFalse(toggle("agentSummary").exists, "Thread options shown while Session Threads is off")
+        app.buttons["sessionRows.cancel"].tap()
+        XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10), "Editor did not close")
+        XCTAssertFalse(app.buttons["settings.inboxListMode"].exists, "Layout picker should be gone")
+
+        // On (still in Settings after closing the editor): the same list folds the child under a Thread strip.
+        let threadsSwitch = settingsSwitch("settings.sessionThreads")
+        flip(threadsSwitch)
+        XCTAssertEqual(threadsSwitch.value as? String, "1")
+        try returnToInbox()
+        let strip = app.buttons["thread.nav.\(orchestrator)"]
+        XCTAssertTrue(reveal(strip, in: inbox, timeout: 20), "Thread strip missing after enabling Session Threads")
+        XCTAssertFalse(app.buttons["session.nav.\(donkeyMaster)"].exists, "Child should fold under its root when enabled")
+        strip.tap()
+        XCTAssertTrue(app.staticTexts["thread.title"].waitForExistence(timeout: 15), "Thread detail did not open")
+        try returnToInbox()
+
+        try openRowEditor()
+        revealInForm(toggle("laneGraph"))
+        XCTAssertTrue(toggle("agentSummary").exists, "Thread options missing when enabled")
+        try closeRowEditor("cancel")
+        try setSessionThreads(false)
     }
 
     /// Thread detail's compose bar starts a session that joins the thread as a child of the root.
@@ -645,7 +709,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         let root = try id(Self.orchestratorKey)
         let inbox = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
-        try setInboxLayout("Threads")
+        try setSessionThreads(true)
 
         let strip = app.buttons["thread.nav.\(root)"]
         XCTAssertTrue(reveal(strip, in: inbox, timeout: 20), "Orchestrator thread strip missing")
@@ -838,6 +902,10 @@ final class SessionThreadsE2ETests: E2ETestCase {
     /// Opens Settings from the sidebar and its Customize Rows entry under Session List.
     private func openRowEditor(viaEdgeSwipe: Bool = false) throws {
         openSettings(viaEdgeSwipe: viaEdgeSwipe)
+        try openRowEditorFromSettings()
+    }
+
+    private func openRowEditorFromSettings() throws {
         let entry = settingsRow("settings.customizeRows")
         XCTAssertTrue(entry.isHittable, "Customize Rows missing from Settings")
         entry.tap()
@@ -853,16 +921,15 @@ final class SessionThreadsE2ETests: E2ETestCase {
         try returnToInbox(until: marker)
     }
 
-    /// Picks the All Sessions layout under Settings' Session List, then returns to All Sessions.
-    private func setInboxLayout(_ name: String) throws {
+    /// Turns the Session Threads experiment (Settings → Experiments) on or off, then returns to All Sessions.
+    private func setSessionThreads(_ enabled: Bool) throws {
         openSettings()
-        let picker = settingsRow("settings.inboxListMode")
-        XCTAssertTrue(picker.isHittable, "Layout picker missing from Settings")
-        picker.tap()
-        let option = app.buttons[name].firstMatch
-        XCTAssertTrue(option.waitForExistence(timeout: 5), "\(name) missing from the Layout menu")
-        option.tap()
-        XCTAssertTrue(waitForNonExistence(option, timeout: 5), "Layout menu did not close")
+        let threadsSwitch = settingsSwitch("settings.sessionThreads")
+        XCTAssertTrue(threadsSwitch.isHittable, "Session Threads toggle missing from Settings")
+        if (threadsSwitch.value as? String == "1") != enabled {
+            flip(threadsSwitch)
+        }
+        XCTAssertEqual(threadsSwitch.value as? String, enabled ? "1" : "0", "Session Threads toggle did not change")
         try returnToInbox()
     }
 
@@ -884,6 +951,21 @@ final class SessionThreadsE2ETests: E2ETestCase {
         let row = app.buttons[identifier]
         _ = row.waitForExistence(timeout: 5)
         for _ in 0..<8 where !row.exists || !row.isHittable { app.swipeUp() }
+        // Settings may already be scrolled past the row (the Experiments section sits below it).
+        for _ in 0..<8 where !row.exists || !row.isHittable { app.swipeDown() }
+        return row
+    }
+
+    /// A Settings switch spans its whole row; the control sits at the trailing edge.
+    private func flip(_ toggle: XCUIElement) {
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+    }
+
+    /// Scrolls Settings until the switch is on screen.
+    private func settingsSwitch(_ identifier: String) -> XCUIElement {
+        let row = app.switches[identifier]
+        _ = row.waitForExistence(timeout: 5)
+        for _ in 0..<12 where !row.exists || !row.isHittable { app.swipeUp() }
         return row
     }
 

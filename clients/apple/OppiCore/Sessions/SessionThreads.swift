@@ -133,6 +133,12 @@ enum SessionListEntries {
         sessions.map { SessionListEntry(session: $0, thread: nil, outsideRoot: nil) }
     }
 
+    /// Rows for a list: launch-tree threads when the experiment is on, otherwise
+    /// one flat row per session.
+    static func entries(threadsEnabled: Bool, listed: [Session], loaded: [Session]) -> [SessionListEntry] {
+        threadsEnabled ? threads(listed: listed, loaded: loaded) : flat(listed)
+    }
+
     /// Threads layout for the sessions a list shows (`listed`). Launch trees are
     /// built over every loaded session (`loaded`), so a thread keeps members
     /// that run in another workspace or worktree. A listed root carries its

@@ -269,20 +269,22 @@ struct WorkspaceDetailView: View {
         )
     }
 
-    /// An older-history bucket threads only within itself, so a thread never
+    /// An older-history bucket threads (experiment on) only within itself, so a thread never
     /// claims recent sessions that already have their own rows above.
     private func archiveEntries(for bucket: WorkspaceSessionArchiveBucket) -> [SessionListEntry] {
         let sessions = archiveStoppedSessions(for: bucket)
-        guard navigation.inboxListMode == .threads else { return SessionListEntries.flat(sessions) }
-        return SessionListEntries.threads(listed: sessions, loaded: sessions)
+        return SessionListEntries.entries(threadsEnabled: navigation.sessionThreadsEnabled, listed: sessions, loaded: sessions)
     }
 
-    /// This list's sessions in the Settings layout. Threads are built over every
-    /// loaded session so a thread keeps members from other workspaces and
-    /// worktrees; a session whose root is elsewhere links to it.
+    /// This list's sessions; threads only when the Session Threads experiment is on.
+    /// Threads are built over every loaded session so a thread keeps members from
+    /// other workspaces and worktrees; a session whose root is elsewhere links to it.
     private func entries(for listed: [Session]) -> [SessionListEntry] {
-        guard navigation.inboxListMode == .threads else { return SessionListEntries.flat(listed) }
-        return SessionListEntries.threads(listed: listed, loaded: sessionStore.listProjectionSessions)
+        SessionListEntries.entries(
+            threadsEnabled: navigation.sessionThreadsEnabled,
+            listed: listed,
+            loaded: sessionStore.listProjectionSessions
+        )
     }
 
     private var selectedWorktree: WorkspaceWorktree? {

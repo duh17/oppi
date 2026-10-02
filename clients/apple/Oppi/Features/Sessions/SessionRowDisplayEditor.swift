@@ -126,6 +126,7 @@ struct SessionRowDisplayEditor: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
     @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(AppNavigation.self) private var navigation
 
     @State private var draft = AppPreferences.SessionRows.display
     @State private var sample = SessionRowPreviewSubject.sample()
@@ -144,7 +145,9 @@ struct SessionRowDisplayEditor: View {
                 Form {
                     densitySection
                     detailsSection
-                    threadSection
+                    if navigation.sessionThreadsEnabled {
+                        threadSection
+                    }
                     Section {
                         Button("Restore Defaults") {
                             draft = .standard
@@ -196,7 +199,7 @@ struct SessionRowDisplayEditor: View {
             // other actions attached, and no hit testing.
             VStack(alignment: .leading, spacing: 6) {
                 SessionRow(presentation: subject.presentation)
-                if let thread = subject.thread {
+                if navigation.sessionThreadsEnabled, let thread = subject.thread {
                     SessionThreadStrip(rollup: thread.rollup, attentionMember: thread.attentionMember)
                         .padding(.leading, SessionThreadStrip.rowInset)
                 }
@@ -207,7 +210,7 @@ struct SessionRowDisplayEditor: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("sessionRows.preview")
 
-            if usesLoaded, subject.thread == nil {
+            if navigation.sessionThreadsEnabled, usesLoaded, subject.thread == nil {
                 Text("This session has no child sessions, so thread options do not show here.")
                     .font(.footnote)
                     .foregroundStyle(.themeComment)

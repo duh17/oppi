@@ -190,10 +190,10 @@ final class AppNavigation {
     /// Session-list search lives on navigation so it survives compact inbox
     /// remount after Back and split detail replacement on iPad.
     var inboxSessionSearch = SessionListSearchNavigationPersistence.State()
-    /// All Sessions layout (Threads or Flat List), chosen in Settings → Session List.
-    /// Held here so a change reaches the mounted inbox; saved for this device.
-    var inboxListMode: SessionInboxListMode = AppPreferences.Inbox.listMode {
-        didSet { AppPreferences.Inbox.setListMode(inboxListMode) }
+    /// Session Threads experiment (Settings → Experiments), off by default. Held here
+    /// so a change reaches every mounted session list; saved for this device.
+    var sessionThreadsEnabled: Bool = AppPreferences.Experiments.sessionThreadsEnabled {
+        didSet { AppPreferences.Experiments.setSessionThreadsEnabled(sessionThreadsEnabled) }
     }
     var workspaceSessionSearchByID: [String: SessionListSearchNavigationPersistence.State] = [:]
 
