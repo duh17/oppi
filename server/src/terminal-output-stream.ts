@@ -1,5 +1,9 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 
+import { createLogger } from "./logger.js";
+
+const log = createLogger({ base: { component: "terminal_output_stream" } });
+
 /**
  * Append-only raw-byte log for one terminal-kind tool call.
  *
@@ -48,10 +52,17 @@ interface StreamState {
   text: string | null;
   filePath?: string;
   fileVerified: boolean;
+  readFailureLogged?: boolean;
 }
 
 export class TerminalOutputStreams {
   private readonly streams = new Map<string, StreamState>();
+  /**
+   * Calls whose Pi file was named but never became the verified log (still lagging, or
+   * unreadable). The sidecar must keep serving the retained streamed bytes for them,
+   * until `clear()`, so it outlives the stream entry.
+   */
+  private readonly unverified = new Set<string>();
 
   has(id: string): boolean {
     return this.streams.has(id);
@@ -60,6 +71,11 @@ export class TerminalOutputStreams {
   /** Register a running stream so a late attach can learn its cursor. */
   begin(id: string, parentToolCallId?: string): void {
     this.state(id, parentToolCallId);
+  }
+
+  /** True while Pi's named file is not (yet) the verified log: the sidecar must not prefer it. */
+  fileUnverified(id: string): boolean {
+    return this.unverified.has(id);
   }
 
   /** Phase-1 text for the sidecar snapshot, or null when the Pi file owns the log. */
@@ -74,7 +90,7 @@ export class TerminalOutputStreams {
   ): TerminalStreamChunk[] {
     const s = this.state(id, input.parentToolCallId);
     if (input.fullOutputPath) s.filePath = input.fullOutputPath;
-    if (s.filePath) return this.fileTick(s, TERMINAL_TICK_MAX_BYTES, false);
+    if (s.filePath) return this.fileTick(id, s, TERMINAL_TICK_MAX_BYTES, false).chunks;
     if (input.text === undefined) return [];
     // A split surrogate pair would make delta bytes differ from whole-text bytes.
     const text = endsWithHighSurrogate(input.text) ? input.text.slice(0, -1) : input.text;
@@ -84,18 +100,30 @@ export class TerminalOutputStreams {
   /** Tool end: drain, then report the final length. The stream is no longer running afterwards. */
   end(
     id: string,
-    input: { text?: string; fullOutputPath?: string; parentToolCallId?: string },
+    input: {
+      text?: string;
+      fullOutputPath?: string;
+      parentToolCallId?: string;
+      /** Producer-reported total length, the best lower bound when the file cannot be read. */
+      producerTotalBytes?: number;
+    },
   ): TerminalStreamEnd {
     const s = this.state(id, input.parentToolCallId);
     this.streams.delete(id);
     if (input.fullOutputPath) s.filePath = input.fullOutputPath;
     if (s.filePath) {
-      const chunks = this.fileTick(s, TERMINAL_END_DRAIN_MAX_BYTES, true);
+      const { chunks, size } = this.fileTick(id, s, TERMINAL_END_DRAIN_MAX_BYTES, true);
+      if (size !== undefined) {
+        return { chunks, epoch: s.epoch, totalBytes: size, snapshotText: null };
+      }
+      // The file never became the log: not a finished short log. Report the producer's
+      // length so the client gap-fills (and fails visibly if the sidecar cannot serve),
+      // and keep the streamed bytes servable.
       return {
         chunks,
         epoch: s.epoch,
-        totalBytes: fileSize(s.filePath) ?? s.sentBytes,
-        snapshotText: null,
+        totalBytes: Math.max(input.producerTotalBytes ?? 0, s.sentBytes),
+        snapshotText: s.text,
       };
     }
     // An empty final text carries no information; keep what was streamed.
@@ -121,6 +149,7 @@ export class TerminalOutputStreams {
 
   clear(): void {
     this.streams.clear();
+    this.unverified.clear();
   }
 
   get size(): number {
@@ -173,20 +202,28 @@ export class TerminalOutputStreams {
     return chunks;
   }
 
-  private fileTick(s: StreamState, budget: number, draining: boolean): TerminalStreamChunk[] {
+  /** `size` is the file length once the file is the verified log; undefined otherwise. */
+  private fileTick(
+    id: string,
+    s: StreamState,
+    budget: number,
+    draining: boolean,
+  ): { chunks: TerminalStreamChunk[]; size?: number } {
     const path = s.filePath;
-    if (!path) return [];
+    if (!path) return { chunks: [] };
+    if (!s.fileVerified) this.unverified.add(id);
     let fd: number;
     try {
       fd = openSync(path, "r");
-    } catch {
-      return [];
+    } catch (error) {
+      this.noteReadFailure(id, s, error);
+      return { chunks: [] };
     }
     try {
       const size = fstatSync(fd).size;
       if (!s.fileVerified) {
         // Pi's write stream may lag the update that named the file.
-        if (size < s.sentBytes && !draining) return [];
+        if (size < s.sentBytes && !draining) return { chunks: [] };
         const expected = Buffer.from(s.text ?? "", "utf8");
         const actual = Buffer.alloc(expected.length);
         const read = size >= expected.length ? readFully(fd, actual, 0) : 0;
@@ -197,9 +234,10 @@ export class TerminalOutputStreams {
         }
         s.fileVerified = true;
         s.text = null;
+        this.unverified.delete(id);
       }
       const want = Math.min(size - s.sentBytes, budget);
-      if (want <= 0) return [];
+      if (want <= 0) return { chunks: [], size };
       const buffer = Buffer.alloc(want);
       const got = readFully(fd, buffer, s.sentBytes);
       // Mid-file cuts and (while running) a trailing partial codepoint are held back.
@@ -220,12 +258,24 @@ export class TerminalOutputStreams {
         s.sentBytes += length;
         at += length;
       }
-      return chunks;
-    } catch {
-      return [];
+      return { chunks, size };
+    } catch (error) {
+      this.noteReadFailure(id, s, error);
+      return { chunks: [] };
     } finally {
       closeSync(fd);
     }
+  }
+
+  /** Surface an unreadable Pi file once per call; never log the private path. */
+  private noteReadFailure(id: string, s: StreamState, error: unknown): void {
+    if (s.readFailureLogged) return;
+    s.readFailureLogged = true;
+    log.error("terminal_stream.file_read_failed", {
+      toolCallId: id,
+      code: (error as NodeJS.ErrnoException | undefined)?.code ?? "unknown",
+      sentBytes: s.sentBytes,
+    });
   }
 }
 
@@ -275,18 +325,4 @@ function readFully(fd: number, buffer: Buffer, position: number): number {
     total += n;
   }
   return total;
-}
-
-function fileSize(path: string): number | undefined {
-  let fd: number;
-  try {
-    fd = openSync(path, "r");
-  } catch {
-    return undefined;
-  }
-  try {
-    return fstatSync(fd).size;
-  } finally {
-    closeSync(fd);
-  }
 }

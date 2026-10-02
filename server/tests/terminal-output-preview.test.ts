@@ -20,7 +20,7 @@ afterEach(() => {
 const full = Array.from({ length: 300 }, (_, i) => `row-${i} ${"x".repeat(61)} 🙂\n`).join("");
 
 describe("terminal stream sidecar handoff", () => {
-  it("never exposes a Pi-truncated live snapshot as full output", () => {
+  it("keeps the streamed log servable until turn_end even when Pi flags its view truncated", () => {
     const registry = new MobileRendererRegistry();
     const ctx: TranslationContext = {
       sessionId: "s",
@@ -53,7 +53,8 @@ describe("terminal stream sidecar handoff", () => {
       ctx,
     );
     expect(ctx.toolOutputSnapshots.previous("tc")).toBe(full);
-    expect(ctx.toolOutputSnapshots.fullOutput("tc")).toBeNull();
+    // These bytes were already streamed; the sidecar must be able to serve them.
+    expect(ctx.toolOutputSnapshots.fullOutput("tc")).toBe(full);
     translatePiEvent(
       {
         type: "tool_execution_end",
@@ -63,6 +64,8 @@ describe("terminal stream sidecar handoff", () => {
       } as AgentSessionEvent,
       ctx,
     );
+    expect(ctx.toolOutputSnapshots.fullOutput("tc")).toBe(full);
+    translatePiEvent({ type: "turn_end" } as AgentSessionEvent, ctx);
     expect(ctx.toolOutputSnapshots.fullOutput("tc")).toBeNull();
   });
   it.each(["bash", "run_thing"])(

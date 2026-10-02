@@ -417,7 +417,8 @@ describe("managed and mirror runtime event parity", () => {
         outputPresentation: { kind: "terminal" },
       });
       const outputs = harness.received.filter((message) => message.type === "tool_output");
-      // The Pi file is unreadable here, so the stream carries only the text it saw.
+      // The Pi file is unreadable here, so the stream carries only the text it saw and the
+      // end reports the producer's length: the client must gap-fill, not treat it as complete.
       expect(outputs).toEqual([
         {
           type: "tool_output",
@@ -429,7 +430,7 @@ describe("managed and mirror runtime event parity", () => {
       expect(harness.received.find((message) => message.type === "tool_end")).toMatchObject({
         outputPresentation: { kind: "terminal" },
         outputAvailability: { complete: false, totalBytes: 100_000, source: "sidecar" },
-        outputStream: { epoch: 1, totalBytes: Buffer.byteLength(output) },
+        outputStream: { epoch: 1, totalBytes: 100_000 },
       });
     }
   });

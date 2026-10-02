@@ -1016,7 +1016,9 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
         });
         const retained = streams.retainedText(key);
         if (retained !== null) {
-          ctx.toolOutputSnapshots.update(key, retained, producerAvailability.complete);
+          // The retained text is exactly the streamed log, so it is servable even when Pi
+          // flags its own view truncated: until the Pi file is verified it is the sidecar.
+          ctx.toolOutputSnapshots.update(key, retained, true);
         } else {
           ctx.toolOutputSnapshots.discard(key);
         }
@@ -1123,6 +1125,7 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
           ...(text !== undefined ? { text } : {}),
           ...optionalProp("fullOutputPath", extractToolFullOutputPath(event.result?.details)),
           ...optionalProp("parentToolCallId", parentToolCallIdOf(event)),
+          ...optionalProp("producerTotalBytes", producerAvailability.totalBytes),
         });
         for (const chunk of end.chunks) {
           pushToolOutputMessage(messages, {
@@ -1193,16 +1196,11 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
           ...(inputPresentation ? { inputPresentation } : {}),
         });
       }
-      // A terminal stream without a Pi file keeps its log as the sidecar source until
-      // turn_end; with a file the file is the source and no text is retained.
+      // A terminal stream keeps its streamed log as the sidecar source until turn_end
+      // unless the Pi file was verified as that log, in which case the file serves it.
       if (settled) {
         const retained = settled.snapshotText;
-        ctx.toolOutputSnapshots.finish(
-          key,
-          retained ?? "",
-          retained !== null,
-          producerAvailability.complete,
-        );
+        ctx.toolOutputSnapshots.finish(key, retained ?? "", retained !== null, true);
       } else {
         ctx.toolOutputSnapshots.finish(key, finalText, false, producerAvailability.complete);
       }

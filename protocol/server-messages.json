@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 63
+    "messageCount": 62
   },
   "messages": {
     "connected": {
@@ -829,19 +829,6 @@
       }
     },
     "tool_end": {
-      "type": "tool_end",
-      "tool": "bash",
-      "toolCallId": "tc-001",
-      "outputPresentation": {
-        "kind": "terminal"
-      },
-      "outputAvailability": {
-        "complete": false,
-        "totalBytes": 32768,
-        "source": "sidecar"
-      }
-    },
-    "tool_end_stream": {
       "type": "tool_end",
       "tool": "bash",
       "toolCallId": "tc-001",

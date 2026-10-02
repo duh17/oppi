@@ -235,7 +235,9 @@ export class SessionAgentEventCoordinator {
             ? event.result?.details
             : event.partialResult?.details,
         );
-        if (fullOutputPath) {
+        // A terminal stream's byte log is served from its retained text until Pi's file
+        // is verified as that log; publishing the path earlier would hide streamed bytes.
+        if (fullOutputPath && !active.toolOutputSnapshots.terminal.fileUnverified(toolCallId)) {
           active.toolFullOutputPaths.set(toolCallId, fullOutputPath);
         }
       }

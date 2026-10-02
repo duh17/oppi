@@ -355,13 +355,6 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     toolCallId: "tc-001",
     outputPresentation: { kind: "terminal" },
     outputAvailability: { complete: false, totalBytes: 32768, source: "sidecar" },
-  },
-  tool_end_stream: {
-    type: "tool_end",
-    tool: "bash",
-    toolCallId: "tc-001",
-    outputPresentation: { kind: "terminal" },
-    outputAvailability: { complete: false, totalBytes: 32768, source: "sidecar" },
     outputStream: { epoch: 1, totalBytes: 32768 },
   },
   tool_end_file_diff: {
@@ -726,7 +719,6 @@ const SERVER_MESSAGE_ORDER = [
   "tool_output_stream",
   "tool_output_stream_marker",
   "tool_end",
-  "tool_end_stream",
   "tool_end_with_details",
   "tool_end_file_diff",
   "tool_end_setting",
