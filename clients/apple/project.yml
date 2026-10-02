@@ -521,6 +521,12 @@ targets:
         type: group
     dependencies:
       - target: Oppi
+      - package: swift-nio
+        product: NIOCore
+      - package: swift-nio
+        product: NIOPosix
+      - package: swift-nio-ssh
+        product: NIOSSH
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiTests
