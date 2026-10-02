@@ -417,6 +417,68 @@ struct BashToolRowViewTests {
         #expect(BashToolRowView.liveTail(of: "head\n\(giant)") == giant[...])
         #expect(BashToolRowView.liveTail(of: giant) == giant[...])
     }
+
+    @Test("a reused expanded row does not carry a detached live paint onto another call")
+    func reusedRowDropsDetachedLivePaint() throws {
+        let owner = TerminalOutputStream { _ in throw CancellationError() }
+        func configuration(_ id: String, _ output: String) -> ToolTimelineRowConfiguration {
+            var configuration = makeTimelineToolConfiguration(itemID: id,
+                expandedContent: .bash(command: "run", output: output, unwrapped: false),
+                isExpanded: true, isDone: false)
+            configuration.terminalOutputStream = owner
+            return configuration
+        }
+        let view = ToolTimelineRowContentView(configuration: configuration("a",
+            (1...80).map { "first \($0)" }.joined(separator: "\n")))
+        _ = fittedTimelineSize(for: view, width: 390)
+        let row = view.bashToolRowView
+        row.outputScrollView.draggingOverrideForTesting = true
+        row.scrollViewWillBeginDragging(row.outputScrollView)
+        row.outputScrollView.draggingOverrideForTesting = nil
+        #expect(!row.outputShouldAutoFollow)
+
+        view.configuration = configuration("b", "second call output")
+        _ = fittedTimelineSize(for: view, width: 390)
+        #expect(row.outputLabel.textStorage.string == "second call output")
+        #expect(row.outputShouldAutoFollow)
+    }
+
+    @Test("a detached reader keeps its lines when the finished output replaces the live tail")
+    func detachedCompletionKeepsLines() throws {
+        let owner = TerminalOutputStream { _ in throw CancellationError() }
+        // More lines than the live tail, but under the deferred-render byte threshold.
+        let full = (1...(BashToolRowView.liveTailLineLimit + 100)).map { "l\($0)" }.joined(separator: "\n")
+        #expect(full.utf8.count < BashToolRowView.deferredANSIByteThreshold)
+        func configuration(done: Bool) -> ToolTimelineRowConfiguration {
+            var configuration = makeTimelineToolConfiguration(
+                expandedContent: .bash(command: "run", output: full, unwrapped: false),
+                isExpanded: true, isDone: done)
+            configuration.terminalOutputStream = owner
+            return configuration
+        }
+        let view = ToolTimelineRowContentView(configuration: configuration(done: false))
+        _ = fittedTimelineSize(for: view, width: 390)
+        let row = view.bashToolRowView
+        let scroll = row.outputScrollView
+        func distanceFromBottom() -> CGFloat {
+            scroll.contentSize.height + scroll.adjustedContentInset.bottom - scroll.bounds.height - scroll.contentOffset.y
+        }
+        let tailHeight = scroll.contentSize.height
+        #expect(tailHeight > scroll.bounds.height)
+        // Park the reader mid-tail, away from the bottom.
+        scroll.draggingOverrideForTesting = true
+        row.scrollViewWillBeginDragging(scroll)
+        scroll.contentOffset.y = tailHeight / 2
+        scroll.draggingOverrideForTesting = false
+        row.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        #expect(!row.outputShouldAutoFollow)
+        let before = distanceFromBottom()
+
+        view.configuration = configuration(done: true)
+        _ = fittedTimelineSize(for: view, width: 390)
+        #expect(scroll.contentSize.height > tailHeight, "The completed row shows the whole output")
+        #expect(abs(distanceFromBottom() - before) < 1, "The same tail lines stay in view")
+    }
 }
 
 private func uniqueForegroundColorCount(_ attributed: NSAttributedString) -> Int {

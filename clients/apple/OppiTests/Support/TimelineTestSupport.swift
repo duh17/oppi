@@ -628,6 +628,7 @@ func waitForTimelineCondition(
 }
 
 func makeTimelineToolConfiguration(
+    itemID: String = "tool-row-test-item",
     title: String = "$ bash",
     preview: String? = nil,
     expandedContent: ToolPresentationBuilder.ToolExpandedContent? = nil,
@@ -650,7 +651,7 @@ func makeTimelineToolConfiguration(
     reviewCommentSessionId: String? = nil
 ) -> ToolTimelineRowConfiguration {
     ToolTimelineRowConfiguration(
-        itemID: "tool-row-test-item",
+        itemID: itemID,
         title: title,
         preview: preview,
         expandedContent: expandedContent,

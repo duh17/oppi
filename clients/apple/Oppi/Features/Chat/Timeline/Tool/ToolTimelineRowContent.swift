@@ -1177,6 +1177,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             if case .bash(let command, let output, let unwrapped) = expandedContent {
                 cancelDeferredCodeHighlight()
                 hideExpandedContainer(outputColor: outputColor)
+                // Follow, signature and a withheld live paint belong to one
+                // call. A reused cell must not carry them onto another call.
+                if previousConfiguration.itemID != configuration.itemID {
+                    bashToolRowView.resetOutputState(outputColor: outputColor)
+                }
 
                 let input = BashRenderInput(
                     command: command,
