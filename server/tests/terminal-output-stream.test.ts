@@ -3,7 +3,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { appendFileSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { translatePiEvent, type TranslationContext } from "../src/session-protocol.js";
@@ -486,6 +486,40 @@ describe("terminal output stream (Pi temp file phase)", () => {
       outputStream: { epoch: 1, offset: 6, bytes: 4 },
     });
     expect(ctx.toolOutputSnapshots.terminal.retainedText("tc")).toBeNull();
+  });
+
+  describe("missing Pi file", () => {
+    const readFailureLogs = (spy: { mock: { calls: unknown[][] } }) =>
+      spy.mock.calls.filter((c) => String(c[0]).includes("terminal_stream.file_read_failed"));
+
+    afterEach(() => vi.restoreAllMocks());
+
+    it("waits quietly on live ticks before Pi creates the file, then verifies normally", () => {
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const ctx = makeCtx();
+      const path = fileFixture(); // named but not yet created
+      begin(ctx);
+      expect(toolOutputs(upd(ctx, "x", path)).filter((m) => m.outputStream)).toEqual([]);
+      expect(toolOutputs(upd(ctx, "x", path)).filter((m) => m.outputStream)).toEqual([]);
+      expect(readFailureLogs(stderr)).toEqual([]);
+      writeFileSync(path, "abc");
+      expect(toolOutputs(upd(ctx, "x", path))[0]).toMatchObject({
+        output: "abc",
+        outputStream: { epoch: 1, offset: 0, bytes: 3 },
+      });
+      expect(readFailureLogs(stderr)).toEqual([]);
+    });
+
+    it("logs once when the tool-end drain finds the file unreadable", () => {
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const ctx = makeCtx();
+      const path = fileFixture(); // never created
+      begin(ctx);
+      upd(ctx, "x", path);
+      expect(readFailureLogs(stderr)).toEqual([]);
+      fin(ctx, path);
+      expect(readFailureLogs(stderr)).toHaveLength(1);
+    });
   });
 
   it("starts a new epoch from file byte 0 when the file disagrees with what was sent", () => {

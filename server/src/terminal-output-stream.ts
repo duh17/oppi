@@ -216,7 +216,9 @@ export class TerminalOutputStreams {
     try {
       fd = openSync(path, "r");
     } catch (error) {
-      this.noteReadFailure(id, s, error);
+      // Pi names the temp file before its write stream opens it, so a live tick waits quietly;
+      // only the tool-end drain knows the file is genuinely unreadable.
+      if (draining) this.noteReadFailure(id, s, error);
       return { chunks: [] };
     }
     try {
