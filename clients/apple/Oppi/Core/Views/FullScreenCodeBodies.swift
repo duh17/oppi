@@ -5708,17 +5708,21 @@ extension NativeFullScreenMarkdownBody: UITextViewDelegate {
             return defaultAction
         }
 
+        return primaryAction(for: url, from: textView, defaultAction: defaultAction)
+    }
+
+    func primaryAction(for url: URL, from textView: UITextView, defaultAction: UIAction) -> UIAction? {
         let action = linkAction(for: url)
+        let fallback = MarkdownLinkInteractionSupport.primaryAction(for: action, defaultAction: defaultAction)
         if ChatReaderLinkIntercept.canHandle(from: textView) {
             return UIAction { [weak textView] _ in
                 guard let textView else { return }
-                _ = ChatReaderLinkIntercept.handle(action, from: textView)
+                if !ChatReaderLinkIntercept.handle(action, from: textView) {
+                    fallback?.performWithSender(nil, target: nil)
+                }
             }
         }
-        return MarkdownLinkInteractionSupport.primaryAction(
-            for: action,
-            defaultAction: defaultAction
-        )
+        return fallback
     }
 }
 

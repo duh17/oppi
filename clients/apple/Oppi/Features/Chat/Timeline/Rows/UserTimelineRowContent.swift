@@ -3,11 +3,12 @@ import UIKit
 
 /// Non-scrollable UITextView that lets the outer timeline own vertical drags.
 ///
-/// User rows enable text selection for the Comment action. A plain selectable
+/// User rows select text for Comment; short done thinking rows enable links.
+/// A plain selectable
 /// `UITextView` still wants to begin its internal pan gesture even when
 /// scrolling is disabled, which prevents the outer chat timeline from entering
 /// a user-drag state and can trigger detached-anchor snap-back.
-private final class VerticalPanPassthroughTextView: UITextView {
+final class VerticalPanPassthroughTextView: UITextView {
     override func layoutSubviews() {
         super.layoutSubviews()
 
@@ -970,6 +971,38 @@ private final class UserTimelineImageThumbnailView: UIView {
 // MARK: - Context Menu
 
 extension UserTimelineRowContentView: UITextViewDelegate {
+    func primaryAction(for url: URL, defaultAction: UIAction) -> UIAction? {
+        let action = MarkdownLinkInteractionSupport.classify(url, workspaceID: nil)
+        guard case .webLink = action else { return defaultAction }
+        return MarkdownLinkInteractionSupport.primaryAction(for: action, defaultAction: defaultAction)
+    }
+
+    func textView(
+        _ textView: UITextView,
+        primaryActionFor textItem: UITextItem,
+        defaultAction: UIAction
+    ) -> UIAction? {
+        guard case let .link(url) = textItem.content else { return defaultAction }
+        return primaryAction(for: url, defaultAction: defaultAction)
+    }
+
+    func textView(
+        _ textView: UITextView,
+        menuConfigurationFor textItem: UITextItem,
+        defaultMenu: UIMenu
+    ) -> UITextItem.MenuConfiguration? {
+        guard case let .link(url) = textItem.content else {
+            return UITextItem.MenuConfiguration(menu: defaultMenu)
+        }
+        return MarkdownLinkInteractionSupport.menuConfiguration(
+            for: MarkdownLinkInteractionSupport.classify(url, workspaceID: nil),
+            defaultMenu: defaultMenu,
+            textView: textView
+        ) { url, sourceView in
+            FileSharePresenter.share(url, sourceView: sourceView)
+        }
+    }
+
     func textView(
         _ textView: UITextView,
         editMenuForTextIn range: NSRange,

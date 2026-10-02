@@ -1742,6 +1742,27 @@ struct ToolTimelineRowModeDispatchTests {
 }
 
 @MainActor
+@Suite("Tool text browser link routing")
+struct ToolTextBrowserLinkRoutingTests {
+    @Test(arguments: ["https://example.com/tool-text", "mailto:tool@example.com"])
+    func textLinksRouteThroughBrowserPreferenceOrSystemDefault(urlString: String) throws {
+        let url = try #require(URL(string: urlString))
+        let view = ToolTimelineRowContentView(configuration: makeToolConfiguration())
+        var received: [URL] = []
+        let observer = NotificationCenter.default.addObserver(forName: .webLinkTapped, object: nil, queue: .main) {
+            if $0.object as? URL == url { received.append(url) }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        var defaultUsed = false
+        let defaultAction = UIAction { _ in defaultUsed = true }
+        let action = try #require(view.primaryAction(for: url, defaultAction: defaultAction))
+        action.performWithSender(nil, target: nil)
+        #expect(defaultUsed == (url.scheme == "mailto"))
+        #expect(received == (url.scheme == "mailto" ? [] : [url]))
+    }
+}
+
+@MainActor
 private final class ModeDispatchInvalidationCountingLayout: UICollectionViewFlowLayout {
     private(set) var invalidationCount = 0
 

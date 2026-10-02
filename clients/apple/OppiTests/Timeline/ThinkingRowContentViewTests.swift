@@ -5,6 +5,55 @@ import UIKit
 @MainActor
 @Suite("ThinkingTimelineRowContentView")
 struct ThinkingRowContentViewTests {
+    @Test(arguments: [
+        "See [App Store Connect](https://appstoreconnect.apple.com/business)",
+        "See https://appstoreconnect.apple.com/business",
+    ])
+    func doneWebLinksAreInteractiveWithoutOwningVerticalPans(source: String) throws {
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: true, previewText: source, fullText: nil
+        ))
+        _ = fittedTimelineSize(for: view, width: 360)
+        let textView = try #require(privateTextLabel(in: view))
+        let scrollView = try #require(privateScrollView(in: view))
+        var hasLink = false
+        textView.attributedText.enumerateAttribute(.link, in: NSRange(location: 0, length: textView.attributedText.length)) {
+            value, _, _ in
+            if value != nil { hasLink = true }
+        }
+        #expect(hasLink || textView.dataDetectorTypes.contains(.link), "Bare URLs need the assistant's link detector if Foundation omits NSLink")
+        #expect(textView.isSelectable, "UIKit requires selectable text for link taps")
+        #expect(scrollView.isUserInteractionEnabled, "The link's ancestor must allow touches")
+        #expect(!scrollView.isScrollEnabled)
+        #expect(!textView.isScrollEnabled)
+        #expect(!textView.gestureRecognizerShouldBegin(textView.panGestureRecognizer))
+    }
+
+    @Test(arguments: ["http://example.com/thinking", "https://example.com/thinking"])
+    func doneWebLinkActionPostsNotification(urlString: String) throws {
+        let url = try #require(URL(string: urlString))
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: true, previewText: "See [details](\(urlString))", fullText: nil
+        ))
+        let textView = try #require(privateTextLabel(in: view))
+        #expect(textView.delegate === view)
+        #expect(view.responds(to: NSSelectorFromString("textView:primaryActionForTextItem:defaultAction:")))
+        #expect(view.responds(to: NSSelectorFromString("textView:menuConfigurationForTextItem:defaultMenu:")))
+        try expectContentWebLink(url) { defaultAction in
+            view.primaryAction(for: url, defaultAction: defaultAction)
+        }
+    }
+
+    @Test(arguments: ["mailto:thinking@example.com", "custom-thinking://item", "oppi://session/thinking"])
+    func nonWebLinkActionKeepsSystemDefault(urlString: String) throws {
+        let url = try #require(URL(string: urlString))
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: true, previewText: "[Contact](\(urlString))", fullText: nil
+        ))
+        let defaultAction = UIAction { _ in }
+        #expect(view.primaryAction(for: url, defaultAction: defaultAction) === defaultAction)
+    }
+
     @Test func streamingOverflowKeepsInnerScrollDisabledAndAutoFollowsTail() throws {
         // Establish bounds first (mirrors real collection view lifecycle where
         // cells have valid frames before apply() runs on content updates).
@@ -551,6 +600,117 @@ struct ThinkingRowContentViewTests {
         #expect(!rendered.contains("AAAA"))
         #expect(rendered.contains("BBBB"))
     }
+}
+
+@MainActor
+@Suite("User-content browser link routing")
+struct UserContentBrowserLinkRoutingTests {
+    @Test(arguments: ["https://example.com/user-content", "mailto:user@example.com"])
+    func userMarkdownUsesBrowserRoutingOrSystemDefault(urlString: String) throws {
+        let url = try #require(URL(string: urlString))
+        let context = TimelineInteractionContext()
+        context.sessionId = "session-1"
+        context.reviewCommentSelectionRouter = ReviewCommentSelectionRouter { _ in }
+        let view = UserTimelineRowContentView(configuration: UserTimelineRowConfiguration(
+            text: "[Link](\(urlString))", images: [], canFork: false, onFork: nil,
+            interactionContext: context
+        ))
+        let textView = try #require(timelineAllTextViews(in: view).first)
+        #expect(textView.delegate === view)
+        #expect(textView.isSelectable)
+        if url.scheme == "mailto" {
+            let defaultAction = UIAction { _ in }
+            #expect(view.primaryAction(for: url, defaultAction: defaultAction) === defaultAction)
+        } else {
+            try expectContentWebLink(url) { view.primaryAction(for: url, defaultAction: $0) }
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func fullScreenWebLinkFallsThroughUnhandledReaderIntercept(installed: Bool) throws {
+        let url = try #require(URL(string: "https://example.com/reader"))
+        let body = makeReader()
+        let textView = UITextView()
+        body.addSubview(textView)
+        var intercepted = false
+        if installed {
+            ChatReaderLinkIntercept.install({ action in
+                #expect(action == .webLink(url))
+                intercepted = true
+                return false
+            }, on: body)
+        }
+        try expectContentWebLink(url) {
+            body.primaryAction(for: url, from: textView, defaultAction: $0)
+        }
+        #expect(intercepted == installed)
+    }
+
+    @Test func fullScreenHandledLinkDoesNotAlsoPostWebLink() throws {
+        let url = try #require(URL(string: "https://example.com/handled-reader"))
+        let body = makeReader()
+        let textView = UITextView()
+        body.addSubview(textView)
+        var intercepted = false
+        ChatReaderLinkIntercept.install({ _ in intercepted = true; return true }, on: body)
+        var posted = false
+        let observer = NotificationCenter.default.addObserver(forName: .webLinkTapped, object: nil, queue: .main) {
+            if $0.object as? URL == url { posted = true }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        var defaultUsed = false
+        let action = try #require(body.primaryAction(
+            for: url, from: textView, defaultAction: UIAction { _ in defaultUsed = true }
+        ))
+        action.performWithSender(nil, target: nil)
+        #expect(intercepted)
+        #expect(!posted)
+        #expect(!defaultUsed)
+    }
+
+    @Test func fullScreenUnhandledMailtoKeepsSystemDefault() throws {
+        let body = makeReader()
+        let textView = UITextView()
+        body.addSubview(textView)
+        ChatReaderLinkIntercept.install({ _ in false }, on: body)
+        let url = try #require(URL(string: "mailto:reader@example.com"))
+        var defaultUsed = false
+        let action = try #require(body.primaryAction(
+            for: url, from: textView, defaultAction: UIAction { _ in defaultUsed = true }
+        ))
+        action.performWithSender(nil, target: nil)
+        #expect(defaultUsed)
+    }
+
+    @Test func assistantUnhandledExtensionWebLinkUsesBrowserRouting() throws {
+        let url = try #require(URL(string: "https://example.com/extension-markdown"))
+        let view = AssistantMarkdownContentView()
+        var hostCalled = false
+        view.linkOpenHandler = { _ in hostCalled = true; return false }
+        try expectContentWebLink(url) { view.primaryAction(for: url, defaultAction: $0) }
+        #expect(hostCalled)
+    }
+
+    private func makeReader() -> NativeFullScreenMarkdownBody {
+        NativeFullScreenMarkdownBody(
+            content: "[Link](https://example.com/reader)", palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil
+        )
+    }
+}
+
+@MainActor
+private func expectContentWebLink(_ url: URL, action: (UIAction) -> UIAction?) throws {
+    var received: [URL] = []
+    let observer = NotificationCenter.default.addObserver(forName: .webLinkTapped, object: nil, queue: .main) {
+        if $0.object as? URL == url { received.append(url) }
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+    var defaultUsed = false
+    let routed = try #require(action(UIAction { _ in defaultUsed = true }))
+    routed.performWithSender(nil, target: nil)
+    #expect(received == [url])
+    #expect(!defaultUsed)
 }
 
 @MainActor

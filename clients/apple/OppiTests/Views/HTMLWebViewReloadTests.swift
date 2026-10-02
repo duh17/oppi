@@ -1,5 +1,71 @@
 import Testing
+import UIKit
+import WebKit
 @testable import Oppi
+
+@MainActor
+@Suite("HTML preview browser routing")
+struct HTMLPreviewBrowserRoutingTests {
+    @Test(arguments: ["http://example.com/html", "https://example.com/html"])
+    func activatedWebLinkPostsBrowserNotificationAndCancelsEmbeddedNavigation(urlString: String) throws {
+        let url = try #require(URL(string: urlString))
+        let view = HTMLRenderView(htmlString: "<p>Preview</p>")
+        var received: [URL] = []
+        let observer = NotificationCenter.default.addObserver(forName: .webLinkTapped, object: nil, queue: .main) {
+            if $0.object as? URL == url { received.append(url) }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        var policy: WKNavigationActionPolicy?
+        view.webView(view.webViewForTesting, decidePolicyFor: PreviewNavigationAction(url: url, type: .linkActivated)) {
+            policy = $0
+        }
+        #expect(policy == .cancel)
+        #expect(received == [url])
+
+        // New-window links use the same browser route without creating a web view.
+        let popup = view.webView(
+            view.webViewForTesting, createWebViewWith: WKWebViewConfiguration(),
+            for: PreviewNavigationAction(url: url, type: .linkActivated), windowFeatures: WKWindowFeatures()
+        )
+        #expect(popup == nil)
+        #expect(received == [url, url])
+    }
+
+    @Test(arguments: [
+        "https://example.com/automatic", "https://example.com/files/raw",
+        "https://example.com/files/current", "https://example.com/files/current/sidecars",
+        "mailto:preview@example.com",
+    ])
+    func automaticOrProtectedNavigationDoesNotOpenBrowser(urlString: String) throws {
+        let url = try #require(URL(string: urlString))
+        let view = HTMLRenderView(htmlString: "<p>Preview</p>")
+        var posted = false
+        let observer = NotificationCenter.default.addObserver(forName: .webLinkTapped, object: nil, queue: .main) {
+            if $0.object as? URL == url { posted = true }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        var policy: WKNavigationActionPolicy?
+        let type: WKNavigationType = url.path == "/automatic" ? .other : .linkActivated
+        view.webView(view.webViewForTesting, decidePolicyFor: PreviewNavigationAction(url: url, type: type)) { policy = $0 }
+        #expect(policy == .cancel)
+        #expect(!posted)
+    }
+}
+
+@MainActor
+private final class PreviewNavigationAction: WKNavigationAction {
+    private let requestedURL: URL
+    private let type: WKNavigationType
+
+    init(url: URL, type: WKNavigationType) {
+        requestedURL = url
+        self.type = type
+        super.init()
+    }
+
+    override var request: URLRequest { URLRequest(url: requestedURL) }
+    override var navigationType: WKNavigationType { type }
+}
 
 @Suite("HTMLContentTracker")
 struct HTMLContentTrackerTests {

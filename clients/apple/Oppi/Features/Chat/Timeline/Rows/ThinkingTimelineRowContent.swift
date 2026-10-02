@@ -17,8 +17,8 @@ enum ThinkingRowHeightPolicy {
 /// - No floating expand icon in thinking bubbles.
 /// - Context menu exposes "Open Full Screen" and "Copy" when overflowed.
 /// - Double-tap or pinch-out opens full screen.
-/// - Inline text selection only activates when review comments are enabled and
-///   the bubble does not have a full-screen overflow affordance.
+/// - Completed bubbles without a full-screen affordance allow link interaction
+///   and selection; overflow and streaming bubbles keep timeline-owned gestures.
 struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     let isDone: Bool
     let previewText: String
@@ -99,7 +99,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     private let bubbleView = UIView()
     private let brainIcon = UIImageView()
     private let scrollView = UIScrollView()
-    private let textLabel = UITextView()
+    private let textLabel = VerticalPanPassthroughTextView()
     private let fadeMask = CAGradientLayer()
     private var bubbleHeightConstraint: NSLayoutConstraint?
     private var textLeadingConstraint: NSLayoutConstraint?
@@ -220,7 +220,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
         // Inner scroll view is for layout/content-size bookkeeping only.
         // Keep scrolling disabled so the timeline stays the sole vertical owner.
-        // Selection-enabled rows temporarily re-enable subview interaction.
+        // Short completed rows re-enable touches for links without owning pans.
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
@@ -418,10 +418,15 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
     private func updateReviewCommentSelectionPolicy() {
         let interaction = currentInteractionSpec
-        textLabel.isSelectable = interaction.inlineSelectionEnabled
-        scrollView.isUserInteractionEnabled = interaction.inlineSelectionEnabled
+        textLabel.isSelectable = allowsInlineTextInteraction
+        textLabel.dataDetectorTypes = currentConfiguration.isDone ? [.link] : []
+        scrollView.isUserInteractionEnabled = allowsInlineTextInteraction
         bubbleDoubleTapGesture.isEnabled = interaction.enablesTapActivation
         bubblePinchGesture.isEnabled = interaction.enablesPinchActivation
+    }
+
+    private var allowsInlineTextInteraction: Bool {
+        currentConfiguration.isDone && !currentInteractionSpec.supportsFullScreenPreview
     }
 
     /// Hash the complete bounded window so same-length edits repaint reliably.
@@ -597,7 +602,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     private func configureScrollBehavior() {
         // Single-vertical-owner policy: inner thinking bubble never scrolls.
         scrollView.isScrollEnabled = false
-        scrollView.isUserInteractionEnabled = currentInteractionSpec.inlineSelectionEnabled
+        scrollView.isUserInteractionEnabled = allowsInlineTextInteraction
         scrollView.showsVerticalScrollIndicator = false
     }
 
@@ -765,6 +770,38 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 }
 
 extension ThinkingTimelineRowContentView: UITextViewDelegate {
+    func primaryAction(for url: URL, defaultAction: UIAction) -> UIAction? {
+        let action = MarkdownLinkInteractionSupport.classify(url, workspaceID: nil)
+        guard case .webLink = action else { return defaultAction }
+        return MarkdownLinkInteractionSupport.primaryAction(for: action, defaultAction: defaultAction)
+    }
+
+    func textView(
+        _ textView: UITextView,
+        primaryActionFor textItem: UITextItem,
+        defaultAction: UIAction
+    ) -> UIAction? {
+        guard case let .link(url) = textItem.content else { return defaultAction }
+        return primaryAction(for: url, defaultAction: defaultAction)
+    }
+
+    func textView(
+        _ textView: UITextView,
+        menuConfigurationFor textItem: UITextItem,
+        defaultMenu: UIMenu
+    ) -> UITextItem.MenuConfiguration? {
+        guard case let .link(url) = textItem.content else {
+            return UITextItem.MenuConfiguration(menu: defaultMenu)
+        }
+        return MarkdownLinkInteractionSupport.menuConfiguration(
+            for: MarkdownLinkInteractionSupport.classify(url, workspaceID: nil),
+            defaultMenu: defaultMenu,
+            textView: textView
+        ) { url, sourceView in
+            FileSharePresenter.share(url, sourceView: sourceView)
+        }
+    }
+
     func textView(
         _ textView: UITextView,
         editMenuForTextIn range: NSRange,

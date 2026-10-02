@@ -12,6 +12,25 @@ struct ExtensionNativeBlockViewsTests {
         sessionID: "session-parent"
     )
 
+    @Test(arguments: ["missing", "unhandled", "handled"])
+    func webLinkFallbackUsesBrowserRoutingOnlyWhenHostDoesNotHandle(host: String) throws {
+        let url = try #require(URL(string: "https://example.com/extension-native-\(host)"))
+        var posted: [URL] = []
+        let observer = NotificationCenter.default.addObserver(forName: .webLinkTapped, object: nil, queue: .main) {
+            if $0.object as? URL == url { posted.append(url) }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        var hostCalled = false
+        let onOpenURL: ((URL) -> Bool)? = host == "missing" ? nil : { opened in
+            #expect(opened == url)
+            hostCalled = true
+            return host == "handled"
+        }
+        context(onOpenURL: onOpenURL).open(url)
+        #expect(hostCalled == (host != "missing"))
+        #expect(posted == (host == "handled" ? [] : [url]))
+    }
+
     @Test func markdownWikiLinkBecomesWorkspaceFileReference() throws {
         let stack = layout(
             .blocks([.markdown(base: base("notes"), markdown: "See [[docs/foo.md|Foo]]")]),

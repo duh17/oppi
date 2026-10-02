@@ -566,7 +566,7 @@ private struct ExtensionToastSheet: View {
                                     .font(.subheadline)
                                     .foregroundStyle(.themeComment)
                                 HStack(spacing: 12) {
-                                    Button(action: { UIApplication.shared.open(url) }) {
+                                    Button(action: { AppSupportLinks.open(url) }) {
                                         Text(url.absoluteString)
                                             .font(.body)
                                             .lineLimit(1)

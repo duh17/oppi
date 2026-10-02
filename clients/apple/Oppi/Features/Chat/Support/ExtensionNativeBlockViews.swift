@@ -23,10 +23,14 @@ struct ExtensionNativeBlockContext {
 
     var palette: ThemePalette { themeID.palette }
 
-    /// Extension links route through the host first; unhandled links open with the system.
+    /// Extension links route through the host first, then the browser preference
+    /// for web links or the system for other unhandled schemes.
     @MainActor
     func open(_ url: URL) {
-        if onOpenURL?(url) != true {
+        guard onOpenURL?(url) != true else { return }
+        if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+            AppSupportLinks.open(url)
+        } else {
             UIApplication.shared.open(url)
         }
     }

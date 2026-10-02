@@ -375,6 +375,7 @@ enum LinkAction: Equatable {
 }
 
 @MainActor
+// Apple: replace UITextView's external default action here; OppiApp owns modal Safari presentation (https://developer.apple.com/documentation/uikit/uitextviewdelegate/textview(_:primaryactionfor:defaultaction:), https://developer.apple.com/documentation/safariservices/sfsafariviewcontroller).
 enum MarkdownLinkInteractionSupport {
     static func classify(
         _ url: URL,
@@ -564,11 +565,19 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
             return defaultAction
         }
 
+        return primaryAction(for: url, defaultAction: defaultAction)
+    }
+
+    func primaryAction(for url: URL, defaultAction: UIAction) -> UIAction? {
         let action = classifyLink(url)
         if let linkOpenHandler, action != .systemDefault {
             return UIAction { _ in
                 if !linkOpenHandler(url) {
-                    UIApplication.shared.open(url)
+                    if case .webLink(let normalizedURL) = action {
+                        AppSupportLinks.open(normalizedURL)
+                    } else {
+                        UIApplication.shared.open(url)
+                    }
                 }
             }
         }

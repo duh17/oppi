@@ -89,6 +89,18 @@ const IOS_VIEW_LAYER_PATH_PREFIXES = [
 
 const IOS_FORBIDDEN_VIEW_NETWORK_TYPES = ["APIClient", "WebSocketClient"];
 
+// Only the preference owner and fallbacks for unhandled non-HTTP schemes may system-open URLs.
+const IOS_SYSTEM_URL_OPEN_ALLOWED_FILES = new Set([
+  "clients/apple/Oppi/App/OppiApp.swift",
+  "clients/apple/Oppi/Features/Chat/Support/ExtensionNativeBlockViews.swift",
+  "clients/apple/Oppi/Features/Chat/Timeline/Assistant/AssistantMarkdownContentView.swift",
+]);
+const IOS_IN_APP_BROWSER_ALLOWED_FILES = new Set([
+  "clients/apple/Oppi/App/OppiApp.swift",
+  "clients/apple/Oppi/Features/Settings/TailnetSettingsView.swift", // Authentication always stays in-app.
+]);
+const IOS_TIMELINE_ROOT = "clients/apple/Oppi/Features/Chat/Timeline/";
+
 // View-layer files receive explicit values and actions from composition. They must not hold the
 // connection or reach transport or shared stores through it. Each entry is a way the timeline used to
 // reach app services (direct type, coordinator lookup, or a member/environment key on the connection).
@@ -1045,6 +1057,70 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
   const candidateFiles = collectIosSwiftFiles(repoRoot, files);
   const candidateSet = new Set(candidateFiles);
   const violations = [];
+
+  for (const file of candidateFiles) {
+    if (!file.startsWith("clients/apple/Oppi/")) {
+      continue;
+    }
+    const parsed = readSwiftSource(repoRoot, file);
+    if (!parsed) {
+      continue;
+    }
+    const checks = [
+      {
+        rule: "ios-browser-system-open-owner",
+        pattern: /\bUIApplication\s*\.\s*shared\s*\.\s*open\s*\(/,
+        allowed: IOS_SYSTEM_URL_OPEN_ALLOWED_FILES.has(file),
+        reason:
+          "User-content web links must not bypass the browser preference with UIApplication.shared.open.",
+        remediation:
+          "Route HTTP(S) through MarkdownLinkInteractionSupport or AppSupportLinks.open (.webLinkTapped); reserve system-open for allowlisted owners and non-HTTP fallbacks.",
+      },
+      {
+        rule: "ios-browser-presentation-owner",
+        pattern: /\bInAppBrowserPresenter\s*\.\s*present\s*\(/,
+        allowed: IOS_IN_APP_BROWSER_ALLOWED_FILES.has(file),
+        reason:
+          "Only the browser preference owner and Tailnet authentication may present the in-app browser directly.",
+        remediation:
+          "Post .webLinkTapped or call AppSupportLinks.open so OppiApp applies the browser preference.",
+      },
+      {
+        rule: "timeline-text-link-interception",
+        pattern:
+          /\b(?:class|struct|extension)\s+[\w.]+(?:\s*<[^{}]*>)?\s*:\s*[^{}]*\bUITextViewDelegate\b/,
+        allowed:
+          !file.startsWith(IOS_TIMELINE_ROOT) ||
+          /\bfunc\s+textView\s*\([^)]*\bprimaryActionFor\s+\w+\s*:\s*UITextItem\b/.test(
+            parsed.stripped,
+          ),
+        reason:
+          "Timeline UITextViewDelegate conformances must replace UIKit's default external link action.",
+        remediation:
+          "Implement textView(_:primaryActionFor:defaultAction:) in this file and route HTTP(S) through MarkdownLinkInteractionSupport.",
+      },
+    ];
+    for (const check of checks) {
+      if (check.allowed) {
+        continue;
+      }
+      const match = findFirstMatch(parsed.stripped, check.pattern);
+      if (!match) {
+        continue;
+      }
+      const location = lineAndColumnForIndex(parsed.stripped, match.index);
+      violations.push(
+        makeIosViolation({
+          rule: check.rule,
+          file,
+          line: location.line,
+          column: location.column,
+          reason: check.reason,
+          remediation: check.remediation,
+        }),
+      );
+    }
+  }
 
   for (const file of candidateFiles) {
     if (!file.startsWith(APPLE_SHARED_CORE_ROOT)) {

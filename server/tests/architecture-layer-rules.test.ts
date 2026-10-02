@@ -17,6 +17,132 @@ function write(path: string, content: string): void {
 }
 
 describe("architecture layer rule helpers", () => {
+  it("restricts system URL opens to the iOS preference owner and non-HTTP fallbacks", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-browser-open-"));
+    try {
+      const forbidden = [
+        "clients/apple/Oppi/Features/FileBrowser/HTMLPreviewView.swift",
+        "clients/apple/Oppi/App/ContentView.swift",
+        "clients/apple/Oppi/Features/Chat/Timeline/Rows/ThinkingTimelineRowContent.swift",
+      ];
+      const allowed = [
+        "clients/apple/Oppi/App/OppiApp.swift",
+        "clients/apple/Oppi/Features/Chat/Support/ExtensionNativeBlockViews.swift",
+        "clients/apple/Oppi/Features/Chat/Timeline/Assistant/AssistantMarkdownContentView.swift",
+        "clients/apple/OppiTests/BrowserTests.swift",
+        "clients/apple/OppiMac/Browser.swift",
+      ];
+      for (const file of [...forbidden, ...allowed]) {
+        write(
+          join(repoRoot, file),
+          "func open(_ url: URL) { UIApplication\n .shared .open (url) }\n",
+        );
+      }
+      write(
+        join(repoRoot, "clients/apple/Oppi/CommentOnly.swift"),
+        [
+          "// UIApplication.shared.open(url)",
+          'let note = "UIApplication.shared.open(url)"',
+          "/* UIApplication.shared.open(url) */",
+        ].join("\n"),
+      );
+      const violations = findIosLayerViolations(repoRoot).filter(
+        (v) => v.rule === "ios-browser-system-open-owner",
+      );
+      expect(violations.map((v) => v.file).sort()).toEqual(forbidden.sort());
+      expect(violations.every((v) => v.line === 1)).toBe(true);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("allows direct in-app browser presentation only at the preference owner and Tailnet auth", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-browser-present-"));
+    try {
+      const forbidden = [
+        "clients/apple/Oppi/App/ContentView.swift",
+        "clients/apple/Oppi/Features/FileBrowser/HTMLPreviewView.swift",
+      ];
+      for (const file of [
+        ...forbidden,
+        "clients/apple/Oppi/App/OppiApp.swift",
+        "clients/apple/Oppi/Features/Settings/TailnetSettingsView.swift",
+      ]) {
+        write(
+          join(repoRoot, file),
+          "func open(_ url: URL) { InAppBrowserPresenter .present (url: url) }\n",
+        );
+      }
+      write(
+        join(repoRoot, "clients/apple/Oppi/CommentOnly.swift"),
+        [
+          "// InAppBrowserPresenter.present(url: url)",
+          'let note = "InAppBrowserPresenter.present(url: url)"',
+        ].join("\n"),
+      );
+      const violations = findIosLayerViolations(repoRoot).filter(
+        (v) => v.rule === "ios-browser-presentation-owner",
+      );
+      expect(violations.map((v) => v.file).sort()).toEqual(forbidden.sort());
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("requires a same-file primary link action for timeline text-view delegates", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-text-links-"));
+    try {
+      const timeline = "clients/apple/Oppi/Features/Chat/Timeline/";
+      write(
+        join(repoRoot, timeline, "Missing.swift"),
+        [
+          "class Missing: UIView,\n UITextViewDelegate {}",
+          "// func textView(_ v: UITextView, primaryActionFor item: UITextItem, defaultAction: UIAction) {}",
+          'let note = "primaryActionFor item: UITextItem"',
+        ].join("\n"),
+      );
+      write(
+        join(repoRoot, timeline, "ExtensionMissing.swift"),
+        "extension Row: UITextViewDelegate {}\n",
+      );
+      write(
+        join(repoRoot, timeline, "GenericMissing.swift"),
+        "final class GenericMissing<Content>: UIView, UITextViewDelegate {}\n",
+      );
+      write(
+        join(repoRoot, timeline, "NestedMissing.swift"),
+        "extension Namespace.Row: UITextViewDelegate {}\n",
+      );
+      write(
+        join(repoRoot, timeline, "Intercepted.swift"),
+        [
+          "class Intercepted: UIView {}",
+          "extension Intercepted: UITextViewDelegate {",
+          "  func textView(_ view: UITextView,\n primaryActionFor item: UITextItem, defaultAction: UIAction) -> UIAction? {",
+          "    MarkdownLinkInteractionSupport.primaryAction(for: .webLink(url), defaultAction: defaultAction)",
+          "  }",
+          "}",
+        ].join("\n"),
+      );
+      write(join(repoRoot, timeline, "NoDelegate.swift"), "class NoDelegate: UIView {}\n");
+      write(
+        join(repoRoot, "clients/apple/Oppi/Core/Views/OutsideTimeline.swift"),
+        "class Reader: UIView, UITextViewDelegate {}\n",
+      );
+      const violations = findIosLayerViolations(repoRoot).filter(
+        (v) => v.rule === "timeline-text-link-interception",
+      );
+      expect(violations.map((v) => v.file).sort()).toEqual([
+        `${timeline}ExtensionMissing.swift`,
+        `${timeline}GenericMissing.swift`,
+        `${timeline}Missing.swift`,
+        `${timeline}NestedMissing.swift`,
+      ]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("flags server tests placed under src", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-src-tests-"));
 
@@ -154,7 +280,7 @@ describe("architecture layer rule helpers", () => {
         ],
         [
           "clients/apple/Oppi/Features/Chat/Timeline/ReadsStore.swift",
-          "func lookup(_ c: Owner) { _ = c.sessionStore.session(id: \"s\") }",
+          'func lookup(_ c: Owner) { _ = c.sessionStore.session(id: "s") }',
         ],
         [
           "clients/apple/Oppi/Features/Chat/Timeline/HoldsWorkspaceStore.swift",
