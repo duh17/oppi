@@ -1549,6 +1549,20 @@ final class ServerConnection {
         excluding: Set<ServerRouteCandidateKind>
     ) async {
         guard let credentials, transportFailureDisposition != .failClosed else { return }
+        // With no other route, tearing the clients down would only discard the
+        // installed socket's capped reconnect backoff. A resolver throw falls
+        // through so the reconfigure below fails closed as before.
+        if let alternates = try? ServerTransportPlanResolver.candidates(
+            credentials: credentials,
+            discoveredLANEndpoint: lanDemoted ? nil : discoveredLANEndpoint,
+            excluding: excluding,
+            pathType: networkPathType()
+        ), alternates.isEmpty {
+            ClientLog.info("Network", "No alternate route; keeping socket backoff", metadata: [
+                "transport": transportPath.rawValue,
+            ])
+            return
+        }
         let configured = await reconfigureForExplicitRetry(
             credentials: credentials,
             excluding: excluding,
@@ -1557,7 +1571,11 @@ final class ServerConnection {
             serverInfoBootstrap: configuredServerInfoBootstrap,
             deviceCredentialDidChange: configuredDeviceCredentialObserver
         )
-        guard configured, self.credentials == credentials else { return }
+        guard configured else {
+            isTransportDemoting = false
+            return
+        }
+        guard self.credentials == credentials else { return }
         await refreshWorkspaceAndSessionLists(force: true, retryAfterJoinedFailure: true)
     }
 

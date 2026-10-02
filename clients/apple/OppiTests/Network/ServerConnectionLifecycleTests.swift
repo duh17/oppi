@@ -17,18 +17,64 @@ struct ServerConnectionLifecycleTests {
         #expect(conn.credentials?.host == "192.168.1.10")
     }
 
-    @Test func persistentHealthFailureOnHTTPOnlyConnectionFailsOfflineWithoutExpandingRoutes() async {
+    @Test func persistentHealthFailureWithoutAlternateRoutePreservesRetryOwner() async {
         let conn = ServerConnection()
         #expect(await conn.configureForUse(
             credentials: makeHTTPOnlyCredentials(),
             serverInfoBootstrap: successfulServerInfoBootstrap
         ))
 
-        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 7))
+        let retryOwner = conn.wsClient
+        retryOwner?._setStatusForTesting(.reconnecting(attempt: 4))
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
 
         #expect(conn.transportPath == .paired)
+        #expect(conn.apiClient != nil)
+        #expect(conn.wsClient === retryOwner)
+        #expect(conn.wsClient?.status == .reconnecting(attempt: 4))
+        #expect(!conn.isTransportDemoting)
+        #expect(conn.isFocusedStreamBindReady())
+    }
+
+    @Test func failedAlternateBootstrapEndsDemotingWithoutClients() async {
+        let conn = ServerConnection()
+        // Off the local network the discovered LAN endpoint is recorded but
+        // not promoted, so it is still an eligible alternate after the path
+        // returns to Wi-Fi.
+        conn.networkPathType = { "cellular" }
+        let credentials = ServerCredentials(
+            host: "my-server.tail00000.ts.net",
+            port: 7749,
+            token: "dt_test",
+            name: "Test",
+            scheme: .https,
+            serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
+            tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF"
+        )
+        var hosts: [String] = []
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            serverInfoBootstrap: { client, _ in
+                let host = await client.baseURL.host ?? ""
+                hosts.append(host)
+                if host == "192.168.1.42" { throw URLError(.cannotConnectToHost) }
+                return successfulServerInfo()
+            }
+        ))
+        await conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "SERVERFINGERPRINT",
+            tlsCertFingerprintPrefix: "TLSFINGERPRINT"
+        ))?.value
+        conn.networkPathType = { "wifi" }
+        #expect(hosts == [credentials.host])
+
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+
+        #expect(hosts == [credentials.host, "192.168.1.42"])
         #expect(conn.apiClient == nil)
-        #expect(conn.wsClient == nil)
+        #expect(!conn.isTransportDemoting)
     }
 
     @Test func unixTransportPathIsNotARouteCandidate() {
