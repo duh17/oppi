@@ -10,6 +10,7 @@ struct SSHTerminalSetupView: View {
     @State private var portText = String(SSHTerminalProfileStore().load()?.port ?? 22)
     @State private var identity: SSHIdentity?
     @State private var identityFailure: String?
+    @State private var identityNeedsReplacement = false
     @State private var copied = false
     @State private var connecting = false
     @State private var failure: String?
@@ -66,6 +67,13 @@ struct SSHTerminalSetupView: View {
                         Text(identity.backingDescription).font(.footnote).foregroundStyle(.themeComment)
                     } else {
                         Text(identityFailure ?? "Loading identity…").foregroundStyle(.themeComment)
+                        if identityNeedsReplacement {
+                            Button("Device passcode changed — create a new key") {
+                                loadIdentityIfSelected(createReplacement: true)
+                            }.disabled(connecting)
+                            Text("Replace the old entry in ~/.ssh/authorized_keys with the new public key before connecting.")
+                                .font(.footnote).foregroundStyle(.themeComment)
+                        }
                     }
                 } header: { Text("This Device’s SSH Identity") } footer: {
                     Text("Append this public key to ~/.ssh/authorized_keys. Signing requires Face ID or your device passcode. The simulator uses a software key. Oppi never installs the key for you.")
@@ -190,10 +198,18 @@ struct SSHTerminalSetupView: View {
         .onChange(of: showsTerminal) { _, visible in if !visible { cancel() } }
     }
 
-    private func loadIdentityIfSelected() {
+    private func loadIdentityIfSelected(createReplacement: Bool = false) {
         guard experimentEnabled, profile.authentication == .deviceKey else { identity = nil; return }
-        do { identity = try SSHIdentityKeyStore.loadOrCreate(); identityFailure = nil }
-        catch { identityFailure = "SSH identity unavailable: \(error.localizedDescription)" }
+        do {
+            identity = try SSHIdentityKeyStore.loadOrCreate(createReplacement: createReplacement)
+            identityFailure = nil
+            identityNeedsReplacement = false
+            if createReplacement { failure = "New SSH key created. Replace the old entry in ~/.ssh/authorized_keys before connecting." }
+        } catch {
+            identity = nil
+            identityNeedsReplacement = (error as? SSHIdentityKeyStoreError) == .devicePasscodeChanged
+            identityFailure = error.localizedDescription
+        }
     }
 
     private func normalizedProfile() -> SSHTerminalProfile {
@@ -288,37 +304,32 @@ struct SSHTerminalSetupView: View {
                 try await Task.detached { try SSHTerminalProfileStore().save(value, password: suppliedPassword) }.value
                 guard !Task.isCancelled, runID == id else { return }
                 profile = value
-                let authentication: SSHPTYAuthentication
-                switch value.authentication {
-                case .password:
-                    if let suppliedPassword { authentication = .password(suppliedPassword) }
-                    else {
-                        let stored = try await Task.detached { try SSHTerminalProfileStore().password(for: value) }.value
-                        guard let stored else { throw SSHKeychainError.passwordRequired }
-                        authentication = .password(stored)
-                    }
-                case .deviceKey:
-                    // Load afresh so the signing authentication context belongs
-                    // to this connection, never a previous approval.
-                    authentication = .deviceKey(try SSHIdentityKeyStore.loadOrCreate())
-                }
-                guard !Task.isCancelled, runID == id else { return }
                 let savedKey = try SSHKnownHosts().savedKey(host: value.host, port: value.port)
                 let owner = try SSHTerminalChannel()
                 channel = owner
                 let tailnet = TailnetNodeController.shared
                 let useTailnet = value.host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")).hasSuffix(".ts.net") && tailnet.state == .running
-                let socket = try await (useTailnet
-                    ? tailnet.dialTCP(host: value.host, port: value.port, timeout: .seconds(15))
-                    : SSHDirectTCP.dial(host: value.host, port: value.port))
-                guard !Task.isCancelled, runID == id else { Darwin.close(socket); return }
                 let queue = SSHTerminalEventQueue()
                 let session: SSHPTYSession
                 do {
-                    session = try await SSHPTYSession.connect(configuration: .init(
-                        username: value.username, authentication: authentication,
-                        savedHostKey: savedKey, inboundFlow: queue.flow
-                    ), socket: socket) { queue.push($0) }
+                    session = try await SSHPTYSession.connect(
+                        username: value.username, savedHostKey: savedKey, inboundFlow: queue.flow,
+                        prepareAuthentication: {
+                            switch value.authentication {
+                            case .password:
+                                if let suppliedPassword { return .password(suppliedPassword) }
+                                let stored = try await Task.detached { try SSHTerminalProfileStore().password(for: value) }.value
+                                guard let stored else { throw SSHKeychainError.passwordRequired }
+                                return .password(stored)
+                            case .deviceKey:
+                                return .deviceKey(try await SSHIdentityKeyStore.authenticatedIdentity())
+                            }
+                        }, dial: {
+                            try await (useTailnet
+                                ? tailnet.dialTCP(host: value.host, port: value.port, timeout: .seconds(15))
+                                : SSHDirectTCP.dial(host: value.host, port: value.port))
+                        }, sink: { queue.push($0) }
+                    )
                 } catch { queue.finish(); throw error }
                 guard !Task.isCancelled, runID == id else { queue.finish(); await session.cancel(); return }
                 owner.opened(session)
@@ -329,6 +340,11 @@ struct SSHTerminalSetupView: View {
                 task = Task { await owner.consume(queue) }
             } catch {
                 guard runID == id, !Task.isCancelled else { return }
+                if (error as? SSHIdentityKeyStoreError) == .devicePasscodeChanged {
+                    identity = nil
+                    identityNeedsReplacement = true
+                    identityFailure = error.localizedDescription
+                }
                 hostFailure = error as? SSHPTYSessionError
                 switch hostFailure {
                 case .unknownHostKey, .hostKeyMismatch:

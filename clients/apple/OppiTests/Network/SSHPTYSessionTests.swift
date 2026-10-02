@@ -4,6 +4,7 @@ import Foundation
 import NIOCore
 import NIOPosix
 import NIOSSH
+import Security
 import Synchronization
 import Testing
 @testable import Oppi
@@ -276,6 +277,115 @@ struct SSHPTYSessionTests {
         await session.cancel()
     }
 
+    @Test func presenceEvaluationPrecedesDialAndSignInDeadline() async throws {
+        let context = ControlledPresenceContext()
+        let fixture = try await SSHFixture.start(auth: .passwordOnly)
+        defer { fixture.close() }
+        let dialed = Mutex(false)
+        let connecting = Task {
+            try await SSHPTYSession.connect(
+                username: "fixture", savedHostKey: SSHHostKey(openSSH: String(openSSHPublicKey: fixture.hostKey.publicKey)),
+                prepareAuthentication: {
+                    _ = try await SSHIdentityKeyStore.authenticatedIdentity(context: context)
+                    return .password("fixture-correct")
+                }, dial: {
+                    #expect(context.evaluated.withLock { $0 })
+                    dialed.withLock { $0 = true }
+                    return fixture.clientSocket
+                }, sink: { _ in }
+            )
+        }
+        await context.started.first(where: { _ in true })
+        #expect(!dialed.withLock { $0 })
+        #expect(fixture.authRequests == 0)
+        // Presence outlasts the actual 20 s network sign-in timeout. Once
+        // approved, a fresh deadline must still allow authentication to finish.
+        try await Task.sleep(for: .seconds(21))
+        #expect(!dialed.withLock { $0 })
+        context.approve()
+        let session = try await connecting.value
+        #expect(dialed.withLock { $0 })
+        #expect(fixture.authRequests == 1)
+        await session.cancel()
+    }
+
+    @Test func cancellationDuringPresenceInvalidatesContextAndNeverDialsEvenAfterApproval() async throws {
+        let context = ControlledPresenceContext()
+        let dialed = Mutex(false)
+        let connecting = Task {
+            try await SSHPTYSession.connect(
+                username: "fixture", savedHostKey: nil,
+                prepareAuthentication: { .deviceKey(try await SSHIdentityKeyStore.authenticatedIdentity(context: context)) },
+                dial: { dialed.withLock { $0 = true }; throw SSHPTYSessionError.connectionClosed },
+                sink: { _ in }
+            )
+        }
+        await context.started.first(where: { _ in true })
+        connecting.cancel()
+        context.approve() // adversarial late success from the system sheet
+        await #expect(throws: CancellationError.self) { _ = try await connecting.value }
+        #expect(context.invalidated.withLock { $0 })
+        #expect(!context.loaded.withLock { $0 })
+        #expect(!dialed.withLock { $0 })
+    }
+
+    @Test func missingEnclaveKeyRequiresExplicitReplacementButTransientErrorsPreserveSealedData() throws {
+        for status in [errSecItemNotFound, errSecInteractionNotAllowed, errSecUserCanceled, errSecAuthFailed, errSecDecode] {
+            let storage = MemorySSHIdentityStorage()
+            let sealed = Data([1, 2, 3])
+            try storage.save(sealed)
+            let expected: SSHIdentityKeyStoreError = status == errSecItemNotFound ? .devicePasscodeChanged : .keychain(status)
+            #expect(throws: expected) {
+                let _: Data = try SSHIdentityKeyStore.restore(sealed: sealed, storage: storage) { _ in
+                    throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+                }
+            }
+            if status == errSecItemNotFound {
+                #expect(throws: SSHIdentityKeyStoreError.devicePasscodeChanged) { _ = try storage.load() }
+                #expect(throws: SSHIdentityKeyStoreError.devicePasscodeChanged) { _ = try SSHIdentityKeyStore.loadOrCreate(storage: storage) }
+                let replacement = try SSHIdentityKeyStore.loadOrCreate(storage: storage, createReplacement: true)
+                #expect(replacement.publicKeyOpenSSH == (try SSHIdentityKeyStore.loadOrCreate(storage: storage)).publicKeyOpenSSH)
+            } else {
+                #expect(try storage.load() == sealed)
+            }
+            #expect(!expected.localizedDescription.contains("couldn’t be completed"))
+        }
+        #expect(SSHPTYSession.mapFailure(NSError(domain: NSOSStatusErrorDomain, code: Int(errSecInteractionNotAllowed)))
+            == .keyExchangeFailed(SSHIdentityKeyStoreError.authenticationExpired.localizedDescription))
+        #expect(SSHIdentityKeyStoreError.devicePasscodeChanged.localizedDescription == "Device passcode changed — create a new key")
+    }
+
+    @Test func realKeychainRemovesLegacySharedIdentityAndPersistsReplacementState() throws {
+        func query(_ account: String, legacy: Bool = false) -> [String: Any] {
+            var value: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: SharedConstants.keychainService,
+                kSecAttrAccount as String: account,
+            ]
+            if legacy { value[kSecAttrAccessGroup as String] = SharedConstants.keychainAccessGroup }
+            return value
+        }
+        let legacy = query("oppi.ssh.identity.v1", legacy: true)
+        let current = query("oppi.ssh.identity.presence.v2")
+        let marker = query("oppi.ssh.identity.replacement-required")
+        defer { for item in [legacy, current, marker] { SecItemDelete(item as CFDictionary) } }
+        var add = legacy
+        add[kSecValueData as String] = Data([7])
+        SecItemDelete(legacy as CFDictionary)
+        #expect(SecItemAdd(add as CFDictionary, nil) == errSecSuccess)
+        let storage = KeychainSSHIdentityStorage()
+        try storage.save(Data([2, 3]))
+        #expect(try storage.load() == Data([2, 3]))
+        #expect(SecItemCopyMatching(legacy as CFDictionary, nil) == errSecItemNotFound)
+        #expect(try storage.load() == Data([2, 3])) // legacy not-found is harmless
+        try storage.requireReplacement()
+        #expect(SecItemCopyMatching(current as CFDictionary, nil) == errSecItemNotFound)
+        #expect(throws: SSHIdentityKeyStoreError.devicePasscodeChanged) { _ = try KeychainSSHIdentityStorage().load() }
+        _ = try SSHIdentityKeyStore.loadOrCreate(storage: storage, createReplacement: true)
+        #expect(SecItemCopyMatching(marker as CFDictionary, nil) == errSecItemNotFound)
+        #expect(try storage.load() != nil)
+    }
+
     @Test func simulatorIdentityIsPersistentExportableAndExplicitlySoftwareBacked() throws {
         let storage = MemorySSHIdentityStorage()
         let first = try SSHIdentityKeyStore.loadOrCreate(storage: storage)
@@ -319,9 +429,53 @@ private func backpressurePattern(at offset: Int) -> UInt8 {
 
 private final class MemorySSHIdentityStorage: SSHIdentitySealedStorage, @unchecked Sendable {
     private let sealed = Mutex<Data?>(nil)
+    private let replacement = Mutex(false)
 
-    func load() throws -> Data? { sealed.withLock { $0 } }
-    func save(_ data: Data) throws { sealed.withLock { $0 = data } }
+    func load() throws -> Data? {
+        if replacement.withLock({ $0 }) { throw SSHIdentityKeyStoreError.devicePasscodeChanged }
+        return sealed.withLock { $0 }
+    }
+    func save(_ data: Data) throws {
+        sealed.withLock { $0 = data }
+        replacement.withLock { $0 = false }
+    }
+    func requireReplacement() throws {
+        replacement.withLock { $0 = true }
+        sealed.withLock { $0 = nil }
+    }
+}
+
+private final class ControlledPresenceContext: SSHKeyPresenceContext, Sendable {
+    let evaluated = Mutex(false)
+    let invalidated = Mutex(false)
+    let loaded = Mutex(false)
+    let started: AsyncStream<Void>
+    private let start: AsyncStream<Void>.Continuation
+    private let approval: AsyncStream<Void>
+    private let completion: AsyncStream<Void>.Continuation
+
+    init() {
+        (started, start) = AsyncStream.makeStream()
+        (approval, completion) = AsyncStream.makeStream()
+    }
+    func evaluate() async throws {
+        start.yield(())
+        // Intentionally ignore cancellation, as a late system success can race
+        // invalidate(). The production owner must check cancellation itself.
+        await withCheckedContinuation { continuation in
+            Task.detached {
+                await self.approval.first(where: { _ in true })
+                self.evaluated.withLock { $0 = true }
+                continuation.resume()
+            }
+        }
+    }
+    func identity() throws -> SSHIdentity {
+        loaded.withLock { $0 = true }
+        return SSHIdentity(privateKey: NIOSSHPrivateKey(p256Key: P256.Signing.PrivateKey()), isHardwareBacked: false)
+    }
+    func invalidate() { invalidated.withLock { $0 = true } }
+    func approve() { completion.yield(()) }
 }
 
 private final class EventCollector: @unchecked Sendable {

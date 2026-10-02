@@ -1,7 +1,9 @@
+import Darwin
 import Foundation
 import NIOCore
 import NIOPosix
 import NIOSSH
+import Security
 import Synchronization
 
 enum SSHPTYEvent: Sendable, Equatable {
@@ -175,6 +177,27 @@ final class SSHPTYSession: @unchecked Sendable {
         }
         parent.closeFuture.whenComplete { _ in keepalive.cancel() }
         channels = Mutex(Channels(parent: parent, terminal: terminal, keepalive: keepalive))
+    }
+
+    /// Owns the pre-dial authentication boundary. No sign-in deadline or socket
+    /// exists while device presence is pending, and cancellation cannot dial.
+    static func connect(
+        username: String,
+        savedHostKey: SSHHostKey?,
+        inboundFlow: SSHPTYInboundFlow? = nil,
+        prepareAuthentication: @Sendable () async throws -> SSHPTYAuthentication,
+        dial: @Sendable () async throws -> Int32,
+        sink: @escaping SSHPTYByteSink
+    ) async throws -> SSHPTYSession {
+        try Task.checkCancellation()
+        let authentication = try await prepareAuthentication()
+        try Task.checkCancellation()
+        let socket = try await dial()
+        if Task.isCancelled { Darwin.close(socket); throw CancellationError() }
+        return try await connect(configuration: .init(
+            username: username, authentication: authentication,
+            savedHostKey: savedHostKey, inboundFlow: inboundFlow
+        ), socket: socket, sink: sink)
     }
 
     /// Takes ownership of an already-connected direct socket. The socket is
@@ -381,6 +404,9 @@ final class SSHPTYSession: @unchecked Sendable {
 
     static func mapFailure(_ error: any Error) -> SSHPTYSessionError {
         if let failure = error as? SSHPTYSessionError { return failure }
+        if SSHIdentityKeyStoreError.securityStatus(error) == errSecInteractionNotAllowed {
+            return .keyExchangeFailed(SSHIdentityKeyStoreError.authenticationExpired.localizedDescription)
+        }
         if let preflight = error as? SSHPreflightFailure {
             switch preflight {
             case .passwordNotAllowed: return .passwordNotAllowed
