@@ -190,4 +190,8 @@ export class SessionRuntimes implements AgentRuntimeTransport {
 
   getPendingUIRequestMessages: AgentRuntimeTransport["getPendingUIRequestMessages"] = (sessionId) =>
     this.runtimeFor(sessionId).getPendingUIRequestMessages(sessionId);
+
+  getTerminalStreamAttachMarkers: NonNullable<
+    AgentRuntimeTransport["getTerminalStreamAttachMarkers"]
+  > = (sessionId) => this.runtimeFor(sessionId).getTerminalStreamAttachMarkers?.(sessionId) ?? [];
 }

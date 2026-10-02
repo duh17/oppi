@@ -770,6 +770,72 @@ describe("BoundSessionStreamMux", () => {
     expect(getCatchUp).toHaveBeenCalledWith(session.id, 10);
   });
 
+  it("sends terminal stream attach markers after catch-up replay and queued live events", async () => {
+    const session = makeSession("sess-marker", "w1");
+    const { ctx, broadcastTo } = createMockContext([session]);
+    const marker = (epoch: number, offset: number): ServerMessage => ({
+      type: "tool_output",
+      output: "",
+      toolCallId: "tc-run",
+      outputStream: { epoch, offset, bytes: 0 },
+    });
+    // The marker is read at send time, after queued live chunks advanced the cursor.
+    let cursor = 0;
+    (
+      ctx.sessionRuntimes as unknown as { getTerminalStreamAttachMarkers: () => ServerMessage[] }
+    ).getTerminalStreamAttachMarkers = () => [marker(1, cursor)];
+    (ctx.sessions as unknown as { getCatchUp: () => SessionCatchUpResponse }).getCatchUp = () => {
+      cursor = 5;
+      broadcastTo(session.id, {
+        type: "tool_output",
+        output: "world",
+        toolCallId: "tc-run",
+        outputStream: { epoch: 1, offset: 0, bytes: 5 },
+      });
+      return {
+        events: [{ type: "tool_start", tool: "bash", args: {}, toolCallId: "tc-run", seq: 1 }],
+        currentSeq: 1,
+        session,
+        catchUpComplete: true,
+      } as SessionCatchUpResponse;
+    };
+
+    const ws = new FakeWebSocket();
+    await new BoundSessionStreamMux(ctx).handleWebSocket(
+      "w1",
+      session.id,
+      ws as unknown as WebSocket,
+    );
+
+    const order = ws.sent.map((m) =>
+      m.type === "tool_output"
+        ? `tool_output:${(m as { outputStream: { offset: number; bytes: number } }).outputStream.offset}+${(m as { outputStream: { bytes: number } }).outputStream.bytes}`
+        : m.type,
+    );
+    const connected = order.indexOf("connected");
+    expect(order.slice(connected, connected + 1 + 1 + 2)).toEqual([
+      "connected",
+      "tool_start",
+      "tool_output:0+5",
+      "tool_output:5+0",
+    ]);
+  });
+
+  it("sends no attach marker when no terminal stream is running", async () => {
+    const session = makeSession("sess-no-marker", "w1");
+    const { ctx } = createMockContext([session]);
+    (
+      ctx.sessionRuntimes as unknown as { getTerminalStreamAttachMarkers: () => ServerMessage[] }
+    ).getTerminalStreamAttachMarkers = () => [];
+    const ws = new FakeWebSocket();
+    await new BoundSessionStreamMux(ctx).handleWebSocket(
+      "w1",
+      session.id,
+      ws as unknown as WebSocket,
+    );
+    expect(ws.sentOfType("tool_output", session.id)).toEqual([]);
+  });
+
   it("uses the started runtime head and delivers post-subscribe events once", async () => {
     const session = makeSession("sess-bootstrap-started", "w1");
     const { ctx, broadcastTo } = createMockContext([session]);

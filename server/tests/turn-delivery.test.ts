@@ -64,7 +64,6 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
     toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map(),
-    shellPreviewLastSent: new Map(),
     streamingToolUpdatesSeen: new Map(),
     turnCache: new TurnDedupeCache(),
     pendingTurnStarts: [],

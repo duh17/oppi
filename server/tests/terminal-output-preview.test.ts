@@ -19,7 +19,7 @@ afterEach(() => {
 // Above Oppi's 8 KB threshold but below Pi's 50 KB / 2000-line limits.
 const full = Array.from({ length: 300 }, (_, i) => `row-${i} ${"x".repeat(61)} 🙂\n`).join("");
 
-describe("terminal preview source handoff", () => {
+describe("terminal stream sidecar handoff", () => {
   it("never exposes a Pi-truncated live snapshot as full output", () => {
     const registry = new MobileRendererRegistry();
     const ctx: TranslationContext = {
@@ -28,7 +28,6 @@ describe("terminal preview source handoff", () => {
       streamedAssistantText: "",
       mobileRenderers: registry,
       toolNames: new Map(),
-      shellPreviewLastSent: new Map(),
       streamingToolUpdatesSeen: new Map(),
     };
     translatePiEvent(
@@ -67,7 +66,7 @@ describe("terminal preview source handoff", () => {
     expect(ctx.toolOutputSnapshots.fullOutput("tc")).toBeNull();
   });
   it.each(["bash", "run_thing"])(
-    "keeps %s full output reachable during preview, completion and trace reload",
+    "serves %s's streamed bytes from the sidecar during the run, completion and trace reload",
     async (toolName) => {
       const root = mkdtempSync(join(tmpdir(), "oppi-preview-source-"));
       roots.push(root);
@@ -89,7 +88,6 @@ describe("terminal preview source handoff", () => {
         mobileRenderers: registry,
         toolNames: new Map(),
         toolArgs: new Map(),
-        shellPreviewLastSent: new Map(),
         streamingToolUpdatesSeen: new Map(),
       };
       const session = {
@@ -175,17 +173,25 @@ describe("terminal preview source handoff", () => {
         expect(splitCodepoint.status).toBe(206);
         expect(await splitCodepoint.text()).not.toContain("\uFFFD");
         expect(await (await fetch(url)).json()).toEqual({ toolCallId: "tc", output: full });
-        const preview = update.find((message) => message.type === "tool_output");
-        expect(preview).toMatchObject({
-          mode: "replace",
-          truncated: true,
-          outputAvailability: {
-            complete: false,
-            totalBytes: Buffer.byteLength(full),
-            source: "sidecar",
-          },
-        });
-        expect(preview?.output).not.toBe(full);
+        // The sidecar and the live stream share one byte space: what Range returns is
+        // exactly what the stream sent, at the offsets it sent it.
+        const chunks = update.filter((message) => message.type === "tool_output");
+        expect(chunks.length).toBeGreaterThan(0);
+        let cursor = 0;
+        for (const chunk of chunks) {
+          expect(chunk.outputStream).toMatchObject({ epoch: 1, offset: cursor });
+          expect(chunk).not.toHaveProperty("mode");
+          cursor += chunk.outputStream?.bytes ?? 0;
+        }
+        expect(cursor).toBe(Buffer.byteLength(full));
+        expect(chunks.map((chunk) => chunk.output).join("")).toBe(full);
+        const tail = Buffer.byteLength(full) - 1000;
+        const tailRange = await fetch(url, { headers: { Range: `bytes=${tail}-${tail + 99}` } });
+        expect(Buffer.from(await tailRange.arrayBuffer()).toString("utf8")).toBe(
+          Buffer.from(full, "utf8")
+            .subarray(tail, tail + 100)
+            .toString("utf8"),
+        );
 
         const end = emit({
           type: "tool_execution_end",
@@ -193,11 +199,10 @@ describe("terminal preview source handoff", () => {
           toolCallId: "tc",
           result: { content: [{ type: "text", text: full }], details: {} },
         });
-        expect(end.find((message) => message.type === "tool_output")).toMatchObject({
-          output: full,
-          mode: "replace",
-          truncated: false,
-          outputAvailability: { complete: true },
+        // Nothing is resent at the end: the log already holds the whole result.
+        expect(end.filter((message) => message.type === "tool_output")).toEqual([]);
+        expect(end.find((message) => message.type === "tool_end")).toMatchObject({
+          outputStream: { epoch: 1, totalBytes: Buffer.byteLength(full) },
         });
         const endFact = end.find((message) => message.type === "tool_end")?.outputAvailability;
         expect(endFact).toEqual({ complete: true });

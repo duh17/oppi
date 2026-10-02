@@ -338,7 +338,7 @@ describe("GET /server/info", () => {
     expect(body.update?.status).toBe("idle");
     expect(body.update).toHaveProperty("latestVersion");
     expect(body.update?.manualCommand).toMatch(/npm install -g oppi-server/);
-    expect(body.capabilities?.sessionStream?.version).toBe(1);
+    expect(body.capabilities?.sessionStream?.version).toBe(2);
     expect(body.capabilities?.appEventStream?.version).toBe(1);
     expect(body.capabilities?.workspaceFileEditing).toEqual({
       version: 1,

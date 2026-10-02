@@ -332,7 +332,6 @@ function makeManagerHarness(status: Session["status"] = "busy", stopTimers?: Ses
     toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map(),
-    shellPreviewLastSent: new Map(),
     streamingToolUpdatesSeen: new Map(),
     turnCache: new TurnDedupeCache(),
     pendingTurnStarts: [],

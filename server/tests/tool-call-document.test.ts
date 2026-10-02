@@ -29,7 +29,6 @@ function context(): TranslationContext {
     toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map(),
-    shellPreviewLastSent: new Map(),
     streamingToolUpdatesSeen: new Map(),
     mobileRenderers: new MobileRendererRegistry(),
   };

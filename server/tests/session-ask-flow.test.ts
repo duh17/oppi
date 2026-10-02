@@ -48,7 +48,6 @@ function createHarness(): {
     toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map<string, string>(),
-    shellPreviewLastSent: new Map<string, number>(),
     streamingToolUpdatesSeen: new Map<string, string>(),
     sdkBackend,
   } as unknown as EventProcessorSessionState & {

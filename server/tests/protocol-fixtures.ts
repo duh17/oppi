@@ -335,15 +335,19 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     isError: false,
     toolCallId: "tc-001",
   },
-  tool_output_preview: {
+  // Terminal-kind chunk: raw VT bytes (17 here: 5 + 2 + 4 + 1 + 3 + 2) at a raw-byte offset.
+  tool_output_stream: {
     type: "tool_output",
-    output: "/path/to/file-180\n/path/to/file-181\n/path/to/file-182",
-    isError: false,
-    toolCallId: "tc-preview-001",
-    outputAvailability: { complete: false, totalBytes: 32768, source: "sidecar" },
-    mode: "replace",
-    truncated: true,
-    totalBytes: 32768,
+    output: "\u001b[32mok\u001b[0m \u2713\r\n",
+    toolCallId: "tc-001",
+    outputStream: { epoch: 1, offset: 4096, bytes: 17 },
+  },
+  // Attach ready marker: the next chunk of this epoch starts at `offset`.
+  tool_output_stream_marker: {
+    type: "tool_output",
+    output: "",
+    toolCallId: "tc-001",
+    outputStream: { epoch: 1, offset: 4113, bytes: 0 },
   },
   tool_end: {
     type: "tool_end",
@@ -351,6 +355,14 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     toolCallId: "tc-001",
     outputPresentation: { kind: "terminal" },
     outputAvailability: { complete: false, totalBytes: 32768, source: "sidecar" },
+  },
+  tool_end_stream: {
+    type: "tool_end",
+    tool: "bash",
+    toolCallId: "tc-001",
+    outputPresentation: { kind: "terminal" },
+    outputAvailability: { complete: false, totalBytes: 32768, source: "sidecar" },
+    outputStream: { epoch: 1, totalBytes: 32768 },
   },
   tool_end_file_diff: {
     type: "tool_end",
@@ -711,8 +723,10 @@ const SERVER_MESSAGE_ORDER = [
   "tool_update",
   "tool_update_with_display",
   "tool_output",
-  "tool_output_preview",
+  "tool_output_stream",
+  "tool_output_stream_marker",
   "tool_end",
+  "tool_end_stream",
   "tool_end_with_details",
   "tool_end_file_diff",
   "tool_end_setting",

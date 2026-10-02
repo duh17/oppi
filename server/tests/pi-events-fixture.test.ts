@@ -60,7 +60,6 @@ function makeCtx(): TranslationContext {
     toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map(),
-    shellPreviewLastSent: new Map(),
     streamingToolUpdatesSeen: new Map(),
   };
 }

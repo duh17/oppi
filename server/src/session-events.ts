@@ -151,12 +151,10 @@ export interface EventProcessorSessionState extends ExtensionUIState {
   streamedAssistantText: string;
   currentThinkingContentIndex?: number;
   pendingStop?: PendingStop;
-  /** Tool names per toolCallId — tracked for shell preview decisions. */
+  /** Tool names per toolCallId — tracked for terminal-kind routing. */
   toolNames: Map<string, string>;
   /** Tool call arguments per toolCallId, retained until the final tool result. */
   toolArgs?: Map<string, Record<string, unknown>>;
-  /** Last time a shell preview snapshot was sent per toolCallId (ms). */
-  shellPreviewLastSent: Map<string, number>;
   /** Last serialized streaming tool args emitted per toolCallId this turn. */
   streamingToolUpdatesSeen: Map<string, string>;
   /** Timestamp (ms) when the current turn started (agent_start). */
@@ -212,7 +210,6 @@ export class SessionEventProcessor {
       mobileRenderers: this.deps.mobileRenderers,
       toolNames: active.toolNames,
       toolArgs: active.toolArgs,
-      shellPreviewLastSent: active.shellPreviewLastSent,
       streamingToolUpdatesSeen: active.streamingToolUpdatesSeen,
     };
   }

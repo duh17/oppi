@@ -38,7 +38,6 @@ function context(mobileRenderers: MobileRendererRegistry): TranslationContext {
     toolNames: new Map(),
     toolArgs: new Map(),
     streamingToolUpdatesSeen: new Map(),
-    shellPreviewLastSent: new Map(),
     streamedAssistantText: "",
   };
 }
@@ -80,18 +79,31 @@ describe("terminal inspection facts", () => {
           toolName,
           partialResult: { content: [{ type: "text", text }] },
         });
-      expect(update("hello")).toEqual([{ type: "tool_output", output: "hello", toolCallId: "tc" }]);
-      expect(update("hello\nworld")).toEqual([
-        { type: "tool_output", output: "\nworld", toolCallId: "tc" },
+      expect(update("hello")).toEqual([
+        {
+          type: "tool_output",
+          output: "hello",
+          toolCallId: "tc",
+          outputStream: { epoch: 1, offset: 0, bytes: 5 },
+        },
       ]);
+      expect(update("hello\nworld")).toEqual([
+        {
+          type: "tool_output",
+          output: "\nworld",
+          toolCallId: "tc",
+          outputStream: { epoch: 1, offset: 5, bytes: 6 },
+        },
+      ]);
+      // A non-prefix view restarts the byte log explicitly instead of replacing a tail.
       const large = "x".repeat(9000);
       expect(update(large)).toEqual([
-        expect.objectContaining({
+        {
           type: "tool_output",
-          mode: "replace",
-          truncated: true,
-          totalBytes: 9000,
-        }),
+          output: large,
+          toolCallId: "tc",
+          outputStream: { epoch: 2, offset: 0, bytes: 9000 },
+        },
       ]);
       const end = project({
         type: "tool_execution_end",
@@ -104,6 +116,7 @@ describe("terminal inspection facts", () => {
         type: "tool_end",
         outputPresentation,
         outputAvailability: availability,
+        outputStream: { epoch: 2, totalBytes: 9000 },
       });
       expect(JSON.stringify(end.at(-1))).not.toContain("/private/");
       expect(end.at(-1)?.details).not.toHaveProperty("fullOutputPath");

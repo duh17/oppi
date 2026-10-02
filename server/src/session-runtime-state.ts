@@ -22,7 +22,6 @@ export interface RuntimeSessionStateScaffold<
   pendingStop?: PendingStop;
   toolNames: Map<string, string>;
   toolArgs: Map<string, Record<string, unknown>>;
-  shellPreviewLastSent: Map<string, number>;
   streamingToolUpdatesSeen: Map<string, string>;
   toolFullOutputPaths: Map<string, string>;
   messageQueue: TQueue;
@@ -60,7 +59,6 @@ export function createRuntimeSessionStateScaffold<
     streamedAssistantText: "",
     toolNames: new Map(),
     toolArgs: new Map(),
-    shellPreviewLastSent: new Map(),
     streamingToolUpdatesSeen: new Map(),
     toolFullOutputPaths: new Map(),
     messageQueue,

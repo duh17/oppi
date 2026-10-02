@@ -56,7 +56,6 @@ function makeActiveSession(): SessionAgentEventState {
     toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map(),
-    shellPreviewLastSent: new Map(),
     streamingToolUpdatesSeen: new Map(),
     turnCache: new TurnDedupeCache(),
     pendingTurnStarts: [],
@@ -384,7 +383,7 @@ describe("managed and mirror runtime event parity", () => {
     ] as AgentSessionEvent[]);
   });
 
-  it("previews terminal output and publishes terminal facts in both runtimes", () => {
+  it("streams terminal output bytes and publishes terminal facts in both runtimes", () => {
     const output = "terminal output line\n".repeat(600);
     const { managed, mirror } = expectRuntimeParity([
       {
@@ -418,18 +417,19 @@ describe("managed and mirror runtime event parity", () => {
         outputPresentation: { kind: "terminal" },
       });
       const outputs = harness.received.filter((message) => message.type === "tool_output");
-      expect(outputs).toHaveLength(2);
-      for (const preview of outputs) {
-        expect(preview).toMatchObject({
-          mode: "replace",
-          truncated: true,
-          outputAvailability: { complete: false, source: "sidecar" },
-        });
-        expect(preview.output).not.toBe(output);
-      }
+      // The Pi file is unreadable here, so the stream carries only the text it saw.
+      expect(outputs).toEqual([
+        {
+          type: "tool_output",
+          toolCallId: "terminal-1",
+          output,
+          outputStream: { epoch: 1, offset: 0, bytes: Buffer.byteLength(output) },
+        },
+      ]);
       expect(harness.received.find((message) => message.type === "tool_end")).toMatchObject({
         outputPresentation: { kind: "terminal" },
         outputAvailability: { complete: false, totalBytes: 100_000, source: "sidecar" },
+        outputStream: { epoch: 1, totalBytes: Buffer.byteLength(output) },
       });
     }
   });

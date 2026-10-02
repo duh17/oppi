@@ -26,7 +26,6 @@ function makeActiveSession(session: Session): EventProcessorSessionState {
     toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map<string, string>(),
-    shellPreviewLastSent: new Map<string, number>(),
     streamingToolUpdatesSeen: new Map<string, string>(),
   };
 }

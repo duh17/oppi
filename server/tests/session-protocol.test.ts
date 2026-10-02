@@ -24,7 +24,6 @@ function makeCtx(overrides?: Partial<TranslationContext>): TranslationContext {
     toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     toolNames: new Map(),
-    shellPreviewLastSent: new Map(),
     streamingToolUpdatesSeen: new Map(),
     ...overrides,
   };
@@ -1454,88 +1453,7 @@ describe("translatePiEvent", () => {
     });
   });
 
-  describe("tool_execution_update: shell preview mode", () => {
-    beforeEach(() => {
-      vi.useFakeTimers();
-    });
-
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
-    it("switches to replace mode when bash output exceeds 8KB", () => {
-      const ctx = makeCtx({ mobileRenderers: new MobileRendererRegistry() });
-      ctx.toolNames.set("tc-1", "bash");
-
-      // Create output > 8KB
-      const bigOutput = "x".repeat(9000);
-      const result = translatePiEvent(
-        {
-          type: "tool_execution_update",
-          toolCallId: "tc-1",
-          toolName: "bash",
-          args: {},
-          partialResult: { content: [{ type: "text", text: bigOutput }] },
-        } as AgentSessionEvent,
-        ctx,
-      );
-
-      expect(result).toHaveLength(1);
-      const msg = result[0] as Extract<ServerMessage, { type: "tool_output" }>;
-      expect(msg.mode).toBe("replace");
-      expect(msg.truncated).toBe(true);
-      expect(msg.totalBytes).toBe(9000);
-    });
-
-    it("throttles shell preview updates to 150ms intervals", () => {
-      const ctx = makeCtx({ mobileRenderers: new MobileRendererRegistry() });
-      ctx.toolNames.set("tc-1", "bash");
-
-      const bigOutput = "x".repeat(9000);
-      vi.setSystemTime(1000);
-
-      // First update at t=1000 — should emit
-      const result1 = translatePiEvent(
-        {
-          type: "tool_execution_update",
-          toolCallId: "tc-1",
-          toolName: "bash",
-          args: {},
-          partialResult: { content: [{ type: "text", text: bigOutput }] },
-        } as AgentSessionEvent,
-        ctx,
-      );
-      expect(result1).toHaveLength(1);
-
-      // Second update at t=1050 (< 150ms) — should be throttled
-      vi.setSystemTime(1050);
-      const result2 = translatePiEvent(
-        {
-          type: "tool_execution_update",
-          toolCallId: "tc-1",
-          toolName: "bash",
-          args: {},
-          partialResult: { content: [{ type: "text", text: bigOutput + "more" }] },
-        } as AgentSessionEvent,
-        ctx,
-      );
-      expect(result2).toEqual([]);
-
-      // Third update at t=1200 (>= 150ms from last sent) — should emit
-      vi.setSystemTime(1200);
-      const result3 = translatePiEvent(
-        {
-          type: "tool_execution_update",
-          toolCallId: "tc-1",
-          toolName: "bash",
-          args: {},
-          partialResult: { content: [{ type: "text", text: bigOutput + "even more" }] },
-        } as AgentSessionEvent,
-        ctx,
-      );
-      expect(result3).toHaveLength(1);
-    });
-
+  describe("tool_execution_update: terminal routing", () => {
     it("does not switch to replace for non-bash tools even with large output", () => {
       const ctx = makeCtx();
       ctx.toolNames.set("tc-1", "read");
@@ -1797,11 +1715,11 @@ describe("translatePiEvent", () => {
       expect(toolOutput.output).toBe("\x1b[32mSuccess\x1b[0m: done");
     });
 
-    it("strips TUI chrome but preserves SGR colors from streaming output", () => {
+    it("keeps terminal-kind VT bytes raw but strips TUI chrome for other tools", () => {
       const ctx = makeCtx();
       ctx.toolNames.set("tc-1", "bash");
 
-      // Simulates capturing pi TUI output — DEC modes and OSC stripped, SGR preserved
+      // Simulates capturing pi TUI output; non-terminal tools get DEC modes and OSC stripped
       const tuiOutput =
         "\x1b[?2004h\x1b[?25l\x1b[0m\x1b]8;;\x1b\\" +
         "\x1b[38;5;59m─\x1b[39m\x1b[38;5;59m─\x1b[39m\n" +
@@ -1820,8 +1738,25 @@ describe("translatePiEvent", () => {
       );
 
       expect(result).toHaveLength(1);
+      // Terminal kind: raw VT bytes; the client engine owns interpretation.
+      expect(result[0]).toMatchObject({
+        output: tuiOutput,
+        outputStream: { epoch: 1, offset: 0, bytes: Buffer.byteLength(tuiOutput) },
+      });
+
+      ctx.toolNames.set("tc-2", "read");
+      const other = translatePiEvent(
+        {
+          type: "tool_execution_update",
+          toolCallId: "tc-2",
+          toolName: "read",
+          args: {},
+          partialResult: { content: [{ type: "text", text: tuiOutput }] },
+        } as AgentSessionEvent,
+        ctx,
+      );
       // DEC modes + OSC stripped, SGR preserved
-      expect((result[0] as Extract<ServerMessage, { type: "tool_output" }>).output).toBe(
+      expect((other[0] as Extract<ServerMessage, { type: "tool_output" }>).output).toBe(
         "\x1b[0m\x1b[38;5;59m─\x1b[39m\x1b[38;5;59m─\x1b[39m\n" +
           "\x1b[38;5;167mError: 404\x1b[39m\n",
       );
@@ -1915,7 +1850,6 @@ describe("translatePiEvent", () => {
       const ctx = makeCtx();
       ctx.toolOutputSnapshots.update("tc-1", "data");
       ctx.toolNames.set("tc-1", "bash");
-      ctx.shellPreviewLastSent.set("tc-1", 1000);
 
       translatePiEvent(
         {
@@ -1930,7 +1864,6 @@ describe("translatePiEvent", () => {
 
       expect(ctx.toolOutputSnapshots.previous("tc-1")).toBe("completed output");
       expect(ctx.toolNames.has("tc-1")).toBe(false);
-      expect(ctx.shellPreviewLastSent.has("tc-1")).toBe(false);
 
       translatePiEvent({ type: "turn_end" } as AgentSessionEvent, ctx);
       expect(ctx.toolOutputSnapshots.size).toBe(0);
@@ -2542,8 +2475,22 @@ describe("translatePiEvent", () => {
         } as AgentSessionEvent,
         ctx,
       );
-      expect(update1).toEqual([{ type: "tool_output", output: "hel", toolCallId: "tc-1" }]);
-      expect(update2).toEqual([{ type: "tool_output", output: "lo", toolCallId: "tc-1" }]);
+      expect(update1).toEqual([
+        {
+          type: "tool_output",
+          output: "hel",
+          toolCallId: "tc-1",
+          outputStream: { epoch: 1, offset: 0, bytes: 3 },
+        },
+      ]);
+      expect(update2).toEqual([
+        {
+          type: "tool_output",
+          output: "lo",
+          toolCallId: "tc-1",
+          outputStream: { epoch: 1, offset: 3, bytes: 2 },
+        },
+      ]);
 
       // tool_execution_end
       const end = translatePiEvent(
@@ -2559,11 +2506,17 @@ describe("translatePiEvent", () => {
 
       const outputs = end.filter((m) => m.type === "tool_output");
       expect(outputs).toHaveLength(1);
-      expect(outputs[0]).toMatchObject({ type: "tool_output", output: "\n", toolCallId: "tc-1" });
+      expect(outputs[0]).toMatchObject({
+        type: "tool_output",
+        output: "\n",
+        toolCallId: "tc-1",
+        outputStream: { epoch: 1, offset: 5, bytes: 1 },
+      });
       expect(end.find((m) => m.type === "tool_end")).toMatchObject({
         type: "tool_end",
         tool: "bash",
         toolCallId: "tc-1",
+        outputStream: { epoch: 1, totalBytes: 6 },
       });
       expect(
         [...update1, ...update2, ...outputs]
@@ -2574,9 +2527,12 @@ describe("translatePiEvent", () => {
           .join(""),
       ).toBe("hello\n");
 
-      // Context should be clean
-      expect(ctx.toolOutputSnapshots.size).toBe(0);
+      // The terminal log stays servable until turn_end; call maps are clean.
+      expect(ctx.toolOutputSnapshots.fullOutput("tc-1")).toBe("hello\n");
+      expect(ctx.toolOutputSnapshots.terminal.size).toBe(0);
       expect(ctx.toolNames.size).toBe(0);
+      translatePiEvent({ type: "turn_end" } as AgentSessionEvent, ctx);
+      expect(ctx.toolOutputSnapshots.size).toBe(0);
     });
 
     it("handles concurrent tool calls with separate toolOutputSnapshots tracking", () => {
