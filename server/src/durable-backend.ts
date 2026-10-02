@@ -44,6 +44,7 @@ import {
 import { isThinkingLevel, THINKING_LEVELS, type ThinkingLevel } from "./thinking-levels.js";
 import type { Session, Workspace } from "./types.js";
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
+import { DurableBackgroundJobs } from "../extensions/durable/background-jobs/durable.js";
 import {
   DurableWorkingWords,
   ensureWorkingWords,
@@ -142,13 +143,13 @@ export class DurableBackend implements AgentBackend {
       // Bound conversations store exact extension/tool names. Enroll the native
       // UI ports on attachment too, without overriding their launch tool policy.
       await conversation.configure(
-        { extensions: { add: [DurableAsk, DurableWorkingWords] } },
+        { extensions: { add: [DurableAsk, DurableWorkingWords, DurableBackgroundJobs] } },
         BACKGROUND_CONTEXT,
       );
       const agent = await conversation.agent(BACKGROUND_CONTEXT);
       const policy = session.launch?.tools;
       const selected = new Set(agent.tools.map((tool) => tool.name));
-      const additions = [DurableAsk, DurableWorkingWords]
+      const additions = [DurableAsk, DurableWorkingWords, DurableBackgroundJobs]
         .flatMap((extension) => extension.tools ?? [])
         .filter(
           (tool) =>
@@ -197,6 +198,7 @@ export class DurableBackend implements AgentBackend {
         ...(CodingTools.tools ?? []),
         ...(DurableAsk.tools ?? []),
         ...(sandbox ? (DurableSandboxTools.tools ?? []) : []),
+        ...(DurableBackgroundJobs.tools ?? []),
       ].filter(
         (tool) =>
           !policy?.noTools &&
@@ -220,8 +222,14 @@ export class DurableBackend implements AgentBackend {
           },
           agent: {
             extensions: sandbox
-              ? [CodingTools, DurableSandboxTools, DurableAsk, DurableWorkingWords]
-              : [CodingTools, DurableAsk, DurableWorkingWords],
+              ? [
+                  CodingTools,
+                  DurableSandboxTools,
+                  DurableAsk,
+                  DurableWorkingWords,
+                  DurableBackgroundJobs,
+                ]
+              : [CodingTools, DurableAsk, DurableWorkingWords, DurableBackgroundJobs],
             model: { provider: model.provider, modelId: model.id },
             thinkingLevel:
               session.thinkingLevel !== undefined && isThinkingLevel(session.thinkingLevel)

@@ -15,6 +15,11 @@ import { join } from "node:path";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { DurableSandboxTools } from "./durable-sandbox-tools.js";
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
+import {
+  DurableBackgroundJobs,
+  DurableJobs,
+} from "../extensions/durable/background-jobs/durable.js";
+import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 
@@ -44,9 +49,15 @@ export class DurableHarness {
   }
 
   bindSandboxEnv(id: ConversationId, env: ExecutionEnv): void {
-    this.sandboxEnvs.set(id, env);
+    // A stopped projection can reattach while conversation-owned jobs still run.
+    if (!this.sandboxEnvs.has(id)) this.sandboxEnvs.set(id, env);
   }
-  async unbindSandboxEnv(id: ConversationId): Promise<void> {
+  async unbindSandboxEnv(id: ConversationId, force = false): Promise<void> {
+    if (!force && this.opening) {
+      const { harness } = await this.opening;
+      const jobs = await harness.snapshot(DurableJobs, id, BACKGROUND_CONTEXT);
+      if (jobs?.jobs.some((job) => !job.delivered)) return;
+    }
     const env = this.sandboxEnvs.get(id);
     await env?.cleanup(BACKGROUND_CONTEXT);
     this.sandboxEnvs.delete(id);
@@ -74,12 +85,26 @@ export class DurableHarness {
       await (await harness.conversation(id, BACKGROUND_CONTEXT))?.abort(BACKGROUND_CONTEXT);
     }
     const { harness } = await this.open();
+    // Bash runs under a background-capable task before promotion, but Stop
+    // still owns that foreground execution. Join its abort protocol so guest
+    // kill confirmation cannot race the live-doc observer's cancellation.
+    if (!this.resumeHeld) {
+      const jobs = await harness.snapshot(DurableJobs, id, BACKGROUND_CONTEXT);
+      const foreground =
+        jobs?.jobs.filter((job) => job.decision === "waiting" && !job.delivered) ?? [];
+      for (const job of foreground) await harness.abortTask(job.taskId, BACKGROUND_CONTEXT);
+      await Promise.all(
+        foreground.map((job) => harness.waitForTask(job.taskId, BACKGROUND_CONTEXT)),
+      );
+    }
     const conversation = await harness.conversation(id, BACKGROUND_CONTEXT);
     await conversation?.commit(async (tx) => {
       (await tx.doc(DurableUI, id)).requests = {};
     }, BACKGROUND_CONTEXT);
-    // Task cancellation alone is not guest Stop confirmation.
-    await this.sandboxEnvs.get(id)?.cleanup(BACKGROUND_CONTEXT);
+    // Confirm the guest kill boundary independently, without cleanup() killing
+    // conversation-owned background executions that ordinary Stop excludes.
+    const env = this.sandboxEnvs.get(id);
+    if (env instanceof GondolinExecutionEnv) await env.confirmCancelledCalls();
   }
 
   holdResume(): void {
@@ -117,6 +142,7 @@ export class DurableHarness {
     registry.install(DurableSandboxTools);
     registry.install(DurableAsk);
     registry.install(DurableWorkingWords);
+    registry.install(DurableBackgroundJobs);
     const directory = join(this.dataDir, "durable");
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     // Bun-based CLI commands must not load node:sqlite when the experiment is
@@ -162,8 +188,15 @@ export class DurableHarness {
       )
         await harness.abortSubmission(submission.id, BACKGROUND_CONTEXT);
     }
+    const foreground = new Set<number>();
+    for (const id of ids) {
+      const jobs = await harness.snapshot(DurableJobs, id, BACKGROUND_CONTEXT);
+      for (const job of jobs?.jobs ?? [])
+        if (job.decision === "waiting" && !job.delivered) foreground.add(job.taskId);
+    }
     for (const { record } of live.tasks) {
-      if (ids.has(record.conversationId)) await harness.abortTask(record.id, BACKGROUND_CONTEXT);
+      if (ids.has(record.conversationId) && (!record.background || foreground.has(record.id)))
+        await harness.abortTask(record.id, BACKGROUND_CONTEXT);
     }
     for (const id of ids) {
       const conversation = await harness.conversation(id, BACKGROUND_CONTEXT);
@@ -191,7 +224,7 @@ export class DurableHarness {
     // Closing interrupts invocations without settling their tasks. Recorded
     // restart work remains durable and is continued by the next Harness.open.
     await harness.close(BACKGROUND_CONTEXT);
-    await Promise.all([...this.sandboxEnvs.keys()].map((id) => this.unbindSandboxEnv(id)));
+    await Promise.all([...this.sandboxEnvs.keys()].map((id) => this.unbindSandboxEnv(id, true)));
   }
 }
 

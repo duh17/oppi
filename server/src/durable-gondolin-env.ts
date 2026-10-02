@@ -588,6 +588,14 @@ export class GondolinExecutionEnv implements ExecutionEnv {
     }
   }
 
+  /** Stop confirms signalled executions, without crossing background task ownership. */
+  async confirmCancelledCalls(): Promise<void> {
+    await Promise.all(
+      [...this.inflight].filter((call) => call.abort.signal.aborted).map((call) => call.done),
+    );
+    if (this.cancellationFailure) throw this.cancellationFailure;
+  }
+
   async cleanup(_context: Context): Promise<void> {
     const calls = [...this.inflight];
     for (const call of calls) call.abort.abort();

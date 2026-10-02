@@ -44,6 +44,11 @@ import {
 import type { ChatAttachmentRef, ServerMessage, Session } from "../src/types.js";
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
 import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
+import {
+  DurableBackgroundJobs,
+  DurableJobs,
+} from "../extensions/durable/background-jobs/durable.js";
+import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import {
   DurableUI,
@@ -151,6 +156,7 @@ async function openHarness(
   registry.install(CodingTools);
   registry.install(DurableAsk);
   registry.install(DurableWorkingWords);
+  registry.install(DurableBackgroundJobs);
   if (tool) registry.install({ name: "restart-proof", tools: [tool] });
   const harness = await Harness.open(
     await openNodeSqliteStorage(join(dir, "restart.sqlite")),
@@ -1297,6 +1303,7 @@ describe("server durable managed runtime", () => {
       "ls",
       "find",
       "grep",
+      "background_job",
     ]);
     const settled = await (
       await conversation.submit({ type: "input", content: "write and read" }, context)
@@ -1325,6 +1332,86 @@ describe("server durable managed runtime", () => {
     expect(sdk).not.toHaveBeenCalled();
   });
 
+  it("keeps a conversation-owned background job alive after a full server Stop and preserves its result on resume", async () => {
+    const f = await fixture([
+      fauxAssistantMessage(
+        [fauxToolCall("background_job", { action: "start", command: "controlled host job" })],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("STARTED"),
+      fauxAssistantMessage("JOB_RESULT_RECEIVED"),
+    ]);
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let cancelled = false;
+    vi.spyOn(NodeExecutionEnv.prototype, "exec").mockImplementation(
+      async (_command, options, execContext) => {
+        const onAbort = () => {
+          cancelled = true;
+          finish();
+        };
+        execContext.abortSignal?.addEventListener("abort", onAbort, { once: true });
+        entered();
+        try {
+          await gate;
+          options?.onOutput?.("HOST_RESULT");
+          return { ok: true, value: { exitCode: 0, stdout: "HOST_RESULT", stderr: "" } };
+        } finally {
+          execContext.abortSignal?.removeEventListener("abort", onAbort);
+        }
+      },
+    );
+    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    const settled = observed.next((message) => message.type === "agent_end");
+    try {
+      await f.manager.sendPrompt(f.session.id, "Start background job");
+      await started;
+      await settled;
+      const { harness } = await opening.mock.results[0]!.value;
+      const id = f.storage.getSession(f.session.id)!.serverDurable!
+        .conversationId as ConversationId;
+      const job = (await harness.snapshot(DurableJobs, id, context))!.jobs[0]!;
+      await f.manager.stopSession(f.session.id);
+      expect(cancelled).toBe(false);
+      expect(
+        (await harness.inspect(context)).tasks.find(({ record }) => record.id === job.taskId)
+          ?.record.state.status,
+      ).toBe("running");
+      finish();
+      await harness.waitForTask(job.taskId, context);
+      await (await harness.conversation(id, context))!.waitForIdle(context);
+      await f.manager.startSession(f.session.id, f.workspace);
+      const history = (await f.manager.runCommand(f.session.id, {
+        type: "get_messages",
+      })) as Array<{ role: string; content: unknown }>;
+      expect(
+        history.filter(
+          (message) =>
+            message.role === "user" &&
+            JSON.stringify(message.content).includes("Background job bash-1"),
+        ),
+      ).toHaveLength(1);
+      expect(
+        history.filter(
+          (message) =>
+            message.role === "assistant" &&
+            JSON.stringify(message.content).includes("JOB_RESULT_RECEIVED"),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      finish();
+      observed.unsubscribe();
+    }
+  });
+
   it("does not confirm cancellation when the sandbox environment cannot prove the guest stopped", async () => {
     const f = await fixture([]);
     const harness = await openHarness(f.dir, f.models);
@@ -1335,15 +1422,15 @@ describe("server durable managed runtime", () => {
       { ownership: { kind: "ownerless" } },
       context,
     );
-    const env = new NodeExecutionEnv({ cwd: f.dir });
-    const cleanup = vi
-      .spyOn(env, "cleanup")
+    const env = new GondolinExecutionEnv({} as GondolinVm, "workspace", "/workspace/project");
+    const confirmation = vi
+      .spyOn(env, "confirmCancelledCalls")
       .mockRejectedValue(new Error("Guest cancellation was not confirmed"));
     owner.bindSandboxEnv(conversation.id, env);
     await expect(owner.abortConversation(conversation.id)).rejects.toThrow(
       "Guest cancellation was not confirmed",
     );
-    expect(cleanup).toHaveBeenCalledOnce();
+    expect(confirmation).toHaveBeenCalledOnce();
   });
 
   it("fails clearly for selected sandbox MCP instead of launching it on the host", async () => {
@@ -2004,6 +2091,10 @@ describe("server durable managed runtime", () => {
       stopGuest = resolve;
     });
     let guestCalls = 0;
+    let markGuestStarted!: () => void;
+    const guestStarted = new Promise<void>((resolve) => {
+      markGuestStarted = resolve;
+    });
     const vm: GondolinVm = {
       fs: {
         mkdir: async () => {},
@@ -2020,6 +2111,7 @@ describe("server durable managed runtime", () => {
             if (tool) {
               yield { stream: "stdout" as const, data: Buffer.from("42 12345\n") };
               yield { stream: "stdout" as const, data: Buffer.from("MID_TOOL\n") };
+              markGuestStarted();
               await guestStopped;
             }
           },
@@ -2033,13 +2125,12 @@ describe("server durable managed runtime", () => {
     const opening = vi.spyOn(DurableHarness.prototype, "open");
     await f.manager.startSession(f.session.id, f.workspace);
     const projection = observe(f.manager, f.session.id);
-    const toolStarted = projection.next(
-      (message) => message.type === "tool_output" && message.output.includes("MID_TOOL"),
-    );
+    // Native background jobs retain final output only. Synchronize on guest
+    // execution, not CodingTools' former streaming-output projection.
     await f.manager.sendPrompt(f.session.id, "Keep this original turn", {
       clientTurnId: "sandbox-restart-turn",
     });
-    await toolStarted;
+    await guestStarted;
     const { harness } = await opening.mock.results[0]!.value;
     const id = f.storage.getSession(f.session.id)!.serverDurable!.conversationId! as ConversationId;
     const placed = (await harness.inspect(context)).submissions.find(
@@ -2117,11 +2208,29 @@ describe("server durable managed runtime", () => {
       ),
       fauxAssistantMessage("GRACEFUL_RESUMED"),
     ]);
+    let markStarted!: () => void;
+    const marker = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const exec = NodeExecutionEnv.prototype.exec;
+    vi.spyOn(NodeExecutionEnv.prototype, "exec").mockImplementation(
+      function (command, options, execContext) {
+        return exec.call(
+          this,
+          command,
+          {
+            ...options,
+            onOutput: (text, stream) => {
+              options?.onOutput?.(text, stream);
+              if (text.includes("MID_TOOL")) markStarted();
+            },
+          },
+          execContext,
+        );
+      },
+    );
     await f.manager.startSession(f.session.id, f.workspace);
     const projection = observe(f.manager, f.session.id);
-    const marker = projection.next(
-      (message) => message.type === "tool_output" && message.output.includes("MID_TOOL"),
-    );
     await f.manager.sendPrompt(f.session.id, "Continue the original submission", {
       clientTurnId: "graceful-turn",
     });

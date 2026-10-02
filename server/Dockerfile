@@ -39,6 +39,9 @@ COPY pi-extensions/durable-ui.ts /opt/pi-extensions/durable-ui.ts
 COPY pi-extensions/ask/durable.ts /opt/pi-extensions/ask/durable.ts
 COPY pi-extensions/ask/extensions/ask-shared.ts /opt/pi-extensions/ask/extensions/ask-shared.ts
 COPY pi-extensions/working-words/durable.ts /opt/pi-extensions/working-words/durable.ts
+COPY pi-extensions/background-jobs/durable.ts /opt/pi-extensions/background-jobs/durable.ts
+COPY pi-extensions/background-jobs/jobs.ts /opt/pi-extensions/background-jobs/jobs.ts
+COPY pi-extensions/background-jobs/delivery.ts /opt/pi-extensions/background-jobs/delivery.ts
 RUN npm run build \
     && ln -sf /opt/server/dist/src/cli.js /usr/local/bin/oppi
 

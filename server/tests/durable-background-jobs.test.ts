@@ -1,0 +1,537 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
+import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
+import {
+  fauxProvider,
+  fauxAssistantMessage,
+  fauxToolCall,
+  type FauxResponseStep,
+} from "@earendil-works/pi-ai/providers/faux";
+import {
+  Harness,
+  createRegistry,
+  type Conversation,
+  type TaskId,
+} from "@earendil-works/pi-durable";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import {
+  DurableBackgroundJobs,
+  DurableJobs,
+} from "../extensions/durable/background-jobs/durable.js";
+import { DurableUI } from "../extensions/durable/durable-ui.js";
+import { DurableHarness } from "../src/durable-harness.js";
+import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
+import type { GondolinVm } from "../src/gondolin-ops.js";
+
+const harnesses = new Set<Harness>();
+afterEach(async () => {
+  await Promise.all([...harnesses].map((h) => h.close(context)));
+  harnesses.clear();
+  vi.restoreAllMocks();
+});
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+function tool(name: string, args: Record<string, unknown>): FauxResponseStep {
+  return fauxAssistantMessage([fauxToolCall(name, args)], { stopReason: "toolUse" });
+}
+const answer = () => fauxAssistantMessage("Integrated the result.");
+async function fixture(responses: FauxResponseStep[], realExec = false, serverOwner = false) {
+  const dir = mkdtempSync(join(tmpdir(), "oppi-durable-background-jobs-"));
+  console.info(`Background jobs integration artifacts: ${dir}`);
+  const models = await ModelRuntime.create({
+    authPath: join(dir, "auth.json"),
+    modelsPath: null,
+    modelsStorePath: join(dir, "models-cache.json"),
+    refreshOnCreate: false,
+  });
+  const faux = fauxProvider();
+  faux.setResponses(responses);
+  models.registerNativeProvider(faux.provider);
+  await models.setRuntimeApiKey("faux", "test-only-faux-credential");
+  await models.refresh({ allowNetwork: false });
+  const env = new NodeExecutionEnv({ cwd: dir });
+  const entered = deferred<void>();
+  const finish = deferred<void>();
+  let executions = 0;
+  let cancellations = 0;
+  if (!realExec)
+    vi.spyOn(serverOwner ? NodeExecutionEnv.prototype : env, "exec").mockImplementation(
+      async (_command, options, execContext) => {
+        executions++;
+        entered.resolve();
+        let onAbort = () => {};
+        try {
+          await Promise.race([
+            finish.promise,
+            new Promise<void>((resolve) => {
+              onAbort = () => {
+                cancellations++;
+                resolve();
+              };
+              execContext.abortSignal?.addEventListener("abort", onAbort, { once: true });
+              if (execContext.abortSignal?.aborted) onAbort();
+            }),
+          ]);
+        } finally {
+          execContext.abortSignal?.removeEventListener("abort", onAbort);
+        }
+        if (execContext.abortSignal?.aborted)
+          return { ok: false, error: { code: "aborted", message: "aborted" } };
+        options?.onOutput?.("FINAL-OUTPUT\n");
+        return { ok: true, value: { exitCode: 0, stdout: "FINAL-OUTPUT\n", stderr: "" } };
+      },
+    );
+  const owner = new DurableHarness(dir);
+  if (serverOwner) {
+    vi.spyOn(ModelRuntime, "create").mockResolvedValue(models);
+    vi.spyOn(SettingsManager, "create").mockReturnValue(
+      SettingsManager.inMemory({ compaction: { enabled: false } }),
+    );
+  }
+  const open = async (executionEnv: NodeExecutionEnv | GondolinExecutionEnv = env) => {
+    const registry = createRegistry();
+    registry.install(CodingTools);
+    registry.install(DurableBackgroundJobs);
+    const harness = await Harness.open(
+      await openNodeSqliteStorage(
+        join(dir, serverOwner ? "durable/harness.sqlite" : "jobs.sqlite"),
+      ),
+      { models, registry, env: () => executionEnv, settings: { compaction: { enabled: false } } },
+      context,
+    );
+    harnesses.add(harness);
+    return harness;
+  };
+  const harness = serverOwner ? (await owner.open()).harness : await open();
+  harnesses.add(harness);
+  const root = await harness.root(context, {
+    agent: { model: { provider: "faux", modelId: "faux-1" }, cwd: dir },
+  });
+  return {
+    dir,
+    harness,
+    root,
+    env,
+    open,
+    owner,
+    entered,
+    finish,
+    counts: () => ({ executions, cancellations }),
+  };
+}
+async function prompt(root: Conversation, content = "Start the job") {
+  const submission = await root.submit({ type: "input", content }, context);
+  expect((await submission.wait(context)).status).toBe("done");
+  await root.waitForIdle(context);
+}
+async function jobTask(harness: Harness, root: Conversation): Promise<TaskId> {
+  return (await harness.snapshot(DurableJobs, root.id, context))!.jobs[0]!.taskId;
+}
+async function delivery(harness: Harness, root: Conversation) {
+  await harness.waitForTask(await jobTask(harness, root), context);
+  await root.waitForIdle(context);
+  const state = (await root.context(context)).messages;
+  const reports = state.filter(
+    (message) =>
+      message.role === "user" && JSON.stringify(message.content).includes("Background job bash-1"),
+  );
+  expect(reports).toHaveLength(1);
+  expect(state.at(-1)).toMatchObject({
+    role: "assistant",
+    content: [{ type: "text", text: "Integrated the result." }],
+  });
+  return reports;
+}
+
+describe("native Durable background jobs", () => {
+  it("is idle while running, publishes generic chrome, and answers exactly one idempotent follow-up", async () => {
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "controlled command" }),
+      answer(),
+      answer(),
+    ]);
+    await prompt(f.root);
+    await f.entered.promise;
+    const record = (await f.harness.inspect(context)).tasks.find(
+      ({ record }) => record.kind === "oppi.background-job",
+    )!.record;
+    expect(record).toMatchObject({ background: true, state: { status: "running" } });
+    const ui = await f.harness.snapshot(DurableUI, f.root.id, context);
+    expect(ui?.notifications["status:background-jobs"]?.statusText).toContain("1 job");
+    expect(ui?.notifications["widget:background-jobs"]?.nativeSurface?.blocks).toEqual([
+      {
+        type: "activityList",
+        id: "jobs",
+        rows: [{ id: "bash-1", title: "bash-1", subtitle: "controlled command", state: "running" }],
+      },
+    ]);
+    f.finish.resolve();
+    const reports = await delivery(f.harness, f.root);
+    expect(JSON.stringify(reports)).toContain("FINAL-OUTPUT");
+    const first = await f.root.submit(
+      {
+        type: "input",
+        content: "duplicate must not replace original",
+        requestId: "background-job:bash-1",
+      },
+      context,
+    );
+    const second = await f.root.submit(
+      { type: "input", content: "duplicate", requestId: "background-job:bash-1" },
+      context,
+    );
+    expect(first.id).toBe(second.id);
+    expect((await first.wait(context)).status).toBe("done");
+    expect(f.counts()).toEqual({ executions: 1, cancellations: 0 });
+    const cleared = await f.harness.snapshot(DurableUI, f.root.id, context);
+    expect(cleared?.notifications["status:background-jobs"]).not.toHaveProperty("statusText");
+    expect(cleared?.notifications["widget:background-jobs"]).not.toHaveProperty("nativeSurface");
+  });
+
+  it("server Stop leaves a job running, while cancel kills it and delivers its final cancellation", async () => {
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "controlled command" }),
+      answer(),
+      tool("background_job", { action: "cancel", job_id: "bash-1" }),
+      answer(),
+      answer(),
+    ]);
+    await prompt(f.root);
+    await f.entered.promise;
+    const owner = new DurableHarness(f.dir);
+    vi.spyOn(owner, "open").mockResolvedValue({ harness: f.harness, models: {} as ModelRuntime });
+    await owner.releaseResume();
+    await owner.abortConversation(f.root.id);
+    expect(f.counts().cancellations).toBe(0);
+    expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]!.status).toBe(
+      "running",
+    );
+    await prompt(f.root, "Cancel the job");
+    const reports = await delivery(f.harness, f.root);
+    expect(JSON.stringify(reports)).toContain("was cancelled");
+    expect(f.counts()).toEqual({ executions: 1, cancellations: 1 });
+  });
+
+  it("background abort crosses the ownership boundary and kills the execution", async () => {
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "controlled command" }),
+      answer(),
+    ]);
+    await prompt(f.root);
+    await f.entered.promise;
+    await f.root.abort(context, { background: true });
+    expect(f.counts().cancellations).toBe(1);
+    expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]).toMatchObject({
+      status: "cancelled",
+      delivered: true,
+    });
+  });
+
+  it.each(["harness detach", "server graceful shutdown"])(
+    "%s mid-job reports interrupted once without rerunning",
+    async (mode) => {
+      const f = await fixture(
+        [
+          tool("background_job", { action: "start", command: "controlled command" }),
+          answer(),
+          answer(),
+        ],
+        false,
+        mode === "server graceful shutdown",
+      );
+      await prompt(f.root);
+      await f.entered.promise;
+      if (mode === "harness detach") await f.harness.close(context);
+      else await f.owner.close();
+      harnesses.delete(f.harness);
+      let harness = await f.open();
+      let root = (await harness.conversation(f.root.id, context))!;
+      harness.resume();
+      const reports = await delivery(harness, root);
+      expect(JSON.stringify(reports)).toContain("interrupted by a host restart");
+      expect(f.counts().executions).toBe(1);
+      await harness.close(context);
+      harnesses.delete(harness);
+      harness = await f.open();
+      root = (await harness.conversation(f.root.id, context))!;
+      harness.resume();
+      const again = await root.submit(
+        { type: "input", content: "duplicate", requestId: "background-job:bash-1" },
+        context,
+      );
+      expect((await again.wait(context)).status).toBe("done");
+      await delivery(harness, root);
+      expect(f.counts().executions).toBe(1);
+    },
+  );
+
+  it("reuses an already admitted job receipt instead of submitting another model input", async () => {
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "controlled command" }),
+      answer(),
+      answer(),
+    ]);
+    await prompt(f.root);
+    await f.entered.promise;
+    // Admission is the external-effect half of the reporter's crash window.
+    // Pre-admit its durable receipt; the real reporter must reuse it.
+    const admitted = await f.root.submit(
+      {
+        type: "input",
+        content: "Background job bash-1 finished (exit 0).",
+        requestId: "background-job:bash-1",
+      },
+      context,
+    );
+    expect((await admitted.wait(context)).status).toBe("done");
+    f.finish.resolve();
+    await delivery(f.harness, f.root);
+    expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]!.delivered).toBe(
+      true,
+    );
+  });
+
+  it("bash replacement returns quick commands in foreground and trailing & immediately", async () => {
+    const f = await fixture(
+      [
+        tool("bash", { command: "printf foreground" }),
+        answer(),
+        tool("bash", { command: "printf background &" }),
+        answer(),
+        answer(),
+      ],
+      true,
+    );
+    await prompt(f.root);
+    const first = (await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]!;
+    expect(first).toMatchObject({
+      status: "completed",
+      decision: "foreground",
+      output: "foreground",
+    });
+    expect((await f.root.context(context)).messages.filter((m) => m.role === "user")).toHaveLength(
+      1,
+    );
+    await prompt(f.root, "Run background bash");
+    const second = (await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[1]!;
+    await f.harness.waitForTask(second.taskId, context);
+    await f.root.waitForIdle(context);
+    expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[1]).toMatchObject({
+      decision: "background",
+      command: "printf background",
+      delivered: true,
+    });
+  });
+
+  it("bash backgrounds a still-running command after 15 seconds", async () => {
+    const f = await fixture([tool("bash", { command: "controlled command" }), answer(), answer()]);
+    await prompt(f.root);
+    const job = (await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]!;
+    expect(job.deadline - job.startedAt).toBe(15_000);
+    expect(job).toMatchObject({ status: "running", decision: "background" });
+    await f.root.abort(context);
+    expect(f.counts().cancellations).toBe(0);
+    f.finish.resolve();
+    await delivery(f.harness, f.root);
+  }, 25_000);
+
+  it("Stop before the bash foreground deadline kills it without waking a new model turn", async () => {
+    const f = await fixture([tool("bash", { command: "controlled command" }), answer()]);
+    const submission = await f.root.submit(
+      { type: "input", content: "Run foreground bash" },
+      context,
+    );
+    await f.entered.promise;
+    await f.root.abort(context);
+    expect((await submission.wait(context)).status).toBe("unanswered");
+    await f.harness.waitForTask(await jobTask(f.harness, f.root), context);
+    expect(f.counts()).toEqual({ executions: 1, cancellations: 1 });
+    expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]).toMatchObject({
+      status: "cancelled",
+      decision: "foreground",
+      delivered: true,
+    });
+    expect((await f.root.context(context)).messages.filter((m) => m.role === "user")).toHaveLength(
+      1,
+    );
+  });
+
+  it("reports a thrown execution failure and frees the running job slot", async () => {
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "cannot spawn" }),
+      answer(),
+      answer(),
+    ]);
+    vi.spyOn(f.env, "exec").mockRejectedValue(new Error("spawn failed"));
+    await prompt(f.root);
+    expect(JSON.stringify(await delivery(f.harness, f.root))).toContain("spawn failed");
+    expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]).toMatchObject({
+      status: "failed",
+      delivered: true,
+    });
+  });
+
+  it("blocks bash polling while a job runs, without starting another execution", async () => {
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "controlled command" }),
+      answer(),
+      tool("bash", { command: "ps" }),
+      answer(),
+      answer(),
+    ]);
+    await prompt(f.root);
+    await f.entered.promise;
+    await prompt(f.root, "Try polling");
+    expect(f.counts().executions).toBe(1);
+    const results = (await f.root.context(context)).messages.filter((m) => m.role === "toolResult");
+    expect(results.at(-1)).toMatchObject({ isError: true });
+    expect(JSON.stringify(results.at(-1))).toContain("Do NOT poll");
+    f.finish.resolve();
+    await delivery(f.harness, f.root);
+  });
+
+  it("short bash timeout remains foreground and kills a real host process", async () => {
+    const f = await fixture([tool("bash", { command: "sleep 20", timeout: 0.05 }), answer()], true);
+    await prompt(f.root);
+    const job = (await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]!;
+    expect(job).toMatchObject({ status: "timed_out", decision: "foreground" });
+    expect((await f.root.context(context)).messages.filter((m) => m.role === "user")).toHaveLength(
+      1,
+    );
+  });
+
+  it("server Stop joins foreground guest cancellation and rejects an unconfirmed kill", async () => {
+    const f = await fixture([tool("bash", { command: "foreground guest command" }), answer()]);
+    await f.harness.close(context);
+    harnesses.delete(f.harness);
+    const started = deferred<void>();
+    const finish = deferred<void>();
+    const killing = deferred<void>();
+    const releaseKill = deferred<void>();
+    const result = { ok: true, exitCode: 0, stdout: "", stdoutBuffer: Buffer.alloc(0) };
+    const vm = {
+      exec: vi.fn((args: string[] | string) => {
+        if (args.includes("oppi-kill")) {
+          killing.resolve();
+          return releaseKill.promise.then(() => {
+            finish.resolve();
+            throw new Error("Guest kill could not be confirmed");
+          });
+        }
+        return Object.assign(
+          finish.promise.then(() => result),
+          {
+            async *output() {
+              yield { stream: "stdout", data: Buffer.from("42 12345\n") };
+              started.resolve();
+              await finish.promise;
+            },
+            write() {},
+            end() {},
+          },
+        );
+      }),
+    } as unknown as GondolinVm;
+    const env = new GondolinExecutionEnv(vm, "workspace", "/workspace/project");
+    const harness = await f.open(env);
+    const root = (await harness.conversation(f.root.id, context))!;
+    const owner = new DurableHarness(f.dir);
+    vi.spyOn(owner, "open").mockResolvedValue({ harness, models: {} as ModelRuntime });
+    owner.bindSandboxEnv(root.id, env);
+    await owner.releaseResume();
+    const submission = await root.submit(
+      { type: "input", content: "Run guest foreground bash" },
+      context,
+    );
+    await started.promise;
+    let confirmed = false;
+    const stop = owner.abortConversation(root.id).then(() => {
+      confirmed = true;
+    });
+    // Capture both outcomes before releasing the failed kill receipt, so an
+    // early successful Stop cannot become an unhandled assertion rejection.
+    const outcome = stop.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    let confirmedBeforeReceipt = false;
+    try {
+      await killing.promise;
+      // Let ordinary task aborts and the owner's UI commit drain while the
+      // guest kill receipt is deliberately withheld.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      confirmedBeforeReceipt = confirmed;
+    } finally {
+      releaseKill.resolve();
+    }
+    const failure = await outcome;
+    expect(confirmedBeforeReceipt).toBe(false);
+    expect(failure).toMatchObject({ message: "Failed to kill durable sandbox guest work" });
+    expect((await submission.wait(context)).status).toBe("unanswered");
+  });
+
+  it("runs background commands through Gondolin, and Stop does not clean up that guest execution", async () => {
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "guest-command" }),
+      answer(),
+      answer(),
+    ]);
+    await f.harness.close(context);
+    harnesses.delete(f.harness);
+    const started = deferred<void>();
+    const finish = deferred<void>();
+    const calls: Array<string[] | string> = [];
+    const vm = {
+      exec: vi.fn((args: string[] | string) => {
+        calls.push(args);
+        const result = finish.promise.then(() => ({
+          ok: true,
+          exitCode: 0,
+          stdout: "guest-result",
+          stdoutBuffer: Buffer.from("guest-result"),
+        }));
+        return Object.assign(result, {
+          async *output() {
+            yield { stream: "stdout", data: Buffer.from("42 12345\n") };
+            started.resolve();
+            await finish.promise;
+            yield { stream: "stdout", data: Buffer.from("guest-result") };
+          },
+          write() {},
+          end() {},
+        });
+      }),
+    } as unknown as GondolinVm;
+    const env = new GondolinExecutionEnv(vm, "workspace", "/workspace/project");
+    const harness = await f.open(env);
+    const root = (await harness.conversation(f.root.id, context))!;
+    const owner = new DurableHarness(f.dir);
+    vi.spyOn(owner, "open").mockResolvedValue({ harness, models: {} as ModelRuntime });
+    owner.bindSandboxEnv(root.id, env);
+    await owner.releaseResume();
+    await prompt(root);
+    await started.promise;
+    try {
+      await owner.abortConversation(root.id);
+      expect(calls).toHaveLength(1);
+      expect(JSON.stringify(calls)).toContain("guest-command");
+      expect(vm.exec).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({ cwd: "/workspace/project", env: undefined }),
+      );
+    } finally {
+      finish.resolve();
+    }
+    expect(JSON.stringify(await delivery(harness, root))).toContain("guest-result");
+  });
+});

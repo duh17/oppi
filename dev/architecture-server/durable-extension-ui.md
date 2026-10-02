@@ -47,9 +47,21 @@ The native working-words extension owns a background Durable task. It watches `p
 
 `server/extensions/durable/` contains symlinks to the canonical native implementations, the shared document helper, and ask's existing pure result helper. TypeScript follows these source paths and emits ordinary JS under `dist/extensions/durable/`, which the npm package includes. The server imports only this compiled layout. No code depends on the excluded `dist/oppi-extensions/` tree, and no Pi factory is imported.
 
-The Dockerfile copies the four canonical source files into `/opt/pi-extensions/`, beside `/opt/server/`, to keep the same relative symlink targets inside the build image. This uses the existing compiler layout without a source-generation step. The runtime uses only the emitted JS.
+The Dockerfile copies the canonical native ports and their pure helpers into `/opt/pi-extensions/`, beside `/opt/server/`, to keep the same relative symlink targets inside the build image. This uses the existing compiler layout without a source-generation step. The runtime uses only the emitted JS.
 
 `npm run dev` uses tsx with `--preserve-symlinks` so native source imports resolve dependencies from `server/node_modules`. Other source-mode commands that import the native ports must use that Node option too. Compiled and packed commands need no option. The entire import graph remains behind the existing lazy durable-backend boundary; flag-off commands load no Durable modules.
+
+## Background jobs
+
+The native background-jobs extension replaces CodingTools bash by the Durable later-wins rule. It offers `background_job start/cancel`; the classic extension has no list/output tool actions. Durable has no `/jobs` command. Ordinary bash runs in the foreground for up to 15 seconds, then returns a job notice. A trailing `&` backgrounds immediately. A timeout of one second or less remains foreground.
+
+Each shell execution belongs to a conversation-owned background task. A memo claims execution before the shell starts. On process restart or graceful shutdown, a claimed but unfinished execution reports `interrupted` and does not rerun. Each completion submits a follow-up with request ID `background-job:<id>` before settling its task. Replaying the report reuses that submission. Stable per-job receipts take priority over classic-style single-message batching; results can cause separate model turns. There is no auto-stop hold.
+
+The extension publishes status and a native activity-list widget through the same notification slots as other native extensions. Output is bounded to the last 64,000 characters and is saved at completion, not streamed to a live widget. Ordinary Stop preserves background jobs, including guest execution. Cancel signals the execution environment and reports cancellation; a background abort crosses the ownership boundary. A foreground bash that has not returned its notice is cancelled by Stop.
+
+SIGKILL cannot run environment cleanup. A host shell process can outlive the killed server; reporting interruption does not prove that external side effects stopped. The smoke runner records and removes its own process group during teardown.
+
+The opt-in crash runner is `node --import tsx scripts/durable-background-jobs-smoke.ts` after `npm run build`. Run it through the credential-approved tool. It starts a throwaway server through the local API socket, selects `anthropic/claude-haiku-4-5`, confirms shell execution, kills the server, and verifies one interrupted follow-up and one durable receipt after restart. It copies credentials into private temporary storage and preserves its receipt and server logs.
 
 ## Proof commands
 
