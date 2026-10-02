@@ -596,7 +596,7 @@ private struct ExtensionToastSheet: View {
                 .padding()
             }
             .background(.themeBg)
-            .navigationTitle("Extension")
+            .navigationTitle("Notice")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

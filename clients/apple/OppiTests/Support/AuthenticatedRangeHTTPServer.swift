@@ -16,6 +16,7 @@ final class AuthenticatedRangeHTTPServer: @unchecked Sendable {
     private let body: Data
     private let token: String
     private let redirectLocation: String?
+    private let failureStatus: Int?
     private var stopped = false
     private var clientFDs: [Int32] = []
     private var recordedRangesStorage: [String] = []
@@ -26,7 +27,8 @@ final class AuthenticatedRangeHTTPServer: @unchecked Sendable {
         body: Data,
         token: String,
         filename: String = "known-good-h264.mp4",
-        redirectLocation: String? = nil
+        redirectLocation: String? = nil,
+        failureStatus: Int? = nil
     ) throws {
         let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw CocoaError(.fileWriteUnknown) }
@@ -69,6 +71,7 @@ final class AuthenticatedRangeHTTPServer: @unchecked Sendable {
         self.body = body
         self.token = token
         self.redirectLocation = redirectLocation
+        self.failureStatus = failureStatus
         self.url = url
         acceptQueue.async { [weak self] in
             self?.acceptLoop()
@@ -176,6 +179,11 @@ final class AuthenticatedRangeHTTPServer: @unchecked Sendable {
 
         guard authorization == token else {
             write(client, status: "401 Unauthorized", headers: ["Content-Length": "0"], body: Data())
+            return
+        }
+
+        if let failureStatus {
+            write(client, status: "\(failureStatus) Failure", headers: ["Content-Length": "0"], body: Data())
             return
         }
 

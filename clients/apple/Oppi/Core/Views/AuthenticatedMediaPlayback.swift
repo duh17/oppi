@@ -181,6 +181,7 @@ enum AuthenticatedMediaResponseValidator {
         contentRange: String?
     ) -> String? {
         guard (200 ... 299).contains(statusCode) else {
+            if statusCode == 404 { return "Media file not found (HTTP 404)" }
             return "Media request failed with HTTP \(statusCode)"
         }
 
@@ -317,6 +318,11 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
     private var contextsByTaskId: [Int: LoadingContext] = [:]
     private var tasksByRequestId: [ObjectIdentifier: URLSessionDataTask] = [:]
     private var isInvalidated = false
+    // AVFoundation can turn our NSError(code: 1) into POSIX EPERM, losing
+    // its domain and description. Keep the validated response reason with
+    // this asset so the failure card can explain a missing file honestly.
+    private var responseErrorMessageStorage: String?
+    var responseErrorMessage: String? { lock.withLock { responseErrorMessageStorage } }
     private var liveTaskIds: Set<Int> = []
     private var networkLifetime: AuthenticatedMediaResourceLoader?
 #if DEBUG
@@ -547,6 +553,9 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
                     "content_range": contentRange ?? "",
                 ]
             )
+            lock.withLock {
+                if responseErrorMessageStorage == nil { responseErrorMessageStorage = errorMessage }
+            }
             context.responseError = mediaError(errorMessage)
             completionHandler(.cancel)
             return
@@ -1033,6 +1042,7 @@ final class AuthenticatedMediaPlaybackSession {
     let player: AVPlayer
 
     private let loader: AuthenticatedMediaResourceLoader
+    var responseErrorMessage: String? { loader.responseErrorMessage }
     private let asset: AVURLAsset
     private var timeControlObservation: NSKeyValueObservation?
     private var bufferEmptyObservation: NSKeyValueObservation?
@@ -1467,7 +1477,8 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
                     }
                 case .failed:
                     self.isLoading = false
-                    self.errorMessage = item.error?.localizedDescription ?? "Media failed to load"
+                    self.errorMessage = self.playbackSession?.responseErrorMessage
+                        ?? item.error?.localizedDescription ?? "Media failed to load"
                     if self.recordedErrorIdentity != source.identity {
                         self.recordedErrorIdentity = source.identity
                         MediaPlaybackTelemetry.recordError(

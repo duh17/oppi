@@ -50,6 +50,31 @@ struct MarkdownInlineVideoNativePlayTests {
     }
 
     @MainActor
+    @Test("missing media reports HTTP 404 instead of AVFoundation's generic failure")
+    func missingFileReportsNotFound() async throws {
+        let server = try AuthenticatedRangeHTTPServer(
+            body: Data(), token: "Bearer native-play", failureStatus: 404
+        )
+        defer { server.stop() }
+        let model = AuthenticatedMediaPlayerModel()
+        defer { model.teardown() }
+        model.prepare(
+            source: mediaSource(url: server.url), autoplay: false,
+            telemetrySource: "markdown_inline_video", telemetryMode: "inline",
+            telemetrySessionId: nil, onPresentationSize: nil
+        )
+        let player = try #require(model.player)
+        let failed = await waitUntil(timeout: .seconds(8)) { model.errorMessage != nil }
+        #expect(failed, "HTTP 404 did not fail the player item")
+        #expect(player.currentItem?.status == .failed)
+        #expect(model.player == nil)
+        #expect(!server.snapshotRanges().isEmpty)
+        let error = player.currentItem?.error as NSError?
+        print("MISSING_MEDIA itemError=\(String(describing: error)) underlying=\(String(describing: error?.userInfo[NSUnderlyingErrorKey])) modelMessage=\(model.errorMessage ?? "nil")")
+        #expect(model.errorMessage == "Media file not found (HTTP 404)")
+    }
+
+    @MainActor
     @Test("diagnosis: hosted markdown video play() advances currentTime through authenticated route")
     func hostedMarkdownVideoPlayAdvancesCurrentTime() async throws {
         let body = try Data(contentsOf: knownGoodH264URL())
