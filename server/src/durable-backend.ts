@@ -45,6 +45,7 @@ import { isThinkingLevel, THINKING_LEVELS, type ThinkingLevel } from "./thinking
 import type { Session, Workspace } from "./types.js";
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
 import { DurableBackgroundJobs } from "../extensions/durable/background-jobs/durable.js";
+import { DURABLE_RESERVED_REQUEST_ID_PREFIXES } from "./durable-request-ids.js";
 import {
   DurableWorkingWords,
   ensureWorkingWords,
@@ -362,6 +363,13 @@ export class DurableBackend implements AgentBackend {
     this.transactions.assertPermit(permit, "shared");
     this.assertOpen();
     this.owner.assertSchedulingReady();
+    if (
+      options?.clientTurnId &&
+      DURABLE_RESERVED_REQUEST_ID_PREFIXES.some((prefix) =>
+        options.clientTurnId!.startsWith(prefix),
+      )
+    )
+      throw new Error("clientTurnId uses a reserved durable requestId namespace");
     const content = options?.images?.length
       ? [{ type: "text" as const, text: message }, ...options.images]
       : message;

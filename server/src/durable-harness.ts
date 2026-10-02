@@ -170,14 +170,20 @@ export class DurableHarness {
   }
 
   /** Mark cancellation without Conversation.abort(), which enables ALL scheduling. */
-  abortConversations(ids: ReadonlySet<ConversationId>): Promise<void> {
-    const operation = this.markAbortedConversations(ids);
+  abortConversations(
+    ids: ReadonlySet<ConversationId>,
+    options?: { background?: boolean },
+  ): Promise<void> {
+    const operation = this.markAbortedConversations(ids, options?.background === true);
     this.pausedAborts.add(operation);
     void operation.finally(() => this.pausedAborts.delete(operation)).catch(() => undefined);
     return operation;
   }
 
-  private async markAbortedConversations(ids: ReadonlySet<ConversationId>): Promise<void> {
+  private async markAbortedConversations(
+    ids: ReadonlySet<ConversationId>,
+    background: boolean,
+  ): Promise<void> {
     const { harness } = await this.open();
     const live = await harness.inspect(BACKGROUND_CONTEXT);
     for (const submission of live.submissions) {
@@ -195,7 +201,10 @@ export class DurableHarness {
         if (job.decision === "waiting" && !job.delivered) foreground.add(job.taskId);
     }
     for (const { record } of live.tasks) {
-      if (ids.has(record.conversationId) && (!record.background || foreground.has(record.id)))
+      if (
+        ids.has(record.conversationId) &&
+        (background || !record.background || foreground.has(record.id))
+      )
         await harness.abortTask(record.id, BACKGROUND_CONTEXT);
     }
     for (const id of ids) {

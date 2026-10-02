@@ -317,7 +317,7 @@ try {
   try {
     const receipts = db
       .prepare(
-        "SELECT request_id, status FROM submissions WHERE request_id LIKE 'background-job:%'",
+        "SELECT json_extract(request_id, '$') AS request_id, status FROM submissions WHERE json_extract(request_id, '$') LIKE 'background-job:%'",
       )
       .all();
     assert.deepEqual(

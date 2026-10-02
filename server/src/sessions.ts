@@ -708,7 +708,11 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         )
         .map((session) => session.serverDurable!.conversationId! as ConversationId),
     );
-    await durableHarness.abortConversations(marked);
+    // Ordinary Stop leaves promoted jobs alive in the current process. At
+    // startup an explicitly stopped session must resume no work, including
+    // its old background reporters. Orphan healing queues idle live sessions
+    // too, so their background tasks remain outside this stopped-session fence.
+    await durableHarness.abortConversations(marked, { background: true });
     for (const session of bound) {
       const workspace = session.workspaceId
         ? this.storage.getWorkspace(session.workspaceId)
@@ -739,6 +743,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
           new Set(
             unmarked.map((session) => session.serverDurable!.conversationId! as ConversationId),
           ),
+          { background: true },
         );
       for (const session of unmarked)
         marked.add(session.serverDurable!.conversationId! as ConversationId);

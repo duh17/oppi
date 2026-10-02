@@ -1,6 +1,7 @@
 import { mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -1330,6 +1331,152 @@ describe("server durable managed runtime", () => {
       "cannot switch execution runtime",
     );
     expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "real startup fences user-stopped background jobs and resumes idle live ones (stopped=%s)",
+    async (stopped) => {
+      const f = await fixture([
+        fauxAssistantMessage(
+          [fauxToolCall("background_job", { action: "start", command: "controlled startup job" })],
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage("STARTED"),
+        fauxAssistantMessage("INTERRUPTED_RESULT_RECEIVED"),
+      ]);
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let executions = 0;
+      vi.spyOn(NodeExecutionEnv.prototype, "exec").mockImplementation(
+        async (_command, _options, execContext) => {
+          executions++;
+          entered();
+          // Harness detach models process loss, not a successful guest/host kill.
+          return await new Promise((_resolve, reject) => {
+            execContext.abortSignal!.addEventListener(
+              "abort",
+              () => reject(execContext.abortSignal!.reason),
+              { once: true },
+            );
+          });
+        },
+      );
+      let harness = await openHarness(f.dir, f.models);
+      const first = await backend(harness, f.models, f.session, f.dir);
+      const id = f.session.serverDurable!.conversationId! as ConversationId;
+      let root = (await harness.conversation(id, context))!;
+      await first.prompt("Start a conversation-owned job");
+      await started;
+      await root.waitForIdle(context);
+      const job = (await harness.snapshot(DurableJobs, id, context))!.jobs[0]!;
+      f.session.status = "ready";
+      f.storage.saveSession(f.session);
+      const opening = vi
+        .spyOn(DurableHarness.prototype, "open")
+        .mockResolvedValue({ harness, models: f.models });
+      if (stopped) {
+        await f.manager.startSession(f.session.id, f.workspace);
+        await f.manager.stopSession(f.session.id);
+        expect(f.storage.getSession(f.session.id)?.status).toBe("stopped");
+        // Ordinary Stop preserves the running execution in this process.
+        expect((await harness.getTask(job.taskId, context))?.abortRequested).toBe(false);
+      }
+      await first.detachForRestart();
+      await f.manager.close();
+      managers.splice(managers.indexOf(f.manager), 1);
+      await harness.close(context);
+      harnesses.splice(harnesses.indexOf(harness), 1);
+      harness = await openHarness(f.dir, f.models);
+      opening.mockResolvedValue({ harness, models: f.models });
+      expect((await harness.inspect(context)).scheduling).toBe("paused");
+      const storage = new Storage(f.dir);
+      queueOrphanedSessionsForRestart(storage);
+      expect(storage.listRestartResume().map((entry) => entry.sessionId)).toEqual(
+        stopped ? [] : [f.session.id],
+      );
+      const restarted = new SessionManager(storage);
+      managers.push(restarted);
+      await restarted.resumeDurableSessions();
+      root = (await harness.conversation(id, context))!;
+      await harness.waitForTask(job.taskId, context);
+      await root.waitForIdle(context);
+      const reports = (await root.context(context)).messages.filter(
+        (message) =>
+          message.role === "user" &&
+          JSON.stringify(message.content).includes("Background job bash-1 was interrupted"),
+      );
+      expect(executions).toBe(1);
+      expect(restarted.isActive(f.session.id)).toBe(!stopped);
+      expect(reports).toHaveLength(stopped ? 0 : 1);
+      expect(f.faux.state.callCount).toBe(stopped ? 2 : 3);
+      // Same JSON-decoding oracle as the live smoke, over real native SQLite.
+      const db = new DatabaseSync(join(f.dir, "restart.sqlite"), { readOnly: true });
+      try {
+        const receipts = db
+          .prepare(
+            "SELECT json_extract(request_id, '$') AS request_id, status FROM submissions WHERE json_extract(request_id, '$') LIKE 'background-job:%'",
+          )
+          .all();
+        expect(receipts).toEqual(
+          stopped ? [] : [{ request_id: "background-job:bash-1", status: "done" }],
+        );
+      } finally {
+        db.close();
+      }
+      if (!stopped) {
+        expect(JSON.stringify(reports)).toContain(
+          "Do not start it again until it is confirmed dead",
+        );
+        await restarted.stopSession(f.session.id);
+      }
+      await restarted.close();
+      managers.splice(managers.indexOf(restarted), 1);
+      await harness.close(context);
+      harnesses.splice(harnesses.indexOf(harness), 1);
+      harness = await openHarness(f.dir, f.models);
+      opening.mockResolvedValue({ harness, models: f.models });
+      const again = new SessionManager(new Storage(f.dir));
+      managers.push(again);
+      await again.resumeDurableSessions();
+      await harness.waitForIdle(context);
+      expect(f.faux.state.callCount).toBe(stopped ? 2 : 3);
+      expect(executions).toBe(1);
+      expect(again.isActive(f.session.id)).toBe(false);
+    },
+  );
+
+  it("rejects client occupation of native reporter request IDs before admission", async () => {
+    const f = await fixture([fauxAssistantMessage("NORMAL_CLIENT_TURN")], { slow: true });
+    await f.manager.startSession(f.session.id, f.workspace);
+    await expect(
+      f.manager.sendPrompt(f.session.id, "Forged result", {
+        clientTurnId: "background-job:bash-1",
+      }),
+    ).rejects.toThrow("reserved durable requestId namespace");
+    await expect(
+      f.manager.sendPrompt(f.session.id, "Forged retry", {
+        clientTurnId: "background-job:bash-1:1",
+      }),
+    ).rejects.toThrow("reserved durable requestId namespace");
+    expect(f.faux.state.callCount).toBe(0);
+    expect(await f.manager.runCommand(f.session.id, { type: "get_messages" })).toEqual([]);
+    expect(f.manager.getMessageQueue(f.session.id)).toMatchObject({ followUp: [] });
+    const observed = observe(f.manager, f.session.id);
+    const end = observed.next((message) => message.type === "agent_end");
+    const delta = observed.next((message) => message.type === "text_delta");
+    await f.manager.sendPrompt(f.session.id, "Normal turn", { clientTurnId: "normal-client-turn" });
+    await delta;
+    await expect(
+      f.manager.sendFollowUp(f.session.id, "Forged follow-up", {
+        clientTurnId: "background-job:bash-1:2",
+      }),
+    ).rejects.toThrow("reserved durable requestId namespace");
+    expect(f.manager.getMessageQueue(f.session.id)).toMatchObject({ followUp: [] });
+    await end;
+    observed.unsubscribe();
+    expect(f.faux.state.callCount).toBe(1);
   });
 
   it("keeps a conversation-owned background job alive after a full server Stop and preserves its result on resume", async () => {

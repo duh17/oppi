@@ -13,6 +13,8 @@ import {
 import {
   Harness,
   createRegistry,
+  InboxDoc,
+  type SubmissionId,
   type Conversation,
   type TaskId,
 } from "@earendil-works/pi-durable";
@@ -26,6 +28,7 @@ import {
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 import { DurableHarness } from "../src/durable-harness.js";
 import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
+import { RESULT_GUIDANCE } from "../extensions/durable/background-jobs/delivery.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 
 const harnesses = new Set<Harness>();
@@ -121,6 +124,7 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
     dir,
     harness,
     root,
+    faux,
     env,
     open,
     owner,
@@ -193,6 +197,10 @@ describe("native Durable background jobs", () => {
     expect(first.id).toBe(second.id);
     expect((await first.wait(context)).status).toBe("done");
     expect(f.counts()).toEqual({ executions: 1, cancellations: 0 });
+    expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]).toMatchObject({
+      delivered: true,
+      output: "",
+    });
     const cleared = await f.harness.snapshot(DurableUI, f.root.id, context);
     expect(cleared?.notifications["status:background-jobs"]).not.toHaveProperty("statusText");
     expect(cleared?.notifications["widget:background-jobs"]).not.toHaveProperty("nativeSurface");
@@ -259,6 +267,10 @@ describe("native Durable background jobs", () => {
       harness.resume();
       const reports = await delivery(harness, root);
       expect(JSON.stringify(reports)).toContain("interrupted by a host restart");
+      expect(JSON.stringify(reports)).toContain(
+        "previous host or guest process may still be running",
+      );
+      expect(JSON.stringify(reports)).toContain("Do not start it again until it is confirmed dead");
       expect(f.counts().executions).toBe(1);
       await harness.close(context);
       harnesses.delete(harness);
@@ -275,31 +287,132 @@ describe("native Durable background jobs", () => {
     },
   );
 
-  it("reuses an already admitted job receipt instead of submitting another model input", async () => {
-    const f = await fixture([
-      tool("background_job", { action: "start", command: "controlled command" }),
-      answer(),
-      answer(),
-    ]);
-    await prompt(f.root);
-    await f.entered.promise;
-    // Admission is the external-effect half of the reporter's crash window.
-    // Pre-admit its durable receipt; the real reporter must reuse it.
-    const admitted = await f.root.submit(
-      {
-        type: "input",
-        content: "Background job bash-1 finished (exit 0).",
-        requestId: "background-job:bash-1",
-      },
-      context,
-    );
-    expect((await admitted.wait(context)).status).toBe("done");
-    f.finish.resolve();
-    await delivery(f.harness, f.root);
-    expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]!.delivered).toBe(
-      true,
-    );
-  });
+  it.each([false, true, "legacy"])(
+    "verifies receipt content before reuse (matching=%s)",
+    async (matches) => {
+      const f = await fixture([
+        tool("background_job", { action: "start", command: "controlled command" }),
+        answer(),
+        answer(),
+        answer(),
+      ]);
+      await prompt(f.root);
+      await f.entered.promise;
+      if (matches === "legacy") {
+        await f.root.commit(async (tx) => {
+          const historical = (await tx.doc(DurableJobs, f.root.id)).jobs[0]! as {
+            receiptId?: string;
+            receiptAttempt?: number;
+          };
+          delete historical.receiptId;
+          delete historical.receiptAttempt;
+        }, context);
+      }
+      // Simulate submit-before-settlement. A matching completed receipt is safe;
+      // the old collision test falsely blessed a partial report with no output.
+      const admitted = await f.root.submit(
+        {
+          type: "input",
+          content: matches
+            ? `${RESULT_GUIDANCE}\n\nBackground job bash-1 finished (exit 0).\n\ncommand: controlled command\ncwd: ${f.dir}\n\noutput:\nFINAL-OUTPUT\n\nThis is the final result. Do not poll for this job.`
+            : "Background job bash-1 finished (exit 0).",
+          requestId: "background-job:bash-1",
+        },
+        context,
+      );
+      expect((await admitted.wait(context)).status).toBe("done");
+      f.finish.resolve();
+      await f.harness.waitForTask(await jobTask(f.harness, f.root), context);
+      await f.root.waitForIdle(context);
+      const reports = (await f.root.context(context)).messages.filter(
+        (message) =>
+          message.role === "user" && JSON.stringify(message.content).includes("FINAL-OUTPUT"),
+      );
+      expect(reports).toHaveLength(1);
+      expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]).toMatchObject({
+        delivered: true,
+        output: "",
+        receiptId: matches ? "background-job:bash-1" : "background-job:bash-1:1",
+        receiptAttempt: matches ? 0 : 1,
+      });
+      expect(f.faux.state.callCount).toBe(matches ? 3 : 4);
+      expect(f.counts().executions).toBe(1);
+    },
+  );
+
+  it.each(["Stop", "restart"])(
+    "keeps a queued result pending through %s without losing its output",
+    async (mode) => {
+      const busy = deferred();
+      const f = await fixture([
+        tool("background_job", { action: "start", command: "controlled command" }),
+        answer(),
+        async (_transcript, options) => {
+          busy.resolve();
+          await new Promise<void>((_resolve, reject) => {
+            options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
+              once: true,
+            });
+          });
+          return fauxAssistantMessage("Must not finish the interrupted turn");
+        },
+        answer(),
+        answer(),
+      ]);
+      await prompt(f.root);
+      await f.entered.promise;
+      await f.root.submit({ type: "input", content: "Hold a foreground turn" }, context);
+      await busy.promise;
+      const queued = deferred<SubmissionId>();
+      const inbox = (await f.harness.watchDoc(InboxDoc, f.root.id, context))!;
+      inbox.start(async (value) => {
+        const item = value?.items.find(
+          (item) => item.mode !== "write" && JSON.stringify(item.content).includes("FINAL-OUTPUT"),
+        );
+        if (item) queued.resolve(item.id);
+      });
+      f.finish.resolve();
+      const id = await queued.promise;
+      await inbox.stop();
+      expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]).toMatchObject({
+        status: "completed",
+        delivered: false,
+        output: "FINAL-OUTPUT\n",
+      });
+      let harness = f.harness;
+      let root = f.root;
+      if (mode === "Stop") {
+        await root.abort(context);
+        expect(await (await harness.submission(id, context))!.status(context)).toMatchObject({
+          status: "unanswered",
+          reason: "aborted",
+        });
+      } else {
+        await harness.close(context);
+        harnesses.delete(harness);
+        harness = await f.open();
+        root = (await harness.conversation(root.id, context))!;
+        harness.resume();
+      }
+      const reports = await delivery(harness, root);
+      expect(JSON.stringify(reports)).toContain("FINAL-OUTPUT");
+      expect((await harness.snapshot(DurableJobs, root.id, context))!.jobs[0]).toMatchObject({
+        delivered: true,
+        output: "",
+        receiptId: mode === "Stop" ? "background-job:bash-1:1" : "background-job:bash-1",
+      });
+      expect(f.counts().executions).toBe(1);
+      const calls = f.faux.state.callCount;
+      await harness.close(context);
+      harnesses.delete(harness);
+      harness = await f.open();
+      root = (await harness.conversation(root.id, context))!;
+      harness.resume();
+      await delivery(harness, root);
+      expect(f.faux.state.callCount).toBe(calls);
+      expect(f.counts().executions).toBe(1);
+    },
+  );
 
   it("bash replacement returns quick commands in foreground and trailing & immediately", async () => {
     const f = await fixture(
@@ -317,11 +430,22 @@ describe("native Durable background jobs", () => {
     expect(first).toMatchObject({
       status: "completed",
       decision: "foreground",
-      output: "foreground",
     });
     expect((await f.root.context(context)).messages.filter((m) => m.role === "user")).toHaveLength(
       1,
     );
+    expect((await f.root.context(context)).messages).toContainEqual(
+      expect.objectContaining({
+        role: "toolResult",
+        toolName: "bash",
+        content: [{ type: "text", text: "foreground" }],
+      }),
+    );
+    await f.harness.waitForTask(first.taskId, context);
+    expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]).toMatchObject({
+      delivered: true,
+      output: "",
+    });
     await prompt(f.root, "Run background bash");
     const second = (await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[1]!;
     await f.harness.waitForTask(second.taskId, context);

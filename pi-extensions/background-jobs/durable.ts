@@ -8,11 +8,13 @@ import {
   defineTask,
   defineTool,
   LiveDoc,
+  InboxDoc,
   section,
   type ConversationId,
   type DocumentObserver,
   type DocumentReader,
   type TaskId,
+  type SubmissionId,
   type ToolExecutionApi,
   type Tx,
 } from "@earendil-works/pi-durable";
@@ -50,6 +52,8 @@ type Job = {
   cancelRequested: boolean;
   cancelTask?: TaskId;
   delivered: boolean;
+  receiptId: string;
+  receiptAttempt: number;
   output: string;
   truncated: boolean;
   exitCode: number | null;
@@ -154,10 +158,45 @@ async function waitForJob(
   }
 }
 
+const INTERRUPTED_PROCESS_WARNING =
+  "The previous host or guest process may still be running. Do not start it again until it is confirmed dead.";
+
+/** A queued receipt can be placed or withdrawn; both remove its inbox item. */
+async function waitForReceiptChange(
+  api: DocumentObserver,
+  id: ConversationId,
+  receipt: SubmissionId,
+  context: Context,
+): Promise<void> {
+  const watch = await api.watchDoc(InboxDoc, id, context);
+  if (!watch) throw new Error("Background job inbox disappeared");
+  let removeAbort = (): void => {};
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const abort = (): void =>
+        reject(
+          context.abortSignal?.reason ?? new Error("Receipt wait aborted"),
+        );
+      const take = (value: typeof watch.value): void => {
+        if (!value?.items.some((item) => item.id === receipt)) resolve();
+      };
+      context.abortSignal?.addEventListener("abort", abort, { once: true });
+      removeAbort = () =>
+        context.abortSignal?.removeEventListener("abort", abort);
+      watch.start(async (value) => take(value));
+      take(watch.value);
+      if (context.abortSignal?.aborted) abort();
+    });
+  } finally {
+    removeAbort();
+    await watch.stop();
+  }
+}
+
 function report(job: Job): string {
   const headline =
     job.status === "interrupted"
-      ? `Background job ${job.id} was interrupted by a host restart before it finished. It was not rerun.`
+      ? `Background job ${job.id} was interrupted by a host restart before it finished. It was not rerun. ${INTERRUPTED_PROCESS_WARNING}`
       : job.status === "cancelled"
         ? `Background job ${job.id} was cancelled.`
         : job.status === "timed_out"
@@ -336,6 +375,18 @@ const JobRunner = defineTask<
       } finally {
         await live?.stop();
       }
+      const settle = async (tx: Tx) => {
+        const current = (
+          await tx.doc(DurableJobs, runtime.conversationId)
+        ).jobs.find((item) => item.id === job.id)!;
+        current.delivered = true;
+        current.output = "";
+        await publish(tx, runtime.conversationId);
+        return {
+          status: "terminal" as const,
+          outcome: { status: "completed" as const, result: null },
+        };
+      };
       if (job.decision === "background") {
         const conversation = await runtime.conversation(
           runtime.conversationId,
@@ -343,31 +394,103 @@ const JobRunner = defineTask<
         );
         if (!conversation)
           throw new Error("Background job conversation disappeared");
-        // Admission and task settlement are separate commits. requestId closes
-        // the crash window after submit and before delivered/terminal is saved.
-        // Keep a receipt per job rather than risk reassigning batch membership
-        // across restart. Durable follow-up admission supplies the safe boundary.
-        await conversation.submit(
-          {
-            type: "input",
-            content: report(job),
-            whenBusy: "followUp",
-            requestId: `background-job:${job.id}`,
-          },
-          context,
-        );
+        const content = report(job);
+        let receiptId = job.receiptId;
+        // Initialize delivery identities for existing version-one documents.
+        if (!receiptId) {
+          await runtime.commit(async (tx) => {
+            const current = (
+              await tx.doc(DurableJobs, runtime.conversationId)
+            ).jobs.find((item) => item.id === job.id)!;
+            current.receiptId = `background-job:${job.id}`;
+            current.receiptAttempt = 0;
+            receiptId = current.receiptId;
+          }, context);
+        }
+        for (;;) {
+          let receipt:
+            | { id: SubmissionId; status: string; matches: boolean }
+            | undefined;
+          let delivered = false;
+          // Confirm placement/content and settle on the SAME mutation line:
+          // Stop must not burn a receipt between validation and output release.
+          // requestId lookup alone also returns withdrawn/colliding rows.
+          await runtime.commit(async (tx) => {
+            const record = await tx.submissionByRequest(
+              runtime.conversationId,
+              receiptId,
+            );
+            if (!record) return;
+            const item =
+              record.entry === undefined
+                ? (await tx.doc(InboxDoc, runtime.conversationId)).items.find(
+                    (item) => item.id === record.id,
+                  )
+                : undefined;
+            const stored =
+              record.entry !== undefined
+                ? (await tx.entry(record.entry))?.model?.find(
+                    (message) => message.role === "user",
+                  )?.content
+                : item && item.mode !== "write"
+                  ? item.content
+                  : undefined;
+            receipt = {
+              id: record.id,
+              status: record.status,
+              matches:
+                record.type === "input" &&
+                (stored === content ||
+                  JSON.stringify(stored) ===
+                    JSON.stringify([{ type: "text", text: content }])),
+            };
+            if (
+              receipt.matches &&
+              (receipt.status === "placed" || receipt.status === "done")
+            ) {
+              delivered = true;
+              return settle(tx);
+            }
+          }, context);
+          if (delivered) return;
+          if (receipt?.matches && receipt.status === "queued") {
+            await waitForReceiptChange(
+              runtime,
+              runtime.conversationId,
+              receipt.id,
+              context,
+            );
+            continue;
+          }
+          if (receipt) {
+            // Stop burns queued receipt IDs. Persist the next identity BEFORE
+            // admission; replay must not reuse a dead or foreign submission.
+            await runtime.commit(async (tx) => {
+              const current = (
+                await tx.doc(DurableJobs, runtime.conversationId)
+              ).jobs.find((item) => item.id === job.id)!;
+              current.receiptAttempt += 1;
+              current.receiptId = `background-job:${job.id}:${current.receiptAttempt}`;
+              receiptId = current.receiptId;
+            }, context);
+            continue;
+          }
+          await conversation.submit(
+            {
+              type: "input",
+              content,
+              whenBusy: "followUp",
+              requestId: receiptId,
+            },
+            context,
+          );
+        }
+      } else {
+        // Foreground bash is replay-safe too. Keep its bytes until its starter
+        // has committed the tool result, not merely selected foreground mode.
+        await runtime.waitForTask(job.starter, context);
       }
-      await runtime.commit(async (tx) => {
-        const current = (
-          await tx.doc(DurableJobs, runtime.conversationId)
-        ).jobs.find((item) => item.id === job.id)!;
-        current.delivered = true;
-        await publish(tx, runtime.conversationId);
-        return {
-          status: "terminal",
-          outcome: { status: "completed", result: null },
-        };
-      }, context);
+      await runtime.commit(settle, context);
     },
   },
   async abort(task, runtime, context) {
@@ -377,6 +500,7 @@ const JobRunner = defineTask<
       )!;
       job.status = "cancelled";
       job.delivered = true;
+      job.output = "";
       await publish(tx, runtime.conversationId);
       return { status: "terminal", outcome: { status: "aborted" } };
     }, context);
@@ -440,6 +564,8 @@ async function start(
       decision: backgrounded && !foregroundOnly ? "background" : "waiting",
       cancelRequested: false,
       delivered: false,
+      receiptId: `background-job:${id}`,
+      receiptAttempt: 0,
       output: "",
       truncated: false,
       exitCode: null,
@@ -572,7 +698,7 @@ const bash = defineTool({
     const formatted =
       selected.status === "interrupted"
         ? {
-            text: "Command interrupted by a host restart; it was not rerun.",
+            text: `Command interrupted by a host restart; it was not rerun. ${INTERRUPTED_PROCESS_WARNING}`,
             isError: true,
           }
         : formatForegroundResult(selected, {
