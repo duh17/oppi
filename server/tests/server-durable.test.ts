@@ -1,4 +1,4 @@
-import { mkdtempSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -34,7 +34,7 @@ import {
   queueOrphanedSessionsForRestart,
   recordLiveSessionsForRestart,
 } from "../src/session-restart-resume.js";
-import type { ServerMessage, Session } from "../src/types.js";
+import type { ChatAttachmentRef, ServerMessage, Session } from "../src/types.js";
 
 const managers: SessionManager[] = [];
 const harnesses: Harness[] = [];
@@ -77,6 +77,7 @@ async function fixture(responses: FauxResponseStep[], options?: { slow?: boolean
   storage.saveSession(session);
   const manager = new SessionManager(storage);
   managers.push(manager);
+  await manager.resumeDurableSessions();
   return { dir, models, faux, storage, workspace, session, manager };
 }
 
@@ -143,8 +144,12 @@ async function openHarness(
 }
 
 async function backend(harness: Harness, models: ModelRuntime, session: Session, dataDir: string) {
+  const owner = new DurableHarness(dataDir);
+  vi.spyOn(owner, "open").mockResolvedValue({ harness, models });
+  await owner.releaseResume();
   const result = await DurableBackend.create({
     harness,
+    owner,
     models,
     session,
     dataDir,
@@ -155,7 +160,333 @@ async function backend(harness: Harness, models: ModelRuntime, session: Session,
   return result;
 }
 
+async function crashedQueuedTools(f: Awaited<ReturnType<typeof fixture>>) {
+  const sessions = [f.session, f.storage.createSession("Queued tool B", "faux/faux-1")];
+  const secondWorkspace = f.storage.createWorkspace({
+    name: "Second crash workspace",
+    hostMount: f.dir,
+  });
+  const effects: number[] = [];
+  let recovering = false;
+  let count = 0;
+  let allEntered!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    allEntered = resolve;
+  });
+  const tool: ToolRegistration = {
+    name: "startup_counter",
+    description: "Controlled tool recovery",
+    parameters: Type.Object({}),
+    replay: "safe",
+    async execute(_args, api, callContext) {
+      if (!recovering) {
+        if (++count === sessions.length) allEntered();
+        await new Promise<void>((_resolve, reject) => {
+          callContext.abortSignal!.addEventListener(
+            "abort",
+            () => reject(callContext.abortSignal!.reason),
+            { once: true },
+          );
+        });
+      }
+      effects.push(api.conversationId);
+      return { content: [{ type: "text", text: "counted" }] };
+    },
+  };
+  let harness = await openHarness(f.dir, f.models, tool);
+  const tasks = [];
+  for (const [index, session] of sessions.entries()) {
+    const conversation = await harness.createConversation(
+      {
+        ownership: { kind: "ownerless" },
+        agent: { model: { provider: "faux", modelId: "faux-1" }, tools: [tool], cwd: f.dir },
+      },
+      context,
+    );
+    session.workspaceId = index === 0 ? f.workspace.id : secondWorkspace.id;
+    session.serverDurable = { conversationId: conversation.id };
+    session.status = "busy";
+    f.storage.saveSession(session);
+    tasks.push(
+      await conversation.commit(async (tx) => {
+        const assistant = await tx.appendEntry(AssistantEntry, conversation.id, {
+          model: [
+            {
+              role: "assistant",
+              content: [fauxToolCall(tool.name, {}, { id: "startup" })],
+              api: "faux",
+              provider: "faux",
+              model: "faux-1",
+              usage: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 0,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              stopReason: "toolUse",
+              timestamp: 1,
+            },
+          ],
+        });
+        return tx.createTask(
+          ToolTask,
+          { assistant: assistant.id, callId: "startup" },
+          { ownership: { kind: "conversation" } },
+        );
+      }, context),
+    );
+  }
+  harness.resume();
+  await entered;
+  await harness.close(context);
+  harnesses.splice(harnesses.indexOf(harness), 1);
+  recovering = true;
+  harness = await openHarness(f.dir, f.models, tool);
+  vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+  vi.spyOn(f.storage, "listSessions").mockImplementation(() =>
+    sessions.map((session) => f.storage.getSession(session.id)!),
+  );
+  queueOrphanedSessionsForRestart(f.storage);
+  return { sessions, secondWorkspace, effects, harness, tasks };
+}
+
 describe("server durable managed runtime", () => {
+  it("gates an early HTTP-equivalent open and prompt before bootstrap even begins", async () => {
+    const f = await fixture([]);
+    const crashed = await crashedQueuedTools(f);
+    const early = new SessionManager(f.storage);
+    managers.push(early);
+    const a = crashed.sessions[0]!;
+    await early.startSession(a.id, f.workspace);
+    await expect(early.sendPrompt(a.id, "Early launch prompt")).rejects.toMatchObject({
+      code: "server_durable_startup_pending",
+      retryable: true,
+    });
+    expect(f.storage.listRestartResume().map((entry) => entry.sessionId)).toContain(a.id);
+    await early.stopSession(a.id);
+    expect(crashed.effects).toEqual([]);
+    expect((await crashed.harness.inspect(context)).scheduling).toBe("paused");
+    await early.resumeDurableSessions();
+    await Promise.all(crashed.tasks.map((id) => crashed.harness.waitForTask(id, context)));
+    expect(crashed.effects).toEqual([crashed.sessions[1]!.serverDurable!.conversationId]);
+  });
+
+  it("keeps admission gated until an in-flight paused cancellation mark commits", async () => {
+    const f = await fixture([]);
+    const crashed = await crashedQueuedTools(f);
+    const owner = new DurableHarness(f.dir);
+    vi.spyOn(owner, "open").mockResolvedValue({ harness: crashed.harness, models: f.models });
+    let admit!: () => void;
+    let marking!: () => void;
+    const allowed = new Promise<void>((resolve) => {
+      admit = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      marking = resolve;
+    });
+    const abortTask = crashed.harness.abortTask.bind(crashed.harness);
+    vi.spyOn(crashed.harness, "abortTask").mockImplementation(async (...args) => {
+      if (args[0] === crashed.tasks[1]) {
+        marking();
+        await allowed;
+      }
+      return abortTask(...args);
+    });
+    const a = crashed.sessions[0]!;
+    const active = await DurableBackend.create({
+      harness: crashed.harness,
+      owner,
+      models: f.models,
+      session: a,
+      dataDir: f.dir,
+      persistBinding: () => {},
+      onEvent: () => {},
+    });
+    const stopped = owner.abortConversations(
+      new Set([crashed.sessions[1]!.serverDurable!.conversationId! as ConversationId]),
+    );
+    await started;
+    const released = owner.releaseResume();
+    try {
+      await expect(active.prompt("Do not resume before the stop mark")).rejects.toMatchObject({
+        code: "server_durable_startup_pending",
+        retryable: true,
+      });
+      expect(crashed.effects).toEqual([]);
+      expect((await crashed.harness.inspect(context)).scheduling).toBe("paused");
+    } finally {
+      admit();
+      await stopped;
+      await released;
+      await active.detachForRestart();
+    }
+    await Promise.all(crashed.tasks.map((id) => crashed.harness.waitForTask(id, context)));
+    expect(crashed.effects).toEqual([a.serverDurable!.conversationId]);
+  });
+
+  it.each(["stop", "agent-launch prompt"])(
+    "keeps shared scheduling paused during an attached %s while the next workspace disappears",
+    async (action) => {
+      const f = await fixture([]);
+      const crashed = await crashedQueuedTools(f);
+      const [a, b] = crashed.sessions;
+      const start = f.manager.startSession.bind(f.manager);
+      vi.spyOn(f.manager, "startSession").mockImplementation(async (id, workspace) => {
+        const result = await start(id, workspace);
+        expect(id).toBe(a!.id);
+        if (action === "stop") await f.manager.stopSession(a!.id);
+        else {
+          await expect(
+            f.manager.sendPrompt(a!.id, "Launch input during startup", {
+              clientTurnId: "startup-launch",
+            }),
+          ).rejects.toMatchObject({ code: "server_durable_startup_pending", retryable: true });
+          expect(f.storage.listRestartResume().map((entry) => entry.sessionId)).toContain(a!.id);
+        }
+        // If a broken stop enabled scheduling, join B's already-enabled work
+        // before resolving B's workspace. Never enable a paused scheduler here.
+        if ((await crashed.harness.inspect(context)).scheduling === "running")
+          await crashed.harness.waitForTask(crashed.tasks[1]!, context);
+        expect(crashed.effects).toEqual([]);
+        expect((await crashed.harness.inspect(context)).scheduling).toBe("paused");
+        // It existed at the first fence and disappears after A has been exposed.
+        f.storage.deleteWorkspace(crashed.secondWorkspace.id);
+        expect(f.storage.listRestartResume().map((entry) => entry.sessionId)).toContain(b!.id);
+        return result;
+      });
+      await f.manager.resumeDurableSessions();
+      await Promise.all(crashed.tasks.map((id) => crashed.harness.waitForTask(id, context)));
+      expect(crashed.effects).toEqual(action === "stop" ? [] : [a!.serverDurable!.conversationId]);
+      expect(f.manager.isActive(b!.id)).toBe(false);
+    },
+  );
+
+  it.each(["prompt", "steer", "follow-up"])(
+    "preserves restart intent when an inactive startup %s fails admission",
+    async (kind) => {
+      const f = await fixture([]);
+      const crashed = await crashedQueuedTools(f);
+      const b = crashed.sessions[1]!;
+      const send =
+        kind === "prompt"
+          ? f.manager.sendPrompt.bind(f.manager)
+          : kind === "steer"
+            ? f.manager.sendSteer.bind(f.manager)
+            : f.manager.sendFollowUp.bind(f.manager);
+      await expect(send(b.id, "Not admitted")).rejects.toThrow("Session not active");
+      expect(f.storage.listRestartResume().map((entry) => entry.sessionId)).toContain(b.id);
+      await f.manager.resumeDurableSessions();
+      await Promise.all(crashed.tasks.map((id) => crashed.harness.waitForTask(id, context)));
+      expect(new Set(crashed.effects)).toEqual(
+        new Set(crashed.sessions.map((session) => session.serverDurable!.conversationId)),
+      );
+    },
+  );
+
+  it.each(["follow-up", "steer", "prompt-followUp", "prompt-steer"])(
+    "publishes one rich image chip for native %s, including inbox refresh and failed-submit rollback",
+    async (kind) => {
+      const f = await fixture(
+        [
+          fauxAssistantMessage(
+            "A long streaming answer leaves time for deterministic native queue admission.",
+          ),
+        ],
+        { slow: true },
+      );
+      const harness = await openHarness(f.dir, f.models);
+      vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+      const creating = vi.spyOn(harness, "createConversation");
+      await f.manager.startSession(f.session.id, f.workspace);
+      const conversation = await creating.mock.results[0]!.value;
+      const submit = conversation.submit.bind(conversation);
+      let rejectNext = false;
+      vi.spyOn(conversation, "submit").mockImplementation(async (...args) => {
+        if (rejectNext) {
+          rejectNext = false;
+          throw new Error("native admission rejected");
+        }
+        return submit(...args);
+      });
+      const png = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jE0YAAAAASUVORK5CYII=",
+        "base64",
+      );
+      writeFileSync(join(f.dir, "queue.png"), png);
+      const attachment: ChatAttachmentRef = {
+        type: "attachment",
+        id: "image-proof",
+        source: "workspace",
+        name: "queue.png",
+        mimeType: "image/png",
+        kind: "image",
+        sizeBytes: png.length,
+        workspacePath: "queue.png",
+      };
+      const projection = observe(f.manager, f.session.id);
+      const delta = projection.next((message) => message.type === "text_delta");
+      await f.manager.sendPrompt(f.session.id, "Stream");
+      await delta;
+      const send = (text: string, id: string) => {
+        const opts = { clientTurnId: id, attachments: [attachment] };
+        if (kind === "follow-up") return f.manager.sendFollowUp(f.session.id, text, opts);
+        if (kind === "steer") return f.manager.sendSteer(f.session.id, text, opts);
+        return f.manager.sendPrompt(f.session.id, text, {
+          ...opts,
+          streamingBehavior: kind === "prompt-steer" ? "steer" : "followUp",
+        });
+      };
+      const before = projection.messages.length;
+      f.storage.queueRestartResume([{ sessionId: f.session.id, wasBusy: true }], Date.now());
+      rejectNext = true;
+      await expect(send("Failed rich input", "failed-image-turn")).rejects.toThrow(
+        "native admission rejected",
+      );
+      expect(f.storage.listRestartResume().map((entry) => entry.sessionId)).toContain(f.session.id);
+      const failedFrames = projection.messages
+        .slice(before)
+        .filter((message) => message.type === "queue_state");
+      for (const frame of failedFrames)
+        expect([...frame.queue.steering, ...frame.queue.followUp]).toEqual([]);
+      const acceptedAt = projection.messages.length;
+      await send("Rich input", "rich-image-turn");
+      expect(f.storage.listRestartResume()).toEqual([]);
+      const inbox = await harness.snapshot(InboxDoc, conversation.id, context);
+      expect(inbox!.items).toHaveLength(1);
+      expect(inbox!.items[0]).toMatchObject({
+        content: expect.arrayContaining([
+          { type: "image", data: png.toString("base64"), mimeType: "image/png" },
+        ]),
+      });
+      // Force another native inbox update, with no Oppi enqueue involved.
+      const transient = await conversation.submit(
+        { type: "input", content: "Native refresh tick", whenBusy: "followUp" },
+        context,
+      );
+      await transient.abort(context);
+      const frames = projection.messages
+        .slice(acceptedAt)
+        .filter((message) => message.type === "queue_state");
+      expect(frames.length).toBeGreaterThan(0);
+      for (const frame of frames) {
+        const rich = [...frame.queue.steering, ...frame.queue.followUp].filter(
+          (item) => item.id === "rich-image-turn",
+        );
+        expect(rich).toHaveLength(1);
+        expect(rich[0]).toMatchObject({ message: "Rich input", attachments: [attachment] });
+        expect(
+          [...frame.queue.steering, ...frame.queue.followUp].filter((item) =>
+            item.message.includes("queue.png"),
+          ),
+        ).toEqual([]);
+      }
+      await f.manager.sendAbort(f.session.id);
+      projection.unsubscribe();
+    },
+  );
+
   it("projects a tool-using prompt through the existing pipeline and keeps the client turn id unique", async () => {
     const f = await fixture([
       fauxAssistantMessage(

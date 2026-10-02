@@ -25,6 +25,7 @@ import {
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import type { AgentDefinition } from "./agent-launch-service.js";
 import type { AgentBackend } from "./agent-backend.js";
+import type { DurableHarness } from "./durable-harness.js";
 import { adaptDurableEvent, createAdapterState, snapshotEvents } from "./durable-event-adapter.js";
 import type { PiMessage, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import type { SdkBackendDisposeResult } from "./sdk-backend.js";
@@ -71,6 +72,7 @@ export class DurableBackend implements AgentBackend {
 
   private constructor(
     private readonly harness: Harness,
+    private readonly owner: DurableHarness,
     private readonly conversation: Conversation,
     models: ModelRuntime,
     private readonly session: Session,
@@ -83,6 +85,7 @@ export class DurableBackend implements AgentBackend {
 
   static async create(options: {
     harness: Harness;
+    owner: DurableHarness;
     models: ModelRuntime;
     session: Session;
     workspace?: Workspace;
@@ -172,6 +175,7 @@ export class DurableBackend implements AgentBackend {
       const events = await watchEvents(harness, conversation.id, BACKGROUND_CONTEXT);
       return new DurableBackend(
         harness,
+        options.owner,
         conversation,
         models,
         session,
@@ -233,6 +237,7 @@ export class DurableBackend implements AgentBackend {
     operation: (permit: SessionRuntimeTransactionPermit) => Promise<T>,
   ): Promise<T> {
     this.assertOpen();
+    this.owner.assertSchedulingReady();
     return this.transactions.withShared(operation);
   }
   withRuntimeLifecycleTransaction<T>(
@@ -253,6 +258,7 @@ export class DurableBackend implements AgentBackend {
       return this.withModelTurnAdmission("prompt", (token) => this.prompt(message, options, token));
     this.transactions.assertPermit(permit, "shared");
     this.assertOpen();
+    this.owner.assertSchedulingReady();
     const content = options?.images?.length
       ? [{ type: "text" as const, text: message }, ...options.images]
       : message;
@@ -260,6 +266,7 @@ export class DurableBackend implements AgentBackend {
     // admission so two copies of one request cannot both append a local user row.
     const admission = this.admissions.then(async () => {
       this.assertOpen();
+      this.owner.assertSchedulingReady();
       const existing = options?.clientTurnId
         ? await this.conversation.commit(async (tx) => {
             const record = await tx.submissionByRequest(
@@ -343,7 +350,7 @@ export class DurableBackend implements AgentBackend {
     if (!permit) return this.withRuntimeLifecycleTransaction("abort", (token) => this.abort(token));
     this.transactions.assertPermit(permit, "exclusive");
     this.assertOpen();
-    await this.conversation.abort(BACKGROUND_CONTEXT);
+    await this.owner.abortConversation(this.conversation.id);
     this.onEvent({ type: "queue_update", ...this.queuedMessages() });
   }
   abortBash(): never {
@@ -356,7 +363,7 @@ export class DurableBackend implements AgentBackend {
       });
     if (this.disposed) return { disposal: "graceful" };
     this.transactions.assertPermit(permit, "exclusive");
-    await this.conversation.abort(BACKGROUND_CONTEXT);
+    await this.owner.abortConversation(this.conversation.id);
     await this.detachForRestart();
     return { disposal: "graceful" };
   }
@@ -372,7 +379,7 @@ export class DurableBackend implements AgentBackend {
     return async (timeoutMs) => {
       // Never report a successful stop until Durable has admitted cancellation.
       // A rejected abort leaves the projection alive and propagates stop_failed.
-      await this.conversation.abort(BACKGROUND_CONTEXT);
+      await this.owner.abortConversation(this.conversation.id);
       await this.detachForRestart();
       this.transactions.poison(new Error("Server durable stop timed out"));
       return { disposal: "forced", cause: "lifecycle_timeout", operation: "stop", timeoutMs };
@@ -502,6 +509,7 @@ export class DurableBackend implements AgentBackend {
   }
   async compact(instructions?: string): Promise<CompactionResult> {
     this.assertOpen();
+    this.owner.assertSchedulingReady();
     const usageBefore = this.messages()
       .reverse()
       .find((message) => message.role === "assistant")?.usage;

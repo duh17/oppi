@@ -94,6 +94,7 @@ export class SessionStartCoordinator {
           DurableBackend && durableHarness
             ? await DurableBackend.create({
                 ...(await durableHarness.open()),
+                owner: durableHarness,
                 session,
                 workspace,
                 agentDefinition,

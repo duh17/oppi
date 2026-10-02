@@ -374,10 +374,10 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     },
   ): Promise<void> {
     const key = this.sessionKey(sessionId);
-    this.claimFromRestartResume(sessionId);
     await this.inputCoordinator.sendPrompt(key, message, {
       ...opts,
     });
+    this.claimFromRestartResume(sessionId);
   }
 
   /**
@@ -407,8 +407,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     },
   ): Promise<void> {
     const key = this.sessionKey(sessionId);
-    this.claimFromRestartResume(sessionId);
     await this.inputCoordinator.sendSteer(key, message, opts);
+    this.claimFromRestartResume(sessionId);
   }
 
   /**
@@ -426,8 +426,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     },
   ): Promise<void> {
     const key = this.sessionKey(sessionId);
-    this.claimFromRestartResume(sessionId);
     await this.inputCoordinator.sendFollowUp(key, message, opts);
+    this.claimFromRestartResume(sessionId);
   }
 
   getMessageQueue(sessionId: string): MessageQueueState {
@@ -678,24 +678,26 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         (session) =>
           isServerDurableSession(session) && session.serverDurable?.conversationId !== undefined,
       );
-    if (!bound.length) return;
     const durableHarness = await this.durableHarness;
+    if (!bound.length) {
+      await durableHarness.releaseResume();
+      return;
+    }
     durableHarness.holdResume();
     await durableHarness.open();
     // A mounted conversation can accept input, which itself enables scheduling.
     // Fence known stops before exposing even the first resumable projection.
     const queued = new Set(this.storage.listRestartResume().map((entry) => entry.sessionId));
-    await durableHarness.abortConversations(
-      new Set(
-        bound
-          .filter(
-            (session) =>
-              !queued.has(session.id) ||
-              (session.workspaceId && !this.storage.getWorkspace(session.workspaceId)),
-          )
-          .map((session) => session.serverDurable!.conversationId! as ConversationId),
-      ),
+    const marked = new Set(
+      bound
+        .filter(
+          (session) =>
+            !queued.has(session.id) ||
+            (session.workspaceId && !this.storage.getWorkspace(session.workspaceId)),
+        )
+        .map((session) => session.serverDurable!.conversationId! as ConversationId),
     );
+    await durableHarness.abortConversations(marked);
     for (const session of bound) {
       const workspace = session.workspaceId
         ? this.storage.getWorkspace(session.workspaceId)
@@ -705,15 +707,32 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         continue;
       await this.startSession(session.id, workspace);
     }
-    // Mark EVERY stopped conversation and withdraw its inbox while paused.
-    // Conversation.abort()/waitForIdle()/submit() enable the shared scheduler.
-    await durableHarness.abortConversations(
-      new Set(
-        bound
-          .filter((session) => !this.isActive(session.id))
-          .map((session) => session.serverDurable!.conversationId! as ConversationId),
-      ),
-    );
+    // Re-evaluate after every await: stops and workspace deletion can change
+    // the decision while attachments/cancellation marks are being committed.
+    // The owner gate rejects prompts and routes all stops to paused cancellation.
+    for (;;) {
+      const pending = new Set(this.storage.listRestartResume().map((entry) => entry.sessionId));
+      const stopped = bound.filter(
+        (session) =>
+          !pending.has(session.id) ||
+          !this.isActive(session.id) ||
+          (session.workspaceId && !this.storage.getWorkspace(session.workspaceId)),
+      );
+      const unmarked = stopped.filter(
+        (session) => !marked.has(session.serverDurable!.conversationId! as ConversationId),
+      );
+      const attachedStops = stopped.filter((session) => this.isActive(session.id));
+      if (!unmarked.length && !attachedStops.length) break;
+      if (unmarked.length)
+        await durableHarness.abortConversations(
+          new Set(
+            unmarked.map((session) => session.serverDurable!.conversationId! as ConversationId),
+          ),
+        );
+      for (const session of unmarked)
+        marked.add(session.serverDurable!.conversationId! as ConversationId);
+      for (const session of attachedStops) await this.stopSession(session.id);
+    }
     for (const session of bound) this.storage.clearRestartResume(session.id);
     await durableHarness.releaseResume();
   }

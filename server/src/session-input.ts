@@ -22,7 +22,14 @@ import type { AgentBackend } from "./agent-backend.js";
 export interface SessionInputSessionState extends TurnSessionState {
   session: Session;
   sdkBackend?: Partial<
-    Pick<AgentBackend, "isStreaming" | "isCompacting" | "isDisposed" | "withModelTurnAdmission">
+    Pick<
+      AgentBackend,
+      | "isStreaming"
+      | "isCompacting"
+      | "isDisposed"
+      | "withModelTurnAdmission"
+      | "abortClearsQueuedModelTurns"
+    >
   >;
 }
 
@@ -79,6 +86,7 @@ export interface SessionInputCoordinatorDeps {
     data: unknown,
   ) => void | Promise<void>;
   enqueueQueuedMessage?: EnqueueQueuedMessage;
+  reserveQueuedMessage?: (...args: Parameters<EnqueueQueuedMessage>) => (accepted: boolean) => void;
   resolveWorkspaceRoot?: (session: Session) => string | null;
   onFirstMessage?: (session: Session) => void;
   assertModelTurnAdmissionAllowed?: (key: string) => void;
@@ -290,14 +298,34 @@ export class SessionInputCoordinator {
       recordPromptLocally: shouldRecordPromptLocally(active.session),
     });
 
-    const commandResult = this.deps.sendCommand(key, cmd, permit, () => {
-      acceptPreflight();
-      // Pi can synchronously emit agent_start immediately after preflight.
-      dispatchAcceptedTurn();
-    });
-    // Promise-returning runtimes resolve only after authoritative preflight acceptance.
-    // Sync managed sendCommand still runs onPreflightAccepted first via the callback above.
-    const data = isPromiseLike(commandResult) ? await commandResult : commandResult;
+    const queueKind =
+      runtimeBusy && opts?.streamingBehavior
+        ? opts.streamingBehavior === "steer"
+          ? "steer"
+          : "follow_up"
+        : undefined;
+    const data = await this.dispatchModelTurn(
+      key,
+      active,
+      cmd,
+      permit,
+      () => {
+        acceptPreflight();
+        // Pi can synchronously emit agent_start immediately after preflight.
+        dispatchAcceptedTurn();
+      },
+      queueKind
+        ? [
+            key,
+            queueKind,
+            message,
+            opts?.attachments,
+            opts?.clientTurnId,
+            dispatchMessage,
+            dispatchImages,
+          ]
+        : undefined,
+    );
     if (data && typeof data === "object" && "duplicate" in data && data.duplicate === true)
       return { duplicate: true };
     acceptPreflight();
@@ -306,13 +334,12 @@ export class SessionInputCoordinator {
     }
     const dispatchedTurn = dispatchAcceptedTurn();
 
-    if (runtimeBusy && opts?.streamingBehavior) {
-      const kind = opts.streamingBehavior === "steer" ? "steer" : "follow_up";
+    if (queueKind && !active.sdkBackend?.abortClearsQueuedModelTurns) {
       this.deps.enqueueQueuedMessage?.(
         key,
-        kind,
+        queueKind,
         message,
-        opts.attachments,
+        opts?.attachments,
         dispatchedTurn.clientTurnId,
         dispatchMessage,
         dispatchImages,
@@ -458,11 +485,17 @@ export class SessionInputCoordinator {
       attachmentCount: opts?.attachments?.length ?? 0,
     });
 
-    const commandResult = this.deps.sendCommand(key, cmd, permit, () => {
-      acceptPreflight();
-      dispatchAcceptedTurn();
-    });
-    const data = isPromiseLike(commandResult) ? await commandResult : commandResult;
+    const data = await this.dispatchModelTurn(
+      key,
+      active,
+      cmd,
+      permit,
+      () => {
+        acceptPreflight();
+        dispatchAcceptedTurn();
+      },
+      [key, kind, message, opts?.attachments, opts?.clientTurnId, dispatchMessage, dispatchImages],
+    );
     if (data && typeof data === "object" && "duplicate" in data && data.duplicate === true)
       return { duplicate: true };
     acceptPreflight();
@@ -470,17 +503,43 @@ export class SessionInputCoordinator {
       await this.deps.onCommandResult(key, cmd, data);
     }
     const dispatchedTurn = dispatchAcceptedTurn();
-    this.deps.enqueueQueuedMessage?.(
-      key,
-      kind,
-      message,
-      opts?.attachments,
-      dispatchedTurn.clientTurnId,
-      dispatchMessage,
-      dispatchImages,
-    );
+    if (!active.sdkBackend?.abortClearsQueuedModelTurns)
+      this.deps.enqueueQueuedMessage?.(
+        key,
+        kind,
+        message,
+        opts?.attachments,
+        dispatchedTurn.clientTurnId,
+        dispatchMessage,
+        dispatchImages,
+      );
 
     return { duplicate: false };
+  }
+
+  private async dispatchModelTurn(
+    key: string,
+    active: SessionInputSessionState,
+    command: Record<string, unknown>,
+    permit: SessionRuntimeTransactionPermit | undefined,
+    onPreflightAccepted: () => void,
+    queued?: Parameters<EnqueueQueuedMessage>,
+  ): Promise<unknown> {
+    const settle =
+      queued && active.sdkBackend?.abortClearsQueuedModelTurns
+        ? this.deps.reserveQueuedMessage?.(...queued)
+        : undefined;
+    try {
+      const result = this.deps.sendCommand(key, command, permit, onPreflightAccepted);
+      const data = isPromiseLike(result) ? await result : result;
+      settle?.(
+        !(data && typeof data === "object" && "duplicate" in data && data.duplicate === true),
+      );
+      return data;
+    } catch (error) {
+      settle?.(false);
+      throw error;
+    }
   }
 
   private assertPreflightOwnerActive(key: string, active: SessionInputSessionState): void {

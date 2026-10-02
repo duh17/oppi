@@ -74,6 +74,13 @@ export interface SessionMessageQueueCoordinatorDeps {
 }
 
 export class SessionMessageQueueCoordinator {
+  // Native inbox publication can beat prompt admission's continuation. Keep
+  // rich pending rows available to reconciliation, without publishing a chip
+  // until the inbox actually contains it (or duplicating an existing replay).
+  private readonly pendingAdmissions = new WeakMap<
+    SessionMessageQueueState,
+    Map<string, { kind: MessageQueueKind; item: QueueStoreItem }>
+  >();
   private readonly abortQueueSnapshots = new WeakMap<
     SessionAbortQueueClear,
     {
@@ -204,8 +211,21 @@ export class SessionMessageQueueCoordinator {
       };
     }
 
-    const nextSteering = this.reconcileItemsWithSdkTextQueue(queue.steering, sdkSteering);
-    const nextFollowUp = this.reconcileItemsWithSdkTextQueue(queue.followUp, sdkFollowUp);
+    const pending = [...(this.pendingAdmissions.get(active)?.values() ?? [])];
+    const basis = (kind: MessageQueueKind, items: QueueStoreItem[]) => [
+      ...items,
+      ...pending
+        .filter((entry) => entry.kind === kind && !items.some((item) => item.id === entry.item.id))
+        .map((entry) => entry.item),
+    ];
+    const nextSteering = this.reconcileItemsWithSdkTextQueue(
+      basis("steer", queue.steering),
+      sdkSteering,
+    );
+    const nextFollowUp = this.reconcileItemsWithSdkTextQueue(
+      basis("follow_up", queue.followUp),
+      sdkFollowUp,
+    );
 
     const removedSteering = this.removedItemsByID(queue.steering, nextSteering);
     const removedFollowUp = this.removedItemsByID(queue.followUp, nextFollowUp);
@@ -353,6 +373,58 @@ export class SessionMessageQueueCoordinator {
     return cloneQueueState(this.syncFromSdk(active));
   }
 
+  /** Reserve rich metadata before native submission; settle only after admission. */
+  reserveQueuedMessage(
+    key: string,
+    kind: MessageQueueKind,
+    message: string,
+    attachments?: ChatAttachmentRef[],
+    idHint?: string,
+    sdkMessage?: string,
+    sdkImages?: QueueImageContent[],
+  ): (accepted: boolean) => void {
+    const active = this.deps.getActiveSession(key);
+    if (!active) return () => {};
+    const queue = this.ensureQueueStore(active);
+    const item = this.makeQueuedItem(message, attachments, idHint, sdkMessage, sdkImages);
+    if ([...queue.steering, ...queue.followUp].some((existing) => existing.id === item.id))
+      return () => {};
+    const pending = this.pendingAdmissions.get(active) ?? new Map();
+    this.pendingAdmissions.set(active, pending);
+    pending.set(item.id, { kind, item });
+    let settled = false;
+    return (accepted) => {
+      if (settled) return;
+      settled = true;
+      // Reconcile while the reservation still supplies metadata, even if the
+      // watch callback has not yet arrived or another inbox event raced submit.
+      if (accepted && this.deps.getActiveSession(key) === active) this.syncFromSdk(active);
+      pending.delete(item.id);
+      if (!accepted) {
+        queue.steering = queue.steering.filter((entry) => entry.id !== item.id);
+        queue.followUp = queue.followUp.filter((entry) => entry.id !== item.id);
+      }
+      if (this.deps.getActiveSession(key) === active) this.refreshQueuedMessages(key);
+    };
+  }
+
+  private makeQueuedItem(
+    message: string,
+    attachments?: ChatAttachmentRef[],
+    idHint?: string,
+    sdkMessage?: string,
+    sdkImages?: QueueImageContent[],
+  ): QueueStoreItem {
+    return {
+      id: normalizeQueueId(idHint),
+      message: normalizeQueueMessage(message),
+      attachments: attachments ? [...attachments] : undefined,
+      createdAt: Date.now(),
+      sdkMessage: sdkMessage ? normalizeQueueMessage(sdkMessage) : normalizeQueueMessage(message),
+      sdkImages: queueImagesFromPromptImages(sdkImages),
+    };
+  }
+
   enqueueQueuedMessage(
     key: string,
     kind: MessageQueueKind,
@@ -368,14 +440,7 @@ export class SessionMessageQueueCoordinator {
     }
 
     const queue = this.ensureQueueStore(active);
-    const nextItem: QueueStoreItem = {
-      id: normalizeQueueId(idHint),
-      message: normalizeQueueMessage(message),
-      attachments: attachments ? [...attachments] : undefined,
-      createdAt: Date.now(),
-      sdkMessage: sdkMessage ? normalizeQueueMessage(sdkMessage) : normalizeQueueMessage(message),
-      sdkImages: queueImagesFromPromptImages(sdkImages),
-    };
+    const nextItem = this.makeQueuedItem(message, attachments, idHint, sdkMessage, sdkImages);
 
     const version = nextQueueVersion(queue.version);
     if (kind === "steer") {

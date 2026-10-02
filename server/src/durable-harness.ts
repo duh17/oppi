@@ -16,7 +16,31 @@ import { join } from "node:path";
 export class DurableHarness {
   private opening?: Promise<{ harness: Harness; models: ModelRuntime }>;
   private closed = false;
-  private resumeHeld = false;
+  // Created before the local HTTP listener. No conversation may enable the
+  // harness-wide scheduler until startup has resolved every persisted binding.
+  private resumeHeld = true;
+  private readonly pausedAborts = new Set<Promise<void>>();
+
+  get isResumeHeld(): boolean {
+    return this.resumeHeld;
+  }
+
+  assertSchedulingReady(): void {
+    if (this.resumeHeld) {
+      throw Object.assign(
+        new Error(
+          "Server durable startup is still resolving conversations; retry this command after startup completes",
+        ),
+        { code: "server_durable_startup_pending", retryable: true },
+      );
+    }
+  }
+
+  async abortConversation(id: ConversationId): Promise<void> {
+    if (this.resumeHeld) return this.abortConversations(new Set([id]));
+    const { harness } = await this.open();
+    await (await harness.conversation(id, BACKGROUND_CONTEXT))?.abort(BACKGROUND_CONTEXT);
+  }
 
   holdResume(): void {
     this.resumeHeld = true;
@@ -25,6 +49,9 @@ export class DurableHarness {
     if (!this.resumeHeld && this.opening) (await this.opening).harness.resume();
   }
   async releaseResume(): Promise<void> {
+    // Stops of already attached projections may still be committing their
+    // cancellation marks. Join them before opening the scheduling gate.
+    while (this.pausedAborts.size) await Promise.all([...this.pausedAborts]);
     this.resumeHeld = false;
     await this.resume();
   }
@@ -66,7 +93,14 @@ export class DurableHarness {
   }
 
   /** Mark cancellation without Conversation.abort(), which enables ALL scheduling. */
-  async abortConversations(ids: ReadonlySet<ConversationId>): Promise<void> {
+  abortConversations(ids: ReadonlySet<ConversationId>): Promise<void> {
+    const operation = this.markAbortedConversations(ids);
+    this.pausedAborts.add(operation);
+    void operation.finally(() => this.pausedAborts.delete(operation)).catch(() => undefined);
+    return operation;
+  }
+
+  private async markAbortedConversations(ids: ReadonlySet<ConversationId>): Promise<void> {
     const { harness } = await this.open();
     const live = await harness.inspect(BACKGROUND_CONTEXT);
     for (const submission of live.submissions) {
