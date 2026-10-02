@@ -43,7 +43,26 @@ To clear a slot, replace its value with an empty notification of the same method
 
 The native working-words extension owns a background Durable task. It watches `pi.live`, writes plain working frames and status, chooses a phrase every 1.5 seconds while busy, and clears the message while idle. The host ensures one task at conversation attachment, including after an explicit Stop. Closing the Harness cancels its local timer and watcher. The classic `/working-words` preview command and terminal color styling have no Durable equivalent.
 
-The native goal extension publishes goal status and a widget through replacement slots in the same document. Its separate `oppi.goal` document stores the latest goal; typed transcript entries retain full snapshots and continuation reasons. A conversation-owned task submits a new input after the current run settles, with a stable request ID across restart. Abort/Stop cancels that task but retains the goal; progress-only updates do not restart it. Its widget derives the active/stopped subtitle from runner liveness. Decision entries also carry passive `[Goal runner]` user-message text so reasons appear in the existing phone transcript without starting a run. The phone sets and inspects goals through model tools, without a new protocol or slash command. See [Goal extension](../../pi-extensions/goal/README.md#server-durable-port) for restart, compaction, and UI parity limits.
+The native goal extension publishes goal status and a widget through replacement slots in the same document. Its separate `oppi.goal` document stores the latest goal; typed transcript entries retain full snapshots and continuation reasons. A conversation-owned task submits a new input after the current run settles, with a stable request ID across restart. Abort/Stop cancels that task but retains the goal; progress-only updates do not restart it. Its widget derives the active/stopped subtitle from runner liveness. Decision entries publish display-only transcript cards so reasons survive history reload without entering model context. The phone sets and inspects goals through model tools, without a new protocol or slash command. See [Goal extension](../../pi-extensions/goal/README.md#server-durable-port) for restart, compaction, and UI parity limits.
+
+## Publish a transcript card
+
+Append an entry with no `model` and a `data.card` object:
+
+```typescript
+{
+  title: "Runner decision",
+  status: "continue",
+  body: "Work remains; checks are incomplete.",
+  fields: [{ label: "Continuation", value: "1/5" }],
+  accent: "info",
+  at: Date.now(),
+}
+```
+
+`TranscriptCard` and `sanitizeTranscriptCard` are available from `durable-ui.ts`. The pure helper lives in `transcript-card.ts` so classic trace reads do not load the Durable runtime. A card requires a non-empty title and a valid millisecond timestamp. Optional fields are `subtitle`, `status`, `body`, `fields`, and `accent` (`info`, `success`, `warning`, or `error`). Projection allows at most eight label/value fields, caps display fields at 500 characters and body text at 4096 UTF-8 bytes, and discards unknown properties. Keep full evidence in entry data.
+
+History projects a valid card as the existing `system` event with `presentation.kind="custom"`, without a renderer or an extension-name check. Live append emits one ephemeral notice with ID `entry:<entry-id>`. Catch-up does not replay notices; trace reload restores the card. Cards do not appear in `get_messages` or model context. Classic entries without cards still require their live renderer.
 
 ## Build and loading
 
@@ -71,4 +90,4 @@ From `server/`, run `npm run check:server`, `npm test`, and `npm run check:pack-
 
 The opt-in live runner is `node --import tsx scripts/durable-extension-ui-smoke.ts` after `npm run build`. It uses only a throwaway server and data directory, copies Pi credentials into that private directory, selects `anthropic/claude-haiku-4-5`, kills the server with SIGKILL while ask is pending, and answers the same request after restart. Run it through the credential-approved tool. It preserves the report and server logs; it never restarts an owner runtime or installs an app.
 
-The corresponding goal smoke is `node --import tsx scripts/durable-goal-smoke.ts` after a build. It creates a goal, lets one continuation reach a pending ask, kills the owned server, and verifies the same goal/checklist/count and dialog after restart. Answering the dialog completes the goal; history must contain one create and two submitted user inputs (the original and one continuation), plus visible passive goal-decision notes. Run it only through the credential-approved tool.
+The corresponding goal smoke is `node --import tsx scripts/durable-goal-smoke.ts` after a build. It creates a goal, lets one continuation reach a pending ask, kills the owned server, and verifies the same goal/checklist/count and dialog after restart. Answering the dialog completes the goal; history must contain one create and two submitted user inputs (the original and one continuation), plus visible goal-decision cards in trace and no `[Goal runner]` user rows. Run it only through the credential-approved tool.

@@ -129,13 +129,13 @@ async function launch(label: string) {
   }
   throw new Error(`Throwaway server health timeout; inspect server-${label}.log`);
 }
-async function post(path: string, body: unknown): Promise<any> {
+async function post(path: string, body: unknown, method = "POST"): Promise<any> {
   return new Promise((resolve, reject) => {
     const req = request(
       {
         socketPath: apiSocketPath,
         path,
-        method: "POST",
+        method,
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         signal: AbortSignal.timeout(45000),
         agent: false,
@@ -148,7 +148,7 @@ async function post(path: string, body: unknown): Promise<any> {
         res.on("end", () => {
           const status = res.statusCode ?? 0;
           if (status < 200 || status >= 300) {
-            reject(new Error(`POST ${path}: HTTP ${status}`));
+            reject(new Error(`${method} ${path}: HTTP ${status}`));
             return;
           }
           try {
@@ -306,16 +306,29 @@ try {
   const notes = history.filter(
     (m) => m.role === "user" && userText(m.content).startsWith("[Goal runner]"),
   );
-  assert(
-    notes.some((m) =>
-      userText(m.content).includes("continue: Run settled; no pending messages or compaction"),
-    ),
-    "continuation decision must be visible in the phone transcript",
+  assert.equal(notes.length, 0, "decision evidence must not become user speech");
+  assert.equal(history.filter((m) => m.role === "user").length, 2);
+  const snapshot = await post(`/sessions/${session.id}?view=full`, undefined, "GET");
+  const cards = snapshot.trace.filter(
+    (event: {
+      type: string;
+      presentation?: { kind: string; title: string; status?: string; body?: string };
+    }) =>
+      event.type === "system" &&
+      event.presentation?.kind === "custom" &&
+      event.presentation.title.startsWith("Goal runner ·"),
   );
-  assert.equal(
-    history.filter((m) => m.role === "user" && !userText(m.content).startsWith("[Goal runner]"))
-      .length,
-    2,
+  assert(
+    cards.some(
+      (event: { presentation: { status?: string; body?: string } }) =>
+        event.presentation.status === "continue" &&
+        event.presentation.body?.includes("Run settled; no pending messages or compaction"),
+    ),
+    "continuation decision must survive reload as a transcript card",
+  );
+  writeFileSync(
+    join(artifactDir, "trace-after-restart.json"),
+    JSON.stringify(snapshot.trace, null, 2),
   );
   const creates = history.filter((m) => m.role === "toolResult" && m.toolName === "create_goal");
   assert.equal(creates.length, 1);

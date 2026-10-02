@@ -63,6 +63,7 @@ export interface ExtensionAudioStreamEvent extends AudioStreamEvent {
 }
 
 export type SessionBackendEvent =
+  | { type: "notice"; id: string; message: string }
   | AgentSessionEvent
   | ExtensionUIRequestEvent
   | ExtensionUIRequestSettledEvent

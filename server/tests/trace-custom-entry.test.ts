@@ -129,6 +129,84 @@ function cardEvent(events: TraceEvent[]): TraceEvent | undefined {
 }
 
 describe("custom entry timeline projection", () => {
+  it("projects a transcript card without a renderer in full and paged history", () => {
+    const entries = [
+      userEntry("u1", null, "hello"),
+      customEntry("c1", "u1", "any-extension:decision", {
+        secret: SENTINEL,
+        card: {
+          title: "Runner decision",
+          subtitle: "Evidence",
+          status: "continue",
+          body: "Work remains",
+          fields: [{ label: "Continuation", value: "1/5" }],
+          accent: "info",
+          at: Date.parse(TIMESTAMP),
+          secret: SENTINEL,
+        },
+      }),
+    ];
+    const full = buildSessionContext(entries);
+    const page = readSessionTracePageFromFile(writeJsonl(entries), { targetEvents: 10 });
+    expect(cardEvent(full)).toEqual({
+      id: "c1",
+      type: "system",
+      timestamp: TIMESTAMP,
+      text: "Runner decision\nEvidence\n\nWork remains\nContinuation: 1/5",
+      presentation: {
+        kind: "custom",
+        title: "Runner decision",
+        subtitle: "Evidence",
+        status: "continue",
+        body: "Work remains",
+        fields: [{ label: "Continuation", value: "1/5" }],
+        accent: "info",
+      },
+    });
+    expect(page.trace).toEqual(full);
+    expect(serialized({ full, page })).not.toContain(SENTINEL);
+  });
+
+  it.each([
+    null,
+    [],
+    {},
+    { title: "", at: 0 },
+    { title: "Title" },
+    { title: "Title", at: Infinity },
+    { title: "Title", at: 1e20 },
+  ])("hides a malformed transcript card without a renderer (%j)", (card) => {
+    const events = buildSessionContext([customEntry("c1", null, "any-extension", { card })]);
+    expect(events).toEqual([]);
+  });
+
+  it("bounds transcript fields and UTF-8 body without leaking extra properties", () => {
+    const events = buildSessionContext([
+      customEntry("c1", null, "any-extension", {
+        card: {
+          title: "x".repeat(600),
+          at: 0,
+          body: "🙂".repeat(2000),
+          accent: "invalid",
+          fields: Array.from({ length: 10 }, () => ({
+            label: "l".repeat(600),
+            value: "v".repeat(600),
+          })),
+        },
+      }),
+    ]);
+    const card = cardEvent(events)!.presentation!;
+    expect(card.title.length).toBeLessThanOrEqual(500);
+    expect(card.fields).toHaveLength(8);
+    expect(
+      card.fields!.every((field) => field.label.length <= 500 && field.value.length <= 500),
+    ).toBe(true);
+    expect(Buffer.byteLength(card.body!, "utf8")).toBeLessThanOrEqual(4096);
+    expect(card.body).toMatch(/…$/);
+    expect(card.body).not.toContain("�");
+    expect(card.accent).toBeUndefined();
+  });
+
   it("hides custom entries when no live renderer is registered and never leaks data", () => {
     const logs = captureStderr();
     const events = buildSessionContext(fixtureEntries());

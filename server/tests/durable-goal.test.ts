@@ -23,7 +23,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { DurableGoal, GoalDoc } from "../extensions/durable/goal/durable.js";
-import { DurableUI } from "../extensions/durable/durable-ui.js";
+import { DurableUI, sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
 
 const harnesses = new Set<Harness>();
 const gates = new Set<() => void>();
@@ -234,11 +234,7 @@ describe("Durable goal", () => {
         (await history(f.conversation)).some(
           (entry) =>
             entry.data?.decision === "skip" &&
-            entry.model?.some(
-              (message) =>
-                message.role === "user" &&
-                String(message.content).includes("Goal changed or stopped"),
-            ),
+            String(entry.data?.reason).includes("Goal changed or stopped"),
         ),
       ).toBe(true);
       expect(f.faux.state.callCount).toBe(2);
@@ -507,6 +503,8 @@ describe("Durable goal", () => {
 
   it("keeps Stop sticky for summary-only updates and rearms only an explicit active update", async () => {
     const entered = gate();
+    let stoppedPrompt = "";
+    let resumedPrompt = "";
     const f = await fixture([
       tool("create_goal", { objective: "Sticky Stop", max_continuations: 1 }),
       async (_request, options) => {
@@ -525,7 +523,12 @@ describe("Durable goal", () => {
     const stopped = (await f.harness.snapshot(GoalDoc, f.conversation.id, context))!;
     const ui = (await f.harness.snapshot(DurableUI, f.conversation.id, context))!;
     f.faux.appendResponses([
-      tool("update_goal", { summary: "Only a progress note" }),
+      (request) => {
+        stoppedPrompt = JSON.stringify(
+          request.messages.filter((message) => message.role === "system").at(-1),
+        );
+        return tool("update_goal", { summary: "Only a progress note" });
+      },
       fauxAssistantMessage("Summary recorded"),
     ]);
     await f.conversation.submit(
@@ -535,8 +538,12 @@ describe("Durable goal", () => {
     await f.conversation.waitForIdle(context);
     expect((await f.harness.snapshot(GoalDoc, f.conversation.id, context))!).toMatchObject({
       runner: stopped.runner,
+      runnerStopped: true,
       goal: { status: "active", continuationCount: 0 },
     });
+    expect(stoppedPrompt).not.toContain("Keep status=active");
+    expect(stoppedPrompt).toContain("runner stopped by user");
+    expect(stoppedPrompt).toContain("Sticky Stop");
     expect((await f.harness.inspect(context)).tasks).toHaveLength(0);
     expect(JSON.stringify(ui.notifications["widget:goal"]!.nativeSurface)).toContain(
       "Runner stopped",
@@ -553,11 +560,20 @@ describe("Durable goal", () => {
     ).toContain("Runner stopped");
     f.faux.appendResponses([
       tool("update_goal", { status: "active" }),
-      fauxAssistantMessage("Resuming explicitly"),
+      (request) => {
+        resumedPrompt = JSON.stringify(
+          request.messages.filter((message) => message.role === "system").at(-1),
+        );
+        return fauxAssistantMessage("Resuming explicitly");
+      },
       fauxAssistantMessage("One continuation"),
     ]);
     await f.conversation.submit({ type: "input", content: "Explicitly resume goal" }, context);
     await f.conversation.waitForIdle(context);
+    expect(resumedPrompt).toContain("Keep status=active");
+    expect((await f.harness.snapshot(GoalDoc, f.conversation.id, context))!.runnerStopped).toBe(
+      false,
+    );
     expect((await f.harness.snapshot(GoalDoc, f.conversation.id, context))!.runner).not.toBe(
       stopped.runner,
     );
@@ -654,9 +670,19 @@ describe("Durable goal", () => {
       blocker: "Continuation budget exhausted (1/1).",
     });
     const entries = await history(conversation);
-    const decisions = entries
-      .filter((entry) => entry.kind === "oppi-goal-continuation")
-      .map((entry) => entry.data);
+    const decisionEntries = entries.filter((entry) => entry.kind === "oppi-goal-continuation");
+    for (const entry of decisionEntries) {
+      expect(entry.model).toBeUndefined();
+      expect(sanitizeTranscriptCard(entry.data?.card)).toBeDefined();
+      expect(entry.data?.card).toMatchObject({
+        title: `Goal runner · ${entry.data?.decision}`,
+        status: entry.data?.decision,
+        body: entry.data?.reason,
+        fields: [{ label: "Continuation", value: `${entry.data?.continuation}/1` }],
+        at: expect.any(Number),
+      });
+    }
+    const decisions = decisionEntries.map((entry) => entry.data);
     expect(decisions).toContainEqual(
       expect.objectContaining({
         decision: "continue",
@@ -941,12 +967,11 @@ describe("Durable goal", () => {
           item.kind === "oppi-goal-continuation" &&
           ["wait", "resume", "stop"].includes(item.data!.decision),
       )) {
-        expect(entry.model).toEqual([
-          expect.objectContaining({
-            role: "user",
-            content: `[Goal runner] ${entry.data!.decision}: ${entry.data!.reason}`,
-          }),
-        ]);
+        expect(entry.model).toBeUndefined();
+        expect(entry.data?.card).toMatchObject({
+          title: `Goal runner · ${entry.data!.decision}`,
+          body: entry.data!.reason,
+        });
       }
       expect(
         entries.some(

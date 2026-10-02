@@ -36,6 +36,7 @@ COPY server/ ./
 # Match the canonical targets of server/extensions/durable source symlinks.
 # tsc emits ordinary JS into dist/extensions/durable; runtime needs no symlinks.
 COPY pi-extensions/durable-ui.ts /opt/pi-extensions/durable-ui.ts
+COPY pi-extensions/transcript-card.ts /opt/pi-extensions/transcript-card.ts
 COPY pi-extensions/ask/durable.ts /opt/pi-extensions/ask/durable.ts
 COPY pi-extensions/ask/extensions/ask-shared.ts /opt/pi-extensions/ask/extensions/ask-shared.ts
 COPY pi-extensions/working-words/durable.ts /opt/pi-extensions/working-words/durable.ts

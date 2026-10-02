@@ -6,6 +6,12 @@ import {
 } from "@earendil-works/pi-durable";
 
 // Structural Pi/Oppi UI payloads. No classic factory or server runtime is loaded.
+// Re-export the pure helper; classic trace imports it without loading Durable.
+export {
+  sanitizeTranscriptCard,
+  type TranscriptCard,
+} from "./transcript-card.js";
+
 export type UIRequest = {
   id: string;
   method: "ask" | "select" | "confirm" | "input" | "editor";

@@ -17,6 +17,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { sanitizeTranscriptCard } from "../extensions/durable/transcript-card.js";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -163,6 +164,17 @@ export function projectCustomEntry(
   renderers?: LiveEntryRendererSet | null,
 ): TraceEvent | null {
   if (entry.type !== "custom") return null;
+  const card = sanitizeTranscriptCard(asRecord(entry.data)?.card);
+  if (card) {
+    const { at, ...presentation } = card;
+    return {
+      id: entry.id,
+      type: "system",
+      timestamp: new Date(at).toISOString(),
+      text: textFromPresentation(presentation),
+      presentation,
+    };
+  }
   if (renderers) {
     let cached = projectionCache.get(renderers);
     if (!cached) {

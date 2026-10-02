@@ -47,6 +47,7 @@ import { DurableAsk } from "../extensions/durable/ask/durable.js";
 import { DurableBackgroundJobs } from "../extensions/durable/background-jobs/durable.js";
 import { DURABLE_RESERVED_REQUEST_ID_PREFIXES } from "./durable-request-ids.js";
 import { DurableGoal } from "../extensions/durable/goal/durable.js";
+import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
 import {
   DurableWorkingWords,
   ensureWorkingWords,
@@ -145,7 +146,11 @@ export class DurableBackend implements AgentBackend {
       // Bound conversations store exact extension/tool names. Enroll the native
       // UI ports on attachment too, without overriding their launch tool policy.
       await conversation.configure(
-        { extensions: { add: [DurableAsk, DurableWorkingWords, DurableBackgroundJobs, DurableGoal] } },
+        {
+          extensions: {
+            add: [DurableAsk, DurableWorkingWords, DurableBackgroundJobs, DurableGoal],
+          },
+        },
         BACKGROUND_CONTEXT,
       );
       const agent = await conversation.agent(BACKGROUND_CONTEXT);
@@ -305,6 +310,18 @@ export class DurableBackend implements AgentBackend {
         this.onEvent(pi);
       }
       for (const event of events) {
+        if (event.type === "entry_appended" && !event.entry.model?.length) {
+          const data = event.entry.data;
+          const card = sanitizeTranscriptCard(
+            data && typeof data === "object" && !Array.isArray(data) ? data.card : undefined,
+          );
+          if (card)
+            this.onEvent({
+              type: "notice",
+              id: `entry:${event.entry.id}`,
+              message: card.body ? `${card.title} — ${card.body}` : card.title,
+            });
+        }
         if (event.type === "inbox_update")
           this.onEvent({ type: "queue_update", ...this.queuedMessages() });
         if (event.type === "task_failed" && event.kind !== "pi.compaction")
@@ -366,11 +383,10 @@ export class DurableBackend implements AgentBackend {
     this.transactions.assertPermit(permit, "shared");
     this.assertOpen();
     this.owner.assertSchedulingReady();
+    const clientTurnId = options?.clientTurnId;
     if (
-      options?.clientTurnId &&
-      DURABLE_RESERVED_REQUEST_ID_PREFIXES.some((prefix) =>
-        options.clientTurnId!.startsWith(prefix),
-      )
+      clientTurnId &&
+      DURABLE_RESERVED_REQUEST_ID_PREFIXES.some((prefix) => clientTurnId.startsWith(prefix))
     )
       throw new Error("clientTurnId uses a reserved durable requestId namespace");
     const content = options?.images?.length

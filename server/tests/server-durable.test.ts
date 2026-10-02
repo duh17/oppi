@@ -337,39 +337,55 @@ describe("server durable managed runtime", () => {
         m.method === "setWidget" &&
         JSON.stringify(m.nativeSurface).includes("Continuation budget exhausted (1/1)."),
     );
+    const stopNotice = observed.next(
+      (m) =>
+        m.type === "notice" &&
+        m.message === "Goal runner · stop — Continuation budget exhausted (1/1).",
+    );
     await f.manager.sendPrompt(f.session.id, "Create an explicit autonomous goal", {
       clientTurnId: "managed-goal",
     });
-    await Promise.all([blocked, blockedWidget]);
+    await Promise.all([blocked, blockedWidget, stopNotice]);
     const history = (await f.manager.runCommand(f.session.id, { type: "get_messages" })) as Array<{
       role: string;
       toolName?: string;
       isError?: boolean;
     }>;
-    expect(
-      history.filter((m) => m.role === "user" && !JSON.stringify(m).includes("[Goal runner]")),
-    ).toHaveLength(2);
-    expect(
-      history.some(
-        (m) =>
-          m.role === "user" &&
-          JSON.stringify(m).includes("[Goal runner] stop: Continuation budget exhausted (1/1)."),
-      ),
-    ).toBe(true);
+    expect(history.filter((m) => m.role === "user")).toHaveLength(2);
+    expect(JSON.stringify(history)).not.toContain("[Goal runner]");
     expect(history.filter((m) => m.role === "toolResult" && m.toolName === "create_goal")).toEqual([
       expect.objectContaining({ isError: false }),
     ]);
     expect(observed.messages.filter((m) => m.type === "agent_end")).toHaveLength(2);
+    expect(JSON.stringify(observed.messages)).not.toContain("[Goal runner]");
+    const service = new SessionTraceService({
+      storage: f.storage,
+      sessionRuntimes: f.manager,
+      ensureSessionContextWindow: (session) => session,
+      mobileRenderers: f.manager.mobileRenderer,
+    });
+    const result = await service.getSessionWithTrace({ session: f.session });
+    const cards = result.trace.filter((event) =>
+      event.presentation?.title.startsWith("Goal runner ·"),
+    );
+    expect(cards.map((event) => event.presentation?.status)).toEqual([
+      "update",
+      "continue",
+      "stop",
+    ]);
     expect(
-      observed.messages.some(
-        (m) =>
-          m.type === "message_end" &&
-          m.role === "user" &&
-          JSON.stringify(m).includes(
-            "[Goal runner] continue: Run settled; no pending messages or compaction",
-          ),
-      ),
+      cards.every((event) => event.type === "system" && event.presentation?.kind === "custom"),
     ).toBe(true);
+    expect(cards[1]?.presentation?.body).toContain(
+      "Run settled; no pending messages or compaction",
+    );
+    expect(cards[2]?.presentation?.body).toBe("Continuation budget exhausted (1/1).");
+    const notices = observed.messages.filter((m) => m.type === "notice");
+    expect(notices).toHaveLength(cards.length);
+    expect(notices.map((m) => m.id)).toEqual(cards.map((event) => `entry:${event.id}`));
+    expect(new Set(notices.map((m) => m.id)).size).toBe(cards.length);
+    await service.getSessionWithTrace({ session: f.session });
+    expect(observed.messages.filter((m) => m.type === "notice")).toHaveLength(cards.length);
     observed.unsubscribe();
   });
 
@@ -2037,7 +2053,7 @@ describe("server durable managed runtime", () => {
         clientTurnId: "oppi-goal:known-goal:1",
         onPreflightAccepted: accepted,
       }),
-    ).rejects.toThrow("clientTurnId prefix oppi-goal: is reserved");
+    ).rejects.toThrow("reserved durable requestId namespace");
     expect(accepted).not.toHaveBeenCalled();
     expect(runtime.messages()).toHaveLength(0);
     expect(f.faux.state.callCount).toBe(0);

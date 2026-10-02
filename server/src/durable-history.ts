@@ -17,6 +17,7 @@ import {
 } from "./trace-paging.js";
 import { readSessionTraceOutlineFromEntries, type TraceOutlineResult } from "./trace-outline.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
+import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
 
 async function projectEntries(
   harness: Harness,
@@ -34,28 +35,43 @@ async function projectEntries(
       continue;
     const message = entry.model?.[0];
     const timestamp = new Date(message?.timestamp ?? 0).toISOString();
+    const data = entry.data;
+    const card = !entry.model?.length
+      ? sanitizeTranscriptCard(
+          data && typeof data === "object" && !Array.isArray(data) ? data.card : undefined,
+        )
+      : undefined;
     entries.push(
-      entry.kind === "pi.compaction"
+      card
         ? {
-            type: "compaction",
+            type: "custom",
+            customType: entry.kind,
+            data: entry.data,
             id: String(entry.id),
             parentId,
-            timestamp,
-            summary: compactionSummary(entry),
-            firstKeptEntryId: String(entry.head),
+            timestamp: new Date(card.at).toISOString(),
           }
-        : message
-          ? { type: "message", id: String(entry.id), parentId, timestamp, message }
-          : // Display/bookkeeping entries have no model contribution. Preserve their
-            // payload for the existing custom-entry renderer, never send it to the model.
-            {
-              type: "custom",
+        : entry.kind === "pi.compaction"
+          ? {
+              type: "compaction",
               id: String(entry.id),
               parentId,
               timestamp,
-              customType: entry.kind,
-              data: entry.data,
-            },
+              summary: compactionSummary(entry),
+              firstKeptEntryId: String(entry.head),
+            }
+          : message
+            ? { type: "message", id: String(entry.id), parentId, timestamp, message }
+            : // Display/bookkeeping entries have no model contribution. Preserve their
+              // payload for the existing custom-entry renderer, never send it to the model.
+              {
+                type: "custom",
+                id: String(entry.id),
+                parentId,
+                timestamp,
+                customType: entry.kind,
+                data: entry.data,
+              },
     );
     parentId = String(entry.id);
   }

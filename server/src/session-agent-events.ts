@@ -116,6 +116,11 @@ export class SessionAgentEventCoordinator {
       return;
     }
 
+    if (data.type === "notice") {
+      this.deps.broadcast(key, { type: "notice", id: data.id, message: data.message });
+      return;
+    }
+
     if (data.type === "extension_ui_request") {
       handleExtensionUIRequestState(active, data, {
         broadcast: (message) => this.deps.broadcast(key, message),

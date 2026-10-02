@@ -19,7 +19,7 @@ import {
   type ConversationId,
   type ToolExecutionApi,
 } from "@earendil-works/pi-durable";
-import { DurableUI } from "../durable-ui.js";
+import { DurableUI, type TranscriptCard } from "../durable-ui.js";
 
 // Deliberately independent of the classic factory (and its TUI/SDK imports).
 // Forks start without a goal: inherited transcript evidence must not launch a
@@ -51,6 +51,7 @@ type Goal = {
 export const GoalDoc = defineDoc<{
   goal?: Goal;
   runner?: TaskId;
+  runnerStopped?: boolean;
   nextAttempt?: number;
 }>({
   kind: "oppi.goal",
@@ -67,6 +68,7 @@ const Decision = defineEntry<{
   reason: string;
   continuation: number;
   requestId?: string;
+  card: TranscriptCard;
 }>("oppi-goal-continuation");
 const TaskStatusSchema = Type.Union([
   Type.Literal("pending"),
@@ -463,22 +465,30 @@ async function publishUi(
 async function decision(
   tx: Tx,
   id: ConversationId,
-  goal: Pick<Goal, "id" | "continuationCount">,
+  goal: Pick<Goal, "id" | "continuationCount"> &
+    Partial<Pick<Goal, "maxContinuations">>,
   action: string,
   reason: string,
   requestId?: string,
 ): Promise<void> {
   await tx.appendEntry(Decision, id, {
-    // A passive user message uses the phone's existing message renderer without
-    // inventing a tool call or impersonating a model response. It starts no run.
-    model: [
-      {
-        role: "user",
-        content: `[Goal runner] ${action}: ${reason}`,
-        timestamp: Date.now(),
-      },
-    ],
     data: {
+      card: {
+        title: `Goal runner · ${action}`,
+        status: action,
+        body: reason,
+        fields: [
+          {
+            label: "Continuation",
+            value: `${goal.continuationCount}/${goal.maxContinuations ?? "unknown"}`,
+          },
+        ],
+        accent:
+          action === "stop" || action === "skip" || action === "wait"
+            ? "warning"
+            : "info",
+        at: Date.now(),
+      },
       goalId: goal.id,
       decision: action,
       reason,
@@ -495,6 +505,7 @@ type Checkpoint =
       phase: "submit";
       goalId: string;
       count: number;
+      maxContinuations?: number;
       requestId: string;
       content: string;
     };
@@ -527,7 +538,9 @@ const Runner = defineTask<null, Checkpoint, null>({
         (queued && queued.mode !== "write" ? queued.content : undefined);
       const owned =
         plan && existing?.type === "input" && content === plan.content;
-      let goal = (await tx.doc(GoalDoc, runtime.conversationId)).goal;
+      const doc = await tx.doc(GoalDoc, runtime.conversationId);
+      doc.runnerStopped = true;
+      let goal = doc.goal;
       if (owned && existing?.status === "queued") {
         const index = inbox.items.findIndex((item) => item.id === existing.id);
         if (index >= 0) inbox.items.splice(index, 1);
@@ -719,6 +732,7 @@ const Runner = defineTask<null, Checkpoint, null>({
                 phase: "submit",
                 goalId: next.id,
                 count: next.continuationCount,
+                maxContinuations: next.maxContinuations,
                 requestId,
                 content: continuation(next),
               },
@@ -840,7 +854,13 @@ const Runner = defineTask<null, Checkpoint, null>({
           await decision(
             tx,
             runtime.conversationId,
-            { id: plan.goalId, continuationCount: plan.count },
+            {
+              id: plan.goalId,
+              continuationCount: plan.count,
+              maxContinuations:
+                plan.maxContinuations ??
+                (goal?.id === plan.goalId ? goal.maxContinuations : undefined),
+            },
             "skip",
             reason,
             plan.requestId,
@@ -935,11 +955,13 @@ async function ensureRunner(
     arm &&
     doc.goal?.status === "active" &&
     (!old || old.state.status === "terminal")
-  )
+  ) {
     doc.runner = await tx.createTask(Runner, null, {
       conversationId: id,
       ownership: { kind: "conversation" },
     });
+    doc.runnerStopped = false;
+  }
   return (
     (arm && doc.runner !== old?.id) ||
     !!(old && old.state.status !== "terminal" && !old.abortRequested)
@@ -1075,10 +1097,16 @@ export const DurableGoal = defineExtension({
   tasks: [Runner],
   sections: [
     section("goal", async (input, context) => {
-      const goal = (
-        await input.read.snapshot(GoalDoc, input.conversationId, context)
-      )?.goal;
-      return goal?.status === "active" ? prompt(goal) : undefined;
+      const doc = await input.read.snapshot(
+        GoalDoc,
+        input.conversationId,
+        context,
+      );
+      const goal = doc?.goal;
+      if (goal?.status !== "active") return undefined;
+      return doc?.runnerStopped
+        ? `Goal runner stopped by user; do not call update_goal(status="active") unless the user explicitly asks to resume.\n\n${format(goal)}`
+        : prompt(goal);
     }),
   ],
   hooks: [
