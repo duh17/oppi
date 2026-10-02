@@ -34,6 +34,7 @@ import { Storage } from "../src/storage.js";
 import { SessionManager } from "../src/sessions.js";
 import { DurableHarness } from "../src/durable-harness.js";
 import { SessionTraceService } from "../src/session-trace-service.js";
+import { SessionAgentEventCoordinator } from "../src/session-agent-events.js";
 import { SessionStopCoordinator } from "../src/session-stop.js";
 import { SessionMessageQueueCoordinator } from "../src/session-queue.js";
 import {
@@ -44,7 +45,12 @@ import type { ChatAttachmentRef, ServerMessage, Session } from "../src/types.js"
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
 import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
-import { DurableUI, requestUI, type UIResponse } from "../extensions/durable/durable-ui.js";
+import {
+  DurableUI,
+  requestUI,
+  type UIResponse,
+  type UINotification,
+} from "../extensions/durable/durable-ui.js";
 import { buildExtensionUIRequestMessage } from "../src/extension-ui-contract.js";
 
 const managers: SessionManager[] = [];
@@ -483,87 +489,165 @@ describe("server durable managed runtime", () => {
       }),
     ]);
   });
-  it("survives a crash after answer commit but before the tool records its answer memo", async () => {
-    const native = DurableAsk.tools![0]!;
-    let saving!: () => void;
-    const savingMemo = new Promise<void>((resolve) => {
-      saving = resolve;
-    });
-    const wrapped: ToolRegistration = {
-      ...native,
-      async execute(args, api, ctx) {
-        const memo = new Proxy(api.memo, {
-          apply(target, receiver, values) {
-            if (String(values[0]).startsWith("ui-answer:") && values.length === 3) {
-              saving();
-              return new Promise((_resolve, reject) => {
-                ctx.abortSignal!.addEventListener("abort", () => reject(ctx.abortSignal!.reason), {
-                  once: true,
+  it.each(["before", "after"] as const)(
+    "survives a crash %s the answer memo and removes the answered row on replay",
+    async (gap) => {
+      const native = DurableAsk.tools![0]!;
+      let saving!: () => void;
+      const savingMemo = new Promise<void>((resolve) => {
+        saving = resolve;
+      });
+      const wrapped: ToolRegistration = {
+        ...native,
+        async execute(args, api, ctx) {
+          const memo = new Proxy(api.memo, {
+            async apply(target, receiver, values) {
+              if (String(values[0]).startsWith("ui-answer:") && values.length === 3) {
+                if (gap === "after") await Reflect.apply(target, receiver, values);
+                saving();
+                return new Promise((_resolve, reject) => {
+                  ctx.abortSignal!.addEventListener(
+                    "abort",
+                    () => reject(ctx.abortSignal!.reason),
+                    {
+                      once: true,
+                    },
+                  );
                 });
-              });
-            }
-            return Reflect.apply(target, receiver, values);
-          },
-        });
-        return native.execute(args as never, { ...api, memo }, ctx);
-      },
-    };
-    const f = await fixture([askStep(), fauxAssistantMessage("MEMO_GAP_RECOVERED")]);
-    let harness = await openHarness(f.dir, f.models, wrapped);
-    const conversation = await harness.createConversation(
-      {
-        ownership: { kind: "ownerless" },
-        agent: { model: { provider: "faux", modelId: "faux-1" }, tools: [wrapped], cwd: f.dir },
-      },
-      context,
-    );
-    f.session.serverDurable = { conversationId: conversation.id };
-    const owner = new DurableHarness(f.dir);
-    vi.spyOn(owner, "open").mockResolvedValue({ harness, models: f.models });
-    await owner.releaseResume();
-    let shown!: UIResponse;
-    let show!: () => void;
-    const displayed = new Promise<void>((resolve) => {
-      show = resolve;
-    });
-    const first = await DurableBackend.create({
-      harness,
-      owner,
-      models: f.models,
-      session: f.session,
-      dataDir: f.dir,
-      persistBinding: () => {},
-      onEvent: (event) => {
-        if (event.type === "extension_ui_request" && event.method === "ask") {
-          shown = { id: event.id, value: JSON.stringify(askResponse) };
-          show();
-        }
-      },
-    });
-    first.startEvents();
-    await first.prompt("Ask and cross the answer/memo crash window");
-    await displayed;
-    expect(await first.respondToExtensionUIRequest(shown)).toBe(true);
-    await savingMemo;
-    await first.detachForRestart();
-    await harness.close(context);
-    harnesses.splice(harnesses.indexOf(harness), 1);
-    harness = await openHarness(f.dir, f.models);
-    const resumed = await backend(harness, f.models, f.session, f.dir);
-    harness.resume();
-    await (await harness.conversation(conversation.id, context))!.waitForIdle(context);
-    const results = resumed.messages().filter((m) => m.role === "toolResult") as Array<{
-      details?: unknown;
-      isError?: boolean;
-    }>;
-    expect(results).toEqual([
-      expect.objectContaining({
-        isError: false,
-        details: { questions, answers: askResponse, allIgnored: false },
-      }),
-    ]);
-    expect(f.faux.state.callCount).toBe(2);
-    await resumed.dispose();
+              }
+              return Reflect.apply(target, receiver, values);
+            },
+          });
+          return native.execute(args as never, { ...api, memo }, ctx);
+        },
+      };
+      const f = await fixture([askStep(), fauxAssistantMessage("MEMO_GAP_RECOVERED")]);
+      let harness = await openHarness(f.dir, f.models, wrapped);
+      const conversation = await harness.createConversation(
+        {
+          ownership: { kind: "ownerless" },
+          agent: { model: { provider: "faux", modelId: "faux-1" }, tools: [wrapped], cwd: f.dir },
+        },
+        context,
+      );
+      f.session.serverDurable = { conversationId: conversation.id };
+      const owner = new DurableHarness(f.dir);
+      vi.spyOn(owner, "open").mockResolvedValue({ harness, models: f.models });
+      await owner.releaseResume();
+      let shown!: UIResponse;
+      let show!: () => void;
+      const displayed = new Promise<void>((resolve) => {
+        show = resolve;
+      });
+      const first = await DurableBackend.create({
+        harness,
+        owner,
+        models: f.models,
+        session: f.session,
+        dataDir: f.dir,
+        persistBinding: () => {},
+        onEvent: (event) => {
+          if (event.type === "extension_ui_request" && event.method === "ask") {
+            shown = { id: event.id, value: JSON.stringify(askResponse) };
+            show();
+          }
+        },
+      });
+      first.startEvents();
+      await first.prompt("Ask and cross the answer/memo crash window");
+      await displayed;
+      expect(await first.respondToExtensionUIRequest(shown)).toBe(true);
+      await savingMemo;
+      await first.detachForRestart();
+      await harness.close(context);
+      harnesses.splice(harnesses.indexOf(harness), 1);
+      harness = await openHarness(f.dir, f.models);
+      const resumed = await backend(harness, f.models, f.session, f.dir);
+      harness.resume();
+      await (await harness.conversation(conversation.id, context))!.waitForIdle(context);
+      const results = resumed.messages().filter((m) => m.role === "toolResult") as Array<{
+        details?: unknown;
+        isError?: boolean;
+      }>;
+      expect(results).toEqual([
+        expect.objectContaining({
+          isError: false,
+          details: { questions, answers: askResponse, allIgnored: false },
+        }),
+      ]);
+      expect(f.faux.state.callCount).toBe(2);
+      const restored = (await harness.conversation(conversation.id, context))!;
+      expect(
+        await restored.commit(
+          async (tx) => Object.keys((await tx.doc(DurableUI, conversation.id)).requests),
+          context,
+        ),
+      ).toEqual([]);
+      await resumed.dispose();
+    },
+  );
+
+  it("committed hostile UI JSON reaches handlePiEvent only as allowlisted UI requests", async () => {
+    const f = await fixture([]);
+    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    const handled = vi.spyOn(SessionAgentEventCoordinator.prototype, "handlePiEvent");
+    await f.manager.startSession(f.session.id, f.workspace);
+    const { harness } = await opening.mock.results[0]!.value;
+    const id = f.storage.getSession(f.session.id)!.serverDurable!.conversationId!;
+    const conversation = (await harness.conversation(id, context))!;
+    await conversation.commit(async (tx) => {
+      const ui = await tx.doc(DurableUI, id);
+      for (const type of ["message_end", "agent_end", "tool_execution_end"]) {
+        ui.requests[`hostile:${type}`] = {
+          taskId: 999 as Parameters<typeof requestUI>[0]["taskId"],
+          request: {
+            id: "forged",
+            method: "confirm",
+            title: "Safe dialog",
+            type,
+            details: { fullOutputPath: "/private/file" },
+            extra: true,
+          } as Parameters<typeof requestUI>[1],
+        };
+        ui.notifications[`hostile:slot:${type}`] = {
+          id: "forged",
+          method: "setStatus",
+          statusKey: `safe:${type}`,
+          statusText: "ready",
+          type,
+          details: { fullOutputPath: "/private/file" },
+        } as UINotification;
+      }
+      ui.requests["hostile:unknown"] = {
+        taskId: 999 as Parameters<typeof requestUI>[0]["taskId"],
+        request: { id: "unknown", method: "tool_execution_end" } as unknown as Parameters<
+          typeof requestUI
+        >[1],
+      };
+    }, context);
+    const hostileEvents = () =>
+      handled.mock.calls
+        .map(([, event]) => event)
+        .filter(
+          (event) =>
+            "id" in event && typeof event.id === "string" && event.id.startsWith("hostile:"),
+        );
+    await vi.waitFor(() => expect(hostileEvents()).toHaveLength(6));
+    for (const event of hostileEvents()) {
+      expect(event.type).toBe("extension_ui_request");
+      expect(event).not.toHaveProperty("details");
+      expect(event).not.toHaveProperty("extra");
+    }
+    expect(
+      f.manager
+        .getPendingUIRequestMessages(f.session.id)
+        .filter(
+          (message) =>
+            "id" in message &&
+            message.id.startsWith("hostile:") &&
+            message.type === "extension_ui_request",
+        ),
+    ).toHaveLength(3);
   });
 
   it.each(["select", "confirm", "input", "editor"] as const)(

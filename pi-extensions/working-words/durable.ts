@@ -54,7 +54,6 @@ const Words = defineTask<null, { phase: "watch" }, null>({
       );
       if (!live) throw new Error("Working words requires pi.live");
       let busy = live.value?.run !== undefined;
-      let previous: boolean | undefined;
       let wake: (() => void) | undefined;
       live.start(async (value) => {
         const next = value?.run !== undefined;
@@ -65,7 +64,10 @@ const Words = defineTask<null, { phase: "watch" }, null>({
       });
       try {
         while (!runtime.signal.aborted) {
-          const message = busy
+          // A live-doc edge can arrive while the UI commit is in flight and no
+          // waiter is installed. Compare against the state actually published.
+          const publishedBusy = busy;
+          const message = publishedBusy
             ? (PHRASES[Math.floor(Math.random() * PHRASES.length)] ??
               PHRASES[0])
             : undefined;
@@ -100,24 +102,26 @@ const Words = defineTask<null, { phase: "watch" }, null>({
             });
             return { status: "running", checkpoint: task.state.checkpoint };
           }, context);
-          previous = busy;
           await new Promise<void>((resolve, reject) => {
             let timer: ReturnType<typeof setTimeout> | undefined;
-            const finish = (): void => {
+            const cleanup = (): void => {
               if (timer) clearTimeout(timer);
               runtime.signal.removeEventListener("abort", abort);
               wake = undefined;
+            };
+            const finish = (): void => {
+              cleanup();
               resolve();
             };
             const abort = (): void => {
-              finish();
+              cleanup();
               reject(runtime.signal.reason);
             };
             wake = finish;
             runtime.signal.addEventListener("abort", abort, { once: true });
-            if (busy) timer = setTimeout(finish, 1500);
-            if (previous !== busy) finish();
             if (runtime.signal.aborted) abort();
+            else if (publishedBusy !== busy) finish();
+            else if (busy) timer = setTimeout(finish, 1500);
           });
         }
       } finally {

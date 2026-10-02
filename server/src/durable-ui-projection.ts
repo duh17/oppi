@@ -1,7 +1,15 @@
 import { isDeepStrictEqual } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Conversation, Harness, DocumentWatch } from "@earendil-works/pi-durable";
-import { DurableUI, type UIResponse, type UIState } from "../extensions/durable/durable-ui.js";
+import {
+  DurableUI,
+  MAX_DURABLE_UI_REQUESTS,
+  MAX_DURABLE_UI_NOTIFICATION_SLOTS,
+  sanitizeUIRequest,
+  sanitizeUINotification,
+  type UIResponse,
+  type UIState,
+} from "../extensions/durable/durable-ui.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 
 /** Committed documents → the same events as SdkUiBridge, through the shared sanitizer/state owner. */
@@ -33,18 +41,57 @@ export class DurableUIProjection {
     });
   }
   private apply(value: UIState | null): void {
-    const current = value ?? { requests: {}, notifications: {} };
+    // Never retain the raw document as projection state. Limit traversal before
+    // materializing entries and retain only the allowlisted, bounded snapshot.
+    const current: UIState = { requests: Object.create(null), notifications: Object.create(null) };
+    let count = 0;
+    let overflow = false;
+    for (const id in value?.requests) {
+      if (!Object.hasOwn(value.requests, id)) continue;
+      if (++count > MAX_DURABLE_UI_REQUESTS) {
+        overflow = true;
+        break;
+      }
+      const entry = value.requests[id];
+      const request = sanitizeUIRequest(id, entry?.request);
+      if (request && entry)
+        current.requests[id] = { taskId: entry.taskId, request, response: entry.response };
+    }
+    count = 0;
+    if (!overflow)
+      for (const slot in value?.notifications) {
+        if (!Object.hasOwn(value.notifications, slot)) continue;
+        if (++count > MAX_DURABLE_UI_NOTIFICATION_SLOTS) {
+          overflow = true;
+          break;
+        }
+        const notification = sanitizeUINotification(slot, value.notifications[slot]);
+        if (notification) current.notifications[slot] = notification;
+      }
+    if (overflow)
+      this.emit({ type: "prompt_error", error: "Durable extension UI slot limit exceeded" });
     for (const [id, entry] of Object.entries(this.previous.requests)) {
-      if (!entry.response && (!current.requests[id] || current.requests[id].response)) {
+      if (
+        !entry.response &&
+        (!current.requests[id] ||
+          current.requests[id].response ||
+          !isDeepStrictEqual(entry.request, current.requests[id].request))
+      ) {
         this.emit({ type: "extension_ui_request_settled", id });
         clearTimeout(this.timers.get(id));
         this.timers.delete(id);
       }
     }
     for (const [id, entry] of Object.entries(current.requests)) {
-      if (entry.response || this.previous.requests[id]) continue;
-      this.emit({ type: "extension_ui_request", ...entry.request });
-      if (entry.request.timeoutAt !== undefined) {
+      if (
+        entry.response ||
+        (this.previous.requests[id] &&
+          !this.previous.requests[id].response &&
+          isDeepStrictEqual(this.previous.requests[id].request, entry.request))
+      )
+        continue;
+      this.emit({ ...entry.request, type: "extension_ui_request" });
+      if (typeof entry.request.timeoutAt === "number" && Number.isFinite(entry.request.timeoutAt)) {
         this.timers.set(
           id,
           setTimeout(
@@ -60,7 +107,7 @@ export class DurableUIProjection {
     }
     for (const [slot, notification] of Object.entries(current.notifications)) {
       if (!isDeepStrictEqual(this.previous.notifications[slot], notification))
-        this.emit({ type: "extension_ui_request", ...notification });
+        this.emit({ ...notification, type: "extension_ui_request" });
     }
     this.previous = current;
   }

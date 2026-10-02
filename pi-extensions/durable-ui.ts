@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { Context, JsonValue } from "@earendil-works/chord";
 import {
   defineDoc,
@@ -61,6 +62,98 @@ export type UIState = {
   // empty notifications to clear previous client state (including after restart).
   notifications: Record<string, UINotification>;
 };
+// Bound both writers and the untrusted document projection. Answered rows also
+// occupy a request slot until the task removes them, keeping traversal bounded.
+export const MAX_DURABLE_UI_REQUESTS = 32;
+export const MAX_DURABLE_UI_NOTIFICATION_SLOTS = 32;
+
+/** Only protocol UI fields may cross the document → session-event boundary. */
+export function sanitizeUIRequest(
+  id: string,
+  value: unknown,
+): UIRequest | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const data = value as Record<string, unknown>;
+  const method = data.method;
+  if (
+    method !== "ask" &&
+    method !== "select" &&
+    method !== "confirm" &&
+    method !== "input" &&
+    method !== "editor"
+  )
+    return undefined;
+  return {
+    ...pickUIFields(data, [
+      "title",
+      "message",
+      "options",
+      "placeholder",
+      "prefill",
+      "questions",
+      "allowCustom",
+      "timeout",
+      "timeoutAt",
+      "extensionScopeId",
+      "extensionDisplayName",
+    ]),
+    id,
+    method,
+  } as UIRequest;
+}
+
+export function sanitizeUINotification(
+  id: string,
+  value: unknown,
+): UINotification | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const data = value as Record<string, unknown>;
+  const method = data.method;
+  if (
+    method !== "setStatus" &&
+    method !== "setWidget" &&
+    method !== "setWorkingMessage" &&
+    method !== "setWorkingIndicator" &&
+    method !== "setWorkingVisible"
+  )
+    return undefined;
+  return {
+    ...pickUIFields(data, [
+      "statusKey",
+      "statusText",
+      "widgetKey",
+      "widgetLines",
+      "widgetPlacement",
+      "nativeSurface",
+      "message",
+      "workingIndicator",
+      "workingVisible",
+      "extensionScopeId",
+      "extensionDisplayName",
+    ]),
+    id,
+    method,
+  } as UINotification;
+}
+
+function pickUIFields(
+  data: Record<string, unknown>,
+  fields: readonly string[],
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const field of fields)
+    if (Object.hasOwn(data, field) && data[field] !== undefined)
+      result[field] = data[field];
+  return result;
+}
+
+function exceedsSlotLimit(slots: object, limit: number): boolean {
+  let count = 0;
+  for (const key in slots)
+    if (Object.hasOwn(slots, key) && ++count > limit) return true;
+  return false;
+}
+
 export const DurableUI = defineDoc<UIState>({
   kind: "oppi.extension-ui",
   version: 1,
@@ -78,18 +171,43 @@ export async function requestUI(
 ): Promise<UIResponse> {
   const memoKey = `ui-answer:${request.id}`;
   const saved = await api.memo<UIResponse>(memoKey, context);
-  if (saved) return saved;
+  const remove = async (): Promise<void> => {
+    await api.commit(async (tx) => {
+      delete (await tx.doc(DurableUI, api.conversationId)).requests[request.id];
+    }, context);
+  };
+  if (saved) {
+    // Replay can land here after a crash between memo persistence and deletion.
+    await remove();
+    return saved;
+  }
+  const payload = sanitizeUIRequest(request.id, request);
+  if (!payload) throw new Error("Unsupported durable UI request method");
   await api.commit(async (tx) => {
     const ui = await tx.doc(DurableUI, api.conversationId);
-    ui.requests[request.id] ??= {
-      taskId: api.taskId,
-      request: {
-        ...request,
-        ...(request.timeout && request.timeoutAt === undefined
-          ? { timeoutAt: Date.now() + request.timeout }
-          : {}),
-      },
-    };
+    const existing = ui.requests[request.id];
+    if (
+      exceedsSlotLimit(
+        ui.requests,
+        MAX_DURABLE_UI_REQUESTS - (existing ? 0 : 1),
+      ) ||
+      exceedsSlotLimit(ui.notifications, MAX_DURABLE_UI_NOTIFICATION_SLOTS)
+    )
+      throw new Error("Durable extension UI slot limit exceeded");
+    if (existing && existing.taskId !== api.taskId)
+      throw new Error("Durable UI request belongs to another task");
+    if (existing?.response) return;
+    if (payload.timeout && payload.timeoutAt === undefined) {
+      // Keep the original deadline only for a replay of the same payload, not
+      // an unrelated preseeded body under this task's predictable request ID.
+      const prior = existing && sanitizeUIRequest(request.id, existing.request);
+      const { timeoutAt: deadline, ...body } = prior ?? {};
+      payload.timeoutAt =
+        isDeepStrictEqual(body, payload) && typeof deadline === "number"
+          ? deadline
+          : Date.now() + payload.timeout;
+    }
+    ui.requests[request.id] = { taskId: api.taskId, request: payload };
   }, context);
   const watch = await api.watchDoc(DurableUI, api.conversationId, context);
   if (!watch) throw new Error("Durable UI document disappeared");
@@ -116,9 +234,7 @@ export async function requestUI(
       if (signal?.aborted) abort();
     });
     const winner = await api.memo(memoKey, response, context);
-    await api.commit(async (tx) => {
-      delete (await tx.doc(DurableUI, api.conversationId)).requests[request.id];
-    }, context);
+    await remove();
     return winner;
   } finally {
     removeAbortListener();
