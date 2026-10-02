@@ -443,41 +443,52 @@ struct BashToolRowViewTests {
         #expect(row.outputShouldAutoFollow)
     }
 
-    @Test("a detached reader keeps its lines when the finished output replaces the live tail")
+    @Test("a detached reader keeps its painted tail through growth and completion until back at the tail")
     func detachedCompletionKeepsLines() throws {
         let owner = TerminalOutputStream { _ in throw CancellationError() }
-        // More lines than the live tail, but under the deferred-render byte threshold.
-        let full = (1...(BashToolRowView.liveTailLineLimit + 100)).map { "l\($0)" }.joined(separator: "\n")
-        #expect(full.utf8.count < BashToolRowView.deferredANSIByteThreshold)
-        func configuration(done: Bool) -> ToolTimelineRowConfiguration {
+        func lines(_ count: Int) -> String { (1...count).map { "l\($0)" }.joined(separator: "\n") }
+        // Under the deferred-render byte threshold so paints are synchronous.
+        #expect(lines(BashToolRowView.liveTailLineLimit + 300).utf8.count < BashToolRowView.deferredANSIByteThreshold)
+        func configuration(_ output: String, done: Bool) -> ToolTimelineRowConfiguration {
             var configuration = makeTimelineToolConfiguration(
-                expandedContent: .bash(command: "run", output: full, unwrapped: false),
+                expandedContent: .bash(command: "run", output: output, unwrapped: false),
                 isExpanded: true, isDone: done)
             configuration.terminalOutputStream = owner
             return configuration
         }
-        let view = ToolTimelineRowContentView(configuration: configuration(done: false))
+        let view = ToolTimelineRowContentView(configuration: configuration(lines(250), done: false))
         _ = fittedTimelineSize(for: view, width: 390)
         let row = view.bashToolRowView
         let scroll = row.outputScrollView
-        func distanceFromBottom() -> CGFloat {
-            scroll.contentSize.height + scroll.adjustedContentInset.bottom - scroll.bounds.height - scroll.contentOffset.y
-        }
-        let tailHeight = scroll.contentSize.height
-        #expect(tailHeight > scroll.bounds.height)
+        let painted = row.outputLabel.textStorage.string
+        #expect(painted.hasSuffix("l250"))
+        #expect(scroll.contentSize.height > scroll.bounds.height)
         // Park the reader mid-tail, away from the bottom.
         scroll.draggingOverrideForTesting = true
         row.scrollViewWillBeginDragging(scroll)
-        scroll.contentOffset.y = tailHeight / 2
+        scroll.contentOffset.y = scroll.contentSize.height / 2
         scroll.draggingOverrideForTesting = false
         row.scrollViewDidEndDragging(scroll, willDecelerate: false)
         #expect(!row.outputShouldAutoFollow)
-        let before = distanceFromBottom()
+        let parkedY = scroll.contentOffset.y
 
-        view.configuration = configuration(done: true)
+        // The ring grows, then the tool finishes: nothing moves under the reader.
+        view.configuration = configuration(lines(400), done: false)
+        view.configuration = configuration(lines(500), done: true)
         _ = fittedTimelineSize(for: view, width: 390)
-        #expect(scroll.contentSize.height > tailHeight, "The completed row shows the whole output")
-        #expect(abs(distanceFromBottom() - before) < 1, "The same tail lines stay in view")
+        #expect(row.outputLabel.textStorage.string == painted)
+        #expect(abs(scroll.contentOffset.y - parkedY) < 1)
+
+        // Settling back at the tail paints the finished output and follows it.
+        scroll.draggingOverrideForTesting = true
+        row.scrollViewWillBeginDragging(scroll)
+        scroll.contentOffset.y = scroll.contentSize.height - scroll.bounds.height
+        scroll.draggingOverrideForTesting = false
+        row.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        _ = fittedTimelineSize(for: view, width: 390)
+        #expect(row.outputShouldAutoFollow)
+        #expect(row.outputLabel.textStorage.string.hasSuffix("l500"))
+        #expect(row.outputLabel.textStorage.string.hasPrefix("l1\n"), "The finished row shows the whole output")
     }
 }
 

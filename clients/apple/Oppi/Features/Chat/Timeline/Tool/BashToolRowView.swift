@@ -97,15 +97,10 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     private var pendingFollowTail = false
     private var ownsTerminalOutput = false
     private var perfSessionId: String?
-    /// Latest live owned paint withheld while the reader is detached.
+    /// Latest owned paint withheld while the reader is detached.
     private var frozenLiveOutput: (input: BashRenderInput, outputColor: UIColor)?
-    /// The painted text is a live tail, a suffix of the completed output.
+    /// The painted text is a live tail of an owned stream.
     private var outputShowsLiveTail = false
-    /// A detached reader's distance from the bottom, captured when the live
-    /// tail is replaced by the completed output and restored after the new
-    /// text lays out. The tail is a suffix, so the same lines stay in view.
-    private var detachedBottomDistance: CGFloat?
-    private var restoreBottomDistanceOnLayout: CGFloat?
 
     /// A live inline row lays out its whole UITextView on every paint. The
     /// owner's 2000-line ring made that O(ring) TextKit work at paint cadence,
@@ -160,12 +155,6 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     override func layoutSubviews() {
         super.layoutSubviews()
         outputScrollView.layoutIfNeeded()
-        if let distance = restoreBottomDistanceOnLayout {
-            restoreBottomDistanceOnLayout = nil
-            let scroll = outputScrollView
-            let bottom = scroll.contentSize.height + scroll.adjustedContentInset.bottom - scroll.bounds.height
-            scroll.contentOffset.y = max(-scroll.adjustedContentInset.top, bottom - distance)
-        }
         // A deferred paint dirties this view, not necessarily its parent row.
         // Settle TextKit here so the final paint can follow without another delta.
         flushDeferredScrollToBottom()
@@ -225,9 +214,10 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         // MARK: Output
 
         // While a finger or deceleration owns the viewport, or the reader has
-        // left the tail, keep the painted text still. Content must not move
-        // under the reader, and paints are skipped instead of laid out.
-        let freezeLiveOutput = input.terminalResolved && input.isStreaming
+        // left the tail, keep a painted live tail still, through completion
+        // too. Content must not move under the reader; paints are skipped,
+        // not laid out, and the newest one lands when they settle at the tail.
+        let freezeLiveOutput = input.terminalResolved && outputShowsLiveTail
             && !outputShouldAutoFollow && outputRenderSignature != nil
         if freezeLiveOutput {
             frozenLiveOutput = (input, outputColor)
@@ -247,11 +237,6 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
             ) ^ (input.terminalResolved ? 0x5354524D : 0)
 
             if signature != outputRenderSignature, !freezeLiveOutput {
-                if outputShowsLiveTail, !input.isStreaming, !outputShouldAutoFollow {
-                    let scroll = outputScrollView
-                    detachedBottomDistance = scroll.contentSize.height + scroll.adjustedContentInset.bottom
-                        - scroll.bounds.height - scroll.contentOffset.y
-                }
                 outputShowsLiveTail = input.terminalResolved && input.isStreaming
                 let startNs = ChatTimelinePerf.timestampNs()
                 let didTextChange: Bool
@@ -259,7 +244,6 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                 if let cached = ToolRowRenderCache.get(signature: signature) {
                     cancelDeferredANSIHighlight()
                     outputLabel.attributedText = cached
-                    armDetachedBottomDistance()
                     didTextChange = previousText != cached.string
                 } else if displayOutput.utf8.count > Self.deferredANSIByteThreshold {
                     terminalEngine = nil
@@ -296,7 +280,6 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                         )
                         ToolRowRenderCache.set(signature: signature, attributed: attributed)
                         outputLabel.attributedText = attributed
-                        armDetachedBottomDistance()
                         didTextChange = previousText != attributed.string
                     } catch {
                         outputLabel.text = "Terminal rendering failed: \(error)"
@@ -387,8 +370,6 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         ownsTerminalOutput = false
         frozenLiveOutput = nil
         outputShowsLiveTail = false
-        detachedBottomDistance = nil
-        restoreBottomDistanceOnLayout = nil
         outputScrollView.allowsVerticalPan = false
         terminalEngine = nil
         ToolTimelineRowUIHelpers.resetScrollPosition(outputScrollView)
@@ -631,7 +612,6 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                 if request.themeID == ThemeRuntimeState.currentThemeID(),
                    isLatest || (succeeded && isEarlierAppend) {
                     self.outputLabel.attributedText = result.attributed
-                    self.armDetachedBottomDistance()
                     self.terminalEngine = nil
                     self.outputRenderedText = self.outputUsesUnwrappedLayout ? result.attributed.string : nil
                     self.updateOutputLabelWidthIfNeeded()
@@ -706,16 +686,6 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         outputShouldAutoFollow = false
         pendingFollowTail = false
         outputPendingScrollToBottom = false
-        // A new gesture owns the viewport; drop a pending completion anchor.
-        detachedBottomDistance = nil
-        restoreBottomDistanceOnLayout = nil
-    }
-
-    private func armDetachedBottomDistance() {
-        guard let distance = detachedBottomDistance else { return }
-        detachedBottomDistance = nil
-        restoreBottomDistanceOnLayout = distance
-        setNeedsLayout()
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
