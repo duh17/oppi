@@ -13,11 +13,13 @@ import {
   writeFileSync,
   chmodSync,
 } from "node:fs";
-import { createServer } from "node:net";
+import { request } from "node:http";
+import { createConnection, createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
+import { localApiSocketPath } from "../src/local-api-socket.js";
 import type { ServerMessage } from "../src/types.js";
 
 const serverDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -72,6 +74,8 @@ writeFileSync(
   { mode: 0o600 },
 );
 const base = `http://127.0.0.1:${port}`;
+// Owner sk_ bearers are local-only; both REST and live upgrades use this socket.
+const apiSocketPath = localApiSocketPath(dataDir);
 const receipt: string[] = [];
 function record(line: string) {
   receipt.push(line);
@@ -126,18 +130,43 @@ async function launch(label: string) {
   throw new Error(`Throwaway server health timeout; inspect server-${label}.log`);
 }
 async function post(path: string, body: unknown): Promise<any> {
-  const response = await fetch(`${base}${path}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(45000),
+  return new Promise((resolve, reject) => {
+    const req = request(
+      {
+        socketPath: apiSocketPath,
+        path,
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(45000),
+        agent: false,
+      },
+      (res) => {
+        let text = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => (text += chunk));
+        res.on("error", reject);
+        res.on("end", () => {
+          const status = res.statusCode ?? 0;
+          if (status < 200 || status >= 300) {
+            reject(new Error(`POST ${path}: HTTP ${status}`));
+            return;
+          }
+          try {
+            resolve(JSON.parse(text));
+          } catch (error) {
+            reject(error);
+          }
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end(JSON.stringify(body));
   });
-  if (!response.ok) throw new Error(`POST ${path}: HTTP ${response.status}`);
-  return response.json();
 }
 async function connect(path: string) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`, {
+  const ws = new WebSocket(`ws://localhost${path}`, {
     headers: { Authorization: `Bearer ${token}` },
+    createConnection: () => createConnection(apiSocketPath),
   });
   connections.push(ws);
   const messages: ServerMessage[] = [];
