@@ -29,6 +29,7 @@ import type {
  * gondolin package installed (it is a runtime-only dependency).
  */
 export interface GondolinVm {
+  readonly id?: string;
   fs: GondolinFs;
   exec(
     args: string[] | string,
@@ -47,20 +48,31 @@ export interface GondolinVm {
 }
 
 export interface GondolinFs {
-  access(path: string): Promise<void>;
-  mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
+  access(path: string, options?: { signal?: AbortSignal }): Promise<void>;
+  rename?(source: string, destination: string, options?: { signal?: AbortSignal }): Promise<void>;
+  deleteFile?(
+    path: string,
+    options?: { recursive?: boolean; force?: boolean; signal?: AbortSignal },
+  ): Promise<void>;
+  mkdir(path: string, options?: { recursive?: boolean; signal?: AbortSignal }): Promise<void>;
   /** Guest directory listing. Sandbox ls requires this instead of host remount. */
   listDir?(dirPath: string, options?: { cwd?: string; signal?: AbortSignal }): Promise<string[]>;
   /** Guest stat. Sandbox ls requires this instead of host remount. */
   stat?(
     filePath: string,
     options?: { cwd?: string; signal?: AbortSignal },
-  ): Promise<{ isDirectory: () => boolean; isFile?: () => boolean }>;
-  readFile(path: string, options?: { encoding?: null }): Promise<Buffer>;
+  ): Promise<{
+    isDirectory: () => boolean;
+    isFile?: () => boolean;
+    isSymbolicLink?: () => boolean;
+    size?: number;
+    mtimeMs?: number;
+  }>;
+  readFile(path: string, options?: { encoding?: null; signal?: AbortSignal }): Promise<Buffer>;
   writeFile(
     path: string,
     content: string | Buffer,
-    options?: { encoding?: BufferEncoding },
+    options?: { encoding?: BufferEncoding; signal?: AbortSignal },
   ): Promise<void>;
 }
 
@@ -442,7 +454,7 @@ export function createGondolinFindOps(
 
 // ─── Grep ───
 
-const sandboxGrepSchema = Type.Object({
+export const sandboxGrepSchema = Type.Object({
   pattern: Type.String({ description: "Search pattern (regex or literal string)" }),
   path: Type.Optional(
     Type.String({ description: "Directory or file to search (default: current directory)" }),

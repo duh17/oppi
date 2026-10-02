@@ -82,7 +82,7 @@ import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
 import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "./oppi-docs.js";
-import type { ReadonlyMount, VmSecretDefinition } from "./gondolin-manager.js";
+import type { ReadonlyMount, ReadonlyMountSpec, VmSecretDefinition } from "./gondolin-manager.js";
 import type { GondolinVm } from "./gondolin-ops.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import { resolveWorkspaceSessionCwd, WorkspaceWorktreeError } from "./worktrees.js";
@@ -876,6 +876,25 @@ export class SdkBackend implements AgentBackend {
   static readonly RUNTIME_LIFECYCLE_TIMEOUT_MS = SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private static _gondolinManager: any;
+
+  /** Shared VM owner for both managed backends; never create a parallel VM. */
+  static async ensureSandboxWorkspaceVm(
+    workspace: Workspace,
+    hostCwd: string,
+    readonlyMounts: ReadonlyMountSpec[] = [],
+  ): Promise<GondolinVm> {
+    const { GondolinManager, isQemuAvailable } = await import("./gondolin-manager.js");
+    if (!(await isQemuAvailable())) throw new Error("Sandbox mode requires QEMU on the server");
+    SdkBackend._gondolinManager ??= new GondolinManager();
+    return SdkBackend._gondolinManager.ensureWorkspaceVm(
+      workspace,
+      hostCwd,
+      {},
+      readonlyMounts,
+      workspace.sandboxConfig?.env,
+      resolveSandboxGuestCwd(workspace),
+    );
+  }
 
   /** Stop one workspace VM. No-op when sandbox mode has never booted. */
   static async stopWorkspaceVm(workspaceId: string): Promise<void> {

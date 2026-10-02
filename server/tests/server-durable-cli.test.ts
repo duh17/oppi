@@ -33,8 +33,7 @@ registerHooks({ resolve(specifier, context, nextResolve) {
   expect(
     urls.filter(
       (url) =>
-        url.includes("/@earendil-works/pi-durable/") ||
-        /\/src\/durable-(backend|harness|event-adapter)\.js$/.test(url),
+        url.includes("/@earendil-works/pi-durable/") || /\/src\/durable-[^/]+\.js$/.test(url),
     ),
   ).toEqual([]);
   console.info(`Flag-off CLI import-graph artifacts: ${dir}`);

@@ -25,11 +25,18 @@ import {
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import type { AgentDefinition } from "./agent-launch-service.js";
 import type { AgentBackend } from "./agent-backend.js";
-import type { DurableHarness } from "./durable-harness.js";
+import { DurableRuntime, type DurableHarness } from "./durable-harness.js";
+import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
+import { DurableSandboxTools } from "./durable-sandbox-tools.js";
 import { DurableEventProjection } from "./durable-event-projection.js";
 import type { PiMessage, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import type { SdkBackendDisposeResult } from "./sdk-backend.js";
-import { resolveSessionSeedModel, resolveSdkSessionCwd } from "./sdk-backend.js";
+import {
+  SdkBackend,
+  resolveSandboxGuestCwd,
+  resolveSessionSeedModel,
+  resolveSdkSessionCwd,
+} from "./sdk-backend.js";
 import {
   SessionRuntimeTransaction,
   type SessionRuntimeTransactionPermit,
@@ -103,16 +110,29 @@ export class DurableBackend implements AgentBackend {
     ) {
       throw new DurableNotSupportedError("Saved Agent Skills/Extensions");
     }
+    const workspace = options.workspace;
+    const sandbox = workspace?.runtime === "sandbox";
+    if (sandbox && options.workspace?.sandboxConfig?.mcpServers?.length)
+      throw new DurableNotSupportedError("Sandbox MCP servers");
+    const hostCwd = resolveSdkSessionCwd(options.workspace, session, { dataDir: options.dataDir });
+    const cwd = sandbox ? resolveSandboxGuestCwd(workspace) : hostCwd;
     const id = session.serverDurable?.conversationId;
     let conversation: Conversation;
     if (id !== undefined) {
       const existing = await harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
       if (!existing) throw new Error(`Server durable conversation ${id} is missing`);
+      const runtime = await harness.snapshot(DurableRuntime, existing.id, BACKGROUND_CONTEXT);
+      if (
+        (runtime?.kind === "sandbox") !== sandbox ||
+        (sandbox && runtime?.workspaceId !== options.workspace?.id)
+      )
+        throw new Error(
+          "A bound server durable session cannot switch execution runtime or sandbox workspace",
+        );
       conversation = existing;
     } else {
       const registry = new ModelRegistry(models);
-      const cwd = resolveSdkSessionCwd(options.workspace, session, { dataDir: options.dataDir });
-      const settings = SettingsManager.create(cwd, getAgentDir(), { projectTrusted: false });
+      const settings = SettingsManager.create(hostCwd, getAgentDir(), { projectTrusted: false });
       const defaultModel =
         settings.getDefaultProvider() && settings.getDefaultModel()
           ? `${settings.getDefaultProvider()}/${settings.getDefaultModel()}`
@@ -127,7 +147,10 @@ export class DurableBackend implements AgentBackend {
       if (!model)
         throw new Error(`Server durable model is unavailable: ${session.model ?? "default"}`);
       const policy = session.launch?.tools;
-      const tools = (CodingTools.tools ?? []).filter(
+      const tools = [
+        ...(CodingTools.tools ?? []),
+        ...(sandbox ? (DurableSandboxTools.tools ?? []) : []),
+      ].filter(
         (tool) =>
           !policy?.noTools &&
           (!policy?.allowed || policy.allowed.includes(tool.name)) &&
@@ -143,7 +166,13 @@ export class DurableBackend implements AgentBackend {
       conversation = await harness.createConversation(
         {
           ownership: { kind: "ownerless" },
+          init: async (tx, id) => {
+            const runtime = await tx.doc(DurableRuntime, id);
+            runtime.kind = sandbox ? "sandbox" : "host";
+            if (sandbox) runtime.workspaceId = workspace.id;
+          },
           agent: {
+            extensions: sandbox ? [CodingTools, DurableSandboxTools] : [CodingTools],
             model: { provider: model.provider, modelId: model.id },
             thinkingLevel:
               session.thinkingLevel !== undefined && isThinkingLevel(session.thinkingLevel)
@@ -170,6 +199,13 @@ export class DurableBackend implements AgentBackend {
       // Bind before any submit can be accepted. A crash before this save leaves
       // only an empty unbound conversation, never a duplicated user turn.
       options.persistBinding();
+    }
+    if (sandbox) {
+      const vm = await SdkBackend.ensureSandboxWorkspaceVm(workspace, hostCwd);
+      const probe = await vm.exec(["/usr/bin/setsid", "/bin/true"]);
+      if (!probe.ok) throw new Error("Durable sandbox execution requires guest setsid");
+      const env = new GondolinExecutionEnv(vm, workspace.id, cwd);
+      options.owner.bindSandboxEnv(conversation.id, env);
     }
     const view = await conversation.viewState(BACKGROUND_CONTEXT);
     try {
@@ -370,6 +406,7 @@ export class DurableBackend implements AgentBackend {
     this.transactions.assertPermit(permit, "exclusive");
     await this.owner.abortConversation(this.conversation.id);
     await this.detachForRestart();
+    await this.owner.unbindSandboxEnv(this.conversation.id);
     return { disposal: "graceful" };
   }
   /** Projection teardown only: the recorded original submission must survive shutdown. */
@@ -386,6 +423,7 @@ export class DurableBackend implements AgentBackend {
       // A rejected abort leaves the projection alive and propagates stop_failed.
       await this.owner.abortConversation(this.conversation.id);
       await this.detachForRestart();
+      await this.owner.unbindSandboxEnv(this.conversation.id);
       this.transactions.poison(new Error("Server durable stop timed out"));
       return { disposal: "forced", cause: "lifecycle_timeout", operation: "stop", timeoutMs };
     };

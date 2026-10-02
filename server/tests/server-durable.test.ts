@@ -26,6 +26,8 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { SdkBackend, resolveSandboxGuestCwd } from "../src/sdk-backend.js";
+import type { GondolinVm } from "../src/gondolin-ops.js";
 import { DurableBackend, DurableNotSupportedError } from "../src/durable-backend.js";
 import { Storage } from "../src/storage.js";
 import { SessionManager } from "../src/sessions.js";
@@ -610,6 +612,129 @@ describe("server durable managed runtime", () => {
       observed.unsubscribe();
     },
   );
+  it("enrolls sandbox sessions without SDK fallback, reads guest images and refuses runtime changes", async () => {
+    const f = await fixture([
+      fauxAssistantMessage(
+        [
+          fauxToolCall("write", { path: "note.txt", content: "guest only" }),
+          fauxToolCall("read", { path: "image.png" }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("done"),
+    ]);
+    f.workspace.runtime = "sandbox";
+    f.storage.updateWorkspace(f.workspace.id, { runtime: "sandbox" });
+    const root = resolveSandboxGuestCwd(f.workspace);
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    );
+    const files = new Map<string, Buffer>([[`${root}/image.png`, png]]);
+    const vm: GondolinVm = {
+      fs: {
+        mkdir: async () => {},
+        access: async (path) => {
+          if (path !== root && !files.has(path)) throw new Error("ENOENT");
+        },
+        readFile: async (path) => {
+          const bytes = files.get(path);
+          if (!bytes) throw new Error("ENOENT");
+          return bytes;
+        },
+        writeFile: async (path, content) => {
+          files.set(path, Buffer.from(content));
+        },
+      },
+      exec: () =>
+        Object.assign(
+          Promise.resolve({ ok: true, exitCode: 0, stdout: "", stdoutBuffer: Buffer.alloc(0) }),
+          {
+            async *output() {},
+            write() {},
+            end() {},
+          },
+        ),
+    };
+    const ensure = vi.spyOn(SdkBackend, "ensureSandboxWorkspaceVm").mockResolvedValue(vm);
+    const sdk = vi.spyOn(SdkBackend, "create");
+    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    await f.manager.startSession(f.session.id, f.workspace);
+    const { harness } = await opening.mock.results[0]!.value;
+    const id = f.storage.getSession(f.session.id)!.serverDurable!.conversationId as ConversationId;
+    const conversation = (await harness.conversation(id, context))!;
+    const agent = await conversation.agent(context);
+    expect(agent.cwd).toBe(root);
+    expect(agent.tools.map((tool) => tool.name)).toEqual([
+      "read",
+      "write",
+      "edit",
+      "bash",
+      "ls",
+      "find",
+      "grep",
+    ]);
+    const settled = await (
+      await conversation.submit({ type: "input", content: "write and read" }, context)
+    ).wait(context);
+    expect(settled.status).toBe("done");
+    expect(files.get(`${root}/note.txt`)?.toString()).toBe("guest only");
+    expect(existsSync(join(f.dir, "note.txt"))).toBe(false);
+    const page = await conversation.entries({}, 40, undefined, context);
+    const image = page.items
+      .flatMap((entry) => entry.model ?? [])
+      .find((message) => message.role === "toolResult" && message.toolName === "read");
+    expect(image).toMatchObject({
+      isError: false,
+      content: expect.arrayContaining([
+        expect.objectContaining({ type: "image", mimeType: "image/png" }),
+      ]),
+    });
+    expect(ensure).toHaveBeenCalledOnce();
+    expect(sdk).not.toHaveBeenCalled();
+    await f.manager.stopSession(f.session.id);
+    f.workspace.runtime = "host";
+    f.storage.updateWorkspace(f.workspace.id, { runtime: "host" });
+    await expect(f.manager.startSession(f.session.id, f.workspace)).rejects.toThrow(
+      "cannot switch execution runtime",
+    );
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it("does not confirm cancellation when the sandbox environment cannot prove the guest stopped", async () => {
+    const f = await fixture([]);
+    const harness = await openHarness(f.dir, f.models);
+    const owner = new DurableHarness(f.dir);
+    vi.spyOn(owner, "open").mockResolvedValue({ harness, models: f.models });
+    await owner.releaseResume();
+    const conversation = await harness.createConversation(
+      { ownership: { kind: "ownerless" } },
+      context,
+    );
+    const env = new NodeExecutionEnv({ cwd: f.dir });
+    const cleanup = vi
+      .spyOn(env, "cleanup")
+      .mockRejectedValue(new Error("Guest cancellation was not confirmed"));
+    owner.bindSandboxEnv(conversation.id, env);
+    await expect(owner.abortConversation(conversation.id)).rejects.toThrow(
+      "Guest cancellation was not confirmed",
+    );
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("fails clearly for selected sandbox MCP instead of launching it on the host", async () => {
+    const f = await fixture([]);
+    f.workspace.runtime = "sandbox";
+    f.workspace.sandboxConfig = { mcpServers: ["picked-server"] };
+    const sdk = vi.spyOn(SdkBackend, "create");
+    const ensure = vi.spyOn(SdkBackend, "ensureSandboxWorkspaceVm");
+    await expect(f.manager.startSession(f.session.id, f.workspace)).rejects.toMatchObject({
+      code: "server_durable_not_supported",
+      operation: "Sandbox MCP servers",
+    });
+    expect(sdk).not.toHaveBeenCalled();
+    expect(ensure).not.toHaveBeenCalled();
+  });
   it("gates an early HTTP-equivalent open and prompt before bootstrap even begins", async () => {
     const f = await fixture([]);
     const crashed = await crashedQueuedTools(f);

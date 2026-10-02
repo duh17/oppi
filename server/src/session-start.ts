@@ -70,14 +70,8 @@ export class SessionStartCoordinator {
           workspace?.runtime === "sandbox" ||
           session.launch?.target?.runtime === "sandbox" ||
           agentDefinition?.launchConstraints?.requiredRuntime === "sandbox";
-        if (session.serverDurable && sandboxRequired) {
-          if (session.serverDurable.conversationId !== undefined)
-            throw new Error("A server durable session cannot switch to a sandbox");
-          delete session.serverDurable;
-          session.warnings = [
-            ...(session.warnings ?? []),
-            "Server durable is host-only; using the SDK backend for this sandbox session",
-          ];
+        if (session.serverDurable && sandboxRequired && workspace?.runtime !== "sandbox") {
+          throw new Error("Server durable sandbox sessions require a sandbox workspace");
         }
         if (session.serverDurable?.conversationId !== undefined && !this.deps.durableHarness) {
           throw new Error(

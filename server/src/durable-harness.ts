@@ -3,6 +3,7 @@ import { ModelRuntime, SettingsManager, getAgentDir } from "@earendil-works/pi-c
 import {
   Harness,
   createRegistry,
+  defineDoc,
   type HarnessSettings,
   type ConversationId,
 } from "@earendil-works/pi-durable";
@@ -11,6 +12,18 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import { DurableSandboxTools } from "./durable-sandbox-tools.js";
+
+/** Persist the execution boundary so a resumed conversation cannot change runtime. */
+export const DurableRuntime = defineDoc<{ kind: "host" | "sandbox"; workspaceId?: string }>({
+  kind: "oppi.execution-runtime",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  initial: () => ({ kind: "host" }),
+});
 
 /** Process-owned, lazy Harness. A disabled server never creates this owner. */
 export class DurableHarness {
@@ -21,9 +34,19 @@ export class DurableHarness {
   private resumeHeld = true;
   private readonly pausedAborts = new Set<Promise<void>>();
   private runSettings?: HarnessSettings;
+  private readonly sandboxEnvs = new Map<ConversationId, ExecutionEnv>();
 
   get retrySettings(): HarnessSettings["retry"] {
     return this.runSettings?.retry;
+  }
+
+  bindSandboxEnv(id: ConversationId, env: ExecutionEnv): void {
+    this.sandboxEnvs.set(id, env);
+  }
+  async unbindSandboxEnv(id: ConversationId): Promise<void> {
+    const env = this.sandboxEnvs.get(id);
+    await env?.cleanup(BACKGROUND_CONTEXT);
+    this.sandboxEnvs.delete(id);
   }
 
   get isResumeHeld(): boolean {
@@ -42,9 +65,13 @@ export class DurableHarness {
   }
 
   async abortConversation(id: ConversationId): Promise<void> {
-    if (this.resumeHeld) return this.abortConversations(new Set([id]));
-    const { harness } = await this.open();
-    await (await harness.conversation(id, BACKGROUND_CONTEXT))?.abort(BACKGROUND_CONTEXT);
+    if (this.resumeHeld) await this.abortConversations(new Set([id]));
+    else {
+      const { harness } = await this.open();
+      await (await harness.conversation(id, BACKGROUND_CONTEXT))?.abort(BACKGROUND_CONTEXT);
+    }
+    // Task cancellation alone is not guest Stop confirmation.
+    await this.sandboxEnvs.get(id)?.cleanup(BACKGROUND_CONTEXT);
   }
 
   holdResume(): void {
@@ -79,6 +106,7 @@ export class DurableHarness {
     this.runSettings = harnessSettings(settings);
     const registry = createRegistry();
     registry.install(CodingTools);
+    registry.install(DurableSandboxTools);
     const directory = join(this.dataDir, "durable");
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     // Bun-based CLI commands must not load node:sqlite when the experiment is
@@ -91,7 +119,14 @@ export class DurableHarness {
         models,
         registry,
         settings: this.runSettings,
-        env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? homedir() }),
+        env: async ({ conversationId, cwd, read }, context) => {
+          const runtime = await read.snapshot(DurableRuntime, conversationId, context);
+          if (runtime?.kind !== "sandbox") return new NodeExecutionEnv({ cwd: cwd ?? homedir() });
+          const env = this.sandboxEnvs.get(conversationId);
+          if (!env)
+            throw new Error("Durable sandbox workspace is not attached; refusing host execution");
+          return env;
+        },
       },
       BACKGROUND_CONTEXT,
     );
@@ -140,6 +175,7 @@ export class DurableHarness {
     // Closing interrupts invocations without settling their tasks. Recorded
     // restart work remains durable and is continued by the next Harness.open.
     await harness.close(BACKGROUND_CONTEXT);
+    await Promise.all([...this.sandboxEnvs.keys()].map((id) => this.unbindSandboxEnv(id)));
   }
 }
 
