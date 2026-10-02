@@ -297,7 +297,26 @@ try {
   assert.equal(results.length, 1);
   assert.equal(results[0]!.isError, false);
   assert.deepEqual(results[0]!.details?.answers, { restart: "yes" });
-  assert.equal(history.filter((m) => m.role === "user").length, 2);
+  const userText = (content: unknown): string =>
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content.map((block: { text?: string }) => block.text ?? "").join("")
+        : "";
+  const notes = history.filter(
+    (m) => m.role === "user" && userText(m.content).startsWith("[Goal runner]"),
+  );
+  assert(
+    notes.some((m) =>
+      userText(m.content).includes("continue: Run settled; no pending messages or compaction"),
+    ),
+    "continuation decision must be visible in the phone transcript",
+  );
+  assert.equal(
+    history.filter((m) => m.role === "user" && !userText(m.content).startsWith("[Goal runner]"))
+      .length,
+    2,
+  );
   const creates = history.filter((m) => m.role === "toolResult" && m.toolName === "create_goal");
   assert.equal(creates.length, 1);
   const reads = history.filter((m) => m.role === "toolResult" && m.toolName === "get_goal");

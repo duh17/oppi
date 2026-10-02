@@ -11,7 +11,10 @@ import {
   CompactionTask,
   LiveDoc,
   InboxDoc,
+  UserEntry,
+  GenerationTask,
   type TaskId,
+  type SubmissionId,
   type Tx,
   type ConversationId,
   type ToolExecutionApi,
@@ -45,7 +48,11 @@ type Goal = {
   continuationCount: number;
   maxContinuations: number;
 };
-export const GoalDoc = defineDoc<{ goal?: Goal; runner?: TaskId }>({
+export const GoalDoc = defineDoc<{
+  goal?: Goal;
+  runner?: TaskId;
+  nextAttempt?: number;
+}>({
   kind: "oppi.goal",
   version: 1,
   scope: "conversation",
@@ -229,7 +236,8 @@ function update(goal: Goal, params: Static<typeof UpdateParams>): Goal {
     ...goal,
     tasks: goal.tasks.map((task) => ({ ...task })),
   };
-  if (text(params.objective)) next.objective = text(params.objective)!;
+  const objective = text(params.objective);
+  if (objective) next.objective = objective;
   if (params.status) next.status = params.status;
   if (params.summary !== undefined) next.summary = text(params.summary);
   if (params.blocker !== undefined) next.blocker = text(params.blocker);
@@ -242,9 +250,10 @@ function update(goal: Goal, params: Static<typeof UpdateParams>): Goal {
       : patch.index !== undefined
         ? Math.floor(patch.index) - 1
         : -1;
-    if (index >= 0 && index < next.tasks.length)
+    const target = next.tasks[index];
+    if (target)
       next.tasks[index] = {
-        ...next.tasks[index]!,
+        ...target,
         ...(title ? { title } : {}),
         ...(patch.status ? { status: patch.status } : {}),
       };
@@ -274,7 +283,7 @@ function update(goal: Goal, params: Static<typeof UpdateParams>): Goal {
   return next;
 }
 function label(status: GoalStatus): string {
-  return status[0]!.toUpperCase() + status.slice(1);
+  return status.charAt(0).toUpperCase() + status.slice(1);
 }
 function format(goal?: Goal): string {
   if (!goal) return "No active goal.";
@@ -331,23 +340,47 @@ function jsonGoal(goal: Goal): Goal {
   // Chord documents require strict JSON; classic optional fields use undefined.
   return JSON.parse(JSON.stringify(goal)) as Goal;
 }
-function result(goal?: Goal) {
+function result(goal?: Goal): {
+  content: Array<{ type: "text"; text: string }>;
+  details: { status: "ok"; goal?: Goal };
+} {
   return {
     content: [{ type: "text" as const, text: format(goal) }],
     details: { status: "ok", ...(goal ? { goal: jsonGoal(goal) } : {}) },
   };
 }
-function error(message: string) {
+function error(message: string): {
+  content: Array<{ type: "text"; text: string }>;
+  details: { status: "error"; error: string };
+  isError: true;
+} {
   return {
     content: [{ type: "text" as const, text: message }],
     details: { status: "error", error: message },
     isError: true,
   };
 }
-async function persist(tx: Tx, id: ConversationId, goal: Goal): Promise<void> {
+async function persist(
+  tx: Tx,
+  id: ConversationId,
+  goal: Goal,
+  running: boolean,
+): Promise<void> {
   goal = jsonGoal(goal);
   (await tx.doc(GoalDoc, id)).goal = goal;
   await tx.appendEntry(GoalSnapshot, id, { data: { version: 1, goal } });
+  await publishUi(tx, id, goal, running);
+}
+async function publishUi(
+  tx: Tx,
+  id: ConversationId,
+  goal: Goal,
+  running: boolean,
+): Promise<void> {
+  const runnerLabel =
+    goal.status === "active" && !running
+      ? "Active · Runner stopped"
+      : label(goal.status);
   const visible = goal.status !== "complete";
   const ui = await tx.doc(DurableUI, id);
   const provenance = {
@@ -361,7 +394,7 @@ async function persist(tx: Tx, id: ConversationId, goal: Goal): Promise<void> {
     ...provenance,
     ...(visible
       ? {
-          statusText: `goal: ${label(goal.status)} ${goal.continuationCount}/${goal.maxContinuations}`,
+          statusText: `goal: ${runnerLabel} ${goal.continuationCount}/${goal.maxContinuations}`,
         }
       : {}),
   };
@@ -383,8 +416,11 @@ async function persist(tx: Tx, id: ConversationId, goal: Goal): Promise<void> {
         {
           id: goal.id,
           title: goal.objective,
-          subtitle: `${label(goal.status)} · ${goal.continuationCount}/${goal.maxContinuations} continuations`,
-          state: states[goal.status],
+          subtitle: `${runnerLabel} · ${goal.continuationCount}/${goal.maxContinuations} continuations`,
+          state:
+            goal.status === "active" && !running
+              ? "inactive"
+              : states[goal.status],
           children: goal.tasks.map((task) => ({
             id: task.id,
             title: task.title,
@@ -415,7 +451,7 @@ async function persist(tx: Tx, id: ConversationId, goal: Goal): Promise<void> {
             presentation: {
               style: "surfacePanel",
               title: "Goal",
-              subtitle: label(goal.status),
+              subtitle: runnerLabel,
             },
             blocks,
             fallback: { lines: widgetLines },
@@ -427,12 +463,21 @@ async function persist(tx: Tx, id: ConversationId, goal: Goal): Promise<void> {
 async function decision(
   tx: Tx,
   id: ConversationId,
-  goal: Goal,
+  goal: Pick<Goal, "id" | "continuationCount">,
   action: string,
   reason: string,
   requestId?: string,
 ): Promise<void> {
   await tx.appendEntry(Decision, id, {
+    // A passive user message uses the phone's existing message renderer without
+    // inventing a tool call or impersonating a model response. It starts no run.
+    model: [
+      {
+        role: "user",
+        content: `[Goal runner] ${action}: ${reason}`,
+        timestamp: Date.now(),
+      },
+    ],
     data: {
       goalId: goal.id,
       decision: action,
@@ -446,7 +491,13 @@ async function decision(
 type Checkpoint =
   | { phase: "watch" }
   | { phase: "compacted"; goalId: string; compactions: TaskId[] }
-  | { phase: "submit"; goalId: string; requestId: string; content: string };
+  | {
+      phase: "submit";
+      goalId: string;
+      count: number;
+      requestId: string;
+      content: string;
+    };
 // Not background: user Abort/Stop must cancel the loop. Host busy/idle and
 // auto-stop are driven by pi.live.run, not by this observer. A same-run onYield
 // continuation would hide every settled boundary from that host policy.
@@ -454,10 +505,61 @@ const Runner = defineTask<null, Checkpoint, null>({
   name: "oppi.goal-runner",
   version: 1,
   initial: () => ({ phase: "watch" }),
-  abort: async (_task, runtime, context) => {
+  abort: async (task, runtime, context) => {
     await runtime.commit(async (tx) => {
-      const goal = (await tx.doc(GoalDoc, runtime.conversationId)).goal;
-      if (goal)
+      const plan =
+        task.state.checkpoint.phase === "submit"
+          ? task.state.checkpoint
+          : undefined;
+      const existing = plan
+        ? await tx.submissionByRequest(runtime.conversationId, plan.requestId)
+        : undefined;
+      const entry =
+        existing?.entry === undefined
+          ? undefined
+          : await tx.entry(existing.entry);
+      const inbox = await tx.doc(InboxDoc, runtime.conversationId);
+      const queued = existing
+        ? inbox.items.find((item) => item.id === existing.id)
+        : undefined;
+      const content =
+        entry?.model?.find((message) => message.role === "user")?.content ??
+        (queued && queued.mode !== "write" ? queued.content : undefined);
+      const owned =
+        plan && existing?.type === "input" && content === plan.content;
+      let goal = (await tx.doc(GoalDoc, runtime.conversationId)).goal;
+      if (owned && existing?.status === "queued") {
+        const index = inbox.items.findIndex((item) => item.id === existing.id);
+        if (index >= 0) inbox.items.splice(index, 1);
+        tx.settleSubmission(existing.id, {
+          status: "unanswered",
+          reason: "aborted",
+        });
+      }
+      if (
+        plan &&
+        (!owned || existing?.status === "queued") &&
+        goal?.id === plan.goalId &&
+        goal.continuationCount === plan.count
+      ) {
+        goal = {
+          ...goal,
+          continuationCount: Math.max(0, goal.continuationCount - 1),
+          revision: goal.revision + 1,
+          updatedAt: iso(),
+        };
+        await persist(tx, runtime.conversationId, goal, false);
+        await decision(
+          tx,
+          runtime.conversationId,
+          goal,
+          "skip",
+          "Abort/Stop withdrew the unconsumed continuation reservation.",
+          plan.requestId,
+        );
+      }
+      if (goal) {
+        await publishUi(tx, runtime.conversationId, goal, false);
         await decision(
           tx,
           runtime.conversationId,
@@ -465,6 +567,7 @@ const Runner = defineTask<null, Checkpoint, null>({
           "stop",
           "Goal runner cancelled by Abort/Stop; state retained.",
         );
+      }
       return { status: "terminal", outcome: { status: "aborted" } };
     }, context);
   },
@@ -481,20 +584,43 @@ const Runner = defineTask<null, Checkpoint, null>({
         runtime.conversationId,
         context,
       );
-      if (!live || !goals)
+      const inboxWatch = await runtime.watchDoc(
+        InboxDoc,
+        runtime.conversationId,
+        context,
+      );
+      if (!live || !goals || !inboxWatch)
         throw new Error("Goal runner requires conversation state");
       let wake: (() => void) | undefined;
       let changed = false;
       const compactions = new Set<TaskId>(
         live.value?.compactions?.map((item) => item.taskId),
       );
-      const notify = async () => {
+      let busy = live.value?.run !== undefined;
+      let compactIds = (live.value?.compactions ?? [])
+        .map((item) => item.taskId)
+        .join(",");
+      let queued = (inboxWatch.value?.items.length ?? 0) > 0;
+      const notify = async (): Promise<void> => {
         changed = true;
         wake?.();
       };
       live.start(async (value) => {
+        const nextBusy = value?.run !== undefined;
+        const nextIds = (value?.compactions ?? [])
+          .map((item) => item.taskId)
+          .join(",");
+        if (nextBusy === busy && nextIds === compactIds) return;
+        busy = nextBusy;
+        compactIds = nextIds;
         for (const item of value?.compactions ?? [])
           compactions.add(item.taskId);
+        await notify();
+      });
+      inboxWatch.start(async (value) => {
+        const nextQueued = (value?.items.length ?? 0) > 0;
+        if (queued === nextQueued) return;
+        queued = nextQueued;
         await notify();
       });
       goals.start(notify);
@@ -506,7 +632,8 @@ const Runner = defineTask<null, Checkpoint, null>({
             const state = await tx.doc(GoalDoc, runtime.conversationId);
             const goal = state.goal;
             if (!goal || goal.status !== "active") {
-              if (goal)
+              if (goal) {
+                await publishUi(tx, runtime.conversationId, goal, false);
                 await decision(
                   tx,
                   runtime.conversationId,
@@ -514,6 +641,7 @@ const Runner = defineTask<null, Checkpoint, null>({
                   "stop",
                   goal.blocker ?? `Goal is ${goal.status}.`,
                 );
+              }
               ready = true;
               return {
                 status: "terminal",
@@ -551,13 +679,13 @@ const Runner = defineTask<null, Checkpoint, null>({
                 status: "blocked",
                 blocker: `Continuation budget exhausted (${goal.continuationCount}/${goal.maxContinuations}).`,
               });
-              await persist(tx, runtime.conversationId, blocked);
+              await persist(tx, runtime.conversationId, blocked, false);
               await decision(
                 tx,
                 runtime.conversationId,
                 blocked,
                 "stop",
-                blocked.blocker!,
+                blocked.blocker ?? "Continuation budget exhausted.",
               );
               ready = true;
               return {
@@ -571,8 +699,11 @@ const Runner = defineTask<null, Checkpoint, null>({
               updatedAt: iso(),
               revision: goal.revision + 1,
             };
-            const requestId = `oppi-goal:${next.id}:${next.continuationCount}`;
-            await persist(tx, runtime.conversationId, next);
+            // A skipped reservation may reuse its budget count, but must never
+            // reuse the request ID of a withdrawn submission.
+            state.nextAttempt = (state.nextAttempt ?? 0) + 1;
+            const requestId = `oppi-goal:${next.id}:${next.continuationCount}:${state.nextAttempt}`;
+            await persist(tx, runtime.conversationId, next, true);
             await decision(
               tx,
               runtime.conversationId,
@@ -587,6 +718,7 @@ const Runner = defineTask<null, Checkpoint, null>({
               checkpoint: {
                 phase: "submit",
                 goalId: next.id,
+                count: next.continuationCount,
                 requestId,
                 content: continuation(next),
               },
@@ -594,11 +726,11 @@ const Runner = defineTask<null, Checkpoint, null>({
           }, context);
           if (ready) return;
           await new Promise<void>((resolve, reject) => {
-            const abort = () => {
+            const abort = (): void => {
               cleanup();
               reject(runtime.signal.reason);
             };
-            const cleanup = () => {
+            const cleanup = (): void => {
               runtime.signal.removeEventListener("abort", abort);
               wake = undefined;
             };
@@ -614,6 +746,7 @@ const Runner = defineTask<null, Checkpoint, null>({
       } finally {
         await live.stop();
         await goals.stop();
+        await inboxWatch.stop();
       }
     },
     async compacted(task, runtime, context) {
@@ -636,7 +769,7 @@ const Runner = defineTask<null, Checkpoint, null>({
               status: "blocked",
               blocker: reason,
             });
-            await persist(tx, runtime.conversationId, blocked);
+            await persist(tx, runtime.conversationId, blocked, false);
             await decision(tx, runtime.conversationId, blocked, "stop", reason);
             return {
               status: "terminal",
@@ -656,80 +789,150 @@ const Runner = defineTask<null, Checkpoint, null>({
     },
     async submit(task, runtime, context) {
       const plan = task.state.checkpoint;
-      const goal = (
-        await runtime.snapshot(GoalDoc, runtime.conversationId, context)
-      )?.goal;
-      if (!goal || goal.id !== plan.goalId || goal.status !== "active") {
-        await runtime.commit(async (tx) => {
-          if (goal)
-            await decision(
-              tx,
-              runtime.conversationId,
-              goal,
-              "skip",
-              "Goal changed or stopped before continuation admission.",
-              plan.requestId,
+      await runtime.commit(async (tx) => {
+        const existing = await tx.submissionByRequest(
+          runtime.conversationId,
+          plan.requestId,
+        );
+        const entry =
+          existing?.entry === undefined
+            ? undefined
+            : await tx.entry(existing.entry);
+        const state = await tx.doc(GoalDoc, runtime.conversationId);
+        const live = await tx.doc(LiveDoc, runtime.conversationId);
+        const inbox = await tx.doc(InboxDoc, runtime.conversationId);
+        const queued = existing
+          ? inbox.items.find((item) => item.id === existing.id)
+          : undefined;
+        const content =
+          entry?.model?.find((message) => message.role === "user")?.content ??
+          (queued && queued.mode !== "write" ? queued.content : undefined);
+        const goal = state.goal;
+        const rollback = async (
+          reason: string,
+          conflict = false,
+        ): Promise<void> => {
+          if (existing?.status === "queued" && !conflict) {
+            const index = inbox.items.findIndex(
+              (item) => item.id === existing.id,
             );
-          return { status: "running", checkpoint: { phase: "watch" } };
-        }, context);
-        return;
-      }
-      const conversation = await runtime.conversation(
-        runtime.conversationId,
-        context,
-      );
-      if (!conversation) throw new Error("Goal conversation is missing");
-      try {
-        // The checkpoint and budget were committed together. A crash before or
-        // after admission resubmits this SAME request ID, never another turn.
-        await conversation.submit(
-          {
-            type: "input",
-            content: plan.content,
-            whenBusy: "followUp",
-            requestId: plan.requestId,
-          },
-          context,
-        );
-        // Observe the admitted run in watch, including compactions during later
-        // continuations. Waiting only on its submission would miss a compaction
-        // failure that disappeared from pi.live before the run settled.
-        await runtime.commit(
-          () => ({ status: "running", checkpoint: { phase: "watch" } }),
-          context,
-        );
-      } catch (cause) {
-        runtime.signal.throwIfAborted();
-        await runtime.commit(async (tx) => {
-          const current = (await tx.doc(GoalDoc, runtime.conversationId)).goal;
-          if (current?.id === plan.goalId && current.status === "active") {
-            const blocked = update(current, {
-              status: "blocked",
-              blocker: `Continuation launch failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            if (index >= 0) inbox.items.splice(index, 1);
+            tx.settleSubmission(existing.id, {
+              status: "unanswered",
+              reason: "aborted",
             });
-            await persist(tx, runtime.conversationId, blocked);
-            await decision(
-              tx,
-              runtime.conversationId,
-              blocked,
-              "stop",
-              blocked.blocker!,
-              plan.requestId,
-            );
           }
+          if (
+            goal?.id === plan.goalId &&
+            goal.continuationCount === plan.count
+          ) {
+            const next = {
+              ...goal,
+              continuationCount: Math.max(0, goal.continuationCount - 1),
+              revision: goal.revision + 1,
+              updatedAt: iso(),
+            };
+            const restored = conflict
+              ? update(next, { status: "blocked", blocker: reason })
+              : next;
+            await persist(tx, runtime.conversationId, restored, !conflict);
+          }
+          await decision(
+            tx,
+            runtime.conversationId,
+            { id: plan.goalId, continuationCount: plan.count },
+            "skip",
+            reason,
+            plan.requestId,
+          );
+        };
+        if (
+          existing &&
+          (existing.type !== "input" || content !== plan.content)
+        ) {
+          await rollback(
+            "Continuation requestId conflict: stored content differs from the planned continuation.",
+            true,
+          );
           return {
             status: "terminal",
             outcome: { status: "completed", result: null },
           };
-        }, context);
-      }
+        }
+        if (
+          (!existing || existing.status === "queued") &&
+          (goal?.id !== plan.goalId ||
+            goal.status !== "active" ||
+            live.run ||
+            inbox.items.some((item) => item.id !== existing?.id) ||
+            live.compactions?.length)
+        ) {
+          await rollback(
+            goal?.id !== plan.goalId || goal.status !== "active"
+              ? "Goal changed or stopped before continuation admission."
+              : "User work or compaction arrived before continuation admission; continuation withdrawn without spending budget.",
+          );
+          return { status: "running", checkpoint: { phase: "watch" } };
+        }
+        if (existing && existing.status !== "queued") {
+          // Only our exact content can be a replay. New admission below is
+          // idle-only and atomically creates a run with this sole placed input.
+          return { status: "running", checkpoint: { phase: "watch" } };
+        }
+        // Conversation.submit cannot combine a goal-state check with admission.
+        // Use the public Tx surface for this narrow idle-only admission (no
+        // queue/boundary policy): goal, inbox and run cannot change between the
+        // check and placing this single input. This also closes restart races.
+        const user = await tx.appendEntry(UserEntry, runtime.conversationId, {
+          model: [
+            { role: "user", content: plan.content, timestamp: runtime.now() },
+          ],
+        });
+        let submissionId: SubmissionId;
+        if (existing) {
+          // Recover an exact-content sole queued input without a new request.
+          const index = inbox.items.findIndex(
+            (item) => item.id === existing.id,
+          );
+          if (index >= 0) inbox.items.splice(index, 1);
+          tx.placeSubmission(existing.id, user.id);
+          submissionId = existing.id;
+        } else {
+          submissionId = (
+            await tx.createSubmission({
+              conversationId: runtime.conversationId,
+              type: "input",
+              requestId: plan.requestId,
+              status: "placed",
+              entry: user.id,
+            })
+          ).id;
+        }
+        live.run = {
+          taskId: await tx.createTask(
+            GenerationTask,
+            {},
+            {
+              conversationId: runtime.conversationId,
+              ownership: { kind: "conversation" },
+            },
+          ),
+          inputs: [submissionId],
+        };
+        return { status: "running", checkpoint: { phase: "watch" } };
+      }, context);
     },
   },
 });
-async function ensureRunner(tx: Tx, id: ConversationId): Promise<void> {
+async function ensureRunner(
+  tx: Tx,
+  id: ConversationId,
+  arm: boolean,
+): Promise<boolean> {
   const doc = await tx.doc(GoalDoc, id);
   const old = doc.runner === undefined ? undefined : await tx.task(doc.runner);
   if (
+    arm &&
     doc.goal?.status === "active" &&
     (!old || old.state.status === "terminal")
   )
@@ -737,6 +940,10 @@ async function ensureRunner(tx: Tx, id: ConversationId): Promise<void> {
       conversationId: id,
       ownership: { kind: "conversation" },
     });
+  return (
+    (arm && doc.runner !== old?.id) ||
+    !!(old && old.state.status !== "terminal" && !old.abortRequested)
+  );
 }
 const ToolReceipt = defineDoc<{
   result?: ReturnType<typeof result> | ReturnType<typeof error>;
@@ -752,16 +959,22 @@ async function mutate(
   api: ToolExecutionApi,
   context: Parameters<ToolExecutionApi["commit"]>[1],
   change: (goal?: Goal) => ReturnType<typeof result> | ReturnType<typeof error>,
-) {
+  arm: boolean,
+): Promise<ReturnType<typeof result> | ReturnType<typeof error>> {
   return api.commit(async (tx) => {
     const receipt = await tx.doc(ToolReceipt, api.taskId);
     if (receipt.result) return receipt.result;
     const doc = await tx.doc(GoalDoc, api.conversationId);
     const outcome = change(doc.goal);
     // Read the runner before any table writes (Durable enforces ReadAfterWrite).
-    await ensureRunnerBeforeWrite(tx, api.conversationId, outcome);
+    const running = await ensureRunnerBeforeWrite(
+      tx,
+      api.conversationId,
+      outcome,
+      arm,
+    );
     if ("goal" in outcome.details && outcome.details.goal) {
-      await persist(tx, api.conversationId, outcome.details.goal);
+      await persist(tx, api.conversationId, outcome.details.goal, running);
       await decision(
         tx,
         api.conversationId,
@@ -779,11 +992,12 @@ async function ensureRunnerBeforeWrite(
   tx: Tx,
   id: ConversationId,
   outcome: ReturnType<typeof result> | ReturnType<typeof error>,
-): Promise<void> {
-  if (!("goal" in outcome.details) || !outcome.details.goal) return;
+  arm: boolean,
+): Promise<boolean> {
+  if (!("goal" in outcome.details) || !outcome.details.goal) return false;
   const doc = await tx.doc(GoalDoc, id);
   doc.goal = outcome.details.goal;
-  await ensureRunner(tx, id);
+  return ensureRunner(tx, id, arm);
 }
 const get = defineTool({
   name: "get_goal",
@@ -804,27 +1018,32 @@ const create = defineTool({
   executionMode: "sequential",
   replay: "safe",
   async execute(args, api, context) {
-    return mutate(api, context, (old) => {
-      if (old?.status === "active" && !args.replace)
-        return error(
-          `Active goal already exists (${old.id}). Use update_goal or pass replace=true if replacement is intended.`,
-        );
-      const objective = text(args.objective);
-      if (!objective) return error("Goal objective cannot be empty.");
-      const timestamp = iso();
-      return result({
-        id: crypto.randomUUID(),
-        status: "active",
-        objective,
-        summary: text(args.summary),
-        tasks: timed([], tasks(args.tasks), timestamp),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        revision: 1,
-        continuationCount: 0,
-        maxContinuations: budget(args.max_continuations ?? 25),
-      });
-    });
+    return mutate(
+      api,
+      context,
+      (old) => {
+        if (old?.status === "active" && !args.replace)
+          return error(
+            `Active goal already exists (${old.id}). Use update_goal or pass replace=true if replacement is intended.`,
+          );
+        const objective = text(args.objective);
+        if (!objective) return error("Goal objective cannot be empty.");
+        const timestamp = iso();
+        return result({
+          id: crypto.randomUUID(),
+          status: "active",
+          objective,
+          summary: text(args.summary),
+          tasks: timed([], tasks(args.tasks), timestamp),
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          revision: 1,
+          continuationCount: 0,
+          maxContinuations: budget(args.max_continuations ?? 25),
+        });
+      },
+      true,
+    );
   },
 });
 const patch = defineTool({
@@ -835,14 +1054,19 @@ const patch = defineTool({
   executionMode: "sequential",
   replay: "safe",
   async execute(args, api, context) {
-    return mutate(api, context, (goal) => {
-      if (!goal) return error("No goal exists. Use create_goal first.");
-      if (args.goal_id && args.goal_id !== goal.id)
-        return error(
-          `Stale goal id: expected ${goal.id}, received ${args.goal_id}.`,
-        );
-      return result(update(goal, args));
-    });
+    return mutate(
+      api,
+      context,
+      (goal) => {
+        if (!goal) return error("No goal exists. Use create_goal first.");
+        if (args.goal_id && args.goal_id !== goal.id)
+          return error(
+            `Stale goal id: expected ${goal.id}, received ${args.goal_id}.`,
+          );
+        return result(update(goal, args));
+      },
+      args.status === "active",
+    );
   },
 });
 export const DurableGoal = defineExtension({

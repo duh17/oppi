@@ -381,12 +381,9 @@ export class DurableBackend implements AgentBackend {
     const admission = this.admissions.then(async () => {
       this.assertOpen();
       this.owner.assertSchedulingReady();
-      const existing = options?.clientTurnId
+      const existing = clientTurnId
         ? await this.conversation.commit(async (tx) => {
-            const record = await tx.submissionByRequest(
-              this.conversation.id,
-              options.clientTurnId!,
-            );
+            const record = await tx.submissionByRequest(this.conversation.id, clientTurnId);
             const queued =
               record && record.entry === undefined
                 ? (await tx.doc(InboxDoc, this.conversation.id)).items.find(
@@ -403,7 +400,7 @@ export class DurableBackend implements AgentBackend {
             const fingerprint = await tx.doc(
               RequestContent,
               this.conversation.id,
-              options.clientTurnId!,
+              clientTurnId,
               null,
             );
             if (!record) {
@@ -425,7 +422,7 @@ export class DurableBackend implements AgentBackend {
         {
           type: "input",
           content,
-          requestId: options?.clientTurnId,
+          requestId: clientTurnId,
           whenBusy: options?.streamingBehavior ?? "reject",
         },
         BACKGROUND_CONTEXT,

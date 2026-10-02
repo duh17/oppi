@@ -346,11 +346,30 @@ describe("server durable managed runtime", () => {
       toolName?: string;
       isError?: boolean;
     }>;
-    expect(history.filter((m) => m.role === "user")).toHaveLength(2);
+    expect(
+      history.filter((m) => m.role === "user" && !JSON.stringify(m).includes("[Goal runner]")),
+    ).toHaveLength(2);
+    expect(
+      history.some(
+        (m) =>
+          m.role === "user" &&
+          JSON.stringify(m).includes("[Goal runner] stop: Continuation budget exhausted (1/1)."),
+      ),
+    ).toBe(true);
     expect(history.filter((m) => m.role === "toolResult" && m.toolName === "create_goal")).toEqual([
       expect.objectContaining({ isError: false }),
     ]);
     expect(observed.messages.filter((m) => m.type === "agent_end")).toHaveLength(2);
+    expect(
+      observed.messages.some(
+        (m) =>
+          m.type === "message_end" &&
+          m.role === "user" &&
+          JSON.stringify(m).includes(
+            "[Goal runner] continue: Run settled; no pending messages or compaction",
+          ),
+      ),
+    ).toBe(true);
     observed.unsubscribe();
   });
 
@@ -2006,6 +2025,26 @@ describe("server durable managed runtime", () => {
     ).rejects.toThrow("clientTurnId conflict");
     expect(restarted.getMessageQueue(f.session.id).followUp).toEqual([]);
     expect(f.faux.state.callCount).toBe(1);
+  });
+
+  it("reserves internal goal request IDs before client prompt admission", async () => {
+    const f = await fixture([fauxAssistantMessage("Normal client prompt accepted")]);
+    const harness = await openHarness(f.dir, f.models);
+    const runtime = await backend(harness, f.models, f.session, f.dir);
+    const accepted = vi.fn();
+    await expect(
+      runtime.prompt("Preempt a continuation", {
+        clientTurnId: "oppi-goal:known-goal:1",
+        onPreflightAccepted: accepted,
+      }),
+    ).rejects.toThrow("clientTurnId prefix oppi-goal: is reserved");
+    expect(accepted).not.toHaveBeenCalled();
+    expect(runtime.messages()).toHaveLength(0);
+    expect(f.faux.state.callCount).toBe(0);
+    await runtime.prompt("Normal prompt", { clientTurnId: "ordinary-client-id" });
+    await harness.waitForIdle(context);
+    expect(runtime.messages().filter((m) => m.role === "user")).toHaveLength(1);
+    await runtime.dispose();
   });
 
   it("fails unsupported commands with a typed error instead of pretending success", async () => {
