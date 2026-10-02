@@ -397,6 +397,11 @@ export class GondolinManager {
     const existing = this.vms.get(id);
     if (existing) {
       if (existing.fingerprint === fingerprint) return existing.vm;
+      if (this.hasBusySession(id)) {
+        throw new Error(
+          `Cannot recycle sandbox workspace VM ${id} while sessions are busy; stop them before changing its configuration`,
+        );
+      }
       await this.stopWorkspaceVm(id);
     }
 

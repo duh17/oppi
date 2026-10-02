@@ -374,6 +374,33 @@ describe("workspace VM fingerprint reuse", () => {
     },
   );
 
+  it.each(["hostCwd", "allowedHosts", "extraEnv"])(
+    "refuses a %s recycle while another conversation is busy",
+    async (changed) => {
+      const { factory, calls, vms } = makeFactory();
+      manager = new GondolinManager(factory);
+      const ws = makeWorkspace({ id: "w1", sandboxConfig: { allowedHosts: [] } });
+      const vm = await manager.ensureWorkspaceVm(ws, "/path", {}, [], { LANG: "C" });
+      manager.noteWorkspaceBusy("w1", "conversation-a");
+      manager.noteWorkspaceBusy("w1", "conversation-b");
+      manager.noteWorkspaceIdle("w1", "conversation-a");
+      await expect(
+        manager.ensureWorkspaceVm(
+          changed === "allowedHosts"
+            ? { ...ws, sandboxConfig: { allowedHosts: ["example.com"] } }
+            : ws,
+          changed === "hostCwd" ? "/different" : "/path",
+          {},
+          [],
+          changed === "extraEnv" ? { LANG: "en_US" } : { LANG: "C" },
+        ),
+      ).rejects.toThrow(/Cannot recycle.*busy/i);
+      expect(manager.getVm("w1")).toBe(vm);
+      expect(vms[0].close).not.toHaveBeenCalled();
+      expect(calls).toHaveLength(1);
+    },
+  );
+
   it("reuses the VM when the fingerprint is unchanged", async () => {
     const { factory, calls, vms } = makeFactory();
     manager = new GondolinManager(factory);

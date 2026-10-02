@@ -131,6 +131,7 @@ describe("Durable sandbox file capability", () => {
         Promise.resolve({ ok: true, exitCode: 0, stdout: "", stdoutBuffer: Buffer.alloc(0) }),
         {
           async *output() {
+            yield { stream: "stdout" as const, data: Buffer.from("42 12345\n") };
             yield { stream: "stdout" as const, data: Buffer.from("STARTED") };
           },
           write() {},
@@ -146,6 +147,88 @@ describe("Durable sandbox file capability", () => {
       ),
     ).rejects.toThrow("Failed to kill durable sandbox guest work");
     await expect(env.cleanup(context)).rejects.toThrow("Failed to kill durable sandbox guest work");
+  });
+
+  it.each(["1 123", "01 123", "-42 123", "42 0123", "42 nope", "99999999999999999999 123"])(
+    "never ACKs an invalid identity %s",
+    async (header) => {
+      const { env, vm } = fixture();
+      const write = vi.fn();
+      vm.exec = vi.fn(() =>
+        Object.assign(
+          Promise.resolve({ ok: true, exitCode: 0, stdout: "", stdoutBuffer: Buffer.alloc(0) }),
+          {
+            async *output() {
+              yield { stream: "stdout" as const, data: Buffer.from(`${header}\n`) };
+            },
+            write,
+            end() {},
+          },
+        ),
+      );
+      const result = await env.exec("touch late", undefined, context);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain("Invalid guest process identity");
+      expect(write).not.toHaveBeenCalled();
+      expect(vm.exec).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("withholds ACK on abort during a fragmented handshake and kills only the host-held identity", async () => {
+    const { env, vm } = fixture();
+    const abort = new AbortController();
+    const write = vi.fn();
+    const calls: Array<string[] | string> = [];
+    vm.exec = vi.fn((args) => {
+      calls.push(args);
+      return Object.assign(
+        Promise.resolve({ ok: true, exitCode: 0, stdout: "", stdoutBuffer: Buffer.alloc(0) }),
+        {
+          async *output() {
+            yield { stream: "stdout" as const, data: Buffer.from("42 ") };
+            abort.abort();
+            yield { stream: "stdout" as const, data: Buffer.from("12345\n") };
+          },
+          write,
+          end() {},
+        },
+      );
+    });
+    const result = await env.exec("touch late", undefined, withAbortSignal(abort.signal, context));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("aborted");
+    expect(write).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(2);
+    expect((calls[1] as string[]).slice(-2)).toEqual(["42", "12345"]);
+    expect(vm.fs.readFile).not.toHaveBeenCalled();
+  });
+
+  it("retains a non-zero kill result so Stop cannot turn guest signaling errors into success", async () => {
+    const { env, vm } = fixture();
+    const abort = new AbortController();
+    vm.exec = vi.fn((args) => {
+      const killing = args.includes("oppi-kill");
+      return Object.assign(
+        Promise.resolve({
+          ok: !killing,
+          exitCode: killing ? 1 : 0,
+          stdout: "",
+          stdoutBuffer: Buffer.alloc(0),
+        }),
+        {
+          async *output() {
+            yield { stream: "stdout" as const, data: Buffer.from("42 12345\n") };
+            abort.abort();
+          },
+          write() {},
+          end() {},
+        },
+      );
+    });
+    await expect(
+      env.exec("sleep 30", undefined, withAbortSignal(abort.signal, context)),
+    ).rejects.toThrow("Failed to kill");
+    await expect(env.cleanup(context)).rejects.toThrow("Failed to kill");
   });
 
   it("shares a file namespace across sessions of the same workspace, not other workspaces", () => {

@@ -425,7 +425,7 @@ describe("SdkBackend sandbox", () => {
     }
   });
 
-  it("loads an exact selected Skill in a sandbox after guest path rewriting", async () => {
+  it("durable-first VM setup requests the same Skill mounts as SDK sandbox setup", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-selected-agent-skill-"));
     const agentDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-selected-agent-dir-"));
     const selectedSkill = join(agentDir, "skills", "selected-sandbox-skill");
@@ -467,17 +467,25 @@ describe("SdkBackend sandbox", () => {
     const previousManager = sdkBackendType._gondolinManager;
     sdkBackendType._gondolinManager = manager;
     let backend: SdkBackend | undefined;
+    const workspace = {
+      id: "w1",
+      name: "Sandbox Selected Agent Skill",
+      runtime: "sandbox",
+      hostMount: cwd,
+      extensions: [],
+    } as Workspace;
 
     try {
+      // Durable creates the shared VM through this entry point before SDK loads.
+      await SdkBackend.ensureSandboxWorkspaceVm(workspace, cwd);
+      const durableMounts = manager.ensureWorkspaceVm.mock.calls[0][3];
+      expect(durableMounts).toContainEqual({
+        hostPath: selectedSkill,
+        guestPath: "/workspace/sandbox-selected-agent-skill/.pi/skills/selected-sandbox-skill",
+      });
       backend = await SdkBackend.create({
         session: makeSession({ ephemeral: true }),
-        workspace: {
-          id: "w1",
-          name: "Sandbox Selected Agent Skill",
-          runtime: "sandbox",
-          hostMount: cwd,
-          extensions: [],
-        } as Workspace,
+        workspace,
         agentDefinition: {
           name: "Sandbox Selected Skill",
           resources: { skillPaths: [selectedSkill], extensionIds: [] },
@@ -489,6 +497,7 @@ describe("SdkBackend sandbox", () => {
       expect(backend.session.resourceLoader.getSkills().skills.map((skill) => skill.name)).toEqual([
         "selected-sandbox-skill",
       ]);
+      expect(manager.ensureWorkspaceVm.mock.calls[1][3]).toEqual(durableMounts);
       expect(manager.ensureWorkspaceVm).toHaveBeenCalledWith(
         expect.anything(),
         expect.any(String),

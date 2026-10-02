@@ -22,6 +22,44 @@ import {
   type GondolinExecResult,
 } from "./gondolin-ops.js";
 
+// The trusted wrapper emits identity before allowing user code to run. The
+// host ACK is on this exec's stdin, not a same-user, guest-writable pid file.
+const EXEC_HANDSHAKE = [
+  'shell="$1"; command="$2"',
+  "IFS= read -r stat < /proc/$$/stat || exit 125",
+  // eslint-disable-next-line no-template-curly-in-string -- Guest shell parameter expansion.
+  "fields=${stat##*) }; set -- $fields; shift 19",
+  'printf "%s %s\\n" "$$" "$1"',
+  "IFS= read -r ack || exit 125",
+  '[ "$ack" = go ] || exit 125',
+  'exec "$shell" -lc "$command"',
+].join("\n");
+
+const KILL_GROUP = [
+  'p="$1"; start="$2"',
+  // Repeat the host validation at the signaling boundary. Leading zeros,
+  // signs and p <= 1 must never reach kill's negative-pid syntax.
+  'case "$p" in ""|0*|*[!0-9]*) exit 1;; esac',
+  '[ "$p" -gt 1 ] && [ "$p" -le 2147483647 ] 2>/dev/null || exit 1',
+  'case "$start" in ""|0*|*[!0-9]*) exit 1;; esac',
+  // Shell kill reports ESRCH in the C locale; no other failure is success.
+  "export LC_ALL=C",
+  'gone() { case "$1" in *"No such process"*) exit 0;; *) printf "%s\\n" "$1" >&2; exit 1;; esac; }',
+  'if ! IFS= read -r stat < "/proc/$p/stat"; then',
+  // A gone leader does not prove its group is gone. Without a matching
+  // lifetime we cannot safely signal a surviving group: fail Stop visibly.
+  '  failure=$(kill -0 -"$p" 2>&1) && exit 1',
+  '  gone "$failure"',
+  "fi",
+  // eslint-disable-next-line no-template-curly-in-string -- Guest shell parameter expansion.
+  "fields=${stat##*) }; set -- $fields",
+  // The leader must still identify the original group, not a recycled pid.
+  '[ "$3" = "$p" ] || exit 1',
+  'shift 19; [ "$1" = "$start" ] || exit 1',
+  'failure=$(kill -KILL -"$p" 2>&1) && exit 0',
+  'gone "$failure"',
+].join("\n");
+
 function fileError(error: unknown, path?: string): FileError {
   if (error instanceof FileError) return error;
   const cause = toError(error);
@@ -277,10 +315,34 @@ export class GondolinExecutionEnv implements ExecutionEnv {
     });
   }
   canonicalPath(path: string, context: Context): Promise<Result<string, FileError>> {
-    // Like the SDK adapter, containment is lexical; the VM's VFS owns symlink policy.
     return this.file(path, context, async (resolved) => {
+      // VmFs has no realpath API. Resolve in the guest, then check confinement
+      // before access: a symlink outside the VFS mount can look missing to VmFs.
+      const result = await this.vm.exec(
+        [
+          "/bin/sh",
+          "-c",
+          'p=$(readlink -f -- "$1") || exit 1; printf "%s\\0" "$p"',
+          "oppi-realpath",
+          resolved,
+        ],
+        { signal: context.abortSignal, stdout: "buffer", stderr: "buffer" },
+      );
+      if (!result.ok) {
+        // Preserve typed missing errors for Durable's canonical-parent create key.
+        await this.vm.fs.access(resolved, { signal: context.abortSignal });
+        throw new FileError("unknown", "Guest realpath failed", resolved);
+      }
+      const canonical = result.stdoutBuffer.toString("utf8");
+      if (
+        !canonical.endsWith("\0") ||
+        !canonical.startsWith("/") ||
+        canonical.slice(0, -1).includes("\0")
+      )
+        throw new FileError("invalid", "Invalid guest realpath", resolved);
+      const confined = this.path(canonical.slice(0, -1));
       await this.vm.fs.access(resolved, { signal: context.abortSignal });
-      return resolved;
+      return confined;
     });
   }
   async exists(path: string, context: Context): Promise<Result<boolean, FileError>> {
@@ -363,22 +425,21 @@ export class GondolinExecutionEnv implements ExecutionEnv {
       controller.signal,
       ...(context.abortSignal ? [context.abortSignal] : []),
     ]);
-    const pidFile = `/tmp/oppi-durable-pgid-${randomUUID()}`;
+    let identity: { pgid: string; starttime: string } | undefined;
+    let handshake = Buffer.alloc(0);
     let kill: Promise<GondolinExecResult> | undefined;
     const killGroup = (): void => {
       // Do NOT send the cancelled signal to this second exec. Gondolin abort
       // only rejects a host promise; it never signals the guest process.
+      // Abort before identity is captured withholds the ACK. When the header
+      // arrives below we kill the trusted wrapper without ever launching code.
+      const target = identity;
+      if (!target) return;
       kill ??= Promise.resolve().then(() =>
-        this.vm.exec(
-          [
-            "/bin/sh",
-            "-c",
-            ': > "$1.cancelled" || exit 1; i=0; while [ ! -s "$1" ] && [ "$i" -lt 200 ]; do sleep 0.01; i=$((i+1)); done; [ -s "$1" ] || exit 0; p=$(cat "$1") || exit 1; case "$p" in ""|*[!0-9]*) exit 1;; esac; kill -KILL -"$p" 2>/dev/null || true',
-            "oppi-kill",
-            pidFile,
-          ],
-          { stdout: "buffer", stderr: "buffer" },
-        ),
+        this.vm.exec(["/bin/sh", "-c", KILL_GROUP, "oppi-kill", target.pgid, target.starttime], {
+          stdout: "buffer",
+          stderr: "buffer",
+        }),
       );
       void kill.catch(() => undefined);
     };
@@ -399,23 +460,22 @@ export class GondolinExecutionEnv implements ExecutionEnv {
     const decoder = new StringDecoder("utf8");
     try {
       const cwd = this.path(options?.cwd ?? this.cwd);
-      // setsid is required, not an optional fallback. The shell writes its pgid
-      // before exec'ing user code. No aborted RPC can prevent that handshake.
+      // setsid is required. Capture both identity fields on the exec stream
+      // before ACK: the workload cannot replace them after it starts.
       const proc = this.vm.exec(
         [
           "/usr/bin/setsid",
           "/bin/sh",
           "-c",
-          'echo $$ > "$1" || exit 125; [ -e "$1.cancelled" ] && exit 0; shift; exec "$@"',
+          EXEC_HANDSHAKE,
           "oppi-exec",
-          pidFile,
           this.vm.shellPath ?? "/bin/sh",
-          "-lc",
           command,
         ],
         {
           cwd,
           env: options?.env,
+          stdin: true,
           stdout: "pipe",
           stderr: "pipe",
           // Never forward process.env, even when inheritEnv is true.
@@ -424,7 +484,33 @@ export class GondolinExecutionEnv implements ExecutionEnv {
       const resultPromise = Promise.resolve(proc);
       void resultPromise.catch(() => undefined);
       if (signal.aborted) killGroup();
-      for await (const chunk of proc.output()) {
+      for await (const output of proc.output()) {
+        let chunk = output;
+        if (!identity && chunk.stream === "stdout") {
+          handshake = Buffer.concat([handshake, chunk.data]);
+          const newline = handshake.indexOf(10);
+          if (newline < 0 && handshake.length <= 128) continue;
+          const header = handshake.subarray(0, newline).toString("utf8");
+          const match = /^([1-9][0-9]*) ([1-9][0-9]*)$/.exec(header);
+          if (
+            newline < 0 ||
+            newline > 128 ||
+            !match ||
+            !Number.isSafeInteger(Number(match[1])) ||
+            Number(match[1]) <= 1 ||
+            Number(match[1]) > 2147483647
+          ) {
+            proc.end();
+            throw new ExecutionError("unknown", "Invalid guest process identity handshake");
+          }
+          identity = { pgid: match[1], starttime: match[2] };
+          if (signal.aborted) killGroup();
+          else proc.write("go\n");
+          proc.end();
+          chunk = { ...chunk, data: handshake.subarray(newline + 1) };
+          handshake = Buffer.alloc(0);
+          if (!chunk.data.length) continue;
+        }
         if (signal.aborted) continue;
         try {
           options?.onOutput?.(decoder.write(chunk.data), context);
@@ -453,6 +539,8 @@ export class GondolinExecutionEnv implements ExecutionEnv {
         }
       }
       const result = await resultPromise;
+      if (!identity)
+        throw new ExecutionError("unknown", "Guest process identity handshake missing");
       if (signal.aborted)
         throw new ExecutionError(
           timedOut ? "timeout" : "aborted",
@@ -477,14 +565,11 @@ export class GondolinExecutionEnv implements ExecutionEnv {
     } finally {
       if (timer) clearTimeout(timer);
       signal.removeEventListener("abort", killGroup);
-      await this.finishCall(kill, pidFile);
+      await this.finishCall(kill);
     }
   }
 
-  private async finishCall(
-    kill: Promise<GondolinExecResult> | undefined,
-    pidFile: string,
-  ): Promise<void> {
+  private async finishCall(kill: Promise<GondolinExecResult> | undefined): Promise<void> {
     if (kill) {
       try {
         if (!(await kill).ok) throw new Error("Guest kill command failed");
@@ -499,9 +584,6 @@ export class GondolinExecutionEnv implements ExecutionEnv {
         throw this.cancellationFailure;
       }
     }
-    // Internal process metadata is guest-only, outside file-tool capability.
-    await this.vm.fs.deleteFile?.(pidFile, { force: true });
-    await this.vm.fs.deleteFile?.(`${pidFile}.cancelled`, { force: true });
   }
 
   async cleanup(_context: Context): Promise<void> {

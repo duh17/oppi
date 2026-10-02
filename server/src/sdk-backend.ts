@@ -569,6 +569,23 @@ function safeGuestSegment(value: string): string {
   );
 }
 
+/** One mapping for both SDK presentation and durable-first shared VM mounts. */
+function sandboxGuestSkills(
+  skills: Skill[],
+  guestCwd: string,
+  mounts: Map<string, ReadonlyMount>,
+): Skill[] {
+  return skills.map((skill) => {
+    const guestBaseDir = posix.join(guestCwd, ".pi", "skills", safeGuestSegment(skill.name));
+    mounts.set(guestBaseDir, { hostPath: skill.baseDir, guestPath: guestBaseDir });
+    return {
+      ...skill,
+      baseDir: guestBaseDir,
+      filePath: posix.join(guestBaseDir, basename(skill.filePath)),
+    };
+  });
+}
+
 function replaceAllLiteral(value: string, search: string, replacement: string): string {
   return search ? value.split(search).join(replacement) : value;
 }
@@ -881,8 +898,31 @@ export class SdkBackend implements AgentBackend {
   static async ensureSandboxWorkspaceVm(
     workspace: Workspace,
     hostCwd: string,
-    readonlyMounts: ReadonlyMountSpec[] = [],
+    readonlyMounts?: ReadonlyMountSpec[],
   ): Promise<GondolinVm> {
+    if (readonlyMounts === undefined) {
+      // Discover exactly the normal sandbox Skills, but never execute classic
+      // extensions just to attach a durable environment to the shared VM.
+      const mounts = new Map<string, ReadonlyMount>();
+      const agentDir = getAgentDir();
+      const loader = new DefaultResourceLoader({
+        cwd: hostCwd,
+        agentDir,
+        settingsManager: SettingsManager.create(hostCwd, agentDir, { projectTrusted: true }),
+        noExtensions: true,
+        noPromptTemplates: true,
+        noThemes: true,
+        noContextFiles: true,
+        systemPrompt: "",
+        appendSystemPrompt: [],
+        skillsOverride: (base) => ({
+          ...base,
+          skills: sandboxGuestSkills(base.skills, resolveSandboxGuestCwd(workspace), mounts),
+        }),
+      });
+      await loader.reload();
+      readonlyMounts = [...mounts.values()];
+    }
     const { GondolinManager, isQemuAvailable } = await import("./gondolin-manager.js");
     if (!(await isQemuAvailable())) throw new Error("Sandbox mode requires QEMU on the server");
     SdkBackend._gondolinManager ??= new GondolinManager();
@@ -1332,23 +1372,7 @@ export class SdkBackend implements AgentBackend {
                   recordSelectedResourceReloadError(error);
                 }
                 return {
-                  skills: base.skills.map((skill) => {
-                    const guestBaseDir = posix.join(
-                      guestCwd,
-                      ".pi",
-                      "skills",
-                      safeGuestSegment(skill.name),
-                    );
-                    sandboxReadonlyMounts.set(guestBaseDir, {
-                      hostPath: skill.baseDir,
-                      guestPath: guestBaseDir,
-                    });
-                    return {
-                      ...skill,
-                      baseDir: guestBaseDir,
-                      filePath: posix.join(guestBaseDir, basename(skill.filePath)),
-                    };
-                  }),
+                  skills: sandboxGuestSkills(base.skills, guestCwd, sandboxReadonlyMounts),
                   diagnostics: base.diagnostics,
                 };
               },

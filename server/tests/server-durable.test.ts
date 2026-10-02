@@ -646,9 +646,16 @@ describe("server durable managed runtime", () => {
           files.set(path, Buffer.from(content));
         },
       },
-      exec: () =>
+      exec: (argv) =>
         Object.assign(
-          Promise.resolve({ ok: true, exitCode: 0, stdout: "", stdoutBuffer: Buffer.alloc(0) }),
+          Promise.resolve({
+            ok: true,
+            exitCode: 0,
+            stdout: argv.includes("oppi-realpath") ? `${argv.at(-1)}\0` : "",
+            stdoutBuffer: argv.includes("oppi-realpath")
+              ? Buffer.from(`${argv.at(-1)}\0`)
+              : Buffer.alloc(0),
+          }),
           {
             async *output() {},
             write() {},
@@ -1394,6 +1401,7 @@ describe("server durable managed runtime", () => {
         return Object.assign(tool ? guestStopped.then(() => result) : Promise.resolve(result), {
           async *output() {
             if (tool) {
+              yield { stream: "stdout" as const, data: Buffer.from("42 12345\n") };
               yield { stream: "stdout" as const, data: Buffer.from("MID_TOOL\n") };
               await guestStopped;
             }
