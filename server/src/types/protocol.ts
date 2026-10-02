@@ -285,6 +285,8 @@ export interface ExtensionUIActivityRow {
   progress?: number;
   link?: string;
   children?: ExtensionUIActivityRow[];
+  /** Disclosure content. Tapping the row shows or hides it; clients render it only while shown. */
+  blocks?: ExtensionUINativeBlock[];
 }
 
 export type ExtensionUINativeBlock =
@@ -314,7 +316,10 @@ export type ExtensionUINativeBlock =
     })
   | ({ id?: string; accessibility?: ExtensionUIAccessibility } & {
       type: "terminal";
-      lines: ExtensionUITextSpan[][];
+      /** Styled lines. Required unless `text` is present. */
+      lines?: ExtensionUITextSpan[][];
+      /** Raw terminal output (ANSI SGR, CR, cursor motion). Clients resolve it like bash output. */
+      text?: string;
     })
   | ({ id?: string; accessibility?: ExtensionUIAccessibility } & {
       type: "code";

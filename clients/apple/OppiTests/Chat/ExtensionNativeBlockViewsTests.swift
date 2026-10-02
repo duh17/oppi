@@ -90,6 +90,49 @@ struct ExtensionNativeBlockViewsTests {
         #expect(opened == [URL(string: link)])
     }
 
+    @Test func disclosureRowBuildsOutputOnlyWhenOpenAndStaysOpenAcrossSnapshots() throws {
+        func snapshot(_ raw: String) -> ExtensionNativeBlockContent {
+            .blocks([.activityList(base: base("jobs"), rows: [
+                ExtensionUIActivityRow(
+                    id: "bash-1", title: "bash-1", subtitle: "make", detail: nil,
+                    state: "running", progress: nil, link: "oppi://session/ignored", children: nil,
+                    blocks: [.terminal(base: base("output:bash-1"), lines: [], text: raw)]
+                ),
+            ])])
+        }
+        var opened: [URL] = []
+        let stack = layout(snapshot("50%\r\u{1B}[32mdone\u{1B}[0m\n"), context: context { opened.append($0); return true })
+        let row = try #require(control(id: "bash-1", in: stack))
+        #expect(row.isUserInteractionEnabled)
+        #expect(paintedText(in: stack).isEmpty)
+
+        row.sendActions(for: .touchUpInside)
+        stack.layoutIfNeeded()
+        // The carriage return overwrote the progress text; the escape is styling, not text.
+        #expect(paintedText(in: stack) == ["done"])
+        #expect(opened.isEmpty)
+
+        // A replacement snapshot for the same row updates the open output in place.
+        stack.apply(snapshot("done\nnext line"), context: context())
+        stack.layoutIfNeeded()
+        #expect(paintedText(in: stack) == ["done\nnext line"])
+
+        row.sendActions(for: .touchUpInside)
+        stack.layoutIfNeeded()
+        #expect(paintedText(in: stack).isEmpty)
+    }
+
+    @Test func textOnlyTerminalBlockDecodesPlainLinesForPreviews() throws {
+        let json = #"{"type":"terminal","text":"\u001b[1mbuild\u001b[0m\n10%\r100%\n"}"#
+        let block = try JSONDecoder().decode(ExtensionUINativeBlock.self, from: Data(json.utf8))
+        guard case .terminal(_, let lines, let text) = block else {
+            Issue.record("Expected terminal block")
+            return
+        }
+        #expect(text == "\u{1B}[1mbuild\u{1B}[0m\n10%\r100%\n")
+        #expect(lines.map { $0.map(\.text).joined() } == ["build", "100%"])
+    }
+
     @Test func cappedViewportHugsShortContentAndCapsLongContent() {
         let host = ExtensionNativeBlockScrollView(frame: CGRect(x: 0, y: 0, width: 360, height: 1))
         let short = ExtensionNativeBlockContent.blocks([
@@ -134,7 +177,7 @@ struct ExtensionNativeBlockViewsTests {
     }
 
     private func terminal(id: String, line: String) -> ExtensionUINativeBlock {
-        .terminal(base: base(id), lines: [[ExtensionUITextSpan(text: line, role: nil, traits: nil, link: nil)]])
+        .terminal(base: base(id), lines: [[ExtensionUITextSpan(text: line, role: nil, traits: nil, link: nil)]], text: nil)
     }
 
     private func activityList(rowID: String, subtitle: String?, link: String? = nil) -> ExtensionUINativeBlock {
@@ -174,6 +217,21 @@ struct ExtensionNativeBlockViewsTests {
             accessibilityIdentifier: nil,
             onDoubleTap: nil
         )
+    }
+
+    /// Visible text of every painted terminal/text view, hidden containers excluded.
+    private func paintedText(in root: UIView) -> [String] {
+        subviews(of: ExtensionNativeTerminalView.self, in: root)
+            .filter { view in
+                var current: UIView? = view
+                while let candidate = current, candidate !== root {
+                    if candidate.isHidden { return false }
+                    current = candidate.superview
+                }
+                return true
+            }
+            .flatMap { subviews(of: UITextView.self, in: $0) }
+            .compactMap(\.text)
     }
 
     private func control(id: String, in root: UIView) -> UIControl? {

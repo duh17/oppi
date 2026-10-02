@@ -5,6 +5,7 @@ import {
 	BACKGROUND_POLICY,
 	backgroundDisposition,
 	backgroundPill,
+	rawOutputTail,
 	bashBackgroundAdvice,
 	createJobManager,
 	formatBackgroundNotice,
@@ -227,7 +228,9 @@ describe("background pill", () => {
 		expect(pill?.status).toContain("npm test");
 		expect(pill?.rows.map((row) => row.title)).toEqual(["bash-1", "bash-2"]);
 		expect(pill?.rows.map((row) => row.state)).toEqual(["running", "running"]);
-		expect(pill?.terminal).toEqual([]);
+		expect(pill?.rows[0]?.blocks).toEqual([
+			{ type: "text", id: "output:bash-1", spans: [{ text: "No output yet", role: "muted" }] },
+		]);
 	});
 
 	test("keeps the pill label short and shows an output tail", () => {
@@ -243,7 +246,31 @@ describe("background pill", () => {
 		expect(pill?.rows[0]?.title).toBe("bash-52");
 		expect(pill?.rows[0]?.subtitle.startsWith("prompt_file=")).toBe(true);
 		expect(pill?.rows[0]?.subtitle.length).toBeLessThanOrEqual(48);
-		expect(pill?.terminal).toEqual(["# bash-52", "line one", "line two"]);
+		expect(pill?.lines.slice(-3)).toEqual(["# bash-52", "line one", "line two"]);
+		expect(pill?.rows[0]?.blocks).toEqual([{ type: "terminal", id: "output:bash-52", text: "line one\nline two" }]);
+	});
+
+	test("row output keeps escapes and stays inside the shared byte budget", () => {
+		const noisy = Array.from({ length: 2_000 }, (_, i) => `\u001b[32mok\u001b[0m step ${i}\r`).join("\n");
+		const pill = backgroundPill(
+			Array.from({ length: 8 }, (_, i) => ({
+				id: `bash-${i}`,
+				command: "make",
+				status: "running" as const,
+				backgrounded: true,
+				output: noisy,
+			})),
+		);
+		const texts = pill?.rows.map((row) => (row.blocks[0] as { text: string }).text) ?? [];
+		const total = texts.reduce((sum, text) => sum + Buffer.byteLength(text, "utf8"), 0);
+		expect(total).toBeLessThanOrEqual(12 * 1024);
+		expect(texts[0]?.split("\n").length).toBeLessThanOrEqual(30);
+		expect(texts[0]?.startsWith("\u001b[32mok")).toBe(true);
+		expect(texts[0]?.endsWith("step 1999")).toBe(true);
+	});
+
+	test("row output cut inside one long line drops a split leading codepoint", () => {
+		expect(rawOutputTail(`${"\u00e9".repeat(100)}`, 9, 30)).toBe("\u00e9".repeat(4));
 	});
 
 	test("keeps a finished result visible without pretending it is still running", () => {

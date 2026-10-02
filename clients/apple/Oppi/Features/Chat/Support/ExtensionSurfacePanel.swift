@@ -581,7 +581,7 @@ private enum ExtensionSurfaceStripEntry: Equatable, Identifiable {
             case .section(_, let title, let subtitle, _):
                 if let subtitle = subtitle?.trimmedNonEmpty { return subtitle }
                 if let title = title?.trimmedNonEmpty { return title }
-            case .terminal(_, let lines):
+            case .terminal(_, let lines, _):
                 let text = lines.first?.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
                 if let text, !text.isEmpty { return text }
             case .code(_, let language, _):

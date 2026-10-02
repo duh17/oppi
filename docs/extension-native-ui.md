@@ -94,7 +94,7 @@ export type ExtensionUINativeBlock = ExtensionUIBlockBase &
         value?: number;
         indeterminate?: boolean;
       }
-    | { type: "terminal"; lines: ExtensionUITextSpan[][] }
+    | { type: "terminal"; lines?: ExtensionUITextSpan[][]; text?: string }
     | { type: "code"; language?: string; text: string }
     | { type: "divider" }
     | { type: "spacer"; size?: "small" | "medium" | "large" }
@@ -152,10 +152,32 @@ export interface ExtensionUIActivityRow {
   progress?: number;
   link?: string;
   children?: ExtensionUIActivityRow[];
+  blocks?: ExtensionUINativeBlock[];
 }
 ```
 
-Use activity lists for persistent task state: running jobs, queued work, progress, substeps, and recent results. `link` is a generic row navigation target, such as `oppi://session/<id>`, and must route through app-level link handling. Structured `span.link` and `activityRow.link` fields stay real URLs; they do not accept `[[wiki]]` grammar. The model is generic and must not encode extension-specific concepts in the protocol.
+Use activity lists for persistent task state: running jobs, queued work, progress, substeps, and recent results. `link` is a generic row navigation target, such as `oppi://session/<id>`, and must route through app-level link handling.
+
+`blocks` makes the row a disclosure row: tapping it shows or hides those blocks under the row, and the row's `link` is not used for tap navigation. Clients build disclosure content only while it is shown, and keep a row open across snapshots while its `id` is stable. Disclosure blocks count against the same surface limits as top-level blocks, one nesting level below the list.
+
+### Terminal output
+
+A `terminal` block carries either styled `lines` or raw `text`. `text` is terminal output as a program wrote it: SGR colors, carriage returns, and cursor motion. iOS resolves it with the same VT engine and painter as bash tool output, with terminal effects disabled, so progress bars redraw in place and escapes never reach the screen as text. Clients without that engine show the plain projection: escapes stripped, and only the text after a line's last carriage return.
+
+`text` is a bounded snapshot, not a stream. Send the output tail each time the widget updates; the surface byte and text budgets apply. For live command output, put one row per command with its tail in `blocks`, so the client renders only the output someone opened:
+
+```ts
+{
+  type: "activityList",
+  rows: [{
+    id: "bash-3",
+    title: "bash-3",
+    subtitle: "npm test",
+    state: "running",
+    blocks: [{ type: "terminal", id: "output:bash-3", text: tail }],
+  }],
+}
+``` Structured `span.link` and `activityRow.link` fields stay real URLs; they do not accept `[[wiki]]` grammar. The model is generic and must not encode extension-specific concepts in the protocol.
 
 Recommended Apple state mapping:
 

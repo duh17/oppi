@@ -78,6 +78,8 @@ struct ExtensionUIActivityRow: Sendable, Equatable, Decodable, Identifiable {
     let progress: Double?
     let link: String?
     let children: [ExtensionUIActivityRow]?
+    /// Disclosure content: tapping the row shows or hides it. Clients build it only while shown.
+    var blocks: [ExtensionUINativeBlock]? = nil
 }
 
 struct ExtensionUIBlockBase: Sendable, Equatable {
@@ -91,7 +93,9 @@ enum ExtensionUINativeBlock: Sendable, Equatable, Decodable, Identifiable {
     case section(base: ExtensionUIBlockBase, title: String?, subtitle: String?, blocks: [ExtensionUINativeBlock])
     case activityList(base: ExtensionUIBlockBase, rows: [ExtensionUIActivityRow])
     case progress(base: ExtensionUIBlockBase, label: String?, value: Double?, indeterminate: Bool?)
-    case terminal(base: ExtensionUIBlockBase, lines: [[ExtensionUITextSpan]])
+    /// `text` is raw terminal output (SGR, CR, cursor motion). `lines` is always
+    /// usable: when the block carries only `text`, it holds the plain-text projection.
+    case terminal(base: ExtensionUIBlockBase, lines: [[ExtensionUITextSpan]], text: String?)
     case code(base: ExtensionUIBlockBase, language: String?, text: String)
     case divider(base: ExtensionUIBlockBase)
     case spacer(base: ExtensionUIBlockBase, size: String?)
@@ -104,7 +108,7 @@ enum ExtensionUINativeBlock: Sendable, Equatable, Decodable, Identifiable {
              .section(let base, _, _, _),
              .activityList(let base, _),
              .progress(let base, _, _, _),
-             .terminal(let base, _),
+             .terminal(let base, _, _),
              .code(let base, _, _),
              .divider(let base),
              .spacer(let base, _),
@@ -135,7 +139,7 @@ enum ExtensionUINativeBlock: Sendable, Equatable, Decodable, Identifiable {
              .section(let base, _, _, _),
              .activityList(let base, _),
              .progress(let base, _, _, _),
-             .terminal(let base, _),
+             .terminal(let base, _, _),
              .code(let base, _, _),
              .divider(let base),
              .spacer(let base, _),
@@ -225,7 +229,10 @@ enum ExtensionUINativeBlock: Sendable, Equatable, Decodable, Identifiable {
                 indeterminate: try c.decodeIfPresent(Bool.self, forKey: .indeterminate)
             )
         case "terminal":
-            self = .terminal(base: base, lines: (try? c.decode([[ExtensionUITextSpan]].self, forKey: .lines)) ?? [])
+            let text = try? c.decode(String.self, forKey: .text)
+            let lines = (try? c.decode([[ExtensionUITextSpan]].self, forKey: .lines))
+                ?? text.map(Self.plainTerminalLines) ?? []
+            self = .terminal(base: base, lines: lines, text: text)
         case "code":
             self = .code(
                 base: base,
@@ -238,6 +245,17 @@ enum ExtensionUINativeBlock: Sendable, Equatable, Decodable, Identifiable {
             self = .spacer(base: base, size: try c.decodeIfPresent(String.self, forKey: .size))
         default:
             self = .unsupported(base: base, type: type)
+        }
+    }
+
+    /// Plain lines for previews and clients without a VT engine: SGR stripped,
+    /// and a carriage return keeps only what was drawn after it.
+    private static func plainTerminalLines(_ text: String) -> [[ExtensionUITextSpan]] {
+        var lines = ANSIParser.strip(text).components(separatedBy: "\n")
+        if lines.last?.isEmpty == true { lines.removeLast() }
+        return lines.map { line in
+            let visible = line.split(separator: "\r", omittingEmptySubsequences: true).last.map(String.init) ?? ""
+            return [ExtensionUITextSpan(text: visible, role: nil, traits: nil, link: nil)]
         }
     }
 }

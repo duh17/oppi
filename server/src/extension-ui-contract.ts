@@ -317,6 +317,15 @@ function validateNativeActivityRows(
     ) {
       return false;
     }
+    if (
+      row.blocks !== undefined &&
+      !(
+        Array.isArray(row.blocks) &&
+        row.blocks.every((block) => validateNativeBlock(block, depth + 1, state, limits))
+      )
+    ) {
+      return false;
+    }
   }
 
   return true;
@@ -355,13 +364,18 @@ function validateNativeBlock(
           (typeof value.value === "number" && Number.isFinite(value.value))) &&
         (value.indeterminate === undefined || typeof value.indeterminate === "boolean")
       );
-    case "terminal":
-      if (!Array.isArray(value.lines)) return false;
-      state.terminalLines += value.lines.length;
+    case "terminal": {
+      const lines = value.lines;
+      if (lines === undefined && typeof value.text !== "string") return false;
+      if (!addNativeSurfaceText(value.text, state, limits)) return false;
+      if (lines === undefined) return true;
+      if (!Array.isArray(lines)) return false;
+      state.terminalLines += lines.length;
       return (
         state.terminalLines <= limits.maxTerminalLines &&
-        value.lines.every((line) => validateNativeSpans(line, state, limits))
+        lines.every((line) => validateNativeSpans(line, state, limits))
       );
+    }
     case "code":
       return (
         addNativeSurfaceText(value.language, state, limits) &&

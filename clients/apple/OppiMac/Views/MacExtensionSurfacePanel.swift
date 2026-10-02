@@ -302,7 +302,7 @@ private struct MacExtensionNativeBlockView: View {
                 value: value,
                 indeterminate: indeterminate
             )
-        case .terminal(_, let lines):
+        case .terminal(_, let lines, _):
             MacExtensionNativeTerminalLinesView(lines: lines)
         case .code(_, let language, let text):
             VStack(alignment: .leading, spacing: 4) {

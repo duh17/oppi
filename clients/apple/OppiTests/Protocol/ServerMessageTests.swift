@@ -689,7 +689,7 @@ struct ServerMessageTests {
         """
         let msg = try ServerMessage.decode(from: json)
         guard case .extensionUINotification(let notification) = msg,
-              case .terminal(_, let lines)? = notification.nativeSurface?.blocks.first,
+              case .terminal(_, let lines, _)? = notification.nativeSurface?.blocks.first,
               let line = lines.first else {
             Issue.record("Expected native terminal block with spans")
             return

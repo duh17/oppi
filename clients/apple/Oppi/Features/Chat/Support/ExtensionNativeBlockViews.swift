@@ -447,7 +447,8 @@ extension NativeCodeBlockView: ExtensionNativeBlockRendering {
 // MARK: - Terminal
 
 /// Monospaced lines that keep terminal alignment and scroll horizontally
-/// instead of wrapping. Paints `terminal` span blocks and plain widget lines.
+/// instead of wrapping. Paints `terminal` span blocks, raw terminal `text`
+/// (resolved by the same VT engine as bash output), and plain widget lines.
 final class ExtensionNativeTerminalView: UIView, ExtensionNativeBlockRendering {
     private static let padding = NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10)
 
@@ -512,9 +513,14 @@ final class ExtensionNativeTerminalView: UIView, ExtensionNativeBlockRendering {
 
     func apply(_ block: ExtensionUINativeBlock, context: ExtensionNativeBlockContext) {
         textView.openURL = { context.open($0) }
-        guard case .terminal(let base, let lines) = block,
+        guard case .terminal(let base, let lines, let raw) = block,
               appliedBlock?.block != block || appliedBlock?.signature != context.signature else { return }
         appliedBlock = (block, context.signature)
+        if let raw {
+            install(Self.paintTerminalOutput(raw, palette: context.palette), palette: context.palette)
+            textView.accessibilityLabel = base.accessibility?.label
+            return
+        }
         let text = NSMutableAttributedString()
         for (index, line) in lines.enumerated() {
             if index > 0 { text.append(NSAttributedString(string: "\n")) }
@@ -558,6 +564,20 @@ final class ExtensionNativeTerminalView: UIView, ExtensionNativeBlockRendering {
         }
         install(text, palette: palette)
         textView.accessibilityLabel = nil
+    }
+
+    /// Raw output is untrusted: the VT engine runs with terminal effects off, and
+    /// the result reaches UIKit only as text plus SGR. Extensions bound the tail size.
+    private static func paintTerminalOutput(_ raw: String, palette: ThemePalette) -> NSMutableAttributedString {
+        #if canImport(GhosttyVt)
+        var resolved = (try? TerminalLogEngine.render(raw)) ?? raw
+        #else
+        var resolved = raw
+        #endif
+        while resolved.hasSuffix("\n") { resolved.removeLast() }
+        return NSMutableAttributedString(
+            attributedString: ANSIParser.attributedString(from: resolved, baseForeground: palette.fg)
+        )
     }
 
     private func install(_ text: NSMutableAttributedString, palette: ThemePalette) {
@@ -767,7 +787,10 @@ final class ExtensionNativeActivityListView: UIView, ExtensionNativeBlockRenderi
 }
 
 /// One activity row: state marker, title/subtitle/detail, optional progress,
-/// nested children, and navigation when the row carries a link.
+/// nested children, and navigation when the row carries a link. A row with
+/// `blocks` is a disclosure row instead: tapping shows or hides the blocks, which
+/// are built only while shown. Expansion survives snapshots because list views
+/// reuse row views by row id.
 final class ExtensionNativeActivityRowView: UIView {
     private let control = UIControl()
     private let marker = UIImageView()
@@ -778,6 +801,9 @@ final class ExtensionNativeActivityRowView: UIView {
     private let chevron = UIImageView()
     private let childContainer = UIView()
     private var childList: ExtensionNativeActivityListView?
+    private let detailContainer = UIView()
+    private var detailStack: ExtensionNativeBlockStackView?
+    private var isExpanded = false
     private lazy var minimumHeight = control.heightAnchor.constraint(greaterThanOrEqualToConstant: 34)
 
     private var row: ExtensionUIActivityRow?
@@ -814,7 +840,8 @@ final class ExtensionNativeActivityRowView: UIView {
         control.layer.cornerCurve = .continuous
         control.addTarget(self, action: #selector(handleTap), for: .touchUpInside)
 
-        let column = UIStackView(arrangedSubviews: [control, childContainer])
+        detailContainer.isHidden = true
+        let column = UIStackView(arrangedSubviews: [control, detailContainer, childContainer])
         column.axis = .vertical
         column.spacing = 6
         column.translatesAutoresizingMaskIntoConstraints = false
@@ -854,12 +881,18 @@ final class ExtensionNativeActivityRowView: UIView {
         row.flatMap(ExtensionNativeBlockPresentation.activityRowURL)
     }
 
+    private var detailBlocks: [ExtensionUINativeBlock] {
+        row?.blocks?.compactMap(\.nativeDisplayBlock) ?? []
+    }
+
     private func render() {
         guard let row, let context else { return }
         let palette = context.palette
         let tone = ExtensionNativeBlockPresentation.activityTone(row.state)
         let accent = ExtensionNativeBlockStyle.activityColor(tone, palette: palette)
-        let linkURL = linkURL
+        let detailBlocks = detailBlocks
+        let hasDetail = !detailBlocks.isEmpty
+        let linkURL = hasDetail ? nil : linkURL
 
         marker.image = UIImage(
             systemName: Self.markerSymbol(tone),
@@ -880,27 +913,30 @@ final class ExtensionNativeActivityRowView: UIView {
         }
 
         let isLinked = linkURL != nil
-        chevron.isHidden = !isLinked
+        let isInteractive = isLinked || hasDetail
+        chevron.isHidden = !isInteractive
         chevron.image = UIImage(
-            systemName: "chevron.right",
+            systemName: hasDetail ? (isExpanded ? "chevron.up" : "chevron.down") : "chevron.right",
             withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption2, scale: .default)
                 .applying(UIImage.SymbolConfiguration(weight: .semibold))
         )
         chevron.tintColor = UIColor(palette.comment)
-        minimumHeight.constant = isLinked ? 44 : 34
+        minimumHeight.constant = isInteractive ? 44 : 34
 
         let emphasized = tone == .running || tone == .warning || tone == .error
         control.backgroundColor = UIColor(palette.fg).withAlphaComponent(emphasized ? 0.05 : 0)
         control.layer.borderWidth = emphasized ? 1 : 0
         control.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.16).cgColor
-        control.isUserInteractionEnabled = isLinked
+        control.isUserInteractionEnabled = isInteractive
 
         control.isAccessibilityElement = true
         control.accessibilityIdentifier = "extension.native.activity.row.\(row.id)"
         control.accessibilityLabel = ExtensionNativeBlockPresentation.activityRowAccessibilityLabel(row)
         control.accessibilityValue = ExtensionNativeBlockPresentation.activityRowAccessibilityValue(row)
-        control.accessibilityTraits = isLinked ? .button : .staticText
-        control.accessibilityHint = linkURL.flatMap { url in
+        control.accessibilityTraits = isInteractive ? .button : .staticText
+        control.accessibilityHint = hasDetail
+            ? (isExpanded ? "Hides details" : "Shows details")
+            : linkURL.flatMap { url in
             ExtensionSurfaceLinkRouting.accessibilityHint(
                 for: ExtensionSurfaceLinkRouting.action(
                     for: url,
@@ -909,6 +945,19 @@ final class ExtensionNativeActivityRowView: UIView {
                     currentSessionId: context.linkContext.sessionID ?? ""
                 )
             )
+        }
+
+        if hasDetail, isExpanded {
+            let stack = detailStack ?? makeDetailStack()
+            stack.apply(blocks: detailBlocks, context: context)
+            detailContainer.isHidden = false
+        } else {
+            detailContainer.isHidden = true
+            if !hasDetail, let stack = detailStack {
+                stack.removeFromSuperview()
+                detailStack = nil
+                isExpanded = false
+            }
         }
 
         let children = row.children ?? []
@@ -935,7 +984,29 @@ final class ExtensionNativeActivityRowView: UIView {
         return list
     }
 
+    private func makeDetailStack() -> ExtensionNativeBlockStackView {
+        let stack = ExtensionNativeBlockStackView()
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        detailContainer.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: detailContainer.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: detailContainer.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: detailContainer.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: detailContainer.bottomAnchor),
+        ])
+        detailStack = stack
+        return stack
+    }
+
     @objc private func handleTap() {
+        if !detailBlocks.isEmpty {
+            isExpanded.toggle()
+            render()
+            invalidateExtensionNativeBlockHost()
+            UIAccessibility.post(notification: .layoutChanged, argument: control)
+            return
+        }
         guard let url = linkURL else { return }
         context?.open(url)
     }

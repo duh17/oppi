@@ -869,6 +869,43 @@ describe("extension UI contract", () => {
     ).toBeUndefined();
   });
 
+  it("accepts row disclosure blocks and raw terminal text inside the same budgets", () => {
+    const surface = (text: string, extra: Record<string, unknown> = {}) => ({
+      version: 1,
+      id: "widget:jobs",
+      source: "widget",
+      presentation: { style: "surfacePanel" },
+      blocks: [
+        {
+          type: "activityList",
+          rows: [
+            {
+              id: "bash-1",
+              title: "bash-1",
+              blocks: [{ type: "terminal", id: "output:bash-1", text, ...extra }],
+            },
+          ],
+        },
+      ],
+    });
+    const raw = "\u001b[32mok\u001b[0m 50%\r100%";
+
+    expect(normalizeExtensionUINativeSurface(surface(raw))).toMatchObject({
+      blocks: [{ rows: [{ blocks: [{ type: "terminal", text: raw }] }] }],
+    });
+    // Raw text counts against the text budget; row blocks against depth.
+    expect(normalizeExtensionUINativeSurface(surface("x".repeat(64)), { maxTextBytes: 32 })).toBeUndefined();
+    expect(normalizeExtensionUINativeSurface(surface(raw), { maxDepth: 2 })).toBeUndefined();
+    // A terminal block needs lines or text.
+    expect(
+      normalizeExtensionUINativeSurface({
+        ...surface(raw),
+        blocks: [{ type: "terminal", id: "empty" }],
+      }),
+    ).toBeUndefined();
+    expect(normalizeExtensionUINativeSurface(surface(raw, { text: 42 }))).toBeUndefined();
+  });
+
   it("normalizes and canonicalizes widget native surface ids at the translation boundary", () => {
     expect(
       normalizeExtensionUIWidgetNativeSurface(

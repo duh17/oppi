@@ -109,7 +109,7 @@ async function publish(tx: Tx, id: ConversationId): Promise<void> {
               subtitle: pill.subtitle,
             },
             blocks: [{ type: "activityList", id: "jobs", rows: pill.rows }],
-            fallback: { lines: pill.lines },
+            fallback: { lines: pill.summary },
           },
         }
       : {}),

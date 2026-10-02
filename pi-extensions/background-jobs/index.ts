@@ -154,19 +154,9 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 					title: pill.title,
 					subtitle: pill.subtitle,
 				},
-				blocks: [
-					{ type: "activityList", id: "jobs", rows: pill.rows },
-					...(pill.terminal.length > 0
-						? [
-								{
-									type: "terminal",
-									id: "output",
-									lines: pill.terminal.map((line) => [{ text: line }]),
-								},
-							]
-						: []),
-				],
-				fallback: { lines: pill.lines },
+				// Each row discloses its own output tail; Oppi resolves it like bash output.
+				blocks: [{ type: "activityList", id: "jobs", rows: pill.rows }],
+				fallback: { lines: pill.summary },
 			}),
 			invalidate() {},
 		}));

@@ -57,15 +57,33 @@ export function backgroundDisposition(
 	return { mode: "after-wait", command: trimmed, waitMs: thresholdMs };
 }
 
+/** Native disclosure content for one job row: its raw output tail, or a placeholder. */
+export type JobOutputBlock =
+	| { type: "terminal"; id: string; text: string }
+	| { type: "text"; id: string; spans: Array<{ text: string; role: "muted" }> };
+
 export interface BackgroundPill {
 	status: string;
 	title: string;
 	subtitle: string;
+	/** Terminal widget: summary, job rows, then the last output lines. */
 	lines: string[];
-	rows: Array<{ id: string; title: string; subtitle: string; state: "running" | "success" | "warning" | "error" }>;
-	/** Last lines of running-job output. The existing widget reader shows this; it is not a model update. */
-	terminal: string[];
+	/** Summary and job rows only, for the native fallback. */
+	summary: string[];
+	/** Tapping a row shows that job's output. Display only; it is not a model update. */
+	rows: Array<{
+		id: string;
+		title: string;
+		subtitle: string;
+		state: "running" | "success" | "warning" | "error";
+		blocks: JobOutputBlock[];
+	}>;
 }
+
+/** Raw output shared by every row of one snapshot; keeps the widget under Oppi's surface text budget. */
+const ROW_OUTPUT_TOTAL_BYTES = 12 * 1024;
+const ROW_OUTPUT_MAX_BYTES = 4 * 1024;
+const ROW_OUTPUT_MAX_LINES = 30;
 
 export function backgroundPill(
 	jobs: Array<{ id: string; command: string; status: JobStatus; backgrounded: boolean; output?: string }>,
@@ -91,20 +109,48 @@ export function backgroundPill(
 				? runningSubtitle
 				: first;
 	const status = `${title} · ${subtitle}`.slice(0, 160);
-	const terminal = terminalTail(visible);
+	const summary = [status, ...visible.map((job) => `${job.id} ${job.status} ${compactCommand(job.command)}`)];
+	const withOutput = visible.filter((job) => (job.output ?? "").trim().length > 0).length;
+	const rowBytes = Math.min(ROW_OUTPUT_MAX_BYTES, Math.floor(ROW_OUTPUT_TOTAL_BYTES / Math.max(1, withOutput)));
 	return {
 		status,
 		title,
 		subtitle,
-		lines: [status, ...visible.map((job) => `${job.id} ${job.status} ${compactCommand(job.command)}`), ...terminal],
-		rows: visible.map((job) => ({
-			id: job.id,
-			title: job.id,
-			subtitle: compactCommand(job.command),
-			state: pillState(job.status),
-		})),
-		terminal,
+		lines: [...summary, ...terminalTail(visible)],
+		summary,
+		rows: visible.map((job) => {
+			const text = rawOutputTail(job.output ?? "", rowBytes, ROW_OUTPUT_MAX_LINES);
+			return {
+				id: job.id,
+				title: job.id,
+				subtitle: compactCommand(job.command),
+				state: pillState(job.status),
+				blocks: [
+					text
+						? { type: "terminal", id: `output:${job.id}`, text }
+						: { type: "text", id: `output:${job.id}`, spans: [{ text: "No output yet", role: "muted" }] },
+				],
+			};
+		}),
 	};
+}
+
+/**
+ * Last raw output, escapes and carriage returns kept, for a client terminal
+ * renderer. Starts on a line boundary when cut, so no escape sequence or
+ * codepoint is split at the front.
+ */
+export function rawOutputTail(output: string, maxBytes: number, maxLines: number): string {
+	let tail = output.replace(/\s+$/u, "");
+	if (Buffer.byteLength(tail, "utf8") > maxBytes) {
+		const bytes = Buffer.from(tail, "utf8");
+		tail = bytes.subarray(bytes.length - maxBytes).toString("utf8");
+		const newline = tail.indexOf("\n");
+		// One overlong line has no boundary; drop only a split leading codepoint.
+		tail = newline >= 0 ? tail.slice(newline + 1) : tail.replace(/^\uFFFD+/u, "");
+	}
+	const lines = tail.split("\n");
+	return lines.length > maxLines ? lines.slice(-maxLines).join("\n") : tail;
 }
 
 function pillState(status: JobStatus): "running" | "success" | "warning" | "error" {
