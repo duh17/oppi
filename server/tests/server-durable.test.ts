@@ -1352,6 +1352,132 @@ describe("server durable managed runtime", () => {
     expect(f.manager.isActive(stopped.id)).toBe(false);
   });
 
+  it("persists a busy sandbox restart attachment until its original submission settles once", async () => {
+    let finishReply!: () => void;
+    const replyGate = new Promise<void>((resolve) => {
+      finishReply = resolve;
+    });
+    let generating!: () => void;
+    const generationStarted = new Promise<void>((resolve) => {
+      generating = resolve;
+    });
+    const f = await fixture([
+      fauxAssistantMessage(
+        [fauxToolCall("bash", { command: "controlled guest tool" }, { id: "sandbox-restart" })],
+        { stopReason: "toolUse" },
+      ),
+      async () => {
+        generating();
+        await replyGate;
+        return fauxAssistantMessage("SANDBOX_RECOVERED");
+      },
+    ]);
+    f.workspace.runtime = "sandbox";
+    f.storage.updateWorkspace(f.workspace.id, { runtime: "sandbox" });
+    const result = { ok: true, exitCode: 0, stdout: "", stdoutBuffer: Buffer.alloc(0) };
+    let stopGuest!: () => void;
+    const guestStopped = new Promise<void>((resolve) => {
+      stopGuest = resolve;
+    });
+    let guestCalls = 0;
+    const vm: GondolinVm = {
+      fs: {
+        mkdir: async () => {},
+        access: async () => {},
+        readFile: async () => Buffer.alloc(0),
+        writeFile: async () => {},
+      },
+      exec: (argv) => {
+        const tool = argv.includes("oppi-exec");
+        if (tool) guestCalls++;
+        if (argv.includes("oppi-kill")) stopGuest();
+        return Object.assign(tool ? guestStopped.then(() => result) : Promise.resolve(result), {
+          async *output() {
+            if (tool) {
+              yield { stream: "stdout" as const, data: Buffer.from("MID_TOOL\n") };
+              await guestStopped;
+            }
+          },
+          write() {},
+          end() {},
+        });
+      },
+    };
+    vi.spyOn(SdkBackend, "ensureSandboxWorkspaceVm").mockResolvedValue(vm);
+    const sdk = vi.spyOn(SdkBackend, "create");
+    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    await f.manager.startSession(f.session.id, f.workspace);
+    const projection = observe(f.manager, f.session.id);
+    const toolStarted = projection.next(
+      (message) => message.type === "tool_output" && message.output.includes("MID_TOOL"),
+    );
+    await f.manager.sendPrompt(f.session.id, "Keep this original turn", {
+      clientTurnId: "sandbox-restart-turn",
+    });
+    await toolStarted;
+    const { harness } = await opening.mock.results[0]!.value;
+    const id = f.storage.getSession(f.session.id)!.serverDurable!.conversationId! as ConversationId;
+    const placed = (await harness.inspect(context)).submissions.find(
+      (item) => item.conversationId === id,
+    )!;
+    recordLiveSessionsForRestart(f.storage, [f.manager.getActiveSession(f.session.id)!]);
+    await f.manager.close();
+    managers.splice(managers.indexOf(f.manager), 1);
+    projection.unsubscribe();
+    const storage = new Storage(f.dir);
+    const restarted = new SessionManager(storage);
+    managers.push(restarted);
+    let observed!: ReturnType<typeof observe>;
+    let end!: Promise<ServerMessage>;
+    const start = restarted.startSession.bind(restarted);
+    vi.spyOn(restarted, "startSession").mockImplementation(async (sessionId, workspace) => {
+      const session = await start(sessionId, workspace);
+      observed = observe(restarted, sessionId);
+      end = observed.next((message) => message.type === "agent_end");
+      return session;
+    });
+    try {
+      await restarted.resumeDurableSessions();
+      await generationStarted;
+      // GET /sessions reads persisted state, not the in-memory event projection.
+      // No save-debounce delay or extra continuation input may be required.
+      expect(restarted.isActive(f.session.id)).toBe(true);
+      expect(restarted.getActiveSession(f.session.id)?.status).toBe("busy");
+      expect(storage.getSession(f.session.id)?.status).toBe("busy");
+      await restarted.refreshSessionState(f.session.id);
+      expect(storage.getSession(f.session.id)?.status).toBe("busy");
+      finishReply();
+      await end;
+      const resumed = (await opening.mock.results.at(-1)!.value).harness;
+      expect(await (await resumed.submission(placed.id, context))!.status(context)).toMatchObject({
+        status: "done",
+      });
+      const conversation = (await resumed.conversation(id, context))!;
+      const entries = (await conversation.entries({}, 100, undefined, context)).items;
+      expect(entries.filter((entry) => entry.kind === "pi.user")).toHaveLength(1);
+      expect(
+        entries
+          .flatMap((entry) => entry.model ?? [])
+          .filter((message) => message.role === "assistant" && message.stopReason === "stop"),
+      ).toHaveLength(1);
+      expect(
+        entries.filter(
+          (entry) =>
+            entry.kind === "pi.tool-result" &&
+            entry.data?.diagnostics?.some(
+              (diagnostic: { code: string }) => diagnostic.code === "interrupted",
+            ),
+        ),
+      ).toHaveLength(1);
+      expect(guestCalls).toBe(1);
+      expect(sdk).not.toHaveBeenCalled();
+      expect(restarted.getActiveSession(f.session.id)?.status).toBe("ready");
+    } finally {
+      finishReply();
+      observed?.unsubscribe();
+    }
+  });
+
   it("continues the same submission once after graceful shutdown mid-tool", async () => {
     const f = await fixture([
       fauxAssistantMessage(

@@ -152,6 +152,10 @@ export class SessionStartCoordinator {
 
         if (DurableBackend && sdkBackend instanceof DurableBackend && durableHarness) {
           sdkBackend.startEvents();
+          // Snapshot replay can restore a live turn. Persist it before serving
+          // reads: event projection normally saves on a debounce, which would
+          // otherwise expose the earlier ready row during crash recovery.
+          this.deps.persistSessionNow(key, session);
           // submit/abort also enables the Harness-wide scheduler. Explicitly
           // resume after attaching the projection, never via a new user prompt.
           await durableHarness.resume();
