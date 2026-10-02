@@ -209,6 +209,33 @@ struct TerminalOutputStreamTests {
         #expect(ANSIParser.strip(owner.formatted) == "new\n")
     }
 
+    @Test func reconnectCancelsFillBeforeFreshLossyChunkRecovery() async {
+        actor Sidecar {
+            let gate = StreamRangeGate()
+            var requests: [Range<Int>] = []
+            func fetch(_ range: Range<Int>) async -> TerminalOutputRange {
+                requests.append(range)
+                if requests.count == 1 { return await gate.fetch(range) }
+                // Only the fresh one-byte span is currently servable. An old
+                // high-water request gets a short 206, as a lagging file would.
+                return .init(data: Data([0xFF]), start: 0, end: 1)
+            }
+        }
+        let sidecar = Sidecar()
+        let owner = TerminalOutputStream { await sidecar.fetch($0) }
+        owner.receive(chunk(100, 0), output: "")
+        await sidecar.gate.waitForRequest()
+        owner.markReconnecting()
+        owner.receive(chunk(0, 1), output: "\u{FFFD}")
+        await sidecar.gate.release()
+        await owner.waitForRecovery()
+        #expect(await sidecar.requests == [0..<100, 0..<1])
+        #expect(owner.cursor == 1)
+        #expect(owner.state == .live)
+        owner.finish(.init(epoch: 1, totalBytes: 1))
+        #expect(owner.state == .complete)
+    }
+
     @Test func recoveryQueueOverflowRefetchesDroppedChunks() async {
         let gate = StreamRangeGate()
         let owner = TerminalOutputStream { await gate.fetch($0) }

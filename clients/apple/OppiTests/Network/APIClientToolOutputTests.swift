@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("APIClient tool-output sidecar", .serialized)
@@ -53,6 +54,67 @@ struct APIClientToolOutputTests {
         #expect(range.start == 6)
         #expect(range.end == 10)
         #expect(range.data == bytes) // invalid UTF-8 must not be re-encoded
+    }
+
+    @Test(arguments: [false, true]) @MainActor
+    func completedTerminalHistoryUsesRawHTTPBytes(large: Bool) async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        // C1 erase-display distinguishes raw VT interpretation from U+FFFD.
+        // Include an invalid lead and an incomplete UTF-8 sequence at EOF.
+        // Large raw input with a small resolved screen isolates byte paging
+        // from virtualized history (covered by the terminal-window suite).
+        let padding = large ? String(repeating: "\u{1B}[32m", count: 30_000) : ""
+        let raw = Data((padding + "earlier\n").utf8)
+            + Data([0x9B, 0x33, 0x4A, 0x9B, 0x32, 0x4A])
+            + Data("visible\n".utf8) + Data([0xFF, 0xE2, 0x82])
+        var ranges: [String] = []
+        var jsonRequests = 0
+        MockURLProtocol.handler = { request in
+            if request.httpMethod == "HEAD" {
+                return (Data(), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                    headerFields: ["Content-Length": "\(raw.count)"])!)
+            }
+            if let range = request.value(forHTTPHeaderField: "Range") {
+                ranges.append(range)
+                let bounds = range.dropFirst(6).split(separator: "-")
+                let start = Int(bounds[0])!
+                let end = min(Int(bounds[1])! + 1, raw.count)
+                return (raw.subdata(in: start..<end), HTTPURLResponse(url: request.url!, statusCode: 206,
+                    httpVersion: nil, headerFields: ["Content-Range": "bytes \(start)-\(end - 1)/\(raw.count)"])!)
+            }
+            jsonRequests += 1
+            let data = try JSONEncoder().encode(["output": String(decoding: raw, as: UTF8.self)])
+            return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"])!)
+        }
+        let access = SessionToolOutputAccess(apiClient: client, scope: .control, sessionId: "s1")
+        let owner = TerminalOutputStream { _ in throw APIError.invalidResponse }
+        owner.finish(.init(epoch: 1, totalBytes: 0))
+        let stream = TerminalTraceStream(output: "held preview\n", command: nil, isDone: true)
+        stream.owner = owner
+        stream.completionSidecarSource = access.sidecarSource(toolCallId: "tc-1")
+        let body = NativeFullScreenTerminalBody(content: "held preview\n", command: nil, stream: stream,
+            palette: ThemeRuntimeState.currentThemeID().palette,
+            reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil)
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        body.frame = host.bounds
+        host.addSubview(body)
+        let reference = try TerminalLogEngine()
+        try reference.feed(raw)
+        let expected = ANSIParser.strip(try reference.paint())
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            host.layoutIfNeeded()
+            func painted(_ view: UIView) -> Bool {
+                if let text = view as? UITextView, text.textStorage.string == expected { return true }
+                return view.subviews.contains { painted($0) }
+            }
+            return painted(body)
+        })
+        #expect(await body.resolvedCopyText() == expected)
+        #expect(jsonRequests == 0)
+        #expect(!ranges.isEmpty)
+        if large { #expect(ranges.contains { $0.hasPrefix("bytes=131072-") }) }
     }
 
     @Test func terminalRecoveryRejectsUnrangedResponse() async throws {

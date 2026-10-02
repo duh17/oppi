@@ -646,6 +646,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     func flushDeferredScrollToBottom() {
         guard outputPendingScrollToBottom else { return }
         outputPendingScrollToBottom = false
+        guard !ownsTerminalOutput || (!outputScrollView.isDragging && !outputScrollView.isDecelerating) else { return }
         ToolTimelineRowUIHelpers.followTail(in: outputScrollView, contentLabel: outputLabel)
     }
 
@@ -661,7 +662,13 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === outputScrollView else { return }
         // Reflow/programmatic tail following must not detach the live clock.
-        if ownsTerminalOutput, !scrollView.isDragging, !scrollView.isDecelerating { return }
+        if ownsTerminalOutput {
+            if !scrollView.isDragging, !scrollView.isDecelerating { return }
+            // A finger/deceleration owns the viewport even inside the tail
+            // threshold. Only gesture-end callbacks may re-arm following.
+            outputShouldAutoFollow = false
+            return
+        }
         if outputLabelHeightLockConstraint?.isActive == true {
             let lockedY = -outputScrollView.adjustedContentInset.top
             if abs(outputScrollView.contentOffset.y - lockedY) > 0.5 {
@@ -669,6 +676,16 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
             }
         }
         outputShouldAutoFollow = ToolTimelineRowUIHelpers.isNearBottom(outputScrollView)
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard scrollView === outputScrollView, ownsTerminalOutput, !decelerate else { return }
+        outputShouldAutoFollow = ToolTimelineRowUIHelpers.isNearBottom(scrollView)
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        guard scrollView === outputScrollView, ownsTerminalOutput else { return }
+        outputShouldAutoFollow = ToolTimelineRowUIHelpers.isNearBottom(scrollView)
     }
 
     // MARK: - Private Helpers

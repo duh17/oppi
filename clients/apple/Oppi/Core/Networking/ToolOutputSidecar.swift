@@ -17,6 +17,9 @@ struct ToolOutputSidecarWindowSource: Sendable {
     let loadNext: @Sendable (_ startByte: Int) async throws -> ToolOutputSidecarWindow?
     /// Bound by the tool document adapter; never infer a boundary from source text.
     var rawDocumentPrefix: String? = nil
+    /// Terminal history must retain raw VT/invalid UTF-8 bytes until engine feed.
+    /// Other document readers continue using the text-window capabilities.
+    var loadRawRange: (@Sendable (Range<Int>) async throws -> TerminalOutputRange?)? = nil
 }
 
 /// Expand vs copy fetch policy for tool-output sidecars.

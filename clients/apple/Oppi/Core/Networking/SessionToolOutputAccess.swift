@@ -50,6 +50,18 @@ struct SessionToolOutputAccess: Sendable {
                     toolCallId: toolCallId,
                     startByte: startByte
                 )
+            },
+            loadRawRange: { [apiClient, scope, sessionId] range in
+                if range.lowerBound == 0,
+                   try await apiClient.headFullToolOutput(scope: scope, sessionId: sessionId, toolCallId: toolCallId) == 0 {
+                    return TerminalOutputRange(data: Data(), start: 0, end: 0, totalBytes: 0)
+                }
+                do {
+                    return try await apiClient.getTerminalOutputRange(
+                        scope: scope, sessionId: sessionId, toolCallId: toolCallId, range: range)
+                } catch let APIError.server(status, _) where status == 404 {
+                    return nil
+                }
             }
         )
     }

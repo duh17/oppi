@@ -19,6 +19,11 @@ final class HorizontalPanPassthroughScrollView: UIScrollView {
     /// Unit tests cannot synthesize UIKit touch velocity. This seam still runs
     /// through the real nested scroll view's gestureRecognizerShouldBegin path.
     var panVelocityOverrideForTesting: CGPoint?
+    /// Hosted tests drive delegate callbacks without a physical touch source.
+    var draggingOverrideForTesting: Bool?
+    var deceleratingOverrideForTesting: Bool?
+    override var isDragging: Bool { draggingOverrideForTesting ?? super.isDragging }
+    override var isDecelerating: Bool { deceleratingOverrideForTesting ?? super.isDecelerating }
     #endif
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {

@@ -7,6 +7,7 @@ struct TerminalOutputRange: Sendable {
     let data: Data
     let start: Int
     let end: Int // exclusive
+    var totalBytes: Int? = nil // Content-Range total, used by full-history paging
 }
 
 enum TerminalOutputStreamState: Equatable, Sendable {
@@ -116,6 +117,7 @@ final class TerminalOutputStream {
         generation += 1
         recovery?.cancel()
         recovery = nil
+        recoveryTarget = cursor
         queued.removeAll()
         queuedBytes = 0
         state = .resyncing
@@ -138,6 +140,7 @@ final class TerminalOutputStream {
         recovery?.cancel()
         paintTask?.cancel()
         recovery = nil
+        recoveryTarget = cursor
         paintTask = nil
         #if canImport(GhosttyVt)
         engine = nil
@@ -174,7 +177,9 @@ final class TerminalOutputStream {
     }
 
     private func recover(to target: Int) {
-        recoveryTarget = max(recoveryTarget, target)
+        // This is a fresh recovery. Only finish/queue overflow extend an
+        // in-flight target; a cancelled fill must not lend its high-water mark.
+        recoveryTarget = target
         state = .resyncing
         publish()
         let token = generation

@@ -65,9 +65,14 @@ struct ChatTimelineOwnedClockTests {
         })
         let row = try #require(Self.terminalRow(in: fixture.host.view))
         let scroll = row.bashToolRowView.outputScrollView
+        scroll.draggingOverrideForTesting = true
         scroll.delegate?.scrollViewWillBeginDragging?(scroll)
-        scroll.setContentOffset(.zero, animated: false)
+        // The first incremental movement is still inside the near-tail threshold.
+        let draggedY = scroll.contentOffset.y - 8
+        scroll.setContentOffset(CGPoint(x: 0, y: draggedY), animated: false)
         row.bashToolRowView.scrollViewDidScroll(scroll)
+        #expect(ToolTimelineRowUIHelpers.isNearBottom(scroll))
+        #expect(!row.bashToolRowView.outputShouldAutoFollow)
         fixture.reducer.process(.toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: "detached tail\n",
             isError: false, outputStream: .init(epoch: 1, offset: owner.cursor, bytes: 14))))
         #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
@@ -76,7 +81,17 @@ struct ChatTimelineOwnedClockTests {
                 return Self.containsTerminalText("detached tail", in: fixture.host.view)
             }
         })
-        #expect(abs(scroll.contentOffset.y) < 1)
+        #expect(abs(scroll.contentOffset.y - draggedY) < 1,
+            "A streamed paint during an incremental tail drag must keep the viewport")
+        scroll.draggingOverrideForTesting = false
+        scroll.deceleratingOverrideForTesting = true
+        scroll.delegate?.scrollViewDidEndDragging?(scroll, willDecelerate: true)
+        scroll.setContentOffset(CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height - 4), animated: false)
+        row.bashToolRowView.scrollViewDidScroll(scroll)
+        #expect(!row.bashToolRowView.outputShouldAutoFollow)
+        scroll.deceleratingOverrideForTesting = false
+        scroll.delegate?.scrollViewDidEndDecelerating?(scroll)
+        #expect(row.bashToolRowView.outputShouldAutoFollow)
     }
 
     private static func terminalRow(in view: UIView) -> ToolTimelineRowContentView? {

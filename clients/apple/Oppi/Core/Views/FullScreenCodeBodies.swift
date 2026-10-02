@@ -2056,6 +2056,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
 
     private var streamObserverID: UUID?
     private var sidecarSource: ToolOutputSidecarWindowSource?
+    private var sidecarTerminalResolved = false
     private var sidecarTask: Task<Void, Never>?
     private var sidecarExpectsMore = false
     private var sidecarHasPendingAppend = false
@@ -2260,6 +2261,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         sidecarTask = nil
         sidecarSource = nil
         usingCompletedSidecar = false
+        sidecarTerminalResolved = false
         sidecarExpectsMore = false
         renderedSnapshot = nil
         if let owner {
@@ -2339,7 +2341,8 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
             leaveVirtualizedMode()
             let resolved: String
             do {
-                resolved = liveOwner != nil && !usingCompletedSidecar ? content : try TerminalLogEngine.render(content)
+                resolved = sidecarTerminalResolved || (liveOwner != nil && !usingCompletedSidecar)
+                    ? content : try TerminalLogEngine.render(content)
             } catch {
                 resolved = "Terminal rendering failed: \(error)"
             }
@@ -2372,6 +2375,12 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         var source = heldSource
         if let sidecarSource {
             do {
+                if sidecarSource.loadRawRange != nil {
+                    if let resolved = try await Self.loadRawTerminalHistory(sidecarSource) {
+                        return ANSIParser.strip(resolved)
+                    }
+                    return renderedOutputText.isEmpty ? ANSIParser.strip(heldSource) : renderedOutputText
+                }
                 if let first = try await sidecarSource.loadFirst() {
                     var complete = first.text
                     var offset = first.endByteOffset
@@ -2406,11 +2415,61 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         }
     }
 
+    /// Content-Range is the byte authority, not a decoded String's UTF-8 size.
+    /// Hold the readable preview until the complete raw log has been interpreted
+    /// once, then use the existing resolved-text/virtualized presentation path.
+    private static func loadRawTerminalHistory(_ source: ToolOutputSidecarWindowSource) async throws -> String? {
+        guard let fetch = source.loadRawRange else { return nil }
+        var bytes = Data()
+        var offset = 0
+        var total: Int?
+        repeat {
+            try Task.checkCancellation()
+            let upper = min(total ?? ToolOutputSidecarHTTP.firstWindowBytes,
+                offset + ToolOutputSidecarHTTP.firstWindowBytes)
+            guard let page = try await fetch(offset..<upper) else { return nil }
+            guard let length = page.totalBytes, length >= 0,
+                  total == nil || total == length,
+                  page.start == offset, page.end <= length,
+                  page.data.count == page.end - offset,
+                  page.end > offset || length == 0 else { throw APIError.invalidResponse }
+            bytes.append(page.data)
+            offset = page.end
+            total = length
+        } while offset < (total ?? 0)
+        let completeBytes = bytes
+        let result = await withCancellableDetachedTask(priority: .userInitiated) { () -> Result<String, Error>? in
+            do {
+                let engine = try TerminalLogEngine()
+                try engine.feed(completeBytes)
+                return .success(try engine.paint())
+            } catch { return .failure(error) }
+        }
+        guard let result else { throw CancellationError() }
+        return try result.get()
+    }
+
     private func startSidecarLoadingIfNeeded() {
         guard let sidecarSource else { return }
         sidecarTask?.cancel()
         sidecarTask = Task { [weak self] in
             do {
+                if sidecarSource.loadRawRange != nil {
+                    let resolved = try await Self.loadRawTerminalHistory(sidecarSource)
+                    guard let self, !Task.isCancelled else { return }
+                    guard let resolved else {
+                        self.setStreamNotice("Terminal history unavailable")
+                        return
+                    }
+                    self.usingCompletedSidecar = true
+                    self.sidecarTerminalResolved = true
+                    self.sidecarExpectsMore = false
+                    self.setStreamNotice(nil)
+                    self.renderedSnapshot = nil
+                    self.latestSnapshot = .init(output: resolved, command: self.latestSnapshot.command, isDone: true)
+                    self.render(snapshot: self.latestSnapshot)
+                    return
+                }
                 let first = try await sidecarSource.loadFirst()
                 guard !Task.isCancelled else { return }
                 var offset = 0
@@ -2520,7 +2579,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
             return
         }
         let generation = virtualizedGeneration
-        let terminalResolved = liveOwner != nil && !usingCompletedSidecar
+        let terminalResolved = sidecarTerminalResolved || (liveOwner != nil && !usingCompletedSidecar)
         let chunkLineLimit = Self.virtualizedChunkLineLimit
         let chunkByteLimit = Self.virtualizedChunkByteLimit
         let visualLineLimit = Self.virtualizedChunkVisualLineLimit

@@ -1931,7 +1931,7 @@ actor APIClient: ClientLogUploading {
               parsed.end < parsed.total, data.count == parsed.end - parsed.start + 1 else {
             throw APIError.invalidResponse
         }
-        return TerminalOutputRange(data: data, start: parsed.start, end: parsed.end + 1)
+        return TerminalOutputRange(data: data, start: parsed.start, end: parsed.end + 1, totalBytes: parsed.total)
     }
 
     func getFullToolOutputSidecarWindow(
