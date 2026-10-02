@@ -46,9 +46,11 @@ const KILL_GROUP = [
   "export LC_ALL=C",
   'gone() { case "$1" in *"No such process"*) exit 0;; *) printf "%s\\n" "$1" >&2; exit 1;; esac; }',
   'if ! IFS= read -r stat < "/proc/$p/stat"; then',
-  // A gone leader does not prove its group is gone. Without a matching
-  // lifetime we cannot safely signal a surviving group: fail Stop visibly.
-  '  failure=$(kill -0 -"$p" 2>&1) && exit 1',
+  // A gone leader can leave children in the captured group. A recycled
+  // leader would have /proc/<pid>/stat and take the lifetime-check branch.
+  '  if failure=$(kill -0 -"$p" 2>&1); then',
+  '    failure=$(kill -KILL -"$p" 2>&1) && exit 0',
+  "  fi",
   '  gone "$failure"',
   "fi",
   // eslint-disable-next-line no-template-curly-in-string -- Guest shell parameter expansion.

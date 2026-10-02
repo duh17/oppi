@@ -4,18 +4,51 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context, withAbortSignal } from "@earendil-works/chord/context";
 import { createEditTool } from "@earendil-works/pi-durable/tools";
-import { GondolinManager } from "../src/gondolin-manager.js";
+import {
+  GondolinManager,
+  isQemuAvailable,
+  sandboxUnsupportedNodeMessage,
+} from "../src/gondolin-manager.js";
 import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 
-// Security regression proof requires the real guest: do not silently pass when
-// QEMU is absent. Only this suite's VM and temporary mount are ever used.
+// Match the other live VM suites: absent prerequisites return early, but VM
+// boot and assertion failures after a successful preflight must still fail.
+let qemuAvailable = false;
+beforeAll(async () => {
+  const nodeError = sandboxUnsupportedNodeMessage();
+  if (nodeError) {
+    console.log(`[durable-security] Skipping: ${nodeError}`);
+    return;
+  }
+  qemuAvailable = await isQemuAvailable();
+  if (!qemuAvailable) console.log("[durable-security] Skipping: QEMU not installed");
+}, 10_000);
+
 describe("Durable shared guest security", { timeout: 30_000 }, () => {
   const root = "/workspace/durable-security";
   let host: string;
   let vm: GondolinVm;
   let manager: GondolinManager;
+  const noLiveGroupMembers = async (pgid: string): Promise<boolean> =>
+    (
+      await vm.exec([
+        "/bin/sh",
+        "-c",
+        [
+          'p="$1"',
+          "for f in /proc/[0-9]*/stat; do",
+          '  IFS= read -r s < "$f" || continue',
+          "  fields=${s##*) }; set -- $fields",
+          '  if [ "$3" = "$p" ]; then echo "$s"; [ "$1" = Z ] || exit 1; fi',
+          "done",
+        ].join("\n"),
+        "probe-group",
+        pgid,
+      ])
+    ).ok;
   beforeAll(async () => {
+    if (!qemuAvailable) return;
     host = mkdtempSync(join(tmpdir(), "oppi-durable-security-"));
     console.log("durable security artifacts:", host);
     manager = new GondolinManager();
@@ -42,6 +75,7 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
   it.each(["1", "sibling", "empty", "deleted"])(
     "Stop ignores %s forged pid files and preserves a sibling conversation",
     async (attack) => {
+      if (!qemuAvailable) return;
       let killArgs: string[] | undefined;
       const victim = new GondolinExecutionEnv(
         {
@@ -111,26 +145,7 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
         // kill -0 also succeeds for dead, unreaped zombies. The safety oracle
         // is no runnable group member (not PID 1's unrelated reaping policy).
         await expect
-          .poll(
-            async () =>
-              (
-                await vm.exec([
-                  "/bin/sh",
-                  "-c",
-                  [
-                    'p="$1"',
-                    "for f in /proc/[0-9]*/stat; do",
-                    '  IFS= read -r s < "$f" || continue',
-                    "  fields=${s##*) }; set -- $fields",
-                    '  if [ "$3" = "$p" ]; then echo "$s"; [ "$1" = Z ] || exit 1; fi',
-                    "done",
-                  ].join("\n"),
-                  "probe-group",
-                  target,
-                ])
-              ).ok,
-            { timeout: 2000, interval: 10 },
-          )
+          .poll(() => noLiveGroupMembers(target), { timeout: 2000, interval: 10 })
           .toBe(true);
         expect((await vm.exec(["/bin/sh", "-c", 'kill -0 -"$1"', "probe", other])).ok).toBe(true);
         expect((await victim.readTextFile(`victim-${attack}.txt`, context)).ok).toBe(false);
@@ -148,8 +163,8 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
             false,
           );
           expect((await vm.exec(["/bin/sh", "-c", 'kill -0 -"$1"', "probe", other])).ok).toBe(true);
-          // A leader that exited can leave a live child in its group. No
-          // matching /proc identity means signaling is unsafe, not successful.
+          // A gone leader leaves its existing group safe to kill; a recycled
+          // leader would have /proc/<pid>/stat and fail the lifetime check.
           const detached = await vm.exec([
             "/usr/bin/setsid",
             "/bin/sh",
@@ -163,15 +178,18 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
             expect((await vm.exec(["/bin/sh", "-c", 'kill -0 -"$1"', "probe", orphan])).ok).toBe(
               true,
             );
-            expect((await vm.exec([...killArgs!.slice(0, 4), orphan, "12345"])).ok).toBe(false);
-            expect((await vm.exec(["/bin/sh", "-c", 'kill -0 -"$1"', "probe", orphan])).ok).toBe(
+            expect((await vm.exec([...killArgs!.slice(0, 4), orphan, "12345"])).ok).toBe(true);
+            await expect
+              .poll(() => noLiveGroupMembers(orphan), { timeout: 2000, interval: 10 })
+              .toBe(true);
+            expect((await vm.exec(["/bin/sh", "-c", 'kill -0 -"$1"', "probe", other])).ok).toBe(
               true,
             );
           } finally {
             await vm.exec(["/bin/sh", "-c", 'kill -KILL -"$1"', "owned-orphan-cleanup", orphan]);
           }
           console.log(
-            "PASS kill boundary: invalid targets, lifetime mismatch and orphan group refused; group ESRCH accepted",
+            "PASS kill boundary: invalid targets and lifetime mismatch refused; orphan group killed, sibling alive; group ESRCH accepted",
           );
         }
         console.log(
@@ -187,6 +205,7 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
   );
 
   it("concurrent edits through a symlink and its target both land", async () => {
+    if (!qemuAvailable) return;
     const env = new GondolinExecutionEnv(vm, "security", root);
     writeFileSync(join(host, "note.txt"), "one\ntwo\n");
     symlinkSync("note.txt", join(host, "link.txt"));
@@ -208,6 +227,7 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
   });
 
   it("rejects a resolved guest symlink outside the workspace", async () => {
+    if (!qemuAvailable) return;
     expect((await vm.exec(["ln", "-s", "/etc", `${root}/outside`])).ok).toBe(true);
     const env = new GondolinExecutionEnv(vm, "security", root);
     const result = await env.canonicalPath("outside", context);
