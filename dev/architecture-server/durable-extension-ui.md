@@ -43,6 +43,8 @@ To clear a slot, replace its value with an empty notification of the same method
 
 The native working-words extension owns a background Durable task. It watches `pi.live`, writes plain working frames and status, chooses a phrase every 1.5 seconds while busy, and clears the message while idle. The host ensures one task at conversation attachment, including after an explicit Stop. Closing the Harness cancels its local timer and watcher. The classic `/working-words` preview command and terminal color styling have no Durable equivalent.
 
+The native goal extension publishes goal status and a widget through replacement slots in the same document. Its separate `oppi.goal` document stores the latest goal; typed transcript entries retain full snapshots and continuation reasons. A conversation-owned task submits a new input after the current run settles, with a stable request ID across restart. Abort/Stop cancels that task but retains the goal. The phone sets and inspects goals through model tools, without a new protocol or slash command. See [Goal extension](../../pi-extensions/goal/README.md#server-durable-port) for restart, compaction, and UI parity limits.
+
 ## Build and loading
 
 `server/extensions/durable/` contains symlinks to the canonical native implementations, the shared document helper, and ask's existing pure result helper. TypeScript follows these source paths and emits ordinary JS under `dist/extensions/durable/`, which the npm package includes. The server imports only this compiled layout. No code depends on the excluded `dist/oppi-extensions/` tree, and no Pi factory is imported.
@@ -68,3 +70,5 @@ The opt-in crash runner is `node --import tsx scripts/durable-background-jobs-sm
 From `server/`, run `npm run check:server`, `npm test`, and `npm run check:pack-contents` after a build. The durable integration suite covers SDK request-field parity, first-answer-wins, all blocking methods, reconnect, pending restart, the answer/memo crash window, one ask per turn, Abort/Stop, working state, and generic native widgets.
 
 The opt-in live runner is `node --import tsx scripts/durable-extension-ui-smoke.ts` after `npm run build`. It uses only a throwaway server and data directory, copies Pi credentials into that private directory, selects `anthropic/claude-haiku-4-5`, kills the server with SIGKILL while ask is pending, and answers the same request after restart. Run it through the credential-approved tool. It preserves the report and server logs; it never restarts an owner runtime or installs an app.
+
+The corresponding goal smoke is `node --import tsx scripts/durable-goal-smoke.ts` after a build. It creates a goal, lets one continuation reach a pending ask, kills the owned server, and verifies the same goal/checklist/count and dialog after restart. Answering the dialog completes the goal; history must contain one create and two user inputs (the original and one continuation). Run it only through the credential-approved tool.

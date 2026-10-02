@@ -44,6 +44,7 @@ import {
 } from "../src/session-restart-resume.js";
 import type { ChatAttachmentRef, ServerMessage, Session } from "../src/types.js";
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
+import { DurableGoal } from "../extensions/durable/goal/durable.js";
 import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
 import {
   DurableBackgroundJobs,
@@ -156,6 +157,7 @@ async function openHarness(
   const registry = createRegistry();
   registry.install(CodingTools);
   registry.install(DurableAsk);
+  registry.install(DurableGoal);
   registry.install(DurableWorkingWords);
   registry.install(DurableBackgroundJobs);
   if (tool) registry.install({ name: "restart-proof", tools: [tool] });
@@ -305,6 +307,52 @@ describe("server durable managed runtime", () => {
   const askResponse = { color: "red", extras: ["tests", "custom extra"] };
   const askStep = () =>
     fauxAssistantMessage([fauxToolCall("ask", { questions })], { stopReason: "toolUse" });
+
+  it("enrolls goal tools on the managed backend and projects one continuation and its budget blocker", async () => {
+    const f = await fixture([
+      fauxAssistantMessage(
+        [
+          fauxToolCall("create_goal", {
+            objective: "Prove native goal wiring",
+            max_continuations: 1,
+          }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("Initial goal run settled"),
+      fauxAssistantMessage("One continuation finished"),
+    ]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    const blocked = observed.next(
+      (m) =>
+        m.type === "extension_ui_notification" &&
+        m.method === "setStatus" &&
+        m.statusKey === "goal" &&
+        m.statusText === "goal: Blocked 1/1",
+    );
+    const blockedWidget = observed.next(
+      (m) =>
+        m.type === "extension_ui_notification" &&
+        m.method === "setWidget" &&
+        JSON.stringify(m.nativeSurface).includes("Continuation budget exhausted (1/1)."),
+    );
+    await f.manager.sendPrompt(f.session.id, "Create an explicit autonomous goal", {
+      clientTurnId: "managed-goal",
+    });
+    await Promise.all([blocked, blockedWidget]);
+    const history = (await f.manager.runCommand(f.session.id, { type: "get_messages" })) as Array<{
+      role: string;
+      toolName?: string;
+      isError?: boolean;
+    }>;
+    expect(history.filter((m) => m.role === "user")).toHaveLength(2);
+    expect(history.filter((m) => m.role === "toolResult" && m.toolName === "create_goal")).toEqual([
+      expect.objectContaining({ isError: false }),
+    ]);
+    expect(observed.messages.filter((m) => m.type === "agent_end")).toHaveLength(2);
+    observed.unsubscribe();
+  });
 
   it("projects SDK-identical ask fields, replays pending on reconnect, and commits only the first answer", async () => {
     const f = await fixture([askStep(), fauxAssistantMessage("ANSWER_RECEIVED")]);
@@ -1301,6 +1349,9 @@ describe("server durable managed runtime", () => {
       "edit",
       "bash",
       "ask",
+      "get_goal",
+      "create_goal",
+      "update_goal",
       "ls",
       "find",
       "grep",

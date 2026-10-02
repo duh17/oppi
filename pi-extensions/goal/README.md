@@ -61,3 +61,52 @@ While a goal is active, the widget updates periodically so mobile surfaces can s
 The continuation budget is a safety cap, not a target to spend. Continuation prompts tell the model to audit completion against real evidence and avoid stopping on weak proxy signals. Every completion path—including `/goal complete`, model tool updates, and loaded snapshots—keeps the goal active when listed tasks remain pending or in progress, then records those tasks in the summary.
 
 The loop waits for Pi's `agent_settled` event before queuing the next turn. It stops when the goal is complete, blocked, paused, or cleared. Budget exhaustion and continuation-dispatch failures leave the goal blocked. Context pressure waits for compaction and blocks only if compaction fails.
+
+## Server Durable port
+
+`durable.ts` provides the native goal extension for experimental server-durable sessions. The classic extension above is unchanged. On the phone, send a prompt such as:
+
+```text
+Create an autonomous goal to audit the feature against its requirements.
+Track implementation, tests, and evidence as tasks. Use a budget of 5 continuations.
+```
+
+The model uses `create_goal`, `get_goal`, and `update_goal`. To inspect, pause, resume, block, change the budget, or complete the goal, ask the model to call those tools. Durable has no `/goal` command. There is no clear tool; complete or pause the goal, or replace it with `create_goal(replace=true)`.
+
+The latest goal is a conversation document (`oppi.goal`). Each change also appends a full `oppi-goal` snapshot. `oppi-goal-continuation` entries record updates, continuation decisions, wait/resume decisions, blockers, and cancellation reasons. These entries do not add model messages. Snapshots and tool results retain the full summary/checklist; UI transport limits still apply to widgets.
+
+A conversation-owned Durable task waits until `pi.live.run` is absent, the inbox is empty, and compaction has settled. It then submits an ordinary follow-up input to start a **new run**. An `onYield` continuation would keep the original run busy, bypassing Oppi's settled/auto-stop boundary. The runner is not a background task: Abort/Stop cancels it. Goal state remains available; `update_goal(status="active")` starts a new runner after cancellation. Forks start with no goal (`fork: "initial"`) so an inherited transcript cannot launch a second autonomous loop.
+
+The budget increment, snapshot, continuation reason, and submission checkpoint are one commit. Submission uses `requestId="oppi-goal:<goal-id>:<continuation-count>"`. Replay before or after admission reuses the same request ID. Tool receipts and mutations share a commit, so a replayed create/update does not repeat its mutation.
+
+| Classic behavior                                              | Native Durable behavior                                                                                                                                                                           |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tool parameters, stale-ID rejection, active replacement guard | Same tools and parameters; tools run sequentially and replay safely                                                                                                                               |
+| Completion audit and unfinished-task invariant                | Same guidance; unfinished tasks keep the goal active                                                                                                                                              |
+| Task start/completion timestamps and elapsed time             | Persisted; returned by tools and text widget snapshots                                                                                                                                            |
+| Append goal snapshots                                         | Full typed entries plus latest conversation document                                                                                                                                              |
+| `before_agent_start` goal injection                           | `section("goal")` reads the document before each request                                                                                                                                          |
+| Settled run followed by automatic follow-up                   | New submission after `pi.live.run` clears; stable request ID across restart                                                                                                                       |
+| Budget exhaustion and launch failure                          | Blocked goal with inspectable reason                                                                                                                                                              |
+| Before/after compaction handling                              | `CompactionTask.beforeCompact` records the goal in a task memo while compaction runs; the runner waits for compaction and records completion/failure; the document survives transcript compaction |
+| Proactive compaction at 95% context usage                     | Uses Durable's configured token-reserve/overflow compaction instead; no separate 95% trigger or goal-specific summarizer instructions                                                             |
+| Widget/status and periodic elapsed refresh                    | Generic durable-ui replacement slots with native activity list, full summary/blocker, and explicit clears on completion; refreshed on state changes, no periodic timer                            |
+| `/goal`, TUI styling, custom message display                  | Tools only; continuations are ordinary user inputs, without classic custom-message metadata                                                                                                       |
+| Restart/session start                                         | Pending runner resumes from its checkpoint; Abort/Stop retains state but requires an active update to restart the runner                                                                          |
+
+Validation from `server/`:
+
+```bash
+npx vitest run tests/durable-goal.test.ts
+npm run check:server
+npm test
+npm run build && npm run check:pack-contents
+```
+
+The credential-approved live smoke uses a private temporary Pi credential copy and an owned throwaway server. It creates a goal, waits for one continuation to open `ask`, kills that server with SIGKILL, restores the same goal/dialog, and completes it with no duplicate continuation:
+
+```bash
+node --import tsx scripts/durable-goal-smoke.ts
+```
+
+Build first. Run the smoke through the credential-approved tool, not an ordinary shell lane. It retains receipts, WebSocket events, and server logs; it never targets the owner's runtime.

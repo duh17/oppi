@@ -46,6 +46,7 @@ import type { Session, Workspace } from "./types.js";
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
 import { DurableBackgroundJobs } from "../extensions/durable/background-jobs/durable.js";
 import { DURABLE_RESERVED_REQUEST_ID_PREFIXES } from "./durable-request-ids.js";
+import { DurableGoal } from "../extensions/durable/goal/durable.js";
 import {
   DurableWorkingWords,
   ensureWorkingWords,
@@ -144,13 +145,13 @@ export class DurableBackend implements AgentBackend {
       // Bound conversations store exact extension/tool names. Enroll the native
       // UI ports on attachment too, without overriding their launch tool policy.
       await conversation.configure(
-        { extensions: { add: [DurableAsk, DurableWorkingWords, DurableBackgroundJobs] } },
+        { extensions: { add: [DurableAsk, DurableWorkingWords, DurableBackgroundJobs, DurableGoal] } },
         BACKGROUND_CONTEXT,
       );
       const agent = await conversation.agent(BACKGROUND_CONTEXT);
       const policy = session.launch?.tools;
       const selected = new Set(agent.tools.map((tool) => tool.name));
-      const additions = [DurableAsk, DurableWorkingWords, DurableBackgroundJobs]
+      const additions = [DurableAsk, DurableWorkingWords, DurableBackgroundJobs, DurableGoal]
         .flatMap((extension) => extension.tools ?? [])
         .filter(
           (tool) =>
@@ -198,6 +199,7 @@ export class DurableBackend implements AgentBackend {
       const tools = [
         ...(CodingTools.tools ?? []),
         ...(DurableAsk.tools ?? []),
+        ...(DurableGoal.tools ?? []),
         ...(sandbox ? (DurableSandboxTools.tools ?? []) : []),
         ...(DurableBackgroundJobs.tools ?? []),
       ].filter(
@@ -229,8 +231,9 @@ export class DurableBackend implements AgentBackend {
                   DurableAsk,
                   DurableWorkingWords,
                   DurableBackgroundJobs,
+                  DurableGoal,
                 ]
-              : [CodingTools, DurableAsk, DurableWorkingWords, DurableBackgroundJobs],
+              : [CodingTools, DurableAsk, DurableWorkingWords, DurableBackgroundJobs, DurableGoal],
             model: { provider: model.provider, modelId: model.id },
             thinkingLevel:
               session.thinkingLevel !== undefined && isThinkingLevel(session.thinkingLevel)

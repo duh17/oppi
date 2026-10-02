@@ -20,6 +20,7 @@ import {
   DurableJobs,
 } from "../extensions/durable/background-jobs/durable.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
+import { DurableGoal } from "../extensions/durable/goal/durable.js";
 import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 
@@ -141,6 +142,7 @@ export class DurableHarness {
     registry.install(CodingTools);
     registry.install(DurableSandboxTools);
     registry.install(DurableAsk);
+    registry.install(DurableGoal);
     registry.install(DurableWorkingWords);
     registry.install(DurableBackgroundJobs);
     const directory = join(this.dataDir, "durable");
