@@ -934,7 +934,6 @@ describe("server durable managed runtime", () => {
   );
 
   it("replays generic native widgets/status and working words, sanitizes fields, and explicitly clears slots", async () => {
-    const random = vi.spyOn(Math, "random").mockReturnValue(0);
     const f = await fixture([askStep(), fauxAssistantMessage("DONE")]);
     const opening = vi.spyOn(DurableHarness.prototype, "open");
     await f.manager.startSession(f.session.id, f.workspace);
@@ -945,33 +944,36 @@ describe("server durable managed runtime", () => {
     const request = observed.next((m) => m.type === "extension_ui_request" && m.method === "ask");
     await f.manager.sendPrompt(f.session.id, "Hold a working turn");
     await request;
-    const notifications = f.manager
-      .getPendingUIRequestMessages(f.session.id)
-      .filter((m) => m.type === "extension_ui_notification");
-    expect(notifications).toContainEqual(
-      expect.objectContaining({
-        method: "setStatus",
-        statusKey: "working-words",
-        statusText: "shuffled · 16 phrases",
-      }),
-    );
-    expect(notifications).toContainEqual(
-      expect.objectContaining({
-        method: "setWorkingIndicator",
-        workingIndicator: { frames: ["·", "•", "●", "•"], intervalMs: 120 },
-      }),
-    );
-    expect(notifications).toContainEqual(
-      expect.objectContaining({ method: "setWorkingMessage", message: expect.any(String) }),
-    );
-    random.mockReturnValue(0.75);
-    const rotation = await observed.next(
+    const asking = /^(Waiting on you|Your move|Need a nod|Holding for you)( · \d+s)?$/;
+    // Matches the classic working-message extension: an activity phrase, no
+    // status pill, and Pi's default indicator (earlier slots are cleared).
+    const working = await observed.next(
       (m) =>
         m.type === "extension_ui_notification" &&
         m.method === "setWorkingMessage" &&
-        m.message === "Comparing options…",
+        typeof m.message === "string" &&
+        asking.test(m.message),
     );
-    expect(rotation).toMatchObject({ method: "setWorkingMessage", message: "Comparing options…" });
+    expect(working).toMatchObject({ method: "setWorkingMessage" });
+    const notifications = f.manager
+      .getPendingUIRequestMessages(f.session.id)
+      .filter((m) => m.type === "extension_ui_notification");
+    const status = notifications.find(
+      (m) => m.method === "setStatus" && m.statusKey === "working-words",
+    );
+    expect(status).toBeDefined();
+    expect((status as { statusText?: string }).statusText).toBeUndefined();
+    const indicator = notifications.find((m) => m.method === "setWorkingIndicator");
+    expect(indicator).toBeDefined();
+    expect((indicator as { workingIndicator?: unknown }).workingIndicator).toBeUndefined();
+    const elapsed = await observed.next(
+      (m) =>
+        m.type === "extension_ui_notification" &&
+        m.method === "setWorkingMessage" &&
+        typeof m.message === "string" &&
+        / · \d+s$/.test(m.message),
+    );
+    expect((elapsed as { message: string }).message).toMatch(asking);
     const widget = observed.next(
       (m) => m.type === "extension_ui_notification" && m.widgetKey === "arbitrary-widget",
     );

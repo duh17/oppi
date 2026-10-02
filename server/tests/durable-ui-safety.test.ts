@@ -9,7 +9,12 @@ import type {
 } from "@earendil-works/pi-durable";
 import { DurableUIProjection } from "../src/durable-ui-projection.js";
 import { requestUI, type UIRequest, type UIState } from "../extensions/durable/durable-ui.js";
-import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
+import {
+  deriveView,
+  DurableWorkingWords,
+  pickPhrase,
+  workingLine,
+} from "../extensions/durable/working-words/durable.js";
 import type { SessionBackendEvent } from "../src/pi-events.js";
 
 const empty = (): UIState => ({ requests: {}, notifications: {} });
@@ -235,5 +240,71 @@ describe("durable working words commit interleavings", () => {
     expect(frames[0]).toEqual(expect.any(String));
     expect(frames).toHaveLength(edge === "idle" ? 2 : 1);
     if (edge === "idle") expect(frames[1]).toBeUndefined();
+  });
+});
+
+describe("durable working words activity", () => {
+  const run = { taskId: 7, inputs: [] };
+  const live = (value: object) => value as Parameters<typeof deriveView>[0];
+
+  it("maps pi.live to the classic working-message activities", () => {
+    expect(deriveView(live({}))).toEqual({ activity: "thinking" });
+    expect(deriveView(live({ run }))).toEqual({ run: "7", activity: "thinking" });
+    expect(
+      deriveView(
+        live({
+          run,
+          generation: {
+            attempt: 1,
+            message: { content: [{ type: "thinking" }, { type: "text" }] },
+          },
+        }),
+      ),
+    ).toEqual({ run: "7", activity: "writing" });
+    expect(
+      deriveView(
+        live({
+          run,
+          generation: {
+            attempt: 1,
+            message: { content: [{ type: "text" }, { type: "toolCall" }] },
+          },
+        }),
+      ),
+    ).toEqual({ run: "7", activity: "writing" });
+    expect(
+      deriveView(
+        live({
+          run,
+          tools: [
+            { callId: "a", name: "read", status: "running" },
+            { callId: "b", name: "bash", status: "running" },
+          ],
+        }),
+      ),
+    ).toEqual({ run: "7", activity: "running" });
+    expect(
+      deriveView(live({ run, tools: [{ callId: "a", name: "ask", status: "running" }] })),
+    ).toEqual({
+      run: "7",
+      activity: "asking",
+    });
+    expect(
+      deriveView(
+        live({
+          run,
+          generation: { attempt: 1, message: { content: [{ type: "text" }] } },
+          tools: [{ callId: "a", name: "edit", status: "done" }],
+        }),
+      ),
+    ).toEqual({ run: "7", activity: "thinking" });
+  });
+
+  it("formats a per-run phrase with elapsed time", () => {
+    expect(pickPhrase("running", "7")).toBe(pickPhrase("running", "7"));
+    expect(workingLine("Your move", 999)).toBe("Your move");
+    expect(workingLine("Your move", 12_400)).toBe("Your move · 12s");
+    expect(workingLine("Your move", 125_000)).toBe("Your move · 2m 05s");
+    expect(workingLine("Your move", 3_660_000)).toBe("Your move · 1h 01m");
   });
 });
