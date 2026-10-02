@@ -112,106 +112,35 @@ describe("durable UI document safety", () => {
     },
   );
 
-  it.each(["requests", "notifications"] as const)(
-    "caps %s fan-out at 32 and emits one error on attach and update",
-    async (map) => {
-      const ui = empty();
-      for (let i = 0; i < 100; i++) {
-        const id = `slot:${i}`;
-        if (map === "requests") ui.requests[id] = entry({ id, method: "confirm" });
-        else ui.notifications[id] = { id, method: "setStatus", statusKey: id, statusText: "ready" };
-      }
-      const p = await project(ui);
-      expect(p.events.filter((e) => e.type === "extension_ui_request")).toHaveLength(32);
-      expect(p.events.filter((e) => e.type === "prompt_error")).toHaveLength(1);
-      p.events.length = 0;
-      await p.change(structuredClone(ui));
-      expect(p.events).toEqual([expect.objectContaining({ type: "prompt_error" })]);
-      await p.stop();
-    },
-  );
-
-  it("settles a replaced pending body before emitting its authoritative replacement", async () => {
+  it("stores only allowlisted tool fields", async () => {
     const ui = empty();
-    ui.requests.dialog = entry({ id: "dialog", method: "confirm", title: "Preseeded" });
-    const p = await project(ui);
-    const next = structuredClone(ui);
-    next.requests.dialog!.request.title = "Authoritative";
-    await p.change(next);
-    expect(p.events.slice(1)).toEqual([
-      { type: "extension_ui_request_settled", id: "dialog" },
-      expect.objectContaining({
-        type: "extension_ui_request",
+    const t = tool(ui);
+    const controller = new AbortController();
+    const waiting = requestUI(
+      t.api,
+      {
         id: "dialog",
+        method: "confirm",
         title: "Authoritative",
-      }),
-    ]);
-    await p.stop();
+        type: "message_end",
+        details: { fullOutputPath: "/private/file" },
+      } as UIRequest,
+      abortContext(controller),
+    );
+    const outcome = waiting.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    try {
+      await vi.waitFor(() => expect(t.published).toHaveLength(1));
+      expect(t.published[0]!.requests.dialog).toEqual(
+        entry({ id: "dialog", method: "confirm", title: "Authoritative" }),
+      );
+    } finally {
+      controller.abort(new Error("cancel wait"));
+      expect(await outcome).toEqual(new Error("cancel wait"));
+    }
   });
-
-  it.each([false, true])(
-    "stores only allowlisted tool fields and replaces an unanswered same-task preseed (seeded=%s)",
-    async (seeded) => {
-      const ui = empty();
-      if (seeded)
-        ui.requests.dialog = entry({ id: "dialog", method: "confirm", title: "Preseeded" });
-      const t = tool(ui);
-      const controller = new AbortController();
-      const waiting = requestUI(
-        t.api,
-        {
-          id: "dialog",
-          method: "confirm",
-          title: "Authoritative",
-          type: "message_end",
-          details: { fullOutputPath: "/private/file" },
-        } as UIRequest,
-        abortContext(controller),
-      );
-      const outcome = waiting.then(
-        () => undefined,
-        (error: unknown) => error,
-      );
-      try {
-        await vi.waitFor(() => expect(t.published).toHaveLength(1));
-        expect(t.published[0]!.requests.dialog).toEqual(
-          entry({ id: "dialog", method: "confirm", title: "Authoritative" }),
-        );
-      } finally {
-        controller.abort(new Error("cancel wait"));
-        expect(await outcome).toEqual(new Error("cancel wait"));
-      }
-    },
-  );
-
-  it.each(["requests", "notifications"] as const)(
-    "refuses publication when %s exceeds capacity",
-    async (map) => {
-      const ui = empty();
-      for (let i = 0; i < 33; i++) {
-        const id = `slot:${i}`;
-        if (map === "requests") ui.requests[id] = entry({ id, method: "confirm" });
-        else ui.notifications[id] = { id, method: "setWorkingMessage" };
-      }
-      const t = tool(ui);
-      const controller = new AbortController();
-      let finished = false;
-      const outcome = requestUI(t.api, { id: "new", method: "confirm" }, abortContext(controller))
-        .then(
-          () => undefined,
-          (error: unknown) => error,
-        )
-        .finally(() => {
-          finished = true;
-        });
-      await vi.waitFor(() => expect(finished || t.published.length > 0).toBe(true));
-      controller.abort(new Error("Unexpected wait instead of capacity rejection"));
-      expect(await outcome).toEqual(
-        expect.objectContaining({ message: expect.stringMatching(/limit/i) }),
-      );
-      expect(ui.requests).not.toHaveProperty("new");
-    },
-  );
 
   it("rejects unknown tool UI methods without committing a document", async () => {
     const t = tool(empty());

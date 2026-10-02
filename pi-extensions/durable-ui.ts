@@ -1,4 +1,3 @@
-import { isDeepStrictEqual } from "node:util";
 import type { Context, JsonValue } from "@earendil-works/chord";
 import {
   defineDoc,
@@ -62,11 +61,6 @@ export type UIState = {
   // empty notifications to clear previous client state (including after restart).
   notifications: Record<string, UINotification>;
 };
-// Bound both writers and the untrusted document projection. Answered rows also
-// occupy a request slot until the task removes them, keeping traversal bounded.
-export const MAX_DURABLE_UI_REQUESTS = 32;
-export const MAX_DURABLE_UI_NOTIFICATION_SLOTS = 32;
-
 /** Only protocol UI fields may cross the document → session-event boundary. */
 export function sanitizeUIRequest(
   id: string,
@@ -147,13 +141,6 @@ function pickUIFields(
   return result;
 }
 
-function exceedsSlotLimit(slots: object, limit: number): boolean {
-  let count = 0;
-  for (const key in slots)
-    if (Object.hasOwn(slots, key) && ++count > limit) return true;
-  return false;
-}
-
 export const DurableUI = defineDoc<UIState>({
   kind: "oppi.extension-ui",
   version: 1,
@@ -186,27 +173,12 @@ export async function requestUI(
   await api.commit(async (tx) => {
     const ui = await tx.doc(DurableUI, api.conversationId);
     const existing = ui.requests[request.id];
-    if (
-      exceedsSlotLimit(
-        ui.requests,
-        MAX_DURABLE_UI_REQUESTS - (existing ? 0 : 1),
-      ) ||
-      exceedsSlotLimit(ui.notifications, MAX_DURABLE_UI_NOTIFICATION_SLOTS)
-    )
-      throw new Error("Durable extension UI slot limit exceeded");
     if (existing && existing.taskId !== api.taskId)
       throw new Error("Durable UI request belongs to another task");
-    if (existing?.response) return;
-    if (payload.timeout && payload.timeoutAt === undefined) {
-      // Keep the original deadline only for a replay of the same payload, not
-      // an unrelated preseeded body under this task's predictable request ID.
-      const prior = existing && sanitizeUIRequest(request.id, existing.request);
-      const { timeoutAt: deadline, ...body } = prior ?? {};
-      payload.timeoutAt =
-        isDeepStrictEqual(body, payload) && typeof deadline === "number"
-          ? deadline
-          : Date.now() + payload.timeout;
-    }
+    // Replay keeps the committed request, answer, and original absolute deadline.
+    if (existing) return;
+    if (payload.timeout && payload.timeoutAt === undefined)
+      payload.timeoutAt = Date.now() + payload.timeout;
     ui.requests[request.id] = { taskId: api.taskId, request: payload };
   }, context);
   const watch = await api.watchDoc(DurableUI, api.conversationId, context);
