@@ -4,6 +4,7 @@ import { performance } from "node:perf_hooks";
 import {
   buildSessionContext,
   type SessionEntry,
+  type LiveEntryRendererSet,
   type TraceEvent,
   type TraceViewMode,
 } from "./trace.js";
@@ -20,11 +21,17 @@ import type { MobileRendererRegistry } from "./mobile-renderer.js";
 async function projectEntries(
   harness: Harness,
   records: readonly EntryRecord[],
+  hiddenEntryIds?: ReadonlySet<EntryId>,
 ): Promise<SessionEntry[]> {
   const entries: SessionEntry[] = [];
   let parentId: string | null = null;
   for (const entry of records) {
-    if (await isRecoveredPartial(entry, harness, records)) continue;
+    if (
+      hiddenEntryIds
+        ? hiddenEntryIds.has(entry.id)
+        : await isRecoveredPartial(entry, harness, records)
+    )
+      continue;
     const message = entry.model?.[0];
     const timestamp = new Date(message?.timestamp ?? 0).toISOString();
     entries.push(
@@ -73,9 +80,11 @@ export async function readDurableTrace(
   harness: Harness,
   id: ConversationId,
   view: TraceViewMode,
+  entryRenderers?: LiveEntryRendererSet,
 ): Promise<TraceEvent[]> {
   return buildSessionContext(await projectEntries(harness, await allEntries(harness, id)), {
     view,
+    entryRenderers,
   });
 }
 
@@ -92,13 +101,54 @@ export async function readDurableTracePage(
   const sourceId = `durable:${id}`;
   const conversation = await harness.conversation(id, context);
   const target = Math.max(1, options.targetEvents ?? 450);
+  const latest = await conversation?.entries({}, 1, undefined, context);
+  const tip = latest?.items[0]?.id;
+  const rendererVersion = options.entryRenderers?.version ?? "";
+
+  async function pageFromRecords(
+    records: readonly EntryRecord[],
+    recoveryEvidence: readonly EntryRecord[],
+    hasOlder = false,
+  ): Promise<TracePageResult> {
+    const hidden = new Set<EntryId>();
+    for (const entry of records) {
+      if (await isRecoveredPartial(entry, harness, recoveryEvidence)) hidden.add(entry.id);
+    }
+    const hiddenCalls = new Set(
+      records.flatMap((entry) => {
+        const content = entry.model?.[0]?.content;
+        return hidden.has(entry.id) && Array.isArray(content)
+          ? content.flatMap((block) => (block.type === "toolCall" ? [block.id] : []))
+          : [];
+      }),
+    );
+    const resultCalls = new Map<string, string>();
+    const entries = (await projectEntries(harness, records, hidden)).map((entry) => {
+      const message = entry.message;
+      if (
+        message?.role !== "toolResult" ||
+        !message.toolCallId ||
+        !hiddenCalls.has(message.toolCallId)
+      )
+        return entry;
+      // The full trace keeps these results without their recovered call. Treat
+      // them as standalone for selection, then restore their original identity.
+      // Do not change JSONL's independent call/result grouping contract.
+      resultCalls.set(`result-${entry.id}`, message.toolCallId);
+      return { ...entry, message: { ...message, toolCallId: undefined } };
+    });
+    const page = readSessionTracePageFromEntries(entries, sourceId, options, hasOlder);
+    page.trace = page.trace.map((event) => {
+      const toolCallId = resultCalls.get(event.id);
+      return toolCallId ? { ...event, toolCallId } : event;
+    });
+    return page;
+  }
+
   let result: TracePageResult;
   if (!conversation || options.aroundEntryId) {
-    result = readSessionTracePageFromEntries(
-      await projectEntries(harness, await allEntries(harness, id)),
-      sourceId,
-      options,
-    );
+    const records = await allEntries(harness, id);
+    result = await pageFromRecords(records, records);
   } else {
     const anchorId = options.cursor ? tracePageCursorEntryId(options.cursor) : undefined;
     const maxEntryId =
@@ -107,39 +157,86 @@ export async function readDurableTracePage(
       return readSessionTracePageFromEntries([], sourceId, options);
     }
     const records: EntryRecord[] = [];
+    const newerRecords: EntryRecord[] = [];
+    let newerCursor;
+    let newerExhausted = false;
     let cursor;
     do {
       const page = await conversation.entries(
-        maxEntryId === undefined ? {} : { maxEntryId },
+        maxEntryId === undefined ? (tip === undefined ? {} : { maxEntryId: tip }) : { maxEntryId },
         Math.max(32, target + 1),
         cursor,
         context,
       );
       records.push(...page.items);
       cursor = page.next;
-      const entries = await projectEntries(harness, [...records].reverse());
-      result = readSessionTracePageFromEntries(entries, sourceId, options, cursor !== undefined);
+      // Cursor windows cannot decide recovery from their prefix alone. Only
+      // aborted assistants need forward evidence: stop as soon as each task has
+      // a newer assistant, or after exhausting the range through the captured tip.
+      const pending = new Set(
+        records
+          .filter(
+            (entry) =>
+              entry.model?.[0]?.role === "assistant" &&
+              entry.model[0].stopReason === "aborted" &&
+              entry.byTaskId &&
+              ![...records, ...newerRecords].some(
+                (later) =>
+                  later.id > entry.id &&
+                  later.byTaskId === entry.byTaskId &&
+                  later.model?.[0]?.role === "assistant",
+              ),
+          )
+          .map((entry) => entry.byTaskId!),
+      );
+      const windowTip = records[0]?.id;
+      while (
+        pending.size &&
+        !newerExhausted &&
+        windowTip !== undefined &&
+        tip !== undefined &&
+        windowTip < tip
+      ) {
+        const newer = await conversation.entries(
+          { minEntryId: (windowTip + 1) as EntryId, maxEntryId: tip },
+          Math.max(32, target + 1),
+          newerCursor,
+          context,
+        );
+        newerRecords.push(...newer.items);
+        for (const entry of newer.items) {
+          if (entry.byTaskId && entry.model?.[0]?.role === "assistant")
+            pending.delete(entry.byTaskId);
+        }
+        newerCursor = newer.next;
+        newerExhausted = newerCursor === undefined;
+      }
+      result = await pageFromRecords(
+        [...records].reverse(),
+        [...records, ...newerRecords],
+        cursor !== undefined,
+      );
       // A result at the lower window edge may have its call just outside it.
       // Keep reading until the shared selector can retain the whole tool span.
       const calls = new Set(
-        entries.flatMap((entry) =>
-          entry.message?.role === "assistant" && Array.isArray(entry.message.content)
-            ? entry.message.content.flatMap((block) =>
+        records.flatMap((entry) =>
+          entry.model?.[0]?.role === "assistant" && Array.isArray(entry.model[0].content)
+            ? entry.model[0].content.flatMap((block) =>
                 block.type === "toolCall" ? [block.id] : [],
               )
             : [],
         ),
       );
-      const orphanResult = entries.some(
-        (entry) =>
-          entry.message?.role === "toolResult" && !calls.has(entry.message.toolCallId ?? ""),
+      const orphanResult = records.some(
+        (entry) => entry.model?.[0]?.role === "toolResult" && !calls.has(entry.model[0].toolCallId),
       );
-      if (result.page.staleCursor || (result.trace.length >= target && !orphanResult)) break;
+      // A result cursor may need its hidden call before its selection-only hash
+      // can be validated. Resolve outstanding calls before declaring it stale.
+      if (!orphanResult && (result.page.staleCursor || result.trace.length >= target)) break;
     } while (cursor !== undefined);
   }
   // Version describes the conversation, not the bounded cursor window.
-  const latest = await conversation?.entries({}, 1, undefined, context);
-  result.page.traceVersion = `${sourceId}:${latest?.items[0]?.id ?? ""}`;
+  result.page.traceVersion = `${sourceId}:${tip ?? ""}${rendererVersion ? `:r${rendererVersion}` : ""}`;
   result.metrics.readMs = Math.round((performance.now() - start) * 100) / 100;
   return result;
 }
@@ -148,13 +245,14 @@ export async function readDurableTraceOutline(
   harness: Harness,
   id: ConversationId,
   mobileRenderers: MobileRendererRegistry,
+  entryRenderers?: LiveEntryRendererSet,
 ): Promise<TraceOutlineResult> {
   const start = performance.now();
   const entries = await projectEntries(harness, await allEntries(harness, id));
   const result = readSessionTraceOutlineFromEntries(
     entries,
     `durable:${id}:${entries.at(-1)?.id ?? ""}`,
-    { mobileRenderers },
+    { mobileRenderers, entryRenderers },
   );
   result.metrics.readMs = Math.round((performance.now() - start) * 100) / 100;
   return result;

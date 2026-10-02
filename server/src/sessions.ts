@@ -483,7 +483,10 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     if (id === undefined || !this.durableHarness) return null;
     const { harness } = await (await this.durableHarness).open();
     const { readDurableTracePage } = await import("./durable-history.js");
-    return readDurableTracePage(harness, id as ConversationId, options);
+    return readDurableTracePage(harness, id as ConversationId, {
+      ...options,
+      entryRenderers: this.getEntryRenderers(sessionId),
+    });
   }
 
   async getServerDurableTraceOutline(sessionId: string): Promise<TraceOutlineResult | null> {
@@ -491,7 +494,12 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     if (id === undefined || !this.durableHarness) return null;
     const { harness } = await (await this.durableHarness).open();
     const { readDurableTraceOutline } = await import("./durable-history.js");
-    return readDurableTraceOutline(harness, id as ConversationId, this.mobileRenderer);
+    return readDurableTraceOutline(
+      harness,
+      id as ConversationId,
+      this.mobileRenderer,
+      this.getEntryRenderers(sessionId),
+    );
   }
 
   async getServerDurableTrace(
@@ -502,7 +510,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     if (id === undefined || !this.durableHarness) return null;
     const { harness } = await (await this.durableHarness).open();
     const { readDurableTrace } = await import("./durable-history.js");
-    return readDurableTrace(harness, id as ConversationId, view);
+    return readDurableTrace(harness, id as ConversationId, view, this.getEntryRenderers(sessionId));
   }
 
   /**
