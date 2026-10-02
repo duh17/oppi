@@ -18,6 +18,8 @@ import {
   ToolTask,
   AssistantEntry,
   InboxDoc,
+  watchEvents,
+  type AgentEvent,
   type ConversationId,
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
@@ -383,7 +385,7 @@ describe("server durable managed runtime", () => {
     observed.unsubscribe();
   });
 
-  it("holds compaction_end until a busy conversation places its later summary write", async () => {
+  it("emits held compaction_end before a follow-up starts in the same placement batch", async () => {
     let entered!: () => void;
     let release!: () => void;
     const started = new Promise<void>((resolve) => {
@@ -409,6 +411,7 @@ describe("server durable managed runtime", () => {
           return fauxAssistantMessage("Finished turn");
         },
         fauxAssistantMessage("Later summary"),
+        fauxAssistantMessage("FOLLOWUP ANSWER"),
       ],
       { settings: compactionSettings },
     );
@@ -425,6 +428,11 @@ describe("server durable managed runtime", () => {
       f.storage.getSession(f.session.id)!.serverDurable!.conversationId,
       context,
     );
+    const raw = await watchEvents(harness, conversation.id, context);
+    const batches: AgentEvent[][] = [];
+    raw.start(async (events) => {
+      batches.push([...events]);
+    });
     const compactEnd = observed.next((message) => message.type === "compaction_end");
     const id = await conversation.compact(undefined, context);
     const task = await harness.waitForTask(id, context);
@@ -432,6 +440,11 @@ describe("server durable managed runtime", () => {
     expect(observed.messages.filter((message) => message.type === "compaction_end")).toHaveLength(
       0,
     );
+    const followUpAnswer = observed.next(
+      (message) => message.type === "text_delta" && message.delta === "FOLLOWUP ANSWER",
+    );
+    await f.manager.sendFollowUp(f.session.id, "follow-up in placement batch");
+    const placementStart = observed.messages.length;
     release();
     await turnEnd;
     expect(await compactEnd).toMatchObject({
@@ -440,11 +453,27 @@ describe("server durable managed runtime", () => {
       willRetry: false,
       tokensBefore: expect.any(Number),
     });
+    await followUpAnswer;
+    await raw.stop();
+    const placement = batches.find((batch) =>
+      batch.some((event) => event.type === "message_end" && event.entry.kind === "pi.compaction"),
+    );
+    expect(placement).toBeDefined();
+    expect(placement!.some((event) => event.type === "run_end")).toBe(true);
+    expect(placement!.some((event) => event.type === "run_start")).toBe(true);
     expect(
-      observed.messages.filter(
-        (message) => message.type === "message_end" && message.role === "user",
-      ),
-    ).toHaveLength(3);
+      placement!.some((event) => event.type === "message_end" && event.entry.kind === "pi.user"),
+    ).toBe(true);
+    const messages = observed.messages.slice(placementStart);
+    const compactIndex = messages.findIndex((message) => message.type === "compaction_end");
+    const followUpIndex = messages.findIndex(
+      (message) => message.type === "message_end" && message.role === "user",
+    );
+    const startIndex = messages.findIndex((message) => message.type === "agent_start");
+    expect(compactIndex).toBeGreaterThanOrEqual(0);
+    expect(followUpIndex).toBeGreaterThan(compactIndex);
+    expect(startIndex).toBeGreaterThan(compactIndex);
+    expect(messages.filter((message) => message.type === "compaction_end")).toHaveLength(1);
     observed.unsubscribe();
   });
 
