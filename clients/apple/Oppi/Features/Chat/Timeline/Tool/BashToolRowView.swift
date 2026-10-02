@@ -217,8 +217,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         // left the tail, keep a painted live tail still, through completion
         // too. Content must not move under the reader; paints are skipped,
         // not laid out, and the newest one lands when they settle at the tail.
-        let freezeLiveOutput = input.terminalResolved && outputShowsLiveTail
-            && !outputShouldAutoFollow && outputRenderSignature != nil
+        let freezeLiveOutput = input.terminalResolved && outputShowsLiveTail && !outputShouldAutoFollow
         if freezeLiveOutput {
             frozenLiveOutput = (input, outputColor)
         } else {
@@ -237,13 +236,13 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
             ) ^ (input.terminalResolved ? 0x5354524D : 0)
 
             if signature != outputRenderSignature, !freezeLiveOutput {
-                outputShowsLiveTail = input.terminalResolved && input.isStreaming
                 let startNs = ChatTimelinePerf.timestampNs()
                 let didTextChange: Bool
                 let previousText = outputLabel.attributedText?.string ?? outputLabel.text ?? ""
                 if let cached = ToolRowRenderCache.get(signature: signature) {
                     cancelDeferredANSIHighlight()
                     outputLabel.attributedText = cached
+                    outputShowsLiveTail = input.terminalResolved && input.isStreaming
                     didTextChange = previousText != cached.string
                 } else if displayOutput.utf8.count > Self.deferredANSIByteThreshold {
                     terminalEngine = nil
@@ -261,7 +260,8 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                         outputColor: outputColor,
                         unwrapped: input.unwrapped,
                         sessionId: input.sessionId,
-                        terminalResolved: input.terminalResolved
+                        terminalResolved: input.terminalResolved,
+                        source: input
                     )
                 } else {
                     cancelDeferredANSIHighlight()
@@ -280,6 +280,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                         )
                         ToolRowRenderCache.set(signature: signature, attributed: attributed)
                         outputLabel.attributedText = attributed
+                        outputShowsLiveTail = input.terminalResolved && input.isStreaming
                         didTextChange = previousText != attributed.string
                     } catch {
                         outputLabel.text = "Terminal rendering failed: \(error)"
@@ -553,17 +554,21 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         let sessionId: String?
         let themeID: ThemeID
         let terminalResolved: Bool
+        /// The render input that scheduled this job, withheld if the reader
+        /// detaches from a painted live tail before the job lands.
+        let source: BashRenderInput?
     }
 
     private var pendingDeferredANSIRequest: DeferredANSIRequest?
 
     private func scheduleDeferredANSIHighlight(
         text: String, isError: Bool, signature: Int, outputColor: UIColor,
-        unwrapped: Bool, sessionId: String?, terminalResolved: Bool = false
+        unwrapped: Bool, sessionId: String?, terminalResolved: Bool = false, source: BashRenderInput? = nil
     ) {
         let request = DeferredANSIRequest(text: text, isError: isError,
             signature: signature, outputColor: outputColor, unwrapped: unwrapped,
-            sessionId: sessionId, themeID: ThemeRuntimeState.currentThemeID(), terminalResolved: terminalResolved)
+            sessionId: sessionId, themeID: ThemeRuntimeState.currentThemeID(), terminalResolved: terminalResolved,
+            source: source)
         if deferredANSITask != nil {
             // Keep one useful worker and only the latest cumulative snapshot.
             if deferredANSISignature != signature { pendingDeferredANSIRequest = request }
@@ -610,8 +615,19 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                     ToolRowRenderCache.set(signature: signature, attributed: result.attributed)
                 }
                 if request.themeID == ThemeRuntimeState.currentThemeID(),
+                   isLatest || (succeeded && isEarlierAppend),
+                   self.ownsTerminalOutput, self.outputShowsLiveTail, !self.outputShouldAutoFollow {
+                    // The reader detached from a painted live tail while this
+                    // job ran. Same rule as apply: keep the tail still and land
+                    // the newest input when they settle back at the tail.
+                    if self.frozenLiveOutput == nil, let source = request.source {
+                        self.frozenLiveOutput = (source, request.outputColor)
+                    }
+                    if isLatest { self.outputRenderSignature = nil }
+                } else if request.themeID == ThemeRuntimeState.currentThemeID(),
                    isLatest || (succeeded && isEarlierAppend) {
                     self.outputLabel.attributedText = result.attributed
+                    self.outputShowsLiveTail = request.source.map { $0.terminalResolved && $0.isStreaming } ?? false
                     self.terminalEngine = nil
                     self.outputRenderedText = self.outputUsesUnwrappedLayout ? result.attributed.string : nil
                     self.updateOutputLabelWidthIfNeeded()
@@ -627,7 +643,8 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                 if let pending {
                     self.scheduleDeferredANSIHighlight(text: pending.text, isError: pending.isError,
                         signature: pending.signature, outputColor: pending.outputColor,
-                        unwrapped: pending.unwrapped, sessionId: pending.sessionId, terminalResolved: pending.terminalResolved)
+                        unwrapped: pending.unwrapped, sessionId: pending.sessionId, terminalResolved: pending.terminalResolved,
+                        source: pending.source)
                 }
             }
         }

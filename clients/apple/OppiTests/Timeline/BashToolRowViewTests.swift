@@ -490,6 +490,55 @@ struct BashToolRowViewTests {
         #expect(row.outputLabel.textStorage.string.hasSuffix("l500"))
         #expect(row.outputLabel.textStorage.string.hasPrefix("l1\n"), "The finished row shows the whole output")
     }
+
+    @Test("a deferred completion paint that lands after the reader detaches keeps the tail still")
+    func deferredCompletionAfterDetachIsWithheld() async throws {
+        let owner = TerminalOutputStream { _ in throw CancellationError() }
+        func lines(_ count: Int) -> String { (1...count).map { "deferred \($0 + 10_000)" }.joined(separator: "\n") }
+        // The live tail paints synchronously; the finished output renders off-main.
+        #expect(Substring(BashToolRowView.liveTail(of: lines(300))).utf8.count < BashToolRowView.deferredANSIByteThreshold)
+        #expect(lines(600).utf8.count > BashToolRowView.deferredANSIByteThreshold)
+        func configuration(_ output: String, done: Bool) -> ToolTimelineRowConfiguration {
+            var configuration = makeTimelineToolConfiguration(
+                expandedContent: .bash(command: "run", output: output, unwrapped: false),
+                isExpanded: true, isDone: done)
+            configuration.terminalOutputStream = owner
+            return configuration
+        }
+        let view = ToolTimelineRowContentView(configuration: configuration(lines(300), done: false))
+        _ = fittedTimelineSize(for: view, width: 390)
+        let row = view.bashToolRowView
+        let scroll = row.outputScrollView
+        let painted = row.outputLabel.textStorage.string
+        #expect(painted.hasSuffix("deferred 10300"))
+
+        // The tool finishes while following; the reader grabs the row before that paint lands.
+        view.configuration = configuration(lines(600), done: true)
+        scroll.draggingOverrideForTesting = true
+        row.scrollViewWillBeginDragging(scroll)
+        scroll.contentOffset.y = 20
+        scroll.draggingOverrideForTesting = false
+        row.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        #expect(!row.outputShouldAutoFollow)
+        let withheld = await waitForMainActorCondition(timeout: .seconds(3)) { row.outputRenderSignature == nil }
+        #expect(withheld)
+        _ = fittedTimelineSize(for: view, width: 390)
+        #expect(row.outputLabel.textStorage.string == painted)
+        #expect(abs(scroll.contentOffset.y - 20) < 1)
+
+        // Settling back at the tail lands the finished output and follows it.
+        scroll.draggingOverrideForTesting = true
+        row.scrollViewWillBeginDragging(scroll)
+        scroll.contentOffset.y = scroll.contentSize.height - scroll.bounds.height
+        scroll.draggingOverrideForTesting = false
+        row.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        let finished = await waitForMainActorCondition(timeout: .seconds(3)) {
+            row.outputLabel.textStorage.string.hasSuffix("deferred 10600")
+        }
+        #expect(finished)
+        #expect(row.outputLabel.textStorage.string.hasPrefix("deferred 10001\n"))
+        #expect(row.outputShouldAutoFollow)
+    }
 }
 
 private func uniqueForegroundColorCount(_ attributed: NSAttributedString) -> Int {
