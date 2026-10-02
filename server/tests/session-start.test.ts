@@ -102,15 +102,17 @@ describe("SessionStartCoordinator status persistence", () => {
     expect(session.serverDurable).toBeUndefined();
   });
 
-  it("keeps the disabled SDK sandbox path unchanged without discarding enrollment", async () => {
+  it("keeps the flag-off SDK fallback for an unbound sandbox enrollment", async () => {
     const session = makeSession({ serverDurable: {} });
     const deps = makeDeps(session);
     const workspace = { ...makeWorkspace(), runtime: "sandbox" as const };
     const create = vi.spyOn(SdkBackend, "create").mockResolvedValue({} as SdkBackend);
     await new SessionStartCoordinator(deps).startSessionInner("key", session.id, workspace);
     expect(create).toHaveBeenCalledOnce();
-    expect(session.serverDurable).toEqual({});
-    expect(session.warnings).toBeUndefined();
+    expect(session.serverDurable).toBeUndefined();
+    expect(session.warnings).toContain(
+      "Server durable is host-only; using the SDK backend for this sandbox session",
+    );
   });
   it("persists starting during SDK startup, then ready after registration", async () => {
     const session = makeSession({ status: "ready" });
