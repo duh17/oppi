@@ -3,6 +3,8 @@ import type { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
 import type { SessionManager } from "./sessions.js";
 import type { Storage } from "./storage.js";
 import type { LiveEntryRendererSet, TraceEvent } from "./trace.js";
+import type { TracePageOptions, TracePageResult } from "./trace-paging.js";
+import type { TraceOutlineResult } from "./trace-outline.js";
 import type { ServerMessage, Session } from "./types.js";
 
 /**
@@ -86,6 +88,17 @@ export class SessionRuntimes implements AgentRuntimeTransport {
       sessionFile: snapshot.piSessionFile,
       sessionId: snapshot.id,
     };
+  }
+
+  getServerDurableTracePage(
+    sessionId: string,
+    options: TracePageOptions,
+  ): Promise<TracePageResult | null> {
+    return this.oppi.getServerDurableTracePage(sessionId, options);
+  }
+
+  getServerDurableTraceOutline(sessionId: string): Promise<TraceOutlineResult | null> {
+    return this.oppi.getServerDurableTraceOutline(sessionId);
   }
 
   getServerDurableTrace(sessionId: string, view: "context" | "full"): Promise<TraceEvent[] | null> {

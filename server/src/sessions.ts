@@ -50,6 +50,8 @@ import { updateSearchIndexForSessionEvent } from "./session-search-indexing.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 import { SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS, SdkBackend } from "./sdk-backend.js";
 import type { LiveEntryRendererSet, TraceEvent } from "./trace.js";
+import type { TracePageOptions, TracePageResult } from "./trace-paging.js";
+import type { TraceOutlineResult } from "./trace-outline.js";
 import type { SessionStopTimers } from "./session-stop.js";
 import { notifySandboxWorkspaceActivity } from "./workspace-sandbox-lifecycle.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
@@ -471,6 +473,25 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     if (!active) return null;
 
     return this.stateCoordinator.refreshSessionState(key, active as SessionStateActiveSession);
+  }
+
+  async getServerDurableTracePage(
+    sessionId: string,
+    options: TracePageOptions,
+  ): Promise<TracePageResult | null> {
+    const id = this.storage.getSession(sessionId)?.serverDurable?.conversationId;
+    if (id === undefined || !this.durableHarness) return null;
+    const { harness } = await (await this.durableHarness).open();
+    const { readDurableTracePage } = await import("./durable-history.js");
+    return readDurableTracePage(harness, id as ConversationId, options);
+  }
+
+  async getServerDurableTraceOutline(sessionId: string): Promise<TraceOutlineResult | null> {
+    const id = this.storage.getSession(sessionId)?.serverDurable?.conversationId;
+    if (id === undefined || !this.durableHarness) return null;
+    const { harness } = await (await this.durableHarness).open();
+    const { readDurableTraceOutline } = await import("./durable-history.js");
+    return readDurableTraceOutline(harness, id as ConversationId, this.mobileRenderer);
   }
 
   async getServerDurableTrace(

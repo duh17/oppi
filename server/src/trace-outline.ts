@@ -185,6 +185,61 @@ export async function readSessionTraceOutlineFromFiles(
   };
 }
 
+/** Reuse the outline row projector and its metadata budgets for non-JSONL storage. */
+export function readSessionTraceOutlineFromEntries(
+  sessionEntries: SessionEntry[],
+  traceVersion: string,
+  options: {
+    mobileRenderers: MobileRendererRegistry;
+    entryRenderers?: LiveEntryRendererSet | null;
+  },
+): TraceOutlineResult {
+  const start = performance.now();
+  const metadataBudget = { remaining: MAX_OUTLINE_METADATA_BYTES };
+  const entries: TraceOutlineEntry[] = [];
+  const toolRowsByCallId = new Map<string, TraceOutlineEntry>();
+  for (const original of sessionEntries) {
+    let entry: OutlineSourceEntry = original;
+    if (original.message?.role === "toolResult") {
+      const result = retainResultDetails(
+        asRecord(original.message.details) ?? undefined,
+        metadataBudget,
+        options.mobileRenderers,
+      );
+      entry = {
+        ...original,
+        resultHints: result.hints,
+        message: { ...original.message, content: "", details: result.details },
+      };
+    }
+    projectEntry(
+      entry,
+      entries,
+      toolRowsByCallId,
+      options.mobileRenderers,
+      metadataBudget,
+      options.entryRenderers,
+    );
+  }
+  return {
+    outline: {
+      traceVersion: appendRendererVersion(traceVersion, options.entryRenderers?.version ?? ""),
+      entries,
+      itemCount: entries.length,
+      sourceCount: 1,
+      jsonlBytes: 0,
+    },
+    metrics: {
+      rawEntryCount: sessionEntries.length,
+      outlineEntryCount: entries.length,
+      jsonlBytes: 0,
+      readMs: 0,
+      parseMs: 0,
+      projectMs: elapsed(start),
+    },
+  };
+}
+
 function elapsed(startMs: number): number {
   return Math.round((performance.now() - startMs) * 100) / 100;
 }

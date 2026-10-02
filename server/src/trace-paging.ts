@@ -301,6 +301,111 @@ export function readSessionTracePageFromFiles(
   };
 }
 
+/** Storage-neutral seam: ordered entries, with stable source/entry identity in opaque cursors.
+ * `byteStart` is an entry position here, not a file offset. JSONL readers are unchanged.
+ */
+export function readSessionTracePageFromEntries(
+  entries: SessionEntry[],
+  sourceId: string,
+  options: TracePageOptions = {},
+  hasOlderEntries = false,
+): TracePageResult {
+  const start = performance.now();
+  const lines: ParsedLine[] = entries.map((entry, index) => ({
+    entry,
+    sourceIndex: 0,
+    sourceId,
+    byteStart: index,
+    byteEnd: index + 1,
+    // Window boundaries can change parent links; identity hashes only immutable content.
+    hash: hashLine(Buffer.from(JSON.stringify({ ...entry, parentId: undefined }))),
+  }));
+  const rendererVersion = options.entryRenderers?.version ?? "";
+  const traceVersion = appendRendererVersion(
+    `${sourceId}:${lines.at(-1)?.entry.id ?? ""}`,
+    rendererVersion,
+  );
+  const previewBytes = Math.max(0, options.previewBytes ?? DEFAULT_PREVIEW_BYTES);
+  const aroundId = options.aroundEntryId?.trim();
+  const cursor = options.cursor && !aroundId ? decodeCursor(options.cursor) : null;
+  const anchor = cursor && lines.find((line) => line.entry.id === cursor.entryId);
+  if (
+    options.cursor &&
+    !aroundId &&
+    (!anchor ||
+      cursor?.sourceId !== sourceId ||
+      cursor.lineHash !== anchor.hash ||
+      (cursor.rendererVersion ?? "") !== rendererVersion)
+  ) {
+    return emptyPage({
+      traceVersion,
+      previewBytes,
+      jsonlBytes: 0,
+      scannedBytes: 0,
+      rawEntryCount: lines.length,
+      readMs: 0,
+      parseMs: 0,
+      staleCursor: true,
+    });
+  }
+  const targetEvents = Math.max(1, options.targetEvents ?? DEFAULT_TARGET_EVENTS);
+  const target =
+    aroundId &&
+    lines.find(
+      (line) =>
+        line.entry.id === aroundId ||
+        line.entry.id === normalizeTraceDerivedEntryId(aroundId) ||
+        toolCallIdsInEntry(line.entry).includes(aroundId),
+    );
+  const eligible = anchor ? lines.filter((line) => line.byteStart < anchor.byteStart) : lines;
+  const selected = aroundId
+    ? target &&
+      (target.entry.type !== "custom" || projectCustomEntry(target.entry, options.entryRenderers))
+      ? selectAroundPageEntries(lines, target, targetEvents, options.entryRenderers)
+      : []
+    : selectPageEntries(eligible, targetEvents, options.entryRenderers);
+  const selectMs = elapsed(start);
+  const previewStart = performance.now();
+  const prepared = prepareEntriesForFormatting(selected, previewBytes);
+  const previewMs = elapsed(previewStart);
+  const formatStart = performance.now();
+  const trace = applyToolOutputPreviews(
+    formatEntries(prepared.entries, options),
+    previewBytes,
+    prepared.previews,
+  );
+  const formatMs = elapsed(formatStart);
+  const first = selected[0];
+  const hasOlder = !!first && (hasOlderEntries || first.byteStart > 0);
+  return {
+    trace,
+    page: {
+      hasOlder,
+      olderCursor: hasOlder && first ? encodeCursor(first, undefined, rendererVersion) : null,
+      traceVersion,
+      previewBytes,
+      staleCursor: false,
+    },
+    metrics: {
+      rawEntryCount: lines.length,
+      traceEventCount: trace.length,
+      selectedRawEntryCount: selected.length,
+      jsonlBytes: 0,
+      scannedBytes: 0,
+      readMs: 0,
+      parseMs: 0,
+      selectMs,
+      previewMs,
+      formatMs,
+    },
+  };
+}
+
+/** Decode only identity; the storage-neutral reader still validates source and content. */
+export function tracePageCursorEntryId(cursor: string): string | undefined {
+  return decodeCursor(cursor)?.entryId;
+}
+
 function emptyPage(params: {
   traceVersion: string;
   previewBytes: number;

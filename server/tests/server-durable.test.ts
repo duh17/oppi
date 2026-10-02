@@ -2423,6 +2423,164 @@ describe("server durable managed runtime", () => {
     observed.unsubscribe();
   });
 
+  it("pages and outlines live and stopped durable history across compaction without scheduling reads", async () => {
+    const f = await fixture([
+      fauxAssistantMessage("answer one"),
+      fauxAssistantMessage("answer two"),
+      fauxAssistantMessage("answer three"),
+    ]);
+    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    for (const prompt of ["turn one", "turn two", "turn three"]) {
+      const ended = observed.next((message) => message.type === "agent_end");
+      await f.manager.sendPrompt(f.session.id, prompt);
+      await ended;
+    }
+    const { harness } = await opening.mock.results[0]!.value;
+    const conversation = (await harness.conversation(
+      f.storage.getSession(f.session.id)!.serverDurable!.conversationId! as ConversationId,
+      context,
+    ))!;
+    const history = await conversation.entries({}, 100, undefined, context);
+    await conversation.commit(async (tx) => {
+      await tx.appendEntry(conversation.id, {
+        kind: "pi.compaction",
+        head: history.items[0]!.id,
+        model: [{ role: "user", content: "<summary>earlier turns</summary>", timestamp: 7 }],
+      });
+    }, context);
+    const service = new SessionTraceService({
+      storage: f.storage,
+      sessionRuntimes: f.manager,
+      ensureSessionContextWindow: (session) => session,
+      mobileRenderers: f.manager.mobileRenderer,
+    });
+    const resume = vi.spyOn(harness, "resume");
+    for (const stopped of [false, true]) {
+      if (stopped) await f.manager.stopSession(f.session.id);
+      resume.mockClear();
+      const full = await service.getSessionWithTrace({ session: f.session, traceView: "full" });
+      expect(
+        full.trace.filter((event) => event.type === "user").map((event) => event.text),
+      ).toEqual(["turn one", "turn two", "turn three"]);
+      expect(full.trace.at(-1)?.type).toBe("compaction");
+      const pages = [];
+      let cursor: string | undefined;
+      do {
+        const result = (await service.getSessionTracePage({
+          session: f.session,
+          targetEvents: 2,
+          cursor,
+        }))!;
+        expect(result.page.staleCursor).toBe(false);
+        expect(result.trace.length).toBeGreaterThan(0);
+        pages.unshift(...result.trace);
+        cursor = result.page.olderCursor ?? undefined;
+      } while (cursor);
+      expect(pages).toEqual(full.trace);
+      const outline = await service.getSessionTraceOutline({ session: f.session });
+      expect(outline.outline.entries.map((entry) => entry.kind)).toEqual([
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+        "compaction",
+      ]);
+      for (const entry of outline.outline.entries) {
+        const around = (await service.getSessionTracePage({
+          session: f.session,
+          targetEvents: 2,
+          aroundEntryId: entry.id,
+        }))!;
+        expect(around.trace.map((event) => event.id)).toContain(entry.id);
+      }
+      const stale = (await service.getSessionTracePage({ session: f.session, cursor: "invalid" }))!;
+      expect(stale.page.staleCursor).toBe(true);
+      expect(resume).not.toHaveBeenCalled();
+    }
+    observed.unsubscribe();
+  });
+
+  it("bounds durable page reads for 2,000 entries and keeps cursors valid after append", async () => {
+    const f = await fixture([]);
+    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    await f.manager.startSession(f.session.id, f.workspace);
+    const { harness } = await opening.mock.results[0]!.value;
+    const conversation = (await harness.conversation(
+      f.storage.getSession(f.session.id)!.serverDurable!.conversationId! as ConversationId,
+      context,
+    ))!;
+    await conversation.commit(async (tx) => {
+      for (let index = 0; index < 2_000; index++)
+        await tx.appendEntry(conversation.id, {
+          kind: "pi.user",
+          model: [{ role: "user", content: `entry ${index}`, timestamp: index }],
+        });
+    }, context);
+    vi.spyOn(harness, "conversation").mockResolvedValue(conversation);
+    const reads = vi.spyOn(conversation, "entries");
+    const resume = vi.spyOn(harness, "resume");
+    const service = new SessionTraceService({
+      storage: f.storage,
+      sessionRuntimes: f.manager,
+      ensureSessionContextWindow: (session) => session,
+      mobileRenderers: f.manager.mobileRenderer,
+    });
+    const timings: number[] = [];
+    let cursor: string | undefined;
+    const events = [];
+    let version: string | undefined;
+    do {
+      const start = performance.now();
+      const page = (await service.getSessionTracePage({
+        session: f.session,
+        targetEvents: 100,
+        cursor,
+      }))!;
+      timings.push(performance.now() - start);
+      expect(page.trace).toHaveLength(100);
+      expect(page.page.staleCursor).toBe(false);
+      version ??= page.page.traceVersion;
+      expect(page.page.traceVersion).toBe(version);
+      events.unshift(...page.trace);
+      cursor = page.page.olderCursor ?? undefined;
+    } while (cursor);
+    expect(events.map((event) => event.text)).toEqual(
+      Array.from({ length: 2_000 }, (_, index) => `entry ${index}`),
+    );
+    // One bounded window + one latest-entry read per page, not twenty full rescans.
+    expect(reads).toHaveBeenCalledTimes(40);
+    expect(reads.mock.calls.every(([, limit]) => limit <= 101)).toBe(true);
+    const latest = (await service.getSessionTracePage({ session: f.session, targetEvents: 2 }))!;
+    await conversation.commit(async (tx) => {
+      await tx.appendEntry(conversation.id, {
+        kind: "pi.user",
+        model: [{ role: "user", content: "appended", timestamp: 2000 }],
+      });
+    }, context);
+    const older = (await service.getSessionTracePage({
+      session: f.session,
+      targetEvents: 2,
+      cursor: latest.page.olderCursor!,
+    }))!;
+    expect(older.trace.map((event) => event.text)).toEqual(["entry 1996", "entry 1997"]);
+    expect(older.page.staleCursor).toBe(false);
+    expect(older.page.traceVersion).not.toBe(latest.page.traceVersion);
+    const outlineStart = performance.now();
+    const outline = await service.getSessionTraceOutline({ session: f.session });
+    const outlineMs = performance.now() - outlineStart;
+    expect(outline.outline.itemCount).toBe(2001);
+    expect(resume).not.toHaveBeenCalled();
+    const perf = { pages: timings.length, timingsMs: timings, outlineMs };
+    writeFileSync(join(f.dir, "trace-perf.json"), JSON.stringify(perf, null, 2));
+    process.stdout.write(
+      `Durable 2000-entry perf: pages=${timings.length} min=${Math.min(...timings).toFixed(2)} max=${Math.max(...timings).toFixed(2)} avg=${(timings.reduce((a, b) => a + b, 0) / timings.length).toFixed(2)}ms outline=${outlineMs.toFixed(2)}ms artifact=${join(f.dir, "trace-perf.json")}\n`,
+    );
+  });
+
   it("loads trace for an active durable session without Pi tree metadata", async () => {
     const f = await fixture([]);
     await f.manager.startSession(f.session.id, f.workspace);

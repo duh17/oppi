@@ -114,6 +114,8 @@ export interface SessionTraceServiceDeps {
   > & {
     getEntryRenderers?: SessionRuntimes["getEntryRenderers"];
     getServerDurableTrace?: SessionRuntimes["getServerDurableTrace"];
+    getServerDurableTracePage?: SessionRuntimes["getServerDurableTracePage"];
+    getServerDurableTraceOutline?: SessionRuntimes["getServerDurableTraceOutline"];
   };
   ensureSessionContextWindow: (session: Session) => Session;
   getMcpServerNames?: (session: Session) => readonly string[];
@@ -204,6 +206,27 @@ export class SessionTraceService {
       hydratedSession,
       typeof live?.sessionFile === "string" ? live.sessionFile : undefined,
     );
+    const durablePage = await this.deps.sessionRuntimes.getServerDurableTracePage?.(
+      params.session.id,
+      {
+        cursor: params.cursor,
+        aroundEntryId: params.aroundEntryId,
+        targetEvents: params.targetEvents,
+        previewBytes: params.previewBytes,
+      },
+    );
+    if (durablePage) {
+      const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
+      return {
+        session: this.deps.ensureSessionContextWindow(latestSession),
+        ...durablePage,
+        trace: this.withMobileRenderSegments(
+          durablePage.trace,
+          params.includePresentationSegments === true,
+          this.deps.getMcpServerNames?.(latestSession) ?? [],
+        ),
+      };
+    }
     if (jsonlPaths.length === 0) {
       const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
       const previewBytes = Math.max(0, params.previewBytes ?? 4096);
@@ -267,10 +290,12 @@ export class SessionTraceService {
       typeof live?.sessionFile === "string" ? live.sessionFile : undefined,
     );
     const entryRenderers = this.liveEntryRenderers(params.session.id);
-    const result = await readSessionTraceOutlineFromFiles(jsonlPaths, {
-      mobileRenderers: this.mobileRenderers,
-      ...(entryRenderers ? { entryRenderers } : {}),
-    });
+    const result =
+      (await this.deps.sessionRuntimes.getServerDurableTraceOutline?.(params.session.id)) ??
+      (await readSessionTraceOutlineFromFiles(jsonlPaths, {
+        mobileRenderers: this.mobileRenderers,
+        ...(entryRenderers ? { entryRenderers } : {}),
+      }));
     const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
     return {
       session: this.deps.ensureSessionContextWindow(latestSession),
