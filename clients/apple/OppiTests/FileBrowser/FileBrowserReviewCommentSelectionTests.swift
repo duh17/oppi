@@ -305,8 +305,8 @@ struct FileBrowserReviewCommentSelectionTests {
     /// Re-showing the view (full-screen modal, or a pop back from a pushed
     /// wiki link) must still pick up a file that changed while it was covered.
     @Test func textReaderShowsChangedFileAfterFullScreenModalCover() async throws {
-        FileBrowserMutableTextURLProtocol.setBody("file-browser-revalidate-before")
-        let client = FileBrowserMutableTextURLProtocol.makeClient()
+        let response = FileBrowserMutableTextURLProtocol.Response(body: "file-browser-revalidate-before")
+        let client = FileBrowserMutableTextURLProtocol.makeClient(response: response)
         let host = UIHostingController(rootView:
             FileBrowserContentView(
                 workspaceId: FileBrowserMutableTextURLProtocol.workspaceId,
@@ -343,13 +343,127 @@ struct FileBrowserReviewCommentSelectionTests {
         host.present(cover, animated: false)
         let covered = await waitForMainActorCondition { host.view.window == nil }
         #expect(covered, "full-screen modal did not take the reader out of the window")
-        FileBrowserMutableTextURLProtocol.setBody("file-browser-revalidate-after")
+        response.set(body: "file-browser-revalidate-after")
         cover.dismiss(animated: false)
 
         let refreshed = await waitForMainActorCondition(timeout: .seconds(5)) {
             showsText("file-browser-revalidate-after")
         }
         #expect(refreshed, "returning to the file view kept stale text after the file changed")
+    }
+
+    /// Exercise the real SwiftUI task on re-show, not just status classification.
+    @Test(arguments: [401, 403, 404], [false, true])
+    func textReaderReplacesStaleTextAfterDefinitiveFailure(status: Int, coded: Bool) async throws {
+        let message = status == 404 ? "File no longer exists" : "File access denied"
+        try await checkReaderAfterReShow(status: status, message: message, keepsReader: false, coded: coded)
+    }
+
+    @Test(arguments: [200, 408, 500, 503, URLError.notConnectedToInternet.rawValue, URLError.timedOut.rawValue])
+    func textReaderKeepsIdentityAfterUnchangedTextOrTransientFailure(status: Int) async throws {
+        try await checkReaderAfterReShow(status: status, message: "Temporary failure", keepsReader: true)
+    }
+
+    private func checkReaderAfterReShow(
+        status: Int, message: String, keepsReader: Bool, coded: Bool = true
+    ) async throws {
+        let text = "file-browser-revalidate-kept-text"
+        let response = FileBrowserMutableTextURLProtocol.Response(body: text)
+        let client = FileBrowserMutableTextURLProtocol.makeClient(response: response)
+        let host = UIHostingController(rootView:
+            FileBrowserContentView(
+                workspaceId: FileBrowserMutableTextURLProtocol.workspaceId,
+                filePath: FileBrowserMutableTextURLProtocol.filePath,
+                fileName: FileBrowserMutableTextURLProtocol.filePath,
+                chromeMode: .pushed
+            )
+            .environment(\.apiClient, client)
+        )
+        host.loadViewIfNeeded()
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let window = UIWindow(frame: host.view.frame)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let mounted = await waitForMainActorCondition(timeout: .seconds(5)) {
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            return firstFullScreenCodeViewController(in: host) != nil
+        }
+        #expect(mounted, "initial reads: \(response.requestCount)")
+        let reader = try #require(firstFullScreenCodeViewController(in: host))
+        let cover = UIViewController()
+        cover.modalPresentationStyle = .fullScreen
+        host.present(cover, animated: false)
+        let covered = await waitForMainActorCondition { host.view.window == nil }
+        #expect(covered)
+        let errorBody = coded
+            ? "{\"error\":\"\(message)\",\"code\":\"file_error\"}"
+            : "{\"error\":\"\(message)\"}"
+        response.set(body: status == 200 ? text : errorBody, status: status)
+        let readsBefore = response.requestCount
+        cover.dismiss(animated: false)
+        let reRead = await waitForMainActorCondition(timeout: .seconds(5)) {
+            response.requestCount > readsBefore && host.view.window != nil
+        }
+        #expect(reRead, "re-show must actually re-read the file")
+
+        if keepsReader {
+            let kept = await waitForMainActorConditionToStayTrue(for: .seconds(1)) {
+                host.view.setNeedsLayout()
+                host.view.layoutIfNeeded()
+                return firstFullScreenCodeViewController(in: host) === reader
+            }
+            #expect(kept, "a transient failure or unchanged text must not remount the reader")
+            reader.view.layoutIfNeeded()
+            #expect(timelineAllTextViews(in: reader.view).contains {
+                timelineRenderedText(of: $0).contains(text)
+            })
+        } else {
+            let unavailable = await waitForMainActorCondition(timeout: .seconds(5)) {
+                host.view.setNeedsLayout()
+                host.view.layoutIfNeeded()
+                return firstFullScreenCodeViewController(in: host) == nil
+            }
+            #expect(unavailable, "definitive failure left the stale reader mounted")
+            let cleared = await waitForMainActorConditionToStayTrue(for: .seconds(1)) {
+                host.view.setNeedsLayout()
+                host.view.layoutIfNeeded()
+                return firstFullScreenCodeViewController(in: host) == nil
+                    && !timelineAllTextViews(in: host.view).contains {
+                        timelineRenderedText(of: $0).contains(text)
+                    }
+                    && !timelineAllLabels(in: host.view).contains {
+                        $0.text?.contains(text) == true
+                    }
+            }
+            #expect(cleared, "no reader or stale text may remain after \(status)")
+
+            // A later successful re-show must recover, rather than pinning the
+            // file in a terminal unavailable state or resurrecting cached text.
+            let recoveryCover = UIViewController()
+            recoveryCover.modalPresentationStyle = .fullScreen
+            host.present(recoveryCover, animated: false)
+            let coveredAgain = await waitForMainActorCondition { host.view.window == nil }
+            #expect(coveredAgain)
+            let freshText = "file-browser-recovered-fresh-text"
+            response.set(body: freshText)
+            let readsBeforeRecovery = response.requestCount
+            recoveryCover.dismiss(animated: false)
+            let recovered = await waitForMainActorCondition(timeout: .seconds(5)) {
+                host.view.setNeedsLayout()
+                host.view.layoutIfNeeded()
+                guard response.requestCount > readsBeforeRecovery,
+                      let freshReader = firstFullScreenCodeViewController(in: host),
+                      freshReader !== reader else { return false }
+                freshReader.view.layoutIfNeeded()
+                return timelineAllTextViews(in: freshReader.view).contains {
+                    timelineRenderedText(of: $0).contains(freshText)
+                }
+            }
+            #expect(recovered, "a later 200 must show fresh text after \(status)")
+        }
     }
 
     @Test func fileBrowserKeepsExistingMediaInsteadOfReloadingSamePath() {
@@ -1175,19 +1289,41 @@ private final class FileBrowserTextMountURLProtocol: URLProtocol, @unchecked Sen
     override func stopLoading() {}
 }
 
-/// Serves one text file whose body the test changes between reads.
+/// Serves independently controlled file responses for each hosted reader.
 private final class FileBrowserMutableTextURLProtocol: URLProtocol, @unchecked Sendable {
-    static let host = "file-browser-mutable-text.test"
     static let workspaceId = "ws-mutable-text"
     static let filePath = "changing.txt"
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var body = ""
+    nonisolated(unsafe) private static var responses: [String: Response] = [:]
 
-    static func setBody(_ text: String) {
-        lock.withLock { body = text }
+    final class Response: @unchecked Sendable {
+        private let lock = NSLock()
+        private var body: String
+        private var status = 200
+        private var reads = 0
+
+        init(body: String) { self.body = body }
+
+        var requestCount: Int { lock.withLock { reads } }
+
+        func set(body: String, status: Int = 200) {
+            lock.withLock {
+                self.body = body
+                self.status = status
+            }
+        }
+
+        func next() -> (Data, Int) {
+            lock.withLock {
+                reads += 1
+                return (Data(body.utf8), status)
+            }
+        }
     }
 
-    static func makeClient() -> APIClient {
+    static func makeClient(response: Response) -> APIClient {
+        let host = "\(UUID().uuidString.lowercased()).file-browser-mutable-text.test"
+        lock.withLock { responses[host] = response }
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [FileBrowserMutableTextURLProtocol.self]
         return APIClient(
@@ -1198,7 +1334,7 @@ private final class FileBrowserMutableTextURLProtocol: URLProtocol, @unchecked S
     }
 
     override class func canInit(with request: URLRequest) -> Bool {
-        request.url?.host == host
+        request.url?.host?.hasSuffix(".file-browser-mutable-text.test") == true
     }
 
     override class func canonicalRequest(for request: URLRequest) -> URLRequest {
@@ -1206,14 +1342,19 @@ private final class FileBrowserMutableTextURLProtocol: URLProtocol, @unchecked S
     }
 
     override func startLoading() {
-        guard let url = request.url else {
+        guard let url = request.url, let host = url.host,
+              let configured = Self.lock.withLock({ Self.responses[host] }) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
         }
-        let body = Data(Self.lock.withLock { Self.body }.utf8)
+        let (body, status) = configured.next()
+        if status < 0 {
+            client?.urlProtocol(self, didFailWithError: URLError(URLError.Code(rawValue: status)))
+            return
+        }
         guard let response = HTTPURLResponse(
             url: url,
-            statusCode: 200,
+            statusCode: status,
             httpVersion: "HTTP/1.1",
             headerFields: [
                 "Content-Type": "text/plain; charset=utf-8",

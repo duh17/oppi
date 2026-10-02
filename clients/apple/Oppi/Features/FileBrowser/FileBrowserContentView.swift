@@ -586,10 +586,10 @@ struct FileBrowserContentView: View {
         return recovered.currentText
     }
 
-    private static func isNotFound(_ error: Error) -> Bool {
+    private static func isHTTPError(_ error: Error, statusCodes: Set<Int>) -> Bool {
         switch error {
         case APIError.server(let status, _), APIError.codedServer(let status, _, _):
-            return status == 404
+            return statusCodes.contains(status)
         default:
             return false
         }
@@ -822,8 +822,8 @@ struct FileBrowserContentView: View {
         // `.task(id:)` reruns whenever SwiftUI re-shows this view: after AVKit
         // fullscreen from an inline Markdown video, or a pop back from a pushed
         // wiki link. Rebuilding the reader there recreates every inline player,
-        // so re-read first and rebuild only when the shown text changed. A failed
-        // re-read keeps the reader that is already showing.
+        // so re-read first and rebuild only when the shown text changed. Transient
+        // failures keep its inline players; missing or denied files must not show stale text.
         if !force, loadedTextPath == requestedPath, case .text(let shownText) = content {
             do {
                 guard let read = try await readReaderBytes(
@@ -835,6 +835,12 @@ struct FileBrowserContentView: View {
                     return
                 }
             } catch {
+                guard isCurrentFile(requestedPath),
+                      Self.isHTTPError(error, statusCodes: [401, 403, 404]) else { return }
+                loadedTextPath = nil
+                loadedHostFilePath = nil
+                resetEditState()
+                content = .error(error.localizedDescription)
                 return
             }
         }
@@ -960,7 +966,7 @@ struct FileBrowserContentView: View {
                     path: path,
                     worktreeId: worktreeId
                 )
-            } catch let error where Self.isNotFound(error) {
+            } catch let error where Self.isHTTPError(error, statusCodes: [404]) {
                 guard isCurrentFile(path) else { return nil }
                 guard let session = WorkspaceFileEditRecovery.sessionForMissingFile(
                     identity: identity,
