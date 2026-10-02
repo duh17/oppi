@@ -3,10 +3,11 @@ import SwiftUI
 import UIKit
 
 struct SSHTerminalSetupView: View {
-    @AppStorage("\(AppIdentifiers.subsystem).ssh.terminal.host") private var host = "mac-studio"
-    @AppStorage("\(AppIdentifiers.subsystem).ssh.terminal.port") private var portText = "22"
-    @AppStorage("\(AppIdentifiers.subsystem).ssh.terminal.username") private var username = ""
-    @AppStorage("\(AppIdentifiers.subsystem).ssh.terminal.transport") private var transport = "direct"
+    var connectOnOpen = false
+    @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var experimentEnabled = false
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var profile = SSHTerminalProfileStore().load() ?? SSHTerminalProfile()
+    @State private var portText = String(SSHTerminalProfileStore().load()?.port ?? 22)
     @State private var identity: SSHIdentity?
     @State private var identityFailure: String?
     @State private var copied = false
@@ -16,68 +17,74 @@ struct SSHTerminalSetupView: View {
     @State private var attemptedHost = ""
     @State private var attemptedPort: UInt16 = 22
     @State private var forgetConfirmation = false
+    @State private var deleteConfirmation = false
+    @State private var passwordPrompt = false
+    @State private var savingHostOnly = false
+    @State private var password = ""
     @State private var channel: SSHTerminalChannel?
     @State private var showsTerminal = false
     @State private var task: Task<Void, Never>?
     @State private var runID = UUID()
 
-    private var tailnet: TailnetNodeController { .shared }
-    private var target: String { host.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var target: String { profile.host.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var port: UInt16? { UInt16(portText) }
+    private var canConnect: Bool { !target.isEmpty && !profile.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && port != nil && port != 0 }
 
     var body: some View {
         List {
             Section {
-                TextField("Hostname or IP", text: $host)
+                TextField("Hostname or IP", text: $profile.host)
                     .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
                     .accessibilityIdentifier("sshTerminal.host")
                 TextField("Port", text: $portText).keyboardType(.numberPad)
                     .accessibilityIdentifier("sshTerminal.port")
-                TextField("Username", text: $username)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.username)
+                TextField("Username", text: $profile.username)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(nil)
                     .accessibilityIdentifier("sshTerminal.username")
-                Picker("Transport", selection: $transport) {
-                    Text("Direct TCP").tag("direct")
-                    Text("Tailscale Node").tag("tailnet")
-                }.accessibilityIdentifier("sshTerminal.transport")
-                if transport == "tailnet" {
-                    ForEach(tailnet.onlinePeers) { peer in
-                        Button(peer.displayName) { host = peer.dialHost }
-                    }
+                Picker("Sign In", selection: $profile.authentication) {
+                    Text("Password").tag(SSHTerminalProfile.Authentication.password)
+                    Text("This Device’s Key").tag(SSHTerminalProfile.Authentication.deviceKey)
+                }.accessibilityIdentifier("sshTerminal.authentication")
+                if profile.authentication == .password {
+                    Toggle("Save Password", isOn: $profile.savesPassword)
+                        .accessibilityIdentifier("sshTerminal.savePassword")
                 }
-            } header: { Text("Owner Host") } footer: {
-                Text("Direct TCP uses your current network, including the system Tailscale VPN. Tailscale Node uses Oppi’s in-app node. Remote Login must be enabled on the host.")
+            } header: { Text("Host") } footer: {
+                Text("One host. Remote Login (sshd) must be enabled. When Oppi’s Tailscale node is running, *.ts.net hosts use it; other hosts use your current network.")
             }.disabled(connecting)
 
-            Section {
-                if let identity {
-                    Text(identity.publicKeyOpenSSH)
-                        .font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
-                        .accessibilityIdentifier("sshTerminal.publicKey")
-                    Button(copied ? "Copied Public Key" : "Copy Public Key", systemImage: copied ? "checkmark" : "doc.on.doc") {
-                        UIPasteboard.general.string = identity.publicKeyOpenSSH
-                        copied = true
-                    }.accessibilityIdentifier("sshTerminal.copyKey")
-                    Text(identity.backingDescription).font(.footnote).foregroundStyle(.themeComment)
-                } else {
-                    Text(identityFailure ?? "Loading identity…").foregroundStyle(.themeComment)
+            if profile.authentication == .deviceKey {
+                Section {
+                    if let identity {
+                        Text(identity.publicKeyOpenSSH)
+                            .font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
+                            .accessibilityIdentifier("sshTerminal.publicKey")
+                        Button(copied ? "Copied Public Key" : "Copy Public Key", systemImage: copied ? "checkmark" : "doc.on.doc") {
+                            UIPasteboard.general.string = identity.publicKeyOpenSSH
+                            copied = true
+                        }.accessibilityIdentifier("sshTerminal.copyKey")
+                        Text(identity.backingDescription).font(.footnote).foregroundStyle(.themeComment)
+                    } else {
+                        Text(identityFailure ?? "Loading identity…").foregroundStyle(.themeComment)
+                    }
+                } header: { Text("This Device’s SSH Identity") } footer: {
+                    Text("Append this public key to ~/.ssh/authorized_keys. Signing requires Face ID or your device passcode. The simulator uses a software key. Oppi never installs the key for you.")
                 }
-            } header: { Text("This Device’s SSH Identity") } footer: {
-                Text("Append this public key as one line to ~/.ssh/authorized_keys on the owner host. Oppi never installs it for you.")
             }
 
             Section {
                 if connecting {
                     HStack {
                         ProgressView().controlSize(.small)
-                        Text("Connecting…")
+                        Text(savingHostOnly ? "Saving Host…" : "Connecting…")
                         Spacer()
                         Button("Cancel") { cancel() }
                     }.accessibilityIdentifier("sshTerminal.connecting")
                 } else {
-                    Button("Connect") { connect() }
-                        .disabled(identity == nil || target.isEmpty || username.isEmpty || port == nil || port == 0 || (transport == "tailnet" && tailnet.state != .running))
+                    Button("Connect") { connect() }.disabled(!canConnect)
                         .accessibilityIdentifier("sshTerminal.connect")
+                    Button("Save Host") { saveHost() }.disabled(!canConnect)
+                        .accessibilityIdentifier("sshTerminal.saveHost")
                 }
                 if let failure {
                     Text("Disconnected — \(failure)").foregroundStyle(.themeRed)
@@ -85,50 +92,162 @@ struct SSHTerminalSetupView: View {
                 }
                 trustRows
             } footer: {
-                Text("A new connection opens a fresh shell. Run tmux attach or herdr session attach <name> yourself. No input is replayed after disconnect.")
+                Text("Saved passwords stay only in this device’s private Keychain and require Face ID or passcode at connect. Unsaved passwords are used for one attempt only. Keyboard-interactive and private-key import are not supported. Reconnect opens a fresh shell; use tmux to preserve work. Input is never replayed.")
+            }
+            if SSHTerminalProfileStore().hasStoredProfile {
+                Section {
+                    Button("Delete Host", role: .destructive) { deleteConfirmation = true }
+                        .accessibilityIdentifier("sshTerminal.deleteHost")
+                }
             }
         }
         .navigationTitle("SSH Terminal").navigationBarTitleDisplayMode(.inline)
         .task {
-            do { identity = try SSHIdentityKeyStore.loadOrCreate() }
-            catch { identityFailure = "SSH identity unavailable: \(error.localizedDescription)" }
-            tailnet.startIfEnabled()
+            guard experimentEnabled else { return }
+            if SSHTerminalProfileStore().hasStoredProfile && SSHTerminalProfileStore().load() == nil {
+                failure = "The saved host profile cannot be read. Delete Host to clear its saved password, then configure it again."
+            }
+            loadIdentityIfSelected()
+            if connectOnOpen && canConnect { connect() }
         }
-        .onChange(of: host) { hostFailure = nil; failure = nil }
+        .onChange(of: profile.authentication) { loadIdentityIfSelected() }
+        .onChange(of: profile.host) { hostFailure = nil; failure = nil }
         .onChange(of: portText) { hostFailure = nil; failure = nil }
+        .onChange(of: experimentEnabled) { _, enabled in if !enabled { cancel(); showsTerminal = false } }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .background else { return }
+            password = ""
+            passwordPrompt = false
+            if connecting {
+                cancel()
+                failure = "Connection cancelled when Oppi entered the background. Connect again to open a fresh shell."
+            }
+        }
         .confirmationDialog("Forget the trusted host key?", isPresented: $forgetConfirmation, titleVisibility: .visible) {
             Button("Forget Trusted Key", role: .destructive) {
-                SSHKnownHosts().forget(host: attemptedHost, port: attemptedPort)
-                hostFailure = nil
-                failure = "Trusted key forgotten. Verify the new fingerprint before trusting it."
+                do {
+                    try SSHKnownHosts().forget(host: attemptedHost, port: attemptedPort)
+                    hostFailure = nil
+                    failure = "Trusted key forgotten. Verify the new fingerprint before trusting it."
+                } catch { failure = error.localizedDescription }
             }
         } message: { Text("Only do this after independently verifying why the host key changed.") }
+        .confirmationDialog("Delete this host and its saved password?", isPresented: $deleteConfirmation, titleVisibility: .visible) {
+            Button("Delete Host", role: .destructive) {
+                do {
+                    cancel()
+                    try SSHTerminalProfileStore().delete()
+                    profile = SSHTerminalProfile()
+                    portText = "22"
+                    identity = nil
+                    failure = nil
+                    hostFailure = nil
+                } catch { failure = error.localizedDescription }
+            }
+        }
+        .sheet(isPresented: $passwordPrompt, onDismiss: { password = "" }) {
+            NavigationStack {
+                Form {
+                    Section {
+                        SecureField("Password", text: $password).textContentType(nil)
+                            .accessibilityIdentifier("sshTerminal.password")
+                    } header: { Text("\(profile.username)@\(target)") }
+                    Section {
+                        Toggle("Save Password", isOn: $profile.savesPassword)
+                        Text("Saving requires a device passcode. Face ID or passcode approval is required whenever Oppi reads it.")
+                            .font(.footnote).foregroundStyle(.themeComment)
+                    }
+                }
+                .navigationTitle("SSH Sign In")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { password = ""; passwordPrompt = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(savingHostOnly ? "Save" : "Connect") {
+                            let attempt = password
+                            password = ""
+                            passwordPrompt = false
+                            if savingHostOnly { saveHost(password: attempt) }
+                            else { connect(password: attempt) }
+                        }.disabled(password.isEmpty).accessibilityIdentifier("sshTerminal.passwordConnect")
+                    }
+                }
+            }.presentationDetents([.medium])
+        }
         .navigationDestination(isPresented: $showsTerminal) {
             if let channel {
                 SSHTerminalView(channel: channel) { connect() }
                     .id(ObjectIdentifier(channel))
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Edit Host") { showsTerminal = false }
+                        }
+                    }
             }
         }
-        .onDisappear {
-            // Pushing the terminal retains ownership. Leaving setup cancels it.
-            if !showsTerminal { cancel() }
+        .onDisappear { if !showsTerminal { cancel() } }
+        .onChange(of: showsTerminal) { _, visible in if !visible { cancel() } }
+    }
+
+    private func loadIdentityIfSelected() {
+        guard experimentEnabled, profile.authentication == .deviceKey else { identity = nil; return }
+        do { identity = try SSHIdentityKeyStore.loadOrCreate(); identityFailure = nil }
+        catch { identityFailure = "SSH identity unavailable: \(error.localizedDescription)" }
+    }
+
+    private func normalizedProfile() -> SSHTerminalProfile {
+        var result = profile
+        result.host = target
+        result.username = profile.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        result.port = port ?? 22
+        if result.authentication == .deviceKey { result.savesPassword = false }
+        return result
+    }
+
+    private func saveHost(password: String? = nil) {
+        guard experimentEnabled, canConnect else { return }
+        let value = normalizedProfile()
+        let old = SSHTerminalProfileStore().load()
+        if value.authentication == .password && value.savesPassword && password == nil
+            && !(old.map { value.sameCredentials(as: $0) && $0.savesPassword } ?? false) {
+            savingHostOnly = true
+            passwordPrompt = true
+            return
         }
-        .onChange(of: showsTerminal) { _, visible in
-            if !visible { cancel() }
+        cancel()
+        let id = UUID()
+        runID = id
+        connecting = true
+        savingHostOnly = true
+        failure = nil
+        task = Task {
+            do {
+                // Updating a presence-protected item can wait for approval.
+                // Never block SwiftUI's main actor on a Security call.
+                try await Task.detached { try SSHTerminalProfileStore().save(value, password: password) }.value
+                guard !Task.isCancelled, runID == id else { return }
+                profile = value
+            } catch {
+                guard !Task.isCancelled, runID == id else { return }
+                failure = error.localizedDescription
+            }
+            connecting = false
+            savingHostOnly = false
         }
     }
 
     @ViewBuilder private var trustRows: some View {
         if case .unknownHostKey(let key) = hostFailure {
-            Text("New host \u{2014} trust decision").font(.headline).accessibilityIdentifier("sshTerminal.trustPrompt")
+            Text("New host — trust decision").font(.headline).accessibilityIdentifier("sshTerminal.trustPrompt")
             fingerprint("Presented Host Key", key)
-            Text("Verify this fingerprint on the host before trusting it. No user key has been offered.")
+            Text("Verify this fingerprint on the host before trusting it. No credentials were sent.")
                 .font(.footnote).foregroundStyle(.themeComment)
             Button("Trust & Connect") {
                 guard target == attemptedHost, port == attemptedPort else { return }
-                SSHKnownHosts().trust(key, host: attemptedHost, port: attemptedPort)
-                connect()
-            }.accessibilityIdentifier("sshTerminal.trustKey")
+                do { try SSHKnownHosts().trust(key, host: attemptedHost, port: attemptedPort); connect() }
+                catch { failure = error.localizedDescription }
+            }.disabled(connecting).accessibilityIdentifier("sshTerminal.trustKey")
         } else if case .hostKeyMismatch(let saved, let presented) = hostFailure {
             Text("Host key changed — connection blocked.").foregroundStyle(.themeRed)
             fingerprint("Trusted", saved)
@@ -145,62 +264,85 @@ struct SSHTerminalSetupView: View {
         }.accessibilityElement(children: .combine)
     }
 
-    private func connect() {
-        guard let identity, let port, port > 0 else { return }
+    private func connect(password suppliedPassword: String? = nil) {
+        guard experimentEnabled, canConnect else { return }
+        let value = normalizedProfile()
+        let old = SSHTerminalProfileStore().load()
+        let hasSavedPassword = old.map { value.sameCredentials(as: $0) && $0.savesPassword } ?? false
+        if value.authentication == .password && suppliedPassword == nil && !(hasSavedPassword && value.savesPassword) {
+            savingHostOnly = false
+            passwordPrompt = true
+            return
+        }
         cancel()
-        let host = target
-        let username = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        let useTailnet = transport == "tailnet"
         let id = UUID()
         runID = id
-        attemptedHost = host
-        attemptedPort = port
+        attemptedHost = value.host
+        attemptedPort = value.port
         connecting = true
+        savingHostOnly = false
         failure = nil
         hostFailure = nil
         task = Task {
             do {
+                try await Task.detached { try SSHTerminalProfileStore().save(value, password: suppliedPassword) }.value
+                guard !Task.isCancelled, runID == id else { return }
+                profile = value
+                let authentication: SSHPTYAuthentication
+                switch value.authentication {
+                case .password:
+                    if let suppliedPassword { authentication = .password(suppliedPassword) }
+                    else {
+                        let stored = try await Task.detached { try SSHTerminalProfileStore().password(for: value) }.value
+                        guard let stored else { throw SSHKeychainError.passwordRequired }
+                        authentication = .password(stored)
+                    }
+                case .deviceKey:
+                    // Load afresh so the signing authentication context belongs
+                    // to this connection, never a previous approval.
+                    authentication = .deviceKey(try SSHIdentityKeyStore.loadOrCreate())
+                }
+                guard !Task.isCancelled, runID == id else { return }
+                let savedKey = try SSHKnownHosts().savedKey(host: value.host, port: value.port)
                 let owner = try SSHTerminalChannel()
                 channel = owner
+                let tailnet = TailnetNodeController.shared
+                let useTailnet = value.host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")).hasSuffix(".ts.net") && tailnet.state == .running
                 let socket = try await (useTailnet
-                    ? tailnet.dialTCP(host: host, port: port, timeout: .seconds(15))
-                    : SSHDirectTCP.dial(host: host, port: port))
+                    ? tailnet.dialTCP(host: value.host, port: value.port, timeout: .seconds(15))
+                    : SSHDirectTCP.dial(host: value.host, port: value.port))
                 guard !Task.isCancelled, runID == id else { Darwin.close(socket); return }
-                // The queue preserves NIO callback order; one consumer feeds
-                // every byte and bounds what is waiting for the main actor.
                 let queue = SSHTerminalEventQueue()
                 let session: SSHPTYSession
                 do {
                     session = try await SSHPTYSession.connect(configuration: .init(
-                        username: username, identity: identity,
-                        savedHostKey: SSHKnownHosts().savedKey(host: host, port: port),
-                        inboundFlow: queue.flow
+                        username: value.username, authentication: authentication,
+                        savedHostKey: savedKey, inboundFlow: queue.flow
                     ), socket: socket) { queue.push($0) }
                 } catch { queue.finish(); throw error }
                 guard !Task.isCancelled, runID == id else { queue.finish(); await session.cancel(); return }
                 owner.opened(session)
                 connecting = false
                 showsTerminal = true
-                await owner.consume(queue)
+                // Sign-in's task (and its password capture) ends here. The
+                // long-lived byte consumer owns no authentication material.
+                task = Task { await owner.consume(queue) }
             } catch {
                 guard runID == id, !Task.isCancelled else { return }
-                let message = SSHTerminalChannel.message(error)
-                let trust = error as? SSHPTYSessionError
-                hostFailure = trust
-                // A trust decision is not a connection error. Both trust cases
-                // are resolved on this screen, so the terminal screen points here.
-                switch trust {
-                case .unknownHostKey:
+                hostFailure = error as? SSHPTYSessionError
+                switch hostFailure {
+                case .unknownHostKey, .hostKeyMismatch:
                     failure = nil
-                    channel?.close(reason: "This host's key is not trusted yet. Go back to SSH Terminal setup to review its fingerprint.")
-                case .hostKeyMismatch:
-                    failure = nil
-                    channel?.close(reason: "The SSH host key changed. Go back to SSH Terminal setup to compare the fingerprints or forget the trusted key.")
+                    channel?.close(reason: "Host trust needs review. Use Edit Host to compare the fingerprints.")
                 default:
-                    failure = message
-                    channel?.close(reason: message)
+                    failure = SSHTerminalChannel.message(error)
+                    channel?.close(reason: failure ?? "Connection failed.")
                 }
                 connecting = false
+                if let keychainError = error as? SSHKeychainError, keychainError == .passwordRequired {
+                    savingHostOnly = false
+                    passwordPrompt = true
+                }
             }
         }
     }
@@ -209,7 +351,8 @@ struct SSHTerminalSetupView: View {
         runID = UUID()
         task?.cancel()
         task = nil
-        channel?.close(reason: "Disconnected by you.")
+        password = ""
+        channel?.close(reason: "Closed by you.")
         connecting = false
     }
 }

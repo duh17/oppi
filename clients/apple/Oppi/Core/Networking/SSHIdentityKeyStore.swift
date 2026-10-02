@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import LocalAuthentication
 import NIOSSH
 import Security
 
@@ -29,7 +30,7 @@ protocol SSHIdentitySealedStorage: Sendable {
 }
 
 struct KeychainSSHIdentityStorage: SSHIdentitySealedStorage {
-    private static let account = "oppi.ssh.identity.v1"
+    private static let account = "oppi.ssh.identity.presence.v2"
 
     func load() throws -> Data? {
         var query = Self.query
@@ -61,7 +62,6 @@ struct KeychainSSHIdentityStorage: SSHIdentitySealedStorage {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: SharedConstants.keychainService,
-            kSecAttrAccessGroup as String: SharedConstants.keychainAccessGroup,
             kSecAttrAccount as String: account,
         ]
     }
@@ -93,14 +93,20 @@ enum SSHIdentityKeyStore {
         if let sealed = try storage.load() {
             guard sealed.first == enclaveTag else { throw SSHIdentityKeyStoreError.sealedDataCorrupt }
             do {
-                let key = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: sealed.dropFirst())
+                let key = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: sealed.dropFirst(), authenticationContext: LAContext())
                 return SSHIdentity(privateKey: NIOSSHPrivateKey(secureEnclaveP256Key: key), isHardwareBacked: true)
             } catch {
                 throw SSHIdentityKeyStoreError.sealedDataCorrupt
             }
         }
         do {
-            let key = try SecureEnclave.P256.Signing.PrivateKey()
+            var accessError: Unmanaged<CFError>?
+            guard let access = SecAccessControlCreateWithFlags(nil,
+                kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
+                [.privateKeyUsage, .userPresence], &accessError) else {
+                throw SSHIdentityKeyStoreError.secureEnclaveUnavailable
+            }
+            let key = try SecureEnclave.P256.Signing.PrivateKey(accessControl: access, authenticationContext: LAContext())
             try storage.save(Data([enclaveTag]) + key.dataRepresentation)
             return SSHIdentity(privateKey: NIOSSHPrivateKey(secureEnclaveP256Key: key), isHardwareBacked: true)
         } catch let error as SSHIdentityKeyStoreError {

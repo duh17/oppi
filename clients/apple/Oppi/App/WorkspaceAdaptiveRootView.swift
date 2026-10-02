@@ -225,6 +225,8 @@ private struct WorkspaceUtilityDestinationView: View {
                 ServerExtensionsView()
             case .mcpServers:
                 McpServersView(scopeId: McpScopeSnapshot.globalId)
+            case .sshTerminal:
+                SSHTerminalSetupView(connectOnOpen: true)
             case .desktopStill:
                 DesktopCurrentStillViewerView()
             case .manageServers:

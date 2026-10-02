@@ -44,7 +44,23 @@ enum SSHDirectTCP {
                         } else { lastError = errno }
                     } else { lastError = ETIMEDOUT }
                 } else if !connected { lastError = errno }
-                if connected { return .success(fd) } // SSHPTYSession takes ownership.
+                if connected {
+                    // Kernel probes detect a dead direct TCP peer even with no
+                    // shell output. SSH child-open probes cover socketpairs too.
+                    var enabled: Int32 = 1
+                    var idle: Int32 = 30
+                    var interval: Int32 = 10
+                    var count: Int32 = 3
+                    guard setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &enabled, socklen_t(MemoryLayout<Int32>.size)) == 0,
+                          setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &idle, socklen_t(MemoryLayout<Int32>.size)) == 0,
+                          setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, socklen_t(MemoryLayout<Int32>.size)) == 0,
+                          setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+                        lastError = errno
+                        close(fd)
+                        continue
+                    }
+                    return .success(fd) // SSHPTYSession takes ownership.
+                }
                 close(fd)
                 if ContinuousClock.now >= deadline { break }
             }

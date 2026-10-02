@@ -23,6 +23,7 @@ struct SettingsView: View {
     @State private var quietModeEnabled = AppPreferences.ChatDisplay.isCompactTurnsEnabled
     @State private var workStripStyle = AppPreferences.ChatDisplay.workStripStyle
     @State private var presentsRowEditor = false
+    @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var sshTerminalEnabled = false
 
     var body: some View {
         List {
@@ -365,6 +366,9 @@ struct SettingsView: View {
                 Text("Groups sessions under the session that launched them, with Thread strips and a Thread view.")
                     .font(.footnote)
                     .foregroundStyle(.themeComment)
+
+                Toggle("SSH Terminal", isOn: $sshTerminalEnabled)
+                    .accessibilityIdentifier("settings.experiments.sshTerminal")
             } header: {
                 Text("Experiments")
             } footer: {
@@ -390,12 +394,14 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings.tailscale")
 
-                NavigationLink {
-                    SSHTerminalSetupView()
-                } label: {
-                    Label("SSH Terminal", systemImage: "terminal")
+                if sshTerminalEnabled {
+                    NavigationLink {
+                        SSHTerminalSetupView()
+                    } label: {
+                        Label("SSH Terminal", systemImage: "terminal")
+                    }
+                    .accessibilityIdentifier("settings.sshTerminal")
                 }
-                .accessibilityIdentifier("settings.sshTerminal")
             } header: {
                 Text("Network")
             } footer: {

@@ -1,6 +1,7 @@
 import Foundation
 import GhosttyVt
 import Observation
+import Network
 import Synchronization
 
 protocol SSHTerminalConnection: Sendable {
@@ -113,6 +114,27 @@ final class SSHTerminalChannel {
     private(set) var inputNotice = ""
     /// Display-only; published only when the remote sets a different title.
     private(set) var title = ""
+    private(set) var networkChanged = false
+
+    /// A path change is a hint, not proof the SSH stream failed. Do not replay
+    /// input or silently reconnect; the user can replace this shell explicitly.
+    func watchNetwork() async {
+        let monitor = NWPathMonitor()
+        let (paths, continuation) = AsyncStream<String>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        monitor.pathUpdateHandler = { path in
+            let interfaces = path.availableInterfaces.filter { path.usesInterfaceType($0.type) }
+                .map { "\($0.type):\($0.name)" }.sorted().joined(separator: ",")
+            continuation.yield("\(path.status):\(path.isExpensive):\(path.isConstrained):\(interfaces)")
+        }
+        continuation.onTermination = { _ in monitor.cancel() }
+        monitor.start(queue: DispatchQueue(label: "oppi.ssh.path"))
+        defer { monitor.cancel() }
+        var previous: String?
+        for await path in paths {
+            if let previous, previous != path, connected { networkChanged = true }
+            previous = path
+        }
+    }
     private var connection: (any SSHTerminalConnection)?
     private var writable = true
     private var writabilityRevision = 0
@@ -300,7 +322,15 @@ final class SSHTerminalChannel {
 
     static func message(_ error: any Error) -> String {
         if let error = error as? SSHPTYSessionError { return error.message }
-        if let error = error as? SSHPreflightFailure { return error.message }
+        if let error = error as? SSHPreflightFailure {
+            switch error {
+            case .dialFailed(let reason):
+                return "SSH host unreachable: \(reason). Check the hostname, port and that sshd is running."
+            case .dialTimedOut:
+                return "SSH connection timed out. Check the host, port and network route."
+            default: return error.message
+            }
+        }
         return error.localizedDescription
     }
 }

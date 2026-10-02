@@ -14,49 +14,45 @@ private let ecdsaKey = SSHHostKey(
 
 @Suite("SSH host key trust on first use")
 struct SSHKnownHostsTests {
-    private let defaults: UserDefaults
-    private let knownHosts: SSHKnownHosts
+    private let knownHosts = SSHKnownHosts(keychain: SSHKeychain(service: "SSHKnownHostsTests.\(UUID().uuidString)"))
 
-    init() throws {
-        let suite = "SSHKnownHostsTests.\(UUID().uuidString)"
-        defaults = try #require(UserDefaults(suiteName: suite))
-        defaults.removePersistentDomain(forName: suite)
-        knownHosts = SSHKnownHosts(defaults: defaults)
+    @Test func firstKeyIsUnknownUntilTrustedThenAccepted() throws {
+        let host = "mac-studio.tail1234.ts.net"
+        #expect(try knownHosts.verdict(host: host, port: 22, presented: ed25519Key) == .unknown)
+        try knownHosts.trust(ed25519Key, host: host, port: 22)
+        defer { try? knownHosts.forget(host: host, port: 22) }
+        #expect(try knownHosts.verdict(host: host, port: 22, presented: ed25519Key) == .trusted)
+        // A fresh Keychain lookup reads the persisted trusted key.
+        #expect(try knownHosts.savedKey(host: host, port: 22) == ed25519Key)
     }
 
-    @Test func firstKeyIsUnknownUntilTrustedThenAccepted() {
+    @Test func changedKeyIsRejectedAgainstTheTrustedOne() throws {
         let host = "mac-studio.tail1234.ts.net"
-        #expect(knownHosts.verdict(host: host, port: 22, presented: ed25519Key) == .unknown)
-
-        knownHosts.trust(ed25519Key, host: host, port: 22)
-        #expect(knownHosts.verdict(host: host, port: 22, presented: ed25519Key) == .trusted)
-    }
-
-    @Test func changedKeyIsRejectedAgainstTheTrustedOne() {
-        let host = "mac-studio.tail1234.ts.net"
-        knownHosts.trust(ed25519Key, host: host, port: 22)
-
-        #expect(knownHosts.verdict(host: host, port: 22, presented: ecdsaKey) == .mismatch(saved: ed25519Key))
+        try knownHosts.trust(ed25519Key, host: host, port: 22)
+        defer { try? knownHosts.forget(host: host, port: 22) }
+        #expect(try knownHosts.verdict(host: host, port: 22, presented: ecdsaKey) == .mismatch(saved: ed25519Key))
         // A mismatch never replaces the trusted key.
-        #expect(knownHosts.savedKey(host: host, port: 22) == ed25519Key)
+        #expect(try knownHosts.savedKey(host: host, port: 22) == ed25519Key)
     }
 
-    @Test func dnsCaseAndRootDotNameTheSameHost() {
-        knownHosts.trust(ed25519Key, host: "Mac-Studio.tail1234.ts.net.", port: 22)
-        #expect(knownHosts.verdict(host: "mac-studio.tail1234.ts.net", port: 22, presented: ecdsaKey)
+    @Test func dnsCaseAndRootDotNameTheSameHost() throws {
+        try knownHosts.trust(ed25519Key, host: "Mac-Studio.tail1234.ts.net.", port: 22)
+        defer { try? knownHosts.forget(host: "mac-studio.tail1234.ts.net", port: 22) }
+        #expect(try knownHosts.verdict(host: "mac-studio.tail1234.ts.net", port: 22, presented: ecdsaKey)
             == .mismatch(saved: ed25519Key))
     }
 
-    @Test func hostsAndPortsAreTrustedSeparately() {
-        knownHosts.trust(ed25519Key, host: "mac-studio", port: 22)
-        #expect(knownHosts.verdict(host: "mac-mini", port: 22, presented: ed25519Key) == .unknown)
-        #expect(knownHosts.verdict(host: "mac-studio", port: 2222, presented: ed25519Key) == .unknown)
+    @Test func hostsAndPortsAreTrustedSeparately() throws {
+        try knownHosts.trust(ed25519Key, host: "mac-studio", port: 22)
+        defer { try? knownHosts.forget(host: "mac-studio", port: 22) }
+        #expect(try knownHosts.verdict(host: "mac-mini", port: 22, presented: ed25519Key) == .unknown)
+        #expect(try knownHosts.verdict(host: "mac-studio", port: 2222, presented: ed25519Key) == .unknown)
     }
 
-    @Test func forgettingTheKeyRequiresTrustAgain() {
-        knownHosts.trust(ed25519Key, host: "mac-studio", port: 22)
-        knownHosts.forget(host: "mac-studio", port: 22)
-        #expect(knownHosts.verdict(host: "mac-studio", port: 22, presented: ecdsaKey) == .unknown)
+    @Test func forgettingTheKeyRequiresTrustAgain() throws {
+        try knownHosts.trust(ed25519Key, host: "mac-studio", port: 22)
+        try knownHosts.forget(host: "mac-studio", port: 22)
+        #expect(try knownHosts.verdict(host: "mac-studio", port: 22, presented: ecdsaKey) == .unknown)
     }
 
     @Test func fingerprintMatchesSSHKeygen() {

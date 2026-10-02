@@ -46,11 +46,31 @@ struct SSHPTYSessionTests {
             _ = try await fixture.connect(sink: { _ in })
             Issue.record("Connection with no mutually supported algorithms unexpectedly succeeded")
         } catch let error as SSHPTYSessionError {
-            guard case .keyExchangeFailed = error else {
+            guard case .unsupportedAlgorithms = error else {
                 Issue.record("Expected key-exchange failure, got \(error)")
                 return
             }
-            #expect(error.message.contains("key exchange failed"))
+            #expect(error.message.contains("no supported algorithm"))
+        }
+    }
+
+    @Test func passwordSignInSharesThePreflightOfferAndRejectsWithoutRetry() async throws {
+        for credential in ["fixture-correct", "fixture-wrong"] {
+            let fixture = try await SSHFixture.start(auth: .passwordOnly)
+            defer { fixture.close() }
+            do {
+                let session = try await SSHPTYSession.connect(configuration: .init(
+                    username: "fixture", authentication: .password(credential), savedHostKey: SSHHostKey(openSSH: String(openSSHPublicKey: fixture.hostKey.publicKey))
+                ), socket: fixture.clientSocket, sink: { _ in })
+                #expect(credential == "fixture-correct")
+                #expect(fixture.channelRequests.prefix(2).elementsEqual(["pty", "shell"]))
+                await session.cancel()
+            } catch let error as SSHPTYSessionError {
+                #expect(credential == "fixture-wrong")
+                #expect(error == .authenticationFailed)
+                #expect(fixture.channelRequests.isEmpty)
+            }
+            #expect(fixture.authKinds == ["password"])
         }
     }
 
@@ -545,9 +565,9 @@ private final class FixtureAuthDelegate: NIOSSHServerUserAuthenticationDelegate 
                     state.parent.withLock { $0 }?.close(promise: nil)
                 }
             }
-        case .password:
+        case .password(let password):
             state.authKinds.withLock { $0.append("password") }
-            responsePromise.succeed(.failure)
+            responsePromise.succeed(state.auth == .passwordOnly && password.password == "fixture-correct" ? .success : .failure)
         case .none:
             state.authKinds.withLock { $0.append("none") }
             responsePromise.succeed(.failure)

@@ -44,10 +44,33 @@ final class SSHPTYInboundFlow: Sendable {
     fileprivate func attach(_ wake: (@Sendable () -> Void)?) { state.withLock { $0.wake = wake } }
 }
 
+enum SSHPTYAuthentication: Sendable {
+    case deviceKey(SSHIdentity)
+    case password(String)
+
+    func delegate(username: String) -> any NIOSSHClientUserAuthenticationDelegate {
+        switch self {
+        case .deviceKey(let identity): PublicKeyAuthDelegate(username: username, identity: identity)
+        case .password(let password): SSHPasswordAuthDelegate(username: username, password: password)
+        }
+    }
+}
+
 struct SSHPTYConfiguration: Sendable {
     let username: String
-    let identity: SSHIdentity
+    let authentication: SSHPTYAuthentication
     let savedHostKey: SSHHostKey?
+
+    init(username: String, authentication: SSHPTYAuthentication, savedHostKey: SSHHostKey?, inboundFlow: SSHPTYInboundFlow? = nil) {
+        self.username = username
+        self.authentication = authentication
+        self.savedHostKey = savedHostKey
+        self.inboundFlow = inboundFlow
+    }
+
+    init(username: String, identity: SSHIdentity, savedHostKey: SSHHostKey?, inboundFlow: SSHPTYInboundFlow? = nil) {
+        self.init(username: username, authentication: .deviceKey(identity), savedHostKey: savedHostKey, inboundFlow: inboundFlow)
+    }
     var term = "xterm-256color"
     var columns = 80
     var rows = 24
@@ -61,6 +84,8 @@ enum SSHPTYSessionError: Error, Equatable, Sendable {
     case unknownHostKey(SSHHostKey)
     case hostKeyMismatch(saved: SSHHostKey, presented: SSHHostKey)
     case publicKeyNotAllowed
+    case passwordNotAllowed
+    case unsupportedAlgorithms
     case authenticationFailed
     case signInTimedOut
     case keyExchangeFailed(String)
@@ -74,15 +99,19 @@ enum SSHPTYSessionError: Error, Equatable, Sendable {
     var message: String {
         switch self {
         case .unknownHostKey:
-            "Confirm this host's SSH fingerprint before signing in. No user key was offered."
+            "Confirm this host's SSH fingerprint before signing in. No credentials were sent."
         case .hostKeyMismatch:
-            "The SSH host key changed. No user key was offered."
+            "The SSH host key changed. No credentials were sent."
         case .publicKeyNotAllowed:
             "The SSH server does not offer public-key authentication."
+        case .passwordNotAllowed:
+            "The SSH server does not offer password authentication. Keyboard-interactive is not supported."
+        case .unsupportedAlgorithms:
+            "The SSH server offered no supported algorithm. Oppi supports Ed25519/ECDSA keys, Curve25519/ECDH key exchange and AES-GCM; RSA-only and legacy servers are not supported."
         case .authenticationFailed:
-            "The SSH server rejected this public key."
+            "The SSH server rejected the username or credential."
         case .signInTimedOut:
-            "SSH public-key sign-in timed out."
+            "SSH sign-in timed out."
         case .keyExchangeFailed(let reason):
             "SSH key exchange failed: \(reason)"
         case .ptyRequestRejected:
@@ -112,12 +141,40 @@ final class SSHPTYSession: @unchecked Sendable {
     private struct Channels {
         let parent: Channel
         let terminal: Channel
+        let keepalive: RepeatedTask
     }
 
     private let channels: Mutex<Channels?>
 
     private init(parent: Channel, terminal: Channel) {
-        channels = Mutex(Channels(parent: parent, terminal: terminal))
+        // This also works over tailscale_dial's socketpair: opening a child
+        // requires a real SSH reply, unlike TCP probes or window-change. No
+        // PTY/shell/exec is requested, so sshd starts no process. Backgrounding
+        // closes the parent and cancels the timer with it.
+        let keepalive = parent.eventLoop.scheduleRepeatedTask(initialDelay: .seconds(60), delay: .seconds(60)) { task in
+            guard parent.isActive else { task.cancel(); return }
+            let opened = parent.eventLoop.makePromise(of: Channel.self)
+            let deadline = parent.eventLoop.scheduleTask(in: .seconds(15)) {
+                opened.fail(SSHPTYSessionError.requestTimedOut)
+            }
+            opened.futureResult.whenComplete { result in
+                deadline.cancel()
+                switch result {
+                case .success(let probe): probe.close(promise: nil)
+                case .failure: parent.close(promise: nil)
+                }
+            }
+            do {
+                let ssh = try parent.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
+                ssh.createChannel(opened, channelType: .session) { child, _ in
+                    // Even a late channel-open response after the timeout must
+                    // close its child; it never acquires a shell or credentials.
+                    child.pipeline.addHandler(SSHKeepaliveProbeHandler())
+                }
+            } catch { opened.fail(error) }
+        }
+        parent.closeFuture.whenComplete { _ in keepalive.cancel() }
+        channels = Mutex(Channels(parent: parent, terminal: terminal, keepalive: keepalive))
     }
 
     /// Takes ownership of an already-connected direct socket. The socket is
@@ -135,10 +192,7 @@ final class SSHPTYSession: @unchecked Sendable {
                 .channelInitializer { channel in
                     channel.eventLoop.makeCompletedFuture {
                         var client = SSHClientConfiguration(
-                            userAuthDelegate: PublicKeyAuthDelegate(
-                                username: configuration.username,
-                                identity: configuration.identity
-                            ),
+                            userAuthDelegate: configuration.authentication.delegate(username: configuration.username),
                             serverAuthDelegate: PTYHostKeyDelegate(saved: configuration.savedHostKey)
                         )
                         // NIOSSH advertises a 64-packet receive window. The 128 KiB
@@ -173,19 +227,27 @@ final class SSHPTYSession: @unchecked Sendable {
                 try await authenticated.futureResult.get()
 
                 let ready = loop.makePromise(of: Void.self)
+                let openingCompleted = NIOLoopBoundBox.makeBoxSendingValue(false, eventLoop: loop)
+                let requestDeadline = loop.scheduleTask(in: requestTimeout) {
+                    // Completing an already-ready promise is a no-op, but
+                    // closing its parent is not. The timer and completion own
+                    // this decision on the same event loop.
+                    guard !openingCompleted.value else { return }
+                    openingCompleted.value = true
+                    ready.fail(SSHPTYSessionError.requestTimedOut)
+                    parent.close(promise: nil)
+                }
+                ready.futureResult.whenComplete { _ in
+                    openingCompleted.value = true
+                    requestDeadline.cancel()
+                }
+                defer { requestDeadline.cancel() }
                 let terminal = try await openTerminal(
                     on: parent,
                     configuration: configuration,
                     ready: ready,
                     sink: sink
                 )
-                // Only fails `ready`: if the timeout wins, the catch below
-                // closes the parent. Closing the terminal here would also kill a
-                // session that became ready at the deadline and was returned.
-                let requestDeadline = loop.scheduleTask(in: requestTimeout) {
-                    ready.fail(SSHPTYSessionError.requestTimedOut)
-                }
-                defer { requestDeadline.cancel() }
                 try await ready.futureResult.get()
                 return SSHPTYSession(parent: parent, terminal: terminal)
             } onCancel: {
@@ -261,6 +323,7 @@ final class SSHPTYSession: @unchecked Sendable {
             return channels
         }
         guard let owned else { return }
+        owned.keepalive.cancel()
         owned.terminal.close(promise: nil)
         owned.parent.close(promise: nil)
         _ = try? await owned.parent.closeFuture.get()
@@ -271,6 +334,7 @@ final class SSHPTYSession: @unchecked Sendable {
             defer { channels = nil }
             return channels
         }
+        owned?.keepalive.cancel()
         owned?.terminal.close(promise: nil)
         owned?.parent.close(promise: nil)
     }
@@ -317,13 +381,32 @@ final class SSHPTYSession: @unchecked Sendable {
 
     static func mapFailure(_ error: any Error) -> SSHPTYSessionError {
         if let failure = error as? SSHPTYSessionError { return failure }
+        if let preflight = error as? SSHPreflightFailure {
+            switch preflight {
+            case .passwordNotAllowed: return .passwordNotAllowed
+            case .authenticationFailed: return .authenticationFailed
+            default: return .keyExchangeFailed("SSH authentication failed")
+            }
+        }
         if let ssh = error as? NIOSSHError, ssh.type == .keyExchangeNegotiationFailure {
-            return .keyExchangeFailed("no mutually supported algorithms")
+            return .unsupportedAlgorithms
         }
         if error is ChannelError || error is NIOFcntlFailedError {
             return .connectionClosed
         }
         return .keyExchangeFailed(String(describing: error))
+    }
+}
+
+private final class SSHKeepaliveProbeHandler: ChannelInboundHandler {
+    typealias InboundIn = Any
+
+    func channelActive(context: ChannelHandlerContext) {
+        context.close(promise: nil)
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: any Error) {
+        context.close(promise: nil)
     }
 }
 
@@ -417,7 +500,17 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
         case ready
     }
 
-    private let configuration: SSHPTYConfiguration
+    /// Deliberately contains no authentication material. The child outlives
+    /// sign-in and must not retain a password with its PTY geometry.
+    private struct TerminalConfiguration {
+        let term: String
+        let columns: Int
+        let rows: Int
+        let pixelWidth: Int
+        let pixelHeight: Int
+        let inboundFlow: SSHPTYInboundFlow?
+    }
+    private let configuration: TerminalConfiguration
     private let ready: EventLoopPromise<Void>
     private let sink: SSHPTYByteSink
     private var openingState = OpeningState.waitingForPTY
@@ -430,7 +523,11 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
     private var heldExitEvents = [SSHPTYEvent]()
 
     init(configuration: SSHPTYConfiguration, ready: EventLoopPromise<Void>, sink: @escaping SSHPTYByteSink) {
-        self.configuration = configuration
+        self.configuration = TerminalConfiguration(
+            term: configuration.term, columns: configuration.columns, rows: configuration.rows,
+            pixelWidth: configuration.pixelWidth, pixelHeight: configuration.pixelHeight,
+            inboundFlow: configuration.inboundFlow
+        )
         self.ready = ready
         self.sink = sink
     }

@@ -14,6 +14,7 @@ How to pair a server and use Oppi from your phone.
 - [Document viewers](document-viewers.md)
 - [Sandbox workspaces](sandbox.md)
 - [Oppi Mirror](oppi-mirror.md)
+- [SSH Terminal experiment](ssh-terminal.md)
 - [Provider quotas](provider-quotas.md)
 - [Server configuration](server-configuration.md)
 - [Reverse proxy](reverse-proxy.md)

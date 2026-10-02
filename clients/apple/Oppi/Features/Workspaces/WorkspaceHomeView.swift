@@ -222,6 +222,7 @@ enum WorkspaceUtilityNavTarget: Hashable {
     case skills
     case extensions
     case mcpServers
+    case sshTerminal
     /// iPhone-only current remote screen. Hidden until `ReleaseFeatures.desktopStillEnabled`.
     case desktopStill
     case manageServers
@@ -233,6 +234,8 @@ enum WorkspaceUtilityNavTarget: Hashable {
             ReleaseFeatures.agentAndScheduleManagementEnabled
         case .desktopStill:
             ReleaseFeatures.desktopStillEnabled
+        case .sshTerminal:
+            AppPreferences.Experiments.sshTerminalEnabled && SSHTerminalProfileStore().load()?.isConfigured == true
         case .skills, .extensions, .mcpServers, .manageServers, .appSettings:
             true
         }

@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Security
 
 /// An SSH server host key in OpenSSH public-key form (`ssh-ed25519 AAAA…`).
 struct SSHHostKey: Equatable, Sendable {
@@ -33,36 +34,32 @@ enum SSHHostKeyVerdict: Equatable, Sendable {
 
 /// Host keys the user trusted, keyed by the directly dialed SSH host and port.
 struct SSHKnownHosts {
-    static let storageKey = "\(AppIdentifiers.subsystem).ssh.knownHosts"
+    private let keychain: SSHKeychain
 
-    private let defaults: UserDefaults
-
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
+    init(keychain: SSHKeychain = SSHKeychain()) {
+        self.keychain = keychain
     }
 
-    func savedKey(host: String, port: UInt16) -> SSHHostKey? {
-        entries[Self.entryKey(host: host, port: port)].map(SSHHostKey.init(openSSH:))
+    func savedKey(host: String, port: UInt16) throws -> SSHHostKey? {
+        guard let data = try keychain.load(account: account(host: host, port: port)) else { return nil }
+        guard let value = String(data: data, encoding: .utf8) else { throw SSHKeychainError.status(errSecDecode) }
+        return SSHHostKey(openSSH: value)
     }
 
-    func verdict(host: String, port: UInt16, presented: SSHHostKey) -> SSHHostKeyVerdict {
-        SSHHostKeyVerdict.evaluate(saved: savedKey(host: host, port: port), presented: presented)
+    func verdict(host: String, port: UInt16, presented: SSHHostKey) throws -> SSHHostKeyVerdict {
+        SSHHostKeyVerdict.evaluate(saved: try savedKey(host: host, port: port), presented: presented)
     }
 
-    func trust(_ key: SSHHostKey, host: String, port: UInt16) {
-        var entries = entries
-        entries[Self.entryKey(host: host, port: port)] = key.openSSH
-        defaults.set(entries, forKey: Self.storageKey)
+    func trust(_ key: SSHHostKey, host: String, port: UInt16) throws {
+        try keychain.save(Data(key.openSSH.utf8), account: account(host: host, port: port))
     }
 
-    func forget(host: String, port: UInt16) {
-        var entries = entries
-        entries.removeValue(forKey: Self.entryKey(host: host, port: port))
-        defaults.set(entries, forKey: Self.storageKey)
+    func forget(host: String, port: UInt16) throws {
+        try keychain.delete(account: account(host: host, port: port))
     }
 
-    private var entries: [String: String] {
-        defaults.dictionary(forKey: Self.storageKey) as? [String: String] ?? [:]
+    private func account(host: String, port: UInt16) -> String {
+        "host:" + Self.entryKey(host: host, port: port)
     }
 
     /// DNS names are case-insensitive and may carry the root dot.

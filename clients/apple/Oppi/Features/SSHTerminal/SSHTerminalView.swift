@@ -22,12 +22,12 @@ struct SSHTerminalView: View {
                 } else {
                     Image(systemName: channel.connected ? "checkmark.circle" : "xmark.circle")
                 }
-                Text(channel.connecting || channel.connected ? channel.reason : "Disconnected — \(channel.reason)").lineLimit(3)
+                Text(channel.connecting || channel.connected ? channel.reason : "Disconnected · \(channel.reason)").lineLimit(3)
                 Spacer()
-                if !channel.connected && !channel.connecting {
+                if (!channel.connected || channel.networkChanged) && !channel.connecting {
                     Button("Reconnect", action: reconnect).accessibilityIdentifier("sshTerminal.reconnect")
                 } else if channel.connected {
-                    Button("Disconnect") { channel.close(reason: "Disconnected by you.") }
+                    Button("Disconnect") { channel.close(reason: "Closed by you.") }
                         .accessibilityIdentifier("sshTerminal.disconnect")
                 }
             }
@@ -36,6 +36,11 @@ struct SSHTerminalView: View {
             // Disconnect buttons' own identifiers.
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("sshTerminal.status")
+            if channel.networkChanged && channel.connected {
+                Text("Network changed — this shell may be stale. Reconnect opens a fresh shell.")
+                    .font(.footnote).foregroundStyle(.themeOrange)
+                    .accessibilityIdentifier("sshTerminal.networkChanged")
+            }
             if !channel.inputNotice.isEmpty {
                 Text(channel.inputNotice).font(.footnote).foregroundStyle(.themeOrange)
                     .accessibilityIdentifier("sshTerminal.inputNotice")
@@ -59,11 +64,18 @@ struct SSHTerminalView: View {
         .background(.themeBg)
         .navigationTitle(channel.title.isEmpty ? "SSH Terminal" : channel.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text(channel.title.isEmpty ? "SSH Terminal" : channel.title)
+                    .font(.headline).foregroundStyle(.themeFg).lineLimit(1)
+            }
+        }
         // The terminal paints with the app theme, not the system appearance.
         // Keep the bar's title and back chevron legible against it in both.
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarBackground(Color.themeBg, for: .navigationBar)
         .toolbarColorScheme(themeID.preferredColorScheme, for: .navigationBar)
+        .task { await channel.watchNetwork() }
         .onDisappear {
             pasteNoticeTask?.cancel()
             channel.close(reason: "Terminal dismissed.")
@@ -71,7 +83,7 @@ struct SSHTerminalView: View {
         .onChange(of: scenePhase) { _, phase in
             // Explicit background recovery: close rather than silently losing
             // bytes while suspended. Host tmux can preserve the remote work.
-            if phase == .background { channel.close(reason: "Disconnected when Oppi entered the background. Reconnect manually.") }
+            if phase == .background { channel.close(reason: "Oppi went to the background.") }
         }
         .alert("Paste \(pasteLineCount) \(pasteLineCount == 1 ? "line" : "lines")?", isPresented: $pasteConfirmation) {
             Button("Cancel", role: .cancel) { pendingPaste = nil }

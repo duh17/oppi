@@ -1348,6 +1348,7 @@ final class AppNavigation {
         case .skills: "skills"
         case .extensions: "extensions"
         case .mcpServers: "mcp_servers"
+        case .sshTerminal: "ssh_terminal"
         case .desktopStill: "desktop_still"
         case .manageServers: "manage_servers"
         case .appSettings: "app_settings"

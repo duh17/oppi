@@ -94,6 +94,10 @@ Create and edit sheets can open a **Pi Control** session (ordinary Pi with globa
 - [Sandbox workspaces](sandbox.md) run agent file tools in a Gondolin VM.
 - [Oppi Mirror](oppi-mirror.md) shows a live terminal Pi session in Oppi.
 
+## SSH Terminal experiment
+
+Turn on **Settings → Experiments → SSH Terminal** to configure one SSH host with password or per-device key sign-in. The workspace sidebar then offers **Terminal** below **MCP Servers**. Saved passwords and trusted host keys stay in this device’s Keychain; saved-password reads and Secure Enclave signing require user presence. See [SSH Terminal](ssh-terminal.md) for setup, host trust, reconnect behavior, and supported algorithms.
+
 ## Models and quota
 
 Pick models from the in-app picker. Remaining provider quota and pace live on **Server** detail → **Model Providers**. The CLI also has `oppi quota` and `oppi models`. See [Provider quotas](provider-quotas.md).

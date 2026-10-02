@@ -137,11 +137,21 @@ enum WorkspaceSidebarPrimaryUtilities {
         accessibilityHint: "Inspect the current remote screen"
     )
 
-    static func items(for idiom: UIUserInterfaceIdiom) -> [WorkspaceSidebarPrimaryUtilityItem] {
-        if idiom == .phone {
-            return items + [desktopStill]
+    static func items(
+        for idiom: UIUserInterfaceIdiom,
+        sshTerminalEnabled: Bool = AppPreferences.Experiments.sshTerminalEnabled,
+        hasSSHProfile: Bool = SSHTerminalProfileStore().load()?.isConfigured == true
+    ) -> [WorkspaceSidebarPrimaryUtilityItem] {
+        var result = items
+        if sshTerminalEnabled && hasSSHProfile {
+            result.append(.init(
+                target: .sshTerminal, title: "Terminal", systemImage: "terminal",
+                accessibilityLabel: "Open SSH Terminal", accessibilityIdentifier: "workspace.terminal.open",
+                minimumHitHeight: 44, accessibilityHint: "Connect to your SSH host"
+            ))
         }
-        return items
+        if idiom == .phone { result.append(desktopStill) }
+        return result
     }
 }
 
@@ -552,6 +562,8 @@ struct SessionInboxView: View {
                     ServerExtensionsView()
                 case .mcpServers:
                     McpServersView(scopeId: McpScopeSnapshot.globalId)
+                case .sshTerminal:
+                    SSHTerminalSetupView(connectOnOpen: true)
                 case .desktopStill:
                     DesktopCurrentStillViewerView()
                 case .manageServers:
@@ -1415,6 +1427,8 @@ struct WorkspaceSessionInboxStackRootView: View {
 }
 
 struct WorkspaceSidebarView: View {
+    @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var sshTerminalEnabled = false
+    @AppStorage(SSHTerminalProfileStore.storageKey) private var sshProfileData = Data()
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
@@ -1447,7 +1461,11 @@ struct WorkspaceSidebarView: View {
             ScrollView(.vertical, showsIndicators: true) {
                 LazyVStack(spacing: 2) {
                     ForEach(
-                        WorkspaceSidebarPrimaryUtilities.items(for: UIDevice.current.userInterfaceIdiom)
+                        WorkspaceSidebarPrimaryUtilities.items(
+                            for: UIDevice.current.userInterfaceIdiom,
+                            sshTerminalEnabled: sshTerminalEnabled,
+                            hasSSHProfile: (try? JSONDecoder().decode(SSHTerminalProfile.self, from: sshProfileData))?.isConfigured == true
+                        )
                             .filter { $0.target.isReleaseEnabled },
                         id: \.target
                     ) { item in

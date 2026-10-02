@@ -71,6 +71,15 @@ enum AppPreferences {
     /// Opt-in features, saved on this device. Every flag defaults to off.
     enum Experiments {
         static let sessionThreadsKey = "\(AppIdentifiers.subsystem).experiments.sessionThreads"
+        static let sshTerminalKey = "\(AppIdentifiers.subsystem).experiments.sshTerminal"
+
+        static var sshTerminalEnabled: Bool {
+            UserDefaults.standard.bool(forKey: sshTerminalKey)
+        }
+
+        static func setSSHTerminalEnabled(_ enabled: Bool) {
+            UserDefaults.standard.set(enabled, forKey: sshTerminalKey)
+        }
 
         /// Session Threads: launch-tree grouping, Thread strips, Thread detail, and
         /// compose in every session list. Off lists every session as its own row.

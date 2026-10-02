@@ -34,7 +34,7 @@ enum SSHPreflightClient {
                     channel.eventLoop.makeCompletedFuture {
                         let ssh = NIOSSHHandler(
                             role: .client(.init(
-                                userAuthDelegate: PasswordAuthDelegate(
+                                userAuthDelegate: SSHPasswordAuthDelegate(
                                     username: request.username,
                                     password: request.password
                                 ),
@@ -135,9 +135,10 @@ private final class HostKeyDelegate: NIOSSHClientServerAuthenticationDelegate {
 }
 
 /// Offers the password once. A second request means the server rejected it.
-private final class PasswordAuthDelegate: NIOSSHClientUserAuthenticationDelegate {
+/// Shared by Check a Mac and the interactive terminal. Never logs credentials.
+final class SSHPasswordAuthDelegate: NIOSSHClientUserAuthenticationDelegate {
     private let username: String
-    private let password: String
+    private var password: String?
     private var offered = false
 
     init(username: String, password: String) {
@@ -158,10 +159,12 @@ private final class PasswordAuthDelegate: NIOSSHClientUserAuthenticationDelegate
             return
         }
         offered = true
+        let credential = password ?? ""
+        password = nil
         nextChallengePromise.succeed(NIOSSHUserAuthenticationOffer(
             username: username,
             serviceName: "",
-            offer: .password(.init(password: password))
+            offer: .password(.init(password: credential))
         ))
     }
 }

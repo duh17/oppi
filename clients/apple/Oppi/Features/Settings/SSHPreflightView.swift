@@ -24,6 +24,7 @@ struct SSHPreflightView: View {
     @State private var phase = Phase.idle
     @State private var runID = UUID()
     @State private var task: Task<Void, Never>?
+    @State private var forgetHost: String?
 
     /// `initialPeer` preselects a machine from the tailnet list; the picker
     /// still allows changing it.
@@ -46,6 +47,16 @@ struct SSHPreflightView: View {
         }
         .onDisappear { cancel() }
         .onChange(of: targetHost) { phase = .idle }
+        .confirmationDialog("Forget the trusted host key?", isPresented: Binding(
+            get: { forgetHost != nil }, set: { if !$0 { forgetHost = nil } }
+        ), titleVisibility: .visible) {
+            Button("Forget Trusted Key", role: .destructive) {
+                guard let host = forgetHost else { return }
+                do { try SSHKnownHosts().forget(host: host, port: Self.sshPort); phase = .idle }
+                catch { phase = .failed(.handshakeFailed(error.localizedDescription), host: host) }
+                forgetHost = nil
+            }
+        } message: { Text("Independently verify why the host key changed before forgetting it.") }
     }
 
     // MARK: - Sections
@@ -163,8 +174,7 @@ struct SSHPreflightView: View {
             fingerprintRow("Trusted", saved)
             fingerprintRow("Presented", presented)
             Button("Forget Trusted Key", role: .destructive) {
-                SSHKnownHosts().forget(host: host, port: Self.sshPort)
-                phase = .idle
+                forgetHost = host
             }
             .accessibilityIdentifier("sshPreflight.forgetKey")
         default:
@@ -232,14 +242,17 @@ struct SSHPreflightView: View {
         guard canCheck else { return }
         let host = host ?? targetHost
         let knownHosts = SSHKnownHosts()
-        if let key {
-            knownHosts.trust(key, host: host, port: Self.sshPort)
+        let request: SSHPreflightClient.Request
+        do {
+            if let key { try knownHosts.trust(key, host: host, port: Self.sshPort) }
+            request = SSHPreflightClient.Request(
+                username: username, password: password,
+                savedHostKey: try knownHosts.savedKey(host: host, port: Self.sshPort)
+            )
+        } catch {
+            phase = .failed(.handshakeFailed(error.localizedDescription), host: host)
+            return
         }
-        let request = SSHPreflightClient.Request(
-            username: username,
-            password: password,
-            savedHostKey: knownHosts.savedKey(host: host, port: Self.sshPort)
-        )
         task?.cancel()
         let runID = UUID()
         self.runID = runID
