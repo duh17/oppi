@@ -1360,7 +1360,15 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let existingToolState: (isError: Bool, isDone: Bool)?
         if let idx = indexForID(toolEventId),
            case .toolCall(_, _, _, _, _, let isError, let isDone) = items[idx] {
-            existingToolState = (isError, isDone)
+            // Interruption is inferred from a run boundary, not reported by Pi.
+            // A first-connect ring replay over a fresh trace re-delivers the
+            // running turn's agent_start before its tool_start; the start is
+            // authoritative evidence that this call is still executing.
+            if startsExecution, isDone, interruptedToolIDs.remove(toolEventId) != nil {
+                existingToolState = (false, false)
+            } else {
+                existingToolState = (isError, isDone)
+            }
         } else {
             existingToolState = nil
         }

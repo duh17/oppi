@@ -165,6 +165,31 @@ struct TimelineReducerToolTests {
                 "Lifecycle interruption must not be written into canonical tool output")
     }
 
+    @Test func replayedStartRevivesToolClosedByReplayedAgentStart() {
+        let reducer = TimelineReducer()
+        // First connect replays the server ring over a fresh trace: the running
+        // turn's agent_start arrives again, then its tool_start and output.
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
+        reducer.process(.agentStart(sessionId: "s1"))
+        #expect(reducer.isToolInterrupted("t1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
+
+        guard case .toolCall(_, _, _, _, _, let isError, let isDone) = reducer.items[0] else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(!isDone, "An authoritative tool_start means the call is still executing")
+        #expect(!isError)
+        #expect(!reducer.isToolInterrupted("t1"))
+
+        // A canonically finished call stays finished on a stale start.
+        reducer.process(.toolEnd(sessionId: "s1", toolEventId: "t1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
+        guard case .toolCall(_, _, _, _, _, _, let doneAfterEnd) = reducer.items[0] else { return }
+        #expect(doneAfterEnd)
+    }
+
     @Test func midFlightParallelToolsStayOpenAcrossAgentEnd() {
         let reducer = TimelineReducer()
 
