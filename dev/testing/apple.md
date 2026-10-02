@@ -17,6 +17,22 @@ cd clients/apple
 
 Without it, the Oppi target fails with a missing `Vendor/TailscaleKit/TailscaleKit.xcframework`.
 
+### Build the terminal engine
+
+The iOS app statically links a pinned libghostty-vt build, without SIMD C++
+libraries or Kitty graphics decoding. The framework is untracked. A cache miss
+needs exactly Zig 0.16.0 and Xcode with the iOS device and simulator SDKs:
+
+```bash
+clients/apple/scripts/build-ghostty-vt.sh
+```
+
+The Oppi pre-build phase runs this command. Other checkouts reuse
+`~/Library/Caches/oppi-ghostty-vt/<build-id>/` without Zig or network access.
+The source revision and build options live in the script; update both deliberately.
+`Oppi/Resources/GhosttyVt-LICENSE.txt` carries the distributed notices.
+Only the iOS app links this library; OppiMac does not.
+
 ### Regenerate project
 
 `Oppi.xcodeproj` is generated. Change `project.yml`, then run:

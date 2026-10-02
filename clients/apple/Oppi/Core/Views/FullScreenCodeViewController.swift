@@ -735,6 +735,7 @@ final class FullScreenCodeViewController: UIViewController {
             action: #selector(copyTapped)
         )
         copy.tintColor = UIColor(palette.fgDim)
+        copy.accessibilityIdentifier = "fullscreen-code.copy"
         copyButton = copy
         rightItems.append(copy)
 
@@ -1889,7 +1890,24 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     @objc private func copyTapped() {
-        FullScreenCopyDestination.write(makePresentation().copyText)
+        if let terminal = installedBodyView as? NativeFullScreenTerminalBody {
+            // Small settled readers keep instant Copy; complete-sidecar and
+            // virtualized copies do their materialization off the UI executor.
+            if let text = terminal.immediateCopyText {
+                finishCopy(text)
+                return
+            }
+            Task { @MainActor [weak self] in
+                guard let text = await terminal.resolvedCopyText(), !Task.isCancelled else { return }
+                self?.finishCopy(text)
+            }
+        } else {
+            finishCopy(makePresentation().copyText)
+        }
+    }
+
+    private func finishCopy(_ text: String) {
+        FullScreenCopyDestination.write(text)
         copyButton?.image = UIImage(systemName: "checkmark")
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.copyButton?.image = UIImage(systemName: "doc.on.doc")

@@ -6,6 +6,8 @@ clients/apple/build/
 clients/apple/.build/
 # Built by clients/apple/scripts/build-tailscalekit.sh (exceeds the repo file-size limit).
 clients/apple/Vendor/TailscaleKit/
+# Locally built, pinned static terminal engine.
+clients/apple/Vendor/GhosttyVt/
 clients/apple/docs/
 clients/apple/*.xcodeproj/
 # Xcode Cloud must discover the configured project before post-clone scripts run.
@@ -31,6 +33,7 @@ scripts/*
 !scripts/sim-pool.sh
 clients/apple/scripts/*
 !clients/apple/scripts/build-tailscalekit.sh
+!clients/apple/scripts/build-ghostty-vt.sh
 !clients/apple/scripts/build-tailscalekit.test.sh
 !clients/apple/scripts/check-coverage.sh
 !clients/apple/scripts/check-privacy-manifests.sh

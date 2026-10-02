@@ -225,35 +225,54 @@ struct BashToolRowViewTests {
         #expect(text.contains("new output"))
     }
 
-    // MARK: - Deferred path uses stripPrefix (not full strip)
-
-    @Test("large output deferred path shows prefix placeholder, not full strip")
-    func deferredPathUsesStripPrefix() {
+    @Test("large deferred output resolves redraws before painting")
+    func deferredTerminalOutput() async throws {
         let view = BashToolRowView()
-        // Build output larger than deferredANSIByteThreshold (4KB)
-        let line = "\u{1B}[32m\u{2713}\u{1B}[0m test passed\n"
-        let largeOutput = String(repeating: line, count: 500) // ~10KB
-        #expect(largeOutput.utf8.count > BashToolRowView.deferredANSIByteThreshold)
-
-        let input = BashRenderInput(
-            command: nil,
-            output: largeOutput,
-            unwrapped: false,
-            isError: false,
-            isStreaming: false
-        )
+        let largeOutput = String(repeating: "line\n", count: 1_000)
+            + "pending\r\u{1B}[2K\u{1B}[32mcomplete\u{1B}[0m\n"
+        let input = BashRenderInput(command: nil, output: largeOutput,
+            unwrapped: false, isError: false, isStreaming: false)
         _ = view.apply(input: input, outputColor: .white, wasOutputVisible: false)
+        let painted = await waitForMainActorCondition(timeout: .seconds(3)) {
+            view.outputLabel.textStorage.string.hasSuffix("complete\n")
+        }
+        #expect(painted)
+        #expect(!view.outputLabel.textStorage.string.contains("pending"))
+        #expect(uniqueForegroundColorCount(try #require(view.outputLabel.attributedText)) >= 2)
+    }
 
-        // Should show a short placeholder (not the full stripped content)
-        let displayed = view.outputLabel.text ?? view.outputLabel.attributedText?.string ?? ""
-        let fullStripped = ANSIParser.strip(largeOutput)
+    @Test("a burst of large snapshots paints useful work before the latest replay")
+    func deferredStreamCoalesces() async throws {
+        BashToolRowView.deferredANSIDelayForTesting = .milliseconds(200)
+        defer { BashToolRowView.deferredANSIDelayForTesting = nil }
+        let view = BashToolRowView()
+        let first = String(repeating: "coalesced line\n", count: 1_000) + "first"
+        _ = view.apply(input: .init(command: nil, output: first, unwrapped: false,
+            isError: false, isStreaming: true), outputColor: .white, wasOutputVisible: false)
+        _ = view.apply(input: .init(command: nil, output: first + "\r\u{1B}[2Ksecond", unwrapped: false,
+            isError: false, isStreaming: true), outputColor: .white, wasOutputVisible: true)
+        let interim = await waitForMainActorCondition(timeout: .seconds(3)) {
+            view.outputLabel.textStorage.string.hasSuffix("first")
+        }
+        #expect(interim)
+        let latest = await waitForMainActorCondition(timeout: .seconds(3)) {
+            view.outputLabel.textStorage.string.hasSuffix("second")
+        }
+        #expect(latest)
+        #expect(!view.outputLabel.textStorage.string.hasSuffix("first"))
+    }
 
-        // Placeholder should be much shorter than the full strip
-        #expect(displayed.count < fullStripped.count,
-            "Deferred path should show a short placeholder, not the full stripped output")
-        // But it should contain some of the beginning
-        #expect(displayed.contains("test passed"),
-            "Placeholder should show the beginning of the output")
+    @Test("streaming redraws retain colors, not duplicate progress lines")
+    func streamingProgress() throws {
+        let view = BashToolRowView()
+        let prefix = "working 10%\r"
+        _ = view.apply(input: .init(command: nil, output: prefix, unwrapped: false,
+            isError: false, isStreaming: true), outputColor: .white, wasOutputVisible: false)
+        _ = view.apply(input: .init(command: nil,
+            output: prefix + "\u{1B}[2K\u{1B}[32mworking 100%\u{1B}[0m plain",
+            unwrapped: false, isError: false, isStreaming: true), outputColor: .white, wasOutputVisible: true)
+        #expect(view.outputLabel.textStorage.string == "working 100% plain")
+        #expect(uniqueForegroundColorCount(try #require(view.outputLabel.attributedText)) >= 2)
     }
 
     @Test("streaming path uses incremental stripping")

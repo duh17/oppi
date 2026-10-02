@@ -1245,7 +1245,7 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func expandedOutputDisplayKeepsLargePayloadsIntact() throws {
+    @Test func expandedOutputDisplayKeepsLargePayloadsIntact() async throws {
         let longOutput = String(repeating: "x", count: 12_000)
         let config = makeTimelineToolConfiguration(
             expandedContent: .bash(command: nil, output: longOutput, unwrapped: true),
@@ -1255,6 +1255,10 @@ struct ToolTimelineRowContentViewTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 370)
 
+        let painted = await waitForMainActorCondition(timeout: .seconds(3)) {
+            timelineAllTextRenderViews(in: view).contains { timelineRenderedText(of: $0).contains(longOutput) }
+        }
+        #expect(painted)
         let renderedTexts = timelineAllTextRenderViews(in: view).map { timelineRenderedText(of: $0) }
         let longest = try #require(renderedTexts.max(by: { $0.count < $1.count }))
 

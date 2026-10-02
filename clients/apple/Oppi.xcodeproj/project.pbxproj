@@ -657,6 +657,7 @@
 		58D5CC5F43280B2EF490EA4A /* WorkspaceWorktree.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCA069FF2800CFB20DFDC09A /* WorkspaceWorktree.swift */; };
 		59455F8A498F6AEA4A9BE4F1 /* NativeMermaidBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8738C84664F4A082861C5C5 /* NativeMermaidBlockView.swift */; };
 		5973187F170F46427B342E5E /* TimelineReducerImageOrphanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6125E0158C3B9818B5FB97FF /* TimelineReducerImageOrphanTests.swift */; };
+		5974B7B960C1B2953E0846C6 /* TerminalLogEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F35C5D7715176ABC7FCEBCE /* TerminalLogEngine.swift */; };
 		598D5C66606FF61FFCE786B1 /* ServerSkillDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1757503C86C6ECCC1CC91C3 /* ServerSkillDetailView.swift */; };
 		599FE715135D275A80872537 /* DictationDictionarySelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3BFBD4D104435458C539FFE /* DictationDictionarySelection.swift */; };
 		59BB1DC64201629B9EAFBC39 /* ThinkingOrbAcknowledgmentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B03125CCA0CB2559CDD3404 /* ThinkingOrbAcknowledgmentsView.swift */; };
@@ -824,6 +825,7 @@
 		6F1C233E85AF7B0E04225118 /* MermaidMindmapParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6D56199C9872F096995469F /* MermaidMindmapParser.swift */; };
 		6F3733280779FA667B948AA2 /* SessionHistoryE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 483FFB3B4ABEADE2DE22AC02 /* SessionHistoryE2ETests.swift */; };
 		6F38EC14CA668A98DA60F13B /* SwiftTreeSitter in Frameworks */ = {isa = PBXBuildFile; productRef = 3C808C2938230C8FC5C24136 /* SwiftTreeSitter */; };
+		6FA3650EF71BDD85E5B1CE28 /* TerminalLogEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113C208DAA1E0A0043F698D2 /* TerminalLogEngineTests.swift */; };
 		6FB53456B122128D0DDDAFBF /* MessageQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C96CE46A65BF1D70E470A49 /* MessageQueue.swift */; };
 		6FCA6D7BD5EBFBCD6E8970D2 /* ToolSegmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0F794058E6634723333C473 /* ToolSegmentStore.swift */; };
 		7018CF011FD94959E9C150ED /* MarkdownBlockSerializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C3E2292E082C2BDAC152D8A /* MarkdownBlockSerializer.swift */; };
@@ -1241,6 +1243,7 @@
 		A5DCDFF0C38ADCD73C1FD7F2 /* ExtensionSurfaceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72E2180FABF6409D30AF3EB4 /* ExtensionSurfaceState.swift */; };
 		A6184B5838A0A0931528F237 /* ExtensionSurfaceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72E2180FABF6409D30AF3EB4 /* ExtensionSurfaceState.swift */; };
 		A6296648FCCABC5106390447 /* MermaidKanbanParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B231D97AE677A326B334E5 /* MermaidKanbanParser.swift */; };
+		A649A71151AF35B90AC5BBB9 /* GhosttyVt-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = AA3C5BD17F50BE4A484BAE1C /* GhosttyVt-LICENSE.txt */; };
 		A67B720F74895724F14292A0 /* SystemTimelineRowContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D63D8949F9E75EC29682125 /* SystemTimelineRowContent.swift */; };
 		A67F2AF0A68F18A97FCF53DF /* ComposerDraftStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27560F6067A16918331DF012 /* ComposerDraftStore.swift */; };
 		A6B891C2FD263F33BFB01EF9 /* UnifiedPatchParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DF5DA555AFB287996FF1BDA /* UnifiedPatchParser.swift */; };
@@ -1488,6 +1491,7 @@
 		C7970FEE38143C98440703E4 /* TeXMathParserConformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3792E8E3EC34593F7D500E32 /* TeXMathParserConformanceTests.swift */; };
 		C7CC43541E65B79B9ED64060 /* AskRequestStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 357625D6E77C502A3C54C15B /* AskRequestStore.swift */; };
 		C7EE80D33971F6B47D959345 /* OrbStyleMapping.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D77EB97D3A2C824AAB9ECB8 /* OrbStyleMapping.swift */; };
+		C838754878E37FC5325B6C96 /* ghostty-vt.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = B30E5AA009B4EAC528E81DCE /* ghostty-vt.xcframework */; };
 		C841BB054A3CB1DEFB08C23D /* WorkingIndicatorTimelineRowContentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A50E42F85C9350D05553E6AD /* WorkingIndicatorTimelineRowContentTests.swift */; };
 		C85B5A423917106A7BAB3BFB /* QAVerificationNegativeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5FBAE35B3DAA02D1F26E0B2 /* QAVerificationNegativeUITests.swift */; };
 		C89651109E13D6FE58806727 /* MermaidGanttParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A258A67AF49D572F6ACDA472 /* MermaidGanttParser.swift */; };
@@ -1536,6 +1540,7 @@
 		D01654AF5E0B77C8646CB878 /* TreeSitterTOML in Frameworks */ = {isa = PBXBuildFile; productRef = 91D0C023E309A10A89EE8A3B /* TreeSitterTOML */; };
 		D02B084149F7A1FEC59F0221 /* FileIconTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22F98E33A192E987510F5570 /* FileIconTests.swift */; };
 		D06979A4FCF171843A4C4169 /* SessionFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34A025C1B087BCEDBDC6FE27 /* SessionFormatting.swift */; };
+		D06B7F95AEE6F0037C27BE71 /* TerminalLogEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F35C5D7715176ABC7FCEBCE /* TerminalLogEngine.swift */; };
 		D07838ABE5C97DB5FC54F038 /* StyledSegment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B7E7DC726B62185774F3F75 /* StyledSegment.swift */; };
 		D07DF9C39B44A0A8B83CC2CC /* DelimitedTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69D603A421ED850B5226621C /* DelimitedTable.swift */; };
 		D0AB9D37BB4BE3FD495D0F3A /* MacComposerDictationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F1D3230B4102085C50AE32 /* MacComposerDictationTests.swift */; };
@@ -2114,6 +2119,7 @@
 		108BB8C94EE6FC1E33CB64E9 /* ReviewCommentFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewCommentFormattingTests.swift; sourceTree = "<group>"; };
 		10ECB7266E12083547C5138A /* ServerMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerMessage.swift; sourceTree = "<group>"; };
 		110F3133CE5C203703E96D3A /* ContextInspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextInspectorView.swift; sourceTree = "<group>"; };
+		113C208DAA1E0A0043F698D2 /* TerminalLogEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalLogEngineTests.swift; sourceTree = "<group>"; };
 		115A6DAA6C2223F1633E1EFF /* McpSignInOwner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpSignInOwner.swift; sourceTree = "<group>"; };
 		115D138DE4C043DB31FF0736 /* CommitDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitDetailView.swift; sourceTree = "<group>"; };
 		1172D97003D1D8F973A7B60E /* WorkspaceFileEditChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFileEditChrome.swift; sourceTree = "<group>"; };
@@ -2973,6 +2979,7 @@
 		9EC7508C9CCED1104481EC3A /* ServerConnectionStreamTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionStreamTests.swift; sourceTree = "<group>"; };
 		9EFBC6CD5F25D9C44C5BCFB1 /* APIClientEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientEnvironment.swift; sourceTree = "<group>"; };
 		9F044BF09A23B7B08BFA8CE5 /* TimedText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimedText.swift; sourceTree = "<group>"; };
+		9F35C5D7715176ABC7FCEBCE /* TerminalLogEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalLogEngine.swift; sourceTree = "<group>"; };
 		9F37B0DEA8B8331AA8E7A45A /* ReviewCommentInlineDraftPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewCommentInlineDraftPresenter.swift; sourceTree = "<group>"; };
 		9F4A1023AB3553EA3AF7E462 /* QuietWorkLineTimelineRowContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuietWorkLineTimelineRowContent.swift; sourceTree = "<group>"; };
 		9F95252400EA1479563D4AB9 /* InteractionPreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InteractionPreferencesTests.swift; sourceTree = "<group>"; };
@@ -3039,6 +3046,7 @@
 		A9F803DDFA51B18E1AE25AB4 /* TimedTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimedTextTests.swift; sourceTree = "<group>"; };
 		AA29533A62DA87EF07DBEB4A /* MacWorkspaceShellViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWorkspaceShellViews.swift; sourceTree = "<group>"; };
 		AA2DC840922C07555826152A /* OrderedJSON.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrderedJSON.swift; sourceTree = "<group>"; };
+		AA3C5BD17F50BE4A484BAE1C /* GhosttyVt-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "GhosttyVt-LICENSE.txt"; sourceTree = "<group>"; };
 		AA44BADB091396872515F65B /* AttributedStringNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttributedStringNormalizer.swift; sourceTree = "<group>"; };
 		AA8604515621F88D03E89F6A /* RenderThemeMappingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderThemeMappingTests.swift; sourceTree = "<group>"; };
 		AACEB6B71CABF21B0B2784DC /* AskSilenceWatchdogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskSilenceWatchdogTests.swift; sourceTree = "<group>"; };
@@ -3094,6 +3102,7 @@
 		B2443DB37C920905F39C37C6 /* BusyReentryMetricsBench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusyReentryMetricsBench.swift; sourceTree = "<group>"; };
 		B2C631FFFB72C9E8886CFD10 /* MarkdownParsePerfBench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownParsePerfBench.swift; sourceTree = "<group>"; };
 		B2D9FE9D136CB3E87D10FBDD /* AppEventMessageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEventMessageTests.swift; sourceTree = "<group>"; };
+		B30E5AA009B4EAC528E81DCE /* ghostty-vt.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = "ghostty-vt.xcframework"; path = "Vendor/GhosttyVt/ghostty-vt.xcframework"; sourceTree = "<group>"; };
 		B31A172424752AE059AF0DEF /* LANEndpointSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LANEndpointSelection.swift; sourceTree = "<group>"; };
 		B3207837735E4C0576579638 /* ExtensionNativeBlockViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionNativeBlockViews.swift; sourceTree = "<group>"; };
 		B34BA805926E8D883DBC19B5 /* StoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreTests.swift; sourceTree = "<group>"; };
@@ -3592,6 +3601,7 @@
 				899755A40E77A26D7BEAED76 /* TreeSitterYAML in Frameworks */,
 				8D926F7DCE14D37855117FFE /* TreeSitterTOML in Frameworks */,
 				A74DA035E88134E8FE7927A2 /* TailscaleKit.xcframework in Frameworks */,
+				C838754878E37FC5325B6C96 /* ghostty-vt.xcframework in Frameworks */,
 				BA055965AD9709238B21ADB3 /* NIOCore in Frameworks */,
 				33571E33DDBB919F4933A593 /* NIOPosix in Frameworks */,
 				9A96B345A03441E8361F6E76 /* NIOSSH in Frameworks */,
@@ -4731,6 +4741,7 @@
 			children = (
 				22CBADB19FF5C739FC72FA85 /* AppIcon.icon */,
 				F3ED987CC68F402EE744D564 /* Assets.xcassets */,
+				AA3C5BD17F50BE4A484BAE1C /* GhosttyVt-LICENSE.txt */,
 				B4BAD411CB60FD93BBF578F0 /* Info.plist */,
 				AEF895A9115EF9F2143B7A6F /* InfoPlist.xcstrings */,
 				16DA599F0281A91ADEA0C700 /* Localizable.xcstrings */,
@@ -5364,6 +5375,7 @@
 				7A89DAE8BB4248CA60C6C77A /* MediaExtractorTests.swift */,
 				D0AB2911CDE5F7FAE68DA622 /* SQLHighlightDebugTests.swift */,
 				A871C06BB40882974D5C3F8C /* SyntaxHighlighterTests.swift */,
+				113C208DAA1E0A0043F698D2 /* TerminalLogEngineTests.swift */,
 				7DC0998A10B1940629F7DBCF /* TreeSitterBashHighlightTests.swift */,
 				F769F70CE975A88074C2E77F /* TreeSitterGrammarSubstitutionTests.swift */,
 			);
@@ -5699,6 +5711,7 @@
 		BA8935F2CBA1C01F83B43DD2 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				B30E5AA009B4EAC528E81DCE /* ghostty-vt.xcframework */,
 				E664E7DE10A5B6E028DEB6D2 /* PaperKit.framework */,
 				AAD7BF77A3054DFE0C02EBB6 /* PencilKit.framework */,
 				F0F24D9B33516A6AD3CE86BB /* ScreenCaptureKit.framework */,
@@ -5867,6 +5880,7 @@
 				B351494904652EBE606B1991 /* SyntaxKeywords.swift */,
 				088F078E3443736CC8735B6D /* SyntaxLanguage.swift */,
 				3AAC5859DC05B80A91840AF4 /* SyntaxTokenScanner.swift */,
+				9F35C5D7715176ABC7FCEBCE /* TerminalLogEngine.swift */,
 				91C9E67C0AA877212B554EAE /* ToolCallDocumentBuilder.swift */,
 				945A1BD7F7865221CB0D7C9E /* ToolCallFormatting.swift */,
 				0A18FFCC65EC84E4C43D42E2 /* ToolContentDescriptor.swift */,
@@ -6558,6 +6572,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = AFB14B88FE78000FE3E0783B /* Build configuration list for PBXNativeTarget "Oppi" */;
 			buildPhases = (
+				2F5899E78516BA4838D48B53 /* GhosttyVt */,
 				92BDC557BC120C46953B00F4 /* TailscaleKit */,
 				C22D8579D29E569FBD61692A /* SwiftLint */,
 				E7D7D0C39F389714C2902907 /* ArchitectureBoundaries */,
@@ -6709,6 +6724,7 @@
 				E4F57E0EEE4D756F22354F68 /* FiraCode-Bold.ttf in Resources */,
 				2034BC7BDDB50598A7E898DD /* FiraCode-Regular.ttf in Resources */,
 				754AAFE32609AF8126B5DDD3 /* FiraCode-SemiBold.ttf in Resources */,
+				A649A71151AF35B90AC5BBB9 /* GhosttyVt-LICENSE.txt in Resources */,
 				F8779CA832B183A59F1024A5 /* InfoPlist.xcstrings in Resources */,
 				4D227089BE22F03AB42A8A2A /* JetBrainsMono-Bold.ttf in Resources */,
 				EDCFB602D6A682390786E267 /* JetBrainsMono-Regular.ttf in Resources */,
@@ -6788,6 +6804,26 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		2F5899E78516BA4838D48B53 /* GhosttyVt */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = GhosttyVt;
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"$SRCROOT/scripts/build-ghostty-vt.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
 		92BDC557BC120C46953B00F4 /* TailscaleKit */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -7273,6 +7309,7 @@
 				5658AFDDD30ED3A2AF7219F4 /* TCCPermissionState.swift in Sources */,
 				4CB9F5E0B6A9D3E98BABA171 /* TailnetStatus.swift in Sources */,
 				2FABF26F7816C2E1F1DEFA0B /* TeXMathParser.swift in Sources */,
+				5974B7B960C1B2953E0846C6 /* TerminalLogEngine.swift in Sources */,
 				F0E3F8E8A8161326118A0EA4 /* ThemeCatalog.swift in Sources */,
 				4088B2C9C8146D87E89F268D /* ThemeStore.swift in Sources */,
 				C21C4BA4052D6105A379B7C6 /* ThinkingLevelMenuSource.swift in Sources */,
@@ -7895,6 +7932,7 @@
 				248AE6396AB124EC9F540352 /* TeXMathParserStressFixtureTests.swift in Sources */,
 				6C66614BE567CB71E57BCEE1 /* TelemetryModeTests.swift in Sources */,
 				5221A29D0638B4457389A13C /* TerminalInspectionTests.swift in Sources */,
+				6FA3650EF71BDD85E5B1CE28 /* TerminalLogEngineTests.swift in Sources */,
 				8DFE48AA4B811729E87C8CD2 /* TestDoubles.swift in Sources */,
 				134DCAD79BC2E886E2AB9C3A /* TestEventPipeline.swift in Sources */,
 				FA7B98A1FEC9B12594D68E32 /* TestFactories.swift in Sources */,
@@ -8564,6 +8602,7 @@
 				3D12BA89218E8E72F1EF2C18 /* TailnetTransportRoute.swift in Sources */,
 				B3BBAB1CD45A3B579C82BB36 /* TeXMathParser.swift in Sources */,
 				8008C37EB63C2AED1492BA91 /* TelemetrySettings.swift in Sources */,
+				D06B7F95AEE6F0037C27BE71 /* TerminalLogEngine.swift in Sources */,
 				98E6458E95AB87B44EDE7DA3 /* TerminalMirrorIndicatorView.swift in Sources */,
 				F7B875FA8AA9E66AEB2C45F6 /* TextSearchMatch.swift in Sources */,
 				6489355DCB28B4FDFB42FCE0 /* ThemeCatalog.swift in Sources */,
@@ -8930,6 +8969,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
+					"\"Vendor/GhosttyVt\"",
 					"\"Vendor/TailscaleKit\"",
 				);
 				INFOPLIST_FILE = Oppi/Resources/Info.plist;
@@ -9001,6 +9041,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
+					"\"Vendor/GhosttyVt\"",
 					"\"Vendor/TailscaleKit\"",
 				);
 				INFOPLIST_FILE = Oppi/Resources/Info.plist;

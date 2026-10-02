@@ -1973,8 +1973,9 @@ private final class FullScreenTerminalVirtualizedLayout: UICollectionViewLayout 
 }
 
 final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollectionViewDataSource, UICollectionViewDelegate {
-    // ~4ms at measured 26 MB/s throughput, safely within 16ms frame budget
-    private static let maxSynchronousANSIBytes = 128 * 1024
+    // VT interpretation is required work, not a deferred color decoration.
+    // Keep the synchronous budget small; larger histories build off-main.
+    private static let maxSynchronousANSIBytes = 16 * 1024
     private static let maxEstimatedOutputWidth: CGFloat = 120_000
     private static let virtualizedChunkLineLimit = 160
     private static let virtualizedChunkVisualLineLimit = 64
@@ -2008,6 +2009,8 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     private var virtualizedSource = ""
     private var virtualizedIndex: ANSIParser.TerminalChunkIndex?
     private var virtualizedCommand: NSAttributedString?
+    // Identity of the mounted index, not the serialized replay in progress.
+    // Starting a replay must not invalidate paints for the still-visible index.
     private var virtualizedGeneration = 0
     private var attributedChunkCache: [Int: NSAttributedString] = [:]
     private var attributedChunkLRU: [Int] = []
@@ -2020,7 +2023,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     private var debugIndexMilliseconds: Double = 0
     #endif
 
-    private lazy var tailFollowCoordinator = TailFollowScrollCoordinator(
+    private lazy var standardTailFollowCoordinator = TailFollowScrollCoordinator(
         scrollView: scrollView,
         shouldAutoFollowTail: false,
         performLayout: { [weak self] in
@@ -2029,11 +2032,25 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     )
 
     private var renderTask: Task<Void, Never>?
+    private lazy var virtualizedTailFollowCoordinator = TailFollowScrollCoordinator(
+        scrollView: virtualizedCollectionView,
+        shouldAutoFollowTail: false,
+        performLayout: { [weak self] in self?.layoutIfNeeded() }
+    )
+
+    private var activeTerminalScrollView: UIScrollView {
+        virtualizedCollectionView.isHidden ? scrollView : virtualizedCollectionView
+    }
+
+    private var tailFollowCoordinator: TailFollowScrollCoordinator {
+        virtualizedCollectionView.isHidden ? standardTailFollowCoordinator : virtualizedTailFollowCoordinator
+    }
+
     private var streamObserverID: UUID?
     private var sidecarSource: ToolOutputSidecarWindowSource?
     private var sidecarTask: Task<Void, Never>?
     private var sidecarExpectsMore = false
-    private var sidecarPendingAppend = ""
+    private var sidecarHasPendingAppend = false
 
     init(
         content: String,
@@ -2062,8 +2079,8 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         latestSnapshot = initialSnapshot
 
         super.init(frame: .zero)
-        tailFollowCoordinator.shouldAutoFollowTail = !initialSnapshot.isDone
         setup()
+        tailFollowCoordinator.shouldAutoFollowTail = !initialSnapshot.isDone
         render(snapshot: initialSnapshot)
         startSidecarLoadingIfNeeded()
 
@@ -2089,7 +2106,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        if !virtualizedCollectionView.isHidden, virtualizedWrapColumns != wrappedChunkColumns {
+        if !virtualizedSource.isEmpty, virtualizedWrapColumns != wrappedChunkColumns {
             enterVirtualizedMode(source: virtualizedSource)
         }
         updateWrappingLayout()
@@ -2219,15 +2236,21 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     }
 
     private func renderTerminalOutput(_ content: String, isStreaming: Bool) {
-        renderTask?.cancel()
-        renderTask = nil
-
-        let virtualizeCompletedPrefix = sidecarExpectsMore || content.utf8.count > Self.maxSynchronousANSIBytes
-        if !virtualizeCompletedPrefix, content.utf8.count <= Self.maxSynchronousANSIBytes {
+        if !sidecarExpectsMore, content.utf8.count <= Self.maxSynchronousANSIBytes {
+            renderTask?.cancel()
+            renderTask = nil
+            sidecarHasPendingAppend = false
             leaveVirtualizedMode()
-            let attributedOutput = ANSIParser.attributedString(
-                from: content, baseForeground: .themeFg
-            )
+            let resolved: String
+            do {
+                resolved = try TerminalLogEngine.render(content)
+            } catch {
+                resolved = "Terminal rendering failed: \(error)"
+            }
+            // ANSIParser is now only the native SGR-to-theme painter. It never
+            // interprets raw terminal bytes; Ghostty has resolved cursor/screen
+            // state before text is handed to TextKit.
+            let attributedOutput = ANSIParser.attributedString(from: resolved, baseForeground: .themeFg)
             renderedOutputAttributedBase = attributedOutput
             outputView.attributedText = attributedOutput
             applyOutputFont()
@@ -2235,24 +2258,55 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
             updateWrappingLayout()
             return
         }
-
-        // Streaming snapshots retain the existing plain-text path. Completed
-        // documents switch to a chunk index before any full output is mounted.
-        // Partial sidecar windows virtualize so first paint does not wait for
-        // the rest of the body.
-        if isStreaming, !sidecarExpectsMore {
-            leaveVirtualizedMode()
-            outputView.attributedText = nil
-            renderedOutputAttributedBase = nil
-            outputView.font = codeFont
-            let stripped = ANSIParser.strip(content)
-            outputView.text = stripped
-            renderedOutputText = stripped
-            updateWrappingLayout()
-            return
-        }
-
+        // Streaming must also interpret cursor instructions. Large snapshots
+        // use the same detached engine/index path, not a stripped-text tier.
         enterVirtualizedMode(source: content)
+    }
+
+    var immediateCopyText: String? {
+        guard sidecarSource == nil, renderTask == nil, virtualizedSource.isEmpty else { return nil }
+        return renderedOutputText
+    }
+
+    /// Clipboard output shares the painted terminal semantics. Materialize a
+    /// complete sidecar before interpretation; never independently strip windows.
+    func resolvedCopyText() async -> String? {
+        let heldSource = virtualizedSource.isEmpty ? latestSnapshot.output : virtualizedSource
+        var source = heldSource
+        if let sidecarSource {
+            do {
+                if let first = try await sidecarSource.loadFirst() {
+                    var complete = first.text
+                    var offset = first.endByteOffset
+                    while offset < first.totalBytes {
+                        try Task.checkCancellation()
+                        guard let next = try await sidecarSource.loadNext(offset),
+                              next.endByteOffset > offset, next.totalBytes == first.totalBytes else { break }
+                        complete += next.text
+                        offset = next.endByteOffset
+                    }
+                    if offset == first.totalBytes, complete.utf8.count == first.totalBytes {
+                        source = complete
+                    }
+                }
+            } catch {
+                // A stopped session may have lost its sidecar; copy the held
+                // resolved preview, not an unresolved or half-fetched mixture.
+            }
+        }
+        guard !Task.isCancelled else { return nil }
+        let sameSource = source.utf8.elementsEqual(heldSource.utf8)
+        if sameSource, virtualizedSource.isEmpty, virtualizedCollectionView.isHidden, renderTask == nil {
+            return renderedOutputText
+        }
+        let chunks = sameSource && renderTask == nil ? virtualizedIndex?.chunks : nil
+        let capturedSource = source
+        return await withCancellableDetachedTask(priority: .userInitiated) { () -> String? in
+            if let chunks {
+                return chunks.map { ANSIParser.strip($0.rawText) }.joined()
+            }
+            return try? TerminalLogEngine.plainText(capturedSource)
+        }
     }
 
     private func startSidecarLoadingIfNeeded() {
@@ -2305,12 +2359,15 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
 
     private func applyFirstSidecarWindow(_ window: ToolOutputSidecarWindow) {
         sidecarExpectsMore = !window.isComplete
-        sidecarPendingAppend = ""
+        sidecarHasPendingAppend = false
         latestSnapshot = TerminalTraceStream.Snapshot(
             output: window.text,
             command: latestSnapshot.command,
             isDone: true
         )
+        // The first window may equal the preview, but its new completeness
+        // requires the one-terminal window path even when the bytes match.
+        renderedSnapshot = nil
         render(snapshot: latestSnapshot)
     }
 
@@ -2328,54 +2385,27 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         }
         virtualizedSource += text
         if renderTask != nil {
-            sidecarPendingAppend += text
+            sidecarHasPendingAppend = true
             return
         }
         if virtualizedIndex == nil {
             enterVirtualizedMode(source: virtualizedSource)
             return
         }
-        appendVirtualizedWindow(text)
+        appendVirtualizedWindow()
     }
 
-    private func appendVirtualizedWindow(_ text: String) {
-        guard let index = virtualizedIndex else { return }
-        let generation = virtualizedGeneration
-        let wrappedColumns = virtualizedWrapColumns
-        let chunkLineLimit = Self.virtualizedChunkLineLimit
-        let chunkByteLimit = Self.virtualizedChunkByteLimit
-        let visualLineLimit = Self.virtualizedChunkVisualLineLimit
-        renderTask = Task { [weak self] in
-            guard let build = await withCancellableDetachedTask(
-                priority: .userInitiated,
-                operation: {
-                    index.appendingWindow(
-                        text,
-                        maxLines: chunkLineLimit,
-                        maxBytes: chunkByteLimit,
-                        wrappedColumns: wrappedColumns,
-                        maxVisualLines: visualLineLimit
-                    )
-                }
-            ), !Task.isCancelled else { return }
-            await MainActor.run {
-                guard let self, generation == self.virtualizedGeneration else { return }
-                self.virtualizedIndex = build
-                self.virtualizedSizingWidth = nil
-                self.refreshVirtualizedItemSizes()
-                self.virtualizedCollectionView.reloadData()
-                self.prepareVisibleChunkRunway()
-                self.renderTask = nil
-                self.flushSidecarPendingAppend()
-            }
-        }
+    private func appendVirtualizedWindow() {
+        // A later window can move the cursor and overwrite a preceding chunk.
+        // Interpret the ordered source as one terminal before rebuilding the
+        // presentation index. Never parse raw windows as independent terminals.
+        enterVirtualizedMode(source: virtualizedSource)
     }
 
     private func flushSidecarPendingAppend() {
-        let extra = sidecarPendingAppend
-        guard !extra.isEmpty else { return }
-        sidecarPendingAppend = ""
-        appendVirtualizedWindow(extra)
+        guard sidecarHasPendingAppend else { return }
+        sidecarHasPendingAppend = false
+        appendVirtualizedWindow()
     }
 
     private var wrappedChunkColumns: Int? {
@@ -2385,45 +2415,36 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     }
 
     private func enterVirtualizedMode(source: String) {
-        renderTask?.cancel()
-        let previousScrollFraction: CGFloat? = virtualizedIndex == nil ? nil
-            : virtualizedCollectionView.contentOffset.y
-                / max(1, virtualizedCollectionView.contentSize.height - virtualizedCollectionView.bounds.height)
-        virtualizedGeneration += 1
+        virtualizedSource = source
+        if renderTask != nil {
+            sidecarHasPendingAppend = true
+            return
+        }
         let generation = virtualizedGeneration
         let chunkLineLimit = Self.virtualizedChunkLineLimit
         let chunkByteLimit = Self.virtualizedChunkByteLimit
         let visualLineLimit = Self.virtualizedChunkVisualLineLimit
         let wrappedColumns = wrappedChunkColumns
         virtualizedWrapColumns = wrappedColumns
-        virtualizedSizingWidth = nil
-        virtualizedSource = source
-        virtualizedIndex = nil
-        renderedOutputAttributedBase = nil
-        renderedOutputText = ""
-        outputView.attributedText = nil
-        chunkRenderTasks.values.forEach { $0.cancel() }
-        chunkRenderTasks.removeAll()
-        attributedChunkCache.removeAll()
-        attributedChunkLRU.removeAll()
-        let followTail = tailFollowCoordinator.shouldAutoFollowTail
-            || scrollView.bounds.height > 0
-            && scrollView.contentOffset.y + scrollView.bounds.height
-                >= scrollView.contentSize.height - 64
-        scrollView.isHidden = true
-        virtualizedCollectionView.isHidden = false
-        virtualizedCollectionView.reloadData()
-        // Wait for the host's first layout instead of indexing a one-column viewport.
+        // Keep the mounted reader while one replay runs. Later snapshots
+        // coalesce to the latest source instead of cancelling useful work.
         guard wrappedColumns == nil || bounds.width > 32 else { return }
 
         renderTask = Task { [weak self] in
             guard let build = await withCancellableDetachedTask(
                 priority: .userInitiated,
-                operation: {
+                operation: { () -> (ANSIParser.TerminalChunkIndex, Bool, Double)? in
                     let ranOnMainThread = Self.isMainThreadForDiagnostics()
                     let start = CACurrentMediaTime()
+                    let resolved: String
+                    do {
+                        resolved = try TerminalLogEngine.render(source)
+                    } catch {
+                        resolved = "Terminal rendering failed: \(error)"
+                    }
+                    guard !Task.isCancelled else { return nil }
                     let index = ANSIParser.TerminalChunkIndex.build(
-                        from: source,
+                        from: resolved,
                         maxLines: chunkLineLimit,
                         maxBytes: chunkByteLimit,
                         wrappedColumns: wrappedColumns,
@@ -2433,29 +2454,45 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
                 }
             ), !Task.isCancelled else { return }
             await MainActor.run {
-                guard let self, generation == self.virtualizedGeneration else { return }
+                guard let self, !Task.isCancelled, generation == self.virtualizedGeneration else { return }
+                if self.sidecarHasPendingAppend, self.virtualizedIndex != nil {
+                    // Preserve the reader/cache while a newer source is queued.
+                    // An initial index is still allowed through, so continuous
+                    // input cannot starve the first paint.
+                    self.renderTask = nil
+                    self.flushSidecarPendingAppend()
+                    return
+                }
+                let activeScrollView = self.virtualizedCollectionView.isHidden
+                    ? self.scrollView : self.virtualizedCollectionView
+                let previousOffset = activeScrollView.contentOffset
+                let followTail = self.tailFollowCoordinator.shouldAutoFollowTail
+                self.virtualizedGeneration += 1
+                self.chunkRenderTasks.values.forEach { $0.cancel() }
+                self.chunkRenderTasks.removeAll()
+                self.attributedChunkCache.removeAll()
+                self.attributedChunkLRU.removeAll()
                 self.virtualizedIndex = build.0
+                self.renderedOutputAttributedBase = nil
+                self.renderedOutputText = ""
+                self.outputView.attributedText = nil
+                self.scrollView.isHidden = true
+                self.virtualizedCollectionView.isHidden = false
+                self.virtualizedTailFollowCoordinator.shouldAutoFollowTail = followTail
                 #if DEBUG
                 self.debugIndexRanOnMainThread = build.1
                 self.debugIndexMilliseconds = build.2
                 #endif
                 self.virtualizedSizingWidth = nil
-                self.refreshVirtualizedItemSizes()
                 self.virtualizedCollectionView.reloadData()
-                // Geometry is already known from the index. Do not synchronously
-                // warm UICollectionView/TextKit on the index-completion turn.
-                if previousScrollFraction != nil || followTail {
-                    let totalHeight = self.virtualizedLayout.itemSizes.reduce(CGFloat.zero) { $0 + $1.height }
-                    let offsetY = max(0, totalHeight - self.virtualizedCollectionView.bounds.height)
-                        * min(1, max(0, previousScrollFraction ?? 1))
-                    self.virtualizedCollectionView.setContentOffset(
-                        CGPoint(
-                            x: self.virtualizedCollectionView.contentOffset.x,
-                            y: offsetY
-                        ),
-                        animated: false
-                    )
-                }
+                self.refreshVirtualizedItemSizes()
+                // A drag during replay still owns the reader at commit time.
+                let totalHeight = self.virtualizedLayout.itemSizes.reduce(CGFloat.zero) { $0 + $1.height }
+                let maxY = max(0, totalHeight - self.virtualizedCollectionView.bounds.height)
+                self.virtualizedCollectionView.setContentOffset(
+                    CGPoint(x: previousOffset.x, y: followTail ? maxY : min(maxY, max(0, previousOffset.y))),
+                    animated: false
+                )
                 self.prepareVisibleChunkRunway()
                 self.renderTask = nil
                 self.flushSidecarPendingAppend()
@@ -2464,8 +2501,12 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     }
 
     private func leaveVirtualizedMode() {
-        guard !virtualizedCollectionView.isHidden else { return }
+        // Invalidate even before the first index appears: a hidden collection
+        // can still have an abandoned replay waiting to commit.
         virtualizedGeneration += 1
+        virtualizedSource = ""
+        guard !virtualizedCollectionView.isHidden else { return }
+        standardTailFollowCoordinator.shouldAutoFollowTail = tailFollowCoordinator.shouldAutoFollowTail
         chunkRenderTasks.values.forEach { $0.cancel() }
         chunkRenderTasks.removeAll()
         attributedChunkCache.removeAll()
@@ -2753,15 +2794,13 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-        guard scrollView === self.scrollView else { return }
+        guard scrollView === activeTerminalScrollView else { return }
         tailFollowCoordinator.handleWillBeginDragging()
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        guard scrollView === self.scrollView else {
-            prepareVisibleChunkRunway()
-            return
-        }
+        guard scrollView === activeTerminalScrollView else { return }
+        if scrollView === virtualizedCollectionView { prepareVisibleChunkRunway() }
         tailFollowCoordinator.handleDidScroll(
             isUserDriven: scrollView.isDragging || scrollView.isDecelerating,
             isStreaming: !latestSnapshot.isDone
@@ -2769,7 +2808,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        guard scrollView === self.scrollView else { return }
+        guard scrollView === activeTerminalScrollView else { return }
         tailFollowCoordinator.handleDidEndDragging(
             willDecelerate: decelerate,
             isStreaming: !latestSnapshot.isDone
@@ -2777,7 +2816,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        guard scrollView === self.scrollView else { return }
+        guard scrollView === activeTerminalScrollView else { return }
         tailFollowCoordinator.handleDidEndDecelerating(isStreaming: !latestSnapshot.isDone)
     }
 }

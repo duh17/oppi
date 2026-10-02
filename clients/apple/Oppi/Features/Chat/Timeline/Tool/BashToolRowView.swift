@@ -94,10 +94,10 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     private var pendingFollowTail = false
     private var perfSessionId: String?
 
-    // MARK: - Deferred ANSI highlight
+    // MARK: - Deferred terminal rendering
 
-    /// Byte threshold above which ANSI highlighting is deferred to a background
-    /// thread. Below this, synchronous parsing is fast enough (< 16ms on device).
+    /// Large terminal snapshots are interpreted and painted off-main. Small
+    /// streaming previews retain one engine and feed only the appended bytes.
     static let deferredANSIByteThreshold = 4 * 1024
 
     private var deferredANSITask: Task<Void, Never>?
@@ -111,16 +111,9 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     private(set) var debugCommandHighlightWorkCountForTesting = 0
     #endif
 
-    // MARK: - Streaming append state (step 7)
-
-    /// UTF-16 length of plain-text content already rendered during streaming.
-    /// Used to append only the delta on each streaming chunk.
-    private var streamAppendOffset = 0
-
-    /// Incremental ANSI stripper for streaming — avoids O(n^2) by only
-    /// processing new bytes on each chunk instead of re-stripping the full
-    /// accumulated output.
-    private var incrementalStripper = ANSIParser.IncrementalStripper()
+    // Own incremental VT state only for small synchronous previews. Large jobs
+    // create an independent engine so cancellation/reuse cannot reorder writes.
+    private var terminalEngine: TerminalLogEngine?
 
     // MARK: - Internal layout
 
@@ -206,39 +199,21 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
             if signature != outputRenderSignature {
                 let startNs = ChatTimelinePerf.timestampNs()
-                let tier = StreamingRenderPolicy.tier(
-                    isStreaming: input.isStreaming,
-                    contentKind: .bash,
-                    byteCount: displayOutput.utf8.count,
-                    lineCount: 0
-                )
-
                 let didTextChange: Bool
-
-                if tier == .cheap {
-                    // Streaming: use incremental plain-text append.
-                    didTextChange = applyStreamingOutput(displayOutput, outputColor: outputColor)
-                } else if let cached = ToolRowRenderCache.get(signature: signature) {
-                    let prevText = outputLabel.attributedText?.string ?? outputLabel.text ?? ""
-                    didTextChange = prevText != cached.string
+                let previousText = outputLabel.attributedText?.string ?? outputLabel.text ?? ""
+                if let cached = ToolRowRenderCache.get(signature: signature) {
+                    cancelDeferredANSIHighlight()
                     outputLabel.attributedText = cached
-                    streamAppendOffset = 0
-                    incrementalStripper.reset()
+                    didTextChange = previousText != cached.string
                 } else if displayOutput.utf8.count > Self.deferredANSIByteThreshold {
-                    // Large output: show placeholder now, parse ANSI in background.
-                    // Plain text (no ESC byte): strip is O(1), use full text.
-                    // ANSI content: use bounded prefix to avoid blocking main thread.
-                    let hasANSI = displayOutput.utf8.contains(0x1B)
-                    let placeholder = hasANSI
-                        ? ANSIParser.stripPrefix(displayOutput, maxInputBytes: 512)
-                        : displayOutput
-                    let prevText = outputLabel.attributedText?.string ?? outputLabel.text ?? ""
-                    didTextChange = prevText != placeholder
-                    outputLabel.attributedText = nil
-                    outputLabel.text = placeholder
-                    outputLabel.textColor = outputColor
-                    streamAppendOffset = 0
-                    incrementalStripper.reset()
+                    terminalEngine = nil
+                    // Never display a raw stripped preview: cursor instructions
+                    // are required state, including while streaming.
+                    if previousText.isEmpty {
+                        outputLabel.text = "Rendering terminal output…"
+                        outputLabel.textColor = outputColor
+                    }
+                    didTextChange = false
                     scheduleDeferredANSIHighlight(
                         text: displayOutput,
                         isError: input.isError,
@@ -248,37 +223,26 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                         sessionId: input.sessionId
                     )
                 } else {
-                    // Small output: synchronous ANSI parse is fast enough.
                     cancelDeferredANSIHighlight()
-                    let p = ToolRowTextRenderer.makeANSIOutputPresentation(
-                        displayOutput,
-                        isError: input.isError
-                    )
-                    if let attr = p.attributedText {
-                        ToolRowRenderCache.set(signature: signature, attributed: attr)
+                    do {
+                        let engine = try terminalEngine ?? TerminalLogEngine()
+                        terminalEngine = engine
+                        let resolved = try engine.update(displayOutput)
+                        let attributed = ToolRowTextRenderer.ansiHighlighted(
+                            resolved, baseForeground: input.isError ? .themeRed : .themeFg
+                        )
+                        ToolRowRenderCache.set(signature: signature, attributed: attributed)
+                        outputLabel.attributedText = attributed
+                        didTextChange = previousText != attributed.string
+                    } catch {
+                        outputLabel.text = "Terminal rendering failed: \(error)"
+                        outputLabel.textColor = outputColor
+                        terminalEngine = nil
+                        didTextChange = true
                     }
-                    let nextText = p.attributedText?.string ?? p.plainText ?? ""
-                    let prevText = outputLabel.attributedText?.string ?? outputLabel.text ?? ""
-                    didTextChange = prevText != nextText
-                    ToolRowTextRenderer.applyANSIOutputPresentation(
-                        p,
-                        to: outputLabel,
-                        plainTextColor: outputColor
-                    )
-                    streamAppendOffset = 0
-                    incrementalStripper.reset()
-                }
-
-                let renderMode: String
-                if tier == .cheap {
-                    renderMode = "bash.output.stream"
-                } else if deferredANSISignature == signature {
-                    renderMode = "bash.output.deferred"
-                } else {
-                    renderMode = "bash.output.ansi"
                 }
                 ChatTimelinePerf.recordRenderStrategy(
-                    mode: renderMode,
+                    mode: deferredANSISignature == signature ? "bash.output.deferred" : "bash.output.terminal",
                     durationMs: ChatTimelinePerf.elapsedMs(since: startNs),
                     inputBytes: displayOutput.utf8.count,
                     sessionId: input.sessionId
@@ -340,60 +304,6 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         }
     }
 
-    // MARK: - Streaming Append (step 7)
-
-    /// Apply streaming output using incremental ANSI stripping.
-    ///
-    /// Uses `ANSIParser.IncrementalStripper` to process only new bytes
-    /// on each chunk, keeping per-chunk cost O(delta) instead of O(n).
-    /// Appends the stripped delta directly to the label.
-    ///
-    /// Falls back to a full rebuild when the stripper returns nil
-    /// (unchanged input) or when the label state is inconsistent.
-    /// Returns whether the visible content changed.
-    private func applyStreamingOutput(_ displayOutput: String, outputColor: UIColor) -> Bool {
-        guard let delta = incrementalStripper.delta(displayOutput) else {
-            return false
-        }
-
-        let font = ToolFont.regular
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: outputColor,
-        ]
-
-        let existingLen = (outputLabel.attributedText?.length)
-            ?? (outputLabel.text as NSString?)?.length
-            ?? 0
-
-        if existingLen == streamAppendOffset, streamAppendOffset > 0 {
-            // Append delta to existing attributed text.
-            if let existing = outputLabel.attributedText, existing.length > 0 {
-                let mutable = NSMutableAttributedString(attributedString: existing)
-                mutable.append(NSAttributedString(string: delta, attributes: attrs))
-                outputLabel.attributedText = mutable
-            } else {
-                // Label was set via .text — rebuild as attributed.
-                let fullText = (outputLabel.text ?? "") + delta
-                outputLabel.attributedText = NSAttributedString(
-                    string: fullText,
-                    attributes: attrs
-                )
-            }
-        } else {
-            // First chunk or label is inconsistent — set full stripped text.
-            // Use the stripper's total output length to reconstruct.
-            let stripped = ANSIParser.strip(displayOutput)
-            outputLabel.attributedText = NSAttributedString(
-                string: stripped,
-                attributes: attrs
-            )
-        }
-
-        streamAppendOffset = incrementalStripper.strippedUTF16Length
-        return true
-    }
-
     // MARK: - Reset
 
     /// Reset output render state. Called when output container is hidden.
@@ -411,14 +321,13 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         outputViewportHeightConstraint?.isActive = false
         outputUsesViewport = false
         outputShouldAutoFollow = true
-        streamAppendOffset = 0
-        incrementalStripper.reset()
+        terminalEngine = nil
         ToolTimelineRowUIHelpers.resetScrollPosition(outputScrollView)
     }
 
     /// Reset command render state. Called when command container is hidden.
+    /// Output work has its own lifetime, including tools with no command header.
     func resetCommandState() {
-        cancelDeferredANSIHighlight()
         cancelDeferredCommandHighlight()
         commandLabel.attributedText = nil
         commandLabel.text = nil
@@ -580,70 +489,93 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         deferredANSITask?.cancel()
         deferredANSITask = nil
         deferredANSISignature = nil
+        pendingDeferredANSIRequest = nil
     }
 
+    private struct DeferredANSIRequest {
+        let text: String
+        let isError: Bool
+        let signature: Int
+        let outputColor: UIColor
+        let unwrapped: Bool
+        let sessionId: String?
+        let themeID: ThemeID
+    }
+
+    private var pendingDeferredANSIRequest: DeferredANSIRequest?
+
     private func scheduleDeferredANSIHighlight(
-        text: String,
-        isError: Bool,
-        signature: Int,
-        outputColor: UIColor,
-        unwrapped: Bool,
-        sessionId: String?
+        text: String, isError: Bool, signature: Int, outputColor: UIColor,
+        unwrapped: Bool, sessionId: String?
     ) {
-        // Skip if already computing this exact signature.
-        if deferredANSISignature == signature,
-           let task = deferredANSITask,
-           !task.isCancelled {
+        let request = DeferredANSIRequest(text: text, isError: isError,
+            signature: signature, outputColor: outputColor, unwrapped: unwrapped,
+            sessionId: sessionId, themeID: ThemeRuntimeState.currentThemeID())
+        if deferredANSITask != nil {
+            // Keep one useful worker and only the latest cumulative snapshot.
+            if deferredANSISignature != signature { pendingDeferredANSIRequest = request }
             return
         }
-
-        cancelDeferredANSIHighlight()
         deferredANSISignature = signature
-
         deferredANSITask = Task.detached(priority: .utility) { [weak self] in
             #if DEBUG
             if let artificialDelay = BashToolRowView.deferredANSIDelayForTesting {
                 try? await Task.sleep(for: artificialDelay)
             }
             #endif
-
             let renderStart = ContinuousClock.now
-            let presentation = ToolRowTextRenderer.makeANSIOutputPresentation(
-                text,
-                isError: isError
-            )
-            guard let attributed = presentation.attributedText else { return }
+            guard !Task.isCancelled else { return }
+            let attributed: NSAttributedString
+            let succeeded: Bool
+            do {
+                let resolved = try TerminalLogEngine.render(text)
+                attributed = ToolRowTextRenderer.ansiHighlighted(
+                    resolved, baseForeground: isError ? .themeRed : .themeFg
+                )
+                succeeded = true
+            } catch is CancellationError {
+                return
+            } catch {
+                attributed = NSAttributedString(string: "Terminal rendering failed: \(error)")
+                succeeded = false
+            }
             let result = DeferredANSIResult(attributed: attributed)
             let durationMs = Int((ContinuousClock.now - renderStart) / .milliseconds(1))
-
             await MainActor.run { [weak self] in
-                guard let self,
-                      self.deferredANSISignature == signature else {
-                    return
+                guard let self, self.deferredANSISignature == signature else { return }
+                let pending = self.pendingDeferredANSIRequest
+                self.pendingDeferredANSIRequest = nil
+                self.deferredANSITask = nil
+                self.deferredANSISignature = nil
+                let isLatest = self.outputRenderSignature == signature
+                // A replacement tail/new tool must not paint the old result.
+                let isEarlierAppend = pending.map {
+                    $0.text.utf8.starts(with: text.utf8) && $0.isError == isError
+                        && $0.themeID == request.themeID
+                } ?? false
+                if succeeded && isLatest && request.themeID == ThemeRuntimeState.currentThemeID() {
+                    ToolRowRenderCache.set(signature: signature, attributed: result.attributed)
                 }
-
-                defer {
-                    self.deferredANSITask = nil
-                    self.deferredANSISignature = nil
+                if request.themeID == ThemeRuntimeState.currentThemeID(),
+                   isLatest || (succeeded && isEarlierAppend) {
+                    self.outputLabel.attributedText = result.attributed
+                    self.terminalEngine = nil
+                    self.outputRenderedText = self.outputUsesUnwrappedLayout ? result.attributed.string : nil
+                    self.updateOutputLabelWidthIfNeeded()
+                    self.schedulePendingFollowTail()
+                    self.flushFollowTail()
+                    self.setNeedsLayout()
+                    if !succeeded && isLatest { self.outputRenderSignature = nil }
                 }
-
-                ToolRowRenderCache.set(signature: signature, attributed: result.attributed)
                 ChatTimelinePerf.recordRenderStrategy(
-                    mode: "bash.output.deferred.highlight",
-                    durationMs: durationMs,
-                    inputBytes: text.utf8.count,
-                    sessionId: sessionId
+                    mode: "bash.output.deferred.highlight", durationMs: durationMs,
+                    inputBytes: text.utf8.count, sessionId: sessionId
                 )
-
-                // Only apply if cell still shows this signature.
-                guard self.outputRenderSignature == signature else { return }
-
-                self.outputLabel.attributedText = result.attributed
-                self.streamAppendOffset = 0
-                self.incrementalStripper.reset()
-                self.outputRenderedText = unwrapped ? result.attributed.string : nil
-                self.updateOutputLabelWidthIfNeeded()
-                self.setNeedsLayout()
+                if let pending {
+                    self.scheduleDeferredANSIHighlight(text: pending.text, isError: pending.isError,
+                        signature: pending.signature, outputColor: pending.outputColor,
+                        unwrapped: pending.unwrapped, sessionId: pending.sessionId)
+                }
             }
         }
     }

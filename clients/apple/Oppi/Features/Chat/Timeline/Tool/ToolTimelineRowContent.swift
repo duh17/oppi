@@ -2095,19 +2095,31 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     func resolveOutputCopyText() async -> String? {
-        if let fetch = currentConfiguration.fetchCompleteToolOutput {
+        // Capture the row contract before awaiting I/O; reuse may replace it.
+        let configuration = currentConfiguration
+        if let fetch = configuration.fetchCompleteToolOutput {
             do {
                 if let complete = try await fetch() {
                     let trimmed = complete.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty {
-                        return complete
+                        return await resolveTerminalCopy(complete, content: configuration.expandedContent)
                     }
                 }
             } catch {
                 // Keep the already-held preview rather than failing copy.
             }
         }
-        return outputCopyText
+        guard let preview = configuration.copyOutputText else { return nil }
+        return await resolveTerminalCopy(preview, content: configuration.expandedContent)
+    }
+
+    private func resolveTerminalCopy(
+        _ source: String, content: ToolPresentationBuilder.ToolExpandedContent?
+    ) async -> String? {
+        guard case .bash = content else { return source }
+        return await withCancellableDetachedTask(priority: .userInitiated) { () -> String? in
+            try? TerminalLogEngine.plainText(source)
+        }
     }
 
     private func updateFullScreenSourceStream(configuration: ToolTimelineRowConfiguration) {

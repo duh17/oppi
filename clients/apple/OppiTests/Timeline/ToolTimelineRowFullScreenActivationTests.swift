@@ -35,8 +35,8 @@ struct ToolTimelineRowFullScreenActivationTests {
 
     @Test("bash first paint stays on the first window; copy fetches the complete sidecar")
     func bashCopyFetchesCompleteSidecarNotFirstWindow() async {
-        let firstWindow = String(repeating: "a", count: 4096)
-        let full = firstWindow + "COMPLETE-TAIL\n"
+        let firstWindow = String(repeating: "a", count: 4096) + "\n"
+        let full = firstWindow + "PENDING\r\u{1B}[2K\u{1B}[32mCOMPLETE-TAIL\u{1B}[0m\n"
         var configuration = makeTimelineToolConfiguration(
             expandedContent: .bash(command: "seq", output: firstWindow, unwrapped: true),
             copyCommandText: "seq",
@@ -59,9 +59,10 @@ struct ToolTimelineRowFullScreenActivationTests {
 
         let view = ToolTimelineRowContentView(configuration: configuration)
         let copied = await view.resolveOutputCopyText()
-        #expect(copied == full)
+        #expect(copied == firstWindow + "COMPLETE-TAIL\n")
         #expect(copied?.hasSuffix("COMPLETE-TAIL\n") == true)
-        #expect((copied?.utf8.count ?? 0) > firstWindow.utf8.count)
+        #expect(copied?.contains("PENDING") == false)
+        #expect(copied?.contains("\u{1B}") == false)
     }
 
     @Test("eligible current-file activation uses navigation action without presenting output")

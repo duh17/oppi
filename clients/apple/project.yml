@@ -190,6 +190,12 @@ targets:
           NSAllowsLocalNetworking: true
     preBuildScripts:
       - script: |
+          "$SRCROOT/scripts/build-ghostty-vt.sh"
+        name: GhosttyVt
+        basedOnDependencyAnalysis: false
+        shell: /bin/bash
+        showEnvVars: false
+      - script: |
           "$SRCROOT/scripts/build-tailscalekit.sh"
         name: TailscaleKit
         basedOnDependencyAnalysis: false
@@ -331,6 +337,9 @@ targets:
       - framework: Vendor/TailscaleKit/TailscaleKit.xcframework
         embed: true
         codeSign: true
+      # VT state only; static archive, not an embedded Ghostty application.
+      - framework: Vendor/GhosttyVt/ghostty-vt.xcframework
+        embed: false
       - package: swift-nio
         product: NIOCore
       - package: swift-nio
