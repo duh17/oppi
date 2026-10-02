@@ -59,6 +59,13 @@ import {
   type UINotification,
 } from "../extensions/durable/durable-ui.js";
 import { buildExtensionUIRequestMessage } from "../src/extension-ui-contract.js";
+import { createRouteHelpers } from "../src/routes/http.js";
+import { createSessionRoutes } from "../src/routes/sessions.js";
+import type { RouteContext } from "../src/routes/types.js";
+import type { TraceEvent } from "../src/trace.js";
+import type { TracePageResult } from "../src/trace-paging.js";
+import type { TraceOutlineResult } from "../src/trace-outline.js";
+import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 const managers: SessionManager[] = [];
 const harnesses: Harness[] = [];
@@ -387,6 +394,122 @@ describe("server durable managed runtime", () => {
     await service.getSessionWithTrace({ session: f.session });
     expect(observed.messages.filter((m) => m.type === "notice")).toHaveLength(cards.length);
     observed.unsubscribe();
+  });
+
+  it("pages and outlines stopped durable goal decision cards in full-trace order without model rows", async () => {
+    const f = await fixture([
+      fauxAssistantMessage(
+        [fauxToolCall("create_goal", { objective: "Keep decision history", max_continuations: 1 })],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("Initial run settled"),
+      fauxAssistantMessage("Continuation settled"),
+    ]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    const stopped = observed.next(
+      (message) =>
+        message.type === "notice" &&
+        message.message === "Goal runner · stop — Continuation budget exhausted (1/1).",
+    );
+    await f.manager.sendPrompt(f.session.id, "Create an explicit autonomous goal");
+    await stopped;
+    const history = (await f.manager.runCommand(f.session.id, { type: "get_messages" })) as Array<{
+      role: string;
+    }>;
+    expect(history.filter((message) => message.role === "user")).toHaveLength(2);
+    expect(JSON.stringify(history)).not.toContain("[Goal runner]");
+    await f.manager.stopSession(f.session.id);
+    observed.unsubscribe();
+
+    // Exercise the GET handlers and their JSON wire responses with the real
+    // manager/storage, not a mocked page or outline. Only the provider is faux.
+    const dispatch = createSessionRoutes(
+      {
+        storage: f.storage,
+        sessions: f.manager,
+        sessionRuntimes: f.manager,
+        ensureSessionContextWindow: (session: Session) => session,
+      } as unknown as RouteContext,
+      createRouteHelpers(),
+    );
+    async function get<T>(path: string): Promise<T> {
+      const url = new URL(path, "http://localhost");
+      const res = makeResponse();
+      expect(
+        await dispatch({
+          method: "GET",
+          path: url.pathname,
+          url,
+          req: makeRequest(),
+          res: res as never,
+        }),
+      ).toBe(true);
+      expect(res.statusCode).toBe(200);
+      return JSON.parse(res.body) as T;
+    }
+    const full = await get<{ trace: TraceEvent[] }>(`/sessions/${f.session.id}/trace?view=full`);
+    const cards = full.trace.filter((event) =>
+      event.presentation?.title.startsWith("Goal runner ·"),
+    );
+    expect(cards.map((event) => event.presentation?.status)).toEqual([
+      "update",
+      "continue",
+      "stop",
+    ]);
+    expect(
+      cards.every((event) => event.type === "system" && event.presentation?.kind === "custom"),
+    ).toBe(true);
+    expect(cards[1]?.presentation?.body).toContain(
+      "Run settled; no pending messages or compaction",
+    );
+    expect(cards[2]?.presentation?.body).toBe("Continuation budget exhausted (1/1).");
+
+    const base = `/workspaces/${f.workspace.id}/sessions/${f.session.id}`;
+    const pages: TracePageResult[] = [];
+    const paged: TraceEvent[] = [];
+    let cursor: string | null = null;
+    do {
+      const query = new URLSearchParams({ targetEvents: "1" });
+      if (cursor) query.set("cursor", cursor);
+      const page = await get<TracePageResult>(`${base}/trace-page?${query}`);
+      expect(page.page.staleCursor).toBe(false);
+      expect(page.trace.length).toBeGreaterThan(0);
+      expect(page.page.hasOlder).toBe(page.page.olderCursor !== null);
+      pages.push(page);
+      paged.unshift(...page.trace);
+      cursor = page.page.olderCursor;
+      // Fail a non-advancing cursor rather than leave the test in an unbounded loop.
+      expect(pages.length).toBeLessThanOrEqual(full.trace.length);
+    } while (cursor);
+    expect(pages.length).toBeGreaterThan(1);
+    expect(paged.filter((event) => event.presentation?.kind === "custom")).toEqual(cards);
+
+    const outline = await get<TraceOutlineResult>(`${base}/trace-outline`);
+    const rows = outline.outline.entries.filter((entry) => entry.kind === "custom");
+    expect(
+      rows.map(({ id, kind, summary, timestamp }) => ({ id, kind, summary, timestamp })),
+    ).toEqual(
+      cards.map((event) => ({
+        id: event.id,
+        kind: "custom",
+        summary: event.presentation!.title,
+        timestamp: event.timestamp,
+      })),
+    );
+    // Outline rows deliberately omit card bodies. The client's anchor fetch
+    // must retrieve the same complete system/custom event, including its reason.
+    for (const card of cards) {
+      const around = await get<TracePageResult>(
+        `${base}/trace-page?targetEvents=1&aroundEntryId=${encodeURIComponent(card.id)}`,
+      );
+      expect(around.page.staleCursor).toBe(false);
+      expect(around.trace.find((event) => event.id === card.id)).toEqual(card);
+    }
+    writeFileSync(
+      join(f.dir, "goal-decision-history.json"),
+      JSON.stringify({ full, pages, outline, modelMessages: history }, null, 2),
+    );
   });
 
   it("projects SDK-identical ask fields, replays pending on reconnect, and commits only the first answer", async () => {
