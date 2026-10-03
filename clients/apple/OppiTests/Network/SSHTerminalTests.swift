@@ -291,6 +291,40 @@ struct SSHTerminalTests {
         #expect(batch.remaining == "at")
     }
 
+    @Test func dictationRewritesDoNotBecomeModifiedKeyboardInput() {
+        // Each partial and the final transcript replace the whole suffix.
+        // Even an empty pre-recording draft is a non-nil recording marker.
+        for prefix in ["", "draft "] {
+            var previous = prefix
+            for partial in ["c", "ca", "cat", "cat"] {
+                let next = prefix + partial
+                #expect(SSHTerminalComposer.modifiedInput(old: previous, new: next,
+                                                          textBeforeRecording: prefix) == nil)
+                previous = next
+            }
+        }
+    }
+
+    @Test func namedActionsPreserveBindingsAndLeaveTheModifierForTyping() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        var bytes = fixture.bytes.makeAsyncIterator()
+        let shell = try #require(SSHTerminalKeymap.profile(for: "shell"))
+        let history = try #require(SSHTerminalKeymap.actions(for: shell, userFile: nil).first { $0.title == "History" })
+        for (strokes, expected) in [(history.strokes, Data([0x12])),
+                                    (try #require(SSHTerminalKeymap.parse("ctrl+x ctrl+b", syntax: .plus)), Data([0x18, 0x02]))] {
+            channel.modifierLatch.toggle(GhosttyMods(GHOSTTY_MODS_ALT))
+            channel.keys(strokes)
+            #expect(await bytes.next() == expected)
+            #expect(channel.modifierLatch.isArmed(GhosttyMods(GHOSTTY_MODS_ALT)))
+            channel.key(GHOSTTY_KEY_X, text: "x")
+            #expect(await bytes.next() == Data("\u{1b}x".utf8))
+            #expect(channel.modifierLatch.modifiers == 0)
+        }
+        channel.close(reason: "done")
+    }
+
     @Test func terminalBarsShareOneShotModifiersAndEncodeAllBaseKeys() async throws {
         let fixture = TerminalConnectionFixture()
         let channel = try SSHTerminalChannel()
@@ -303,11 +337,14 @@ struct SSHTerminalTests {
         #expect(await bytes.next() == Data("c".utf8))
         channel.modifierLatch.toggle(GhosttyMods(GHOSTTY_MODS_ALT))
         channel.keys(try #require(SSHTerminalKeymap.parse("x c", syntax: .plus)))
-        #expect(await bytes.next() == Data("\u{1b}xc".utf8)) // only first stroke spends latch
+        #expect(await bytes.next() == Data("xc".utf8)) // named strokes do not spend the typing latch
+        #expect(channel.modifierLatch.isArmed(GhosttyMods(GHOSTTY_MODS_ALT)))
+        #expect(channel.key(GHOSTTY_KEY_X, text: "x"))
+        #expect(await bytes.next() == Data("\u{1b}x".utf8))
         for (id, expected) in [("escape", "\u{1b}"), ("tab", "\t"), ("left", "\u{1b}[D"),
                                 ("down", "\u{1b}[B"), ("up", "\u{1b}[A"), ("right", "\u{1b}[C")] {
             let stroke = try #require(SSHTerminalKeymap.fixed.first { $0.id == id }?.stroke)
-            channel.keys([stroke])
+            #expect(channel.key(stroke.key, text: stroke.text, modifiers: stroke.modifiers))
             #expect(await bytes.next() == Data(expected.utf8))
         }
         #expect(channel.modifierLatch.modifiers == 0)
@@ -322,7 +359,10 @@ struct SSHTerminalTests {
         channel.key(GHOSTTY_KEY_A, text: "a")
         channel.event(.eof)
         #expect(channel.connected) // still reading: a status may follow
-        channel.key(GHOSTTY_KEY_C, text: "c")
+        channel.modifierLatch.toggle(GhosttyMods(GHOSTTY_MODS_CTRL))
+        #expect(!channel.key(GHOSTTY_KEY_C, text: "c"))
+        #expect(!channel.key(GHOSTTY_KEY_A, text: "a")) // every later insertion must also stay in the draft
+        #expect(channel.modifierLatch.isArmed(GhosttyMods(GHOSTTY_MODS_CTRL)))
         #expect(channel.inputNotice.contains("Not sent"))
         channel.event(.data(Data("\u{1b}[6n".utf8)))
         channel.event(.writabilityChanged(true))
@@ -619,12 +659,18 @@ struct SSHTerminalTests {
 
     @Test func disconnectedInputAndOversizedQueueAreVisiblyRefused() async throws {
         let channel = try SSHTerminalChannel()
-        channel.key(GHOSTTY_KEY_A, text: "a")
+        channel.modifierLatch.toggle(GhosttyMods(GHOSTTY_MODS_ALT))
+        #expect(!channel.key(GHOSTTY_KEY_A, text: "a"))
+        #expect(channel.modifierLatch.isArmed(GhosttyMods(GHOSTTY_MODS_ALT)))
         #expect(channel.inputNotice.contains("disconnected"))
         let fixture = TerminalConnectionFixture()
         channel.opened(fixture)
         channel.event(.writabilityChanged(false))
-        channel.send(Data(repeating: 1, count: SSHTerminalChannel.maximumQueuedBytes + 1))
+        #expect(!channel.send(Data(repeating: 1, count: SSHTerminalChannel.maximumQueuedBytes + 1)))
+        #expect(channel.inputNotice.contains("full"))
+        #expect(channel.send(Data(repeating: 1, count: SSHTerminalChannel.maximumQueuedBytes)))
+        #expect(!channel.key(GHOSTTY_KEY_A, text: "a"))
+        #expect(channel.modifierLatch.isArmed(GhosttyMods(GHOSTTY_MODS_ALT)))
         #expect(channel.inputNotice.contains("full"))
         #expect(await fixture.sentBytes.isEmpty)
         channel.close(reason: "done")

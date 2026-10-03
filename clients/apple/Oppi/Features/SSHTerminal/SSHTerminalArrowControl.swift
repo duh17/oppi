@@ -59,6 +59,11 @@ final class SSHTerminalArrowButton: UIButton {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    deinit {
+        repeatTask?.cancel()
+        NotificationCenter.default.removeObserver(self)
+    }
+
     override func accessibilityActivate() -> Bool { sendArrow(heldKey) }
 
     override func tintColorDidChange() {

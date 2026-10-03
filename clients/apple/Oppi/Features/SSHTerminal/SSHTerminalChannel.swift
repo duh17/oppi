@@ -314,40 +314,45 @@ final class SSHTerminalChannel {
         reason = "The remote shell ended. Waiting for its exit status…"
     }
 
-    func send(_ bytes: Data) {
+    @discardableResult
+    func send(_ bytes: Data) -> Bool {
         guard connected, connection != nil else {
             inputNotice = "Not sent — terminal is disconnected."
-            return
+            return false
         }
         guard !inputClosed else {
             inputNotice = "Not sent — the remote shell has ended."
-            return
+            return false
         }
-        guard !bytes.isEmpty else { return }
+        guard !bytes.isEmpty else { return false }
         guard queuedBytes + bytes.count <= Self.maximumQueuedBytes else {
             inputNotice = "Not sent — input buffer is full."
-            return
+            return false
         }
         inputNotice = writable ? "" : "Waiting for the SSH channel…"
         pending.append(bytes)
         queuedBytes += bytes.count
         startPump()
+        return true
     }
 
-    func key(_ key: GhosttyKey, text: String = "", modifiers: GhosttyMods = 0) {
-        guard connected, !inputClosed else { send(Data()); return }
-        send(engine.key(key, text: text, modifiers: modifiers | modifierLatch.take()))
+    /// Only direct keys use the one-shot latch. Refusal must preserve both
+    /// the pending modifier and any composer character awaiting this result.
+    @discardableResult
+    func key(_ key: GhosttyKey, text: String = "", modifiers: GhosttyMods = 0) -> Bool {
+        guard connected, !inputClosed else { return send(Data()) }
+        let bytes = engine.key(key, text: text, modifiers: modifiers | modifierLatch.modifiers)
+        guard send(bytes) else { return false }
+        _ = modifierLatch.take()
+        return true
     }
 
-    /// One write, so a chord's strokes arrive together and in order.
+    /// Named bindings are sent exactly as configured, without spending the
+    /// typing latch. One write keeps a chord's strokes together and in order.
     func keys(_ strokes: [SSHTerminalKeyStroke]) {
         guard connected, !inputClosed else { send(Data()); return }
-        guard !strokes.isEmpty else { return }
-        let latched = modifierLatch.take()
-        send(strokes.enumerated().reduce(into: Data()) { bytes, entry in
-            let (index, stroke) = entry
-            bytes.append(engine.key(stroke.key, text: stroke.text,
-                                    modifiers: stroke.modifiers | (index == 0 ? latched : 0)))
+        send(strokes.reduce(into: Data()) { bytes, stroke in
+            bytes.append(engine.key(stroke.key, text: stroke.text, modifiers: stroke.modifiers))
         })
     }
 

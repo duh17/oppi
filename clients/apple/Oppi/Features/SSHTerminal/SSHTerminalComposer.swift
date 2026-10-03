@@ -71,8 +71,8 @@ struct SSHTerminalComposer: View {
             // The composer still edits ordinary text locally. Only the next
             // inserted character after Ctrl/Alt is routed as a raw key.
             guard channel.modifierLatch.modifiers != 0,
-                  let input = Self.modifiedInput(old: old, new: new) else { return }
-            channel.key(input.key, text: input.character)
+                  let input = Self.modifiedInput(old: old, new: new, textBeforeRecording: textBeforeRecording),
+                  channel.key(input.key, text: input.character) else { return }
             text = input.remaining
         }
         .task { await prepareVoice() }
@@ -93,13 +93,13 @@ struct SSHTerminalComposer: View {
                             if SSHTerminalArrowRepeat.isArrow(stroke.key) {
                                 SSHTerminalArrowControl(label: fixed.label, key: stroke.key,
                                                         id: "sshTerminal.composer.\(fixed.id)") { arrow in
-                                    guard channel.connected, !channel.inputClosed else { return false }
                                     channel.key(arrow)
-                                    return true
                                 }
                                 .frame(width: 40, height: ComposerInputMetrics.controlDiameter)
                             } else {
-                                key(fixed.label, id: fixed.id) { channel.keys([stroke]) }
+                                key(fixed.label, id: fixed.id) {
+                                    channel.key(stroke.key, text: stroke.text, modifiers: stroke.modifiers)
+                                }
                             }
                         }
                     }
@@ -134,9 +134,11 @@ struct SSHTerminalComposer: View {
             .accessibilityIdentifier("sshTerminal.composer.\(id)")
     }
 
-    /// Remove just the first inserted character, leaving the rest of the
-    /// locally edited draft intact (including insertion in the middle).
-    static func modifiedInput(old: String, new: String) -> (key: GhosttyKey, character: String, remaining: String)? {
+    /// Dictation rewrites the draft on every partial and on stop; it is not a
+    /// keyboard insertion. Otherwise remove only the first inserted character,
+    /// leaving the rest of the locally edited draft intact.
+    static func modifiedInput(old: String, new: String, textBeforeRecording: String? = nil) -> (key: GhosttyKey, character: String, remaining: String)? {
+        guard textBeforeRecording == nil else { return nil }
         let before = Array(old)
         let after = Array(new)
         var prefix = 0
