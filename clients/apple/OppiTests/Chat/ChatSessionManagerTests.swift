@@ -988,7 +988,7 @@ struct ChatSessionManagerTests {
         #expect(manager.entryState == .disconnected(reason: .streamEnded))
     }
 
-    @Test func generationChangeDuringStreamingTransitionsToGenerationChanged() async {
+    @Test func generationChangeDuringStreamingLeavesReplacementStateUntouched() async {
         let sessionId = "state-generation-\(UUID().uuidString)"
         let manager = ChatSessionManager(sessionId: sessionId)
         let streams = ScriptedStreamFactory()
@@ -1019,7 +1019,8 @@ struct ChatSessionManagerTests {
         await connectTask.value
 
         #expect(manager.connectionGeneration == 1)
-        #expect(manager.entryState == .disconnected(reason: .generationChanged))
+        #expect(manager.entryState == .streaming, "Stale events and stream tail must not write entryState")
+        manager.cleanup()
     }
 
     /// History reload always runs to completion on first connect — it is
@@ -1315,6 +1316,8 @@ struct ChatSessionManagerTests {
 
         let firstReady = await streams.waitForCreated(1)
         #expect(firstReady)
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: "s1")))
+        #expect(await waitForMainActorCondition { manager.entryState == .streaming })
         connection._setActiveSessionIdForTesting("s1")
 
         manager.reconnect()
@@ -1326,12 +1329,17 @@ struct ChatSessionManagerTests {
 
         let secondReady = await streams.waitForCreated(2)
         #expect(secondReady)
+        streams.yield(index: 1, message: .connected(session: makeTestSession(id: "s1")))
+        #expect(await waitForMainActorCondition { manager.entryState == .streaming })
+        #expect(connection.silenceWatchdog.onReconnect != nil)
         connection._setActiveSessionIdForTesting("s1")
 
         // Force-drop stale stream #1 while stream #2 is active.
         streams.finish(index: 0)
         await firstConnect.value
 
+        #expect(manager.entryState == .streaming, "Stale stream tail must not overwrite the replacement")
+        #expect(connection.silenceWatchdog.onReconnect != nil, "Stale stream tail must not clear the replacement's watchdog")
         #expect(
             connection.focusedSessionId == "s1",
             "Stale generation cleanup must not disconnect newer stream"

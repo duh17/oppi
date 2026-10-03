@@ -479,6 +479,12 @@ struct ChatSessionReentryTests {
 
         #expect(await streams.waitForCreated(1))
 
+        #expect(await waitForMainActorCondition {
+            if case .awaitingConnected = manager.entryState { return true }
+            return false
+        })
+        let stateBeforeReplacement = manager.entryState
+
         // Rapid re-entry: bump generation before first connect settles
         manager.reconnect()
         #expect(manager.connectionGeneration == 1)
@@ -487,12 +493,10 @@ struct ChatSessionReentryTests {
         streams.finish(index: 0)
         await firstConnect.value
 
-        // After first connect exits, state should reflect the disconnect
-        let stateAfterFirst = manager.entryState
+        // A superseded generation must exit without writing shared state.
         #expect(
-            stateAfterFirst == .disconnected(reason: .generationChanged)
-            || stateAfterFirst == .disconnected(reason: .streamEnded),
-            "First generation should disconnect, got \(stateAfterFirst)"
+            manager.entryState == stateBeforeReplacement,
+            "First generation's stream tail must not write entryState"
         )
 
         // Second connect with the new generation

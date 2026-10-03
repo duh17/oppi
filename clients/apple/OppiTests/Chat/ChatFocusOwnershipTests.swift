@@ -339,6 +339,109 @@ struct ChatFocusOwnershipTests {
         #expect(connection.focusedSessionStore.focused == claim)
     }
 
+    /// Send replaces a cancelled cache load while retaining the same focus
+    /// claim. Releasing the old load after the replacement binds must be inert.
+    @Test func cancelledCacheLoadCannotOverwriteSendReadinessReplacement() async throws {
+        let sessionId = "cancelled-cache-\(UUID().uuidString)"
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        connection.setAPIClientForTesting(nil)
+        let session = makeTestSession(id: sessionId, workspaceId: "w1", status: .ready)
+        connection.sessionStore.upsert(session)
+        let adapter = IOSChatSessionRuntimeAdapter()
+        adapter.bind(connection: connection, sessionStore: connection.sessionStore)
+        let history = SuspendedCacheHistory(adapter: adapter)
+        let manager = ChatSessionManager(
+            sessionId: sessionId,
+            historyPort: history,
+            focusedStreamPort: adapter,
+            effectsStatePort: adapter,
+            reducer: TimelineReducer(),
+            coalescer: DeltaCoalescer()
+        )
+        var replacement: Task<Void, Never>?
+        defer {
+            history.release()
+            replacement?.cancel()
+            manager.cleanup()
+            connection.disconnectStream()
+        }
+        manager._loadHistoryForTesting = { _, _ in nil }
+        var opens = 0
+        connection._connectStreamForTesting = {
+            opens += 1
+            connection.wsClient?._setStatusForTesting(.connected)
+            return AsyncStream { continuation in
+                continuation.yield(StreamFrameEvent(
+                    sessionId: sessionId, message: .connected(session: session), meta: nil
+                ))
+            }
+        }
+        manager.markAppeared()
+        let oldConnect = Task { await manager.connect() }
+        #expect(await waitForMainActorCondition { history.isSuspended })
+        let claim = connection.focusedSessionStore.focused
+        // Use the existing externally-owned loop callback so the old task's
+        // completion can be awaited explicitly after releasing the cache gate.
+        manager.onReconnect = {
+            oldConnect.cancel()
+            replacement = Task { await manager.connect() }
+        }
+        try await manager.ensureReadyForSend(timeout: .seconds(2))
+        #expect(oldConnect.isCancelled)
+        #expect(manager.connectionGeneration == 1)
+        #expect(manager.entryState == .streaming)
+        let consumption = try #require(connection.streamConsumptionTask)
+        #expect(connection.silenceWatchdog.onReconnect != nil)
+
+        history.release()
+        await oldConnect.value
+
+        #expect(manager.entryState == .streaming, "Old cache completion must not overwrite the replacement")
+        #expect(manager.isReadyForTurnDispatch)
+        #expect(connection.wsClient?.status == .connected)
+        #expect(!consumption.isCancelled, "Old connect must not disconnect the replacement socket")
+        #expect(opens == 1, "Old connect must not open another socket")
+        #expect(connection.silenceWatchdog.onReconnect != nil)
+        #expect(connection.focusedSessionStore.focused == claim)
+    }
+
+    /// Readiness cancellation is distinct from focus supersession: the same
+    /// claim can remain current, but the cancelled opener must not attach and
+    /// trigger the missing-bootstrap socket reopen.
+    @Test func cancelledReadinessWaitCannotReopenTheStillOwnedSocket() async throws {
+        let (connection, _) = makeTestConnection(sessionId: "s1")
+        defer { connection.disconnectStream() }
+        connection.setAPIClientForTesting(nil)
+        connection._focusedStreamReadinessPollForTesting = .seconds(10)
+        var waiting = false
+        connection._onFocusedStreamReadinessWaitForTesting = { waiting = true }
+        var opens = 0
+        connection._connectStreamForTesting = {
+            opens += 1
+            return AsyncStream { $0.finish() }
+        }
+        let claim = try #require(connection.claimFocusedSession("s1"))
+        let sentinel = Task<Void, Never> { }
+        connection.streamConsumptionTask = sentinel
+        connection.wsClient?._setStatusForTesting(.connected)
+        let oldOpen = Task {
+            await connection.streamSession("s1", routeScope: .workspace("w1"), claim: claim)
+        }
+        #expect(await waitForMainActorCondition { waiting })
+        oldOpen.cancel()
+        // Route becomes ready before the cancelled waiter resumes; claim and
+        // socket are unchanged, and no connected bootstrap is parked.
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        #expect(await oldOpen.value == nil)
+        #expect(opens == 0)
+        #expect(!sentinel.isCancelled)
+        #expect(connection.wsClient?.status == .connected)
+        #expect(connection.focusedSessionStreamURLForTesting == nil)
+        #expect(connection.sessionEventContinuations["s1"] == nil)
+        #expect(connection.focusedSessionStore.focused == claim)
+    }
+
     @Test func readinessRestartsADroppedSocketOnceAndWaitsForTheBoundStream() async throws {
         let harness = await makeStreamingManager()
         let manager = harness.manager
@@ -702,6 +805,52 @@ struct ChatFocusOwnershipTests {
     }
 
     // MARK: - Helpers
+
+    @MainActor
+    private final class SuspendedCacheHistory: ChatSessionHistoryPort {
+        let adapter: IOSChatSessionRuntimeAdapter
+        private var gate: CheckedContinuation<Void, Never>?
+        private var loads = 0
+        var isSuspended: Bool { gate != nil }
+        var canFetchRemoteHistory: Bool { adapter.canFetchRemoteHistory }
+        var canFetchCatchUp: Bool { adapter.canFetchCatchUp }
+
+        init(adapter: IOSChatSessionRuntimeAdapter) { self.adapter = adapter }
+
+        func release() {
+            gate?.resume()
+            gate = nil
+        }
+
+        func loadCachedTrace(sessionId: String) async -> ChatSessionCachedTrace? {
+            loads += 1
+            if loads == 1 {
+                // Cache IO need not stop when the awaiting connect is cancelled.
+                await withCheckedContinuation { gate = $0 }
+            }
+            return nil
+        }
+
+        func saveCachedTrace(sessionId: String, events: [TraceEvent], page: TracePageMetadata?) async {
+            await adapter.saveCachedTrace(sessionId: sessionId, events: events, page: page)
+        }
+
+        func fetchLatestTrace(scope: SessionRouteScope, sessionId: String, previewBytes: Int) async throws -> ChatSessionTraceSnapshot {
+            try await adapter.fetchLatestTrace(scope: scope, sessionId: sessionId, previewBytes: previewBytes)
+        }
+
+        func fetchOlderTracePage(scope: SessionRouteScope, sessionId: String, cursor: String, previewBytes: Int) async throws -> ChatSessionTraceSnapshot {
+            try await adapter.fetchOlderTracePage(scope: scope, sessionId: sessionId, cursor: cursor, previewBytes: previewBytes)
+        }
+
+        func fetchTracePageAround(scope: SessionRouteScope, sessionId: String, entryId: String, previewBytes: Int) async throws -> ChatSessionTraceSnapshot {
+            try await adapter.fetchTracePageAround(scope: scope, sessionId: sessionId, entryId: entryId, previewBytes: previewBytes)
+        }
+
+        func fetchCatchUp(scope: SessionRouteScope, sessionId: String, since: Int) async throws -> ChatSessionCatchUpResponse {
+            try await adapter.fetchCatchUp(scope: scope, sessionId: sessionId, since: since)
+        }
+    }
 
     private struct StreamingHarness {
         let sessionId: String

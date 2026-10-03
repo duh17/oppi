@@ -1936,7 +1936,11 @@ final class ServerConnection {
             return nil
         }
         await refreshStreamCapabilitiesIfNeeded()
+        guard !Task.isCancelled else { return nil }
         await waitForFocusedStreamBindReadinessIfNeeded(sessionId: sessionId)
+        // Cancellation can retain the claim when the same runtime reconnects.
+        // Do not let its old opener rebind or reopen the replacement socket.
+        guard !Task.isCancelled else { return nil }
         // The owner may have been superseded while waiting. Refuse before the
         // endpoint is rebound and the shared socket reconnected underneath the
         // newer owner (this or another session). The coordinator checks again
@@ -1958,6 +1962,7 @@ final class ServerConnection {
         // The tapped session's own timeline now owns the stream; ordinary focus
         // arbitration resumes for later navigation.
         resolveExternalSessionOpenClaim(for: sessionId)
+        guard !Task.isCancelled else { return nil }
         return await sessionStreamCoordinator.streamSession(
             connection: self,
             claim: claim,

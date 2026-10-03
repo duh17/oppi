@@ -386,11 +386,9 @@ final class ChatSessionManager {
     private func bindFocusedSessionStream(generation: Int) async -> SessionStreamInput? {
         var attempt = 0
         while true {
-            if generation != connectionGeneration {
-                clearFocusedStreamRecovery()
-                transitionTo(.disconnected(reason: .generationChanged))
-                return nil
-            }
+            // Reconnect retains the focus claim but replaces this generation.
+            // Its stale task must not mutate the replacement's shared state.
+            guard generation == connectionGeneration else { return nil }
             guard !Task.isCancelled else {
                 clearFocusedStreamRecovery()
                 transitionTo(.disconnected(reason: .cancelled))
@@ -404,7 +402,9 @@ final class ChatSessionManager {
                 return nil
             }
 
-            switch await focusedStreamSetupDisposition() {
+            let disposition = await focusedStreamSetupDisposition()
+            guard generation == connectionGeneration else { return nil }
+            switch disposition {
             case .bound(let stream):
                 // Ownership may have moved during open; never read a stream
                 // this runtime no longer owns.
@@ -423,7 +423,9 @@ final class ChatSessionManager {
             case .retryable:
                 setFocusedStreamRecovering(true)
                 if focusedStreamPort.externalOpenClaimBlocks(sessionId: sessionId) {
-                    if await waitWhileExternalSessionOpenClaimBlocks() {
+                    let shouldRetry = await waitWhileExternalSessionOpenClaimBlocks()
+                    guard generation == connectionGeneration else { return nil }
+                    if shouldRetry {
                         continue
                     }
                     clearFocusedStreamRecovery()
@@ -442,7 +444,9 @@ final class ChatSessionManager {
                     )
                     return nil
                 }
-                if await waitForFocusedStreamSetupRetry(attempt: attempt) {
+                let shouldRetry = await waitForFocusedStreamSetupRetry(attempt: attempt)
+                guard generation == connectionGeneration else { return nil }
+                if shouldRetry {
                     continue
                 }
                 clearFocusedStreamRecovery()
@@ -813,7 +817,13 @@ final class ChatSessionManager {
         telemetry.updateTransportPath(focusedStreamPort.transportPath)
         telemetry.beginFreshContentLagMeasurement(hadCache: false)
 
-        latestTraceSignature = await loadCachedTimeline()
+        let cachedSignature = await loadCachedTimeline(generation: generation)
+        guard generation == connectionGeneration else { return }
+        guard !Task.isCancelled else {
+            transitionTo(.disconnected(reason: .cancelled))
+            return
+        }
+        latestTraceSignature = cachedSignature
 
         // Stopped sessions: load fresh history but do NOT open a WebSocket.
         // Opening the WS would auto-resume the pi process on the server.
@@ -828,10 +838,7 @@ final class ChatSessionManager {
                 cachedSignature: latestTraceSignature
             )
             await historyReloadTask?.value
-            guard generation == connectionGeneration else {
-                transitionTo(.disconnected(reason: .generationChanged))
-                return
-            }
+            guard generation == connectionGeneration else { return }
             guard !Task.isCancelled else {
                 transitionTo(.disconnected(reason: .cancelled))
                 return
@@ -859,6 +866,7 @@ final class ChatSessionManager {
             return
         }
 
+        guard generation == connectionGeneration else { return }
         transitionTo(.awaitingConnected(workspaceId: workspaceIdForState()))
 
         guard !Task.isCancelled else {
@@ -888,6 +896,7 @@ final class ChatSessionManager {
         switch stream {
         case .events(let eventStream):
             for await event in eventStream {
+                guard generation == connectionGeneration else { return }
                 await handleStreamEvent(
                     event,
                     generation: generation,
@@ -898,6 +907,7 @@ final class ChatSessionManager {
 
         case .bareMessages(let messageStream):
             for await message in messageStream {
+                guard generation == connectionGeneration else { return }
                 await handleStreamEvent(
                     SessionStreamEvent(
                         sessionId: sessionId,
@@ -926,11 +936,12 @@ final class ChatSessionManager {
     /// stale cached content is strictly better than an empty timeline while
     /// the background trace fetch runs. The fresh trace replaces the cache
     /// data when it arrives (via `loadSession(preserveOrphans: false)`).
-    private func loadCachedTimeline() async -> TraceSignature? {
+    private func loadCachedTimeline(generation: Int) async -> TraceSignature? {
         transitionTo(.loadingCache)
 
         let cacheLoadStartMs = ChatSessionRuntimeTelemetryTracker.nowMs()
         let cached = await historyPort.loadCachedTrace(sessionId: sessionId)
+        guard generation == connectionGeneration else { return nil }
         let cacheLoadDurationMs = max(
             0,
             ChatSessionRuntimeTelemetryTracker.nowMs() - cacheLoadStartMs
@@ -1025,13 +1036,14 @@ final class ChatSessionManager {
 
     /// Process a single message from the WebSocket stream.
     ///
-    /// Transitions to `.disconnected` on generation change or cancellation;
-    /// the caller breaks the stream loop when it detects that state.
+    /// Stale generations are inert. Same-generation cancellation transitions
+    /// to `.disconnected`; the caller then breaks the stream loop.
     private func handleStreamEvent(
         _ event: SessionStreamEvent,
         generation: Int,
         hasReceivedConnected: inout Bool
     ) async {
+        guard generation == connectionGeneration else { return }
         guard event.sessionId == sessionId else {
             log.warning("Ignoring stream event for wrong session: \(event.sessionId, privacy: .public) while handling \(self.sessionId, privacy: .public)")
             return
@@ -1039,11 +1051,6 @@ final class ChatSessionManager {
 
         let message = event.message
         let inboundMeta = event.meta
-        if generation != connectionGeneration {
-            transitionTo(.disconnected(reason: .generationChanged))
-            return
-        }
-
         if Task.isCancelled {
             transitionTo(.disconnected(reason: .cancelled))
             return
@@ -1087,6 +1094,7 @@ final class ChatSessionManager {
                             runtimeEpoch: inboundMeta?.runtimeEpoch,
                             generation: generation
                         )
+                        guard generation == connectionGeneration else { return }
                         log.warning("First connect seq=\(currentSeq) epoch=\(inboundMeta?.runtimeEpoch ?? "none", privacy: .public) catchUp=\(String(describing: outcome), privacy: .public) for \(self.sessionId)")
                     } else {
                         focusedStreamPort.seedLastSeenSeq(
@@ -1123,6 +1131,7 @@ final class ChatSessionManager {
                         runtimeEpoch: inboundMeta?.runtimeEpoch,
                         generation: generation
                     )
+                    guard generation == connectionGeneration else { return }
                     switch outcome {
                     case .noGap:
                         log.warning("WS reconnected — no gap for \(self.sessionId)")
@@ -1191,6 +1200,7 @@ final class ChatSessionManager {
         hasReceivedConnected: Bool,
         generation: Int
     ) {
+        guard generation == connectionGeneration else { return }
         if Task.isCancelled {
             transitionTo(.disconnected(reason: .cancelled))
         } else {
