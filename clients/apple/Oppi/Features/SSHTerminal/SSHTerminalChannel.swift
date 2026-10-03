@@ -156,6 +156,7 @@ enum SSHTerminalUpload {
 @MainActor @Observable
 final class SSHTerminalChannel {
     let engine: SSHTerminalEngine
+    var modifierLatch = SSHTerminalModifierLatch()
     private(set) var connected = false
     private(set) var connecting = true
     /// EOF stops input and terminal replies. The channel stays open so a
@@ -335,13 +336,19 @@ final class SSHTerminalChannel {
 
     func key(_ key: GhosttyKey, text: String = "", modifiers: GhosttyMods = 0) {
         guard connected, !inputClosed else { send(Data()); return }
-        send(engine.key(key, text: text, modifiers: modifiers))
+        send(engine.key(key, text: text, modifiers: modifiers | modifierLatch.take()))
     }
 
     /// One write, so a chord's strokes arrive together and in order.
     func keys(_ strokes: [SSHTerminalKeyStroke]) {
         guard connected, !inputClosed else { send(Data()); return }
-        send(strokes.reduce(into: Data()) { $0.append(engine.key($1.key, text: $1.text, modifiers: $1.modifiers)) })
+        guard !strokes.isEmpty else { return }
+        let latched = modifierLatch.take()
+        send(strokes.enumerated().reduce(into: Data()) { bytes, entry in
+            let (index, stroke) = entry
+            bytes.append(engine.key(stroke.key, text: stroke.text,
+                                    modifiers: stroke.modifiers | (index == 0 ? latched : 0)))
+        })
     }
 
     func mouse(_ input: SSHTerminalEngine.MouseInput, column: Int, row: Int) {

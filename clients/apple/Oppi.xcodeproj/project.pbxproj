@@ -1015,6 +1015,7 @@
 		8578FCF74A611E8808FA4FDB /* ServerSkillListPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD4CCF57864B54E419000917 /* ServerSkillListPresentation.swift */; };
 		85A6FBF37C07035331053095 /* TestWaiters.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1C37E10063DE9715CA090E3 /* TestWaiters.swift */; };
 		85E45C9A07BE83DD32F564C5 /* ServerConnectionModelCommandsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E32650EFD98AE8E1B704FD6 /* ServerConnectionModelCommandsTests.swift */; };
+		85F814797633890EF841906B /* SSHTerminalArrowControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 491FE68E4FDCD214D7D60AFD /* SSHTerminalArrowControl.swift */; };
 		8645F3E12C2043CED4E632A0 /* TreeSitterRuby in Frameworks */ = {isa = PBXBuildFile; productRef = A1856583C1919A7C8630A02C /* TreeSitterRuby */; };
 		864A2FD525B778BA31346F5C /* ToolExpandedMarkdownSurfaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EB75B91FCFD93C1DF484009 /* ToolExpandedMarkdownSurfaceTests.swift */; };
 		866907193FF505D1A83D6F04 /* MermaidPieRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AAA171971789277768C06B0 /* MermaidPieRenderer.swift */; };
@@ -2497,6 +2498,7 @@
 		48B64BEC3FD429EB0E9D2B14 /* IPadAdaptiveShellScreenshotE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAdaptiveShellScreenshotE2ETests.swift; sourceTree = "<group>"; };
 		48F75EF9A22E86B076534912 /* ChatScrollControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatScrollControllerTests.swift; sourceTree = "<group>"; };
 		490D07E1EB1A8673A161ACC0 /* ScrollInvariantPropertyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollInvariantPropertyTests.swift; sourceTree = "<group>"; };
+		491FE68E4FDCD214D7D60AFD /* SSHTerminalArrowControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalArrowControl.swift; sourceTree = "<group>"; };
 		49728C075AEAF29906AF5776 /* SSHTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalView.swift; sourceTree = "<group>"; };
 		49D1C856DB31CB6335C6EB8E /* MermaidGanttConformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidGanttConformanceTests.swift; sourceTree = "<group>"; };
 		49DEEBA56210523A5AFBB7D5 /* MermaidThemeContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidThemeContractTests.swift; sourceTree = "<group>"; };
@@ -5824,6 +5826,7 @@
 				27F897DE13278A8879D439C6 /* HerdrRemote.swift */,
 				19C13455DFB1AB9447182559 /* SSHDirectTCP.swift */,
 				943E8A11B1E33EA9AACAEEA0 /* SSHTerminalAgentDetection.swift */,
+				491FE68E4FDCD214D7D60AFD /* SSHTerminalArrowControl.swift */,
 				353DCB2C42D2506A8FB1E917 /* SSHTerminalChannel.swift */,
 				530A9E927F8C08482F429B83 /* SSHTerminalComposer.swift */,
 				555E01FCFE0ADCEA18DD9236 /* SSHTerminalEngine.swift */,
@@ -8602,6 +8605,7 @@
 				A6F4D6CAA684FCB6BB1E7B2F /* SSHPreflightClient.swift in Sources */,
 				6083D7F15107D2BDBD587F56 /* SSHPreflightView.swift in Sources */,
 				4B5EF0C312A4C1013451E779 /* SSHTerminalAgentDetection.swift in Sources */,
+				85F814797633890EF841906B /* SSHTerminalArrowControl.swift in Sources */,
 				63FD9760B8095D8383C20A37 /* SSHTerminalChannel.swift in Sources */,
 				09CD796076A0A76CD657F4E3 /* SSHTerminalComposer.swift in Sources */,
 				633E3686C8AA2E6906E3F903 /* SSHTerminalEngine.swift in Sources */,

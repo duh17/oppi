@@ -221,18 +221,97 @@ struct SSHTerminalTests {
         channel.close(reason: "done")
     }
 
-    @Test func ctrlLatchAppliesToTheNextKeyOnly() throws {
-        var latch = SSHTerminalCtrlLatch()
-        #expect(latch.take() == 0)
-        latch.toggle()
-        #expect(latch.armed)
+    @Test func modifierLatchAppliesToTheNextKeyOnly() throws {
         let engine = try SSHTerminalEngine { _ in }
-        #expect(engine.key(GHOSTTY_KEY_C, text: "c", modifiers: latch.take()) == Data([3]))
-        #expect(!latch.armed)
-        #expect(engine.key(GHOSTTY_KEY_C, text: "c", modifiers: latch.take()) == Data("c".utf8))
-        latch.toggle()
-        latch.toggle()
-        #expect(latch.take() == 0) // a second tap turns it off again
+        for (modifier, expected) in [(GhosttyMods(GHOSTTY_MODS_CTRL), Data([3])),
+                                     (GhosttyMods(GHOSTTY_MODS_ALT), Data("\u{1b}c".utf8))] {
+            var latch = SSHTerminalModifierLatch()
+            #expect(latch.take() == 0)
+            latch.toggle(modifier)
+            #expect(latch.isArmed(modifier))
+            #expect(engine.key(GHOSTTY_KEY_C, text: "c", modifiers: latch.take()) == expected)
+            #expect(!latch.isArmed(modifier))
+            #expect(engine.key(GHOSTTY_KEY_C, text: "c", modifiers: latch.take()) == Data("c".utf8))
+            latch.toggle(modifier)
+            latch.toggle(modifier)
+            #expect(latch.take() == 0) // a second tap turns it off again
+        }
+        var combined = SSHTerminalModifierLatch()
+        combined.toggle(GhosttyMods(GHOSTTY_MODS_CTRL))
+        combined.toggle(GhosttyMods(GHOSTTY_MODS_ALT))
+        #expect(combined.take() == GhosttyMods(GHOSTTY_MODS_CTRL | GHOSTTY_MODS_ALT))
+        #expect(combined.take() == 0)
+    }
+
+    @Test func fixedKeysOfferBaseModifiersNotAnInterruptChord() throws {
+        let fixed = SSHTerminalKeymap.fixed
+        #expect(Array(fixed.prefix(3).map(\.label)) == ["Esc", "Ctrl", "Alt"])
+        #expect(!fixed.contains { $0.label == "^C" })
+        #expect(!fixed.contains { $0.stroke?.key == GHOSTTY_KEY_C })
+        #expect(fixed.first?.stroke?.key == GHOSTTY_KEY_ESCAPE)
+        #expect(fixed.first { $0.label == "Ctrl" }?.modifier == GhosttyMods(GHOSTTY_MODS_CTRL))
+        #expect(fixed.first { $0.label == "Alt" }?.modifier == GhosttyMods(GHOSTTY_MODS_ALT))
+        #expect(fixed.compactMap(\.stroke).filter { SSHTerminalArrowRepeat.isArrow($0.key) }.count == 4)
+        // A program may bind Ctrl-C, but its action remains named, not a base chord.
+        let pi = try #require(SSHTerminalKeymap.profile(for: "pi"))
+        let actions = SSHTerminalKeymap.actions(for: pi, userFile: #"{"app.interrupt":"ctrl+c"}"#)
+        #expect(actions.first?.title == "Stop")
+        #expect(SSHTerminalKeymap.fixed.map(\.label).prefix(3) == ["Esc", "Ctrl", "Alt"])
+    }
+
+    @Test func arrowHoldDragSelectsDominantAxisAndBoundedSpeed() {
+        let held = GHOSTTY_KEY_ARROW_UP
+        let idle = SSHTerminalArrowRepeat.plan(heldKey: held, translation: .zero)
+        #expect(idle.key == held)
+        #expect(idle.interval == 0.12)
+        #expect(SSHTerminalArrowRepeat.plan(heldKey: held, translation: .init(width: 12, height: -8)) == idle)
+        for (drag, expected) in [(CGSize(width: -40, height: 20), GHOSTTY_KEY_ARROW_LEFT),
+                                 (CGSize(width: 40, height: -20), GHOSTTY_KEY_ARROW_RIGHT),
+                                 (CGSize(width: 20, height: -40), GHOSTTY_KEY_ARROW_UP),
+                                 (CGSize(width: -20, height: 40), GHOSTTY_KEY_ARROW_DOWN)] {
+            let plan = SSHTerminalArrowRepeat.plan(heldKey: held, translation: drag)
+            #expect(plan.key == expected)
+            #expect(plan.interval < idle.interval)
+        }
+        let near = SSHTerminalArrowRepeat.plan(heldKey: held, translation: .init(width: 24, height: 0))
+        let far = SSHTerminalArrowRepeat.plan(heldKey: held, translation: .init(width: 120, height: 0))
+        #expect(far.interval < near.interval)
+        #expect(SSHTerminalArrowRepeat.plan(heldKey: held, translation: .init(width: 10_000, height: 0)).interval == 0.035)
+        #expect(SSHTerminalArrowRepeat.plan(heldKey: held, translation: .zero) == idle) // return to held direction
+    }
+
+    @Test func composerModifierConsumesOnlyTheNextInsertedCharacter() throws {
+        let input = try #require(SSHTerminalComposer.modifiedInput(old: "draft", new: "drxaft"))
+        #expect(input.key == GHOSTTY_KEY_X)
+        #expect(input.character == "x")
+        #expect(input.remaining == "draft")
+        #expect(SSHTerminalComposer.modifiedInput(old: "draft", new: "draf") == nil) // deletion is not a typed key
+        let batch = try #require(SSHTerminalComposer.modifiedInput(old: "", new: "cat"))
+        #expect(batch.character == "c")
+        #expect(batch.remaining == "at")
+    }
+
+    @Test func terminalBarsShareOneShotModifiersAndEncodeAllBaseKeys() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        var bytes = fixture.bytes.makeAsyncIterator()
+        channel.modifierLatch.toggle(GhosttyMods(GHOSTTY_MODS_CTRL))
+        channel.key(GHOSTTY_KEY_C, text: "c")
+        #expect(await bytes.next() == Data([3]))
+        channel.key(GHOSTTY_KEY_C, text: "c")
+        #expect(await bytes.next() == Data("c".utf8))
+        channel.modifierLatch.toggle(GhosttyMods(GHOSTTY_MODS_ALT))
+        channel.keys(try #require(SSHTerminalKeymap.parse("x c", syntax: .plus)))
+        #expect(await bytes.next() == Data("\u{1b}xc".utf8)) // only first stroke spends latch
+        for (id, expected) in [("escape", "\u{1b}"), ("tab", "\t"), ("left", "\u{1b}[D"),
+                                ("down", "\u{1b}[B"), ("up", "\u{1b}[A"), ("right", "\u{1b}[C")] {
+            let stroke = try #require(SSHTerminalKeymap.fixed.first { $0.id == id }?.stroke)
+            channel.keys([stroke])
+            #expect(await bytes.next() == Data(expected.utf8))
+        }
+        #expect(channel.modifierLatch.modifiers == 0)
+        channel.close(reason: "done")
     }
 
     @Test func eofStopsInputThenExitStatusBecomesTheReason() async throws {

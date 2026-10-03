@@ -284,6 +284,7 @@ private struct SSHTerminalSurface: UIViewRepresentable {
         view.needsPaint = true
         view.tapTypesInTerminal = tapTypesInTerminal
         view.setKeyActions(keyActions)
+        view.showModifiers()
         if view.keyboardRequest != keyboardRequest {
             view.keyboardRequest = keyboardRequest
             view.becomeFirstResponder()
@@ -316,8 +317,8 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     private let font = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
     private var cellSize = CGSize(width: 8, height: 17)
     private var lastGeometry: SSHTerminalGeometry?
-    private var ctrl = SSHTerminalCtrlLatch()
-    private var ctrlButton: UIButton?
+    private var modifierButtons: [(button: UIButton, modifier: GhosttyMods, label: String)] = []
+    private var arrowButtons: [SSHTerminalArrowButton] = []
     /// A hardware key is sent from pressesBegan only. While one is down,
     /// UIKeyInput's insertText/deleteBackward and the edit-menu paste are
     /// echoes of the same press and must not send again.
@@ -451,7 +452,7 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
             let text = String(character)
             let key = Self.logicalKey(text)
             channel.key(key, text: key == GHOSTTY_KEY_ENTER || key == GHOSTTY_KEY_TAB ? "" : text,
-                        modifiers: takeCtrl())
+                        modifiers: takeModifiers())
         }
     }
 
@@ -460,17 +461,21 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         accessoryKey(GHOSTTY_KEY_BACKSPACE)
     }
     private func accessoryKey(_ key: GhosttyKey) {
-        channel.key(key, modifiers: takeCtrl())
+        channel.key(key, modifiers: takeModifiers())
     }
-    /// Ctrl applies to the next key only, then shows as off.
-    private func takeCtrl() -> GhosttyMods {
-        let mods = ctrl.take()
-        showCtrl()
+    private func takeModifiers() -> GhosttyMods {
+        let mods = channel.modifierLatch.take()
+        showModifiers()
         return mods
     }
-    private func showCtrl() {
-        ctrlButton?.setTitle(ctrl.armed ? "Ctrl \u{2713}" : "Ctrl", for: .normal)
-        ctrlButton?.accessibilityValue = ctrl.armed ? "On" : "Off"
+    func showModifiers() {
+        for entry in modifierButtons {
+            let armed = channel.modifierLatch.isArmed(entry.modifier)
+            entry.button.setTitle(entry.label, for: .normal)
+            entry.button.isSelected = armed
+            entry.button.backgroundColor = armed ? tintColor.withAlphaComponent(0.2) : .clear
+            entry.button.accessibilityValue = armed ? "On" : "Off"
+        }
     }
     /// A tap first dismisses whichever keyboard is up (raw or composer). With
     /// it down, a tap is a click for an app that asked for mouse reports
@@ -512,6 +517,7 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     override func resignFirstResponder() -> Bool {
         hardwarePresses.removeAll()
         keyRepeater.stop()
+        arrowButtons.forEach { $0.stopRepeating() }
         let resigned = super.resignFirstResponder()
         if resigned { Task { @MainActor [rawKeyboardChanged] in rawKeyboardChanged(false) } }
         return resigned
@@ -523,14 +529,14 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
             guard let key = press.key else { unhandled.insert(press); continue }
             hardwarePresses.insert(press)
             // Modifier keys alone (HID 0xE0...0xE7) send nothing and must not
-            // spend the one-shot Ctrl.
+            // spend the one-shot modifiers.
             if (0xE0...0xE7).contains(key.keyCode.rawValue) { continue }
             if key.modifierFlags.contains(.command), key.charactersIgnoringModifiers.lowercased() == "v" {
                 requestPaste()
                 continue
             }
             let physical = Self.physicalKey(key.keyCode) ?? Self.logicalKey(key.charactersIgnoringModifiers)
-            var mods = takeCtrl()
+            var mods = takeModifiers()
             if key.modifierFlags.contains(.control) { mods |= GhosttyMods(GHOSTTY_MODS_CTRL) }
             if key.modifierFlags.contains(.alternate) { mods |= GhosttyMods(GHOSTTY_MODS_ALT) }
             if key.modifierFlags.contains(.shift) { mods |= GhosttyMods(GHOSTTY_MODS_SHIFT) }
@@ -661,20 +667,33 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
             stack.addArrangedSubview(button)
             return button
         }
-        _ = button("Esc", id: "escape") { [weak self] in self?.accessoryKey(GHOSTTY_KEY_ESCAPE) }
-        _ = button("Tab", id: "tab") { [weak self] in self?.accessoryKey(GHOSTTY_KEY_TAB) }
-        ctrlButton = button("Ctrl", id: "control") { [weak self] in
-            guard let self else { return }
-            self.ctrl.toggle()
-            self.showCtrl()
+        for fixed in SSHTerminalKeymap.fixed {
+            if let modifier = fixed.modifier {
+                let modifierButton = button(fixed.label, id: fixed.id) { [weak self] in
+                    guard let self else { return }
+                    self.channel.modifierLatch.toggle(modifier)
+                    self.showModifiers()
+                }
+                modifierButton.accessibilityLabel = "\(fixed.label) modifier"
+                modifierButtons.append((modifierButton, modifier, fixed.label))
+            } else if let stroke = fixed.stroke {
+                if SSHTerminalArrowRepeat.isArrow(stroke.key) {
+                    let arrow = SSHTerminalArrowButton(label: fixed.label, key: stroke.key,
+                                                      id: "sshTerminal.\(fixed.id)") { [weak self] key in
+                        guard let self, self.isFirstResponder, self.channel.connected,
+                              !self.channel.inputClosed else { return false }
+                        self.accessoryKey(key)
+                        return true
+                    }
+                    arrow.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+                    stack.addArrangedSubview(arrow)
+                    arrowButtons.append(arrow)
+                } else {
+                    _ = button(fixed.label, id: fixed.id) { [weak self] in self?.accessoryKey(stroke.key) }
+                }
+            }
         }
-        ctrlButton?.accessibilityLabel = "Control modifier"
-        ctrlButton?.accessibilityValue = "Off"
-        for (label, key, id) in [("←", GHOSTTY_KEY_ARROW_LEFT, "left"), ("↓", GHOSTTY_KEY_ARROW_DOWN, "down"),
-                                 ("↑", GHOSTTY_KEY_ARROW_UP, "up"), ("→", GHOSTTY_KEY_ARROW_RIGHT, "right")] {
-            let arrow = button(label, id: id) { [weak self] in self?.accessoryKey(key) }
-            arrow.accessibilityLabel = "Move cursor \(id)"
-        }
+        showModifiers()
         _ = button("Paste", id: "paste") { [weak self] in self?.requestPaste() }
         let chat = button("", id: "useChatBar") { [weak self] in
             guard let self else { return }

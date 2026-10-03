@@ -22,7 +22,7 @@ struct SSHTerminalKeyAction: Equatable, Identifiable, Sendable {
 
 /// Per-program key strip actions: each program's documented defaults, then
 /// the user's own keybinding file from the host. A program without a profile
-/// gets only the fixed keys (Esc, ^C, Tab, arrows). To support another
+/// gets only the fixed keys (Esc, Ctrl, Alt, Tab, arrows). To support another
 /// program, add a profile; to read its overrides, add a `Config` case.
 ///
 /// Defaults come from each program's own reference: pi `docs/keybindings.md`,
@@ -105,12 +105,22 @@ enum SSHTerminalKeymap {
 
     /// The fixed keys every strip shows. Actions bound to exactly one of
     /// these are left out rather than shown twice.
-    static let fixed: [(id: String, stroke: SSHTerminalKeyStroke)] = [
-        ("escape", stroke(GHOSTTY_KEY_ESCAPE, label: "Esc")),
-        ("interrupt", stroke(GHOSTTY_KEY_C, text: "c", modifiers: GhosttyMods(GHOSTTY_MODS_CTRL), label: "^C")),
-        ("tab", stroke(GHOSTTY_KEY_TAB, label: "Tab")),
-        ("up", stroke(GHOSTTY_KEY_ARROW_UP, label: "\u{2191}")),
-        ("down", stroke(GHOSTTY_KEY_ARROW_DOWN, label: "\u{2193}")),
+    struct FixedKey: Identifiable {
+        let id: String
+        let label: String
+        var stroke: SSHTerminalKeyStroke? = nil
+        var modifier: GhosttyMods? = nil
+    }
+
+    static let fixed: [FixedKey] = [
+        .init(id: "escape", label: "Esc", stroke: stroke(GHOSTTY_KEY_ESCAPE, label: "Esc")),
+        .init(id: "control", label: "Ctrl", modifier: GhosttyMods(GHOSTTY_MODS_CTRL)),
+        .init(id: "alt", label: "Alt", modifier: GhosttyMods(GHOSTTY_MODS_ALT)),
+        .init(id: "tab", label: "Tab", stroke: stroke(GHOSTTY_KEY_TAB, label: "Tab")),
+        .init(id: "left", label: "←", stroke: stroke(GHOSTTY_KEY_ARROW_LEFT, label: "←")),
+        .init(id: "down", label: "↓", stroke: stroke(GHOSTTY_KEY_ARROW_DOWN, label: "↓")),
+        .init(id: "up", label: "↑", stroke: stroke(GHOSTTY_KEY_ARROW_UP, label: "↑")),
+        .init(id: "right", label: "→", stroke: stroke(GHOSTTY_KEY_ARROW_RIGHT, label: "→")),
     ]
 
     /// Resolves a profile against the user's file. Unreadable or invalid
@@ -126,7 +136,7 @@ enum SSHTerminalKeymap {
                     + byKey.filter { $0.value == spec.id }.keys.sorted()
             }
             guard let strokes = keys.lazy.compactMap({ parse($0, syntax: profile.syntax) }).first else { return nil }
-            if strokes.count == 1, fixed.contains(where: { $0.stroke.key == strokes[0].key && $0.stroke.modifiers == strokes[0].modifiers }) { return nil }
+            if strokes.count == 1, fixed.contains(where: { $0.stroke?.key == strokes[0].key && $0.stroke?.modifiers == strokes[0].modifiers }) { return nil }
             return SSHTerminalKeyAction(id: spec.id, title: spec.title, strokes: strokes)
         }
     }

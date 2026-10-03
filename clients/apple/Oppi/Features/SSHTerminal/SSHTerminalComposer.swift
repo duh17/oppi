@@ -1,4 +1,5 @@
 import SwiftUI
+import GhosttyVt
 import UniformTypeIdentifiers
 
 /// Oppi's chat composer, pointed at a terminal. Text (typed or dictated) is
@@ -59,12 +60,20 @@ struct SSHTerminalComposer: View {
                 appliesOuterPadding: true,
                 allowsExpansion: false,
                 allowsAttachments: true,
-                attachmentButtonPlacement: .trailing,
+                attachmentButtonPlacement: .leading,
                 actionRowMinimumHeight: ComposerInputMetrics.controlDiameter,
                 autocorrectionEnabled: false,
                 actionRow: { keyStrip }
             )
             .disabled(!channel.connected)
+        }
+        .onChange(of: text) { old, new in
+            // The composer still edits ordinary text locally. Only the next
+            // inserted character after Ctrl/Alt is routed as a raw key.
+            guard channel.modifierLatch.modifiers != 0,
+                  let input = Self.modifiedInput(old: old, new: new) else { return }
+            channel.key(input.key, text: input.character)
+            text = input.remaining
         }
         .task { await prepareVoice() }
         .onDisappear(perform: releaseVoice)
@@ -75,8 +84,24 @@ struct SSHTerminalComposer: View {
         HStack(spacing: 2) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
-                    ForEach(SSHTerminalKeymap.fixed, id: \.id) { fixed in
-                        key(fixed.stroke.label, id: fixed.id) { channel.keys([fixed.stroke]) }
+                    ForEach(SSHTerminalKeymap.fixed) { fixed in
+                        if let modifier = fixed.modifier {
+                            key(fixed.label, id: fixed.id) { channel.modifierLatch.toggle(modifier) }
+                                .foregroundStyle(channel.modifierLatch.isArmed(modifier) ? .themeBlue : .themeFg)
+                                .accessibilityValue(channel.modifierLatch.isArmed(modifier) ? "On" : "Off")
+                        } else if let stroke = fixed.stroke {
+                            if SSHTerminalArrowRepeat.isArrow(stroke.key) {
+                                SSHTerminalArrowControl(label: fixed.label, key: stroke.key,
+                                                        id: "sshTerminal.composer.\(fixed.id)") { arrow in
+                                    guard channel.connected, !channel.inputClosed else { return false }
+                                    channel.key(arrow)
+                                    return true
+                                }
+                                .frame(width: 40, height: ComposerInputMetrics.controlDiameter)
+                            } else {
+                                key(fixed.label, id: fixed.id) { channel.keys([stroke]) }
+                            }
+                        }
                     }
                     ForEach(keyActions) { action in
                         key(action.title, id: action.id) { channel.keys(action.strokes) }
@@ -107,6 +132,25 @@ struct SSHTerminalComposer: View {
                 .frame(minWidth: 40, minHeight: ComposerInputMetrics.controlDiameter)
         }
             .accessibilityIdentifier("sshTerminal.composer.\(id)")
+    }
+
+    /// Remove just the first inserted character, leaving the rest of the
+    /// locally edited draft intact (including insertion in the middle).
+    static func modifiedInput(old: String, new: String) -> (key: GhosttyKey, character: String, remaining: String)? {
+        let before = Array(old)
+        let after = Array(new)
+        var prefix = 0
+        while prefix < min(before.count, after.count), before[prefix] == after[prefix] { prefix += 1 }
+        var suffix = 0
+        while suffix < min(before.count, after.count) - prefix,
+              before[before.count - 1 - suffix] == after[after.count - 1 - suffix] { suffix += 1 }
+        guard after.count - suffix > prefix else { return nil }
+        let character = String(after[prefix])
+        let key = SSHTerminalKeymap.parse(character == " " ? "space" : character, syntax: .plus)?.first?.key
+            ?? (character == "\n" ? GHOSTTY_KEY_ENTER : GHOSTTY_KEY_UNIDENTIFIED)
+        var remaining = after
+        remaining.remove(at: prefix)
+        return (key, character, String(remaining))
     }
 
     private func send() {

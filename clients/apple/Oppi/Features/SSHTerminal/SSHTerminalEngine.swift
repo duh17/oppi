@@ -411,16 +411,17 @@ final class SSHTerminalKeyRepeater {
     }
 }
 
-/// The accessory-bar Ctrl is one-shot: it modifies the next key, then releases.
-struct SSHTerminalCtrlLatch {
-    private(set) var armed = false
+/// Shared by both terminal bars: modifiers affect one key, not a paste or
+/// the whole chord. Switching keyboards does not lose the pending modifier.
+struct SSHTerminalModifierLatch {
+    private(set) var modifiers: GhosttyMods = 0
 
-    mutating func toggle() { armed.toggle() }
+    func isArmed(_ modifier: GhosttyMods) -> Bool { modifiers & modifier != 0 }
+    mutating func toggle(_ modifier: GhosttyMods) { modifiers ^= modifier }
 
-    /// Modifier for the key being sent now; releases the latch.
     mutating func take() -> GhosttyMods {
-        defer { armed = false }
-        return armed ? GhosttyMods(GHOSTTY_MODS_CTRL) : 0
+        defer { modifiers = 0 }
+        return modifiers
     }
 }
 
