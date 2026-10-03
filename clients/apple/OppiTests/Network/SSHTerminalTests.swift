@@ -315,6 +315,22 @@ struct SSHTerminalTests {
         #expect(channel.reason.contains("network change"))
     }
 
+    @Test func composerSendIsOnePasteThenEnterInBothPasteModes() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        var bytes = fixture.bytes.makeAsyncIterator()
+        try channel.submit("fix the build\nthen run tests")
+        #expect(await bytes.next() == Data("fix the build\rthen run tests\r".utf8))
+        channel.event(.data(Data("\u{1b}[?2004h".utf8))) // an agent TUI turns on bracketed paste
+        try channel.submit("line one\nline two")
+        #expect(await bytes.next() == Data("\u{1b}[200~line one\nline two\u{1b}[201~\r".utf8))
+        try channel.submit("")
+        #expect(await bytes.next() == Data("\r".utf8))
+        channel.close(reason: "done")
+        #expect(throws: SSHTerminalError.disconnected) { try channel.submit("late") }
+    }
+
     @Test func startupCommandExitIsReportedAsTheCommandNotTheShell() throws {
         let channel = try SSHTerminalChannel()
         channel.opened(TerminalConnectionFixture(), command: "herdr")

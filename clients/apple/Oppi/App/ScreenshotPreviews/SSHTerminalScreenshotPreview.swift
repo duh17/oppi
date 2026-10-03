@@ -27,7 +27,20 @@ struct SSHTerminalScreenshotPreview: View {
 
     private func play(on channel: SSHTerminalChannel) {
         guard !channel.connected else { return }
-        channel.opened(PreviewConnection(), command: "herdr")
+        // Echo what the composer and key strip send, escaped, so a driven run
+        // (OPPI_UI_VALIDATE_TAPS) shows the bytes that reached the "PTY".
+        channel.opened(PreviewConnection { [weak channel] bytes in
+            let shown = String(decoding: bytes, as: UTF8.self).unicodeScalars.map { scalar -> String in
+                switch scalar.value {
+                case 0x1b: "\\e"
+                case 0x0d: "\\r"
+                case 0x0a: "\\n"
+                case 0..<0x20: "^" + String(UnicodeScalar(scalar.value + 0x40)!)
+                default: String(scalar)
+                }
+            }.joined()
+            channel?.event(.data(Data("\r\nsent: \(shown)".utf8)))
+        }, command: "herdr")
         let esc = "\u{1b}["
         let screen = [
             "\(esc)2J\(esc)H",
@@ -46,7 +59,9 @@ struct SSHTerminalScreenshotPreview: View {
 }
 
 private actor PreviewConnection: SSHTerminalConnection {
-    func send(_ bytes: Data) async throws {}
+    let echo: @MainActor (Data) -> Void
+    init(echo: @escaping @MainActor (Data) -> Void) { self.echo = echo }
+    func send(_ bytes: Data) async throws { await echo(bytes) }
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {}
     func checkAlive() async throws {}
     func cancel() async {}

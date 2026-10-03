@@ -290,6 +290,17 @@ final class SSHTerminalChannel {
         send(engine.mouse(input, column: column, row: row))
     }
 
+    /// Composer send: the text as one paste, then Enter. The user wrote it in
+    /// Oppi, so a newline needs no clipboard-style consent; bracketed paste
+    /// keeps a multi-line prompt as one prompt in agent TUIs. Empty text is a
+    /// bare Enter.
+    func submit(_ text: String) throws {
+        guard connected, !inputClosed else { send(Data()); throw SSHTerminalError.disconnected }
+        var bytes = text.isEmpty ? Data() : try engine.paste(text, confirmed: true)
+        bytes.append(engine.key(GHOSTTY_KEY_ENTER))
+        send(bytes)
+    }
+
     func paste(_ text: String, confirmed: Bool = false) throws {
         guard connected, !inputClosed else { send(Data()); throw SSHTerminalError.disconnected }
         send(try engine.paste(text, confirmed: confirmed))

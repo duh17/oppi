@@ -35,7 +35,7 @@ struct SSHTerminalComposer: View {
                 isBusy: false,
                 busyStreamingBehavior: $streamingBehavior,
                 isSending: false,
-                placeholderOverride: "Type or dictate a command",
+                placeholderOverride: "",
                 // Empty Send is a bare Enter: accept a default, continue a pager.
                 allowsEmptySubmit: true,
                 sendProgressText: nil,
@@ -89,13 +89,9 @@ struct SSHTerminalComposer: View {
     }
 
     private func send() {
-        let value = text
         failure = nil
         do {
-            // The user wrote this text here, so a newline needs no clipboard-
-            // style consent. Bracketed paste keeps it one prompt in agent TUIs.
-            if !value.isEmpty { try channel.paste(value, confirmed: true) }
-            channel.key(GHOSTTY_KEY_ENTER)
+            try channel.submit(text)
             text = ""
         } catch {
             failure = "Not sent. \(error.localizedDescription)"
