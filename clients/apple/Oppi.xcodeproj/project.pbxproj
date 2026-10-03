@@ -1524,6 +1524,7 @@
 		C8E4998A0077B8A0B6903314 /* WebSocketClientSubscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 742844DD73D5A735763825D2 /* WebSocketClientSubscriptionTests.swift */; };
 		C8FE60D5A96E038BE23507E8 /* JSONUnpairedSurrogateRepair.swift in Sources */ = {isa = PBXBuildFile; fileRef = 408FF5C27B794D214CD842EE /* JSONUnpairedSurrogateRepair.swift */; };
 		C92662C28B6E66F349E4D687 /* ChatFocusOwnershipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5798FD637A227DD071255EBD /* ChatFocusOwnershipTests.swift */; };
+		C99D6386B175545386509DDA /* SSHTerminalKeymap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F1318955097C657E0A1264D /* SSHTerminalKeymap.swift */; };
 		C9C8524C8ACAD1A8FE3F7751 /* session-threads-2026-09-29.json in Resources */ = {isa = PBXBuildFile; fileRef = C3C72E1C4E4563897A7666A1 /* session-threads-2026-09-29.json */; };
 		C9DC606EE283C170B9A10D98 /* DesktopViewGrant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D0DB56D2F654F67020B27B /* DesktopViewGrant.swift */; };
 		C9E9D0CD52A9B463A7B59E31 /* ServerSkillFileTreeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C542BD74088A1BD1C771CCB4 /* ServerSkillFileTreeTests.swift */; };
@@ -2631,6 +2632,7 @@
 		5E628A405F9139327479D182 /* HTMLPDFExportDiagnosticTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTMLPDFExportDiagnosticTests.swift; sourceTree = "<group>"; };
 		5E63D8B13DD41CDB9D19ECC6 /* TestDoubles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestDoubles.swift; sourceTree = "<group>"; };
 		5E829C3D83F6B0A5FF9C27ED /* MonaspaceNeon-SemiBold.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "MonaspaceNeon-SemiBold.otf"; sourceTree = "<group>"; };
+		5F1318955097C657E0A1264D /* SSHTerminalKeymap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalKeymap.swift; sourceTree = "<group>"; };
 		5F3E1953FCFD7C151A4E08DE /* DesktopLatestFrameMailbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopLatestFrameMailbox.swift; sourceTree = "<group>"; };
 		5F4BF2B95D257B03A49C9CBE /* VoiceTranscriptionProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceTranscriptionProvider.swift; sourceTree = "<group>"; };
 		6017BD7FB6680E1F0B4A45CC /* FocusedSessionRuntimePolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusedSessionRuntimePolicyTests.swift; sourceTree = "<group>"; };
@@ -5825,6 +5827,7 @@
 				353DCB2C42D2506A8FB1E917 /* SSHTerminalChannel.swift */,
 				530A9E927F8C08482F429B83 /* SSHTerminalComposer.swift */,
 				555E01FCFE0ADCEA18DD9236 /* SSHTerminalEngine.swift */,
+				5F1318955097C657E0A1264D /* SSHTerminalKeymap.swift */,
 				B488362E8AD725D3820A3F0F /* SSHTerminalSetupView.swift */,
 				49728C075AEAF29906AF5776 /* SSHTerminalView.swift */,
 			);
@@ -8602,6 +8605,7 @@
 				63FD9760B8095D8383C20A37 /* SSHTerminalChannel.swift in Sources */,
 				09CD796076A0A76CD657F4E3 /* SSHTerminalComposer.swift in Sources */,
 				633E3686C8AA2E6906E3F903 /* SSHTerminalEngine.swift in Sources */,
+				C99D6386B175545386509DDA /* SSHTerminalKeymap.swift in Sources */,
 				6328AEEC7DC51DFEB540409F /* SSHTerminalProfile.swift in Sources */,
 				D800CF76E01E19C0F8913B46 /* SSHTerminalScreenshotPreview.swift in Sources */,
 				40891EA93626D18CCF1223F5 /* SSHTerminalSetupView.swift in Sources */,

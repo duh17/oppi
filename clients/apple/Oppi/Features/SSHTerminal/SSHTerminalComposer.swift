@@ -1,4 +1,3 @@
-import GhosttyVt
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -10,6 +9,8 @@ import UniformTypeIdentifiers
 struct SSHTerminalComposer: View {
     let channel: SSHTerminalChannel
     let focusRequest: Int
+    /// The foreground program's own actions, after the fixed keys.
+    let keyActions: [SSHTerminalKeyAction]
     let showRawKeyboard: () -> Void
     @Environment(ServerConnection.self) private var connection: ServerConnection?
 
@@ -70,12 +71,17 @@ struct SSHTerminalComposer: View {
     /// Shown while the composer is focused, so the idle terminal stays compact.
     private var keyStrip: some View {
         HStack(spacing: 2) {
-            key("Esc", id: "escape") { channel.key(GHOSTTY_KEY_ESCAPE) }
-            key("^C", id: "interrupt") { channel.key(GHOSTTY_KEY_C, text: "c", modifiers: GhosttyMods(GHOSTTY_MODS_CTRL)) }
-            key("Tab", id: "tab") { channel.key(GHOSTTY_KEY_TAB) }
-            key("↑", id: "up") { channel.key(GHOSTTY_KEY_ARROW_UP) }
-            key("↓", id: "down") { channel.key(GHOSTTY_KEY_ARROW_DOWN) }
-            Spacer(minLength: 0)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 2) {
+                    ForEach(SSHTerminalKeymap.fixed, id: \.id) { fixed in
+                        key(fixed.stroke.label, id: fixed.id) { channel.keys([fixed.stroke]) }
+                    }
+                    ForEach(keyActions) { action in
+                        key(action.title, id: action.id) { channel.keys(action.strokes) }
+                            .accessibilityHint("Sends \(action.keyLabel)")
+                    }
+                }
+            }
             Button(action: showRawKeyboard) {
                 Image(systemName: "keyboard").frame(minWidth: 40, minHeight: 32)
             }
@@ -87,7 +93,7 @@ struct SSHTerminalComposer: View {
     }
 
     private func key(_ label: String, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { Text(label).frame(minWidth: 40, minHeight: 32) }
+        Button(action: action) { Text(label).padding(.horizontal, 6).frame(minWidth: 40, minHeight: 32) }
             .accessibilityIdentifier("sshTerminal.composer.\(id)")
     }
 

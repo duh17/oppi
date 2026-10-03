@@ -338,6 +338,12 @@ final class SSHTerminalChannel {
         send(engine.key(key, text: text, modifiers: modifiers))
     }
 
+    /// One write, so a chord's strokes arrive together and in order.
+    func keys(_ strokes: [SSHTerminalKeyStroke]) {
+        guard connected, !inputClosed else { send(Data()); return }
+        send(strokes.reduce(into: Data()) { $0.append(engine.key($1.key, text: $1.text, modifiers: $1.modifiers)) })
+    }
+
     func mouse(_ input: SSHTerminalEngine.MouseInput, column: Int, row: Int) {
         guard connected, !inputClosed else { return }
         send(engine.mouse(input, column: column, row: row))

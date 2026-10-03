@@ -29,6 +29,19 @@ The terminal picks its input from what runs in the foreground. About every two s
 
 The chat input bar is Oppi's chat composer. Type or dictate (same dictation as chat), edit, then **Send**: Oppi pastes the text as one block (bracketed paste when the app supports it) and presses Enter. Send with an empty bar presses Enter alone. Autocorrect, capitals, and smart punctuation are off. While the bar is focused, a key strip offers Esc, Ctrl-C, Tab, ↑ and ↓ immediately, and a keyboard button switches to typing straight into the terminal with the Esc/Tab/Ctrl/arrow bar; the input bar returns when that keyboard goes down. Starting an agent from the terminal keyboard moves typing to the input bar.
 
+### Program shortcuts
+
+The key strip and the terminal keyboard's bar add buttons for the program in front, named by what they do. Each button sends the key that program has bound right now:
+
+| Program | Buttons (default key) | User file read |
+|---|---|---|
+| Shell | History (^R), Clear (^L) | none |
+| pi | Thinking (⇧Tab), Model (^L), Tools (^O); Stop when interrupt is not Esc | `${PI_CODING_AGENT_DIR:-~/.pi/agent}/keybindings.json` |
+| Claude Code | Mode (⇧Tab), Model (⌥P), Transcript (^O), Todos (^T), Background (^B) | `${CLAUDE_CONFIG_DIR:-~/.claude}/keybindings.json`, contexts Global, Chat, Task |
+| Codex | Transcript (^T), Effort − (⌥,), Effort + (⌥.); Stop when interrupt is not Esc | `[tui.keymap.*]` in `${CODEX_HOME:-~/.codex}/config.toml` |
+
+The file is read once each time the program takes the foreground, through the same side channel, and follows that program's rules: pi and Codex entries replace an action's keys and `[]` removes it; Claude Code entries add keys, and a default key bound to `null` or to another action stops counting. A missing or unreadable file means the defaults. For Codex only the `tui` tables leave the host, and only table headers, dotted keys, and string arrays are read (not inline tables, profiles, or project `.codex/config.toml`). The variables are those of a non-interactive SSH command, which may differ from the agent's own environment. Actions bound to Esc, ^C, Tab, ↑ or ↓ are not repeated, `super`/`cmd` keys are left out, and Claude Code chords are sent as one write. Other agents get the fixed keys only. Under Herdr, the buttons follow the agent in the focused pane.
+
 Photos and files from **+** or a pasted image are saved on the host before Send, in an owner-only `oppi-ssh` folder under `$TMPDIR` (or `/tmp`), over the same SSH connection. The prompt then lists each file's path on its own line, so the agent can read it. Each file is limited to 32 MB.
 
 - Tap the terminal to hide whichever keyboard is up.

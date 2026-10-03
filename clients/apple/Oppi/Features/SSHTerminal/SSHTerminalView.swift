@@ -20,6 +20,7 @@ struct SSHTerminalView: View {
     @State private var herdr = HerdrMonitor()
     @State private var showsHerdr = false
     @State private var detector = SSHTerminalAgentDetector()
+    @State private var keymap = SSHTerminalKeymapLoader()
     /// The user's choice; dropped when the detected mode changes.
     @State private var modeOverride: SSHTerminalInputMode?
     @State private var resignRawKeyboardRequest = 0
@@ -30,6 +31,16 @@ struct SSHTerminalView: View {
     private var detectedMode: SSHTerminalInputMode? { detector.mode(herdr: herdr.snapshot) }
     /// A shell gets direct typing until a probe finds an agent.
     private var inputMode: SSHTerminalInputMode { modeOverride ?? detectedMode ?? .terminal }
+    /// Whose key bindings the strips offer: the foreground program, or the
+    /// agent in Herdr's focused pane.
+    private var keymapProgram: String? {
+        switch detector.foreground {
+        case nil: nil
+        case .shell: "shell"
+        case .agent(let name): name
+        case .herdr: herdr.snapshot?.focusedAgent?.agent ?? "shell"
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,6 +73,7 @@ struct SSHTerminalView: View {
             }
             SSHTerminalSurface(channel: channel, themeID: themeID, keyboardRequest: keyboardRequest,
                                resignRequest: resignRawKeyboardRequest, tapTypesInTerminal: inputMode == .terminal,
+                               keyActions: keymap.actions,
                                paste: requestPaste, followChanged: { detached = !$0 },
                                rawKeyboardChanged: { rawKeyboard = $0 },
                                focusComposer: { composerFocusRequest += 1 },
@@ -86,7 +98,9 @@ struct SSHTerminalView: View {
             // has its own key bar above the keyboard; the chat bar returns when
             // that keyboard goes down.
             if inputMode == .chat && !rawKeyboard {
-                SSHTerminalComposer(channel: channel, focusRequest: composerFocusRequest) { keyboardRequest += 1 }
+                SSHTerminalComposer(channel: channel, focusRequest: composerFocusRequest, keyActions: keymap.actions) {
+                    keyboardRequest += 1
+                }
             }
         }
         .background(.themeBg)
@@ -163,6 +177,9 @@ struct SSHTerminalView: View {
         .task(id: channel.connected) {
             guard channel.connected else { return }
             await detector.run(on: channel)
+        }
+        .task(id: [channel.connected ? "connected" : "closed", keymapProgram ?? ""]) {
+            await keymap.load(program: channel.connected ? keymapProgram : nil, on: channel)
         }
         // The terminal paints with the app theme, not the system appearance.
         // Keep the bar's title and back chevron legible against it in both.
@@ -243,6 +260,7 @@ private struct SSHTerminalSurface: UIViewRepresentable {
     let resignRequest: Int
     /// Shell input: a tap opens the raw keyboard instead of the chat bar.
     let tapTypesInTerminal: Bool
+    let keyActions: [SSHTerminalKeyAction]
     let paste: () -> Void
     let followChanged: (Bool) -> Void
     let rawKeyboardChanged: (Bool) -> Void
@@ -265,6 +283,7 @@ private struct SSHTerminalSurface: UIViewRepresentable {
         view.applyTheme(themeID)
         view.needsPaint = true
         view.tapTypesInTerminal = tapTypesInTerminal
+        view.setKeyActions(keyActions)
         if view.keyboardRequest != keyboardRequest {
             view.keyboardRequest = keyboardRequest
             view.becomeFirstResponder()
@@ -309,6 +328,10 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     private var scrollRemainder: CGFloat = 0
     private var displayLink: CADisplayLink?
     private var bar: UIView?
+    private var barKeys: UIStackView?
+    /// The foreground program's actions, inserted after Paste.
+    private var keyActions: [SSHTerminalKeyAction] = []
+    private var keyActionButtons: [UIButton] = []
     private var foreground = UIColor(Color.themeFg)
 
     init(channel: SSHTerminalChannel, paste: @escaping () -> Void, followChanged: @escaping (Bool) -> Void) {
@@ -580,6 +603,32 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         needsPaint = true
     }
 
+    func setKeyActions(_ actions: [SSHTerminalKeyAction]) {
+        guard actions != keyActions, let barKeys,
+              let paste = barKeys.arrangedSubviews.first(where: { $0.accessibilityIdentifier == "sshTerminal.paste" }),
+              let anchor = barKeys.arrangedSubviews.firstIndex(of: paste) else { return }
+        keyActions = actions
+        keyActionButtons.forEach { $0.removeFromSuperview() }
+        keyActionButtons = actions.enumerated().map { offset, action in
+            let button = Self.barButton(action.title, id: "sshTerminal.action.\(action.id)") { [weak self] in
+                self?.channel.keys(action.strokes)
+            }
+            // Words, unlike the one-glyph keys, need room to read apart.
+            var configuration = UIButton.Configuration.plain()
+            configuration.title = action.title
+            configuration.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8)
+            configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+                var attributes = attributes
+                attributes.font = .monospacedSystemFont(ofSize: 14, weight: .medium)
+                return attributes
+            }
+            button.configuration = configuration
+            button.accessibilityHint = "Sends \(action.keyLabel)"
+            barKeys.insertArrangedSubview(button, at: anchor + 1 + offset)
+            return button
+        }
+    }
+
     /// Finger up (toward newer output) hides the top bar; finger down shows it.
     private func trackTopBar(_ travel: CGFloat) {
         guard travel != 0 else { return }
@@ -606,13 +655,9 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
             stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
             stack.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor),
         ])
+        barKeys = stack
         func button(_ label: String, id: String, action: @escaping () -> Void) -> UIButton {
-            let button = UIButton(type: .system)
-            button.setTitle(label, for: .normal)
-            button.titleLabel?.font = .monospacedSystemFont(ofSize: 14, weight: .medium)
-            button.accessibilityIdentifier = "sshTerminal.\(id)"
-            button.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-            button.addAction(UIAction { _ in action() }, for: .touchUpInside)
+            let button = Self.barButton(label, id: "sshTerminal.\(id)", action: action)
             stack.addArrangedSubview(button)
             return button
         }
@@ -641,6 +686,16 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         let hide = button("⌄", id: "hideKeyboard") { [weak self] in self?.resignFirstResponder() }
         hide.accessibilityLabel = "Hide keyboard"
         return scroll
+    }
+
+    private static func barButton(_ label: String, id: String, action: @escaping () -> Void) -> UIButton {
+        let button = UIButton(type: .system)
+        button.setTitle(label, for: .normal)
+        button.titleLabel?.font = .monospacedSystemFont(ofSize: 14, weight: .medium)
+        button.accessibilityIdentifier = id
+        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        button.addAction(UIAction { _ in action() }, for: .touchUpInside)
+        return button
     }
 
     private static func logicalKey(_ text: String) -> GhosttyKey {

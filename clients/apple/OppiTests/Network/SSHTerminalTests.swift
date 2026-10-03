@@ -397,6 +397,68 @@ struct SSHTerminalTests {
         #expect(SSHTerminalAgentDetector.mode(for: nil, herdr: nil) == nil)
     }
 
+    @Test func keymapSpecsInEachSyntaxEncodeAsTerminalKeys() async throws {
+        func parse(_ spec: String, _ syntax: SSHTerminalKeymap.Syntax = .plus) throws -> [SSHTerminalKeyStroke] {
+            try #require(SSHTerminalKeymap.parse(spec, syntax: syntax), "\(spec) did not parse")
+        }
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        var bytes = fixture.bytes.makeAsyncIterator()
+        for (spec, syntax, expected, label) in [
+            ("shift+tab", SSHTerminalKeymap.Syntax.plus, "\u{1b}[Z", "\u{21E7}Tab"),
+            ("Ctrl+L", .plus, "\u{0c}", "^L"),
+            ("meta+p", .plus, "\u{1b}p", "\u{2325}P"),
+            ("ctrl+x ctrl+b", .plus, "\u{18}\u{02}", "^X ^B"), // a Claude Code chord, one write
+            ("alt-.", .dash, "\u{1b}.", "\u{2325}."),
+            ("page-down", .dash, "\u{1b}[6~", "PgDn"),
+        ] {
+            let strokes = try parse(spec, syntax)
+            #expect(strokes.map(\.label).joined(separator: " ") == label)
+            channel.keys(strokes)
+            #expect(await bytes.next() == Data(expected.utf8), "\(spec)")
+        }
+        #expect(try parse("ctrl--", .dash).map(\.label) == ["^-"]) // the separator as the key
+        // Keys a phone terminal cannot send reliably are not offered at all.
+        #expect(SSHTerminalKeymap.parse("super+k", syntax: .plus) == nil)
+        #expect(SSHTerminalKeymap.parse("ctrl+x wheelup", syntax: .plus) == nil)
+        channel.close(reason: "done")
+    }
+
+    @Test func keymapAppliesEachProgramsOwnOverrideRules() throws {
+        func strip(_ program: String, _ file: String?) throws -> [String] {
+            let profile = try #require(SSHTerminalKeymap.profile(for: program))
+            return SSHTerminalKeymap.actions(for: profile, userFile: file).map { "\($0.title) \($0.keyLabel)" }
+        }
+        // Defaults; an action bound to a fixed key (pi's Esc) is not repeated.
+        #expect(try strip("pi", nil) == ["Thinking \u{21E7}Tab", "Model ^L", "Tools ^O"])
+        #expect(try strip("shell", nil) == ["History ^R", "Clear ^L"])
+        #expect(SSHTerminalKeymap.profile(for: "vim") == nil)
+
+        // pi: a value replaces the defaults, [] unbinds, a broken file is ignored like pi does.
+        let pi = #"{"app.interrupt": "ctrl+g", "app.model.select": ["ctrl+k", "ctrl+l"], "app.tools.expand": []}"#
+        #expect(try strip("pi", pi) == ["Stop ^G", "Thinking \u{21E7}Tab", "Model ^K"])
+        #expect(try strip("pi", "{ not json") == strip("pi", nil))
+
+        // Claude Code: keys add to defaults; a default key unbound (any alias
+        // or case) or taken by another action drops out; other contexts don't apply.
+        let claude = #"{"bindings": [{"context": "Chat", "bindings": {"Meta+P": null, "ctrl+e": "chat:modelPicker", "ctrl+t": "chat:externalEditor"}}, {"context": "Settings", "bindings": {"ctrl+o": null}}]}"#
+        #expect(try strip("claude", claude) == ["Mode \u{21E7}Tab", "Model ^E", "Transcript ^O", "Background ^B"])
+
+        // Codex: table headers, dotted keys, multi-line arrays, comments, [] unbinds.
+        let codex = """
+        [tui]
+        keymap.global.open_transcript = "f2" # dotted under [tui]
+        [tui.keymap.chat]
+        interrupt_turn = "f12"
+        increase_reasoning_effort = [
+          "alt-=",
+        ]
+        decrease_reasoning_effort = []
+        """
+        #expect(try strip("codex", codex) == ["Stop F12", "Transcript F2", "Effort + \u{2325}="])
+    }
+
     @Test func attachmentUploadSendsTheBytesAndReturnsOnlyTheGeneratedPath() async throws {
         let fixture = TerminalConnectionFixture()
         let channel = try SSHTerminalChannel()
