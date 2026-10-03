@@ -197,13 +197,8 @@ struct SSHTerminalSetupView: View {
         }
         .navigationDestination(isPresented: $showsTerminal) {
             if let channel {
-                SSHTerminalView(channel: channel) { connect() }
+                SSHTerminalView(channel: channel, reconnect: { connect() }, editHost: { showsTerminal = false })
                     .id(ObjectIdentifier(channel))
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("Edit Host") { showsTerminal = false }
-                        }
-                    }
             }
         }
         .onDisappear { if !showsTerminal { cancel() } }

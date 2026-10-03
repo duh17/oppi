@@ -5,6 +5,7 @@ import UIKit
 struct SSHTerminalView: View {
     let channel: SSHTerminalChannel
     let reconnect: () -> Void
+    let editHost: () -> Void
     @Environment(\.themeID) private var themeID
     @Environment(\.scenePhase) private var scenePhase
     @State private var pendingPaste: String?
@@ -14,35 +15,31 @@ struct SSHTerminalView: View {
     @State private var pasteNotice: String?
     @State private var pasteNoticeTask: Task<Void, Never>?
     @State private var keyboardRequest = 0
+    @State private var composerFocusRequest = 0
+    @State private var rawKeyboard = false
     @State private var herdr = HerdrMonitor()
     @State private var showsHerdr = false
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                if channel.connecting {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: channel.connected ? "checkmark.circle" : "xmark.circle")
+            // A healthy connection shows no status row; the terminal gets the space.
+            if channel.connecting || !channel.connected || channel.networkChanged {
+                HStack(spacing: 6) {
+                    if channel.connecting || channel.networkChanged {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "xmark.circle").foregroundStyle(.themeRed)
+                    }
+                    Text(statusText).lineLimit(2)
+                    Spacer(minLength: 4)
+                    if !channel.connected && !channel.connecting {
+                        Button("Reconnect", action: reconnect).accessibilityIdentifier("sshTerminal.reconnect")
+                    }
                 }
-                Text(channel.connecting || channel.connected ? channel.reason : "Disconnected · \(channel.reason)").lineLimit(3)
-                Spacer()
-                if (!channel.connected || channel.networkChanged) && !channel.connecting {
-                    Button("Reconnect", action: reconnect).accessibilityIdentifier("sshTerminal.reconnect")
-                } else if channel.connected {
-                    Button("Disconnect") { channel.close(reason: "Closed by you.") }
-                        .accessibilityIdentifier("sshTerminal.disconnect")
-                }
-            }
-            .font(.footnote).padding(10).foregroundStyle(.themeFg)
-            // Without .contain the identifier replaces the Reconnect and
-            // Disconnect buttons' own identifiers.
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("sshTerminal.status")
-            if channel.networkChanged && channel.connected {
-                Text("Network changed — this shell may be stale. Reconnect opens a fresh shell.")
-                    .font(.footnote).foregroundStyle(.themeOrange)
-                    .accessibilityIdentifier("sshTerminal.networkChanged")
+                .font(.caption).padding(.horizontal, 10).padding(.vertical, 4).foregroundStyle(.themeFg)
+                // Without .contain the identifier replaces Reconnect's own.
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("sshTerminal.status")
             }
             if !channel.inputNotice.isEmpty {
                 Text(channel.inputNotice).font(.footnote).foregroundStyle(.themeOrange)
@@ -53,7 +50,9 @@ struct SSHTerminalView: View {
                     .accessibilityIdentifier("sshTerminal.pasteNotice")
             }
             SSHTerminalSurface(channel: channel, themeID: themeID, keyboardRequest: keyboardRequest,
-                               paste: requestPaste, followChanged: { detached = !$0 })
+                               paste: requestPaste, followChanged: { detached = !$0 },
+                               rawKeyboardChanged: { rawKeyboard = $0 },
+                               focusComposer: { composerFocusRequest += 1 })
                 .overlay(alignment: .bottomTrailing) {
                     if detached {
                         Button("Back to Live", systemImage: "arrow.down.to.line") {
@@ -63,6 +62,11 @@ struct SSHTerminalView: View {
                             .accessibilityIdentifier("sshTerminal.backToLive")
                     }
                 }
+            // Raw typing has its own key bar above the keyboard; the composer
+            // returns when that keyboard goes down.
+            if !rawKeyboard {
+                SSHTerminalComposer(channel: channel, focusRequest: composerFocusRequest) { keyboardRequest += 1 }
+            }
         }
         .background(.themeBg)
         .navigationTitle(channel.title.isEmpty ? "SSH Terminal" : channel.title)
@@ -88,9 +92,19 @@ struct SSHTerminalView: View {
                     .accessibilityValue(herdr.snapshot.map { "\($0.needsAttention) need you" } ?? "")
                     .accessibilityIdentifier("sshTerminal.herdr")
                 }
-                Button("Show Keyboard", systemImage: "keyboard") { keyboardRequest += 1 }
-                    .disabled(!channel.connected)
-                    .accessibilityIdentifier("sshTerminal.showKeyboard")
+                Menu {
+                    Button("Edit Host", systemImage: "pencil", action: editHost)
+                    if channel.connected {
+                        Button("Disconnect", systemImage: "xmark", role: .destructive) { channel.close(reason: "Closed by you.") }
+                            .accessibilityIdentifier("sshTerminal.disconnect")
+                    } else if !channel.connecting {
+                        Button("Reconnect", systemImage: "arrow.clockwise", action: reconnect)
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .accessibilityLabel("Terminal actions")
+                .accessibilityIdentifier("sshTerminal.menu")
             }
         }
         .sheet(isPresented: $showsHerdr) {
@@ -132,6 +146,11 @@ struct SSHTerminalView: View {
         } message: { Text(pasteFailure ?? "") }
     }
 
+    private var statusText: String {
+        if channel.networkChanged { return "Network changed \u{2014} checking the connection\u{2026}" }
+        return channel.connecting ? channel.reason : "Disconnected \u{00b7} \(channel.reason)"
+    }
+
     private var pasteLineCount: Int { SSHTerminalEngine.pasteLineCount(pendingPaste ?? "") }
 
     private func showPasteNotice(_ text: String) {
@@ -167,14 +186,18 @@ struct SSHTerminalView: View {
 private struct SSHTerminalSurface: UIViewRepresentable {
     let channel: SSHTerminalChannel
     let themeID: ThemeID
-    /// Bumped by the toolbar's keyboard button. In a mouse-reporting app a tap
-    /// clicks, so the keyboard needs an entry point that is not a tap.
+    /// Bumped by the composer's keyboard button: raw typing into the grid. In
+    /// a mouse-reporting app a tap clicks, so this cannot be a tap.
     let keyboardRequest: Int
     let paste: () -> Void
     let followChanged: (Bool) -> Void
+    let rawKeyboardChanged: (Bool) -> Void
+    let focusComposer: () -> Void
 
     func makeUIView(context: Context) -> SSHTerminalGridView {
         let view = SSHTerminalGridView(channel: channel, paste: paste, followChanged: followChanged)
+        view.rawKeyboardChanged = rawKeyboardChanged
+        view.focusComposer = focusComposer
         view.keyboardRequest = keyboardRequest
         return view
     }
@@ -198,6 +221,8 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     let followChanged: (Bool) -> Void
     var needsPaint = true
     var keyboardRequest = 0
+    var rawKeyboardChanged: (Bool) -> Void = { _ in }
+    var focusComposer: () -> Void = {}
     var paintedChangeCount = -1
     private let font = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
     private var cellSize = CGSize(width: 8, height: 17)
@@ -226,7 +251,7 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         isOpaque = true
         clipsToBounds = true
         accessibilityIdentifier = "sshTerminal.grid"
-        accessibilityLabel = "SSH terminal. Tap to hide or show the keyboard. Drag to scroll."
+        accessibilityLabel = "SSH terminal. Tap to type or to hide the keyboard. Drag to scroll."
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped(_:))))
         addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(scrollHistory(_:))))
         bar = makeAccessoryBar()
@@ -354,18 +379,32 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         ctrlButton?.setTitle(ctrl.armed ? "Ctrl \u{2713}" : "Ctrl", for: .normal)
         ctrlButton?.accessibilityValue = ctrl.armed ? "On" : "Off"
     }
-    /// A tap first dismisses the keyboard. With it down, a tap is a click for
-    /// an app that asked for mouse reports (Herdr tabs, panes and agents) and
-    /// otherwise brings the keyboard back.
+    /// A tap first dismisses whichever keyboard is up (raw or composer). With
+    /// it down, a tap is a click for an app that asked for mouse reports
+    /// (Herdr tabs, panes and agents) and otherwise starts typing in the
+    /// composer.
     @objc private func tapped(_ gesture: UITapGestureRecognizer) {
         if isFirstResponder {
             _ = resignFirstResponder()
+        } else if let window, Self.hasFirstResponder(in: window) {
+            window.endEditing(true)
         } else if channel.connected, channel.engine.mouseTracking {
             let cell = self.cell(at: gesture.location(in: self))
             channel.mouse(.click, column: cell.column, row: cell.row)
         } else {
-            becomeFirstResponder()
+            focusComposer()
         }
+    }
+
+    private static func hasFirstResponder(in view: UIView) -> Bool {
+        view.isFirstResponder || view.subviews.contains { hasFirstResponder(in: $0) }
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        // Deferred: this can run inside a SwiftUI update (updateUIView).
+        if became { Task { @MainActor [rawKeyboardChanged] in rawKeyboardChanged(true) } }
+        return became
     }
 
     private func cell(at point: CGPoint) -> (column: Int, row: Int) {
@@ -378,7 +417,9 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     override func resignFirstResponder() -> Bool {
         hardwarePresses.removeAll()
         keyRepeater.stop()
-        return super.resignFirstResponder()
+        let resigned = super.resignFirstResponder()
+        if resigned { Task { @MainActor [rawKeyboardChanged] in rawKeyboardChanged(false) } }
+        return resigned
     }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {

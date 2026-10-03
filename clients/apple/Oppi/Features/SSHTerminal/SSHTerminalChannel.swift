@@ -9,11 +9,14 @@ protocol SSHTerminalConnection: Sendable {
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws
     /// One-shot command on the same connection, outside the terminal's PTY.
     func run(_ command: String) async throws -> SSHExecResult
+    /// One SSH round trip. Throwing means the connection is gone.
+    func checkAlive() async throws
     func cancel() async
 }
 
 extension SSHPTYSession: SSHTerminalConnection {
     func run(_ command: String) async throws -> SSHExecResult { try await run(command, maximumOutputBytes: 2 * 1024 * 1024, timeout: .seconds(10)) }
+    func checkAlive() async throws { try await checkAlive(timeout: .seconds(8)) }
 }
 
 /// Bounded hand-off from the NIO event loop to the main actor.
@@ -118,10 +121,12 @@ final class SSHTerminalChannel {
     private(set) var inputNotice = ""
     /// Display-only; published only when the remote sets a different title.
     private(set) var title = ""
+    /// True while a network path change is being checked.
     private(set) var networkChanged = false
 
-    /// A path change is a hint, not proof the SSH stream failed. Do not replay
-    /// input or silently reconnect; the user can replace this shell explicitly.
+    /// A path change is a hint, not proof the SSH stream failed: one SSH round
+    /// trip decides. A live connection clears the notice; a dead one closes
+    /// with a reason and offers Reconnect. Input is never replayed.
     func watchNetwork() async {
         let monitor = NWPathMonitor()
         let (paths, continuation) = AsyncStream<String>.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -135,8 +140,20 @@ final class SSHTerminalChannel {
         defer { monitor.cancel() }
         var previous: String?
         for await path in paths {
-            if let previous, previous != path, connected { networkChanged = true }
+            if let previous, previous != path, connected { await recheckAfterNetworkChange() }
             previous = path
+        }
+    }
+
+    func recheckAfterNetworkChange() async {
+        guard connected, let connection else { return }
+        networkChanged = true
+        do {
+            try await connection.checkAlive()
+            networkChanged = false
+        } catch {
+            networkChanged = false
+            if self.connection != nil { close(reason: "The connection did not survive the network change.") }
         }
     }
     private var connection: (any SSHTerminalConnection)?

@@ -82,6 +82,8 @@ struct ChatInputBar<ActionRow: View>: View {
     var allowsExpansion: Bool = true
     var allowsAttachments: Bool = true
     var showsAccessoryRow: Bool = true
+    /// Off for shell input, where corrections and capitals break commands.
+    var autocorrectionEnabled: Bool = true
     @ViewBuilder let actionRow: () -> ActionRow
 
     @State private var showPhotoPicker = false
@@ -130,7 +132,7 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private var composerPlaceholderFont: Font { .body }
-    private var composerAutocorrectionEnabled: Bool { true }
+    private var composerAutocorrectionEnabled: Bool { autocorrectionEnabled }
 
     private var composerDisplayText: String {
         ComposerShared.currentComposerText(

@@ -302,6 +302,19 @@ struct SSHTerminalTests {
         #expect(engine.mouse(.click, column: 3, row: 2).isEmpty)
     }
 
+    @Test func networkChangeKeepsALiveShellAndClosesADeadOne() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        await channel.recheckAfterNetworkChange()
+        #expect(channel.connected)
+        #expect(!channel.networkChanged)
+        await fixture.setAlive(false)
+        await channel.recheckAfterNetworkChange()
+        #expect(!channel.connected)
+        #expect(channel.reason.contains("network change"))
+    }
+
     @Test func startupCommandExitIsReportedAsTheCommandNotTheShell() throws {
         let channel = try SSHTerminalChannel()
         channel.opened(TerminalConnectionFixture(), command: "herdr")
@@ -429,6 +442,9 @@ private actor TerminalConnectionFixture: SSHTerminalConnection {
                               cellWidth: pixelWidth / columns, cellHeight: pixelHeight / rows))
     }
     func run(_ command: String) async throws -> SSHExecResult { throw SSHPTYSessionError.commandRequestRejected }
+    private var alive = true
+    func setAlive(_ value: Bool) { alive = value }
+    func checkAlive() throws { if !alive { throw SSHPTYSessionError.requestTimedOut } }
     func cancel() {
         suspendedSend?.resume(throwing: SSHPTYSessionError.connectionClosed)
         suspendedSend = nil

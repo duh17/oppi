@@ -173,25 +173,7 @@ final class SSHPTYSession: @unchecked Sendable {
         // closes the parent and cancels the timer with it.
         let keepalive = parent.eventLoop.scheduleRepeatedTask(initialDelay: .seconds(60), delay: .seconds(60)) { task in
             guard parent.isActive else { task.cancel(); return }
-            let opened = parent.eventLoop.makePromise(of: Channel.self)
-            let deadline = parent.eventLoop.scheduleTask(in: .seconds(15)) {
-                opened.fail(SSHPTYSessionError.requestTimedOut)
-            }
-            opened.futureResult.whenComplete { result in
-                deadline.cancel()
-                switch result {
-                case .success(let probe): probe.close(promise: nil)
-                case .failure: parent.close(promise: nil)
-                }
-            }
-            do {
-                let ssh = try parent.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
-                ssh.createChannel(opened, channelType: .session) { child, _ in
-                    // Even a late channel-open response after the timeout must
-                    // close its child; it never acquires a shell or credentials.
-                    child.pipeline.addHandler(SSHKeepaliveProbeHandler())
-                }
-            } catch { opened.fail(error) }
+            SSHPTYSession.probe(parent, timeout: .seconds(15))
         }
         parent.closeFuture.whenComplete { _ in keepalive.cancel() }
         channels = Mutex(Channels(parent: parent, terminal: terminal, keepalive: keepalive))
@@ -357,6 +339,42 @@ final class SSHPTYSession: @unchecked Sendable {
         } catch {
             throw Self.mapFailure(error)
         }
+    }
+
+    /// Opens and closes an empty session channel. Success needs a real SSH
+    /// round trip; failure or timeout closes the whole connection, because a
+    /// peer that cannot answer a channel open cannot carry the terminal either.
+    @discardableResult
+    private static func probe(_ parent: Channel, timeout: TimeAmount) -> EventLoopFuture<Void> {
+        let opened = parent.eventLoop.makePromise(of: Channel.self)
+        let deadline = parent.eventLoop.scheduleTask(in: timeout) {
+            opened.fail(SSHPTYSessionError.requestTimedOut)
+        }
+        opened.futureResult.whenComplete { result in
+            deadline.cancel()
+            switch result {
+            case .success(let probe): probe.close(promise: nil)
+            case .failure: parent.close(promise: nil)
+            }
+        }
+        parent.eventLoop.execute {
+            do {
+                let ssh = try parent.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
+                ssh.createChannel(opened, channelType: .session) { child, _ in
+                    // Even a late channel-open response after the timeout must
+                    // close its child; it never acquires a shell or credentials.
+                    child.pipeline.addHandler(SSHKeepaliveProbeHandler())
+                }
+            } catch { opened.fail(error) }
+        }
+        return opened.futureResult.map { _ in }
+    }
+
+    /// Checks on demand (e.g. after a network path change) that the peer still
+    /// answers. A failed check has already closed the connection.
+    func checkAlive(timeout: TimeAmount = .seconds(8)) async throws {
+        guard let parent = channels.withLock({ $0?.parent }) else { throw SSHPTYSessionError.notConnected }
+        do { try await Self.probe(parent, timeout: timeout).get() } catch { throw Self.mapFailure(error) }
     }
 
     /// Runs one command in its own exec channel on this connection, without a

@@ -23,11 +23,16 @@ After you save a host, **Terminal** appears directly below **MCP Servers** in th
 
 **Run on Connect** runs one command in the terminal instead of a login shell. This is the same exec-with-TTY request as `ssh -t host 'command'` or OpenSSH `RemoteCommand` with `RequestTTY yes`. Enter `herdr` to attach your Herdr session, or `tmux new -A -s main` for tmux. The connection ends when the command exits and the status names the command; **Reconnect** runs it again. The command must be on the `PATH` that non-interactive SSH commands see. Leave it empty for a normal login shell.
 
-## Touch and keyboard
+## Input bar, touch, and keyboard
 
-- Tap the terminal to hide the keyboard. With the keyboard hidden, a tap shows it again, unless the app asked for mouse input.
-- When an app asks for mouse input (Herdr, tmux with `mouse on`, many TUIs), a tap with the keyboard hidden is a click at that cell, and dragging sends scroll-wheel steps to the app. The keyboard button in the navigation bar shows the keyboard.
+The input bar under the terminal is Oppi's chat composer. Type or dictate (same dictation as chat), edit, then **Send**: Oppi pastes the text as one block (bracketed paste when the app supports it) and presses Enter. Send with an empty bar presses Enter alone. Autocorrect, capitals, and smart punctuation are off. While the bar is focused, a key strip offers Esc, Ctrl-C, Tab, ↑ and ↓ immediately, and a keyboard button switches to typing straight into the terminal with the Esc/Tab/Ctrl/arrow bar; the input bar returns when that keyboard goes down.
+
+- Tap the terminal to hide whichever keyboard is up.
+- With the keyboard hidden, a tap starts typing in the input bar, unless the app asked for mouse input.
+- When an app asks for mouse input (Herdr, tmux with `mouse on`, many TUIs), that tap is a click at the cell, and dragging sends scroll-wheel steps to the app.
 - Otherwise, dragging reads local history; **Back to Live** returns to the bottom.
+
+A healthy connection shows no status row. **Edit Host**, **Disconnect**, and **Reconnect** are in the … menu.
 
 ## Herdr
 
@@ -48,7 +53,7 @@ When Oppi’s in-app Tailscale node is running, `*.ts.net` hosts use that node. 
 
 Oppi checks SSH round-trip liveness every 60 seconds by opening and closing an empty session channel, with a 15-second reply timeout. It requests no shell, command, or PTY on that probe. Direct TCP also uses kernel keepalive probes. Failure closes the connection and shows **Disconnected** with **Reconnect**.
 
-Entering the background disconnects the shell. On return, tap **Reconnect**. A Wi-Fi or cellular path change shows a warning and offers the same action. Reconnect always opens a fresh shell; it does not replay input. Use `tmux` on the host if work must survive a disconnect.
+Entering the background disconnects the shell. On return, tap **Reconnect**. After a Wi-Fi or cellular path change, Oppi checks the connection with one SSH round trip: a live shell carries on, and a dead one shows **Disconnected** with **Reconnect**. Reconnect always opens a fresh shell; it does not replay input. Use `tmux` on the host if work must survive a disconnect.
 
 ## Limits
 
