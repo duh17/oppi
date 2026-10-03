@@ -451,9 +451,9 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         for character in text {
             let text = String(character)
             let key = Self.logicalKey(text)
-            channel.key(key, text: key == GHOSTTY_KEY_ENTER || key == GHOSTTY_KEY_TAB ? "" : text,
-                        modifiers: takeModifiers())
+            channel.key(key, text: key == GHOSTTY_KEY_ENTER || key == GHOSTTY_KEY_TAB ? "" : text)
         }
+        showModifiers()
     }
 
     func deleteBackward() {
@@ -461,12 +461,8 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         accessoryKey(GHOSTTY_KEY_BACKSPACE)
     }
     private func accessoryKey(_ key: GhosttyKey) {
-        channel.key(key, modifiers: takeModifiers())
-    }
-    private func takeModifiers() -> GhosttyMods {
-        let mods = channel.modifierLatch.take()
+        channel.key(key)
         showModifiers()
-        return mods
     }
     func showModifiers() {
         for entry in modifierButtons {
@@ -536,21 +532,26 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
                 continue
             }
             let physical = Self.physicalKey(key.keyCode) ?? Self.logicalKey(key.charactersIgnoringModifiers)
-            var mods = takeModifiers()
+            var mods: GhosttyMods = 0
             if key.modifierFlags.contains(.control) { mods |= GhosttyMods(GHOSTTY_MODS_CTRL) }
             if key.modifierFlags.contains(.alternate) { mods |= GhosttyMods(GHOSTTY_MODS_ALT) }
             if key.modifierFlags.contains(.shift) { mods |= GhosttyMods(GHOSTTY_MODS_SHIFT) }
             if key.modifierFlags.contains(.command) { mods |= GhosttyMods(GHOSTTY_MODS_SUPER) }
             let text = key.characters.unicodeScalars.contains { $0.value < 32 || $0.value == 127 || (0xf700...0xf8ff).contains($0.value) }
                 ? "" : key.characters
-            channel.key(physical, text: text, modifiers: mods)
+            // Snapshot for repeats, but only key() may consume the latch.
+            let repeatMods = mods | channel.modifierLatch.modifiers
+            let accepted = channel.key(physical, text: text, modifiers: mods)
+            showModifiers()
+            guard accepted else { continue }
             // The held key repeats with the modifiers it was pressed with
             // (including a spent one-shot Ctrl); DECCKM is read at each encode.
             repeatingPress = press
             keyRepeater.start { [weak self] in
                 guard let self, self.channel.connected else { return false }
-                self.channel.key(physical, text: text, modifiers: mods)
-                return true
+                let accepted = self.channel.key(physical, text: text, modifiers: repeatMods)
+                self.showModifiers()
+                return accepted
             }
         }
         if !unhandled.isEmpty { super.pressesBegan(unhandled, with: event) }

@@ -336,8 +336,8 @@ final class SSHTerminalChannel {
         return true
     }
 
-    /// Only direct keys use the one-shot latch. Refusal must preserve both
-    /// the pending modifier and any composer character awaiting this result.
+    /// Only explicit terminal keys use the one-shot latch. This is the sole
+    /// consumption path: clear it after queue acceptance, never on refusal.
     @discardableResult
     func key(_ key: GhosttyKey, text: String = "", modifiers: GhosttyMods = 0) -> Bool {
         guard connected, !inputClosed else { return send(Data()) }
@@ -348,7 +348,7 @@ final class SSHTerminalChannel {
     }
 
     /// Named bindings are sent exactly as configured, without spending the
-    /// typing latch. One write keeps a chord's strokes together and in order.
+    /// key latch. One write keeps a chord's strokes together and in order.
     func keys(_ strokes: [SSHTerminalKeyStroke]) {
         guard connected, !inputClosed else { send(Data()); return }
         send(strokes.reduce(into: Data()) { bytes, stroke in

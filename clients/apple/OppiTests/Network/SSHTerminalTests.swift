@@ -1,5 +1,6 @@
 import Foundation
 import GhosttyVt
+import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -280,90 +281,108 @@ struct SSHTerminalTests {
         #expect(SSHTerminalArrowRepeat.plan(heldKey: held, translation: .zero) == idle) // return to held direction
     }
 
-    @Test func composerModifierConsumesOnlyTheNextInsertedCharacter() throws {
-        let input = try #require(SSHTerminalComposer.modifiedInput(old: "draft", new: "drxaft"))
-        #expect(input.key == GHOSTTY_KEY_X)
-        #expect(input.character == "x")
-        #expect(input.remaining == "draft")
-        #expect(SSHTerminalComposer.modifiedInput(old: "draft", new: "draf") == nil) // deletion is not a typed key
-        let batch = try #require(SSHTerminalComposer.modifiedInput(old: "", new: "cat"))
-        #expect(batch.character == "c")
-        #expect(batch.remaining == "at")
-    }
-
-    @Test func dictationRewritesDoNotBecomeModifiedKeyboardInput() {
-        // Each partial and the final transcript replace the whole suffix.
-        // Even an empty pre-recording draft is a non-nil recording marker.
-        for prefix in ["", "draft "] {
-            var previous = prefix
-            for partial in ["c", "ca", "cat", "cat"] {
-                let next = prefix + partial
-                #expect(SSHTerminalComposer.modifiedInput(old: previous, new: next,
-                                                          textBeforeRecording: prefix) == nil)
-                previous = next
-            }
-        }
-    }
-
-    @Test func dictationStopPreservesDraftAndArmedModifierUntilTheNextTypedCharacter() async throws {
+    @Test func armedModifiersNeverRouteComposerDraftChangesToTheTerminal() async throws {
+        // Mount the real composer so a draft write runs its actual SwiftUI
+        // observers. Programmatic writes model transcript updates at the draft
+        // boundary; this does not exercise microphone capture or ASR.
+        let rewrites = [
+            ("typing", ["c", "cd", "cdx"]),
+            ("paste", ["pasted text\nsecond line"]),
+            ("dictation partials", ["c", "ca", "cat"]),
+            ("unchanged-text stop then typing", ["cat", "cat", "catx"]),
+            ("first write on stop", ["final transcript"]),
+        ]
         for modifier in [GhosttyMods(GHOSTTY_MODS_CTRL), GhosttyMods(GHOSTTY_MODS_ALT)] {
-            for prefix in ["", "draft "] {
-                for finalCharacter in ["c", "d", "z", "h"] {
-                    let fixture = TerminalConnectionFixture()
-                    let channel = try SSHTerminalChannel()
-                    channel.opened(fixture)
-                    // Keep any accidentally routed byte queued so it cannot
-                    // race the no-send assertion below.
-                    channel.event(.writabilityChanged(false))
-                    channel.modifierLatch.toggle(modifier)
-                    var marker: String? = prefix
-                    var previousMarker: String?
-                    var draft = prefix
-                    let partial = prefix + "a"
-                    #expect(SSHTerminalComposer.modifiedInput(old: draft, new: partial,
-                                                              textBeforeRecording: marker,
-                                                              previousTextBeforeRecording: previousMarker) == nil)
-                    previousMarker = marker
-                    draft = partial
-
-                    // ComposerShared.stopVoiceInput clears the marker before
-                    // assigning prefix + final transcript, in the same turn.
-                    marker = nil
-                    let final = partial + finalCharacter
-                    let input = SSHTerminalComposer.modifiedInput(old: draft, new: final,
-                                                                 textBeforeRecording: marker,
-                                                                 previousTextBeforeRecording: previousMarker)
-                    previousMarker = marker
-                    draft = final
-                    #expect(input == nil)
-                    if let input, channel.key(input.key, text: input.character) {
-                        draft = input.remaining
+            for (scenario, drafts) in rewrites {
+                let fixture = TerminalConnectionFixture()
+                let channel = try SSHTerminalChannel()
+                channel.opened(fixture)
+                channel.event(.writabilityChanged(false))
+                let mounted = try MountedTerminalTestView(SSHTerminalComposer(
+                    channel: channel, focusRequest: 0, keyActions: [], showRawKeyboard: {}
+                ))
+                defer { mounted.dismiss(); channel.close(reason: "done") }
+                let textView = try #require(mounted.find { $0 is PastableUITextView } as? PastableUITextView)
+                let coordinator = try #require(textView.delegate as? PastableTextView.Coordinator)
+                channel.modifierLatch.toggle(modifier)
+                for draft in drafts {
+                    if scenario == "typing" || scenario == "paste" {
+                        textView.text = draft
+                        coordinator.textViewDidChange(textView)
+                    } else {
+                        coordinator.text = draft
                     }
-                    #expect(draft == final)
-                    #expect(channel.modifierLatch.isArmed(modifier))
-                    #expect(await fixture.sentBytes.isEmpty)
-
-                    // Both markers are now nil: normal typing spends the
-                    // latch, and flushing proves stop queued no hidden byte.
-                    let typed = try #require(SSHTerminalComposer.modifiedInput(old: draft, new: draft + "x",
-                                                                             textBeforeRecording: marker,
-                                                                             previousTextBeforeRecording: previousMarker))
-                    #expect(channel.key(typed.key, text: typed.character))
-                    #expect(typed.remaining == final)
-                    channel.event(.writabilityChanged(true))
-                    var bytes = fixture.bytes.makeAsyncIterator()
-                    let expected = modifier == GhosttyMods(GHOSTTY_MODS_CTRL)
-                        ? Data([0x18]) : Data("\u{1b}x".utf8)
-                    #expect(await bytes.next() == expected)
-                    #expect(await fixture.sentBytes == expected)
-                    #expect(channel.modifierLatch.modifiers == 0)
-                    channel.close(reason: "done")
+                    await mounted.update()
+                    #expect(coordinator.text == draft, "\(scenario): draft must stay intact")
+                    #expect(textView.text == draft)
+                    #expect(channel.modifierLatch.isArmed(modifier), "\(scenario): draft must not spend the latch")
                 }
+                // Queue a real key, then drain: comparing the complete sink
+                // catches hidden input even while SSH was backpressured.
+                #expect(channel.key(GHOSTTY_KEY_X, text: "x"))
+                #expect(channel.modifierLatch.modifiers == 0)
+                channel.event(.writabilityChanged(true))
+                var bytes = fixture.bytes.makeAsyncIterator()
+                let expected = modifier == GhosttyMods(GHOSTTY_MODS_CTRL)
+                    ? Data([0x18]) : Data("\u{1b}x".utf8)
+                #expect(await bytes.next() == expected)
+                #expect(await fixture.sentBytes == expected)
             }
         }
     }
 
-    @Test func namedActionsPreserveBindingsAndLeaveTheModifierForTyping() async throws {
+    @Test func rawKeyboardAndAccessoryConsumeOnlyAcceptedKeys() async throws {
+        for modifier in [GhosttyMods(GHOSTTY_MODS_CTRL), GhosttyMods(GHOSTTY_MODS_ALT)] {
+            let fixture = TerminalConnectionFixture()
+            let channel = try SSHTerminalChannel()
+            channel.opened(fixture)
+            let mounted = try MountedTerminalTestView(SSHTerminalView(channel: channel, reconnect: {}, editHost: {}))
+            defer { mounted.dismiss(); channel.close(reason: "done") }
+            let grid = try #require(mounted.find { $0 is UIKeyInput && !($0 is UITextView) })
+            let keyboard = try #require(grid as? UIKeyInput)
+            let accessory = try #require(grid.inputAccessoryView)
+            let modifierButton = try #require(mounted.find(in: accessory) {
+                $0.accessibilityIdentifier == (modifier == GhosttyMods(GHOSTTY_MODS_CTRL) ? "sshTerminal.control" : "sshTerminal.alt")
+            } as? UIButton)
+            var bytes = fixture.bytes.makeAsyncIterator()
+            // A latch armed elsewhere (the composer strip) is spent by raw typing.
+            channel.modifierLatch.toggle(modifier)
+            keyboard.insertText("cc")
+            let expected = modifier == GhosttyMods(GHOSTTY_MODS_CTRL) ? Data([3]) : Data("\u{1b}c".utf8)
+            #expect(await bytes.next() == expected)
+            #expect(await bytes.next() == Data("c".utf8))
+            #expect(channel.modifierLatch.modifiers == 0)
+            #expect(modifierButton.accessibilityValue == "Off")
+            // Conversely, the raw accessory arms the same latch used by key().
+            modifierButton.sendActions(for: .touchUpInside)
+            #expect(channel.modifierLatch.isArmed(modifier))
+            #expect(channel.key(GHOSTTY_KEY_X, text: "x"))
+            #expect(await bytes.next() == (modifier == GhosttyMods(GHOSTTY_MODS_CTRL) ? Data([0x18]) : Data("\u{1b}x".utf8)))
+            #expect(channel.modifierLatch.modifiers == 0)
+
+            for refusal in ["full", "eof", "disconnected"] {
+                if refusal == "full" {
+                    channel.event(.writabilityChanged(false))
+                    #expect(channel.send(Data(repeating: 1, count: SSHTerminalChannel.maximumQueuedBytes)))
+                } else if refusal == "eof" {
+                    channel.event(.eof)
+                } else {
+                    channel.close(reason: "disconnected")
+                }
+                modifierButton.sendActions(for: .touchUpInside)
+                keyboard.insertText("c")
+                #expect(channel.modifierLatch.isArmed(modifier), "\(refusal): refusal must preserve the latch")
+                #expect(modifierButton.accessibilityValue == "On")
+                keyboard.deleteBackward()
+                #expect(channel.modifierLatch.isArmed(modifier))
+                #expect(modifierButton.accessibilityValue == "On")
+                // Disarm before the next refusal case.
+                if channel.modifierLatch.isArmed(modifier) { channel.modifierLatch.toggle(modifier) }
+            }
+        }
+    }
+
+    @Test func namedActionsPreserveBindingsAndLeaveTheModifierForExplicitKeys() async throws {
         let fixture = TerminalConnectionFixture()
         let channel = try SSHTerminalChannel()
         channel.opened(fixture)
@@ -395,7 +414,7 @@ struct SSHTerminalTests {
         #expect(await bytes.next() == Data("c".utf8))
         channel.modifierLatch.toggle(GhosttyMods(GHOSTTY_MODS_ALT))
         channel.keys(try #require(SSHTerminalKeymap.parse("x c", syntax: .plus)))
-        #expect(await bytes.next() == Data("xc".utf8)) // named strokes do not spend the typing latch
+        #expect(await bytes.next() == Data("xc".utf8)) // named strokes do not spend the key latch
         #expect(channel.modifierLatch.isArmed(GhosttyMods(GHOSTTY_MODS_ALT)))
         #expect(channel.key(GHOSTTY_KEY_X, text: "x"))
         #expect(await bytes.next() == Data("\u{1b}x".utf8))
@@ -419,7 +438,7 @@ struct SSHTerminalTests {
         #expect(channel.connected) // still reading: a status may follow
         channel.modifierLatch.toggle(GhosttyMods(GHOSTTY_MODS_CTRL))
         #expect(!channel.key(GHOSTTY_KEY_C, text: "c"))
-        #expect(!channel.key(GHOSTTY_KEY_A, text: "a")) // every later insertion must also stay in the draft
+        #expect(!channel.key(GHOSTTY_KEY_A, text: "a")) // later explicit keys are refused too
         #expect(channel.modifierLatch.isArmed(GhosttyMods(GHOSTTY_MODS_CTRL)))
         #expect(channel.inputNotice.contains("Not sent"))
         channel.event(.data(Data("\u{1b}[6n".utf8)))
@@ -732,6 +751,51 @@ struct SSHTerminalTests {
         #expect(channel.inputNotice.contains("full"))
         #expect(await fixture.sentBytes.isEmpty)
         channel.close(reason: "done")
+    }
+}
+
+@MainActor
+private final class MountedTerminalTestView<Content: View> {
+    let host: UIHostingController<Content>
+    let window: UIWindow
+
+    init(_ content: Content) throws {
+        host = UIHostingController(rootView: content)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.layoutIfNeeded()
+    }
+
+    func dismiss() {
+        window.isHidden = true
+        window.rootViewController = nil
+    }
+
+    func update() async {
+        // Let the mounted SwiftUI graph process the write and any resulting
+        // onChange writeback before checking the draft and terminal sink.
+        for _ in 0..<3 {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { continuation.resume() }
+            }
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+        }
+    }
+
+    func find(_ predicate: (UIView) -> Bool) -> UIView? {
+        find(in: host.view, matching: predicate)
+    }
+
+    func find(in view: UIView, matching predicate: (UIView) -> Bool) -> UIView? {
+        if predicate(view) { return view }
+        for child in view.subviews {
+            if let match = find(in: child, matching: predicate) { return match }
+        }
+        return nil
     }
 }
 
