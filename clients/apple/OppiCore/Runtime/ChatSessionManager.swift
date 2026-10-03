@@ -587,9 +587,10 @@ final class ChatSessionManager {
     /// Make the focused stream ready before a turn is dispatched, re-checking
     /// ownership and socket liveness after every wait.
     ///
-    /// Reuses the manager-owned loop: a loop still binding or a socket that is
-    /// reconnecting on its own is only awaited; a dead loop or a down socket is
-    /// restarted at most once through `reconnect()`, and only while this runtime
+    /// Reuses the manager-owned loop: a streaming runtime whose socket is
+    /// reconnecting on its own is only awaited. A non-streaming or dead loop,
+    /// or a streaming runtime with a down socket, restarts at most once through
+    /// `reconnect()`, and only while this runtime
     /// owns its focus claim. A superseded runtime fails the send without
     /// touching the shared socket. Concurrent callers join one in-flight readiness pass, so a second caller
     /// can never cancel the first caller's restarted loop. Stopped sessions stay
@@ -632,8 +633,12 @@ final class ChatSessionManager {
             }
 
             let isStreaming = entryState == .streaming
+            // A live loop can be stuck awaiting a bootstrap that went to an
+            // earlier consumer. Restart once so open() can rebind that socket;
+            // waiting alone cannot produce the missing server `connected`.
             let needsRestart = !isConnectLoopLive
-                || (isStreaming && focusedStreamLiveness == .down)
+                || !isStreaming
+                || focusedStreamLiveness == .down
             if needsRestart, !restarted {
                 restarted = true
                 if connectLoopTask == nil, onReconnect == nil {

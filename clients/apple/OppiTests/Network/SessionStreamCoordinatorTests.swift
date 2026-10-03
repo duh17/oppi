@@ -352,6 +352,9 @@ struct SSCStateMachineTests {
         connection.setFocusedSessionStreamEndpointKindForTesting("split_session")
         connection._sendMessageForTesting = { _ in }
 
+        connection.routeStreamMessage(StreamMessage(
+            sessionId: "s1", seq: nil, currentSeq: nil, message: .connected(session: makeTestSession())
+        ))
         _ = try #require(await connection.sessionStreamCoordinator.streamSession(
             connection: connection,
             sessionId: "s1",
@@ -371,6 +374,12 @@ struct SSCStateMachineTests {
         connection.setFocusedSessionStreamEndpointKindForTesting("split_session")
         connection._sendMessageForTesting = { _ in }
         let coordinator = connection.sessionStreamCoordinator
+        // Each replacement has no parked bootstrap, so model the server's
+        // immediate transport open without introducing real network waits.
+        connection._connectStreamForTesting = {
+            connection.wsClient?._setStatusForTesting(.connected)
+            return AsyncStream { _ in }
+        }
 
         let firstStream = try #require(await coordinator.streamSession(
             connection: connection,

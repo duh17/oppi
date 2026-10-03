@@ -2227,6 +2227,26 @@ final class ServerConnection {
         _ sessionId: String,
         _ continuation: AsyncStream<SessionStreamEvent>.Continuation
     ) {
+        let hasParkedBootstrap = parkedFocusedSessionFrames[sessionId]?.contains {
+            if case .connected = $0.message { return true }
+            return false
+        } ?? false
+        if wsClient?.status == .connected, !hasParkedBootstrap {
+            // A connected socket is not reusable by a new runtime unless its
+            // bootstrap can be delivered to that consumer. It may have gone to
+            // an old continuation or been dropped during a focus change. Reopen
+            // the socket before attaching; disconnectStream() would also clear
+            // the bound endpoint and finish the new consumer.
+            ClientLog.info("Stream", "Reopening focused socket for missing consumer bootstrap", metadata: [
+                "sessionId": sessionId,
+            ])
+            cancelDeferredQueueSync()
+            streamConsumptionTask?.cancel()
+            streamConsumptionTask = nil
+            parkedFocusedSessionFrames.removeAll()
+            wsClient?.disconnect()
+        }
+        sessionEventContinuations[sessionId]?.finish()
         sessionEventContinuations[sessionId] = continuation
         drainParkedFocusedSessionFrames(for: sessionId)
     }

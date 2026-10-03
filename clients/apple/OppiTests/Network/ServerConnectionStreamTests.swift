@@ -360,7 +360,13 @@ struct ServerConnectionStreamTests {
         let session = makeTestSession(id: sessionId, workspaceId: "w1", status: .busy)
         conn.sessionStore.upsert(session)
         conn.wsClient?._setStatusForTesting(.connected)
-        conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
+        let consumption = makeCancellableNeverCompletingTaskForTesting()
+        conn.streamConsumptionTask = consumption
+        var opens = 0
+        conn._connectStreamForTesting = {
+            opens += 1
+            return AsyncStream { $0.finish() }
+        }
 
         conn.prepareForSessionReentry(sessionId)
         #expect(conn.sessionEventContinuations[sessionId] == nil)
@@ -406,6 +412,8 @@ struct ServerConnectionStreamTests {
         }
         consumeTask.cancel()
 
+        #expect(opens == 0, "A parked connected bootstrap must not reopen the socket")
+        #expect(!consumption.isCancelled)
         #expect(delivered, "Focused bootstrap frames must drain when streamSession attaches")
         #expect(received.count >= 3)
         if received.count >= 3 {
@@ -416,6 +424,69 @@ struct ServerConnectionStreamTests {
 
         conn.streamConsumptionTask?.cancel()
         conn.disconnectStream()
+    }
+
+    /// A bootstrap delivered to an old consumer (or lost entirely) cannot bind
+    /// the new runtime. Non-bootstrap parks do not make the socket reusable.
+    @Test(arguments: ["absent", "oldConsumer", "stateOnly"])
+    func connectedSocketWithoutDeliverableBootstrapReopensForNewConsumer(bootstrap: String) async throws {
+        let sessionId = "s1"
+        let (conn, _) = makeTestConnection(sessionId: sessionId)
+        defer { conn.disconnectStream() }
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        let session = makeTestSession(id: sessionId, workspaceId: "w1", status: .busy)
+        conn.sessionStore.upsert(session)
+        conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: sessionId, workspaceId: "w1")
+        conn.wsClient?._setStatusForTesting(.connected)
+        let oldConsumption = makeCancellableNeverCompletingTaskForTesting()
+        conn.streamConsumptionTask = oldConsumption
+        let endpoint = conn.focusedSessionStreamURLForTesting
+
+        if bootstrap == "oldConsumer" {
+            let (oldStream, oldContinuation) = AsyncStream<SessionStreamEvent>.makeStream()
+            conn.wsClient?._setStatusForTesting(.disconnected)
+            conn.attachSessionEventContinuation(sessionId, oldContinuation)
+            conn.wsClient?._setStatusForTesting(.connected)
+            conn.routeStreamMessage(StreamMessage(
+                sessionId: sessionId, seq: 1, currentSeq: 1, message: .connected(session: session)
+            ))
+            var iterator = oldStream.makeAsyncIterator()
+            #expect(await iterator.next()?.message == .connected(session: session))
+        } else if bootstrap == "stateOnly" {
+            conn.routeStreamMessage(StreamMessage(
+                sessionId: sessionId, seq: 1, currentSeq: 1, message: .state(session: session)
+            ))
+        }
+
+        var opens = 0
+        conn._connectStreamForTesting = {
+            opens += 1
+            #expect(conn.wsClient?.status == .disconnected, "Rebind must close the old socket before opening")
+            #expect(conn.focusedSessionStreamURLForTesting == endpoint, "Socket-only reopen must keep the bound endpoint")
+            conn.wsClient?._setStatusForTesting(.connected)
+            return AsyncStream { continuation in
+                continuation.yield(StreamFrameEvent(
+                    sessionId: sessionId, message: .connected(session: session), meta: nil
+                ))
+                continuation.yield(StreamFrameEvent(
+                    sessionId: sessionId, message: .textDelta(delta: "fresh"), meta: nil
+                ))
+            }
+        }
+        let stream = try #require(await conn.streamSession(sessionId, routeScope: .workspace("w1")))
+        var received: [ServerMessage] = []
+        let consumer = Task { @MainActor in
+            for await event in stream {
+                received.append(event.message)
+                if received.count == 2 { break }
+            }
+        }
+        defer { consumer.cancel() }
+        #expect(await waitForMainActorCondition { received.count == 2 })
+        #expect(opens == 1, "A new consumer needs exactly one fresh server bootstrap")
+        #expect(oldConsumption.isCancelled)
+        #expect(received == [.connected(session: session), .textDelta(delta: "fresh")],
+                "The new consumer must survive reopen and receive bootstrap before live frames")
     }
 
     @Test func focusedParkedFrameBoundKeepsConnectedAndState() async {
@@ -487,6 +558,10 @@ struct ServerConnectionStreamTests {
         conn.wsClient?._setStatusForTesting(.connected)
         conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
         conn.prepareForSessionReentry("focused")
+        conn._connectStreamForTesting = {
+            conn.wsClient?._setStatusForTesting(.connected)
+            return AsyncStream { _ in }
+        }
 
         conn.routeStreamMessage(StreamMessage(
             sessionId: "background",
@@ -666,6 +741,9 @@ struct ServerConnectionStreamTests {
     /// few hundred ms means the setup path is blocking on something it shouldn't.
     @Test func splitSessionStreamCompletesWithinTimeBudget() async {
         let (conn, _) = makeTestConnection()
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: "s1", seq: nil, currentSeq: nil, message: .connected(session: makeTestSession())
+        ))
         conn.wsClient?._setStatusForTesting(.connected)
         conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
@@ -687,6 +765,9 @@ struct ServerConnectionStreamTests {
 
     @Test func modelAndThinkingCommandsProceedAfterBoundStreamMarksFull() async throws {
         let (conn, _) = makeTestConnection()
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: "s1", seq: nil, currentSeq: nil, message: .connected(session: makeTestSession())
+        ))
         conn.wsClient?._setStatusForTesting(.connected)
         conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
         conn._setActiveSessionIdForTesting("s1")
@@ -732,6 +813,9 @@ struct ServerConnectionStreamTests {
     /// setup must still return quickly while queue sync retries in background.
     @Test func splitSessionStreamDoesNotBlockOnMissingGetQueueAck() async {
         let (conn, _) = makeTestConnection()
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: "s1", seq: nil, currentSeq: nil, message: .connected(session: makeTestSession())
+        ))
         conn.wsClient?._setStatusForTesting(.connected)
         conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
@@ -862,6 +946,9 @@ struct ServerConnectionStreamTests {
 
     @Test func splitSessionStreamSkipsExplicitSubscribe() async throws {
         let (conn, _) = makeTestConnection(sessionId: "s1")
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: "s1", seq: nil, currentSeq: nil, message: .connected(session: makeTestSession())
+        ))
         conn.wsClient?._setStatusForTesting(.connected)
         conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")

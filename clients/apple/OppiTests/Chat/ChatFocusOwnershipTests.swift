@@ -272,6 +272,73 @@ struct ChatFocusOwnershipTests {
 
     // MARK: - Send readiness
 
+    /// Exercise the manager -> iOS adapter -> focused socket binding, not a
+    /// scripted runtime stream: the live first socket never sends `connected`.
+    @Test(arguments: [false, true])
+    func readinessRebindsALiveLoopThatMissedConnectedWithoutLeavingChat(superseded: Bool) async throws {
+        let sessionId = "missed-bootstrap-\(UUID().uuidString)"
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        connection.setAPIClientForTesting(nil)
+        let session = makeTestSession(id: sessionId, workspaceId: "w1", status: .ready)
+        connection.sessionStore.upsert(session)
+        let manager = ChatSessionManager(sessionId: sessionId)
+        defer {
+            manager.cleanup()
+            connection.disconnectStream()
+        }
+        manager._loadHistoryForTesting = { _, _ in nil }
+        manager._fetchSessionTraceForTesting = { _, _ in (session, []) }
+        var opens = 0
+        connection._connectStreamForTesting = {
+            opens += 1
+            connection.wsClient?._setStatusForTesting(.connected)
+            return AsyncStream { continuation in
+                if opens == 2 {
+                    continuation.yield(StreamFrameEvent(
+                        sessionId: sessionId, message: .connected(session: session), meta: nil
+                    ))
+                }
+            }
+        }
+        manager.markAppeared()
+        manager.ensureConnected(connection: connection, sessionStore: connection.sessionStore)
+        #expect(await waitForMainActorCondition {
+            manager.entryState == .awaitingConnected(workspaceId: "w1")
+        })
+        #expect(opens == 1)
+        #expect(connection.focusedStreamLiveness(sessionId: sessionId) == .connected)
+        #expect(!manager.isReadyForTurnDispatch)
+        let claim = connection.focusedSessionStore.focused
+        let generation = manager.connectionGeneration
+        let consumption = try #require(connection.streamConsumptionTask)
+        if superseded {
+            let newClaim = connection.claimFocusedSession(sessionId)
+            do {
+                try await manager.ensureReadyForSend(timeout: .seconds(2))
+                Issue.record("A superseded awaitingConnected runtime must fail readiness")
+            } catch let error as ChatSessionSendReadinessError {
+                #expect(error == .notConnected)
+            }
+            #expect(opens == 1, "A superseded runtime must not reopen the shared socket")
+            #expect(!consumption.isCancelled)
+            #expect(manager.connectionGeneration == generation)
+            #expect(connection.focusedSessionStore.focused == newClaim)
+            return
+        }
+
+        // Concurrent sends share the single restart; no disappear/re-appear.
+        let first = Task { try await manager.ensureReadyForSend(timeout: .seconds(2)) }
+        let second = Task { try await manager.ensureReadyForSend(timeout: .seconds(2)) }
+        try await first.value
+        try await second.value
+        #expect(manager.isReadyForTurnDispatch)
+        #expect(manager.connectionGeneration == generation + 1)
+        #expect(opens == 2, "Exactly one socket reopen must recover the missing bootstrap")
+        #expect(consumption.isCancelled)
+        #expect(connection.focusedSessionStore.focused == claim)
+    }
+
     @Test func readinessRestartsADroppedSocketOnceAndWaitsForTheBoundStream() async throws {
         let harness = await makeStreamingManager()
         let manager = harness.manager
