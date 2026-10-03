@@ -5006,22 +5006,66 @@ struct NativeMermaidBlockViewTests {
 
         let narrowImage = try #require(view.debugRenderedImageForTesting)
         let narrowFrame = view.debugDiagramImageFrameForTesting
-        #expect(narrowImage.size.width > 200, "Even a narrow preview uses canonical geometry")
-        #expect(view.debugIsShowingPartialPreviewForTesting, "A narrow bubble clips rather than shrinking text")
-        #expect(narrowFrame.width > view.bounds.width)
+        #expect(narrowImage.size.width > 200, "Even a narrow bubble uses canonical geometry")
+        #expect(narrowFrame.width <= view.bounds.width + 0.5, "A narrow bubble fits the whole diagram")
+        #expect(abs(narrowFrame.width / max(narrowFrame.height, 1) - narrowImage.size.width / max(narrowImage.size.height, 1)) < 0.02,
+                "Fitting must keep the diagram's aspect instead of cropping it")
 
         container.frame.size.width = 360
         container.setNeedsLayout()
         container.layoutIfNeeded()
 
         let image = try #require(view.debugRenderedImageForTesting)
+        let wideFrame = view.debugDiagramImageFrameForTesting
         #expect(image === narrowImage, "Resizing must preserve the canonical bitmap")
-        #expect(view.debugDiagramImageFrameForTesting.width >= narrowFrame.width,
-                "Widening must not shrink the legible diagram to repack its legend")
+        #expect(wideFrame.width + 0.5 >= narrowFrame.width,
+                "Widening must scale the fitted diagram up, not repack its legend")
+        #expect(wideFrame.width <= view.bounds.width + 0.5)
         #expect(
             image.size.height / max(image.size.width, 1) < 1.4,
             "Wide pie should keep a side-legend ratio, not a stacked column (\(image.size))"
         )
+    }
+
+    /// A tall chart used to clip with a "Partial preview" footer. Inline now
+    /// scales the whole diagram into the bubble instead.
+    @Test func tallDiagramFitsEntirelyInsteadOfClipping() {
+        let natural = CGSize(width: 360, height: 900)
+        let availableWidth: CGFloat = 358
+        let result = NativeMermaidBlockView.RasterResult(
+            image: solidImage(color: .systemBlue),
+            size: natural
+        )
+        let view = NativeMermaidBlockView(rasterizer: .init(
+            renderSync: { _, _, _ in result },
+            renderAsync: { _, _, _ in result }
+        ))
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: availableWidth, height: 800))
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+        ])
+        container.layoutIfNeeded()
+
+        view.applyAsDiagramSync(
+            code: "flowchart TD\n    A-->B",
+            palette: ThemeID.dark.palette,
+            availableWidth: availableWidth
+        )
+        container.layoutIfNeeded()
+
+        let frame = view.debugDiagramImageFrameForTesting
+        let height = view.debugDiagramHeightConstantForTesting ?? 0
+        #expect(abs(height - 400) <= 0.5, "Tall diagrams cap at the inline height, got \(height)")
+        #expect(frame.minX >= -0.5 && frame.maxX <= availableWidth + 0.5)
+        #expect(frame.minY >= -0.5 && frame.maxY <= height + 0.5)
+        #expect(
+            abs(frame.width / max(frame.height, 1) - natural.width / natural.height) < 0.02,
+            "Fitted frame \(frame) must keep the diagram aspect, not crop it"
+        )
+        #expect(view.accessibilityLabel?.localizedCaseInsensitiveContains("partial") != true)
     }
 
     @Test func closedFenceReservesLayoutHeightBeforeRasterWithoutSecondJump() async throws {

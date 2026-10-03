@@ -601,8 +601,8 @@ struct AssistantTimelineRowContentViewTests {
 
     @MainActor
     @Test func mermaidInlineDiagramRecomputesPresentationWhenWidthChanges() {
-        // About 280pt wide: fits a 330pt bubble whole, but a 210pt bubble
-        // would shrink its text below the legible preview scale.
+        // About 280pt wide: a 330pt bubble shows it near natural size, and a
+        // 210pt bubble scales the whole diagram down to fit.
         let mermaidCode = """
         flowchart LR
             A[Alpha] --> B[Beta] --> C[Gamma]
@@ -627,8 +627,8 @@ struct AssistantTimelineRowContentViewTests {
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         ).height
-        let narrowIsPartial = view.debugIsShowingPartialPreviewForTesting
-        let narrowImageWidth = view.debugDiagramImageFrameForTesting.width
+        let narrowFrame = view.debugDiagramImageFrameForTesting
+        let narrowImage = view.debugRenderedImageForTesting
 
         container.frame.size.width = 330
         container.setNeedsLayout()
@@ -639,13 +639,16 @@ struct AssistantTimelineRowContentViewTests {
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         ).height
+        let wideFrame = view.debugDiagramImageFrameForTesting
 
-        // Narrow: legible clipped preview wider than the bubble, plus footer.
-        #expect(narrowIsPartial)
-        #expect(narrowImageWidth > 210)
-        // Wide: the whole diagram fits, so the footer goes and height follows.
-        #expect(!view.debugIsShowingPartialPreviewForTesting)
-        #expect(view.debugDiagramImageFrameForTesting.width <= 330)
+        // Both widths show the whole diagram, scaled to the bubble.
+        #expect(narrowFrame.width <= 210.5)
+        #expect(wideFrame.width <= 330.5)
+        if let narrowImage, narrowImage.size.height > 0, narrowFrame.height > 0 {
+            let imageAspect = narrowImage.size.width / narrowImage.size.height
+            #expect(abs(narrowFrame.width / narrowFrame.height - imageAspect) < 0.02)
+            #expect(abs(wideFrame.width / max(wideFrame.height, 1) - imageAspect) < 0.02)
+        }
         #expect(
             abs(wideHeight - narrowHeight) > 5,
             "Inline height should follow the width change (narrow=\(narrowHeight), wide=\(wideHeight))"
