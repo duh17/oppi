@@ -82,7 +82,7 @@ struct SSHTerminalView: View {
                         Image(systemName: "square.grid.2x2")
                             .overlay(alignment: .topTrailing) {
                                 if let count = herdr.snapshot?.needsAttention, count > 0 {
-                                    Text("\(count)").font(.caption2.bold()).foregroundStyle(.white)
+                                    Text("\(count)").font(.caption2.bold()).foregroundStyle(.themeBg)
                                         .padding(.horizontal, 4).background(.themeOrange, in: .capsule)
                                         .offset(x: 8, y: -6)
                                 }

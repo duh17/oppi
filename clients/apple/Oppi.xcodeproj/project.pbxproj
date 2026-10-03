@@ -1620,6 +1620,7 @@
 		D71893B3778728A5F5EDD911 /* ReviewCommentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F61C5C3E8B75CE57A1024237 /* ReviewCommentStore.swift */; };
 		D72C42F1F2D5BCE78EABF8E5 /* ServerMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10ECB7266E12083547C5138A /* ServerMessage.swift */; };
 		D7DF7D2F04D7A4E2168801B8 /* EmbeddedFileViewerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0996499F6180DAE543025C8C /* EmbeddedFileViewerView.swift */; };
+		D800CF76E01E19C0F8913B46 /* SSHTerminalScreenshotPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 705580D21922B64FA5F2A37C /* SSHTerminalScreenshotPreview.swift */; };
 		D84D1278A81DEF88B0E24AA8 /* MacCurrentFileRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = A82F3E361DC858F7E891D3CD /* MacCurrentFileRequest.swift */; };
 		D86D24C38184965B11E9E07F /* ClientLogBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BC9A9B9229497D47A8A4919 /* ClientLogBuffer.swift */; };
 		D880C41DA11A8628A5FBDA7D /* InAppNowPlayingChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = F22E3FB8DC38A8516B29528D /* InAppNowPlayingChrome.swift */; };
@@ -2738,6 +2739,7 @@
 		7017A40A171575B4209D157C /* QuickSessionLaunchSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickSessionLaunchSelection.swift; sourceTree = "<group>"; };
 		702BC47E7ABC614F3A2C7A0D /* MacWorkspaceWorktreeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWorkspaceWorktreeTests.swift; sourceTree = "<group>"; };
 		70303C5850323FE73CE1F035 /* ReviewCommentSelectionTextFormatterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewCommentSelectionTextFormatterTests.swift; sourceTree = "<group>"; };
+		705580D21922B64FA5F2A37C /* SSHTerminalScreenshotPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalScreenshotPreview.swift; sourceTree = "<group>"; };
 		705FEE9AE99F071732D9F8B3 /* QuietWorkLineRowContentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuietWorkLineRowContentTests.swift; sourceTree = "<group>"; };
 		7082F3049BA75A65B658CF92 /* MacReviewCommentSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacReviewCommentSelection.swift; sourceTree = "<group>"; };
 		70BC0FB6D0F35135AEF282C8 /* TypewriterAnimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypewriterAnimator.swift; sourceTree = "<group>"; };
@@ -4169,6 +4171,7 @@
 				21AEFA3E930E3A37B3EC2145 /* SessionTimelinePreview.swift */,
 				B45AC9E7C39BF8584B0C4842 /* ShareRedactionPreview.swift */,
 				12E9FB0546474729B5F46753 /* SplitFileNavigationRegressionPreview.swift */,
+				705580D21922B64FA5F2A37C /* SSHTerminalScreenshotPreview.swift */,
 				1B86007A3133A50F6D08D972 /* SyntaxLanguagesPreview.swift */,
 				6B9BC73E6B5440FC4636F4CA /* ToolInspectionPreviewFixture.swift */,
 				4CACB25826775C877798C26B /* USDZRenderingPreview.swift */,
@@ -8596,6 +8599,7 @@
 				09CD796076A0A76CD657F4E3 /* SSHTerminalComposer.swift in Sources */,
 				633E3686C8AA2E6906E3F903 /* SSHTerminalEngine.swift in Sources */,
 				6328AEEC7DC51DFEB540409F /* SSHTerminalProfile.swift in Sources */,
+				D800CF76E01E19C0F8913B46 /* SSHTerminalScreenshotPreview.swift in Sources */,
 				40891EA93626D18CCF1223F5 /* SSHTerminalSetupView.swift in Sources */,
 				B07E973E394E1F0E3FA8DEAB /* SSHTerminalView.swift in Sources */,
 				D40231F6C7C04FF68838EF5C /* ScheduleManagementView.swift in Sources */,

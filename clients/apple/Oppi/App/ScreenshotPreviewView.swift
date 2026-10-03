@@ -30,6 +30,8 @@ struct ScreenshotPreviewView: View {
                 .environment(ThemeStore())
                 .environment(AppNavigation())
                 .accessibilityIdentifier("screenshot.ready")
+        case "ssh-terminal":
+            SSHTerminalScreenshotPreview()
         case "whats-new-build52-light", "whats-new-build51-light", "whats-new-build50-light", "whats-new-build49-light":
             WhatsNewScreenshotPreview(themeID: .light)
         case "whats-new-build52-dark", "whats-new-build51-dark", "whats-new-build50-dark", "whats-new-build49-dark":
