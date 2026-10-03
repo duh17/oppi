@@ -305,6 +305,64 @@ struct SSHTerminalTests {
         }
     }
 
+    @Test func dictationStopPreservesDraftAndArmedModifierUntilTheNextTypedCharacter() async throws {
+        for modifier in [GhosttyMods(GHOSTTY_MODS_CTRL), GhosttyMods(GHOSTTY_MODS_ALT)] {
+            for prefix in ["", "draft "] {
+                for finalCharacter in ["c", "d", "z", "h"] {
+                    let fixture = TerminalConnectionFixture()
+                    let channel = try SSHTerminalChannel()
+                    channel.opened(fixture)
+                    // Keep any accidentally routed byte queued so it cannot
+                    // race the no-send assertion below.
+                    channel.event(.writabilityChanged(false))
+                    channel.modifierLatch.toggle(modifier)
+                    var marker: String? = prefix
+                    var previousMarker: String?
+                    var draft = prefix
+                    let partial = prefix + "a"
+                    #expect(SSHTerminalComposer.modifiedInput(old: draft, new: partial,
+                                                              textBeforeRecording: marker,
+                                                              previousTextBeforeRecording: previousMarker) == nil)
+                    previousMarker = marker
+                    draft = partial
+
+                    // ComposerShared.stopVoiceInput clears the marker before
+                    // assigning prefix + final transcript, in the same turn.
+                    marker = nil
+                    let final = partial + finalCharacter
+                    let input = SSHTerminalComposer.modifiedInput(old: draft, new: final,
+                                                                 textBeforeRecording: marker,
+                                                                 previousTextBeforeRecording: previousMarker)
+                    previousMarker = marker
+                    draft = final
+                    #expect(input == nil)
+                    if let input, channel.key(input.key, text: input.character) {
+                        draft = input.remaining
+                    }
+                    #expect(draft == final)
+                    #expect(channel.modifierLatch.isArmed(modifier))
+                    #expect(await fixture.sentBytes.isEmpty)
+
+                    // Both markers are now nil: normal typing spends the
+                    // latch, and flushing proves stop queued no hidden byte.
+                    let typed = try #require(SSHTerminalComposer.modifiedInput(old: draft, new: draft + "x",
+                                                                             textBeforeRecording: marker,
+                                                                             previousTextBeforeRecording: previousMarker))
+                    #expect(channel.key(typed.key, text: typed.character))
+                    #expect(typed.remaining == final)
+                    channel.event(.writabilityChanged(true))
+                    var bytes = fixture.bytes.makeAsyncIterator()
+                    let expected = modifier == GhosttyMods(GHOSTTY_MODS_CTRL)
+                        ? Data([0x18]) : Data("\u{1b}x".utf8)
+                    #expect(await bytes.next() == expected)
+                    #expect(await fixture.sentBytes == expected)
+                    #expect(channel.modifierLatch.modifiers == 0)
+                    channel.close(reason: "done")
+                }
+            }
+        }
+    }
+
     @Test func namedActionsPreserveBindingsAndLeaveTheModifierForTyping() async throws {
         let fixture = TerminalConnectionFixture()
         let channel = try SSHTerminalChannel()

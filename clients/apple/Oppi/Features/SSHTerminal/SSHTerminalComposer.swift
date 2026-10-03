@@ -17,6 +17,7 @@ struct SSHTerminalComposer: View {
 
     @State private var text = ""
     @State private var textBeforeRecording: String?
+    @State private var previousTextBeforeRecording: String?
     @State private var pendingAttachments: [PendingAttachment] = []
     @State private var pendingRepoPointers: [PendingFileReference] = []
     @State private var streamingBehavior: StreamingBehavior = .followUp
@@ -70,8 +71,12 @@ struct SSHTerminalComposer: View {
         .onChange(of: text) { old, new in
             // The composer still edits ordinary text locally. Only the next
             // inserted character after Ctrl/Alt is routed as a raw key.
+            // Stop clears the recording marker in the same turn as the final
+            // text write. Keep its previous value through that update only.
+            defer { previousTextBeforeRecording = textBeforeRecording }
             guard channel.modifierLatch.modifiers != 0,
-                  let input = Self.modifiedInput(old: old, new: new, textBeforeRecording: textBeforeRecording),
+                  let input = Self.modifiedInput(old: old, new: new, textBeforeRecording: textBeforeRecording,
+                                                previousTextBeforeRecording: previousTextBeforeRecording),
                   channel.key(input.key, text: input.character) else { return }
             text = input.remaining
         }
@@ -137,8 +142,9 @@ struct SSHTerminalComposer: View {
     /// Dictation rewrites the draft on every partial and on stop; it is not a
     /// keyboard insertion. Otherwise remove only the first inserted character,
     /// leaving the rest of the locally edited draft intact.
-    static func modifiedInput(old: String, new: String, textBeforeRecording: String? = nil) -> (key: GhosttyKey, character: String, remaining: String)? {
-        guard textBeforeRecording == nil else { return nil }
+    static func modifiedInput(old: String, new: String, textBeforeRecording: String? = nil,
+                              previousTextBeforeRecording: String? = nil) -> (key: GhosttyKey, character: String, remaining: String)? {
+        guard textBeforeRecording == nil, previousTextBeforeRecording == nil else { return nil }
         let before = Array(old)
         let after = Array(new)
         var prefix = 0
