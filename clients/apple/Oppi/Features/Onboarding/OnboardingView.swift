@@ -13,31 +13,59 @@ enum OnboardingMode {
 /// Nearby Mac pairing is omitted until the Mac app can advertise.
 enum OnboardingIdlePairingCTA: Equatable {
     case scanQR
+    case connectThroughTailscale
     case enterManually
     case connectWithoutCamera
 
     static func visible(canScan: Bool) -> [Self] {
-        canScan ? [.scanQR, .enterManually] : [.connectWithoutCamera]
+        canScan
+            ? [.scanQR, .connectThroughTailscale, .enterManually]
+            : [.connectWithoutCamera, .connectThroughTailscale]
     }
 
+    /// English catalog key. Tests compare this; the button uses `localizedTitle`.
     var title: String {
         switch self {
         case .scanQR: "Scan QR Code"
+        case .connectThroughTailscale: "Connect through Tailscale"
         case .enterManually: "Enter manually"
         case .connectWithoutCamera: "Connect to Server"
         }
     }
 
-    var isPrimary: Bool {
+    /// Same literals as `title`, as a catalog key so zh-Hans and the other
+    /// idle labels actually localize. `Button(_:)` on a `String` does not.
+    var localizedTitle: LocalizedStringKey { LocalizedStringKey(title) }
+
+    var accessibilityIdentifier: String {
         switch self {
-        case .scanQR, .connectWithoutCamera: true
-        case .enterManually: false
+        case .scanQR: "onboarding.scanQR"
+        case .connectThroughTailscale: "onboarding.tailscale"
+        case .enterManually: "onboarding.manual"
+        case .connectWithoutCamera: "onboarding.connect"
+        }
+    }
+
+    /// Style only. Every idle action shares one width and control size.
+    enum Prominence {
+        case primary
+        case bordered
+    }
+
+    var prominence: Prominence {
+        switch self {
+        case .scanQR, .connectWithoutCamera: .primary
+        case .connectThroughTailscale, .enterManually: .bordered
         }
     }
 }
 
 struct OnboardingView: View {
     var mode: OnboardingMode = .initial
+    #if DEBUG
+    /// Screenshot previews have no camera. Production uses VisionKit.
+    var previewCanScan: Bool? = nil
+    #endif
 
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerConnection.self) private var connection
@@ -47,22 +75,27 @@ struct OnboardingView: View {
 
     @State private var showScanner = false
     @State private var showManualEntry = false
+    @State private var showTailscale = false
     @State private var connectionTest: ConnectionTestState = .idle
 
     /// VisionKit scanner requires camera + on-device ML support.
     private var canScan: Bool {
-        DataScannerViewController.isSupported && DataScannerViewController.isAvailable
+        #if DEBUG
+        if let previewCanScan { return previewCanScan }
+        #endif
+        return DataScannerViewController.isSupported && DataScannerViewController.isAvailable
     }
 
     @ViewBuilder
     private func idlePairingButton(_ cta: OnboardingIdlePairingCTA) -> some View {
-        if cta.isPrimary {
-            Button(cta.title) { activate(cta) }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-        } else {
-            Button(cta.title) { activate(cta) }
-                .font(.subheadline)
+        let button = Button(cta.localizedTitle) { activate(cta) }
+            .accessibilityIdentifier(cta.accessibilityIdentifier)
+
+        switch cta.prominence {
+        case .primary:
+            button.buttonStyle(.borderedProminent)
+        case .bordered:
+            button.buttonStyle(.bordered)
         }
     }
 
@@ -70,6 +103,8 @@ struct OnboardingView: View {
         switch cta {
         case .scanQR:
             showScanner = true
+        case .connectThroughTailscale:
+            showTailscale = true
         case .enterManually, .connectWithoutCamera:
             showManualEntry = true
         }
@@ -101,10 +136,11 @@ struct OnboardingView: View {
                         .accessibilityIdentifier("onboarding.prerequisite")
                 }
             }
+            .frame(maxWidth: 360)
 
             Spacer()
 
-            VStack(spacing: 16) {
+            VStack(spacing: 12) {
                 switch connectionTest {
                 case .idle:
                     ForEach(OnboardingIdlePairingCTA.visible(canScan: canScan), id: \.title) { cta in
@@ -127,6 +163,7 @@ struct OnboardingView: View {
                         Text(error)
                             .font(.caption)
                             .foregroundStyle(.themeComment)
+                            .multilineTextAlignment(.center)
 
                         Button("Try Again") {
                             if canScan {
@@ -139,6 +176,12 @@ struct OnboardingView: View {
                     }
                 }
             }
+            // One column, one control size. Prominence is style, not width.
+            // Inset from the screen edge; capped so iPad does not grow a bar.
+            .buttonSizing(.flexible)
+            .controlSize(.large)
+            .frame(maxWidth: 360)
+            .frame(maxWidth: .infinity)
 
             Link(destination: AppSupportLinks.setupURL) {
                 Text("How to set up the server")
@@ -181,6 +224,38 @@ struct OnboardingView: View {
                 Task { await testConnection(credentials) }
             }
         }
+        .sheet(isPresented: $showTailscale) {
+            NavigationStack {
+                TailnetSettingsView(onPaired: completeTailscalePairing)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") { showTailscale = false }
+                        }
+                    }
+            }
+        }
+    }
+
+    /// Tailscale pairing already stored the server. Show the same success
+    /// beat as QR/manual, then leave onboarding.
+    private func completeTailscalePairing() {
+        showTailscale = false
+        connectionTest = .success
+        Task {
+            try? await Task.sleep(for: .milliseconds(600))
+            leaveOnboardingAfterPair()
+        }
+    }
+
+    private func leaveOnboardingAfterPair() {
+        switch mode {
+        case .initial:
+            navigation.shouldGuideWorkspaceCreation = true
+            navigation.selectedTab = .workspaces
+            navigation.showOnboarding = false
+        case .addServer:
+            dismiss()
+        }
     }
 
     private func testConnection(_ credentials: ServerCredentials) async {
@@ -222,19 +297,10 @@ struct OnboardingView: View {
 
             connectionTest = .success
 
-            // Short delay then transition
+            // Short delay then transition. Guided workspace creation still
+            // waits for the workspace refresh, not this session snapshot.
             try? await Task.sleep(for: .milliseconds(600))
-
-            switch mode {
-            case .initial:
-                // Signal the workspace root to auto-present create flow
-                // after workspaces load (if the server has none).
-                navigation.shouldGuideWorkspaceCreation = true
-                navigation.selectedTab = .workspaces
-                navigation.showOnboarding = false
-            case .addServer:
-                dismiss()
-            }
+            leaveOnboardingAfterPair()
         } catch {
             connection.sessionStore.markSyncFailed()
             connectionTest = .failed(error.localizedDescription)

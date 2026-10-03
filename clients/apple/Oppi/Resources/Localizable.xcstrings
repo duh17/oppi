@@ -577,6 +577,16 @@
         }
       }
     },
+    "Connect through Tailscale": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通过 Tailscale 连接"
+          }
+        }
+      }
+    },
     "Connect to Server": {
       "localizations": {
         "zh-Hans": {

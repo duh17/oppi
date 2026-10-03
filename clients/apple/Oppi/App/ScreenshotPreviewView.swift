@@ -23,6 +23,10 @@ struct ScreenshotPreviewView: View {
         switch ScreenshotPreviewConfig.screen {
         case "workspace-edit":
             WorkspaceEditPreview()
+        case "onboarding":
+            OnboardingScreenshotPreview()
+        case "tailscale-connection":
+            TailscaleConnectionScreenshotPreview()
         case "ssh-terminal-settings":
             // Real Settings/setup surfaces, not a mocked SSH connection. This
             // makes enrollment/refusal QA reachable without pairing a server.
@@ -214,6 +218,74 @@ struct ScreenshotPreviewView: View {
     }
 }
 
+
+/// First-run pairing choices, including Connect through Tailscale.
+private struct OnboardingScreenshotPreview: View {
+    private let coordinator = ConnectionCoordinator(serverStore: ServerStore())
+
+    var body: some View {
+        OnboardingView(previewCanScan: true)
+            .environment(coordinator)
+            .environment(coordinator.serverStore)
+            .environment(coordinator.activeConnection)
+            .environment(AppNavigation())
+            .environment(ThemeStore())
+            .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+/// Connected in-app Tailscale screen: one Mac ready to pair. The node snapshot
+/// is a preview fixture; it does not start TailscaleKit or dial the tailnet.
+private struct TailscaleConnectionScreenshotPreview: View {
+    private let coordinator = ConnectionCoordinator(serverStore: ServerStore())
+    private let studioID = "n-mac-studio"
+
+    init() {
+        TailnetNodeController.shared.applyPreviewSnapshot(
+            TailnetStatusSnapshot(
+                backendState: .running,
+                authURL: nil,
+                selfDNSName: "oppi-ios.tail1234.ts.net",
+                tailnetName: "chen@example.com",
+                peers: [
+                    TailnetPeer(
+                        id: studioID,
+                        hostName: "mac-studio",
+                        dnsName: "mac-studio.tail1234.ts.net",
+                        os: "macOS",
+                        tailscaleIPs: ["100.64.1.2"],
+                        isOnline: true
+                    ),
+                    TailnetPeer(
+                        id: "n-iphone",
+                        hostName: "iphone",
+                        dnsName: "iphone.tail1234.ts.net",
+                        os: "iOS",
+                        tailscaleIPs: ["100.64.1.3"],
+                        isOnline: true
+                    ),
+                ]
+            )
+        )
+    }
+
+    var body: some View {
+        NavigationStack {
+            TailnetSettingsView(previewProbes: [studioID: .ready])
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") {}
+                    }
+                }
+        }
+        .environment(coordinator)
+        .environment(coordinator.serverStore)
+        .environment(coordinator.activeConnection)
+        .environment(AppNavigation())
+        .environment(ThemeStore())
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
 
 /// Isolated editor chrome: production save-state glyph, fixed spacer, Preview, Done.
 private struct FileEditorSaveStatusScreenshotPreview: View {

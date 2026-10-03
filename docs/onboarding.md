@@ -18,7 +18,9 @@ Use `oppi ...` for normal installs. Source checkouts can use `node dist/src/cli.
 
    On first run, Oppi prints a pairing QR code and invite link. If this machine is on Tailscale and `tailscale cert` can issue it a certificate (HTTPS enabled for the tailnet), Oppi uses Tailscale TLS and the invite points at the machine's `*.ts.net` name. Otherwise it uses a self-signed certificate. A `tls.mode` other than `disabled` that you already set is kept.
 
-2. Open Oppi on iPhone, then choose **Scan QR Code** or **Enter manually / Connect to Server**. Opening an `oppi://connect` invite also starts pairing.
+2. Open Oppi on iPhone, then choose **Scan QR Code**, **Connect through Tailscale**, or **Enter manually / Connect to Server**. Opening an `oppi://connect` invite also starts pairing.
+
+   **Connect through Tailscale** opens Oppi's in-app Tailscale connection. After you sign in, Oppi lists Macs on the same tailnet and can pair with one that is already running Oppi over Tailscale HTTPS. It does not install the Tailscale VPN. QR and manual pairing stay available.
 
 3. Confirm server trust. If local authentication is enabled, iOS asks for it before accepting the server identity.
 

@@ -2,6 +2,14 @@ import SwiftUI
 
 /// Connect Oppi's embedded Tailscale node and list online tailnet machines.
 struct TailnetSettingsView: View {
+    /// Called after a machine is paired and selected. Onboarding uses this to
+    /// leave setup; Settings leaves the list in place.
+    var onPaired: (() -> Void)? = nil
+    #if DEBUG
+    /// Skips live health probes so a screenshot can show a settled row.
+    var previewProbes: [String: TailnetPeerProbe]? = nil
+    #endif
+
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
 
@@ -64,7 +72,15 @@ struct TailnetSettingsView: View {
         .navigationTitle("Tailscale")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { tailnet.startIfEnabled() }
-        .task(id: probeTrigger) { await probePeers() }
+        .task(id: probeTrigger) {
+            #if DEBUG
+            if let previewProbes {
+                probes = previewProbes
+                return
+            }
+            #endif
+            await probePeers()
+        }
         .refreshable {
             await tailnet.refresh()
             reprobe()
@@ -359,6 +375,9 @@ struct TailnetSettingsView: View {
                 )
             }
             pairingMessage = "Paired with \(pairedServer.name)."
+            if outcome == .selected {
+                onPaired?()
+            }
         } catch let failure as TailnetSameUserPairing.Failure {
             pairingMessage = failure.errorDescription
         } catch let error as InviteBootstrapError {

@@ -78,6 +78,18 @@ final class TailnetNodeController {
         start()
     }
 
+    #if DEBUG
+    /// Shows a settled node in screenshot previews without starting TailscaleKit.
+    func applyPreviewSnapshot(_ snapshot: TailnetStatusSnapshot) {
+        isStarted = true
+        failure = nil
+        var next = TailnetNodeStatus()
+        next.apply(snapshot)
+        status = next
+        self.snapshot = snapshot
+    }
+    #endif
+
     func disconnect() async {
         AppPreferences.Tailnet.setEnabled(false)
         await stop()
