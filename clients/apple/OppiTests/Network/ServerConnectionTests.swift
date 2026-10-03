@@ -1340,32 +1340,6 @@ struct ServerConnectionTests {
         }
     }
 
-    @Test func sendAckTimeoutForPromptSteerAndFollowUp() async {
-        for command in AckCommand.allCases {
-            let conn = ServerConnection()
-            conn._setActiveSessionIdForTesting("s1")
-            conn._sendAckTimeoutForTesting = .milliseconds(40)
-            conn._turnSendRetryDelayForTesting = .milliseconds(1)
-
-            // Simulate successful socket write with no command_result ack arriving.
-            conn._sendMessageForTesting = { _ in }
-
-            do {
-                try await command.send(using: conn, text: "hello")
-                Issue.record("Expected \(command.rawValue) timeout")
-            } catch let error as SendAckError {
-                switch error {
-                case .timeout(let timedOutCommand):
-                    #expect(timedOutCommand == command.rawValue)
-                default:
-                    Issue.record("Expected timeout error, got \(error)")
-                }
-            } catch {
-                Issue.record("Expected SendAckError.timeout, got \(error)")
-            }
-        }
-    }
-
     // MARK: - Fork
 
     @Test func forkFromTimelineEntryUsesGetForkMessagesThenFork() async throws {

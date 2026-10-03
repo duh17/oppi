@@ -19,6 +19,9 @@ struct ChatActionHandlerRecoveryTests {
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .ready))
         let sessionManager = ChatSessionManager(sessionId: sessionId)
         sessionManager._loadHistoryForTesting = { _, _ in nil }
+        // The scripted stream has no URL-bound socket; report it live so the
+        // send exercises ack recovery rather than pre-send readiness.
+        sessionManager._focusedStreamLivenessForTesting = { .connected }
 
         let streams = RecoveryScriptedStreamFactory()
         sessionManager._streamSessionForTesting = { _ in streams.makeStream() }

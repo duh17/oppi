@@ -1859,18 +1859,32 @@ final class ServerConnection {
             && focusedSessionStreamRouteScope == routeScope
     }
 
-    /// Open the URL-bound focused session stream.
-    func streamSession(_ sessionId: String, workspaceId: String) async -> AsyncStream<SessionStreamEvent>? {
-        await streamSession(sessionId, routeScope: .workspace(workspaceId))
-    }
-
-    func streamSession(_ sessionId: String, routeScope: SessionRouteScope) async -> AsyncStream<SessionStreamEvent>? {
+    /// Open the URL-bound focused session stream for the holder of `claim`.
+    /// Every rebind or socket side effect happens only while `claim` is current.
+    func streamSession(
+        _ sessionId: String,
+        routeScope: SessionRouteScope,
+        claim: FocusedSessionContext
+    ) async -> AsyncStream<SessionStreamEvent>? {
         guard !externalSessionOpenClaimBlocks(sessionId) else {
             recordExternalSessionOpenClaimRefusal(sessionId, context: "stream_bind")
             return nil
         }
         await refreshStreamCapabilitiesIfNeeded()
         await waitForFocusedStreamBindReadinessIfNeeded(sessionId: sessionId)
+        // The owner may have been superseded while waiting. Refuse before the
+        // endpoint is rebound and the shared socket reconnected underneath the
+        // newer owner (this or another session). The coordinator checks again
+        // right before its own focus/attach/connect side effects.
+        if !focusedSessionStore.isCurrent(claim) {
+            recordFocusArbitration(
+                outcome: "stale_open_refused",
+                previousSessionId: claim.sessionId,
+                nextSessionId: focusedSessionId ?? "none",
+                context: "stream_bind"
+            )
+            return nil
+        }
         guard hasRequiredSplitStreamCapabilities else {
             recordSessionStreamUnavailable(reason: streamCapabilityUnavailableReason())
             return nil
@@ -1881,6 +1895,7 @@ final class ServerConnection {
         resolveExternalSessionOpenClaim(for: sessionId)
         return await sessionStreamCoordinator.streamSession(
             connection: self,
+            claim: claim,
             sessionId: sessionId,
             routeScope: routeScope
         )
@@ -2211,7 +2226,8 @@ final class ServerConnection {
         }
     }
 
-    func deferDisconnectSessionUntilLiveAudioStreamFinishes(_ sessionId: String) {
+    private func deferDisconnectSessionUntilLiveAudioStreamFinishes(_ claim: FocusedSessionContext) {
+        let sessionId = claim.sessionId
         cancelDeferredPlaybackDisconnect(for: sessionId)
         deferredPlaybackDisconnectTasks[sessionId] = Task { @MainActor [weak self] in
             while let self,
@@ -2221,6 +2237,14 @@ final class ServerConnection {
             }
             guard let self, !Task.isCancelled else { return }
             self.deferredPlaybackDisconnectTasks.removeValue(forKey: sessionId)
+            // Re-validate after the wait: a newer owner may have claimed this
+            // same session while audio drained, and its stream must survive.
+            // (Focus on another session keeps the old per-session teardown.)
+            if let focused = self.focusedSessionStore.focused,
+               focused.sessionId == sessionId,
+               focused != claim {
+                return
+            }
             self.disconnectSession(sessionId: sessionId)
         }
     }
@@ -2261,9 +2285,61 @@ final class ServerConnection {
     /// continuations or tear down streams. The previous session's ChatSessionManager keeps
     /// receiving events via its per-session continuation and coalescer/reducer.
     func focusSession(_ sessionId: String) {
+        applyFocus(sessionId, startsClaim: false)
+    }
+
+    /// Focus `sessionId` and start a new ownership claim on it. Only the holder
+    /// of the returned claim may release the focus with `releaseFocusedSession`;
+    /// an older claim on the same session (a stale chat runtime) stops matching.
+    func claimFocusedSession(_ sessionId: String) -> FocusedSessionContext? {
+        applyFocus(sessionId, startsClaim: true)
+    }
+
+    /// Release focus and its session stream only if `claim` is still current.
+    /// A stale claim is a no-op, so a destroyed or superseded chat runtime can
+    /// never tear down the stream of a newer owner of the same session.
+    func releaseFocusedSession(_ claim: FocusedSessionContext) {
+        guard focusedSessionStore.isCurrent(claim) else {
+            recordFocusArbitration(
+                outcome: "stale_release_ignored",
+                previousSessionId: claim.sessionId,
+                nextSessionId: focusedSessionId ?? "none",
+                context: "release"
+            )
+            return
+        }
+        if audioPlayer.activeLiveTransportSessionID == claim.sessionId {
+            deferDisconnectSessionUntilLiveAudioStreamFinishes(claim)
+            return
+        }
+        disconnectSession(sessionId: claim.sessionId)
+    }
+
+    /// Whether `sessionId` is focused and its URL-bound socket is live. A chat
+    /// can still read `.streaming` after the socket dropped or focus moved; turn
+    /// dispatch checks this instead of the runtime's entry state alone.
+    func focusedStreamLiveness(sessionId: String) -> FocusedStreamLiveness {
+        guard focusedSessionStore.isFocused(sessionId),
+              focusedSessionStreamEndpointKind == "split_session",
+              focusedSessionStreamSessionId == sessionId,
+              let wsClient else {
+            return .down
+        }
+        switch wsClient.status {
+        case .connected:
+            return .connected
+        case .connecting, .reconnecting:
+            return .recovering
+        case .disconnected:
+            return .down
+        }
+    }
+
+    @discardableResult
+    private func applyFocus(_ sessionId: String, startsClaim: Bool) -> FocusedSessionContext? {
         guard !externalSessionOpenClaimBlocks(sessionId) else {
             recordExternalSessionOpenClaimRefusal(sessionId, context: "focus")
-            return
+            return nil
         }
         cancelDeferredPlaybackDisconnect(for: sessionId)
         let previousSessionId = focusedSessionId
@@ -2282,12 +2358,15 @@ final class ServerConnection {
             silenceWatchdog.stop()
         }
 
-        focusedSessionStore.focus(sessionId: sessionId)
+        let context = startsClaim
+            ? focusedSessionStore.claim(sessionId: sessionId)
+            : focusedSessionStore.focus(sessionId: sessionId)
         // Reset per-connection chat state for the new focused session.
         // Sheet-backed extension dialogs are derived from pendingExtensionDialogQueues.
         chatState.resetSessionState()
 
         syncActiveAskWorkspaceSummary()
+        return context
     }
 
     /// Re-establish command routing before a session view re-enters foreground interaction.

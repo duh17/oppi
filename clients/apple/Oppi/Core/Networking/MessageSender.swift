@@ -172,6 +172,31 @@ final class MessageSender {
         )
         commands.registerTurnSend(pending)
 
+        do {
+            try await performTurnSendAttempts(
+                pending: pending,
+                generation: generation,
+                sessionIdOverride: sessionIdOverride,
+                message: message
+            )
+        } catch {
+            // Once a frame reached the socket the server may hold this turn even
+            // though no ack arrived. Callers must not treat that as never sent;
+            // resending with the same clientTurnId is deduplicated server-side.
+            guard pending.didDispatchFrame, !Self.isDefinitiveTurnRejection(error) else { throw error }
+            throw TurnSendUnconfirmedError(command: command, clientTurnId: clientTurnId, underlying: error)
+        }
+    }
+
+    private func performTurnSendAttempts(
+        pending: PendingTurnSend,
+        generation: UInt64,
+        sessionIdOverride: String?,
+        message: () -> ClientMessage
+    ) async throws {
+        let requestId = pending.requestId
+        let clientTurnId = pending.clientTurnId
+        let command = pending.command
         var lastError: Error?
 
         for attempt in 1...Self.turnSendMaxAttempts {
@@ -194,6 +219,7 @@ final class MessageSender {
 
             do {
                 try await dispatchSend(message(), sessionIdOverride: sessionIdOverride)
+                pending.didDispatchFrame = true
             } catch {
                 lastError = error
                 try requireTransportGeneration(generation)
@@ -927,6 +953,14 @@ final class MessageSender {
         CommandTracker.isReconnectableSendError(error)
     }
 
+    /// The server answered and refused the turn: it was definitively not taken.
+    static func isDefinitiveTurnRejection(_ error: Error) -> Bool {
+        if let ackError = error as? SendAckError, case .rejected = ackError {
+            return true
+        }
+        return false
+    }
+
     static func isRetryableStopError(_ error: Error) -> Bool {
         if let cmdError = error as? CommandRequestError {
             switch cmdError {
@@ -944,6 +978,9 @@ final class MessageSender {
     // MARK: - Telemetry Helpers
 
     static func telemetryErrorKind(from error: Error) -> String {
+        if let unconfirmed = error as? TurnSendUnconfirmedError {
+            return telemetryErrorKind(from: unconfirmed.underlying)
+        }
         if error is CommandRequestError { return "command_request" }
         if error is WebSocketError { return "websocket" }
         if error is URLError { return "url" }

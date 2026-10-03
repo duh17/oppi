@@ -148,28 +148,30 @@ final class IOSChatSessionRuntimeAdapter:
         set { connection?.fatalSetupError = newValue }
     }
 
-    var focusedSessionId: String? { connection?.focusedSessionId }
     var isBindTerminal: Bool { connection?.isFocusedStreamBindTerminal() == true }
 
-    func focus(sessionId: String) {
-        connection?.focusSession(sessionId)
+    func acquireFocus(sessionId: String) -> FocusedSessionContext? {
+        connection?.claimFocusedSession(sessionId)
+    }
+
+    var currentFocusClaim: FocusedSessionContext? {
+        connection?.focusedSessionStore.focused
     }
 
     func open(
         sessionId: String,
-        scope: SessionRouteScope
+        scope: SessionRouteScope,
+        claim: FocusedSessionContext
     ) async -> AsyncStream<SessionStreamEvent>? {
-        await connection?.streamSession(sessionId, routeScope: scope)
+        await connection?.streamSession(sessionId, routeScope: scope, claim: claim)
     }
 
-    func close() {
-        guard let connection else { return }
-        if let sessionId = connection.focusedSessionId,
-           connection.audioPlayer.activeLiveTransportSessionID == sessionId {
-            connection.deferDisconnectSessionUntilLiveAudioStreamFinishes(sessionId)
-            return
-        }
-        connection.disconnectSession()
+    func releaseFocus(_ claim: FocusedSessionContext) {
+        connection?.releaseFocusedSession(claim)
+    }
+
+    func focusedStreamLiveness(sessionId: String) -> FocusedStreamLiveness {
+        connection?.focusedStreamLiveness(sessionId: sessionId) ?? .down
     }
 
     func isFocused(sessionId: String) -> Bool {

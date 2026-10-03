@@ -11,6 +11,8 @@ final class PendingTurnSend {
 
     var latestStage: TurnAckStage?
     var waiter = SendAckWaiter()
+    /// True once any attempt handed the frame to the socket.
+    var didDispatchFrame = false
 
     init(
         command: String,
@@ -62,6 +64,19 @@ final class SendAckWaiter {
 }
 
 // MARK: - Send Ack Errors
+
+/// A turn frame was sent but its acknowledgement never arrived, so the server
+/// may or may not hold it. Distinct from a never-dispatched failure: a retry
+/// must reuse `clientTurnId` so the server deduplicates instead of running twice.
+struct TurnSendUnconfirmedError: LocalizedError {
+    let command: String
+    let clientTurnId: String
+    let underlying: Error
+
+    var errorDescription: String? {
+        "\(command) delivery wasn't confirmed (\(underlying.localizedDescription))"
+    }
+}
 
 enum SendAckError: LocalizedError {
     case timeout(command: String)

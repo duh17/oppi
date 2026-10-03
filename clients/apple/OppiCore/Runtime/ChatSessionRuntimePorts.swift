@@ -82,6 +82,31 @@ enum ChatSessionFocusedStreamBindError: Error, Equatable, LocalizedError {
     }
 }
 
+/// Live state of the socket bound to a focused session.
+enum FocusedStreamLiveness: Equatable, Sendable {
+    case connected
+    /// The transport is reconnecting on its own; wait instead of restarting.
+    case recovering
+    /// No live socket for this session (dropped, unbound, or focus moved).
+    case down
+}
+
+/// Why a turn was not dispatched: the focused stream never became ready.
+enum ChatSessionSendReadinessError: Error, Equatable, LocalizedError {
+    /// Stopped sessions are history-only until the user taps Resume.
+    case sessionStopped
+    case notConnected
+
+    var errorDescription: String? {
+        switch self {
+        case .sessionStopped:
+            "Session is stopped. Resume it to send."
+        case .notConnected:
+            "Couldn't reconnect to the session."
+        }
+    }
+}
+
 /// Cached and remote history operations used by `ChatSessionManager`.
 ///
 /// The port intentionally exposes trace-shaped operations rather than a general
@@ -134,15 +159,24 @@ protocol ChatSessionHistoryPort: AnyObject {
 protocol ChatSessionFocusedStreamPort: AnyObject {
     var transportPath: ConnectionTransportPath { get }
     var fatalSetupError: Bool { get set }
-    var focusedSessionId: String? { get }
     var isBindTerminal: Bool { get }
 
-    func focus(sessionId: String)
+    /// Focus `sessionId` and return a new ownership claim, or nil when focus is
+    /// refused. Each call supersedes older claims on the same session.
+    func acquireFocus(sessionId: String) -> FocusedSessionContext?
+    /// Current focus context: nil when vacant, otherwise the holder's claim.
+    var currentFocusClaim: FocusedSessionContext? { get }
+    /// Open the stream for `claim`'s session. The open is refused, before any
+    /// socket is (re)connected, if `claim` stopped being current while waiting.
     func open(
         sessionId: String,
-        scope: SessionRouteScope
+        scope: SessionRouteScope,
+        claim: FocusedSessionContext
     ) async -> AsyncStream<SessionStreamEvent>?
-    func close()
+    /// Release focus and the stream only while `claim` is still current.
+    /// Stale claims are ignored, including after deferred live-audio drain.
+    func releaseFocus(_ claim: FocusedSessionContext)
+    func focusedStreamLiveness(sessionId: String) -> FocusedStreamLiveness
     func isFocused(sessionId: String) -> Bool
     func setStreamRecovering(_ recovering: Bool, sessionId: String)
     func externalOpenClaimBlocks(sessionId: String) -> Bool

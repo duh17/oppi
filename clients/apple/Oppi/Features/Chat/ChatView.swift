@@ -982,7 +982,8 @@ struct ChatView: View {
                 // specific state so the timeline and connection match.
                 guard sessionManager.sessionId != newId else { return }
 
-                // Tear down old session
+                // Tear down old session. cleanup() releases only the old
+                // runtime's own focus claim (live audio still defers it).
                 actionHandler.cleanup()
                 sessionManager.cleanup()
                 scrollController.cancel()
@@ -991,9 +992,6 @@ struct ChatView: View {
                 nowPlayingDrawerExpanded = false
                 reviewCommentDrawerExpanded = false
                 reviewCommentStashPresentation = nil
-                if connection.isFocusedSession(oldId) {
-                    connection.disconnectSession()
-                }
 
                 // Stand up new session. Detach the draft key before any new
                 // workspace metadata resolves so edits cannot hit the old session.
@@ -1004,6 +1002,8 @@ struct ChatView: View {
                     routeScope: focusedRouteScope
                 )
                 sessionRuntimeLease.manager = sessionManager
+                // The chat on screen now shows newId: claim it like an appear.
+                sessionManager.claimFocusOnAppear(connection: connection, sessionStore: sessionStore)
                 // Session switches can happen while the scene is already
                 // inactive/background (deep link, iPad multitasking). The new
                 // coalescer starts unpaused — re-apply the hard boundary.
@@ -1032,6 +1032,8 @@ struct ChatView: View {
                 scrollController.suspendForNavigation()
                 guard !appNavigation.isCoveringChat(sessionId: sessionId) else { return }
                 actionHandler.cleanup()
+                // Releases this runtime's focus claim only; a newer chat for the
+                // same session keeps its stream (late or repeated cleanup is a no-op).
                 sessionManager.cleanup()
                 Task {
                     if let composerDraftStore {
@@ -1039,7 +1041,6 @@ struct ChatView: View {
                     }
                     await sessionManager.flushSnapshotIfNeeded(connection: connection, force: true)
                 }
-                disconnectIfCurrentSession()
             }
     }
 
@@ -1807,6 +1808,7 @@ struct ChatView: View {
         )
 
         sessionManager.markAppeared()
+        sessionManager.claimFocusOnAppear(connection: connection, sessionStore: sessionStore)
         if Self.shouldPauseTimelinePresentation(for: scenePhase) {
             sessionManager.coalescer.pause()
         } else if scenePhase == .active,
@@ -1989,18 +1991,6 @@ struct ChatView: View {
     private func handleEntryStateChange(_ newState: ChatSessionManager.SessionEntryState) {
         if newState == .streaming {
             actionHandler.clearReconnectFailure()
-        }
-    }
-
-    @MainActor
-    private func disconnectIfCurrentSession() {
-        if audioPlayer.activeLiveTransportSessionID == sessionId {
-            connection.deferDisconnectSessionUntilLiveAudioStreamFinishes(sessionId)
-            return
-        }
-        let focusedSessionId = connection.focusedSessionId
-        if focusedSessionId == sessionId || focusedSessionId == nil {
-            connection.disconnectSession()
         }
     }
 

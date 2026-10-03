@@ -75,21 +75,17 @@ final class SessionStreamCoordinator {
 
     func streamSession(
         connection: ServerConnection,
-        sessionId: String,
-        workspaceId: String
-    ) async -> AsyncStream<SessionStreamEvent>? {
-        await streamSession(
-            connection: connection,
-            sessionId: sessionId,
-            routeScope: .workspace(workspaceId)
-        )
-    }
-
-    func streamSession(
-        connection: ServerConnection,
+        claim: FocusedSessionContext,
         sessionId: String,
         routeScope: SessionRouteScope
     ) async -> AsyncStream<SessionStreamEvent>? {
+        // Re-check with no await before focus, continuation attach, and
+        // connectStream: a stale opener must not retarget the shared socket or
+        // replace the live owner's event consumer.
+        guard connection.focusedSessionStore.isCurrent(claim) else {
+            streamCoordinatorLogger.warning("streamSession(\(sessionId, privacy: .public)): claim superseded before bind; refusing")
+            return nil
+        }
         guard connection.wsClient != nil else { return nil }
         guard connection.focusedSessionStreamEndpointKind == "split_session" else {
             streamCoordinatorLogger.error("Split session stream unavailable for \(sessionId, privacy: .public)")

@@ -117,6 +117,7 @@ Example:
 
 ### Fixed
 
+- **Client:** Sending no longer intermittently bounces the message back into the composer: leaving and reopening a chat can't drop its live connection, and Send shows Connecting… and reconnects first when the connection is down.
 - **Client:** After repeated temporary server errors on a single route, the app keeps retrying the session connection instead of waiting about 50 seconds.
 - **Server:** The phone's context meter no longer collapses after a codemode helper call. Pi records the usage of `models.classify()` and `models.generateImages()` on the tool result, and the server copied that small request into the session's context size (a 152k meter fell to about 900 after one generated image). Only the session's own assistant turns set the context size now; cost and token totals still count every billed call.
 - **Client:** Returning to an open file, after native full-screen video or a Back from a linked file, re-reads it and rebuilds the viewer only if the text changed. Before, every return rebuilt the viewer, so every inline video in a Markdown file was recreated: the watched clip lost its position and each player started loading again. If the re-read fails because the file was deleted or moved (404), or access was lost (401/403), the load error replaces stale text. Offline, timeout, and temporary server failures keep the existing reader and its inline players.

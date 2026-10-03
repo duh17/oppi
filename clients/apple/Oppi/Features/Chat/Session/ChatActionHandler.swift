@@ -61,9 +61,31 @@ final class ChatActionHandler {
         - "install our app" -> Install App
         """
 
-    /// Turn-ack and in-flight send never use the composer caption. The optimistic
-    /// user bubble is dispatch confirmation; ChatView still feeds attachment upload text.
-    var sendProgressText: String? { nil }
+    /// True while a send waits for the focused stream to (re)bind before dispatch.
+    private(set) var isAwaitingSendReadiness = false
+
+    /// Turn-ack never uses the composer caption; the optimistic user bubble is
+    /// dispatch confirmation. Only the pre-dispatch reconnect wait is shown, so
+    /// the kept draft reads as "connecting" rather than stuck.
+    var sendProgressText: String? {
+        isAwaitingSendReadiness ? "Connecting…" : nil
+    }
+
+    /// Last turn whose frame was sent but never acknowledged. An identical resend
+    /// (same session, command, text, attachments) from this chat screen reuses
+    /// its clientTurnId, so the server's existing turn dedupe can recognize it.
+    /// Bounded guarantee: held only by this handler (lost when the screen goes
+    /// away) and only effective while the server still caches that turn id for
+    /// the live session. User copy therefore promises nothing about duplicates.
+    private struct UnconfirmedTurn: Equatable {
+        let sessionId: String
+        let command: String
+        let message: String
+        let attachments: [ChatAttachmentRef]?
+        let clientTurnId: String
+    }
+
+    private var unconfirmedTurn: UnconfirmedTurn?
 
     // MARK: - Prompt / Steer
 
@@ -92,25 +114,63 @@ final class ChatActionHandler {
         guard !isSending else { return text }
 
         isSending = true
+        // Dispatch needs this chat's own live focused socket, re-checked inside
+        // the task right before sending. Otherwise the stream is (re)bound first
+        // and nothing is dispatched or shown as sent until it is ready.
+        let readinessStore = sessionStore ?? connection.sessionStore
+        let isReadyAtTap = sessionManager?.isReadyForTurnDispatch ?? true
+        let sendAttachments = attachments.isEmpty ? nil : attachments
 
         if isBusy {
             AppHaptics.impact(style: .soft)
 
-            let queuedAttachments = attachments.isEmpty ? nil : attachments
+            let queuedAttachments = sendAttachments
             let queuedKind: MessageQueueKind = busyStreamingBehavior == .steer ? .steer : .followUp
-            let queueTurnId = UUID().uuidString
-            let optimisticQueueItem = connection.messageQueueStore.enqueueOptimisticItem(
-                for: sessionId,
-                kind: queuedKind,
+            let commandName = busyStreamingBehavior == .steer ? "steer" : "follow_up"
+            let queueTurnId = clientTurnId(
+                sessionId: sessionId,
+                command: commandName,
                 message: trimmed,
-                attachments: queuedAttachments,
-                optimisticImages: optimisticImages.isEmpty ? nil : optimisticImages,
-                id: queueTurnId
+                attachments: queuedAttachments
             )
+            let enqueueOptimisticItem = {
+                connection.messageQueueStore.enqueueOptimisticItem(
+                    for: sessionId,
+                    kind: queuedKind,
+                    message: trimmed,
+                    attachments: queuedAttachments,
+                    optimisticImages: optimisticImages.isEmpty ? nil : optimisticImages,
+                    id: queueTurnId
+                )
+            }
+            let preDispatchQueueItem = isReadyAtTap ? enqueueOptimisticItem() : nil
 
             launchTask { @MainActor in
                 self.beginSendTracking()
                 defer { self.isSending = false }
+                if let readinessError = await self.awaitSendReadiness(
+                    sessionManager,
+                    connection: connection,
+                    sessionStore: readinessStore
+                ) {
+                    if let preDispatchQueueItem {
+                        connection.messageQueueStore.removeQueuedItem(
+                            for: sessionId,
+                            kind: queuedKind,
+                            id: preDispatchQueueItem.id,
+                            messageFallback: trimmed
+                        )
+                    }
+                    self.failNotDispatched(
+                        command: commandName,
+                        error: readinessError,
+                        sessionId: sessionId,
+                        reducer: reducer
+                    )
+                    onAsyncFailure?(text, attachments)
+                    return
+                }
+                let optimisticQueueItem = preDispatchQueueItem ?? enqueueOptimisticItem()
                 onDispatchStarted?()
 
                 do {
@@ -124,6 +184,7 @@ final class ChatActionHandler {
                             self.updateSendAckStage(stage)
                         })
                     }
+                    self.clearUnconfirmedTurn(clientTurnId: queueTurnId)
                     onSendSucceeded?()
                     Task { @MainActor in
                         try? await connection.requestMessageQueue(sessionIdOverride: sessionId)
@@ -136,7 +197,14 @@ final class ChatActionHandler {
                         messageFallback: trimmed
                     )
                     self.clearSendStageNow()
-                    let commandName = busyStreamingBehavior == .steer ? "steer" : "follow_up"
+                    self.recordUnconfirmedTurnIfNeeded(
+                        error,
+                        sessionId: sessionId,
+                        command: commandName,
+                        message: trimmed,
+                        attachments: queuedAttachments,
+                        clientTurnId: queueTurnId
+                    )
                     let errorPrefix = busyStreamingBehavior == .steer ? "Steer" : "Follow-up"
                     log.error("SEND \(commandName, privacy: .public) FAILED: \(error.localizedDescription, privacy: .public)")
                     ClientLog.error(
@@ -148,15 +216,38 @@ final class ChatActionHandler {
                         onNeedsReconnect?()
                     }
                     onAsyncFailure?(text, attachments)
-                    reducer.process(.error(sessionId: sessionId, message: "\(errorPrefix) failed: \(error.localizedDescription)"))
+                    reducer.process(.error(
+                        sessionId: sessionId,
+                        message: Self.sendFailureMessage(error, prefix: "\(errorPrefix) failed")
+                    ))
                 }
             }
         } else {
             AppHaptics.impact(style: .light)
-            let promptTurnId = UUID().uuidString
+            let promptTurnId = clientTurnId(
+                sessionId: sessionId,
+                command: "prompt",
+                message: trimmed,
+                attachments: sendAttachments
+            )
 
             launchTask { @MainActor in
                 self.beginSendTracking()
+                if let readinessError = await self.awaitSendReadiness(
+                    sessionManager,
+                    connection: connection,
+                    sessionStore: readinessStore
+                ) {
+                    self.failNotDispatched(
+                        command: "prompt",
+                        error: readinessError,
+                        sessionId: sessionId,
+                        reducer: reducer
+                    )
+                    onAsyncFailure?(text, attachments)
+                    self.isSending = false
+                    return
+                }
 
                 let optimisticText = optimisticDisplayText ?? trimmed
                 let messageId: ChatItem.ID? = if !optimisticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty {
@@ -170,10 +261,10 @@ final class ChatActionHandler {
                     }
                 }
                 do {
-                    let promptAttachments = attachments.isEmpty ? nil : attachments
-                    try await connection.sendPrompt(trimmed, attachments: promptAttachments, clientTurnId: promptTurnId, sessionIdOverride: sessionId, onAckStage: { stage in
+                    try await connection.sendPrompt(trimmed, attachments: sendAttachments, clientTurnId: promptTurnId, sessionIdOverride: sessionId, onAckStage: { stage in
                         self.updateSendAckStage(stage)
                     })
+                    self.clearUnconfirmedTurn(clientTurnId: promptTurnId)
                     onSendSucceeded?()
                     self.scheduleAutoSessionTitleIfNeeded(
                         sessionId: sessionId,
@@ -182,6 +273,14 @@ final class ChatActionHandler {
                     )
                 } catch {
                     self.clearSendStageNow()
+                    self.recordUnconfirmedTurnIfNeeded(
+                        error,
+                        sessionId: sessionId,
+                        command: "prompt",
+                        message: trimmed,
+                        attachments: sendAttachments,
+                        clientTurnId: promptTurnId
+                    )
                     log.error("SEND prompt FAILED: \(error.localizedDescription, privacy: .public)")
                     ClientLog.error(
                         "Action",
@@ -195,7 +294,10 @@ final class ChatActionHandler {
                     if let messageId {
                         reducer.removeItem(id: messageId)
                     }
-                    reducer.process(.error(sessionId: sessionId, message: "Failed to send: \(error.localizedDescription)"))
+                    reducer.process(.error(
+                        sessionId: sessionId,
+                        message: Self.sendFailureMessage(error, prefix: "Failed to send")
+                    ))
                 }
 
                 self.isSending = false
@@ -709,6 +811,100 @@ final class ChatActionHandler {
         normalizeTitle(raw)
     }
 
+    private func clientTurnId(
+        sessionId: String,
+        command: String,
+        message: String,
+        attachments: [ChatAttachmentRef]?
+    ) -> String {
+        if let unconfirmedTurn,
+           unconfirmedTurn.sessionId == sessionId,
+           unconfirmedTurn.command == command,
+           unconfirmedTurn.message == message,
+           unconfirmedTurn.attachments == attachments {
+            return unconfirmedTurn.clientTurnId
+        }
+        return UUID().uuidString
+    }
+
+    private func recordUnconfirmedTurnIfNeeded(
+        _ error: Error,
+        sessionId: String,
+        command: String,
+        message: String,
+        attachments: [ChatAttachmentRef]?,
+        clientTurnId: String
+    ) {
+        guard error is TurnSendUnconfirmedError else { return }
+        unconfirmedTurn = UnconfirmedTurn(
+            sessionId: sessionId,
+            command: command,
+            message: message,
+            attachments: attachments,
+            clientTurnId: clientTurnId
+        )
+    }
+
+    private func clearUnconfirmedTurn(clientTurnId: String) {
+        if unconfirmedTurn?.clientTurnId == clientTurnId {
+            unconfirmedTurn = nil
+        }
+    }
+
+    /// Validate this chat's focused stream immediately before dispatch, waiting
+    /// for it when needed. Returns the error when it never became ready; nothing
+    /// was sent in that case.
+    ///
+    /// `sessionManager` stayed optional: ChatView, the only production sender,
+    /// always passes its runtime. With no runtime there is no focus claim to
+    /// validate, so the send relies on the transport's own pre-dispatch checks
+    /// (no focused session or socket fails fast as never dispatched). That keeps
+    /// the dispatch/ack unit tests independent of a scripted chat runtime.
+    private func awaitSendReadiness(
+        _ sessionManager: ChatSessionManager?,
+        connection: ServerConnection,
+        sessionStore: SessionStore
+    ) async -> Error? {
+        guard let sessionManager, !sessionManager.isReadyForTurnDispatch else { return nil }
+        isAwaitingSendReadiness = true
+        defer { isAwaitingSendReadiness = false }
+        do {
+            try await sessionManager.ensureReadyForSend(
+                connection: connection,
+                sessionStore: sessionStore
+            )
+            return nil
+        } catch {
+            return error
+        }
+    }
+
+    private func failNotDispatched(
+        command: String,
+        error: Error,
+        sessionId: String,
+        reducer: TimelineReducer
+    ) {
+        clearSendStageNow()
+        log.error("SEND \(command, privacy: .public) NOT DISPATCHED: \(error.localizedDescription, privacy: .public)")
+        ClientLog.error(
+            "Action",
+            "SEND \(command) NOT DISPATCHED",
+            metadata: ["sessionId": sessionId, "error": error.localizedDescription]
+        )
+        reducer.process(.error(
+            sessionId: sessionId,
+            message: "Not sent: \(error.localizedDescription) Your message is still in the composer."
+        ))
+    }
+
+    private static func sendFailureMessage(_ error: Error, prefix: String) -> String {
+        if error is TurnSendUnconfirmedError {
+            return "Couldn't confirm your message was delivered. It's still in the composer; check the conversation before sending it again."
+        }
+        return "\(prefix): \(error.localizedDescription)"
+    }
+
     private func beginSendTracking() {
         sendAckStage = nil
         reconnectFailureMessage = nil
@@ -739,6 +935,9 @@ final class ChatActionHandler {
     }
 
     private static func isReconnectableSendError(_ error: Error) -> Bool {
+        if let unconfirmed = error as? TurnSendUnconfirmedError {
+            return isReconnectableSendError(unconfirmed.underlying)
+        }
         if let wsError = error as? WebSocketError {
             switch wsError {
             case .notConnected, .sendTimeout:
@@ -777,5 +976,6 @@ final class ChatActionHandler {
         reconnectFailureMessage = nil
         clearSendStageNow()
         isSending = false
+        isAwaitingSendReadiness = false
     }
 }

@@ -307,25 +307,49 @@ struct ServerConnectionSendAckTests {
         }
     }
 
-    @Test func sendAckTimeoutForPromptSteerAndFollowUp() async {
+    /// A frame that reached the socket but was never acknowledged is reported as
+    /// unconfirmed (the server may hold it), carrying the id a resend must reuse.
+    @Test func sendAckTimeoutAfterDispatchIsUnconfirmedForPromptSteerAndFollowUp() async {
         for command in EventFlowAckCommand.allCases {
             let (conn, pipe) = makeEventFlowAckTestConnection(timeout: .milliseconds(40))
 
-            conn._sendMessageForTesting = { _ in }
+            var sentTurnIds: Set<String> = []
+            conn._sendMessageForTesting = { message in
+                if let clientTurnId = extractEventFlowAckRequest(from: message)?.clientTurnId {
+                    sentTurnIds.insert(clientTurnId)
+                }
+            }
 
             do {
                 try await command.send(using: conn, text: "hello")
                 Issue.record("Expected \(command.rawValue) timeout")
-            } catch let error as SendAckError {
-                switch error {
-                case .timeout(let timedOutCommand):
+            } catch let error as TurnSendUnconfirmedError {
+                #expect(error.command == command.rawValue)
+                #expect(sentTurnIds == [error.clientTurnId])
+                if case .timeout(let timedOutCommand)? = error.underlying as? SendAckError {
                     #expect(timedOutCommand == command.rawValue)
-                default:
-                    Issue.record("Expected timeout error, got \(error)")
+                } else {
+                    Issue.record("Expected underlying ack timeout, got \(error.underlying)")
                 }
             } catch {
-                Issue.record("Expected SendAckError.timeout, got \(error)")
+                Issue.record("Expected TurnSendUnconfirmedError, got \(error)")
             }
+            _ = pipe
+        }
+    }
+
+    /// Failing before any frame is written stays a plain never-dispatched error.
+    @Test func sendFailureBeforeDispatchIsNotReportedAsUnconfirmed() async {
+        let (conn, _) = makeEventFlowAckTestConnection(timeout: .milliseconds(40))
+        conn._sendMessageForTesting = { _ in throw WebSocketError.notConnected }
+
+        do {
+            try await conn.sendPrompt("hello")
+            Issue.record("Expected failure")
+        } catch let error as WebSocketError {
+            #expect(error == .notConnected)
+        } catch {
+            Issue.record("Expected WebSocketError.notConnected, got \(error)")
         }
     }
 

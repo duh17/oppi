@@ -44,6 +44,7 @@ final class MacChatSessionRuntimeAdapter:
     private var sessionsById: [String: Session] = [:]
     private var activeSessionIdValue: String?
     private var focusedSessionIdValue: String?
+    private var focusClaimGeneration = 0
     private var liveTransport: MacUnixWebSocketTransport?
     private var terminalStreamConnectError = false
     private var catchUpTracker = SessionStreamCatchUpTracker()
@@ -185,17 +186,36 @@ final class MacChatSessionRuntimeAdapter:
 
     var transportPath: ConnectionTransportPath { .unix }
     var fatalSetupError = false
-    var focusedSessionId: String? { focusedSessionIdValue }
     var isBindTerminal: Bool { terminalStreamConnectError }
 
-    func focus(sessionId: String) {
+    /// One adapter serves one runtime, so a claim only needs the session id;
+    /// release keeps the previous "still ours or unfocused" guard.
+    func acquireFocus(sessionId: String) -> FocusedSessionContext? {
         terminalStreamConnectError = false
         focusedSessionIdValue = sessionId
+        focusClaimGeneration += 1
+        return FocusedSessionContext(sessionId: sessionId, generation: focusClaimGeneration)
+    }
+
+    func releaseFocus(_ claim: FocusedSessionContext) {
+        guard focusedSessionIdValue == nil || focusedSessionIdValue == claim.sessionId else { return }
+        close()
+    }
+
+    var currentFocusClaim: FocusedSessionContext? {
+        focusedSessionIdValue.map {
+            FocusedSessionContext(sessionId: $0, generation: focusClaimGeneration)
+        }
+    }
+
+    func focusedStreamLiveness(sessionId: String) -> FocusedStreamLiveness {
+        focusedSessionIdValue == sessionId && liveTransport != nil ? .connected : .down
     }
 
     func open(
         sessionId: String,
-        scope: SessionRouteScope
+        scope: SessionRouteScope,
+        claim: FocusedSessionContext
     ) async -> AsyncStream<SessionStreamEvent>? {
         terminalStreamConnectError = false
         do {

@@ -39,6 +39,25 @@ extension ChatSessionManager {
         ensureConnected()
     }
 
+    /// Own the focused stream from the moment the chat appears, so its
+    /// teardown is released by this runtime's claim rather than by session id.
+    func claimFocusOnAppear(
+        connection: ServerConnection,
+        sessionStore: SessionStore
+    ) {
+        bindIOSRuntime(connection: connection, sessionStore: sessionStore)
+        acquireFocusClaim()
+    }
+
+    func ensureReadyForSend(
+        connection: ServerConnection,
+        sessionStore: SessionStore,
+        timeout: Duration = ChatSessionManager.focusedStreamBindTimeout
+    ) async throws {
+        bindIOSRuntime(connection: connection, sessionStore: sessionStore)
+        try await ensureReadyForSend(timeout: timeout)
+    }
+
     func reloadTimelineAfterPresentationOverflow(
         connection: ServerConnection,
         sessionStore: SessionStore

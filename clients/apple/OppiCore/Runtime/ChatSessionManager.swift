@@ -97,6 +97,12 @@ final class ChatSessionManager {
 
     private var unexpectedStreamExitCount = 0
     private var wantsAutoReconnect = true
+    /// Ownership claim on the shared focused stream. Release only ever passes
+    /// this claim, so a stale or superseded runtime for the same session (an
+    /// old ChatView released late) cannot tear down a newer owner's stream.
+    private var focusClaim: FocusedSessionContext?
+    /// Single in-flight pre-send readiness pass shared by concurrent senders.
+    private var sendReadinessPass: Task<Void, Error>?
     private let telemetry: ChatSessionRuntimeTelemetryTracker
 
     private var snapshotFlushInFlight = false
@@ -123,6 +129,10 @@ final class ChatSessionManager {
     /// races without opening a real WebSocket. Production streams use
     /// `SessionStreamEvent` so metadata travels in-band.
     var _streamSessionForTesting: ((String) -> AsyncStream<ServerMessage>?)?
+
+    /// Test seam: report focused socket liveness for scripted streams, which
+    /// have no real WebSocket.
+    var _focusedStreamLivenessForTesting: (() -> FocusedStreamLiveness)?
 
     /// Test seam: inject a scripted event stream with in-band metadata.
     var _streamEventsForTesting: ((String) -> AsyncStream<SessionStreamEvent>?)?
@@ -360,7 +370,12 @@ final class ChatSessionManager {
         }
 
         guard let routeScope = resolveRouteScope(),
-              let stream = await focusedStreamPort.open(sessionId: sessionId, scope: routeScope) else {
+              let focusClaim,
+              let stream = await focusedStreamPort.open(
+                  sessionId: sessionId,
+                  scope: routeScope,
+                  claim: focusClaim
+              ) else {
             return nil
         }
         return .events(stream)
@@ -381,9 +396,22 @@ final class ChatSessionManager {
                 transitionTo(.disconnected(reason: .cancelled))
                 return nil
             }
+            // Every await since the claim (cache load, retry delay) may have let
+            // another chat take focus. Only the claim owner binds.
+            guard ownsFocusClaim else {
+                log.warning("Bind abandoned for \(self.sessionId, privacy: .public): this runtime no longer owns the focused stream")
+                transitionTo(.disconnected(reason: .cancelled))
+                return nil
+            }
 
             switch await focusedStreamSetupDisposition() {
             case .bound(let stream):
+                // Ownership may have moved during open; never read a stream
+                // this runtime no longer owns.
+                guard ownsFocusClaim else {
+                    transitionTo(.disconnected(reason: .cancelled))
+                    return nil
+                }
                 clearFocusedStreamRecovery()
                 return stream
             case .missingRoute:
@@ -393,7 +421,7 @@ final class ChatSessionManager {
                 failFocusedStreamSetup(message: "Session stream unavailable")
                 return nil
             case .retryable:
-                focusedStreamPort.setStreamRecovering(true, sessionId: sessionId)
+                setFocusedStreamRecovering(true)
                 if focusedStreamPort.externalOpenClaimBlocks(sessionId: sessionId) {
                     if await waitWhileExternalSessionOpenClaimBlocks() {
                         continue
@@ -446,7 +474,14 @@ final class ChatSessionManager {
     }
 
     private func clearFocusedStreamRecovery() {
-        focusedStreamPort.setStreamRecovering(false, sessionId: sessionId)
+        setFocusedStreamRecovering(false)
+    }
+
+    /// The recovery flag is shared connection state; only the claim owner
+    /// flips it, never a superseded runtime's tail.
+    private func setFocusedStreamRecovering(_ recovering: Bool) {
+        guard ownsFocusClaim else { return }
+        focusedStreamPort.setStreamRecovering(recovering, sessionId: sessionId)
     }
 
     private func waitWhileExternalSessionOpenClaimBlocks() async -> Bool {
@@ -535,6 +570,95 @@ final class ChatSessionManager {
         startConnectLoop()
     }
 
+    /// A turn may be dispatched only when this runtime is streaming, still owns
+    /// the focused stream, and that stream's socket is live. `.streaming` alone
+    /// can outlive a dropped socket or a focus move to another chat.
+    var isReadyForTurnDispatch: Bool {
+        entryState == .streaming
+            && ownsFocusClaim
+            && focusedStreamLiveness == .connected
+    }
+
+    private var focusedStreamLiveness: FocusedStreamLiveness {
+        _focusedStreamLivenessForTesting?()
+            ?? focusedStreamPort.focusedStreamLiveness(sessionId: sessionId)
+    }
+
+    /// Make the focused stream ready before a turn is dispatched, re-checking
+    /// ownership and socket liveness after every wait.
+    ///
+    /// Reuses the manager-owned loop: a loop still binding or a socket that is
+    /// reconnecting on its own is only awaited; a dead loop or a down socket is
+    /// restarted at most once through `reconnect()`, and only while this runtime
+    /// owns its focus claim. A superseded runtime fails the send without
+    /// touching the shared socket. Concurrent callers join one in-flight readiness pass, so a second caller
+    /// can never cancel the first caller's restarted loop. Stopped sessions stay
+    /// history-only (explicit Resume) and a torn-down runtime never reconnects.
+    /// Throws when not ready within `timeout`; nothing has been dispatched then.
+    func ensureReadyForSend(timeout: Duration = focusedStreamBindTimeout) async throws {
+        let pass: Task<Void, Error>
+        if let inFlight = sendReadinessPass {
+            pass = inFlight
+        } else {
+            pass = Task { @MainActor [weak self] in
+                guard let self else { throw ChatSessionSendReadinessError.notConnected }
+                try await self.runSendReadinessPass(timeout: timeout)
+            }
+            sendReadinessPass = pass
+        }
+        defer {
+            if sendReadinessPass == pass { sendReadinessPass = nil }
+        }
+        try await pass.value
+        // Resuming here was a suspension point: validate again for this caller.
+        if case .stopped = entryState {
+            throw ChatSessionSendReadinessError.sessionStopped
+        }
+        guard isReadyForTurnDispatch else {
+            throw ChatSessionSendReadinessError.notConnected
+        }
+    }
+
+    private func runSendReadinessPass(timeout: Duration) async throws {
+        let deadline = ContinuousClock.now + timeout
+        var restarted = false
+        while true {
+            if case .stopped = entryState {
+                throw ChatSessionSendReadinessError.sessionStopped
+            }
+            if isReadyForTurnDispatch { return }
+            guard wantsAutoReconnect, !Task.isCancelled, ownsFocusClaim else {
+                throw ChatSessionSendReadinessError.notConnected
+            }
+
+            let isStreaming = entryState == .streaming
+            let needsRestart = !isConnectLoopLive
+                || (isStreaming && focusedStreamLiveness == .down)
+            if needsRestart, !restarted {
+                restarted = true
+                if connectLoopTask == nil, onReconnect == nil {
+                    startConnectLoop()
+                } else {
+                    reconnect()
+                }
+            }
+
+            let remaining = deadline - ContinuousClock.now
+            guard remaining > .zero else {
+                throw ChatSessionSendReadinessError.notConnected
+            }
+            // Short slices so ownership is re-checked after every wait.
+            let slice = min(remaining, .milliseconds(isStreaming ? 100 : 250))
+            if isStreaming {
+                // Socket recovering on its own, or a restart that has not
+                // left `.streaming` yet.
+                try? await Task.sleep(for: slice)
+            } else {
+                try? await waitUntilStreaming(timeout: slice)
+            }
+        }
+    }
+
     private var isConnectLoopLive: Bool {
         guard let connectLoopTask, !connectLoopTask.isCancelled else { return false }
         switch entryState {
@@ -619,7 +743,14 @@ final class ChatSessionManager {
     /// history but does NOT open a WebSocket (which would auto-resume the
     /// pi process on the server). The user must explicitly resume via the
     /// "Resume" button in the footer.
+    ///
+    /// **Focus claim**: held for the view's lifetime, not the stream's. Only the
+    /// first connect of a runtime that has none claims; reconnects reuse it and
+    /// a superseded runtime exits here without touching the shared stream.
     func connect() async {
+        // A runtime already torn down (cleanup ran while this loop was
+        // starting) must never claim focus over the visible chat.
+        guard !Task.isCancelled, wantsAutoReconnect else { return }
         let generation = connectionGeneration
 
         // A notification / deep-link open owns the focused session until its own
@@ -633,6 +764,15 @@ final class ChatSessionManager {
             return
         }
 
+        if focusClaim == nil {
+            acquireFocusClaim()
+        }
+        guard ownsFocusClaim else {
+            log.warning("Connect skipped for \(self.sessionId, privacy: .public): this runtime no longer owns the focused stream")
+            transitionTo(.disconnected(reason: .cancelled))
+            return
+        }
+
         transitionTo(.idle)
         if let resolvedWorkspaceId = effectsStatePort.resolveSessionReentryWorkspaceId(
             sessionId: sessionId,
@@ -640,7 +780,6 @@ final class ChatSessionManager {
         ) {
             workspaceIdHint = resolvedWorkspaceId
         }
-        focusedStreamPort.focus(sessionId: sessionId)
         focusedStreamPort.fatalSetupError = false
         cancelAutoReconnect()
         cancelStateSync()
@@ -720,20 +859,24 @@ final class ChatSessionManager {
         guard !Task.isCancelled else {
             transitionTo(.disconnected(reason: .cancelled))
             cancelStateSync()
-            disconnectIfCurrent(generation)
             return
         }
 
-        // Wire silence watchdog → full reconnect
+        // Wire silence watchdog → full reconnect. The handler is a shared
+        // connection slot: only the claim owner installs it, and it acts only
+        // while that runtime still owns the stream.
         let sid = sessionId
-        focusedStreamPort.setReconnectHandler { [weak self] in
-            log.error("Silence watchdog triggered reconnect for \(sid)")
-            self?.effectsStatePort.recordLog(
-                .error,
-                message: "Silence watchdog triggered reconnect",
-                metadata: ["sessionId": sid]
-            )
-            self?.reconnect()
+        if ownsFocusClaim {
+            focusedStreamPort.setReconnectHandler { [weak self] in
+                guard let self, self.ownsFocusClaim else { return }
+                log.error("Silence watchdog triggered reconnect for \(sid)")
+                self.effectsStatePort.recordLog(
+                    .error,
+                    message: "Silence watchdog triggered reconnect",
+                    metadata: ["sessionId": sid]
+                )
+                self.reconnect()
+            }
         }
 
         var hasReceivedConnected = false
@@ -1060,8 +1203,8 @@ final class ChatSessionManager {
             shouldAutoReconnect = hasReceivedConnected
                 && generation == connectionGeneration
                 && wantsAutoReconnect
-                // Only the still-focused session may reclaim the shared transport.
-                && focusedStreamPort.isFocused(sessionId: sessionId)
+                // Only the current owner may reclaim the shared transport.
+                && ownsFocusClaim
                 && !focusedStreamPort.fatalSetupError
                 && effectsStatePort.session(id: sessionId)?.status != .stopped
         default:
@@ -1096,9 +1239,14 @@ final class ChatSessionManager {
 
         effectsStatePort.emitTimelineSessionEnded(sessionId: sessionId)
 
-        focusedStreamPort.setReconnectHandler(nil)
+        // A stale tail must not clear a newer owner's (or another session's)
+        // watchdog handler; a leftover handler of ours is inert once unowned.
+        // The focus claim is deliberately kept: stream end never vacates focus,
+        // so the scheduled reconnect (or a Send) rebinds as the same owner.
+        if ownsFocusClaim {
+            focusedStreamPort.setReconnectHandler(nil)
+        }
         cancelStateSync()
-        disconnectIfCurrent(generation)
     }
 
     /// Reconcile session state from REST after a stop attempt times out.
@@ -1205,13 +1353,14 @@ final class ChatSessionManager {
         cancelAutoReconnect()
         cancelPresentationReloadRetry()
         cancelHistoryReload()
+        sendReadinessPass?.cancel()
+        sendReadinessPass = nil
         coalescer.flushNow()
         transitionTo(.disconnected(reason: .cancelled))
         resumeStreamingWaiters(with: .failure(CancellationError()))
         cancelStateSync()
-        // History-only stopped connects return before the stream-loop tail, so
-        // still-owned focus has to be released here rather than after the socket ends.
-        disconnectIfCurrent(connectionGeneration)
+        // The only release: the claim lives as long as the view's runtime.
+        releaseFocusClaim()
     }
 
     // MARK: - Per-Session Timeline Routing
@@ -2122,15 +2271,30 @@ final class ChatSessionManager {
         }
     }
 
-    private func disconnectIfCurrent(_ generation: Int) {
-        guard generation == connectionGeneration else { return }
-        // Only disconnect if WE are still the active session.
-        // Without this check, when session B takes over the WS,
-        // session A's cleanup would kill session B's connection,
-        // causing a connect/disconnect ping-pong loop.
-        guard focusedStreamPort.isFocused(sessionId: sessionId)
-              || focusedStreamPort.focusedSessionId == nil else { return }
-        focusedStreamPort.close()
+    /// Claim the focused stream for this runtime: on view appear, or on the
+    /// first connect of a runtime with no claim. No-op while already owning; a
+    /// refused focus (external open in progress) keeps any claim already held.
+    func acquireFocusClaim() {
+        if ownsFocusClaim { return }
+        if let claim = focusedStreamPort.acquireFocus(sessionId: sessionId) {
+            focusClaim = claim
+        }
+    }
+
+    /// True while this runtime's claim is the store's current focus. A newer
+    /// chat (same or another session) superseding it makes this false for good.
+    var ownsFocusClaim: Bool {
+        guard let focusClaim else { return false }
+        return focusedStreamPort.currentFocusClaim == focusClaim
+    }
+
+    /// Release this runtime's claim, once, from `cleanup()` only. The port
+    /// re-validates it, so a superseded runtime never closes a newer owner's
+    /// stream (previously a session-id check let a late cleanup kill it).
+    private func releaseFocusClaim() {
+        guard let claim = focusClaim else { return }
+        focusClaim = nil
+        focusedStreamPort.releaseFocus(claim)
     }
 }
 

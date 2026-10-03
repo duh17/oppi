@@ -1340,10 +1340,11 @@ struct ChatSessionManagerTests {
         streams.finish(index: 1)
         await secondConnect.value
 
-        #expect(
-            connection.focusedSessionId == nil,
-            "Current generation should disconnect on normal loop exit"
-        )
+        // The focus claim lives as long as the runtime, not the stream: a loop
+        // exit keeps it (no vacancy before reconnect); only cleanup releases.
+        #expect(connection.focusedSessionId == "s1")
+        manager.cleanup()
+        #expect(connection.focusedSessionId == nil, "Cleanup releases the runtime's claim")
     }
 
     @Test func staleCleanupSkipsDisconnectWhenSocketOwnershipMoved() async {

@@ -93,8 +93,15 @@ struct ServerConnectionLifecycleTests {
             conn.sender.advanceTransportGeneration()
         }
 
-        await #expect(throws: CancellationError.self) {
+        // The frame went out before the replacement, so delivery is unconfirmed
+        // (not "never sent"); it must still not be replayed on the new transport.
+        do {
             try await conn.sendPrompt("do not replay")
+            Issue.record("Expected the replacement to fence the send")
+        } catch let error as TurnSendUnconfirmedError {
+            #expect(error.underlying is CancellationError)
+        } catch {
+            Issue.record("Expected TurnSendUnconfirmedError, got \(error)")
         }
 
         #expect(attempts == 1)
