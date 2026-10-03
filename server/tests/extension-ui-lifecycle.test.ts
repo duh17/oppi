@@ -225,6 +225,49 @@ describe("SDK UI bridge lifecycle", () => {
     expect(newBridge.respond({ id: newId, value: "current value" })).toBe(true);
     await expect(newPromise).resolves.toBe("current value");
   });
+
+  it("throttles repeated setWidget replacements to the newest snapshot, never delaying a clear", () => {
+    vi.useFakeTimers();
+    try {
+      const events: SessionBackendEvent[] = [];
+      const ui = new SdkUiBridge(
+        (event) => events.push(event),
+        () => false,
+      ).createContext();
+      const widgetLines = () =>
+        events.flatMap((event) =>
+          event.type === "extension_ui_request" && event.method === "setWidget"
+            ? [event.widgetLines?.[0] ?? "<clear>"]
+            : [],
+        );
+      const component = (n: number) => () => ({
+        render: () => [`frame ${n}`],
+        invalidate() {},
+      });
+
+      // A new key goes out at once; a tight replacement loop collapses to its newest frame.
+      for (let n = 0; n < 100; n += 1) ui.setWidget("jobs", component(n) as never);
+      expect(widgetLines()).toEqual(["frame 0"]);
+      vi.advanceTimersByTime(250);
+      expect(widgetLines()).toEqual(["frame 0", "frame 99"]);
+
+      // Plain line widgets share the same throttle.
+      ui.setWidget("jobs", ["lines a"]);
+      ui.setWidget("jobs", ["lines b"]);
+      expect(widgetLines()).toHaveLength(2);
+      vi.advanceTimersByTime(250);
+      expect(widgetLines().at(-1)).toBe("lines b");
+
+      // A clear is immediate and cancels the pending replacement.
+      ui.setWidget("jobs", ["lines c"]);
+      ui.setWidget("jobs", undefined);
+      expect(widgetLines().at(-1)).toBe("<clear>");
+      vi.advanceTimersByTime(1_000);
+      expect(widgetLines().at(-1)).toBe("<clear>");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("extension UI semantic metadata", () => {

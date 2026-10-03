@@ -49,7 +49,9 @@ interface ExtensionUISourceScope {
 }
 
 interface ActiveWidgetComponent extends ExtensionUISourceScope {
-  component: ExtensionUINativeRenderableComponent;
+  component?: ExtensionUINativeRenderableComponent;
+  /** `setWidget(key, string[])`: sent as given, with no component render. */
+  lines?: string[];
   placement?: ExtensionUIWidgetPlacement;
 }
 
@@ -373,19 +375,30 @@ export class SdkUiBridge {
         });
       },
 
+      // Every replacement shares one per-key throttle with requestRender(), so an
+      // extension calling setWidget() in a loop still sends at most one snapshot
+      // per throttle window, and the newest content wins. A new key is sent at
+      // once; a clear is never delayed.
       setWidget: (key, content, options) => {
         this.disposeWidget(key);
         const sourceScope = detectExtensionUISourceScope();
 
-        if (content === undefined || Array.isArray(content)) {
+        if (content === undefined) {
           this.emitExtensionUIRequest({
             id: randomUUID(),
             method: "setWidget",
             widgetKey: key,
-            widgetLines: content,
+            widgetLines: undefined,
             widgetPlacement: options?.placement,
             ...sourceScope,
           });
+          this.widgetSnapshotEmittedAt.set(key, Date.now());
+          return;
+        }
+
+        if (Array.isArray(content)) {
+          this.activeWidgets.set(key, { lines: content, placement: options?.placement, ...sourceScope });
+          this.requestWidgetSnapshot(key);
           return;
         }
 
@@ -395,7 +408,7 @@ export class SdkUiBridge {
             createCustomUISnapshotTheme() as never,
           ) as ExtensionUINativeRenderableComponent;
           this.activeWidgets.set(key, { component, placement: options?.placement, ...sourceScope });
-          this.emitWidgetSnapshot(key);
+          this.requestWidgetSnapshot(key);
         } catch (error) {
           this.disposeWidget(key);
           this.emitExtensionUIRequest({
@@ -565,18 +578,19 @@ export class SdkUiBridge {
       if (failure) failures.push(failure);
     }
     this.clearPendingWidgetSnapshots();
+    this.widgetSnapshotEmittedAt.clear();
 
     return { failures };
   }
 
   private disposeWidget(key: string): SdkUiBridgeCleanupFailure | undefined {
+    // The last send time outlives the widget so a replacement stays throttled.
     this.clearPendingWidgetSnapshot(key);
-    this.widgetSnapshotEmittedAt.delete(key);
     const active = this.activeWidgets.get(key);
     this.activeWidgets.delete(key);
 
     try {
-      active?.component.dispose?.();
+      active?.component?.dispose?.();
       return undefined;
     } catch (error: unknown) {
       const errorMessage = safeErrorMessage(error);
@@ -592,6 +606,19 @@ export class SdkUiBridge {
         message: `Extension widget "${key}" cleanup failed: ${errorMessage}`,
       };
     }
+  }
+
+  /** Send now when the throttle window is open; otherwise once, when it opens. */
+  private requestWidgetSnapshot(key: string): void {
+    const emittedAt = this.widgetSnapshotEmittedAt.get(key);
+    if (
+      emittedAt === undefined ||
+      Date.now() - emittedAt >= EXTENSION_UI_HIGH_FREQUENCY_UPDATE_THROTTLE_MS
+    ) {
+      this.emitWidgetSnapshot(key);
+      return;
+    }
+    this.scheduleWidgetSnapshot(key);
   }
 
   private scheduleWidgetSnapshot(key: string): void {
@@ -653,13 +680,14 @@ export class SdkUiBridge {
       return;
     }
 
-    const nativeSurface = renderWidgetNativeSurface(active.component, key);
+    const component = active.component;
+    const nativeSurface = component ? renderWidgetNativeSurface(component, key) : undefined;
 
     this.emitExtensionUIRequest({
       id: randomUUID(),
       method: "setWidget",
       widgetKey: key,
-      widgetLines: renderWidgetSnapshotLines(active.component),
+      widgetLines: component ? renderWidgetSnapshotLines(component) : active.lines,
       widgetPlacement: active.placement,
       nativeSurface,
       extensionScopeId: active.extensionScopeId,

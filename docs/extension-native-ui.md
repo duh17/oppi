@@ -250,6 +250,8 @@ Rules:
 
 - `setWidget(key, undefined)` or an empty normalized widget clears that widget surface.
 - Component widgets update by replacing snapshots after `tui.requestRender()`.
+- The managed bridge sends at most one snapshot per widget key every 250 ms. `requestRender()` and repeated `setWidget(key, ...)` replacements share that limit, and the newest content wins. A new key is sent at once and a clear is never delayed, so extensions do not need their own render timer.
+- A full-screen reader opened from a native surface follows replacements for the same surface `id`, and keeps the last snapshot after the widget is cleared.
 - Persistent surfaces survive normal turn boundaries and agent stops unless explicitly cleared.
 - Persistent surfaces are scoped to the session, not the workspace globally.
 

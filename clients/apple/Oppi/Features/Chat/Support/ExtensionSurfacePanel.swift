@@ -312,7 +312,18 @@ struct ExtensionNativeSurfaceDetailSheet: View {
     let statusText: String?
     var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)?
+    /// Reads the session's current snapshot for this surface id. Observation
+    /// re-renders the reader on each widget update, which the server already
+    /// throttles and size-limits; no extra data is fetched. When the surface is
+    /// cleared, the reader keeps the last snapshot it showed.
+    var liveSurface: (@MainActor () -> ExtensionUINativeSurface?)? = nil
     var usesNavigationBackChrome = false
+
+    @State private var lastLiveSurface: ExtensionUINativeSurface?
+
+    private var displayedSurface: ExtensionUINativeSurface {
+        liveSurface?() ?? lastLiveSurface ?? surface
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -356,7 +367,7 @@ struct ExtensionNativeSurfaceDetailSheet: View {
             Divider()
 
             ExtensionNativeBlocksView(
-                content: ExtensionNativeBlockContent(surface: surface),
+                content: ExtensionNativeBlockContent(surface: displayedSurface),
                 sizing: .fill,
                 contentInsets: NSDirectionalEdgeInsets(top: 18, leading: 18, bottom: 18, trailing: 18),
                 spacing: 12,
@@ -366,6 +377,9 @@ struct ExtensionNativeSurfaceDetailSheet: View {
         }
         .themedScrollSurface()
         .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail")
+        .onChange(of: liveSurface?()) { _, current in
+            if let current { lastLiveSurface = current }
+        }
         .horizontalBackSwipeGesture(isEnabled: usesNavigationBackChrome) {
             dismiss()
         }
@@ -709,6 +723,7 @@ private struct ExtensionSurfaceDrawer: View {
     let onCollapse: () -> Void
 
     @Environment(\.openChatReader) private var openChatReader
+    @Environment(ServerConnection.self) private var connection: ServerConnection?
     @State private var nativeDetailPresented = false
     @State private var terminalDetailPresented = false
 
@@ -864,13 +879,23 @@ private struct ExtensionSurfaceDrawer: View {
                         subtitle: entry.subtitle,
                         statusText: statusText,
                         linkContext: linkContext,
-                        onOpenURL: onOpenURL
+                        onOpenURL: onOpenURL,
+                        liveSurface: liveSurfaceLookup(id: nativeSurface.surface.id)
                     )
                 )
             )
             return
         }
         nativeDetailPresented = true
+    }
+
+    /// Looks the surface up by protocol id each time the reader renders, so a
+    /// pushed reader follows updates the drawer would show.
+    private func liveSurfaceLookup(id: String) -> (@MainActor () -> ExtensionUINativeSurface?)? {
+        guard let sessionID = linkContext.sessionID else { return nil }
+        return { [weak connection] in
+            connection?.extensionSurfaceBySession[sessionID]?.nativeSurfaces[id]?.surface
+        }
     }
 
     private func openTerminalDetail() {

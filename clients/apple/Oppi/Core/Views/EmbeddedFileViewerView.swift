@@ -34,6 +34,8 @@ struct ExtensionNativeReaderContent {
     let statusText: String?
     var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)? = nil
+    /// Current snapshot for the same surface id; the reader follows widget updates through it.
+    var liveSurface: (@MainActor () -> ExtensionUINativeSurface?)? = nil
 }
 
 /// Timeline/chat reader body. Only the ``ChatReaderNavTarget`` id rides the path.
@@ -613,6 +615,7 @@ private struct ChatReaderPageView: View {
                 statusText: spec.statusText,
                 linkContext: spec.linkContext,
                 onOpenURL: spec.onOpenURL,
+                liveSurface: spec.liveSurface,
                 usesNavigationBackChrome: true
             )
         }

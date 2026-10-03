@@ -1,4 +1,6 @@
 import Foundation
+import Observation
+import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -131,6 +133,40 @@ struct ExtensionNativeBlockViewsTests {
         #expect(paintedText(in: stack).isEmpty)
     }
 
+    @Test func fullScreenReaderFollowsLiveSurfaceAndKeepsLastAfterClear() async throws {
+        let box = LiveSurfaceBox(surface: surface("first"))
+        let host = UIHostingController(rootView: ExtensionNativeSurfaceDetailSheet(
+            surface: surface("tapped"),
+            identifierSuffix: "jobs",
+            title: "Jobs",
+            subtitle: nil,
+            statusText: nil,
+            liveSurface: { box.surface }
+        ))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        func shown() async -> [String] {
+            for _ in 0 ..< 20 {
+                await Task.yield()
+                host.view.layoutIfNeeded()
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            return subviews(of: ExtensionNativeTerminalView.self, in: host.view)
+                .flatMap { subviews(of: UITextView.self, in: $0) }
+                .compactMap(\.text)
+        }
+
+        #expect(await shown() == ["first"])
+        box.surface = surface("second")
+        #expect(await shown() == ["second"])
+        // The widget was cleared: keep the last live snapshot, not the tap-time copy.
+        box.surface = nil
+        #expect(await shown() == ["second"])
+    }
+
     @Test func textOnlyTerminalBlockDecodesPlainLinesForPreviews() throws {
         let json = #"{"type":"terminal","text":"\u001b[1mbuild\u001b[0m\n10%\r100%\n"}"#
         let block = try JSONDecoder().decode(ExtensionUINativeBlock.self, from: Data(json.utf8))
@@ -176,6 +212,23 @@ struct ExtensionNativeBlockViewsTests {
     }
 
     // MARK: - Helpers
+
+    @MainActor @Observable
+    final class LiveSurfaceBox {
+        var surface: ExtensionUINativeSurface?
+        init(surface: ExtensionUINativeSurface?) { self.surface = surface }
+    }
+
+    private func surface(_ line: String) -> ExtensionUINativeSurface {
+        ExtensionUINativeSurface(
+            version: 1,
+            id: "widget:jobs",
+            source: "widget",
+            presentation: ExtensionUINativePresentation(style: "surfacePanel", title: "Jobs", subtitle: nil),
+            blocks: [terminal(id: "out", line: line)],
+            fallback: nil
+        )
+    }
 
     private func base(_ id: String) -> ExtensionUIBlockBase {
         ExtensionUIBlockBase(id: id, accessibility: nil)
