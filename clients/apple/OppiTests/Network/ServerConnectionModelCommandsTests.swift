@@ -757,6 +757,12 @@ private func markFocusedSessionFullySubscribed(_ connection: ServerConnection, s
     connection.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
     connection._setActiveSessionIdForTesting(sessionId)
     connection.setFocusedSessionStreamEndpointKindForTesting("split_session")
+    connection.routeStreamMessage(StreamMessage(
+        sessionId: sessionId,
+        seq: nil,
+        currentSeq: nil,
+        message: .connected(session: makeTestSession(id: sessionId, workspaceId: "w1"))
+    ))
     _ = await connection.sessionStreamCoordinator.streamSession(
         connection: connection,
         sessionId: sessionId,
