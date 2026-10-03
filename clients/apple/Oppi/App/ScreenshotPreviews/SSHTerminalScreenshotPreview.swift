@@ -6,6 +6,13 @@ import SwiftUI
 /// so the toolbar overview and its badge render.
 struct SSHTerminalScreenshotPreview: View {
     @State private var channel = try? SSHTerminalChannel()
+    /// A server-scoped connection, as the app root injects, so the input bar
+    /// claims the shared dictation manager and shows its mic.
+    @State private var connection: ServerConnection = {
+        let connection = ServerConnection()
+        connection.setPreviewServerId("preview-server")
+        return connection
+    }()
 
     var body: some View {
         NavigationStack {
@@ -14,6 +21,7 @@ struct SSHTerminalScreenshotPreview: View {
                     .task { play(on: channel) }
             }
         }
+        .environment(connection)
         .accessibilityIdentifier("screenshot.ready")
     }
 

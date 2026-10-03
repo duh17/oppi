@@ -35,7 +35,7 @@ struct SSHTerminalComposer: View {
                 isBusy: false,
                 busyStreamingBehavior: $streamingBehavior,
                 isSending: false,
-                placeholderOverride: "Type or dictate · Send presses Enter",
+                placeholderOverride: "Type or dictate a command",
                 // Empty Send is a bare Enter: accept a default, continue a pager.
                 allowsEmptySubmit: true,
                 sendProgressText: nil,
