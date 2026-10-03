@@ -96,6 +96,13 @@ struct SSHOppiStatus: Equatable, Sendable {
     var servesTailscaleHTTPS: Bool {
         transport?.lowercased() == "https" && tlsMode?.lowercased() == "tailscale"
     }
+
+    /// Any HTTPS Oppi, including self-signed LAN and a public origin.
+    /// SSH pairing uses this. Same-account Tailscale pairing still requires
+    /// `servesTailscaleHTTPS`.
+    var servesHTTPS: Bool {
+        transport?.lowercased() == "https"
+    }
 }
 
 struct SSHPreflightReport: Equatable, Sendable {
@@ -121,9 +128,15 @@ struct SSHPreflightReport: Equatable, Sendable {
         [systemCheck, nodeCheck, npmCheck, gitCheck, tailscaleCheck, oppiCheck, tailscaleHTTPSCheck]
     }
 
-    /// Everything passes: the iPhone's Pair button should work.
+    /// Everything passes: same-account Tailscale pairing should work.
     var isReadyToPair: Bool {
         checks.allSatisfy { $0.status == .ok }
+    }
+
+    /// Oppi is installed and already serving HTTPS. SSH pairing does not
+    /// require the Tailscale CLI or a Tailscale certificate.
+    var canPairOverSSH: Bool {
+        oppiPath != nil && oppiStatus?.servesHTTPS == true
     }
 
     private var systemCheck: SSHPreflightCheck {
@@ -223,7 +236,7 @@ struct SSHPreflightReport: Equatable, Sendable {
         let tlsMode = oppiStatus.tlsMode ?? "unknown"
         return SSHPreflightCheck(
             title: title,
-            detail: "The server is set to \(transport) with \(tlsMode) TLS. Pairing from this iPhone needs HTTPS with a Tailscale certificate.",
+            detail: "The server is set to \(transport) with \(tlsMode) TLS. Same-account Tailscale pairing needs a Tailscale certificate. SSH pairing can use any HTTPS Oppi is already serving.",
             status: .missing
         )
     }
@@ -274,6 +287,12 @@ enum SSHPreflightFailure: Error, Equatable, Sendable {
     case probeRefused
     case probeTimedOut
     case probeIncomplete
+    /// Status did not show HTTPS, so no invite command was sent.
+    case serverNotServingHTTPS
+    /// `oppi pair --json` failed. The invite text is not included.
+    case inviteRefused
+    /// Stdout was not a usable HTTPS invite. The body is not included.
+    case inviteInvalid
 
     var message: String {
         switch self {
@@ -305,6 +324,104 @@ enum SSHPreflightFailure: Error, Equatable, Sendable {
             "The check command did not finish in time."
         case .probeIncomplete:
             "The check command ended before reporting all results."
+        case .serverNotServingHTTPS:
+            "Oppi is not serving HTTPS on this Mac. Start `oppi serve`, then try again."
+        case .inviteRefused:
+            "The server did not issue a pairing invite. Start `oppi serve`, then try again."
+        case .inviteInvalid:
+            "The server's pairing invite was not usable. Request a fresh one and try again."
         }
+    }
+}
+
+// MARK: - SSH invite mint
+
+/// Where an SSH setup or pair connection is dialed.
+enum SSHPairDial {
+    enum Route: Equatable, Sendable {
+        case tailnet
+        case direct
+        /// A `*.ts.net` name while Oppi's Tailscale node is stopped.
+        case tailnetRequired
+    }
+
+    static func route(host: String, tailnetRunning: Bool) -> Route {
+        guard ServerTLSTrustPolicy.isTailscaleHostname(host) else { return .direct }
+        return tailnetRunning ? .tailnet : .tailnetRequired
+    }
+}
+
+/// Fixed remote commands for pairing over SSH. Nothing here is built from
+/// the username, host, or password. The client runs the status script first
+/// and sends the pair script only when that status says HTTPS and loopback
+/// health answered.
+enum SSHPairMint {
+    static let maxInviteOutput = 16 * 1024
+
+    /// Login-shell PATH, matching the setup probe. sshd's own PATH misses Homebrew.
+    static let loginPathPreamble = """
+    login_path=$("${SHELL:-/bin/sh}" -lc 'printf "\\nOPPI_PATH=%s\\n" "$PATH"' </dev/null 2>/dev/null | sed -n 's/^OPPI_PATH=//p' | tail -n 1)
+    [ -n "$login_path" ] && PATH=$login_path
+    """
+
+    /// Prints `end=1` only after loopback `/health` answers. Config that says
+    /// HTTPS while `oppi serve` is stopped does not.
+    static let statusScript = loginPathPreamble + """
+
+    status=$(oppi status --json </dev/null 2>/dev/null | tr -d '\\r\\n')
+    echo "oppi_status=$status"
+    transport=$(printf '%s' "$status" | sed -n 's/.*"transport"[[:space:]]*:[[:space:]]*"\\([^\"]*\\)".*/\\1/p' | head -n 1)
+    port=$(printf '%s' "$status" | sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p' | head -n 1)
+    case "$port" in
+      ''|*[!0-9]*) exit 0 ;;
+    esac
+    [ "$transport" = "https" ] || exit 0
+    body=$(curl -sk --max-time 5 "https://127.0.0.1:${port}/health" || true)
+    case "$body" in
+      *'"ok":true'*'"protocol":2'*|*'"ok": true'*'"protocol": 2'*) echo end=1 ;;
+    esac
+
+    """
+
+    /// Default 90s single-use invite. No `--ttl`, no `--show-token`, no extra arguments.
+    static let pairScript = loginPathPreamble + """
+
+    exec oppi pair --json
+
+    """
+
+    static func servesHTTPS(_ output: String) -> Bool {
+        guard let status = status(from: output) else { return false }
+        return status.servesHTTPS
+    }
+
+    /// Nil when the script did not finish or status JSON is missing or garbled.
+    static func status(from output: String) -> SSHOppiStatus? {
+        var values: [String: String] = [:]
+        for line in output.split(whereSeparator: \.isNewline) {
+            guard let separator = line.firstIndex(of: "=") else { continue }
+            let key = String(line[..<separator])
+            let value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespaces)
+            values[key] = value
+        }
+        guard values["end"] == "1" else { return nil }
+        return values["oppi_status"].flatMap(SSHOppiStatus.init(json:))
+    }
+
+    /// Decodes `oppi pair --json`. Rejects anything that is not a single HTTPS invite.
+    /// Does not include the body in the error.
+    static func invite(from output: String) throws(SSHPreflightFailure) -> TailscalePairingInvite {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.utf8.count <= maxInviteOutput,
+              trimmed.hasPrefix("{"), trimmed.hasSuffix("}"),
+              let invite = try? JSONDecoder().decode(TailscalePairingInvite.self, from: Data(trimmed.utf8)),
+              !invite.inviteURL.isEmpty,
+              invite.scheme.lowercased() == "https",
+              let url = URL(string: invite.inviteURL),
+              url.scheme?.lowercased() == "oppi",
+              url.host?.lowercased() == "connect" else {
+            throw SSHPreflightFailure.inviteInvalid
+        }
+        return invite
     }
 }

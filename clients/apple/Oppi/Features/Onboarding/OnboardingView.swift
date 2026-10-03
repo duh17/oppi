@@ -517,6 +517,42 @@ enum InviteBootstrapService {
     private static func shortFingerprint(_ fingerprint: String) -> String {
         fingerprint.count > 24 ? String(fingerprint.prefix(24)) + "…" : fingerprint
     }
+
+    /// Turns an already-minted invite URL into a selected paired server.
+    /// Tailscale same-user pairing and SSH pairing both stop here. Sends one
+    /// `/pair`. Does not log the invite.
+    @MainActor
+    static func enroll(
+        inviteURL: String,
+        serverStore: ServerStore,
+        coordinator: ConnectionCoordinator,
+        confirmTrust: @MainActor (String) async -> Bool
+    ) async throws -> (name: String, selected: Bool) {
+        guard let credentials = ServerCredentials.decodeInviteURLString(inviteURL) else {
+            throw InviteBootstrapError.message(
+                "The pairing invite was not usable. Request a fresh one and try again."
+            )
+        }
+        let existing = credentials.normalizedServerFingerprint.flatMap {
+            serverStore.server(for: $0)?.credentials
+        } ?? serverStore.server(forHost: credentials.host, port: credentials.port)?.credentials
+        let bootstrap = try await validateAndBootstrap(
+            credentials: credentials,
+            existingCredentials: existing,
+            confirmTrust: confirmTrust
+        )
+        guard let pairedServer = PairedServer(
+            from: bootstrap.effectiveCredentials,
+            sortOrder: serverStore.servers.count
+        ) else {
+            throw InviteBootstrapError.message("Missing server fingerprint")
+        }
+        let outcome = await coordinator.addServerReady(pairedServer, switchTo: true)
+        guard outcome != .failed else {
+            throw InviteBootstrapError.message("Connection blocked by server transport policy")
+        }
+        return (pairedServer.name, outcome == .selected)
+    }
 }
 
 #if DEBUG

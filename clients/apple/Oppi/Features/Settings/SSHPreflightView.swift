@@ -15,7 +15,12 @@ struct SSHPreflightView: View {
     private static let manualSelection = "\u{0}manual"
     private static let sshPort: UInt16 = 22
 
+    var onPaired: (() -> Void)?
+
     private var tailnet: TailnetNodeController { .shared }
+
+    @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(ServerStore.self) private var serverStore
 
     @State private var selection: String
     @State private var manualHost = ""
@@ -25,10 +30,13 @@ struct SSHPreflightView: View {
     @State private var runID = UUID()
     @State private var task: Task<Void, Never>?
     @State private var forgetHost: String?
+    @State private var pairing = false
+    @State private var pairMessage: String?
 
     /// `initialPeer` preselects a machine from the tailnet list; the picker
     /// still allows changing it.
-    init(initialPeer: TailnetPeer? = nil) {
+    init(initialPeer: TailnetPeer? = nil, onPaired: (() -> Void)? = nil) {
+        self.onPaired = onPaired
         _selection = State(initialValue: initialPeer?.dialHost ?? "")
     }
 
@@ -123,8 +131,8 @@ struct SSHPreflightView: View {
                     .accessibilityIdentifier("sshPreflight.check")
             }
         } footer: {
-            if tailnet.state != .running {
-                Text("Connect Tailscale first.")
+            if ServerTLSTrustPolicy.isTailscaleHostname(targetHost), tailnet.state != .running {
+                Text("A Tailscale name needs Oppi's Tailscale connection.")
             }
         }
     }
@@ -155,7 +163,25 @@ struct SSHPreflightView: View {
             } header: {
                 Text(host)
             } footer: {
-                Text(Self.resultFooter(report))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(Self.resultFooter(report))
+                    if report.canPairOverSSH {
+                        if pairing {
+                            HStack {
+                                ProgressView().controlSize(.small)
+                                Text("Pairing…").foregroundStyle(.themeComment)
+                            }
+                        } else {
+                            Button("Pair") { pair(host: host) }
+                                .accessibilityIdentifier("sshPreflight.pair")
+                        }
+                        if let pairMessage {
+                            Text(pairMessage)
+                                .font(.footnote)
+                                .foregroundStyle(.themeComment)
+                        }
+                    }
+                }
             }
         }
     }
@@ -228,7 +254,20 @@ struct SSHPreflightView: View {
     }
 
     private var canCheck: Bool {
-        tailnet.state == .running && !targetHost.isEmpty && !username.isEmpty && !password.isEmpty
+        !pairing && !targetHost.isEmpty && !username.isEmpty && !password.isEmpty
+    }
+
+    /// `*.ts.net` uses the embedded node only while it is running. It is not
+    /// dialed on the system network. Every other host uses the current network.
+    private func dialSSH(host: String) async throws -> Int32 {
+        switch SSHPairDial.route(host: host, tailnetRunning: tailnet.state == .running) {
+        case .tailnet:
+            return try await tailnet.dialTCP(host: host, port: Self.sshPort, timeout: .seconds(15))
+        case .direct:
+            return try await SSHDirectTCP.dial(host: host, port: Self.sshPort)
+        case .tailnetRequired:
+            throw SSHPreflightFailure.tailnetNotRunning
+        }
     }
 
     private func selectDefaultMachine() {
@@ -260,7 +299,7 @@ struct SSHPreflightView: View {
         task = Task {
             let outcome: Phase?
             do {
-                let socket = try await tailnet.dialTCP(host: host, port: Self.sshPort, timeout: .seconds(15))
+                let socket = try await dialSSH(host: host)
                 let report = try await SSHPreflightClient.run(request, socket: socket)
                 outcome = .finished(report, host: host)
             } catch let failure as SSHPreflightFailure {
@@ -283,6 +322,9 @@ struct SSHPreflightView: View {
     }
 
     private static func resultFooter(_ report: SSHPreflightReport) -> String {
+        if report.canPairOverSSH {
+            return "Oppi is serving HTTPS. Pair signs this phone in with a one-time invite."
+        }
         if report.checks.contains(where: { $0.status == .missing }) {
             return "Fix the missing items on the Mac, then check again."
         }
@@ -290,6 +332,59 @@ struct SSHPreflightView: View {
             return "Ready — go back and tap Pair."
         }
         return "This Mac has what Oppi's installer needs."
+    }
+
+    private func pair(host: String) {
+        guard !pairing, !password.isEmpty else { return }
+        let knownHosts = SSHKnownHosts()
+        let request: SSHPreflightClient.Request
+        do {
+            request = SSHPreflightClient.Request(
+                username: username, password: password,
+                savedHostKey: try knownHosts.savedKey(host: host, port: Self.sshPort)
+            )
+        } catch {
+            pairMessage = SSHPreflightFailure.handshakeFailed(error.localizedDescription).message
+            return
+        }
+        task?.cancel()
+        let runID = UUID()
+        self.runID = runID
+        pairing = true
+        pairMessage = nil
+        task = Task {
+            let message: String
+            var paired = false
+            do {
+                let socket = try await dialSSH(host: host)
+                let invite = try await SSHPreflightClient.mintInvite(request, socket: socket)
+                let enrolled = try await InviteBootstrapService.enroll(
+                    inviteURL: invite.inviteURL,
+                    serverStore: serverStore,
+                    coordinator: coordinator
+                ) { reason in
+                    await BiometricService.shared.authenticate(reason: reason)
+                }
+                message = "Paired with \(enrolled.name)."
+                paired = enrolled.selected
+            } catch let failure as SSHPreflightFailure {
+                message = failure.message
+            } catch let error as InviteBootstrapError {
+                message = error.errorDescription ?? "Pairing failed. Request a fresh invite and try again."
+            } catch is CancellationError {
+                message = ""
+            } catch {
+                message = InviteBootstrapService.pairingFailureMessage(for: error, host: host)
+            }
+            guard self.runID == runID else { return }
+            pairing = false
+            task = nil
+            if !message.isEmpty { pairMessage = message }
+            if paired {
+                password = ""
+                onPaired?()
+            }
+        }
     }
 
     /// `ssh-ed25519` → `ed25519`, `ecdsa-sha2-nistp256` → `ecdsa`.

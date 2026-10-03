@@ -25,6 +25,64 @@ enum SSHPreflightClient {
     /// Takes ownership of `socket`. Cancelling the task closes the SSH
     /// connection. Throws `SSHPreflightFailure` or `CancellationError`.
     static func run(_ request: Request, socket: Int32) async throws -> SSHPreflightReport {
+        let channel = try await openAuthenticated(request, socket: socket)
+        defer { channel.close(promise: nil) }
+
+        return try await withTaskCancellationHandler {
+            do {
+                let output = channel.eventLoop.makePromise(of: String.self)
+                let probeDeadline = channel.eventLoop.scheduleTask(in: probeTimeout) {
+                    output.fail(SSHPreflightFailure.probeTimedOut)
+                }
+                defer { probeDeadline.cancel() }
+                openProbeChannel(on: channel, output: output)
+                return try SSHPreflightProbe.parse(try await output.futureResult.get())
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                throw Self.failure(error)
+            }
+        } onCancel: {
+            channel.close(promise: nil)
+        }
+    }
+
+    /// Signs in, confirms Oppi is serving HTTPS, then runs `oppi pair --json`.
+    /// The pair command is not sent unless status says HTTPS. The invite body
+    /// is not logged. Takes ownership of `socket`.
+    static func mintInvite(_ request: Request, socket: Int32) async throws -> TailscalePairingInvite {
+        let channel = try await openAuthenticated(request, socket: socket)
+        defer { channel.close(promise: nil) }
+
+        return try await withTaskCancellationHandler {
+            do {
+                let status = try await exec(
+                    on: channel,
+                    stdin: SSHPairMint.statusScript,
+                    maxOutput: maxProbeOutput,
+                    timedOut: .probeTimedOut
+                )
+                guard status.exitStatus == 0, SSHPairMint.servesHTTPS(status.stdout) else {
+                    throw SSHPreflightFailure.serverNotServingHTTPS
+                }
+                let minted = try await exec(
+                    on: channel,
+                    stdin: SSHPairMint.pairScript,
+                    maxOutput: SSHPairMint.maxInviteOutput,
+                    timedOut: .probeTimedOut
+                )
+                guard minted.exitStatus == 0 else { throw SSHPreflightFailure.inviteRefused }
+                return try SSHPairMint.invite(from: minted.stdout)
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                throw Self.failure(error)
+            }
+        } onCancel: {
+            channel.close(promise: nil)
+        }
+    }
+
+    /// Host key is checked before the password is offered.
+    private static func openAuthenticated(_ request: Request, socket: Int32) async throws -> Channel {
         let loop = MultiThreadedEventLoopGroup.singleton.next()
         let authenticated = loop.makePromise(of: Void.self)
         let channel: Channel
@@ -55,29 +113,62 @@ enum SSHPreflightClient {
             authenticated.fail(error)
             throw Self.failure(error)
         }
-        defer { channel.close(promise: nil) }
 
-        return try await withTaskCancellationHandler {
-            do {
-                let signInDeadline = loop.scheduleTask(in: signInTimeout) {
-                    authenticated.fail(SSHPreflightFailure.signInTimedOut)
-                }
-                defer { signInDeadline.cancel() }
-                try await authenticated.futureResult.get()
-
-                let output = loop.makePromise(of: String.self)
-                let probeDeadline = loop.scheduleTask(in: probeTimeout) {
-                    output.fail(SSHPreflightFailure.probeTimedOut)
-                }
-                defer { probeDeadline.cancel() }
-                openProbeChannel(on: channel, output: output)
-                return try SSHPreflightProbe.parse(try await output.futureResult.get())
-            } catch {
-                if Task.isCancelled { throw CancellationError() }
-                throw Self.failure(error)
-            }
-        } onCancel: {
+        let signInDeadline = loop.scheduleTask(in: signInTimeout) {
+            authenticated.fail(SSHPreflightFailure.signInTimedOut)
+        }
+        defer { signInDeadline.cancel() }
+        do {
+            try await authenticated.futureResult.get()
+        } catch {
             channel.close(promise: nil)
+            if Task.isCancelled { throw CancellationError() }
+            throw Self.failure(error)
+        }
+        return channel
+    }
+
+    fileprivate struct ExecOutput: Sendable {
+        var stdout: String
+        var exitStatus: Int?
+    }
+
+    private static func exec(
+        on channel: Channel,
+        stdin: String,
+        maxOutput: Int,
+        timedOut: SSHPreflightFailure
+    ) async throws -> ExecOutput {
+        let output = channel.eventLoop.makePromise(of: ExecOutput.self)
+        let deadline = channel.eventLoop.scheduleTask(in: probeTimeout) {
+            output.fail(timedOut)
+        }
+        defer { deadline.cancel() }
+        openExecChannel(on: channel, stdin: stdin, maxOutput: maxOutput, output: output)
+        return try await output.futureResult.get()
+    }
+
+    private static func openExecChannel(
+        on channel: Channel,
+        stdin: String,
+        maxOutput: Int,
+        output: EventLoopPromise<ExecOutput>
+    ) {
+        channel.eventLoop.execute {
+            let opened = channel.eventLoop.makePromise(of: Channel.self)
+            opened.futureResult.whenFailure { output.fail($0) }
+            do {
+                let ssh = try channel.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
+                ssh.createChannel(opened, channelType: .session) { child, _ in
+                    child.eventLoop.makeCompletedFuture {
+                        try child.pipeline.syncOperations.addHandler(
+                            ExecHandler(stdin: stdin, maxOutput: maxOutput, output: output)
+                        )
+                    }
+                }
+            } catch {
+                opened.fail(error)
+            }
         }
     }
 
@@ -266,5 +357,83 @@ private final class ProbeHandler: ChannelInboundHandler {
 
     func handlerRemoved(context: ChannelHandlerContext) {
         output.fail(ChannelError.ioOnClosedChannel)
+    }
+}
+
+/// Execs `/bin/sh -s`, writes a fixed script, and collects stdout plus exit status.
+/// Used only for the SSH pair mint. The setup probe keeps its own handler.
+private final class ExecHandler: ChannelInboundHandler {
+    typealias InboundIn = SSHChannelData
+    typealias OutboundOut = SSHChannelData
+
+    private let stdin: String
+    private let maxOutput: Int
+    private let output: EventLoopPromise<SSHPreflightClient.ExecOutput>
+    private var stdout = ByteBuffer()
+    private var exitStatus: Int?
+    private var finished = false
+
+    init(stdin: String, maxOutput: Int, output: EventLoopPromise<SSHPreflightClient.ExecOutput>) {
+        self.stdin = stdin
+        self.maxOutput = maxOutput
+        self.output = output
+    }
+
+    func handlerAdded(context: ChannelHandlerContext) {
+        try? context.channel.syncOptions?.setOption(ChannelOptions.allowRemoteHalfClosure, value: true)
+    }
+
+    func channelActive(context: ChannelHandlerContext) {
+        let exec = SSHChannelRequestEvent.ExecRequest(command: SSHPreflightProbe.command, wantReply: true)
+        context.triggerUserOutboundEvent(exec, promise: nil)
+        context.fireChannelActive()
+    }
+
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        switch event {
+        case is ChannelSuccessEvent:
+            let script = context.channel.allocator.buffer(string: stdin)
+            context.writeAndFlush(wrapOutboundOut(SSHChannelData(type: .channel, data: .byteBuffer(script))), promise: nil)
+            context.close(mode: .output, promise: nil)
+        case is ChannelFailureEvent:
+            finish(context: context, result: .failure(SSHPreflightFailure.probeRefused))
+        case let status as SSHChannelRequestEvent.ExitStatus:
+            exitStatus = status.exitStatus
+        default:
+            context.fireUserInboundEventTriggered(event)
+        }
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let message = unwrapInboundIn(data)
+        guard message.type == .channel, case .byteBuffer(var bytes) = message.data else { return }
+        guard stdout.readableBytes + bytes.readableBytes <= maxOutput else {
+            finish(context: context, result: .failure(SSHPreflightFailure.inviteInvalid))
+            return
+        }
+        stdout.writeBuffer(&bytes)
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: any Error) {
+        finish(context: context, result: .failure(error))
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        finish(context: context, result: .success(.init(stdout: String(buffer: stdout), exitStatus: exitStatus)))
+        context.fireChannelInactive()
+    }
+
+    func handlerRemoved(context: ChannelHandlerContext) {
+        finish(context: context, result: .failure(ChannelError.ioOnClosedChannel))
+    }
+
+    private func finish(context: ChannelHandlerContext, result: Result<SSHPreflightClient.ExecOutput, any Error>) {
+        guard !finished else { return }
+        finished = true
+        switch result {
+        case .success(let value): output.succeed(value)
+        case .failure(let error): output.fail(error)
+        }
+        context.close(promise: nil)
     }
 }

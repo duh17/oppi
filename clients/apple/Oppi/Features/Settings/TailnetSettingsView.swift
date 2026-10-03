@@ -265,7 +265,7 @@ struct TailnetSettingsView: View {
         @ViewBuilder status: () -> some View
     ) -> some View {
         NavigationLink {
-            SSHPreflightView(initialPeer: peer)
+            SSHPreflightView(initialPeer: peer, onPaired: onPaired)
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 peerTitle(peer)
@@ -318,11 +318,11 @@ struct TailnetSettingsView: View {
     private var setupCheckSection: some View {
         Section {
             NavigationLink("Check a Mac for Oppi") {
-                SSHPreflightView()
+                SSHPreflightView(onPaired: onPaired)
             }
             .accessibilityIdentifier("tailnet.checkMac")
         } footer: {
-            Text("Signs in to the Mac's Remote Login over SSH to see what Oppi needs. Nothing is installed.")
+            Text("Signs in over SSH to see what Oppi needs. If Oppi is already serving HTTPS, you can pair from that screen. Nothing is installed.")
         }
     }
 
@@ -350,32 +350,15 @@ struct TailnetSettingsView: View {
                 makeClient: { APIClient(baseURL: $0, token: "") }
             )
             let invite = try await inviteClient.issueTailscalePairingInvite()
-            guard let credentials = ServerCredentials.decodeInviteURLString(invite.inviteURL) else {
-                throw TailnetSameUserPairing.Failure.invalidInvite
-            }
-            let existing = credentials.normalizedServerFingerprint.flatMap {
-                serverStore.server(for: $0)?.credentials
-            } ?? serverStore.server(forHost: credentials.host, port: credentials.port)?.credentials
-            let bootstrap = try await InviteBootstrapService.validateAndBootstrap(
-                credentials: credentials,
-                existingCredentials: existing
+            let enrolled = try await InviteBootstrapService.enroll(
+                inviteURL: invite.inviteURL,
+                serverStore: serverStore,
+                coordinator: coordinator
             ) { reason in
                 await BiometricService.shared.authenticate(reason: reason)
             }
-            guard let pairedServer = PairedServer(
-                from: bootstrap.effectiveCredentials,
-                sortOrder: serverStore.servers.count
-            ) else {
-                throw TailnetSameUserPairing.Failure.invalidInvite
-            }
-            let outcome = await coordinator.addServerReady(pairedServer, switchTo: true)
-            guard outcome != .failed else {
-                throw TailnetSameUserPairing.Failure.pairingFailed(
-                    "Connection blocked by server transport policy"
-                )
-            }
-            pairingMessage = "Paired with \(pairedServer.name)."
-            if outcome == .selected {
+            pairingMessage = "Paired with \(enrolled.name)."
+            if enrolled.selected {
                 onPaired?()
             }
         } catch let failure as TailnetSameUserPairing.Failure {

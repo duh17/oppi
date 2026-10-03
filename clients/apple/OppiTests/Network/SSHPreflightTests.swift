@@ -244,3 +244,91 @@ struct SSHPreflightProbeTests {
         #expect(statuses(report)["git"] == .ok)
     }
 }
+
+@Suite("SSH pair invite mint")
+struct SSHPairMintTests {
+    private static let httpsStatus = #"{"ok":true,"data":{"status":{"paired":true,"server":{"port":7749,"transport":"https","tlsMode":"self-signed"}}}}"#
+    private static let httpStatus = #"{"ok":true,"data":{"status":{"paired":true,"server":{"port":7749,"transport":"http","tlsMode":"disabled"}}}}"#
+
+    private static func statusOutput(_ json: String, end: Bool = true) -> String {
+        "oppi_status=\(json)\n" + (end ? "end=1\n" : "")
+    }
+
+    private static let inviteJSON = """
+    {"name":"studio","pairingToken":"pt","fingerprint":"sha256:abc","host":"studio.local","port":7749,"scheme":"https","inviteURL":"oppi://connect?host=studio.local"}
+    """
+
+    @Test func httpsStatusAllowsMintAndHTTPDoesNot() {
+        #expect(SSHPairMint.servesHTTPS(Self.statusOutput(Self.httpsStatus)))
+        #expect(!SSHPairMint.servesHTTPS(Self.statusOutput(Self.httpStatus)))
+        #expect(!SSHPairMint.servesHTTPS(Self.statusOutput(Self.httpsStatus, end: false)))
+        #expect(!SSHPairMint.servesHTTPS("oppi_status=not json\nend=1\n"))
+    }
+
+    @Test func selfSignedHTTPSCanPairWithoutTailscale() throws {
+        let report = try SSHPreflightProbe.parse("""
+        user=chen
+        kernel=Darwin
+        release=25.1.0
+        arch=arm64
+        macos=26.1
+        node=/opt/homebrew/bin/node
+        node_version=v22.19.0
+        npm=/opt/homebrew/bin/npm
+        git=/usr/bin/git
+        oppi=/usr/local/bin/oppi
+        tailscale=
+        clt=1
+        oppi_status=\(Self.httpsStatus)
+        end=1
+        """)
+        #expect(report.canPairOverSSH)
+        #expect(!report.isReadyToPair)
+    }
+
+    @Test func pairScriptIsFixedAndDoesNotTakeSecrets() {
+        #expect(SSHPairMint.pairScript.contains("exec oppi pair --json"))
+        #expect(!SSHPairMint.pairScript.contains("--ttl"))
+        #expect(!SSHPairMint.pairScript.contains("--show-token"))
+        #expect(!SSHPairMint.pairScript.contains("--host"))
+        #expect(!SSHPairMint.statusScript.contains("oppi pair"))
+        #expect(SSHPairMint.statusScript.contains("https://127.0.0.1:${port}/health"))
+        #expect(SSHPairMint.statusScript.contains("curl -sk --max-time 5"))
+    }
+
+    @Test func tailscaleNameDoesNotDialTheSystemNetwork() {
+        #expect(SSHPairDial.route(host: "studio.local", tailnetRunning: false) == .direct)
+        #expect(SSHPairDial.route(host: "oppi.example.com", tailnetRunning: true) == .direct)
+        #expect(SSHPairDial.route(host: "studio.tail1234.ts.net", tailnetRunning: true) == .tailnet)
+        #expect(SSHPairDial.route(host: "studio.tail1234.ts.net", tailnetRunning: false) == .tailnetRequired)
+    }
+
+    @Test func inviteJSONDecodesAndRejectsUnsafeOutput() throws {
+        let invite = try SSHPairMint.invite(from: "\n" + Self.inviteJSON + "\n")
+        #expect(invite.inviteURL == "oppi://connect?host=studio.local")
+        #expect(invite.scheme == "https")
+        #expect(throws: SSHPreflightFailure.inviteInvalid) {
+            try SSHPairMint.invite(from: Self.inviteJSON.replacingOccurrences(of: "https", with: "http"))
+        }
+        #expect(throws: SSHPreflightFailure.inviteInvalid) {
+            try SSHPairMint.invite(from: "notice\n" + Self.inviteJSON)
+        }
+        #expect(throws: SSHPreflightFailure.inviteInvalid) {
+            try SSHPairMint.invite(from: "")
+        }
+        let evil = Self.inviteJSON.replacingOccurrences(
+            of: "oppi://connect?host=studio.local",
+            with: "oppi://evil"
+        )
+        let web = Self.inviteJSON.replacingOccurrences(
+            of: "oppi://connect?host=studio.local",
+            with: "https://connect"
+        )
+        #expect(throws: SSHPreflightFailure.inviteInvalid) {
+            try SSHPairMint.invite(from: evil)
+        }
+        #expect(throws: SSHPreflightFailure.inviteInvalid) {
+            try SSHPairMint.invite(from: web)
+        }
+    }
+}
