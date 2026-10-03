@@ -110,6 +110,19 @@ struct SSHPTYSessionTests {
         await session.cancel()
     }
 
+    @Test func sideCommandStdinLargerThanTheReceiveWindowArrivesWholeBeforeEOF() async throws {
+        // 64 × 32 KiB packets = a 2 MiB window, so this upload must wait for
+        // window adjusts; EOF may only follow the last byte.
+        let fixture = try await SSHFixture.start(maximumPacketSize: 32 * 1024)
+        let session = try await fixture.connect(sink: { _ in })
+        defer { fixture.close() }
+
+        let input = Data(repeating: 0x41, count: 3 * 1024 * 1024)
+        let result = try await session.run("count-stdin", input: input, timeout: .seconds(30))
+        #expect(result == SSHExecResult(output: Data("\(input.count)".utf8), errorOutput: Data(), exitStatus: 0))
+        await session.cancel()
+    }
+
     @Test func rejectedPublicKeyNeverFallsBackToPassword() async throws {
         let fixture = try await SSHFixture.start(auth: .rejectPublicKey)
         defer { fixture.close() }
@@ -757,6 +770,7 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
 
     private let state: SSHFixture.State
     private var sawPTY = false
+    private var countingStdin: Int?
 
     init(state: SSHFixture.State) {
         self.state = state
@@ -776,6 +790,12 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
             state.channelRequests.withLock { $0.append("exec:\(exec.command)") }
             context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
             guard !sawPTY else { return } // a startup command behaves like a shell
+            if exec.command == "count-stdin" {
+                // Reads stdin to EOF, then reports how many bytes arrived.
+                countingStdin = 0
+                try? context.channel.syncOptions?.setOption(ChannelOptions.allowRemoteHalfClosure, value: true)
+                return
+            }
             // A one-shot side command: stdout, stderr, exit status, close.
             let channel = context.channel
             channel.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(channel.allocator.buffer(string: "ran \(exec.command)"))), promise: nil)
@@ -789,6 +809,11 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
             } else {
                 context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil)
             }
+        case ChannelEvent.inputClosed where countingStdin != nil:
+            let channel = context.channel
+            channel.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(channel.allocator.buffer(string: "\(countingStdin ?? 0)"))), promise: nil)
+            channel.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitStatus(exitStatus: 0), promise: nil)
+            channel.close(promise: nil)
         case let resize as SSHChannelRequestEvent.WindowChangeRequest:
             state.channelRequests.withLock { $0.append("window-change") }
             state.lastWindow.withLock {
@@ -808,6 +833,10 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let message = unwrapInboundIn(data)
         guard message.type == .channel, case .byteBuffer(let buffer) = message.data else { return }
+        if let counted = countingStdin {
+            countingStdin = counted + buffer.readableBytes
+            return
+        }
         let total = state.inputBytes.withLock { count -> Int in
             count += buffer.readableBytes
             return count

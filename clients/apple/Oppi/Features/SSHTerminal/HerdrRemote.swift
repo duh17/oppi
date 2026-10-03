@@ -65,6 +65,8 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
 
     /// Agents Herdr sees at an approval or question UI.
     var needsAttention: Int { agents.filter { $0.status == .blocked }.count }
+    /// The agent in Herdr's focused pane, if that pane runs one.
+    var focusedAgent: Agent? { agents.first { $0.focused } }
 
     func agents(in workspace: Workspace) -> [Agent] { agents.filter { $0.workspaceID == workspace.workspaceID } }
     func tabLabel(_ id: String) -> String? { tabs.first { $0.tabID == id }?.label }
@@ -146,15 +148,17 @@ final class HerdrMonitor {
     private(set) var snapshot: HerdrSnapshot?
     private(set) var failure: String?
     private(set) var unavailable = false
-    /// The overview sheet is open: refresh faster.
+    /// The overview sheet is open, or the terminal shows a Herdr client whose
+    /// focused pane picks the input mode: refresh faster.
     var watching = false
+    var attached = false
 
     var available: Bool { snapshot != nil }
 
     func run(on channel: SSHTerminalChannel) async {
         while !Task.isCancelled, channel.connected, !unavailable {
             await refresh(on: channel)
-            try? await Task.sleep(for: watching ? .seconds(2) : .seconds(6))
+            try? await Task.sleep(for: watching || attached ? .seconds(2) : .seconds(6))
         }
     }
 

@@ -1,10 +1,12 @@
 import GhosttyVt
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Oppi's chat composer, pointed at a terminal. Text (typed or dictated) is
 /// edited locally and sent as one paste followed by Enter, so agent TUIs get a
-/// whole prompt instead of a keystroke stream. The key strip sends raw keys
-/// immediately for approvals, aborts and menus.
+/// whole prompt instead of a keystroke stream. Photos and files are saved on
+/// the host first and the prompt carries their paths. The key strip sends raw
+/// keys immediately for approvals, aborts and menus.
 struct SSHTerminalComposer: View {
     let channel: SSHTerminalChannel
     let focusRequest: Int
@@ -19,6 +21,7 @@ struct SSHTerminalComposer: View {
     @State private var voiceInputManager: VoiceInputManager?
     @State private var voiceComposerGeneration: Int?
     @State private var failure: String?
+    @State private var uploading = false
 
     var body: some View {
         VStack(spacing: 4) {
@@ -34,11 +37,11 @@ struct SSHTerminalComposer: View {
                 pendingRepoPointers: $pendingRepoPointers,
                 isBusy: false,
                 busyStreamingBehavior: $streamingBehavior,
-                isSending: false,
+                isSending: uploading,
                 placeholderOverride: "",
                 // Empty Send is a bare Enter: accept a default, continue a pager.
                 allowsEmptySubmit: true,
-                sendProgressText: nil,
+                sendProgressText: uploading ? "Uploading" : nil,
                 isStopping: false,
                 voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
                 onPrepareVoiceInput: { configureVoiceInput($0) },
@@ -54,7 +57,7 @@ struct SSHTerminalComposer: View {
                 externalFocusRequestID: focusRequest,
                 appliesOuterPadding: true,
                 allowsExpansion: false,
-                allowsAttachments: false,
+                allowsAttachments: true,
                 autocorrectionEnabled: false,
                 actionRow: { keyStrip }
             )
@@ -90,12 +93,51 @@ struct SSHTerminalComposer: View {
 
     private func send() {
         failure = nil
-        do {
-            try channel.submit(text)
-            text = ""
-        } catch {
-            failure = "Not sent. \(error.localizedDescription)"
+        guard !pendingAttachments.isEmpty else {
+            do {
+                try channel.submit(text)
+                text = ""
+            } catch {
+                failure = "Not sent. \(error.localizedDescription)"
+            }
+            return
         }
+        guard !uploading else { return }
+        uploading = true
+        let attachments = pendingAttachments
+        Task {
+            defer { uploading = false }
+            do {
+                var paths = [String]()
+                for attachment in attachments {
+                    let (data, ext) = try await Self.fileContents(attachment)
+                    paths.append(try await channel.upload(data, fileExtension: ext))
+                }
+                try channel.submit(Self.prompt(text, paths: paths))
+                text = ""
+                pendingAttachments.removeAll { sent in attachments.contains { $0.id == sent.id } }
+            } catch {
+                failure = "Not sent. \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// The prompt, then one host path per line. Agents read images by path.
+    static func prompt(_ text: String, paths: [String]) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ([trimmed].filter { !$0.isEmpty } + [paths.joined(separator: "\n")]).joined(separator: "\n\n")
+    }
+
+    private static func fileContents(_ attachment: PendingAttachment) async throws -> (Data, String) {
+        let mimeType = attachment.imageAttachment?.mimeType ?? attachment.localMimeType
+        let named = (attachment.displayName as NSString).pathExtension
+        let ext = named.isEmpty ? mimeType.flatMap { UTType(mimeType: $0)?.preferredFilenameExtension } ?? "" : named
+        if let data = attachment.composerDraftData { return (data, ext) }
+        if let url = attachment.localFileURL {
+            let data = try await Task.detached { try Data(contentsOf: url, options: .mappedIfSafe) }.value
+            return (data, ext)
+        }
+        throw SSHTerminalUpload.Failure.rejected("\(attachment.displayName) has no local data to send.")
     }
 
     private func configureVoiceInput(_ manager: VoiceInputManager) {

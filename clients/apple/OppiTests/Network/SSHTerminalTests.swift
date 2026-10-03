@@ -357,6 +357,75 @@ struct SSHTerminalTests {
         #expect(HerdrRemote.focusCommand(.workspace("w1; rm -rf ~")) == nil)
     }
 
+    @Test func foregroundProbeReadsOnlyThisConnectionsPTY() throws {
+        // macOS `ps` output: sshd 500 owns both the probe (a) and the PTY on
+        // ttys002. pi on ttys003 belongs to another terminal and must not count.
+        func probe(_ foreground: String) -> String {
+            """
+            t   600   500 ttys002  Ss   -/opt/homebrew/bin/fish
+            \(foreground)
+            t   700   650 ttys003  S+   pi
+            a   900   890 ??       S    sh
+            a   890   500 ??       Ss   fish
+            a   500   499 ??       S    sshd-session: chenda@ttys002
+            """
+        }
+        #expect(SSHTerminalForeground(probeOutput: probe("t   610   600 ttys002  S+   vim")) == .shell)
+        #expect(SSHTerminalForeground(probeOutput: probe("t   610   600 ttys002  S+   /usr/local/bin/claude")) == .agent("claude"))
+        #expect(SSHTerminalForeground(probeOutput: probe("t   610   600 ttys002  S    claude")) == .shell) // backgrounded
+        #expect(SSHTerminalForeground(probeOutput: probe("t   610   600 ttys002  S+   herdr")) == .herdr)
+        // Linux procps: "?" for no tty, pts names, plain sshd.
+        let linux = """
+        t  4100  4000 pts/0    Ss   bash
+        t  4200  4100 pts/0    Sl+  codex
+        a  4300  4000 ?        S    sh
+        a  4000  3990 ?        S    sshd
+        """
+        #expect(SSHTerminalForeground(probeOutput: linux) == .agent("codex"))
+        #expect(SSHTerminalForeground(probeOutput: "a 900 1 ?? S sh") == nil) // no sshd ancestor
+    }
+
+    @Test func herdrClientInputFollowsTheFocusedPane() throws {
+        func snapshot(focusedAgent: Bool) throws -> HerdrSnapshot {
+            let json = #"{"result":{"snapshot":{"agents":[{"agent":"pi","agent_status":"working","focused":"# + String(focusedAgent) + #","pane_id":"w1:p1","tab_id":"w1:t1","workspace_id":"w1"}],"tabs":[],"workspaces":[]}}}"#
+            return try HerdrRemote.snapshot(from: .init(output: Data(json.utf8), errorOutput: Data(), exitStatus: 0))
+        }
+        #expect(SSHTerminalAgentDetector.mode(for: .herdr, herdr: try snapshot(focusedAgent: true)) == .chat)
+        #expect(SSHTerminalAgentDetector.mode(for: .herdr, herdr: try snapshot(focusedAgent: false)) == .terminal)
+        #expect(SSHTerminalAgentDetector.mode(for: .herdr, herdr: nil) == .terminal)
+        #expect(SSHTerminalAgentDetector.mode(for: .agent("pi"), herdr: nil) == .chat)
+        #expect(SSHTerminalAgentDetector.mode(for: nil, herdr: nil) == nil)
+    }
+
+    @Test func attachmentUploadSendsTheBytesAndReturnsOnlyTheGeneratedPath() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        let name = SSHTerminalUpload.fileName(extension: "JPEG", id: UUID(uuidString: "A1B2C3D4-0000-0000-0000-000000000000")!)
+        #expect(name == "oppi-a1b2c3d4.jpeg")
+        #expect(SSHTerminalUpload.fileName(extension: "x;rm -rf").hasSuffix(".xrmrf"))
+
+        #expect(try SSHTerminalUpload.path(from: .init(output: Data("/var/folders/xy/T/oppi-ssh/oppi-0.png".utf8), errorOutput: Data(), exitStatus: 0),
+                                           fileName: "oppi-0.png") == "/var/folders/xy/T/oppi-ssh/oppi-0.png")
+        #expect(throws: SSHTerminalUpload.Failure.self) { // a path that is not the one asked for
+            _ = try SSHTerminalUpload.path(from: .init(output: Data("/tmp/other.png".utf8), errorOutput: Data(), exitStatus: 0), fileName: "oppi-0.png")
+        }
+        await #expect(throws: SSHTerminalUpload.Failure.rejected("The host did not save the attachment: disk full")) {
+            await fixture.setRunResult(.init(output: Data(), errorOutput: Data("disk full".utf8), exitStatus: 1))
+            _ = try await channel.upload(Data([1, 2, 3]), fileExtension: "png")
+        }
+        await #expect(throws: SSHTerminalUpload.Failure.tooLarge) {
+            _ = try await channel.upload(Data(count: SSHTerminalUpload.maximumBytes + 1), fileExtension: "png")
+        }
+        let runs = await fixture.runs
+        #expect(runs.count == 1) // the oversized file never reached the host
+        #expect(runs[0].input == Data([1, 2, 3]))
+        #expect(runs[0].command.hasPrefix("sh -c 'umask 077;"))
+
+        #expect(SSHTerminalComposer.prompt("  what is this?\n", paths: ["/tmp/a.png", "/tmp/b.png"]) == "what is this?\n\n/tmp/a.png\n/tmp/b.png")
+        #expect(SSHTerminalComposer.prompt("", paths: ["/tmp/a.png"]) == "/tmp/a.png")
+    }
+
     @Test func pasteLineCountIgnoresATrailingTerminator() {
         #expect(SSHTerminalEngine.pasteLineCount("echo one\recho two\r") == 2)
         #expect(SSHTerminalEngine.pasteLineCount("echo one\necho two\n") == 2)
@@ -457,7 +526,14 @@ private actor TerminalConnectionFixture: SSHTerminalConnection {
         resizeSink.yield(.init(columns: columns, rows: rows,
                               cellWidth: pixelWidth / columns, cellHeight: pixelHeight / rows))
     }
-    func run(_ command: String) async throws -> SSHExecResult { throw SSHPTYSessionError.commandRequestRejected }
+    private(set) var runs = [(command: String, input: Data)]()
+    private var runResult: SSHExecResult?
+    func setRunResult(_ result: SSHExecResult) { runResult = result }
+    func run(_ command: String, input: Data) async throws -> SSHExecResult {
+        runs.append((command, input))
+        guard let runResult else { throw SSHPTYSessionError.commandRequestRejected }
+        return runResult
+    }
     private var alive = true
     func setAlive(_ value: Bool) { alive = value }
     func checkAlive() throws { if !alive { throw SSHPTYSessionError.requestTimedOut } }

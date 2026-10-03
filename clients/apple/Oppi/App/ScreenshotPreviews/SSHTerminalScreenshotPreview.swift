@@ -35,7 +35,7 @@ struct SSHTerminalScreenshotPreview: View {
                 case 0x1b: "\\e"
                 case 0x0d: "\\r"
                 case 0x0a: "\\n"
-                case 0..<0x20: "^" + String(UnicodeScalar(scalar.value + 0x40)!)
+                case 0..<0x20: "^" + String(UnicodeScalar(UInt8(scalar.value + 0x40)))
                 default: String(scalar)
                 }
             }.joined()
@@ -66,7 +66,12 @@ private actor PreviewConnection: SSHTerminalConnection {
     func checkAlive() async throws {}
     func cancel() async {}
 
-    func run(_ command: String) async throws -> SSHExecResult {
+    func run(_ command: String, input: Data) async throws -> SSHExecResult {
+        if command == SSHTerminalForeground.probeCommand {
+            // A Herdr client in the PTY's foreground; its focused pane runs pi.
+            let ps = "t 101 100 ttys002 Ss -fish\nt 102 101 ttys002 S+ herdr\na 200 100 ?? S sh\na 100 99 ?? S sshd-session: preview\n"
+            return SSHExecResult(output: Data(ps.utf8), errorOutput: Data(), exitStatus: 0)
+        }
         let json = #"{"result":{"snapshot":{"workspaces":[{"workspace_id":"w1","label":"dotfiles","focused":true},{"workspace_id":"w2","label":"oppi","focused":false}],"tabs":[{"tab_id":"w1:t1","workspace_id":"w1","label":"1"},{"tab_id":"w2:t1","workspace_id":"w2","label":"1"}],"agents":[{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","agent":"pi","agent_status":"blocked","focused":true,"terminal_title_stripped":"Allow running rg?"},{"pane_id":"w2:p1","workspace_id":"w2","tab_id":"w2:t1","agent":"claude","agent_status":"working","focused":false,"terminal_title_stripped":"Fixing the build"}]}}}"#
         return SSHExecResult(output: Data(json.utf8), errorOutput: Data(), exitStatus: 0)
     }

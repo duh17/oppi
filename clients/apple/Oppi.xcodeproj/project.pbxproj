@@ -561,6 +561,7 @@
 		4ABDE5378622D815582B9729 /* OppiClientEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F3C89992F5DCEE3EC870931 /* OppiClientEnvironment.swift */; };
 		4AE67B5911721E9C323DDDAD /* DesktopStillShare.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C1A932BF5D13F41E19D8792 /* DesktopStillShare.swift */; };
 		4B4EC8E539A0FA24F410C6B0 /* DeviceAuthSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24F80637EB2D077A3410259D /* DeviceAuthSession.swift */; };
+		4B5EF0C312A4C1013451E779 /* SSHTerminalAgentDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 943E8A11B1E33EA9AACAEEA0 /* SSHTerminalAgentDetection.swift */; };
 		4B77E0FA00D76795E09EF51C /* PencilKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AAD7BF77A3054DFE0C02EBB6 /* PencilKit.framework */; };
 		4BA67D2253A34FF17AD83C92 /* OnboardingStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 224165BF117754E9EF33CBD0 /* OnboardingStateTests.swift */; };
 		4BCA658487C1CE93E5A80386 /* MacScheduleRunTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FD1C5EDA1AF52B46E9EE82A /* MacScheduleRunTests.swift */; };
@@ -2955,6 +2956,7 @@
 		93BDFBAC4AF77FE70812539A /* TypewriterAnimatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypewriterAnimatorTests.swift; sourceTree = "<group>"; };
 		93BE8CEBEF49796E52C6D232 /* TurnSendTrackingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TurnSendTrackingTests.swift; sourceTree = "<group>"; };
 		9402D3A1420052E7D10E6207 /* ChatFileBrowserPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFileBrowserPanel.swift; sourceTree = "<group>"; };
+		943E8A11B1E33EA9AACAEEA0 /* SSHTerminalAgentDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalAgentDetection.swift; sourceTree = "<group>"; };
 		945A1BD7F7865221CB0D7C9E /* ToolCallFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCallFormatting.swift; sourceTree = "<group>"; };
 		9496F488480CA2B43FFA9DB6 /* UIHarnessTestCase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIHarnessTestCase.swift; sourceTree = "<group>"; };
 		94CB003D4B03D38558E5AB99 /* TimelineInlineVideoNativePlayE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineInlineVideoNativePlayE2ETests.swift; sourceTree = "<group>"; };
@@ -5819,6 +5821,7 @@
 				A6F6185F644E55021D87123F /* HerdrAgentsView.swift */,
 				27F897DE13278A8879D439C6 /* HerdrRemote.swift */,
 				19C13455DFB1AB9447182559 /* SSHDirectTCP.swift */,
+				943E8A11B1E33EA9AACAEEA0 /* SSHTerminalAgentDetection.swift */,
 				353DCB2C42D2506A8FB1E917 /* SSHTerminalChannel.swift */,
 				530A9E927F8C08482F429B83 /* SSHTerminalComposer.swift */,
 				555E01FCFE0ADCEA18DD9236 /* SSHTerminalEngine.swift */,
@@ -8595,6 +8598,7 @@
 				4D6C0A171D21A7EA87DB6CD6 /* SSHPreflight.swift in Sources */,
 				A6F4D6CAA684FCB6BB1E7B2F /* SSHPreflightClient.swift in Sources */,
 				6083D7F15107D2BDBD587F56 /* SSHPreflightView.swift in Sources */,
+				4B5EF0C312A4C1013451E779 /* SSHTerminalAgentDetection.swift in Sources */,
 				63FD9760B8095D8383C20A37 /* SSHTerminalChannel.swift in Sources */,
 				09CD796076A0A76CD657F4E3 /* SSHTerminalComposer.swift in Sources */,
 				633E3686C8AA2E6906E3F903 /* SSHTerminalEngine.swift in Sources */,

@@ -19,6 +19,17 @@ struct SSHTerminalView: View {
     @State private var rawKeyboard = false
     @State private var herdr = HerdrMonitor()
     @State private var showsHerdr = false
+    @State private var detector = SSHTerminalAgentDetector()
+    /// The user's choice; dropped when the detected mode changes.
+    @State private var modeOverride: SSHTerminalInputMode?
+    @State private var resignRawKeyboardRequest = 0
+    /// Focus the chat bar once the raw keyboard is down and the bar is mounted.
+    @State private var focusComposerAfterRaw = false
+    @State private var topBarHidden = false
+
+    private var detectedMode: SSHTerminalInputMode? { detector.mode(herdr: herdr.snapshot) }
+    /// A shell gets direct typing until a probe finds an agent.
+    private var inputMode: SSHTerminalInputMode { modeOverride ?? detectedMode ?? .terminal }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -50,9 +61,18 @@ struct SSHTerminalView: View {
                     .accessibilityIdentifier("sshTerminal.pasteNotice")
             }
             SSHTerminalSurface(channel: channel, themeID: themeID, keyboardRequest: keyboardRequest,
+                               resignRequest: resignRawKeyboardRequest, tapTypesInTerminal: inputMode == .terminal,
                                paste: requestPaste, followChanged: { detached = !$0 },
                                rawKeyboardChanged: { rawKeyboard = $0 },
-                               focusComposer: { composerFocusRequest += 1 })
+                               focusComposer: { composerFocusRequest += 1 },
+                               useChatBar: {
+                                   if detectedMode != .chat { modeOverride = .chat }
+                                   focusComposerAfterRaw = true
+                               },
+                               topBarHiddenChanged: { hidden in
+                                   guard hidden != topBarHidden else { return }
+                                   withAnimation(.easeInOut(duration: 0.2)) { topBarHidden = hidden }
+                               })
                 .overlay(alignment: .bottomTrailing) {
                     if detached {
                         Button("Back to Live", systemImage: "arrow.down.to.line") {
@@ -62,9 +82,10 @@ struct SSHTerminalView: View {
                             .accessibilityIdentifier("sshTerminal.backToLive")
                     }
                 }
-            // Raw typing has its own key bar above the keyboard; the composer
-            // returns when that keyboard goes down.
-            if !rawKeyboard {
+            // An agent gets the chat bar; a shell gets direct typing. Raw typing
+            // has its own key bar above the keyboard; the chat bar returns when
+            // that keyboard goes down.
+            if inputMode == .chat && !rawKeyboard {
                 SSHTerminalComposer(channel: channel, focusRequest: composerFocusRequest) { keyboardRequest += 1 }
             }
         }
@@ -93,6 +114,13 @@ struct SSHTerminalView: View {
                     .accessibilityIdentifier("sshTerminal.herdr")
                 }
                 Menu {
+                    if inputMode == .chat {
+                        Button("Type in Terminal", systemImage: "keyboard") { modeOverride = .terminal }
+                            .accessibilityIdentifier("sshTerminal.useTerminalInput")
+                    } else {
+                        Button("Use Chat Bar", systemImage: "text.bubble") { modeOverride = .chat }
+                            .accessibilityIdentifier("sshTerminal.useChatBar")
+                    }
                     Button("Edit Host", systemImage: "pencil", action: editHost)
                     if channel.connected {
                         Button("Disconnect", systemImage: "xmark", role: .destructive) { channel.close(reason: "Closed by you.") }
@@ -112,16 +140,38 @@ struct SSHTerminalView: View {
                 .presentationDetents([.medium, .large])
         }
         .onChange(of: showsHerdr) { _, open in herdr.watching = open }
+        .onChange(of: detector.foreground) { _, foreground in herdr.attached = foreground == .herdr }
+        .onChange(of: detectedMode) { _, mode in
+            modeOverride = nil
+            // Starting an agent from the raw keyboard moves typing to the chat bar.
+            if mode == .chat && rawKeyboard {
+                focusComposerAfterRaw = true
+                resignRawKeyboardRequest += 1
+            }
+        }
+        .onChange(of: rawKeyboard) { _, raw in
+            guard !raw, focusComposerAfterRaw else { return }
+            focusComposerAfterRaw = false
+            if inputMode == .chat { composerFocusRequest += 1 }
+        }
+        .onChange(of: channel.connected) { _, connected in if !connected { topBarHidden = false } }
         // One poller per connected generation; it ends with the connection.
         .task(id: channel.connected) {
             guard channel.connected else { return }
             await herdr.run(on: channel)
+        }
+        .task(id: channel.connected) {
+            guard channel.connected else { return }
+            await detector.run(on: channel)
         }
         // The terminal paints with the app theme, not the system appearance.
         // Keep the bar's title and back chevron legible against it in both.
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarBackground(Color.themeBg, for: .navigationBar)
         .toolbarColorScheme(themeID.preferredColorScheme, for: .navigationBar)
+        // Dragging toward newer output hides the bar for more rows; dragging
+        // back brings it. A broken connection always shows it.
+        .toolbarVisibility(topBarHidden && channel.connected ? .hidden : .visible, for: .navigationBar)
         .task { await channel.watchNetwork() }
         .onDisappear {
             pasteNoticeTask?.cancel()
@@ -189,25 +239,39 @@ private struct SSHTerminalSurface: UIViewRepresentable {
     /// Bumped by the composer's keyboard button: raw typing into the grid. In
     /// a mouse-reporting app a tap clicks, so this cannot be a tap.
     let keyboardRequest: Int
+    /// Bumped to put the raw keyboard down.
+    let resignRequest: Int
+    /// Shell input: a tap opens the raw keyboard instead of the chat bar.
+    let tapTypesInTerminal: Bool
     let paste: () -> Void
     let followChanged: (Bool) -> Void
     let rawKeyboardChanged: (Bool) -> Void
     let focusComposer: () -> Void
+    let useChatBar: () -> Void
+    let topBarHiddenChanged: (Bool) -> Void
 
     func makeUIView(context: Context) -> SSHTerminalGridView {
         let view = SSHTerminalGridView(channel: channel, paste: paste, followChanged: followChanged)
         view.rawKeyboardChanged = rawKeyboardChanged
         view.focusComposer = focusComposer
+        view.useChatBar = useChatBar
+        view.topBarHiddenChanged = topBarHiddenChanged
         view.keyboardRequest = keyboardRequest
+        view.resignRequest = resignRequest
         return view
     }
 
     func updateUIView(_ view: SSHTerminalGridView, context: Context) {
         view.applyTheme(themeID)
         view.needsPaint = true
+        view.tapTypesInTerminal = tapTypesInTerminal
         if view.keyboardRequest != keyboardRequest {
             view.keyboardRequest = keyboardRequest
             view.becomeFirstResponder()
+        }
+        if view.resignRequest != resignRequest {
+            view.resignRequest = resignRequest
+            _ = view.resignFirstResponder()
         }
     }
 }
@@ -221,8 +285,14 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     let followChanged: (Bool) -> Void
     var needsPaint = true
     var keyboardRequest = 0
+    var resignRequest = 0
+    var tapTypesInTerminal = false
     var rawKeyboardChanged: (Bool) -> Void = { _ in }
     var focusComposer: () -> Void = {}
+    var useChatBar: () -> Void = {}
+    var topBarHiddenChanged: (Bool) -> Void = { _ in }
+    /// Finger travel in one direction since the last top-bar decision.
+    private var barTravel: CGFloat = 0
     var paintedChangeCount = -1
     private let font = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
     private var cellSize = CGSize(width: 8, height: 17)
@@ -381,8 +451,8 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     }
     /// A tap first dismisses whichever keyboard is up (raw or composer). With
     /// it down, a tap is a click for an app that asked for mouse reports
-    /// (Herdr tabs, panes and agents) and otherwise starts typing in the
-    /// composer.
+    /// (Herdr tabs, panes and agents) and otherwise starts typing: in the
+    /// terminal for a shell, in the chat bar for an agent.
     @objc private func tapped(_ gesture: UITapGestureRecognizer) {
         if isFirstResponder {
             _ = resignFirstResponder()
@@ -391,6 +461,8 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         } else if channel.connected, channel.engine.mouseTracking {
             let cell = self.cell(at: gesture.location(in: self))
             channel.mouse(.click, column: cell.column, row: cell.row)
+        } else if tapTypesInTerminal {
+            _ = becomeFirstResponder()
         } else {
             focusComposer()
         }
@@ -474,13 +546,18 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     }
 
     @objc private func scrollHistory(_ gesture: UIPanGestureRecognizer) {
+        let travel = gesture.translation(in: self).y
+        gesture.setTranslation(.zero, in: self)
+        if gesture.state == .began {
+            scrollRemainder = 0
+            barTravel = 0
+        }
+        trackTopBar(travel)
         // A mouse-reporting app owns its own history (Herdr panes, pi, less):
         // send wheel notches where the finger is instead of moving the local
         // viewport, which an alternate-screen app never fills.
         if channel.engine.mouseTracking {
-            if gesture.state == .began { scrollRemainder = 0 }
-            scrollRemainder -= gesture.translation(in: self).y
-            gesture.setTranslation(.zero, in: self)
+            scrollRemainder -= travel
             let rows = Int(scrollRemainder / cellSize.height)
             guard rows != 0 else { return }
             scrollRemainder -= CGFloat(rows) * cellSize.height
@@ -491,18 +568,26 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
             return
         }
         if gesture.state == .began {
-            scrollRemainder = 0
             channel.engine.scroll(rows: 0)
             followChanged(false)
         }
-        scrollRemainder -= gesture.translation(in: self).y
-        gesture.setTranslation(.zero, in: self)
+        scrollRemainder -= travel
         let rows = Int(scrollRemainder / cellSize.height)
         if rows != 0 {
             scrollRemainder -= CGFloat(rows) * cellSize.height
             channel.engine.scroll(rows: rows)
         }
         needsPaint = true
+    }
+
+    /// Finger up (toward newer output) hides the top bar; finger down shows it.
+    private func trackTopBar(_ travel: CGFloat) {
+        guard travel != 0 else { return }
+        if (travel < 0) != (barTravel < 0) { barTravel = 0 }
+        barTravel += travel
+        guard abs(barTravel) >= 24 else { return }
+        topBarHiddenChanged(barTravel < 0)
+        barTravel = 0
     }
 
     private func makeAccessoryBar() -> UIView {
@@ -546,6 +631,13 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
             arrow.accessibilityLabel = "Move cursor \(id)"
         }
         _ = button("Paste", id: "paste") { [weak self] in self?.requestPaste() }
+        let chat = button("", id: "useChatBar") { [weak self] in
+            guard let self else { return }
+            self.useChatBar()
+            _ = self.resignFirstResponder()
+        }
+        chat.setImage(UIImage(systemName: "text.bubble"), for: .normal)
+        chat.accessibilityLabel = "Use chat bar"
         let hide = button("⌄", id: "hideKeyboard") { [weak self] in self?.resignFirstResponder() }
         hide.accessibilityLabel = "Hide keyboard"
         return scroll

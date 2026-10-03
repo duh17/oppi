@@ -380,8 +380,10 @@ final class SSHPTYSession: @unchecked Sendable {
     /// Runs one command in its own exec channel on this connection, without a
     /// PTY and without new authentication, and collects its output. Used for
     /// structured remote APIs (e.g. `herdr api snapshot`) next to the terminal.
+    /// `input` is written to the command's stdin, which then closes.
     func run(
         _ command: String,
+        input: Data = Data(),
         maximumOutputBytes: Int = 2 * 1024 * 1024,
         timeout: TimeAmount = .seconds(10)
     ) async throws -> SSHExecResult {
@@ -400,7 +402,7 @@ final class SSHPTYSession: @unchecked Sendable {
                 ssh.createChannel(opened, channelType: .session) { child, _ in
                     child.eventLoop.makeCompletedFuture {
                         try child.pipeline.syncOperations.addHandler(
-                            SSHExecHandler(command: command, limit: maximumOutputBytes, result: result)
+                            SSHExecHandler(command: command, input: input, limit: maximumOutputBytes, result: result)
                         )
                     }
                 }
@@ -508,20 +510,24 @@ final class SSHPTYSession: @unchecked Sendable {
     }
 }
 
-/// One exec request without a PTY. Stdin is closed once the command starts;
-/// stdout and stderr are collected until the server closes the channel.
+/// One exec request without a PTY. Once the command starts, `input` is written
+/// to stdin and stdin is closed; stdout and stderr are collected until the
+/// server closes the channel.
 private final class SSHExecHandler: ChannelInboundHandler {
     typealias InboundIn = SSHChannelData
+    typealias OutboundOut = SSHChannelData
 
     private let command: String
+    private let input: Data
     private let limit: Int
     private let result: EventLoopPromise<SSHExecResult>
     private var output = ByteBuffer()
     private var errorOutput = ByteBuffer()
     private var exitStatus: Int?
 
-    init(command: String, limit: Int, result: EventLoopPromise<SSHExecResult>) {
+    init(command: String, input: Data, limit: Int, result: EventLoopPromise<SSHExecResult>) {
         self.command = command
+        self.input = input
         self.limit = limit
         self.result = result
     }
@@ -541,7 +547,22 @@ private final class SSHExecHandler: ChannelInboundHandler {
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         switch event {
         case is ChannelSuccessEvent:
-            context.close(mode: .output, promise: nil)
+            guard !input.isEmpty else {
+                context.close(mode: .output, promise: nil)
+                return
+            }
+            // The SSH child channel queues writes past the peer's window, so
+            // one write is enough; EOF follows the last byte.
+            let data = SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(bytes: input)))
+            let channel = context.channel
+            context.writeAndFlush(wrapOutboundOut(data)).whenComplete { [result] outcome in
+                switch outcome {
+                case .success: channel.close(mode: .output, promise: nil)
+                case .failure(let error):
+                    result.fail(error)
+                    channel.close(promise: nil)
+                }
+            }
         case is ChannelFailureEvent:
             result.fail(SSHPTYSessionError.commandRequestRejected)
             context.close(promise: nil)

@@ -8,14 +8,19 @@ protocol SSHTerminalConnection: Sendable {
     func send(_ bytes: Data) async throws
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws
     /// One-shot command on the same connection, outside the terminal's PTY.
-    func run(_ command: String) async throws -> SSHExecResult
+    /// `input` becomes its stdin.
+    func run(_ command: String, input: Data) async throws -> SSHExecResult
     /// One SSH round trip. Throwing means the connection is gone.
     func checkAlive() async throws
     func cancel() async
 }
 
 extension SSHPTYSession: SSHTerminalConnection {
-    func run(_ command: String) async throws -> SSHExecResult { try await run(command, maximumOutputBytes: 2 * 1024 * 1024, timeout: .seconds(10)) }
+    func run(_ command: String, input: Data) async throws -> SSHExecResult {
+        // An upload over a slow link needs longer than an API call.
+        try await run(command, input: input, maximumOutputBytes: 2 * 1024 * 1024,
+                      timeout: input.count > 64 * 1024 ? .seconds(120) : .seconds(10))
+    }
     func checkAlive() async throws { try await checkAlive(timeout: .seconds(8)) }
 }
 
@@ -104,6 +109,45 @@ final class SSHTerminalEventQueue: Sendable {
             state.queuedBytes -= bytes
             if state.queuedBytes < resumeBelow { flow.resume() }
         }
+    }
+}
+
+/// Composer attachments go to the host as files the agent can read by path.
+/// They land in `$TMPDIR/oppi-ssh` (or `/tmp/oppi-ssh`), owner-only.
+enum SSHTerminalUpload {
+    static let maximumBytes = 32 * 1024 * 1024
+
+    enum Failure: Error, Equatable, LocalizedError {
+        case tooLarge
+        case rejected(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .tooLarge: "Attachments are limited to 32 MB."
+            case .rejected(let message): message
+            }
+        }
+    }
+
+    /// Generated, never user-supplied, so it needs no shell quoting.
+    static func fileName(extension ext: String, id: UUID = UUID()) -> String {
+        let safe = String(ext.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) && $0.isASCII }.prefix(8))
+        let stem = "oppi-" + id.uuidString.prefix(8).lowercased()
+        return safe.isEmpty ? stem : "\(stem).\(safe)"
+    }
+
+    /// `sh -c` so the user's login shell (fish included) only sees one quoted word.
+    static func command(fileName: String) -> String {
+        "sh -c 'umask 077; d=\"${TMPDIR:-/tmp}\"; d=\"${d%/}/oppi-ssh\"; mkdir -p \"$d\" && cat > \"$d/\(fileName)\" && printf %s \"$d/\(fileName)\"'"
+    }
+
+    static func path(from result: SSHExecResult, fileName: String) throws -> String {
+        let path = String(decoding: result.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard result.exitStatus == 0, path.hasPrefix("/"), path.hasSuffix("/" + fileName) else {
+            let reason = String(decoding: result.errorOutput, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            throw Failure.rejected(reason.isEmpty ? "The host did not save the attachment." : "The host did not save the attachment: \(reason.prefix(200))")
+        }
+        return path
     }
 }
 
@@ -238,9 +282,18 @@ final class SSHTerminalChannel {
     private var exitSubject: String { command.map { "`\($0)`" } ?? "Shell" }
 
     /// Runs a structured side command on this terminal's connection.
-    func run(_ command: String) async throws -> SSHExecResult {
+    func run(_ command: String, input: Data = Data()) async throws -> SSHExecResult {
         guard connected, let connection else { throw SSHPTYSessionError.notConnected }
-        return try await connection.run(command)
+        return try await connection.run(command, input: input)
+    }
+
+    /// Saves `data` in a private temporary folder on the host and returns its
+    /// path, so a prompt can point an agent at a photo or file from the phone.
+    func upload(_ data: Data, fileExtension: String) async throws -> String {
+        guard data.count <= SSHTerminalUpload.maximumBytes else { throw SSHTerminalUpload.Failure.tooLarge }
+        let name = SSHTerminalUpload.fileName(extension: fileExtension)
+        return try SSHTerminalUpload.path(from: try await run(SSHTerminalUpload.command(fileName: name), input: data),
+                                          fileName: name)
     }
 
     private func interpret(_ bytes: Data) {
