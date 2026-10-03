@@ -16,7 +16,7 @@ This is not a general Pi extension-authoring guide. For pi package layout, lifec
 
 Pi owns ordinary skills and extensions. Normal Oppi-managed sessions resolve them for the session cwd through Pi's resource system; there is no `workspace.extensions` allowlist. Installing or running Oppi does not write `~/.pi/agent/settings.json`, run `pi install`, or enable anything in standalone Pi.
 
-Oppi does not register a server-owned extension or tool. Managed workspace sessions and workspace-less Pi Control sessions use Pi's normal global and cwd-scoped configuration. This includes `SYSTEM.md`, `APPEND_SYSTEM.md`, settings, tools, Skills, prompt templates, and Extensions. A Pi extension can still register a tool named `oppi`, but Oppi does not reserve or manage that name.
+Oppi registers no server-owned tool. Managed host sessions load a lifecycle-journal extension plus Pi's `mcp`, `codemode`, and `tool-search` built-ins. Managed sandbox sessions load the lifecycle-journal extension, `mcp`, and `tool-search`, and do not load `codemode`. On either kind of session, `-builtin:<name>`, an exact Agent extension selection, or another extension that registers the same tool, command, or flag can leave one of those built-ins out (see [Server configuration](server-configuration.md#mcp-servers-codemode-and-tool-search)). Oppi adds none of these to a terminal mirror session; the terminal's own Pi loads its built-ins according to its own settings. Managed workspace sessions and workspace-less Pi Control sessions use Pi's normal global and cwd-scoped configuration. This includes `SYSTEM.md`, `APPEND_SYSTEM.md`, settings, tools, Skills, prompt templates, and Extensions. A Pi extension can still register a tool named `oppi`, but Oppi does not reserve or manage that name.
 
 ## Mobile don'ts
 
@@ -330,7 +330,7 @@ The behavior is the same shape for Oppi-owned sessions and mirrored terminal ses
 
 ## How extension loading works
 
-At session startup, Oppi uses Pi's normal extension sources for the session working directory. Oppi does not add a server-owned extension.
+At session startup, Oppi uses Pi's normal extension sources for the session working directory. Oppi registers no server-owned tool. Managed host sessions load a lifecycle-journal extension plus Pi's `mcp`, `codemode`, and `tool-search` built-ins. Managed sandbox sessions load the lifecycle-journal extension, `mcp`, and `tool-search`, and do not load `codemode`. On either kind of session, `-builtin:<name>`, an exact Agent extension selection, or another extension that registers the same tool, command, or flag can leave one of those built-ins out. Oppi adds none of these to a terminal mirror session; the terminal's own Pi loads its built-ins according to its own settings.
 
 Pi's normal sources are:
 

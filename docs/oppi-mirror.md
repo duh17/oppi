@@ -128,8 +128,8 @@ The terminal Pi process remains the source of truth. Oppi can watch, send prompt
 
 In Oppi clients:
 
-- connected mirror sessions show as `Mirror live`
-- disconnected or stale mirror sessions show as `Mirror offline`
+- in the iPhone and iPad app, connected mirror sessions show a green, animated terminal icon; VoiceOver says "pi-tui live"
+- in the iPhone and iPad app, disconnected or stale mirror sessions show a grey terminal icon; VoiceOver says "pi-tui offline"
 - stopped, disconnected mirror sessions can be resumed as server-owned Oppi sessions when the server has the session file
 
 ## What works from mobile

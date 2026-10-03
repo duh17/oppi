@@ -117,7 +117,7 @@ Apple can manage installation of the speech assets used by its APIs. Apple's own
 
 ### Server dictation
 
-Server dictation streams 16 kHz, 16-bit mono PCM audio from the iPhone to the paired server. The server forwards audio to the speech-to-text endpoint configured in `asr.sttEndpoint` and sends incremental and final transcript results back to the app. The Oppi server does not persist dictation audio locally. The configured speech-to-text backend can receive the audio and transcript and controls its own retention.
+Server dictation streams 16 kHz, 16-bit mono PCM audio from the iPhone to the paired server. Explicit `asr.provider: xai` sends audio to `asr.sttEndpoint` if set, otherwise `https://api.x.ai`. Explicit `asr.provider: http` sends audio to `asr.sttEndpoint` when that endpoint is set. With the provider omitted, an endpoint whose host is `api.x.ai` uses xAI, and any other non-empty endpoint uses the HTTP/Yuwp path. With neither a provider nor an endpoint, with `http` and no endpoint, or with an unknown provider, server dictation stays off and no audio is sent. The server sends incremental and final transcript results back to the app. The Oppi server does not persist dictation audio locally. The configured speech-to-text backend can receive the audio and transcript and controls its own retention.
 
 The endpoint can be local to the server host or remote. For a remote endpoint, the server operator is responsible for its transport security, credentials, processing, and retention.
 
