@@ -59,6 +59,8 @@ struct SSHTerminalComposer: View {
                 appliesOuterPadding: true,
                 allowsExpansion: false,
                 allowsAttachments: true,
+                attachmentButtonPlacement: .trailing,
+                actionRowMinimumHeight: ComposerInputMetrics.controlDiameter,
                 autocorrectionEnabled: false,
                 actionRow: { keyStrip }
             )
@@ -82,8 +84,13 @@ struct SSHTerminalComposer: View {
                     }
                 }
             }
+            // Horizontal ScrollView has no intrinsic cross-axis height. Reserve
+            // the full key target even when the focused composer is compressed.
+            .frame(height: ComposerInputMetrics.controlDiameter)
+            .scrollDismissesKeyboard(.never)
             Button(action: showRawKeyboard) {
-                Image(systemName: "keyboard").frame(minWidth: 40, minHeight: 32)
+                Image(systemName: "keyboard")
+                    .frame(minWidth: 40, minHeight: ComposerInputMetrics.controlDiameter)
             }
             .accessibilityLabel("Type directly into the terminal")
             .accessibilityIdentifier("sshTerminal.composer.rawKeyboard")
@@ -93,7 +100,12 @@ struct SSHTerminalComposer: View {
     }
 
     private func key(_ label: String, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { Text(label).padding(.horizontal, 6).frame(minWidth: 40, minHeight: 32) }
+        Button(action: action) {
+            Text(label)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 6)
+                .frame(minWidth: 40, minHeight: ComposerInputMetrics.controlDiameter)
+        }
             .accessibilityIdentifier("sshTerminal.composer.\(id)")
     }
 

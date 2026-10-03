@@ -81,6 +81,11 @@ struct ChatInputBar<ActionRow: View>: View {
     var alwaysShowActionRow: Bool = false
     var allowsExpansion: Bool = true
     var allowsAttachments: Bool = true
+    /// Surfaces can keep upload beside their trailing controls instead of chat's leading +.
+    var attachmentButtonPlacement: HorizontalEdge = .leading
+    /// A surface-owned scroll row needs a vertical budget, not just its content's ideal height.
+    /// Zero preserves the intrinsic layout of existing chat and intake actions.
+    var actionRowMinimumHeight: CGFloat = 0
     var showsAccessoryRow: Bool = true
     /// Off for shell input, where corrections and capitals break commands.
     var autocorrectionEnabled: Bool = true
@@ -614,7 +619,7 @@ struct ChatInputBar<ActionRow: View>: View {
             if showsComposerActionRow {
                 GlassEffectContainer(spacing: 0) {
                     HStack(spacing: 6) {
-                        if allowsAttachments {
+                        if allowsAttachments, attachmentButtonPlacement == .leading {
                             attachButton
                         }
 
@@ -627,7 +632,12 @@ struct ChatInputBar<ActionRow: View>: View {
                         }
 
                         actionRow()
+
+                        if allowsAttachments, attachmentButtonPlacement == .trailing {
+                            attachButton
+                        }
                     }
+                    .frame(minHeight: actionRowMinimumHeight)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
