@@ -180,6 +180,16 @@ struct TraceEventPresentation: Codable, Equatable, Sendable {
     let body: String?
     let fields: [TraceEventPresentationField]?
     let accent: String?
+    var output: Output? = nil
+
+    var terminalOutput: Output? { output?.kind == "terminal" ? output : nil }
+
+    struct Output: Codable, Equatable, Sendable {
+        let kind: String
+        let entryId: String
+        let command: String?
+        let truncated: Bool?
+    }
 }
 
 struct TraceEventPresentationField: Codable, Equatable, Sendable {

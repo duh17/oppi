@@ -61,4 +61,51 @@ private struct NativeToolRow: UIViewRepresentable {
         )
     }
 }
+/// Both states use the production controller's result-to-tool-row adapter.
+struct InputCardDisclosurePreview: View {
+    var body: some View {
+        GeometryReader { geometry in
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Background result · progressive disclosure").font(.headline)
+                Text("Compact").font(.caption).foregroundStyle(.themeFgDim)
+                CompletionRowPreview(expanded: false, width: geometry.size.width - 32)
+                Text("Expanded · tap output for full screen").font(.caption).foregroundStyle(.themeFgDim)
+                CompletionRowPreview(expanded: true, width: geometry.size.width - 32)
+                Spacer()
+            }
+            .padding(16)
+            .foregroundStyle(.themeFg)
+        }
+        .background(Color.themeBg.ignoresSafeArea())
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+private struct CompletionRowPreview: UIViewRepresentable {
+    let expanded: Bool
+    let width: CGFloat
+
+    func makeUIView(context: Context) -> UIView {
+        let reducer = TimelineReducer()
+        let controller = ChatTimelineCollectionHost.Controller()
+        controller.reducer = reducer
+        controller.toolOutputStore = reducer.toolOutputStore
+        if expanded { reducer.expandedItemIDs.insert("result") }
+        reducer.toolOutputStore.replace((1...100).map { "Build output line \($0): passed" }.joined(separator: "\n"), for: "result")
+        var card = TraceEventPresentation(kind: "custom", title: "Background job bash-60", subtitle: nil,
+            status: "completed", body: "npm run check", fields: [.init(label: "Result", value: "Exit 0")], accent: "success")
+        card.output = .init(kind: "terminal", entryId: "123", command: "npm run check", truncated: nil)
+        let item = ChatItem.customEvent(id: "result", message: "Completed", presentation: card)
+        return controller.toolRowConfiguration(itemID: "result", item: item)!.makeContentView()
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIView, context: Context) -> CGSize? {
+        uiView.bounds.size.width = width
+        uiView.layoutIfNeeded()
+        return uiView.systemLayoutSizeFitting(CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+    }
+}
 #endif

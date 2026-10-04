@@ -116,6 +116,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     handleGenericGetSessionEvents,
     handleGetFullToolOutputForSession,
     handleGetToolOutputForSession,
+    handleGetInputCardOutput,
     handleGetSessionEventsForSession,
     handleGetSessionForSession,
     handleGetSessionTracePageForSession,
@@ -760,6 +761,15 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return true;
     }
 
+    const controlCardOutputMatch = path.match(
+      /^\/control-sessions\/([^/]+)\/input-card-output\/([^/]+)$/,
+    );
+    if (controlCardOutputMatch && method === "GET") {
+      const session = requireControlSession(controlCardOutputMatch[1], res);
+      if (session) await handleGetInputCardOutput(session, controlCardOutputMatch[2], res);
+      return true;
+    }
+
     const controlToolOutputMatch = path.match(
       /^\/control-sessions\/([^/]+)\/tool-output\/([^/]+)$/,
     );
@@ -932,6 +942,15 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const wsSessionForkMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/fork$/);
     if (wsSessionForkMatch && method === "POST") {
       await handleForkWorkspaceSession(wsSessionForkMatch[1], wsSessionForkMatch[2], req, res);
+      return true;
+    }
+
+    const wsCardOutputMatch = path.match(
+      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/input-card-output\/([^/]+)$/,
+    );
+    if (wsCardOutputMatch && method === "GET") {
+      const session = requireWorkspaceSession(wsCardOutputMatch[1], wsCardOutputMatch[2], res);
+      if (session) await handleGetInputCardOutput(session, wsCardOutputMatch[3], res);
       return true;
     }
 

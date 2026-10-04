@@ -322,6 +322,68 @@ struct ChatTimelineCoordinatorTests {
         #expect(secondCell.contentConfiguration is ErrorTimelineRowConfiguration)
     }
 
+    @Test func generatedOutputReusesToolRowExpansionLoaderAndFullScreen() async throws {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        let id = "card-result"
+        var card = TraceEventPresentation(kind: "custom", title: "Arbitrary result", subtitle: nil,
+            status: "completed", body: "producer command", fields: nil, accent: "success")
+        card.output = .init(kind: "terminal", entryId: "123", command: "producer command", truncated: nil)
+        let item = ChatItem.customEvent(id: id, message: "Summary", presentation: card)
+        let text = (1...200).map { "saved output line \($0)" }.joined(separator: "\n")
+        var fetches = 0
+        harness.coordinator._fetchToolOutputForTesting = { sessionId, itemID in
+            #expect(sessionId == "session-a")
+            #expect(itemID == id)
+            fetches += 1
+            return .init(text: text)
+        }
+        harness.coordinator.apply(configuration: makeTimelineConfiguration(items: [item], sessionId: "session-a",
+            reducer: harness.reducer, toolOutputStore: harness.toolOutputStore, toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection, scrollController: harness.scrollController, audioPlayer: harness.audioPlayer),
+            to: harness.collectionView)
+        let collapsed = try #require(configuredTimelineCell(in: harness.collectionView, item: 0)
+            .contentConfiguration as? CollapsedToolTimelineRowConfiguration)
+        #expect(collapsed.chrome.title.contains("Arbitrary result"))
+        #expect(!collapsed.chrome.isExpanded)
+        #expect(fetches == 0)
+        let index = IndexPath(item: 0, section: 0)
+        #expect(harness.coordinator.collectionView(harness.collectionView, shouldSelectItemAt: index))
+        harness.coordinator.collectionView(harness.collectionView, didSelectItemAt: index)
+        #expect(await waitForTimelineCondition(timeoutMs: 1000) {
+            await MainActor.run { harness.toolOutputStore.hasCompleteOutput(for: id) }
+        })
+        let expanded = try #require(harness.coordinator.toolRowConfiguration(itemID: id, item: item) as? ToolTimelineRowConfiguration)
+        #expect(expanded.isExpanded)
+        guard case .bash(let command, let output, _) = expanded.expandedContent else {
+            Issue.record("Expected shared terminal viewport"); return
+        }
+        #expect(command == "producer command")
+        #expect(output == text)
+        let reader = ToolTimelineRowFullScreenSupport.staticFullScreenContent(configuration: expanded,
+            outputCopyText: nil, terminalStream: nil)
+        guard case .terminal(let fullText, _, _, _) = reader else {
+            Issue.record("Expected shared full-screen terminal reader"); return
+        }
+        #expect(fullText == text)
+        #expect(expanded.copyOutputText == text)
+        harness.coordinator.collectionView(harness.collectionView, didSelectItemAt: index)
+        #expect(!harness.reducer.expandedItemIDs.contains(id))
+        harness.coordinator.collectionView(harness.collectionView, didSelectItemAt: index)
+        #expect(fetches == 1)
+    }
+
+    @Test func presentationOutputDecodesAdditivelyAndUnknownKindDoesNotSelectToolUI() throws {
+        let old = try JSONDecoder().decode(TraceEventPresentation.self, from: Data(#"{"kind":"custom","title":"Old card"}"#.utf8))
+        #expect(old.output == nil)
+        let unknown = try JSONDecoder().decode(TraceEventPresentation.self,
+            from: Data(#"{"kind":"custom","title":"Future card","output":{"kind":"future","entryId":"3"}}"#.utf8))
+        #expect(unknown.terminalOutput == nil)
+        let current = try JSONDecoder().decode(TraceEventPresentation.self,
+            from: Data(#"{"kind":"custom","title":"Result","output":{"kind":"terminal","entryId":"3","command":"echo hi","truncated":true}}"#.utf8))
+        #expect(current.terminalOutput?.entryId == "3")
+        #expect(current.terminalOutput?.truncated == true)
+    }
+
     @MainActor
     @Test func customEventsRenderWithNativeCardConfiguration() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")

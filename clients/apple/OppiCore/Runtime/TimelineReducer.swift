@@ -473,6 +473,16 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             _lastLoadWasIncrementalForTesting = false
         }
 
+        // Input-card output is fetched on demand and absent from trace pages. Keep
+        // complete retained output for unchanged references through a same-session
+        // history rebuild (notably older-page prepend), or an expanded row goes blank.
+        // The reducer is session-scoped; clear/reset still discards all cached bytes.
+        let retainedCardOutput: [(String, TraceEventPresentation.Output, String)] = items.compactMap { item in
+            guard case .customEvent(let id, _, let presentation) = item,
+                  let output = presentation.terminalOutput,
+                  toolOutputStore.hasCompleteOutput(for: id) else { return nil }
+            return (id, output, toolOutputStore.fullOutput(for: id))
+        }
         loadedTraceEvents = events
 
         // Preserve locally-added user messages that aren't yet in the trace.
@@ -566,6 +576,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             if let assistantText = applyTraceEvent(event, dateFormatter: dateFormatter, appendOnly: true) {
                 assistantTextsToCache.append(assistantText)
             }
+        }
+
+        for (id, source, text) in retainedCardOutput {
+            guard let index = indexForID(id),
+                  case .customEvent(_, _, let presentation) = items[index],
+                  presentation.terminalOutput == source else { continue }
+            toolOutputStore.replace(text, for: id)
         }
 
         // Re-insert orphaned user messages at their chronological position.

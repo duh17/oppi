@@ -506,6 +506,26 @@ struct TraceRenderingTests {
         #expect(msg == "Context compacted")
     }
 
+    @Test func fetchedInputCardOutputSurvivesPrependButNotChangedReferencesOrReset() {
+        let reducer = TimelineReducer()
+        var card = TraceEventPresentation(kind: "custom", title: "Result", subtitle: nil,
+            status: "completed", body: nil, fields: nil, accent: "success")
+        card.output = .init(kind: "terminal", entryId: "42", command: "echo hi", truncated: nil)
+        let event = traceEvent(id: "result", type: .system, presentation: card)
+        reducer.loadSession([event])
+        reducer.toolOutputStore.replace("saved retained output", for: "result")
+        reducer.expandedItemIDs.insert("result")
+        #expect(reducer.prependTracePage([traceEvent(id: "older", type: .user, text: "Earlier")]))
+        #expect(reducer.toolOutputStore.fullOutput(for: "result") == "saved retained output")
+        #expect(reducer.expandedItemIDs.contains("result"))
+        card.output = .init(kind: "terminal", entryId: "43", command: "other", truncated: nil)
+        reducer.loadSession([traceEvent(id: "result", type: .system, presentation: card)])
+        #expect(reducer.toolOutputStore.fullOutput(for: "result").isEmpty)
+        reducer.toolOutputStore.replace("new output", for: "result")
+        reducer.loadSession([])
+        #expect(reducer.toolOutputStore.fullOutput(for: "result").isEmpty)
+    }
+
     @Test func customPresentationSystemEventUsesCustomTimelineItem() {
         let reducer = TimelineReducer()
         let presentation = TraceEventPresentation(

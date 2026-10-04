@@ -54,3 +54,39 @@ export async function readDurableInputCards(
   }
   return { entries, submissions };
 }
+
+/** Read the explicitly advertised slice, scoped to the session's visible ancestry.
+ * No background-job naming/text heuristics; no raw model prompt returned.
+ */
+export async function readDurableInputCardOutput(
+  harness: Harness,
+  id: ConversationId,
+  entryId: string,
+): Promise<{ output: string } | null> {
+  if (!/^[1-9]\d*$/.test(entryId) || !Number.isSafeInteger(Number(entryId))) return null;
+  const conversation = await harness.conversation(id, context);
+  if (!conversation) return null;
+  const numericId = Number(entryId) as EntryId;
+  const page = await conversation.entries(
+    { minEntryId: numericId, maxEntryId: numericId },
+    1,
+    undefined,
+    context,
+  );
+  const entry = page.items.find((item) => item.id === numericId);
+  if (!entry) return null;
+  const cards = await readDurableInputCards(harness, [entry.conversationId]);
+  const output = cards.entries.get(entry.id)?.output;
+  if (!output) return null;
+  const message = entry.model?.[0];
+  if (message?.role !== "user") return null;
+  const text =
+    typeof message.content === "string"
+      ? message.content
+      : message.content
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n");
+  if (output.offset + output.length > text.length) return null;
+  return { output: text.slice(output.offset, output.offset + output.length) };
+}

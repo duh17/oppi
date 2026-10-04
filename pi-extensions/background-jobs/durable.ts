@@ -158,7 +158,16 @@ async function waitForJob(
 const INTERRUPTED_PROCESS_WARNING =
   "The previous host or guest process may still be running. Do not start it again until it is confirmed dead.";
 
-function report(job: Job): string {
+function report(job: Job): {
+  content: string;
+  output: {
+    kind: "terminal";
+    offset: number;
+    length: number;
+    command: string;
+    truncated: boolean;
+  };
+} {
   const headline =
     job.status === "interrupted"
       ? `Background job ${job.id} was interrupted by a host restart before it finished. It was not rerun. ${INTERRUPTED_PROCESS_WARNING}`
@@ -167,7 +176,7 @@ function report(job: Job): string {
         : job.status === "timed_out"
           ? `Background job ${job.id} timed out after ${job.timeout} seconds and was killed.`
           : `Background job ${job.id} ${job.status === "completed" ? "finished" : "failed"} (exit ${job.exitCode}).`;
-  return [
+  const prefix = [
     RESULT_GUIDANCE,
     "",
     headline,
@@ -181,10 +190,19 @@ function report(job: Job): string {
         ]
       : []),
     "output:",
-    job.output.trimEnd() || "(no output)",
     "",
-    "This is the final result. Do not poll for this job.",
   ].join("\n");
+  const output = job.output.trimEnd() || "(no output)";
+  return {
+    content: `${prefix}${output}\n\nThis is the final result. Do not poll for this job.`,
+    output: {
+      kind: "terminal",
+      offset: prefix.length,
+      length: output.length,
+      command: job.command,
+      truncated: job.truncated,
+    },
+  };
 }
 
 const JobRunner = defineTask<
@@ -210,6 +228,13 @@ const JobRunner = defineTask<
       let output = "";
       let truncated = false;
       let exitCode: number | null = null;
+      const appendOutput = (text: string): void => {
+        output += text;
+        if (output.length > 64_000) {
+          output = output.slice(-64_000);
+          truncated = true;
+        }
+      };
       if (winner === claim) {
         try {
           const env = await runtime.env(context);
@@ -257,13 +282,7 @@ const JobRunner = defineTask<
                 cwd: job.cwd,
                 inheritEnv: true,
                 ...(job.timeout === undefined ? {} : { timeout: job.timeout }),
-                onOutput: (text) => {
-                  output += text;
-                  if (output.length > 64_000) {
-                    output = output.slice(-64_000);
-                    truncated = true;
-                  }
-                },
+                onOutput: appendOutput,
               },
               withAbortSignal(cancel.signal, context),
             );
@@ -273,10 +292,7 @@ const JobRunner = defineTask<
             if (cancel.signal.aborted) status = "cancelled";
             else if (!result.ok) {
               status = result.error.code === "timeout" ? "timed_out" : "failed";
-              output =
-                `${output}${output ? "\n" : ""}${result.error.message}`.slice(
-                  -64_000,
-                );
+              appendOutput(`${output ? "\n" : ""}${result.error.message}`);
             } else {
               exitCode = result.value.exitCode;
               status = exitCode === 0 ? "completed" : "failed";
@@ -288,10 +304,9 @@ const JobRunner = defineTask<
         } catch (error) {
           if (runtime.signal.aborted) return;
           status = "failed";
-          output =
-            `${output}${output ? "\n" : ""}${error instanceof Error ? error.message : String(error)}`.slice(
-              -64_000,
-            );
+          appendOutput(
+            `${output ? "\n" : ""}${error instanceof Error ? error.message : String(error)}`,
+          );
         }
       }
       await runtime.commit(async (tx) => {
@@ -364,10 +379,12 @@ const JobRunner = defineTask<
         // the bytes from here on. Stop may withdraw a queued report; replay must
         // not resurrect it under a new identity.
         const requestId = job.receiptId || `background-job:${job.id}`;
+        const result = report(job);
         await runtime.commit(async (tx) => {
           const cards = await tx.doc(DurableInputCards, runtime.conversationId);
           cards.requests[requestId] ??= {
             title: `Background job ${job.id}`,
+            output: result.output,
             status: job.status,
             body:
               job.status === "interrupted"
@@ -392,7 +409,7 @@ const JobRunner = defineTask<
         await conversation.submit(
           {
             type: "input",
-            content: report(job),
+            content: result.content,
             whenBusy: "followUp",
             requestId,
           },

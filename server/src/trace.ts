@@ -166,7 +166,20 @@ export function projectCustomEntry(
   if (entry.type !== "custom") return null;
   const card = sanitizeTranscriptCard(asRecord(entry.data)?.card);
   if (card) {
-    const { at, ...presentation } = card;
+    const { at, output, ...display } = card;
+    const presentation: TraceEventPresentation = {
+      ...display,
+      ...(output && asRecord(entry.data)?.inputCard === true
+        ? {
+            output: {
+              kind: output.kind,
+              entryId: entry.id,
+              command: output.command,
+              truncated: output.truncated,
+            },
+          }
+        : {}),
+    };
     return {
       id: entry.id,
       type: "system",
@@ -395,6 +408,14 @@ export interface TraceEventPresentationField {
   value: string;
 }
 
+export interface TraceEventPresentationOutput {
+  kind: "terminal";
+  entryId: string;
+  command?: string;
+  /** Earlier bytes were discarded by the producer, not recoverable by full screen. */
+  truncated?: boolean;
+}
+
 export interface TraceEventPresentation {
   kind: "custom";
   title: string;
@@ -402,6 +423,7 @@ export interface TraceEventPresentation {
   status?: string;
   body?: string;
   fields?: TraceEventPresentationField[];
+  output?: TraceEventPresentationOutput;
   accent?: "info" | "success" | "warning" | "error";
 }
 

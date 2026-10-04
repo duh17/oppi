@@ -38,6 +38,23 @@ struct SessionToolOutputAccessTests {
         return "\(request.httpMethod ?? "") \(url?.host ?? "")\(url?.path ?? "")\(query)"
     }
 
+    @Test("Generated result disclosure uses the bound HTTP scope and preserves truncation warnings")
+    func inputCardOutputUsesBoundScope() async throws {
+        let content = makeContent(client: makeClient(host: "server-a.test"))
+        for scope in [SessionRouteScope.workspace("w1"), .control] {
+            let fetch = try #require(content.inputCardOutputFetch(sessionId: "s1", routeScope: scope,
+                output: .init(kind: "terminal", entryId: "42", command: nil, truncated: true)))
+            let result = try await fetch()
+            #expect(result.contains("Earlier output is unavailable"))
+        }
+        #expect(RecordingToolOutputProtocol.requests.map(signature) == [
+            "GET server-a.test/workspaces/w1/sessions/s1/input-card-output/42",
+            "GET server-a.test/control-sessions/s1/input-card-output/42"
+        ])
+        #expect(content.inputCardOutputFetch(sessionId: "s1", routeScope: nil,
+            output: .init(kind: "terminal", entryId: "42", command: nil, truncated: nil)) == nil)
+    }
+
     @Test("Expand, copy, and sidecar reads target the bound session, scope, and client")
     func operationsTargetBoundSessionAndScope() async throws {
         let content = makeContent(client: makeClient(host: "server-a.test"))

@@ -54,7 +54,7 @@ async function projectEntries(
         ? {
             type: "custom",
             customType: entry.kind,
-            data: inputCards.entries.has(entry.id) ? { card } : entry.data,
+            data: inputCards.entries.has(entry.id) ? { card, inputCard: true } : entry.data,
             id: String(entry.id),
             parentId,
             timestamp: new Date(card.at).toISOString(),

@@ -90,6 +90,13 @@ export class SessionRuntimes implements AgentRuntimeTransport {
     };
   }
 
+  getServerDurableInputCardOutput(
+    sessionId: string,
+    entryId: string,
+  ): Promise<{ output: string } | null> {
+    return this.oppi.getServerDurableInputCardOutput(sessionId, entryId);
+  }
+
   getServerDurableTracePage(
     sessionId: string,
     options: TracePageOptions,

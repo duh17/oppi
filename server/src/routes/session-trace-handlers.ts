@@ -25,6 +25,11 @@ type RequireWorkspaceSession = (
 type RequireSession = (sessionId: string, res: ServerResponse) => Session | null;
 
 type SessionTraceRouteHandlers = {
+  handleGetInputCardOutput: (
+    session: Session,
+    entryId: string,
+    res: ServerResponse,
+  ) => Promise<void>;
   sessionFileHandlers: ReturnType<typeof createSessionFileHandlers>;
   handleGetFullToolOutput: (
     workspaceId: string,
@@ -136,6 +141,22 @@ export function createSessionTraceRouteHandlers(
     getMcpServerNames: (session) => ctx.mcp?.configuredServerNames(session.workspaceId) ?? [],
   });
   const sessionFileHandlers = createSessionFileHandlers(ctx, helpers, traceService);
+
+  async function handleGetInputCardOutput(
+    session: Session,
+    entryId: string,
+    res: ServerResponse,
+  ): Promise<void> {
+    const result = await ctx.sessionRuntimes.getServerDurableInputCardOutput(
+      session.id,
+      decodeToolCallId(entryId),
+    );
+    if (!result) {
+      helpers.error(res, 404, "Card output not found");
+      return;
+    }
+    helpers.json(res, result);
+  }
 
   // ─── Tool Output by ID ───
 
@@ -593,6 +614,7 @@ export function createSessionTraceRouteHandlers(
     handleGenericGetSessionEvents,
     handleGetFullToolOutputForSession,
     handleGetToolOutputForSession,
+    handleGetInputCardOutput,
     handleGetSessionEventsForSession,
     handleGetSessionForSession,
     handleGetSessionTracePageForSession,

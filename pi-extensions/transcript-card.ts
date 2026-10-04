@@ -6,6 +6,14 @@ export type TranscriptCard = {
   body?: string;
   fields?: Array<{ label: string; value: string }>;
   accent?: "info" | "success" | "warning" | "error";
+  /** UTF-16 range in this card's admitted input. Bytes remain Harness-owned. */
+  output?: {
+    kind: "terminal";
+    offset: number;
+    length: number;
+    command?: string;
+    truncated?: boolean;
+  };
   at: number;
 };
 
@@ -56,5 +64,30 @@ export function sanitizeTranscriptCard(
     ["info", "success", "warning", "error"].includes(data.accent)
   )
     card.accent = data.accent as TranscriptCard["accent"];
+  if (
+    data.output &&
+    typeof data.output === "object" &&
+    !Array.isArray(data.output)
+  ) {
+    const output = data.output as Record<string, unknown>;
+    if (
+      output.kind === "terminal" &&
+      Number.isSafeInteger(output.offset) &&
+      (output.offset as number) >= 0 &&
+      Number.isSafeInteger(output.length) &&
+      (output.length as number) >= 0 &&
+      (output.length as number) <= 64_000
+    ) {
+      card.output = {
+        kind: "terminal",
+        offset: output.offset as number,
+        length: output.length as number,
+        ...(typeof output.command === "string"
+          ? { command: output.command.slice(0, 8192) }
+          : {}),
+        ...(output.truncated === true ? { truncated: true } : {}),
+      };
+    }
+  }
   return card;
 }

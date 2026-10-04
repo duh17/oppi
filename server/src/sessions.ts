@@ -471,6 +471,17 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return this.stateCoordinator.refreshSessionState(key, active as SessionStateActiveSession);
   }
 
+  async getServerDurableInputCardOutput(
+    sessionId: string,
+    entryId: string,
+  ): Promise<{ output: string } | null> {
+    const id = this.storage.getSession(sessionId)?.serverDurable?.conversationId;
+    if (id === undefined || !this.durableHarness) return null;
+    const { harness } = await (await this.durableHarness).open();
+    const { readDurableInputCardOutput } = await import("./durable-input-cards.js");
+    return readDurableInputCardOutput(harness, id as ConversationId, entryId);
+  }
+
   async getServerDurableTracePage(
     sessionId: string,
     options: TracePageOptions,

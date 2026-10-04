@@ -72,6 +72,8 @@ struct ScreenshotPreviewView: View {
             SessionTimelinePreview()
         case "quiet-work-strip":
             QuietWorkStripPreview()
+        case "input-card-disclosure":
+            InputCardDisclosurePreview()
         case "old-server-bash":
             BuiltInToolFactsPreview(isEdit: false)
         case "old-server-edit":

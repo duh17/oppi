@@ -247,6 +247,31 @@ extension ChatTimelineCollectionHost.Controller {
     }
 
     func toolRowConfiguration(itemID: String, item: ChatItem) -> (any UIContentConfiguration)? {
+        if case .customEvent(_, _, let card) = item, let output = card.terminalOutput {
+            let expanded = reducer?.expandedItemIDs.contains(itemID) == true
+            let inspection = ToolContentDescriptorBuilder.inspect(
+                tool: "", isError: card.accent == "error", isDone: true,
+                context: .init(
+                    args: output.command.map { ["command": .string($0)] },
+                    fullOutput: expanded ? toolOutputStore?.fullOutput(for: itemID) ?? "" : "",
+                    isLoadingOutput: toolOutputLoader.isLoading(itemID),
+                    inputPresentation: .init(fields: ["command": .init(role: "command", language: "shell")]),
+                    display: .init(title: card.title, verbatim: true),
+                    outputPresentation: .init(kind: "terminal")
+                ), includeOutput: expanded
+            )
+            if !expanded {
+                return makeCollapsedToolRowConfiguration(itemID: itemID, tool: "", argsSummary: "",
+                    outputPreview: "", isError: card.accent == "error", isDone: true,
+                    details: nil, inspection: inspection, card: card)
+            }
+            var configuration = makeFullToolRowConfiguration(itemID: itemID, tool: "", argsSummary: "",
+                outputPreview: "", isError: card.accent == "error", isDone: true,
+                details: nil, inspection: inspection, card: card)
+            configuration.inspectionSupplement = ([card.body == output.command ? nil : card.body]
+                + (card.fields ?? []).map { "\($0.label): \($0.value)" }).compactMap { $0 }.joined(separator: "\n")
+            return configuration
+        }
         guard case .toolCall(_, let tool, let argsSummary, let outputPreview, _, let isError, let isDone) = item else {
             return nil
         }
@@ -308,7 +333,8 @@ extension ChatTimelineCollectionHost.Controller {
         isError: Bool,
         isDone: Bool,
         details: JSONValue?,
-        inspection: ToolInspection
+        inspection: ToolInspection,
+        card: TraceEventPresentation? = nil
     ) -> CollapsedToolTimelineRowConfiguration {
         var context = ToolPresentationBuilder.Context(
             args: toolArgsStore?.args(for: itemID),
@@ -316,8 +342,11 @@ extension ChatTimelineCollectionHost.Controller {
             expandedItemIDs: [],
             fullOutput: "",
             isLoadingOutput: false,
-            callSegments: toolSegmentStore?.callSegments(for: itemID),
-            resultSegments: toolSegmentStore?.resultSegments(for: itemID),
+            callSegments: card.map { [StyledSegment(text: $0.title, style: .accent),
+                StyledSegment(text: " " + ($0.output?.command ?? ""), style: .dim)] }
+                ?? toolSegmentStore?.callSegments(for: itemID),
+            resultSegments: card.flatMap { $0.status.map { [StyledSegment(text: $0, style: .muted)] } }
+                ?? toolSegmentStore?.resultSegments(for: itemID),
             startedAt: reducer?.toolStartTime(for: itemID),
             elapsedSeconds: reducer?.toolElapsed(for: itemID)
         )
@@ -345,7 +374,8 @@ extension ChatTimelineCollectionHost.Controller {
         isError: Bool,
         isDone: Bool,
         details: JSONValue?,
-        inspection: ToolInspection
+        inspection: ToolInspection,
+        card: TraceEventPresentation? = nil
     ) -> ToolTimelineRowConfiguration {
         var context = ToolPresentationBuilder.Context(
             args: toolArgsStore?.args(for: itemID),
@@ -353,8 +383,11 @@ extension ChatTimelineCollectionHost.Controller {
             expandedItemIDs: reducer?.expandedItemIDs ?? [],
             fullOutput: reducer?.terminalOutputStreams.owner(for: itemID)?.formatted ?? toolOutputStore?.fullOutput(for: itemID) ?? "",
             isLoadingOutput: toolOutputLoader.isLoading(itemID),
-            callSegments: toolSegmentStore?.callSegments(for: itemID),
-            resultSegments: toolSegmentStore?.resultSegments(for: itemID),
+            callSegments: card.map { [StyledSegment(text: $0.title, style: .accent),
+                StyledSegment(text: " " + ($0.output?.command ?? ""), style: .dim)] }
+                ?? toolSegmentStore?.callSegments(for: itemID),
+            resultSegments: card.flatMap { $0.status.map { [StyledSegment(text: $0, style: .muted)] } }
+                ?? toolSegmentStore?.resultSegments(for: itemID),
             startedAt: reducer?.toolStartTime(for: itemID),
             elapsedSeconds: reducer?.toolElapsed(for: itemID)
         )

@@ -1778,6 +1778,37 @@ describe("server durable managed runtime", () => {
         }),
       ]);
       expect(JSON.stringify(trace)).not.toContain("HOST_RESULT");
+      const output = trace.find((event) => event.presentation?.output)!.presentation!.output!;
+      const dispatch = createSessionRoutes(
+        {
+          storage: f.storage,
+          sessions: f.manager,
+          sessionRuntimes: f.manager,
+          ensureSessionContextWindow: (session: Session) => session,
+        } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+      for (const [path, status] of [
+        [
+          `/workspaces/${f.workspace.id}/sessions/${f.session.id}/input-card-output/${output.entryId}`,
+          200,
+        ],
+        [`/workspaces/wrong/sessions/${f.session.id}/input-card-output/${output.entryId}`, 404],
+        [`/workspaces/${f.workspace.id}/sessions/${f.session.id}/input-card-output/999999`, 404],
+      ] as const) {
+        const res = makeResponse();
+        expect(
+          await dispatch({
+            method: "GET",
+            path,
+            url: new URL(path, "http://localhost"),
+            req: makeRequest(),
+            res: res as never,
+          }),
+        ).toBe(true);
+        expect(res.statusCode).toBe(status);
+        if (status === 200) expect(JSON.parse(res.body)).toEqual({ output: "HOST_RESULT" });
+      }
       expect(
         history.filter(
           (message) =>

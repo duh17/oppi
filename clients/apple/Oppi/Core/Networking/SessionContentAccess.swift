@@ -73,6 +73,18 @@ final class SessionContentAccess {
         )
     }
 
+    /// Same session-bound read capability as tool output; loaded by the shared row loader.
+    func inputCardOutputFetch(sessionId: String, routeScope: SessionRouteScope?, output: TraceEventPresentation.Output)
+        -> (() async throws -> String)? {
+        guard let apiClient = currentAPIClient(), let routeScope else { return nil }
+        return {
+            let text = try await apiClient.getInputCardOutput(scope: routeScope, sessionId: sessionId, entryId: output.entryId)
+            let warning = output.truncated == true
+                ? "Output truncated by producer. Earlier output is unavailable.\n\n" : ""
+            return warning + (text.isEmpty ? "(no output)" : text)
+        }
+    }
+
     // MARK: - Tool output
 
     /// Tool-output capabilities for `sessionId`, bound to the current API client and the

@@ -1458,7 +1458,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // Full-row UIButtons own their actions. Collection selection must
             // not become a second owner or a sticky highlight.
             let itemID = currentIDs[indexPath.item]
-            if case .customEvent = currentItemByID[itemID] {
+            if case .customEvent(_, _, let presentation) = currentItemByID[itemID], presentation.terminalOutput == nil {
                 // The custom card owns tap/double-tap. Collection selection
                 // would steal the first tap of a fullscreen double-tap.
                 return false
@@ -1547,33 +1547,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     return
                 }
 
-                // Do not gate on current cell.contentConfiguration type.
-                // During high-frequency streaming updates the visible cell can be
-                // transiently reconfigured while still representing the same
-                // tool item, and strict type checks can drop taps.
-                let wasExpanded = reducer.expandedItemIDs.contains(itemID)
-                AppHaptics.toolbarExpansion()
-                if wasExpanded {
-                    reducer.expandedItemIDs.remove(itemID)
-                    cancelToolOutputRetryWork(for: itemID)
-                    cancelToolOutputLoadTasks(for: [itemID])
-                } else {
-                    reducer.expandedItemIDs.insert(itemID)
-                    FeatureEducationTips.markToolDetailsOpened()
-                    ensureExpandedToolOutputLoaded(
-                        itemID: itemID,
-                        tool: tool,
-                        outputByteCount: outputByteCount,
-                        in: collectionView
-                    )
-                }
-                updateLiveTailItemIDsFromCurrentState(in: collectionView)
-                anchoredReconfigureToolRow(
-                    itemID: itemID,
-                    anchorIndexPath: indexPath,
-                    in: collectionView,
-                    preserveTopEdge: true
-                )
+                toggleOutputRow(itemID: itemID, tool: tool, outputByteCount: outputByteCount,
+                    indexPath: indexPath, in: collectionView)
             case .thinking:
                 // Thinking rows own their long-form entry points (floating
                 // button, context menu, pinch/double-tap) to match tool rows.
@@ -1585,7 +1560,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 // with double-tap copy gestures.
                 return
 
-            case .customEvent:
+            case .customEvent(_, _, let presentation):
+                if presentation.terminalOutput != nil {
+                    toggleOutputRow(itemID: itemID, tool: "", outputByteCount: 0,
+                        indexPath: indexPath, in: collectionView)
+                    return
+                }
                 guard let row = systemEventRowConfiguration(itemID: itemID, item: item) as? CustomTimelineRowConfiguration,
                       row.canExpand else { return }
                 AppHaptics.toolbarExpansion()
@@ -1608,6 +1588,38 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             default:
                 break
             }
+        }
+
+        private func toggleOutputRow(itemID: String, tool: String, outputByteCount: Int,
+                                     indexPath: IndexPath, in collectionView: UICollectionView) {
+            guard let reducer else { return }
+            // Do not gate on current cell.contentConfiguration type.
+            // During high-frequency streaming updates the visible cell can be
+            // transiently reconfigured while still representing the same
+            // tool item, and strict type checks can drop taps.
+            let wasExpanded = reducer.expandedItemIDs.contains(itemID)
+            AppHaptics.toolbarExpansion()
+            if wasExpanded {
+                reducer.expandedItemIDs.remove(itemID)
+                cancelToolOutputRetryWork(for: itemID)
+                cancelToolOutputLoadTasks(for: [itemID])
+            } else {
+                reducer.expandedItemIDs.insert(itemID)
+                FeatureEducationTips.markToolDetailsOpened()
+                ensureExpandedToolOutputLoaded(
+                    itemID: itemID,
+                    tool: tool,
+                    outputByteCount: outputByteCount,
+                    in: collectionView
+                )
+            }
+            updateLiveTailItemIDsFromCurrentState(in: collectionView)
+            anchoredReconfigureToolRow(
+                itemID: itemID,
+                anchorIndexPath: indexPath,
+                in: collectionView,
+                preserveTopEdge: true
+            )
         }
 
         private func presentReadImagePreviewInsteadOfExpanding(
@@ -1662,11 +1674,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 if let fetchHook = _fetchToolOutputForTesting {
                     fetchToolOutput = fetchHook
                 } else {
-                    guard let defaultFetch = makeDefaultFetchToolOutput(tool: tool) else { return }
+                    guard let defaultFetch = makeDefaultFetchToolOutput(itemID: itemID) else { return }
                     fetchToolOutput = defaultFetch
                 }
             #else
-                guard let defaultFetch = makeDefaultFetchToolOutput(tool: tool) else { return }
+                guard let defaultFetch = makeDefaultFetchToolOutput(itemID: itemID) else { return }
                 fetchToolOutput = defaultFetch
             #endif
 
@@ -1719,7 +1731,13 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         /// Expansion fetch over the session's tool-output access. Access is bound to this
         /// timeline's session and scope right now; without a client or scope there is no fetch.
-        private func makeDefaultFetchToolOutput(tool _: String) -> ExpandedToolOutputLoader.FetchToolOutput? {
+        private func makeDefaultFetchToolOutput(itemID: String) -> ExpandedToolOutputLoader.FetchToolOutput? {
+            // Capture the session-bound content capability; the common loader guards stale results.
+            if case .customEvent(_, _, let card) = currentItemByID[itemID], let output = card.terminalOutput {
+                guard let fetch = sessionContent?.inputCardOutputFetch(
+                    sessionId: sessionId, routeScope: routeScope, output: output) else { return nil }
+                return { _, _ in .init(text: try await fetch()) }
+            }
             guard let access = toolOutputAccess else { return nil }
             // The loader's session id is `access.sessionId`: both come from this controller's
             // `sessionId` in the same synchronous call.

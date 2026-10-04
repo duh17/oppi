@@ -61,8 +61,9 @@ enum TimelineCellFactory {
             return dequeuer(collectionView, indexPath, itemID)
         case .cacheMiss, .notice:
             return registrations.system(collectionView, indexPath, itemID)
-        case .customEvent:
-            return registrations.system(collectionView, indexPath, itemID)
+        case .customEvent(_, _, let presentation):
+            let dequeuer = presentation.terminalOutput != nil ? registrations.tool : registrations.system
+            return dequeuer(collectionView, indexPath, itemID)
         case .error:
             return registrations.error(collectionView, indexPath, itemID)
         }

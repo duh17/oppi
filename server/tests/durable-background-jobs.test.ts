@@ -32,6 +32,7 @@ import type { SessionBackendEvent } from "../src/pi-events.js";
 import { DurableHarness } from "../src/durable-harness.js";
 import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import { RESULT_GUIDANCE } from "../extensions/durable/background-jobs/delivery.js";
+import { readDurableInputCardOutput } from "../src/durable-input-cards.js";
 import { readDurableTrace } from "../src/durable-history.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 
@@ -163,6 +164,33 @@ async function delivery(harness: Harness, root: Conversation) {
 }
 
 describe("native Durable background jobs", () => {
+  it.each(["result", "throw"])(
+    "discloses truncation when an appended %s error overflows the retained output",
+    async (mode) => {
+      const f = await fixture([
+        tool("background_job", { action: "start", command: "failure 🐢" }),
+        answer(),
+        answer(),
+      ]);
+      vi.spyOn(f.env, "exec").mockImplementation(async (_command, options) => {
+        options?.onOutput?.("x".repeat(63_980));
+        const message = "failure ".repeat(20);
+        if (mode === "throw") throw new Error(message);
+        return { ok: false, error: { code: "failed", message } };
+      });
+      await prompt(f.root);
+      await delivery(f.harness, f.root);
+      const trace = await readDurableTrace(f.harness, f.root.id, "full");
+      const output = trace.find((event) => event.presentation?.output)!.presentation!.output!;
+      expect(output.truncated).toBe(true);
+      expect(
+        (await readDurableInputCardOutput(f.harness, f.root.id, output.entryId))?.output.length,
+      ).toBeLessThanOrEqual(64_000);
+      expect(JSON.stringify((await f.root.context(context)).messages)).toContain(
+        "Output truncated",
+      );
+    },
+  );
   it("is idle while running, publishes generic chrome, and answers exactly one idempotent follow-up", async () => {
     const f = await fixture([
       tool("background_job", { action: "start", command: "controlled command" }),
@@ -210,6 +238,12 @@ describe("native Durable background jobs", () => {
       presentation: { status: "completed", body: "controlled command" },
     });
     expect(JSON.stringify(trace)).not.toContain("FINAL-OUTPUT");
+    const outputRef = trace.find((event) => event.presentation?.output)?.presentation?.output;
+    expect(outputRef).toMatchObject({ kind: "terminal", command: "controlled command" });
+    const disclosed = await readDurableInputCardOutput(f.harness, f.root.id, outputRef!.entryId);
+    expect(disclosed?.output).toContain("FINAL-OUTPUT");
+    expect(disclosed?.output).not.toContain(RESULT_GUIDANCE);
+    expect(disclosed?.output).not.toContain("Do not poll");
     const first = await f.root.submit(
       {
         type: "input",

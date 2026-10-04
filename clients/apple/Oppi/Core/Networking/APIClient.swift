@@ -1828,6 +1828,14 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(Response.self, from: data).session
     }
 
+    /// Read-only disclosure of a generated input's advertised output, not its model prompt.
+    func getInputCardOutput(scope: SessionRouteScope, sessionId: String, entryId: String) async throws -> String {
+        let encoded = entryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#%"))) ?? entryId
+        let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))/input-card-output/\(encoded)")
+        struct Response: Decodable { let output: String }
+        return try JSONDecoder().decode(Response.self, from: data).output
+    }
+
     // MARK: - Tool Output & Files
 
     /// Fetch the full tool output for a specific tool call ID from the session's JSONL trace.

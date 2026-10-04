@@ -3,8 +3,8 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { Harness, MemoryStorage, createRegistry, watchEvents } from "@earendil-works/pi-durable";
-import { DurableInputCards } from "../extensions/durable/durable-ui.js";
-import { readDurableInputCards } from "../src/durable-input-cards.js";
+import { DurableInputCards, sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
+import { readDurableInputCardOutput, readDurableInputCards } from "../src/durable-input-cards.js";
 import { DurableEventProjection } from "../src/durable-event-projection.js";
 import {
   readDurableTrace,
@@ -40,6 +40,7 @@ it("projects arbitrary extension input by receipt identity, preserving model byt
     title: "Arbitrary extension result",
     status: "completed",
     body: "Compact summary",
+    output: { kind: "terminal" as const, offset: 4, length: 34, command: "arbitrary producer" },
     at: 1234,
   };
   await root.commit(async (tx) => {
@@ -80,6 +81,23 @@ it("projects arbitrary extension input by receipt identity, preserving model byt
   });
   expect(trace.filter((event) => event.type === "user")).toHaveLength(1);
   expect(JSON.stringify(result)).not.toContain("RAW-RESULT");
+  expect(result.presentation?.output).toEqual({
+    kind: "terminal",
+    entryId: String(entry),
+    command: "arbitrary producer",
+  });
+  expect(JSON.stringify(result)).not.toContain('"offset"');
+  expect(await readDurableInputCardOutput(harness, root.id, String(entry))).toEqual({
+    output: raw.slice(4, 38),
+  });
+  const user = trace.find((event) => event.type === "user")!;
+  expect(await readDurableInputCardOutput(harness, root.id, user.id)).toBeNull();
+  for (const invalid of ["../1", "1.5", "NaN", "-1", "9007199254740993", "999999"]) {
+    expect(await readDurableInputCardOutput(harness, root.id, invalid)).toBeNull();
+  }
+  const other = await harness.createConversation({ ownership: { kind: "ownerless" } }, context);
+  expect(other.id).not.toBe(root.id);
+  expect(await readDurableInputCardOutput(harness, other.id, String(entry))).toBeNull();
   const page = await readDurableTracePage(harness, root.id, {
     targetEvents: 1,
     aroundEntryId: String(entry),
@@ -92,4 +110,28 @@ it("projects arbitrary extension input by receipt identity, preserving model byt
   const fork = await root.fork(entry, { ownership: { kind: "ownerless" } }, context);
   const inherited = await readDurableTrace(harness, fork.id, "full");
   expect(inherited.find((event) => event.id === String(entry))).toEqual(result);
+  expect(await readDurableInputCardOutput(harness, fork.id, String(entry))).toEqual({
+    output: raw.slice(4, 38),
+  });
+  await root.commit(async (tx) => {
+    (await tx.doc(DurableInputCards, root.id)).requests["arbitrary:report"].output!.offset =
+      raw.length;
+  }, context);
+  expect(await readDurableInputCardOutput(harness, fork.id, String(entry))).toBeNull();
+});
+
+it("rejects malformed or oversized output selectors without dropping the compact card", () => {
+  for (const output of [
+    { kind: "terminal", offset: -1, length: 2 },
+    { kind: "terminal", offset: 0.5, length: 2 },
+    { kind: "terminal", offset: 0, length: 64_001 },
+    { kind: "terminal", offset: 0, length: NaN },
+    { kind: "unknown", offset: 0, length: 2 },
+  ]) {
+    expect(sanitizeTranscriptCard({ title: "Result", at: 1, output })).toEqual({
+      kind: "custom",
+      title: "Result",
+      at: 1,
+    });
+  }
 });
