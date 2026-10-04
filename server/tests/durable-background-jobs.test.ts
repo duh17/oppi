@@ -176,7 +176,21 @@ describe("native Durable background jobs", () => {
       {
         type: "activityList",
         id: "jobs",
-        rows: [{ id: "bash-1", title: "bash-1", subtitle: "controlled command", state: "running" }],
+        rows: [
+          {
+            id: "bash-1",
+            title: "bash-1",
+            subtitle: "controlled command",
+            state: "running",
+            blocks: [
+              {
+                type: "text",
+                id: "output:bash-1",
+                spans: [{ text: "No output yet", role: "muted" }],
+              },
+            ],
+          },
+        ],
       },
     ]);
     f.finish.resolve();
