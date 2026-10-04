@@ -48,7 +48,7 @@ Photos and files from **+** or a pasted image are saved on the host before Send,
 - With the keyboard hidden, a tap starts typing: into the terminal when that is the input (a shell, or after the keyboard button or **Type in Terminal**), even if the app asked for mouse input; into the input bar for an agent.
 - While the chat bar is the input and an app asks for mouse input (Herdr, tmux with `mouse on`, many TUIs), that tap is a click at the cell. Dragging still sends scroll-wheel steps to the app whenever it asked for mouse input.
 - Otherwise, dragging reads local history; **Back to Live** returns to the bottom.
-- Dragging up (toward newer output) hides the navigation bar for more rows; dragging down shows it again. A broken connection always shows it.
+- Scrolling does not show or hide the navigation bar. That resize would change the remote terminal's row count, so it is a separate action: **Hide Bar** in the … menu puts it away for more rows, and the chevron at the top brings it back (tap, or pull the chevron down). A broken connection always shows it.
 
 A healthy connection shows no status row. **Edit Host**, **Disconnect**, and **Reconnect** are in the … menu.
 

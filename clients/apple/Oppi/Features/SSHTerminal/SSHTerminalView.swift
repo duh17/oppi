@@ -8,6 +8,7 @@ struct SSHTerminalView: View {
     let editHost: () -> Void
     @Environment(\.themeID) private var themeID
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pendingPaste: String?
     @State private var pasteConfirmation = false
     @State private var pasteFailure: String?
@@ -77,11 +78,14 @@ struct SSHTerminalView: View {
                                paste: requestPaste, followChanged: { detached = !$0 },
                                rawKeyboardChanged: { rawKeyboard = $0 },
                                focusComposer: { composerFocusRequest += 1 },
-                               useChatBar: showChatBar,
-                               topBarHiddenChanged: { hidden in
-                                   guard hidden != topBarHidden else { return }
-                                   withAnimation(.easeInOut(duration: 0.2)) { topBarHidden = hidden }
-                               })
+                               useChatBar: showChatBar)
+                .overlay(alignment: .top) {
+                    // Only while hidden: a visible bar already has Hide Bar in the menu,
+                    // and a control on the first row would cover the prompt for no reason.
+                    if topBarHidden, channel.connected {
+                        SSHTerminalTopBarHandle(show: { setTopBarHidden(false) })
+                    }
+                }
                 .overlay(alignment: .bottomTrailing) {
                     if detached {
                         Button("Back to Live", systemImage: "arrow.down.to.line") {
@@ -134,6 +138,8 @@ struct SSHTerminalView: View {
                     }
                     Button("Edit Host", systemImage: "pencil", action: editHost)
                     if channel.connected {
+                        Button("Hide Bar", systemImage: "chevron.up") { setTopBarHidden(true) }
+                            .accessibilityIdentifier("sshTerminal.hideBar")
                         Button("Disconnect", systemImage: "xmark", role: .destructive) { channel.close(reason: "Closed by you.") }
                             .accessibilityIdentifier("sshTerminal.disconnect")
                     } else if !channel.connecting {
@@ -183,8 +189,9 @@ struct SSHTerminalView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarBackground(Color.themeBg, for: .navigationBar)
         .toolbarColorScheme(themeID.preferredColorScheme, for: .navigationBar)
-        // Dragging toward newer output hides the bar for more rows; dragging
-        // back brings it. A broken connection always shows it.
+        // Scrolling must not show or hide this bar: visibility changes the
+        // row count and resizes the remote terminal. Hide Bar and the top
+        // handle are the only switches. A broken connection always shows it.
         .toolbarVisibility(topBarHidden && channel.connected ? .hidden : .visible, for: .navigationBar)
         .task { await channel.watchNetwork() }
         .onDisappear {
@@ -222,6 +229,13 @@ struct SSHTerminalView: View {
     private func showTerminalKeyboard() {
         modeOverride = .terminal
         keyboardRequest += 1
+    }
+
+    private func setTopBarHidden(_ hidden: Bool) {
+        guard hidden != topBarHidden else { return }
+        withAnimation(ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)) {
+            topBarHidden = hidden
+        }
     }
 
     /// Use Chat Bar, from the menu or the terminal keyboard. Clears a typing
@@ -534,6 +548,60 @@ final class SSHTerminalGridPainter {
     }
 }
 
+/// Showing or hiding the navigation bar resizes the remote terminal, so a
+/// history drag must not do it. A pull counts only when it is long enough and
+/// mostly vertical. Finger down is show; finger up is hide. The reveal handle
+/// commits show only.
+enum SSHTerminalTopBarGesture {
+    /// Shorter than a nav-bar height. The old 24pt scroll threshold resized
+    /// the terminal on an ordinary history nudge.
+    static let minimumTravel: CGFloat = 44
+    static let dominanceRatio: CGFloat = 1.35
+
+    enum Action: Equatable {
+        case show
+        case hide
+    }
+
+    static func action(translation: CGSize) -> Action? {
+        let vertical = translation.height
+        guard abs(vertical) >= minimumTravel else { return nil }
+        guard abs(vertical) > abs(translation.width) * dominanceRatio else { return nil }
+        return vertical > 0 ? .show : .hide
+    }
+}
+
+/// The way back after Hide Bar. A tap shows the bar; a downward pull does too.
+/// It is not a scroll catcher: a short or sideways drag leaves the bar hidden.
+private struct SSHTerminalTopBarHandle: View {
+    let show: () -> Void
+
+    var body: some View {
+        Button(action: show) {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.themeFg)
+                .frame(width: 52, height: 22)
+                .background(.themeBg.opacity(0.88), in: Capsule())
+                .overlay(Capsule().strokeBorder(.themeFg.opacity(0.22), lineWidth: 0.5))
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show terminal bar")
+        .accessibilityHint("Shows the host name, Herdr, and terminal actions")
+        .accessibilityIdentifier("sshTerminal.showBar")
+        // The commit distance, not a short slip, so a tap still reaches the button.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: SSHTerminalTopBarGesture.minimumTravel)
+                .onEnded { value in
+                    guard SSHTerminalTopBarGesture.action(translation: value.translation) == .show else { return }
+                    show()
+                }
+        )
+    }
+}
+
 private struct SSHTerminalSurface: UIViewRepresentable {
     let channel: SSHTerminalChannel
     let themeID: ThemeID
@@ -550,14 +618,12 @@ private struct SSHTerminalSurface: UIViewRepresentable {
     let rawKeyboardChanged: (Bool) -> Void
     let focusComposer: () -> Void
     let useChatBar: () -> Void
-    let topBarHiddenChanged: (Bool) -> Void
 
     func makeUIView(context: Context) -> SSHTerminalGridView {
         let view = SSHTerminalGridView(channel: channel, paste: paste, followChanged: followChanged)
         view.rawKeyboardChanged = rawKeyboardChanged
         view.focusComposer = focusComposer
         view.useChatBar = useChatBar
-        view.topBarHiddenChanged = topBarHiddenChanged
         view.keyboardRequest = keyboardRequest
         view.resignRequest = resignRequest
         return view
@@ -594,9 +660,6 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     var rawKeyboardChanged: (Bool) -> Void = { _ in }
     var focusComposer: () -> Void = {}
     var useChatBar: () -> Void = {}
-    var topBarHiddenChanged: (Bool) -> Void = { _ in }
-    /// Finger travel in one direction since the last top-bar decision.
-    private var barTravel: CGFloat = 0
     var paintedChangeCount = -1
     private let painter = SSHTerminalGridPainter(font: .monospacedSystemFont(ofSize: 13, weight: .regular))
     private var cellSize: CGSize { painter.cellSize }
@@ -902,9 +965,9 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         gesture.setTranslation(.zero, in: self)
         if gesture.state == .began {
             scrollRemainder = 0
-            barTravel = 0
         }
-        trackTopBar(travel)
+        // History or wheel steps only. The navigation bar resizes the remote
+        // terminal, so Hide Bar and the top handle are the only switches.
         // A mouse-reporting app owns its own history (Herdr panes, pi, less):
         // send wheel notches where the finger is instead of moving the local
         // viewport, which an alternate-screen app never fills.
@@ -956,16 +1019,6 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
             barKeys.insertArrangedSubview(button, at: anchor + 1 + offset)
             return button
         }
-    }
-
-    /// Finger up (toward newer output) hides the top bar; finger down shows it.
-    private func trackTopBar(_ travel: CGFloat) {
-        guard travel != 0 else { return }
-        if (travel < 0) != (barTravel < 0) { barTravel = 0 }
-        barTravel += travel
-        guard abs(barTravel) >= 24 else { return }
-        topBarHiddenChanged(barTravel < 0)
-        barTravel = 0
     }
 
     private func makeAccessoryBar() -> UIView {

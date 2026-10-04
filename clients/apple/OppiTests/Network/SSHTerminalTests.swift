@@ -402,6 +402,18 @@ struct SSHTerminalTests {
         channel.close(reason: "done")
     }
 
+    @Test func navigationBarIgnoresOrdinaryScrollsAndNeedsADeliberatePull() {
+        // The old trigger was 24pt of finger travel in either direction.
+        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 0, height: 24)) == nil)
+        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 0, height: -24)) == nil)
+        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 0, height: 43)) == nil)
+        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 40, height: 44)) == nil)
+        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 0, height: 44)) == .show)
+        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 10, height: 80)) == .show)
+        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 0, height: -44)) == .hide)
+        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: -8, height: -70)) == .hide)
+    }
+
     @Test func terminalBarsShareOneShotModifiersAndEncodeAllBaseKeys() async throws {
         let fixture = TerminalConnectionFixture()
         let channel = try SSHTerminalChannel()
