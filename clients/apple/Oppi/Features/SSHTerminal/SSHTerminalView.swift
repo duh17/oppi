@@ -393,6 +393,19 @@ enum SSHTerminalPaintPlan {
         return pending.intersection(IndexSet(integersIn: first..<first + rows))
     }
 
+    /// The rects a tick invalidates: one full-width rect per run of adjacent
+    /// rows, plus the strip below the grid when a full pass ends.
+    static func invalidationRects(rows: IndexSet, margin: Bool, rowCount: Int, cellHeight: CGFloat, bounds: CGSize) -> [CGRect] {
+        var rects = rows.rangeView.map {
+            CGRect(x: 0, y: CGFloat($0.lowerBound) * cellHeight, width: bounds.width, height: CGFloat($0.count) * cellHeight)
+        }
+        let gridBottom = CGFloat(rowCount) * cellHeight
+        if margin, bounds.height > gridBottom {
+            rects.append(CGRect(x: 0, y: gridBottom, width: bounds.width, height: bounds.height - gridBottom))
+        }
+        return rects
+    }
+
     static func cursorRow(_ frame: SSHTerminalFrame) -> Int? {
         frame.cursor.visible && frame.cursor.viewport_has_value ? Int(frame.cursor.viewport_y) : nil
     }
@@ -408,6 +421,43 @@ enum SSHTerminalPaintPlan {
         let scalars = text.unicodeScalars
         guard scalars.count == 1, let scalar = scalars.first, (0x20...0x7E).contains(scalar.value) else { return nil }
         return Character(scalar)
+    }
+}
+
+/// Damage waiting to be invalidated. One pass drains front to back before new
+/// damage joins it, so a row that changes every frame (a spinner on top, a
+/// status line) cannot pull the window back and leave later rows stale for a
+/// whole burst. A row still waiting in the pass paints the latest frame when
+/// its turn comes; a row already taken waits for the next pass.
+struct SSHTerminalRepaintQueue {
+    private(set) var pass = IndexSet()
+    private(set) var next = IndexSet()
+    private(set) var margin = false
+    var isEmpty: Bool { pass.isEmpty && next.isEmpty && !margin }
+
+    /// `changed` nil: the grid's shape changed, so the open pass no longer
+    /// describes it. Start one full pass, including the strip below the grid.
+    mutating func add(_ changed: IndexSet?, rowCount: Int) {
+        guard let changed else {
+            pass = IndexSet(integersIn: 0..<rowCount)
+            next = []
+            margin = true
+            return
+        }
+        next.formUnion(changed.subtracting(pass))
+    }
+
+    /// This tick's rows, and whether the strip below the grid goes with them.
+    mutating func take(secondsPerRow: Double, budget: Double) -> (rows: IndexSet, margin: Bool) {
+        if pass.isEmpty {
+            pass = next
+            next = []
+        }
+        let rows = SSHTerminalPaintPlan.rowsWithinBudget(pass, secondsPerRow: secondsPerRow, budget: budget)
+        pass.subtract(rows)
+        let withMargin = margin && pass.isEmpty
+        if withMargin { margin = false }
+        return (rows, withMargin)
     }
 }
 
@@ -558,15 +608,14 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     /// Changed rows not yet invalidated: a repaint bigger than one tick's
     /// budget (a resize, a scroll, a screenful of styled cells) spreads over
     /// ticks so the main thread keeps answering between them.
-    private var pendingRows = IndexSet()
-    private var pendingMargin = false
+    private var repaints = SSHTerminalRepaintQueue()
     /// Rows invalidated and not yet drawn. `draw(_:)` paints only these.
     private var invalidRows = IndexSet()
     /// Measured paint cost, smoothed. Plain text is a fraction of a millisecond
     /// per row; one style per cell is about two.
     private var secondsPerRow = 0.0005
     private static let paintBudget = 0.008
-    var hasPendingPaint: Bool { !pendingRows.isEmpty || pendingMargin }
+    var hasPendingPaint: Bool { !repaints.isEmpty }
     private var paintedSize = CGSize.zero
     private var appliedTheme: ThemeID?
     private var lastGeometry: SSHTerminalGeometry?
@@ -702,28 +751,14 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     /// invalidate as many as the paint budget allows.
     func repaintChangedRows() {
         let next = channel.engine.frame()
-        if !needsFullPaint, let changed = SSHTerminalPaintPlan.changedRows(from: shown, to: next) {
-            pendingRows.formUnion(changed)
-        } else {
-            pendingRows = IndexSet(integersIn: 0..<next.rows.count)
-            pendingMargin = true
-        }
+        repaints.add(needsFullPaint ? nil : SSHTerminalPaintPlan.changedRows(from: shown, to: next), rowCount: next.rows.count)
         needsFullPaint = false
         shown = next
-        let take = SSHTerminalPaintPlan.rowsWithinBudget(pendingRows, secondsPerRow: secondsPerRow, budget: Self.paintBudget)
-        pendingRows.subtract(take)
-        invalidRows.formUnion(take)
-        let height = cellSize.height
-        for rows in take.rangeView {
-            setNeedsDisplay(CGRect(x: 0, y: CGFloat(rows.lowerBound) * height, width: bounds.width, height: CGFloat(rows.count) * height))
-        }
-        // The strip below the last row goes with the final chunk.
-        if pendingMargin, pendingRows.isEmpty {
-            pendingMargin = false
-            let gridBottom = CGFloat(next.rows.count) * height
-            if bounds.height > gridBottom {
-                setNeedsDisplay(CGRect(x: 0, y: gridBottom, width: bounds.width, height: bounds.height - gridBottom))
-            }
+        let take = repaints.take(secondsPerRow: secondsPerRow, budget: Self.paintBudget)
+        invalidRows.formUnion(take.rows)
+        for rect in SSHTerminalPaintPlan.invalidationRects(rows: take.rows, margin: take.margin, rowCount: next.rows.count,
+                                                            cellHeight: cellSize.height, bounds: bounds.size) {
+            setNeedsDisplay(rect)
         }
     }
 

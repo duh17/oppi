@@ -715,7 +715,21 @@ struct SSHTerminalTests {
 
         engine.receive(Data("x".utf8)) // one cell, and the cursor moves along the same row
         let after = engine.frame()
-        #expect(SSHTerminalPaintPlan.changedRows(from: before, to: after) == IndexSet(integer: 4))
+        let changed = SSHTerminalPaintPlan.changedRows(from: before, to: after)
+        #expect(changed == IndexSet(integer: 4))
+        // The view invalidates that one row, full width: not the bounds, not one rect per cell.
+        var queue = SSHTerminalRepaintQueue()
+        queue.add(changed, rowCount: 10)
+        let take = queue.take(secondsPerRow: 0.0005, budget: 0.008)
+        let bounds = CGSize(width: 400, height: 175)
+        #expect(SSHTerminalPaintPlan.invalidationRects(rows: take.rows, margin: take.margin, rowCount: 10, cellHeight: 17, bounds: bounds)
+            == [CGRect(x: 0, y: 68, width: 400, height: 17)])
+        #expect(queue.isEmpty)
+        // A full plan covers the grid and the strip below it.
+        queue.add(nil, rowCount: 10)
+        let full = queue.take(secondsPerRow: 0.0005, budget: 0.008)
+        #expect(SSHTerminalPaintPlan.invalidationRects(rows: full.rows, margin: full.margin, rowCount: 10, cellHeight: 17, bounds: bounds)
+            == [CGRect(x: 0, y: 0, width: 400, height: 170), CGRect(x: 0, y: 170, width: 400, height: 5)])
         engine.receive(Data("\u{1b}[10;1H".utf8)) // only the cursor moves: its old and new rows
         #expect(SSHTerminalPaintPlan.changedRows(from: after, to: engine.frame()) == IndexSet([4, 9]))
         engine.resize(.init(columns: 40, rows: 8))
@@ -739,6 +753,65 @@ struct SSHTerminalTests {
         #expect(SSHTerminalPaintPlan.rowsWithinBudget(IndexSet([2, 3, 30]), secondsPerRow: 0.002, budget: 0.008) == IndexSet([2, 3]))
         #expect(SSHTerminalPaintPlan.rowsWithinBudget(IndexSet([5]), secondsPerRow: 1, budget: 0.008) == IndexSet([5]))
         #expect(SSHTerminalPaintPlan.rowsWithinBudget([], secondsPerRow: 0.002, budget: 0.008).isEmpty)
+    }
+
+    @Test func aHotRowCannotStarveTheRestOfAnOpenRepaintPass() {
+        var queue = SSHTerminalRepaintQueue()
+        queue.add(nil, rowCount: 40)
+        #expect(queue.take(secondsPerRow: 0.002, budget: 0.008).rows == IndexSet(integersIn: 0..<4))
+        // The spinner on row 0 changes every frame; row 20 (untaken) changes too.
+        var taken = IndexSet(integersIn: 0..<4)
+        var margin = false
+        var nextPass = IndexSet()
+        for _ in 0..<20 {
+            queue.add(IndexSet([0, 20]), rowCount: 40)
+            let take = queue.take(secondsPerRow: 0.002, budget: 0.008)
+            if taken.count == 40 {
+                nextPass = take.rows
+                break
+            }
+            #expect(!take.rows.contains(0), "row 0 jumped the open pass")
+            #expect(take.rows.first == taken.last.map { $0 + 1 }) // resumes at the first row not yet taken
+            taken.formUnion(take.rows)
+            margin = margin || take.margin
+        }
+        #expect(taken == IndexSet(integersIn: 0..<40))
+        #expect(margin) // the strip below the grid went with the pass's last chunk
+        // Only then does the hot row repaint, at the head of the next pass.
+        #expect(nextPass == IndexSet(integer: 0))
+    }
+
+    @Test func paintingSomeRowsLeavesOtherRowsPixelsAlone() throws {
+        let engine = try SSHTerminalEngine(geometry: .init(columns: 10, rows: 3)) { _ in }
+        engine.receive(Data("\u{1b}[41maaaaaaaaaa\r\nbbbbbbbbbb\r\ncccccccccc".utf8))
+        let frame = engine.frame()
+        let painter = SSHTerminalGridPainter(font: .monospacedSystemFont(ofSize: 13, weight: .regular))
+        let cell = painter.cellSize
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: cell.width * 10, height: cell.height * 3), format: format).image { context in
+            UIColor.magenta.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: cell.width * 10, height: cell.height * 3))
+            painter.paint(frame, rows: 1..<2, cursorColor: .white, in: context.cgContext)
+        }
+        let cgImage = try #require(image.cgImage)
+        let width = cgImage.width, height = cgImage.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let space = CGColorSpaceCreateDeviceRGB()
+        try pixels.withUnsafeMutableBytes { buffer in
+            let bitmap = try #require(CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                                bytesPerRow: width * 4, space: space,
+                                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            bitmap.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
+        // Bitmap rows run top-down; sample a cell's top-left corner, clear of glyph ink.
+        func isMagenta(row: Int) -> Bool {
+            let offset = ((row * Int(cell.height) + 1) * width + 1) * 4
+            return pixels[offset] > 200 && pixels[offset + 1] < 60 && pixels[offset + 2] > 200
+        }
+        #expect(isMagenta(row: 0))
+        #expect(!isMagenta(row: 1))
+        #expect(isMagenta(row: 2))
     }
 
     @Test func pasteLineCountIgnoresATrailingTerminator() {
