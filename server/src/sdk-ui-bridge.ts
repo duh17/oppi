@@ -397,7 +397,11 @@ export class SdkUiBridge {
         }
 
         if (Array.isArray(content)) {
-          this.activeWidgets.set(key, { lines: content, placement: options?.placement, ...sourceScope });
+          this.activeWidgets.set(key, {
+            lines: content,
+            placement: options?.placement,
+            ...sourceScope,
+          });
           this.requestWidgetSnapshot(key);
           return;
         }
