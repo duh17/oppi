@@ -2,6 +2,7 @@ import {
   DefaultPackageManager,
   DefaultResourceLoader,
   ProjectTrustStore,
+  type ExtensionUIContext,
   type ProjectTrustContext,
   type ProjectTrustEventResult,
   SettingsManager,
@@ -40,6 +41,45 @@ export const PROJECT_TRUST_OPTIONS = [
   "Trust this session",
   "Don't trust (remember)",
 ];
+
+/**
+ * The trust context of a managed session start. Every phone dialog is bounded so an
+ * unanswered phone cannot hold startup (and the workspace lock) forever; timeouts <= 0
+ * mean "no timeout" upstream. Without a phone attached, dialogs resolve immediately like
+ * Pi's CLI context instead of holding startup for the bound.
+ */
+export function managedProjectTrustContext(
+  cwd: string,
+  hasUI: boolean,
+  ui: Pick<ExtensionUIContext, "select" | "confirm" | "input" | "notify">,
+): ProjectTrustContext {
+  const bound = <T extends { timeout?: number }>(opts: T | undefined): T =>
+    ({
+      ...opts,
+      timeout: Math.min(
+        opts?.timeout && opts.timeout > 0 ? opts.timeout : PROJECT_TRUST_TIMEOUT_MS,
+        PROJECT_TRUST_TIMEOUT_MS,
+      ),
+    }) as T;
+  return {
+    cwd,
+    mode: "rpc",
+    hasUI,
+    ui: hasUI
+      ? {
+          select: (title, choices, opts) => ui.select(title, choices, bound(opts)),
+          confirm: (title, message, opts) => ui.confirm(title, message, bound(opts)),
+          input: (title, placeholder, opts) => ui.input(title, placeholder, bound(opts)),
+          notify: ui.notify,
+        }
+      : {
+          select: async () => undefined,
+          confirm: async () => false,
+          input: async () => undefined,
+          notify: ui.notify,
+        },
+  };
+}
 
 export async function resolveManagedProjectTrust(
   cwd: string,

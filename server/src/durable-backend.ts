@@ -1,7 +1,11 @@
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AttachedReplicatedState } from "@earendil-works/chord";
 import {
+  CONFIG_DIR_NAME,
   ModelRegistry,
   SettingsManager,
   getAgentDir,
@@ -10,6 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   watchEvents,
+  AgentDoc,
   InboxDoc,
   defineDocFamily,
   type AgentEventStream,
@@ -54,6 +59,10 @@ import {
 } from "../extensions/durable/working-words/durable.js";
 import { DurableUIProjection } from "./durable-ui-projection.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
+import { DurableMcp } from "./durable-mcp.js";
+import { safeErrorMessage } from "./log-utils.js";
+import { managedProjectTrustContext, resolveManagedProjectTrust } from "./project-trust.js";
+import { SdkUiBridge } from "./sdk-ui-bridge.js";
 
 export class DurableNotSupportedError extends Error {
   readonly code = "server_durable_not_supported";
@@ -74,6 +83,53 @@ const RequestContent = defineDocFamily<{ content: string }, null>({
   fork: "initial",
   initial: () => ({ content: "" }),
 });
+
+interface DurableBackendOptions {
+  harness: Harness;
+  owner: DurableHarness;
+  models: ModelRuntime;
+  session: Session;
+  workspace?: Workspace;
+  agentDefinition?: AgentDefinition;
+  dataDir: string;
+  persistBinding: () => void;
+  onEvent: (event: SessionBackendEvent) => void;
+  /** Startup dialogs (project trust) before the projection exists, as for SDK sessions. */
+  onUIBridgeReady?: (bridge: SdkUiBridge | undefined) => void;
+  hasUI?: () => boolean;
+}
+
+/**
+ * Durable sessions load only MCP from the project, so trust is asked only when the project
+ * has an `mcp.json`. Same decision as an SDK session start: trust extensions, the remembered
+ * answer, `defaultProjectTrust`, then a bounded phone dialog.
+ */
+async function resolveProjectMcpTrust(
+  cwd: string,
+  agentDir: string,
+  options: DurableBackendOptions,
+): Promise<boolean> {
+  if (!existsSync(join(cwd, CONFIG_DIR_NAME, "mcp.json"))) return false;
+  const bridge = new SdkUiBridge(options.onEvent, () => false);
+  options.onUIBridgeReady?.(bridge);
+  try {
+    return await resolveManagedProjectTrust(
+      cwd,
+      agentDir,
+      SettingsManager.create(cwd, agentDir, { projectTrusted: false }),
+      managedProjectTrustContext(cwd, options.hasUI?.() ?? false, bridge.createContext()),
+      (extensionPath, error) =>
+        options.onEvent({
+          type: "extension_error",
+          extensionPath,
+          event: "project_trust",
+          error: safeErrorMessage(error),
+        }),
+    );
+  } finally {
+    options.onUIBridgeReady?.(undefined);
+  }
+}
 
 /** An AgentBackend over a conversation; the Harness owns execution and queues. */
 export class DurableBackend implements AgentBackend {
@@ -99,23 +155,14 @@ export class DurableBackend implements AgentBackend {
     private readonly view: AttachedReplicatedState<ConversationView>,
     private readonly events: AgentEventStream,
     private readonly onEvent: (event: SessionBackendEvent) => void,
+    private readonly mcp: DurableMcp | undefined,
   ) {
     this.registry = new ModelRegistry(models);
     this.projection = new DurableEventProjection(harness, () => owner.retrySettings ?? {});
   }
 
-  static async create(options: {
-    harness: Harness;
-    owner: DurableHarness;
-    models: ModelRuntime;
-    session: Session;
-    workspace?: Workspace;
-    agentDefinition?: AgentDefinition;
-    dataDir: string;
-    persistBinding: () => void;
-    onEvent: (event: SessionBackendEvent) => void;
-  }): Promise<DurableBackend> {
-    const { harness, models, session, agentDefinition } = options;
+  static async create(options: DurableBackendOptions): Promise<DurableBackend> {
+    const { models, session, agentDefinition } = options;
     if (session.ephemeral) throw new DurableNotSupportedError("Incognito sessions");
     if (
       agentDefinition?.resources?.extensionIds?.length ||
@@ -129,6 +176,39 @@ export class DurableBackend implements AgentBackend {
       throw new DurableNotSupportedError("Sandbox MCP servers");
     const hostCwd = resolveSdkSessionCwd(options.workspace, session, { dataDir: options.dataDir });
     const cwd = sandbox ? resolveSandboxGuestCwd(workspace) : hostCwd;
+    const owner = options.owner;
+    const mcp = sandbox
+      ? undefined
+      : await owner.replaceMcp(session.id, async () => {
+          const agentDir = getAgentDir();
+          const registry = new ModelRegistry(models);
+          return DurableMcp.open({
+            sessionId: session.id,
+            cwd: hostCwd,
+            agentDir,
+            projectTrusted: await resolveProjectMcpTrust(hostCwd, agentDir, options),
+            policy: session.launch?.tools,
+            providerToken: (provider) => registry.getApiKeyForProvider(provider),
+            install: (extension) => owner.installExtension(extension),
+            uninstall: (extension) => owner.uninstallExtension(extension),
+          });
+        });
+    try {
+      return await DurableBackend.bind(options, { hostCwd, cwd, mcp });
+    } catch (error) {
+      await owner.closeMcp(session.id);
+      throw error;
+    }
+  }
+
+  private static async bind(
+    options: DurableBackendOptions,
+    target: { hostCwd: string; cwd: string; mcp: DurableMcp | undefined },
+  ): Promise<DurableBackend> {
+    const { harness, models, session, agentDefinition } = options;
+    const { hostCwd, cwd, mcp } = target;
+    const workspace = options.workspace;
+    const sandbox = workspace?.runtime === "sandbox";
     const id = session.serverDurable?.conversationId;
     let conversation: Conversation;
     if (id !== undefined) {
@@ -144,11 +224,18 @@ export class DurableBackend implements AgentBackend {
         );
       conversation = existing;
       // Bound conversations store exact extension/tool names. Enroll the native
-      // UI ports on attachment too, without overriding their launch tool policy.
+      // UI ports and this attachment's MCP extension too, without overriding
+      // their launch tool policy.
       await conversation.configure(
         {
           extensions: {
-            add: [DurableAsk, DurableWorkingWords, DurableBackgroundJobs, DurableGoal],
+            add: [
+              DurableAsk,
+              DurableWorkingWords,
+              DurableBackgroundJobs,
+              DurableGoal,
+              ...(mcp ? [mcp.selection] : []),
+            ],
           },
         },
         BACKGROUND_CONTEXT,
@@ -165,25 +252,15 @@ export class DurableBackend implements AgentBackend {
             (!policy?.allowed || policy.allowed.includes(tool.name)) &&
             !policy?.excluded?.includes(tool.name),
         );
-      if (additions.length) {
-        const definitions = new Map(
-          agent.extensions.flatMap((extension) =>
-            (extension.tools ?? []).map((tool) => [tool.name, tool] as const),
-          ),
-        );
-        await conversation.configure(
-          {
-            tools: [
-              ...agent.tools.flatMap((tool) => {
-                const definition = definitions.get(tool.name);
-                return definition ? [definition] : [];
-              }),
-              ...additions,
-            ],
-          },
-          BACKGROUND_CONTEXT,
-        );
-      }
+      // Append names instead of rewriting the list from resolved tools: MCP tools a
+      // previous attachment offered are not registered until their servers reconnect.
+      if (additions.length)
+        await conversation.commit(async (tx) => {
+          const state = await tx.doc(AgentDoc, conversation.id);
+          if (!Array.isArray(state.tools)) return;
+          for (const tool of additions)
+            if (!state.tools.includes(tool.name)) state.tools.push(tool.name);
+        }, BACKGROUND_CONTEXT);
     } else {
       const registry = new ModelRegistry(models);
       const settings = SettingsManager.create(hostCwd, getAgentDir(), { projectTrusted: false });
@@ -238,14 +315,21 @@ export class DurableBackend implements AgentBackend {
                   DurableBackgroundJobs,
                   DurableGoal,
                 ]
-              : [CodingTools, DurableAsk, DurableWorkingWords, DurableBackgroundJobs, DurableGoal],
+              : [
+                  CodingTools,
+                  DurableAsk,
+                  DurableWorkingWords,
+                  DurableBackgroundJobs,
+                  DurableGoal,
+                  ...(mcp ? [mcp.selection] : []),
+                ],
             model: { provider: model.provider, modelId: model.id },
             thinkingLevel:
               session.thinkingLevel !== undefined && isThinkingLevel(session.thinkingLevel)
                 ? session.thinkingLevel
                 : settings.getDefaultThinkingLevel(),
             cwd,
-            tools,
+            tools: [...tools, ...(mcp?.initialTools ?? [])],
             // Pi's experimental prompt loader is not published in 1.0.0. Do not
             // reach into private dist paths or load classic extension factories.
             instructions: [
@@ -274,8 +358,13 @@ export class DurableBackend implements AgentBackend {
       options.owner.bindSandboxEnv(conversation.id, env);
     }
     await conversation.commit((tx) => ensureWorkingWords(tx, conversation.id), BACKGROUND_CONTEXT);
+    mcp?.attach(conversation);
     const view = await conversation.viewState(BACKGROUND_CONTEXT);
     try {
+      // A run in progress resumes after this attachment; its MCP tool calls must find
+      // their tools, so let the servers connect first (bounded).
+      if (mcp && (view.value.docs["pi.live"] as LiveState | undefined)?.run !== undefined)
+        await mcp.waitForStartup();
       const events = await watchEvents(harness, conversation.id, BACKGROUND_CONTEXT);
       const backend = new DurableBackend(
         harness,
@@ -286,6 +375,7 @@ export class DurableBackend implements AgentBackend {
         view,
         events,
         options.onEvent,
+        mcp,
       );
       backend.ui = await DurableUIProjection.create(harness, conversation, options.onEvent);
       return backend;
@@ -300,6 +390,18 @@ export class DurableBackend implements AgentBackend {
     if (this.eventsStarted) return;
     this.eventsStarted = true;
     this.ui.start();
+    // One warning after the first connection attempts, as Pi's MCP extension notifies
+    // SDK sessions.
+    void this.mcp?.startupProblems().then((message) => {
+      if (message && !this.disposed)
+        this.onEvent({
+          type: "extension_ui_request",
+          id: randomUUID(),
+          method: "notify",
+          message,
+          notifyType: "warning",
+        });
+    });
     if (!this.owner.isResumeHeld) this.harness.resume();
     for (const event of this.projection.snapshot(this.events.snapshot, this.owner.isResumeHeld))
       this.onEvent(event);
@@ -392,6 +494,7 @@ export class DurableBackend implements AgentBackend {
     const content = options?.images?.length
       ? [{ type: "text" as const, text: message }, ...options.images]
       : message;
+    await this.mcp?.beforePrompt();
     // Shared lifecycle permits allow concurrent prompts. Serialize only durable
     // admission so two copies of one request cannot both append a local user row.
     const admission = this.admissions.then(async () => {
@@ -493,6 +596,7 @@ export class DurableBackend implements AgentBackend {
     await this.owner.abortConversation(this.conversation.id);
     await this.detachForRestart();
     await this.owner.unbindSandboxEnv(this.conversation.id);
+    await this.owner.closeMcp(this.session.id);
     return { disposal: "graceful" };
   }
   /** Projection teardown only: the recorded original submission must survive shutdown. */
@@ -511,6 +615,7 @@ export class DurableBackend implements AgentBackend {
       await this.owner.abortConversation(this.conversation.id);
       await this.detachForRestart();
       await this.owner.unbindSandboxEnv(this.conversation.id);
+      await this.owner.closeMcp(this.session.id);
       this.transactions.poison(new Error("Server durable stop timed out"));
       return { disposal: "forced", cause: "lifecycle_timeout", operation: "stop", timeoutMs };
     };

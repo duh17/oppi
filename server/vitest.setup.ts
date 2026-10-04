@@ -60,3 +60,10 @@ if (!existing) {
   };
   process.once("exit", cleanup);
 }
+
+// Pi reads mcp.json, settings, trust, and credentials from its agent dir. Sessions
+// started by tests must never connect the developer's MCP servers or read their
+// logins; tests that need Pi config point PI_CODING_AGENT_DIR at their own fixture.
+const piAgentDir = mkdtempSync(join(tmpdir(), "oppi-vitest-pi-agent-"));
+process.env.PI_CODING_AGENT_DIR = piAgentDir;
+process.once("exit", () => rmSync(piAgentDir, { recursive: true, force: true }));

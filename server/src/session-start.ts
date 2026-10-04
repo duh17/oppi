@@ -106,6 +106,8 @@ export class SessionStartCoordinator {
                 dataDir: this.deps.storage.getDataDir(),
                 persistBinding: () => this.deps.persistSessionNow(key, session),
                 onEvent: (event) => this.deps.onPiEvent(key, event),
+                onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
+                hasUI: () => this.deps.hasUI?.(key) ?? false,
               })
             : await SdkBackend.create({
                 session,

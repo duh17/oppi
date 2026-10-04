@@ -14,15 +14,14 @@
  * - stdio servers run inside the VM, and never receive host secret references.
  */
 import { isIP } from "node:net";
-import { dirname, join, posix } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { posix } from "node:path";
 import type {
-  LoadedMcpConfig,
   McpExtensionOptions,
   McpServerEntry,
   McpTransportFactory,
 } from "@earendil-works/pi-coding-agent";
 import type { GondolinProcess, GondolinVm } from "./gondolin-ops.js";
+import type { PiMcpInternals } from "./pi-mcp-internals.js";
 
 type McpTransport = ReturnType<McpTransportFactory>;
 type JsonRpcMessage = Parameters<McpTransport["send"]>[0];
@@ -173,40 +172,6 @@ export function sandboxMcpBlockReason(
   )
     return "Its environment uses host secret references ($NAME or !command), which never enter the sandbox.";
   return undefined;
-}
-
-interface PiMcpInternals {
-  loadMcpConfig: (options: {
-    agentDir: string;
-    cwd: string;
-    projectTrusted: boolean;
-  }) => LoadedMcpConfig;
-  createDefaultTransport: McpTransportFactory;
-}
-
-/**
- * Pi's own config loader and default transports are not package exports. Load them from
- * Pi's installed dist (as `pi-global-config.ts` and `mcp-cli.ts` do) so validation and the
- * HTTP/OAuth transport stay Pi's, not a second copy. Same file URLs as Pi's lazy loader,
- * so the module instances (and their error classes) are shared.
- */
-export async function loadPiMcpInternals(): Promise<PiMcpInternals> {
-  const dist = dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")));
-  const load = (path: string): Promise<Record<string, unknown>> =>
-    import(pathToFileURL(join(dist, path)).href) as Promise<Record<string, unknown>>;
-  const [config, runtime] = await Promise.all([
-    load("extensions/mcp/config.js"),
-    load("extensions/mcp/runtime.js"),
-  ]);
-  if (
-    typeof config.loadMcpConfig !== "function" ||
-    typeof runtime.createDefaultTransport !== "function"
-  )
-    throw new Error("Pi's MCP config/runtime modules moved; update sandbox-mcp.ts");
-  return {
-    loadMcpConfig: config.loadMcpConfig as PiMcpInternals["loadMcpConfig"],
-    createDefaultTransport: runtime.createDefaultTransport as McpTransportFactory,
-  };
 }
 
 /** One newline-delimited JSON-RPC peer running inside the workspace VM. */
@@ -389,10 +354,11 @@ export type SandboxMcpOptions = Pick<
 >;
 
 /**
- * Sandboxes have no codemode (its scripts are model-written code running on the host).
- * Pi registers `codemode` and `deferred` tools identically and differs only in which
- * tool reaches them, so `deferred` keeps every tool reachable through `tool_search`.
- * Pi's config loader has already resolved the `codemode-deferred` alias to `codemode`.
+ * Sandboxes and server durable sessions have no codemode (sandbox scripts would be
+ * model-written code running on the host; durable has no codemode port). Pi registers
+ * `codemode` and `deferred` tools identically and differs only in which tool reaches them,
+ * so `deferred` keeps every tool reachable through `tool_search`. Pi's config loader has
+ * already resolved the `codemode-deferred` alias to `codemode`.
  */
 export function withoutCodemode(entry: McpServerEntry): McpServerEntry {
   const toDeferred = (exposure: unknown): unknown =>

@@ -60,13 +60,14 @@ import {
 } from "./model-resolution.js";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
 import { applyPendingProviderRegistrations } from "./extension-model-discovery.js";
-import { PROJECT_TRUST_TIMEOUT_MS, resolveManagedProjectTrust } from "./project-trust.js";
+import { managedProjectTrustContext, resolveManagedProjectTrust } from "./project-trust.js";
 import {
   availableMcpBuiltinNames,
   createMcpBuiltinExtensions,
   isBuiltinExtensionPath,
 } from "./host-mcp-extensions.js";
-import { createSandboxMcpOptions, emptySandboxMcp, loadPiMcpInternals } from "./sandbox-mcp.js";
+import { createSandboxMcpOptions, emptySandboxMcp } from "./sandbox-mcp.js";
+import { loadPiMcpInternals } from "./pi-mcp-internals.js";
 import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
 import {
   DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS,
@@ -1126,17 +1127,6 @@ export class SdkBackend implements AgentBackend {
         projectTrusted: !trustManagedProject,
       });
       let sessionTrust: boolean | undefined;
-      // Handlers see only Pi's declared `select`/`confirm`/`input`/`notify`,
-      // each bounded so an unanswered phone cannot hold startup (and the
-      // workspace lock) forever. Timeouts <= 0 mean "no timeout" upstream.
-      const boundTrustDialog = <T extends { timeout?: number }>(opts: T | undefined): T =>
-        ({
-          ...opts,
-          timeout: Math.min(
-            opts?.timeout && opts.timeout > 0 ? opts.timeout : PROJECT_TRUST_TIMEOUT_MS,
-            PROJECT_TRUST_TIMEOUT_MS,
-          ),
-        }) as T;
       const resolveTrust = async (): Promise<void> => {
         if (!trustManagedProject) return;
         // Nothing to gate is not a decision: do not cache it. Protected files
@@ -1147,36 +1137,13 @@ export class SdkBackend implements AgentBackend {
           await settingsManager.reload();
           return;
         }
-        const hasUI = config.hasUI?.() ?? false;
         // Remember a session-only/default-allow decision across /reload. A runtime
         // replacement gets a new cwd-bound decision through this factory.
         sessionTrust ??= await resolveManagedProjectTrust(
           hostCwd,
           runtimeAgentDir,
           settingsManager,
-          {
-            cwd: hostCwd,
-            mode: "rpc",
-            hasUI,
-            ui: hasUI
-              ? {
-                  select: (title, choices, opts) =>
-                    trustUI.select(title, choices, boundTrustDialog(opts)),
-                  confirm: (title, message, opts) =>
-                    trustUI.confirm(title, message, boundTrustDialog(opts)),
-                  input: (title, placeholder, opts) =>
-                    trustUI.input(title, placeholder, boundTrustDialog(opts)),
-                  notify: trustUI.notify,
-                }
-              : // Like Pi's CLI context: no phone attached, so dialogs resolve
-                // immediately instead of holding startup for the 15 s bound.
-                {
-                  select: async () => undefined,
-                  confirm: async () => false,
-                  input: async () => undefined,
-                  notify: trustUI.notify,
-                },
-          },
+          managedProjectTrustContext(hostCwd, config.hasUI?.() ?? false, trustUI),
           (extensionPath, error) =>
             onEvent({
               type: "extension_error",

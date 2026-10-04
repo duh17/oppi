@@ -4,8 +4,10 @@ import {
   Harness,
   createRegistry,
   defineDoc,
+  type Extension,
   type HarnessSettings,
   type ConversationId,
+  type Registry,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
@@ -23,6 +25,21 @@ import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { DurableGoal } from "../extensions/durable/goal/durable.js";
 import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
+import type { DurableMcp } from "./durable-mcp.js";
+
+/**
+ * Extensions every process installs, in install order. They are also the Harness default
+ * selection, so a conversation whose stored selection is an `{ add }` edit never picks up
+ * another session's MCP extension from the registry.
+ */
+const BASE_EXTENSIONS: Extension[] = [
+  CodingTools,
+  DurableSandboxTools,
+  DurableAsk,
+  DurableGoal,
+  DurableWorkingWords,
+  DurableBackgroundJobs,
+];
 
 /** Persist the execution boundary so a resumed conversation cannot change runtime. */
 export const DurableRuntime = defineDoc<{ kind: "host" | "sandbox"; workspaceId?: string }>({
@@ -44,9 +61,37 @@ export class DurableHarness {
   private readonly pausedAborts = new Set<Promise<void>>();
   private runSettings?: HarnessSettings;
   private readonly sandboxEnvs = new Map<ConversationId, ExecutionEnv>();
+  private registry?: Registry;
+  /** Per Oppi session: its MCP connections and registry extension. */
+  private readonly mcps = new Map<string, DurableMcp>();
 
   get retrySettings(): HarnessSettings["retry"] {
     return this.runSettings?.retry;
+  }
+
+  installExtension(extension: Extension): void {
+    if (!this.registry) throw new Error("Server durable Harness is not open");
+    this.registry.install(extension);
+  }
+  uninstallExtension(extension: Extension): void {
+    this.registry?.uninstall(extension);
+  }
+
+  /** Close the session's previous MCP before opening its next one, which reuses the extension name. */
+  async replaceMcp(
+    sessionId: string,
+    open: () => Promise<DurableMcp | undefined>,
+  ): Promise<DurableMcp | undefined> {
+    await this.closeMcp(sessionId);
+    if (this.closed) return undefined;
+    const mcp = await open();
+    if (mcp) this.mcps.set(sessionId, mcp);
+    return mcp;
+  }
+  async closeMcp(sessionId: string): Promise<void> {
+    const mcp = this.mcps.get(sessionId);
+    this.mcps.delete(sessionId);
+    await mcp?.close();
   }
 
   bindSandboxEnv(id: ConversationId, env: ExecutionEnv): void {
@@ -139,12 +184,8 @@ export class DurableHarness {
     const settings = SettingsManager.create(homedir(), agentDir, { projectTrusted: false });
     this.runSettings = harnessSettings(settings);
     const registry = createRegistry();
-    registry.install(CodingTools);
-    registry.install(DurableSandboxTools);
-    registry.install(DurableAsk);
-    registry.install(DurableGoal);
-    registry.install(DurableWorkingWords);
-    registry.install(DurableBackgroundJobs);
+    for (const extension of BASE_EXTENSIONS) registry.install(extension);
+    this.registry = registry;
     const directory = join(this.dataDir, "durable");
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     // Bun-based CLI commands must not load node:sqlite when the experiment is
@@ -222,6 +263,16 @@ export class DurableHarness {
       this.closed = true;
       return;
     }
+    try {
+      await this.closeHarness(resumeIds);
+    } finally {
+      // MCP stdio servers are host processes: close them even when Harness shutdown fails.
+      await Promise.all([...this.mcps.keys()].map((id) => this.closeMcp(id)));
+    }
+  }
+
+  private async closeHarness(resumeIds: ReadonlySet<ConversationId>): Promise<void> {
+    if (!this.opening) return;
     const { harness } = await this.opening;
     const live = await harness.inspect(BACKGROUND_CONTEXT);
     const stopped = new Set(
@@ -243,6 +294,7 @@ export class DurableHarness {
 // without writing user settings or copying run policy onto conversations.
 function harnessSettings(settings: SettingsManager): HarnessSettings {
   return {
+    extensions: BASE_EXTENSIONS,
     get stream() {
       const provider = settings.getProviderRetrySettings();
       const idle = settings.getHttpIdleTimeoutMs();
