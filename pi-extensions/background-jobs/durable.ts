@@ -8,17 +8,15 @@ import {
   defineTask,
   defineTool,
   LiveDoc,
-  InboxDoc,
   section,
   type ConversationId,
   type DocumentObserver,
   type DocumentReader,
   type TaskId,
-  type SubmissionId,
   type ToolExecutionApi,
   type Tx,
 } from "@earendil-works/pi-durable";
-import { DurableUI } from "../durable-ui.js";
+import { DurableUI, DurableInputCards } from "../durable-ui.js";
 import {
   BACKGROUND_POLICY,
   backgroundDisposition,
@@ -53,7 +51,6 @@ type Job = {
   cancelTask?: TaskId;
   delivered: boolean;
   receiptId: string;
-  receiptAttempt: number;
   output: string;
   truncated: boolean;
   exitCode: number | null;
@@ -160,38 +157,6 @@ async function waitForJob(
 
 const INTERRUPTED_PROCESS_WARNING =
   "The previous host or guest process may still be running. Do not start it again until it is confirmed dead.";
-
-/** A queued receipt can be placed or withdrawn; both remove its inbox item. */
-async function waitForReceiptChange(
-  api: DocumentObserver,
-  id: ConversationId,
-  receipt: SubmissionId,
-  context: Context,
-): Promise<void> {
-  const watch = await api.watchDoc(InboxDoc, id, context);
-  if (!watch) throw new Error("Background job inbox disappeared");
-  let removeAbort = (): void => {};
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const abort = (): void =>
-        reject(
-          context.abortSignal?.reason ?? new Error("Receipt wait aborted"),
-        );
-      const take = (value: typeof watch.value): void => {
-        if (!value?.items.some((item) => item.id === receipt)) resolve();
-      };
-      context.abortSignal?.addEventListener("abort", abort, { once: true });
-      removeAbort = () =>
-        context.abortSignal?.removeEventListener("abort", abort);
-      watch.start(async (value) => take(value));
-      take(watch.value);
-      if (context.abortSignal?.aborted) abort();
-    });
-  } finally {
-    removeAbort();
-    await watch.stop();
-  }
-}
 
 function report(job: Job): string {
   const headline =
@@ -394,97 +359,45 @@ const JobRunner = defineTask<
         );
         if (!conversation)
           throw new Error("Background job conversation disappeared");
-        const content = report(job);
-        let receiptId = job.receiptId;
-        // Initialize delivery identities for existing version-one documents.
-        if (!receiptId) {
-          await runtime.commit(async (tx) => {
-            const current = (
-              await tx.doc(DurableJobs, runtime.conversationId)
-            ).jobs.find((item) => item.id === job.id)!;
-            current.receiptId = `background-job:${job.id}`;
-            current.receiptAttempt = 0;
-            receiptId = current.receiptId;
-          }, context);
-        }
-        for (;;) {
-          let receipt:
-            | { id: SubmissionId; status: string; matches: boolean }
-            | undefined;
-          let delivered = false;
-          // Confirm placement/content and settle on the SAME mutation line:
-          // Stop must not burn a receipt between validation and output release.
-          // requestId lookup alone also returns withdrawn/colliding rows.
-          await runtime.commit(async (tx) => {
-            const record = await tx.submissionByRequest(
-              runtime.conversationId,
-              receiptId,
-            );
-            if (!record) return;
-            const item =
-              record.entry === undefined
-                ? (await tx.doc(InboxDoc, runtime.conversationId)).items.find(
-                    (item) => item.id === record.id,
-                  )
-                : undefined;
-            const stored =
-              record.entry !== undefined
-                ? (await tx.entry(record.entry))?.model?.find(
-                    (message) => message.role === "user",
-                  )?.content
-                : item && item.mode !== "write"
-                  ? item.content
-                  : undefined;
-            receipt = {
-              id: record.id,
-              status: record.status,
-              matches:
-                record.type === "input" &&
-                (stored === content ||
-                  JSON.stringify(stored) ===
-                    JSON.stringify([{ type: "text", text: content }])),
-            };
-            if (
-              receipt.matches &&
-              (receipt.status === "placed" || receipt.status === "done")
-            ) {
-              delivered = true;
-              return settle(tx);
-            }
-          }, context);
-          if (delivered) return;
-          if (receipt?.matches && receipt.status === "queued") {
-            await waitForReceiptChange(
-              runtime,
-              runtime.conversationId,
-              receipt.id,
-              context,
-            );
-            continue;
-          }
-          if (receipt) {
-            // Stop burns queued receipt IDs. Persist the next identity BEFORE
-            // admission; replay must not reuse a dead or foreign submission.
-            await runtime.commit(async (tx) => {
-              const current = (
-                await tx.doc(DurableJobs, runtime.conversationId)
-              ).jobs.find((item) => item.id === job.id)!;
-              current.receiptAttempt += 1;
-              current.receiptId = `background-job:${job.id}:${current.receiptAttempt}`;
-              receiptId = current.receiptId;
-            }, context);
-            continue;
-          }
-          await conversation.submit(
-            {
-              type: "input",
-              content,
-              whenBusy: "followUp",
-              requestId: receiptId,
-            },
-            context,
-          );
-        }
+        // Follow pi-durable/test/examples/23-subagent-background.ts: one
+        // stable submission identity, then retire the reporter. Admission owns
+        // the bytes from here on. Stop may withdraw a queued report; replay must
+        // not resurrect it under a new identity.
+        const requestId = job.receiptId || `background-job:${job.id}`;
+        await runtime.commit(async (tx) => {
+          const cards = await tx.doc(DurableInputCards, runtime.conversationId);
+          cards.requests[requestId] ??= {
+            title: `Background job ${job.id}`,
+            status: job.status,
+            body:
+              job.status === "interrupted"
+                ? `${job.command}\n${INTERRUPTED_PROCESS_WARNING}`
+                : job.command,
+            fields: [
+              {
+                label: "Result",
+                value:
+                  job.exitCode === null ? job.status : `Exit ${job.exitCode}`,
+              },
+            ],
+            accent:
+              job.status === "completed"
+                ? "success"
+                : job.status === "cancelled"
+                  ? "warning"
+                  : "error",
+            at: runtime.now(),
+          };
+        }, context);
+        await conversation.submit(
+          {
+            type: "input",
+            content: report(job),
+            whenBusy: "followUp",
+            requestId,
+          },
+          context,
+        );
       } else {
         // Foreground bash is replay-safe too. Keep its bytes until its starter
         // has committed the tool result, not merely selected foreground mode.
@@ -565,7 +478,6 @@ async function start(
       cancelRequested: false,
       delivered: false,
       receiptId: `background-job:${id}`,
-      receiptAttempt: 0,
       output: "",
       truncated: false,
       exitCode: null,

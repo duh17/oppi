@@ -6,6 +6,7 @@ import {
   CompactionEntry,
   type AgentEvent,
   type CompactionResult,
+  type ConversationId,
   type ConversationRetryPolicy,
   type EntryRecord,
   type Harness,
@@ -13,6 +14,8 @@ import {
   type TaskId,
 } from "@earendil-works/pi-durable";
 import { adaptDurableEvent, createAdapterState, snapshotEvents } from "./durable-event-adapter.js";
+
+import { readDurableInputCards } from "./durable-input-cards.js";
 
 type Compacting = {
   reason: string;
@@ -69,6 +72,13 @@ export function compactionSummary(entry: EntryRecord): string {
  */
 export class DurableEventProjection {
   private readonly adapter = createAdapterState();
+  inputCards: Awaited<ReturnType<typeof readDurableInputCards>> = {
+    entries: new Map(),
+    submissions: new Set(),
+  };
+  async refreshInputCards(ids: Iterable<ConversationId>): Promise<void> {
+    this.inputCards = await readDurableInputCards(this.harness, ids);
+  }
   private entries: EntryRecord[] = [];
   private readonly compacting = new Map<TaskId, Compacting>();
   readonly recoveredEntryIds = new Set<number>();
@@ -170,6 +180,22 @@ export class DurableEventProjection {
       if (event.type === "compaction_start")
         this.compacting.set(event.taskId, { reason: event.reason, tokensBefore: this.estimate() });
     }
+    if (
+      events.some((event) =>
+        ["message_end", "snapshot", "submission", "inbox_update"].includes(event.type),
+      )
+    ) {
+      await this.refreshInputCards([
+        ...this.entries.map((entry) => entry.conversationId),
+        ...events.flatMap((event) =>
+          event.type === "snapshot"
+            ? event.entries.map((entry) => entry.conversationId)
+            : event.type === "submission"
+              ? [event.record.conversationId]
+              : [],
+        ),
+      ]);
+    }
     const hidden = new Set<unknown>();
     for (const event of events) {
       if (event.type !== "message_end") continue;
@@ -179,7 +205,8 @@ export class DurableEventProjection {
       }
       const message = event.entry.model?.[0];
       // A summary is compaction chrome, not another user turn.
-      if (CompactionEntry.is(event.entry)) hidden.add(message);
+      if (CompactionEntry.is(event.entry) || this.inputCards.entries.has(event.entry.id))
+        hidden.add(message);
       // Overflow compaction is admitted in the SAME commit as the failed response.
       // Don't suppress an overflow when no cut exists or recovery already failed.
       if (

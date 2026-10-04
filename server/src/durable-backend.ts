@@ -26,6 +26,7 @@ import {
   type LiveState,
   type InboxState,
   type UsageState,
+  type SubmissionId,
 } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import type { AgentDefinition } from "./agent-launch-service.js";
@@ -33,6 +34,7 @@ import type { AgentBackend } from "./agent-backend.js";
 import { DurableRuntime, type DurableHarness } from "./durable-harness.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { DurableSandboxTools } from "./durable-sandbox-tools.js";
+import { resolveDurableInputCards } from "./durable-input-cards.js";
 import { DurableEventProjection } from "./durable-event-projection.js";
 import type { PiMessage, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import type { SdkBackendDisposeResult } from "./sdk-backend.js";
@@ -385,6 +387,10 @@ export class DurableBackend implements AgentBackend {
         mcp,
       );
       backend.ui = await DurableUIProjection.create(harness, conversation, options.onEvent);
+      await backend.projection.refreshInputCards([
+        conversation.id,
+        ...events.snapshot.entries.map((entry) => entry.conversationId),
+      ]);
       return backend;
     } catch (error) {
       view.dispose();
@@ -419,6 +425,15 @@ export class DurableBackend implements AgentBackend {
         this.onEvent(pi);
       }
       for (const event of events) {
+        if (event.type === "message_end") {
+          const card = this.projection.inputCards.entries.get(event.entry.id);
+          if (card)
+            this.onEvent({
+              type: "notice",
+              id: `entry:${event.entry.id}`,
+              message: `${card.title}${card.status ? ` · ${card.status}` : ""}${card.body ? ` — ${card.body}` : ""}`,
+            });
+        }
         if (event.type === "entry_appended" && !event.entry.model?.length) {
           const data = event.entry.data;
           const card = sanitizeTranscriptCard(
@@ -636,21 +651,23 @@ export class DurableBackend implements AgentBackend {
 
   queuedMessages(): { steering: readonly string[]; followUp: readonly string[] } {
     const inbox = this.view.value.docs["pi.inbox"] as InboxState | undefined;
+    const items = inbox?.items.filter(
+      (item) => !this.projection.inputCards.submissions.has(item.id),
+    );
     const text = (content: string | readonly { type: string; text?: string }[]): string =>
       typeof content === "string"
         ? content
         : content.map((block) => (block.type === "text" ? (block.text ?? "") : "")).join("");
     return {
-      steering:
-        inbox?.items.flatMap((item) => (item.mode === "steer" ? [text(item.content)] : [])) ?? [],
+      steering: items?.flatMap((item) => (item.mode === "steer" ? [text(item.content)] : [])) ?? [],
       followUp:
-        inbox?.items.flatMap((item) => (item.mode === "followUp" ? [text(item.content)] : [])) ??
-        [],
+        items?.flatMap((item) => (item.mode === "followUp" ? [text(item.content)] : [])) ?? [],
     };
   }
   messages(): PiMessage[] {
     return this.view.value.entries.flatMap((entry) =>
-      this.projection.recoveredEntryIds.has(entry.id)
+      this.projection.recoveredEntryIds.has(entry.id) ||
+      this.projection.inputCards.entries.has(entry.id)
         ? []
         : (entry.model ?? []),
     );
@@ -846,15 +863,18 @@ export class DurableBackend implements AgentBackend {
     if (batch.prompt) throw new Error("Server durable queue replacement cannot start a prompt");
     if (authority) this.assertQueuedModelTurnsAuthority(authority, permit, "before_replay");
     const captured = this.userInboxFingerprint(this.currentInbox());
-    await this.conversation.commit(async (tx) => {
+    const internal = await this.conversation.commit(async (tx) => {
       const inbox = await tx.doc(InboxDoc, this.conversation.id);
-      if (authority && this.userInboxFingerprint(inbox) !== captured)
+      const { submissions } = await resolveDurableInputCards(tx, this.conversation.id);
+      if (authority && this.userInboxFingerprint(inbox, submissions) !== captured)
         throw new QueuedModelTurnsAuthorityError("during_replay");
       // Edit is withdrawal plus admission. `aborted` keeps the original send's
       // wait quiet; a later retry of that clientTurnId conflicts or no-ops.
       for (let index = inbox.items.length - 1; index >= 0; index -= 1) {
         const item = inbox.items[index];
-        if (!item || item.mode === "write") continue;
+        // Only Stop withdraws generated reports. Queue edits must preserve the
+        // original receipt and bytes, even when deleting every user message.
+        if (!item || item.mode === "write" || submissions.has(item.id)) continue;
         tx.settleSubmission(item.id, { status: "unanswered", reason: "aborted" });
         inbox.items.splice(index, 1);
       }
@@ -873,7 +893,9 @@ export class DurableBackend implements AgentBackend {
           content: this.queuedInputContent(item.entry),
         });
       }
+      return submissions;
     }, BACKGROUND_CONTEXT);
+    for (const id of internal) this.projection.inputCards.submissions.add(id);
     // The view mount publishes on a microtask. Wait for it before the caller
     // compares authority with no further await.
     await new Promise<void>((resolve) => {
@@ -902,10 +924,15 @@ export class DurableBackend implements AgentBackend {
     return { generation };
   }
 
-  private userInboxFingerprint(inbox: InboxState | undefined): string {
+  private userInboxFingerprint(
+    inbox: InboxState | undefined,
+    internal: ReadonlySet<SubmissionId> = this.projection.inputCards.submissions,
+  ): string {
     return JSON.stringify(
       (inbox?.items ?? []).flatMap((item) =>
-        item.mode === "write" ? [] : [{ mode: item.mode, content: item.content }],
+        item.mode === "write" || internal.has(item.id)
+          ? []
+          : [{ mode: item.mode, content: item.content }],
       ),
     );
   }

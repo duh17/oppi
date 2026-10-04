@@ -26,9 +26,13 @@ import {
   DurableJobs,
 } from "../extensions/durable/background-jobs/durable.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
+import { DurableBackend } from "../src/durable-backend.js";
+import { Storage } from "../src/storage.js";
+import type { SessionBackendEvent } from "../src/pi-events.js";
 import { DurableHarness } from "../src/durable-harness.js";
 import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import { RESULT_GUIDANCE } from "../extensions/durable/background-jobs/delivery.js";
+import { readDurableTrace } from "../src/durable-history.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 
 const harnesses = new Set<Harness>();
@@ -124,6 +128,7 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
     dir,
     harness,
     root,
+    models,
     faux,
     env,
     open,
@@ -196,6 +201,15 @@ describe("native Durable background jobs", () => {
     f.finish.resolve();
     const reports = await delivery(f.harness, f.root);
     expect(JSON.stringify(reports)).toContain("FINAL-OUTPUT");
+    const trace = await readDurableTrace(f.harness, f.root.id, "full");
+    expect(trace.filter((event) => event.type === "user")).toHaveLength(1);
+    expect(
+      trace.find((event) => event.presentation?.title === "Background job bash-1"),
+    ).toMatchObject({
+      type: "system",
+      presentation: { status: "completed", body: "controlled command" },
+    });
+    expect(JSON.stringify(trace)).not.toContain("FINAL-OUTPUT");
     const first = await f.root.submit(
       {
         type: "input",
@@ -219,6 +233,163 @@ describe("native Durable background jobs", () => {
     expect(cleared?.notifications["status:background-jobs"]).not.toHaveProperty("statusText");
     expect(cleared?.notifications["widget:background-jobs"]).not.toHaveProperty("nativeSurface");
   });
+
+  it("emits a compact live notice and keeps internal reports out of get_messages after reattach", async () => {
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "controlled command" }),
+      answer(),
+      answer(),
+    ]);
+    const storage = new Storage(f.dir);
+    const session = storage.createSession("Background display", "faux/faux-1");
+    session.serverDurable = { conversationId: f.root.id };
+    const owner = new DurableHarness(f.dir);
+    vi.spyOn(owner, "open").mockResolvedValue({ harness: f.harness, models: f.models });
+    await owner.releaseResume();
+    const events: SessionBackendEvent[] = [];
+    const shown = deferred<void>();
+    const attach = async () => {
+      const backend = await DurableBackend.create({
+        harness: f.harness,
+        owner,
+        models: f.models,
+        session,
+        dataDir: f.dir,
+        persistBinding: () => {},
+        onEvent: (event) => {
+          events.push(event);
+          if (event.type === "notice" && event.message.includes("Background job bash-1"))
+            shown.resolve();
+        },
+      });
+      backend.startEvents();
+      return backend;
+    };
+    const backend = await attach();
+    try {
+      await prompt(f.root);
+      await f.entered.promise;
+      f.finish.resolve();
+      await delivery(f.harness, f.root);
+      await shown.promise;
+      expect(events.filter((event) => event.type === "notice")).toEqual([
+        expect.objectContaining({
+          message: "Background job bash-1 · completed — controlled command",
+        }),
+      ]);
+      expect(
+        JSON.stringify(
+          events.filter((event) => event.type === "message_start" || event.type === "message_end"),
+        ),
+      ).not.toContain("FINAL-OUTPUT");
+      expect(backend.messages().filter((message) => message.role === "user")).toHaveLength(1);
+    } finally {
+      await backend.detachForRestart();
+    }
+    const resumed = await attach();
+    try {
+      expect(resumed.messages().filter((message) => message.role === "user")).toHaveLength(1);
+      expect(events.filter((event) => event.type === "notice")).toHaveLength(1);
+    } finally {
+      await resumed.detachForRestart();
+    }
+  });
+
+  it.each(["edit", "delete"])(
+    "preserves generated report identity when users %s their queue",
+    async (mode) => {
+      const busy = deferred<void>();
+      const release = deferred<void>();
+      const f = await fixture([
+        tool("background_job", { action: "start", command: "controlled command" }),
+        answer(),
+        async () => {
+          busy.resolve();
+          await release.promise;
+          return answer();
+        },
+        answer(),
+        answer(),
+      ]);
+      const storage = new Storage(f.dir);
+      const session = storage.createSession("Report queue", "faux/faux-1");
+      session.serverDurable = { conversationId: f.root.id };
+      const owner = new DurableHarness(f.dir);
+      vi.spyOn(owner, "open").mockResolvedValue({ harness: f.harness, models: f.models });
+      await owner.releaseResume();
+      let onQueue = () => {};
+      const backend = await DurableBackend.create({
+        harness: f.harness,
+        owner,
+        models: f.models,
+        session,
+        dataDir: f.dir,
+        persistBinding: () => {},
+        onEvent: (event) => {
+          if (event.type === "queue_update") onQueue();
+        },
+      });
+      backend.startEvents();
+      try {
+        await prompt(f.root);
+        await f.entered.promise;
+        await f.root.submit({ type: "input", content: "Hold foreground" }, context);
+        await busy.promise;
+        const userQueued = deferred<void>();
+        onQueue = userQueued.resolve;
+        await f.root.submit({ type: "input", content: "Original user follow-up" }, context);
+        await userQueued.promise;
+        const reportQueued = deferred<void>();
+        onQueue = reportQueued.resolve;
+        f.finish.resolve();
+        await reportQueued.promise;
+        await f.harness.waitForTask(await jobTask(f.harness, f.root), context);
+        expect(backend.queuedMessages()).toEqual({
+          steering: [],
+          followUp: ["Original user follow-up"],
+        });
+        const before = (await f.harness.snapshot(InboxDoc, f.root.id, context))!.items.find(
+          (item) => item.mode !== "write" && JSON.stringify(item.content).includes("FINAL-OUTPUT"),
+        )!;
+        const followUp = mode === "edit" ? [{ message: "Edited user follow-up" }] : [];
+        // Exercise the same captured authority used by set_queue, not just a raw write.
+        await backend.withRuntimeLifecycleTransaction("queue proof", async (permit) => {
+          const authority = backend.captureQueuedModelTurnsAuthority(permit);
+          const next = await backend.replaceQueuedModelTurns(
+            { steering: [], followUp },
+            undefined,
+            permit,
+            authority,
+          );
+          backend.assertQueuedModelTurnsAuthority(next!, permit);
+        });
+        const after = (await f.harness.snapshot(InboxDoc, f.root.id, context))!.items;
+        expect(after.find((item) => item.id === before.id)).toEqual(before);
+        expect(
+          await (await f.harness.submission(before.id, context))!.status(context),
+        ).toMatchObject({
+          status: "queued",
+          requestId: "background-job:bash-1",
+        });
+        expect(backend.queuedMessages()).toEqual({
+          steering: [],
+          followUp: followUp.map((item) => item.message),
+        });
+        release.resolve();
+        await delivery(f.harness, f.root);
+        expect(JSON.stringify(backend.messages())).not.toContain("FINAL-OUTPUT");
+        const trace = await readDurableTrace(f.harness, f.root.id, "full");
+        expect(
+          trace.filter((event) => event.presentation?.title === "Background job bash-1"),
+        ).toHaveLength(1);
+        expect(JSON.stringify(trace)).not.toContain("FINAL-OUTPUT");
+        expect(f.counts().executions).toBe(1);
+      } finally {
+        release.resolve();
+        await backend.detachForRestart();
+      }
+    },
+  );
 
   it("server Stop leaves a job running, while cancel kills it and delivers its final cancellation", async () => {
     const f = await fixture([
@@ -301,132 +472,109 @@ describe("native Durable background jobs", () => {
     },
   );
 
-  it.each([false, true, "legacy"])(
-    "verifies receipt content before reuse (matching=%s)",
-    async (matches) => {
-      const f = await fixture([
-        tool("background_job", { action: "start", command: "controlled command" }),
-        answer(),
-        answer(),
-        answer(),
-      ]);
-      await prompt(f.root);
-      await f.entered.promise;
-      if (matches === "legacy") {
-        await f.root.commit(async (tx) => {
-          const historical = (await tx.doc(DurableJobs, f.root.id)).jobs[0]! as {
-            receiptId?: string;
-            receiptAttempt?: number;
-          };
-          delete historical.receiptId;
-          delete historical.receiptAttempt;
-        }, context);
-      }
-      // Simulate submit-before-settlement. A matching completed receipt is safe;
-      // the old collision test falsely blessed a partial report with no output.
-      const admitted = await f.root.submit(
-        {
-          type: "input",
-          content: matches
-            ? `${RESULT_GUIDANCE}\n\nBackground job bash-1 finished (exit 0).\n\ncommand: controlled command\ncwd: ${f.dir}\n\noutput:\nFINAL-OUTPUT\n\nThis is the final result. Do not poll for this job.`
-            : "Background job bash-1 finished (exit 0).",
-          requestId: "background-job:bash-1",
-        },
-        context,
-      );
-      expect((await admitted.wait(context)).status).toBe("done");
-      f.finish.resolve();
-      await f.harness.waitForTask(await jobTask(f.harness, f.root), context);
-      await f.root.waitForIdle(context);
-      const reports = (await f.root.context(context)).messages.filter(
-        (message) =>
-          message.role === "user" && JSON.stringify(message.content).includes("FINAL-OUTPUT"),
-      );
-      expect(reports).toHaveLength(1);
-      expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]).toMatchObject({
-        delivered: true,
-        output: "",
-        receiptId: matches ? "background-job:bash-1" : "background-job:bash-1:1",
-        receiptAttempt: matches ? 0 : 1,
-      });
-      expect(f.faux.state.callCount).toBe(matches ? 3 : 4);
-      expect(f.counts().executions).toBe(1);
-    },
-  );
+  it("reuses a receipt after submit-before-settlement without submitting twice", async () => {
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "controlled command" }),
+      answer(),
+      answer(),
+    ]);
+    await prompt(f.root);
+    await f.entered.promise;
+    const admitted = await f.root.submit(
+      {
+        type: "input",
+        content: `${RESULT_GUIDANCE}\n\nBackground job bash-1 finished (exit 0).\n\ncommand: controlled command\ncwd: ${f.dir}\n\noutput:\nFINAL-OUTPUT\n\nThis is the final result. Do not poll for this job.`,
+        requestId: "background-job:bash-1",
+      },
+      context,
+    );
+    await admitted.wait(context);
+    f.finish.resolve();
+    await delivery(f.harness, f.root);
+    expect(f.faux.state.callCount).toBe(3);
+    expect(f.counts().executions).toBe(1);
+  });
 
-  it.each(["Stop", "restart"])(
-    "keeps a queued result pending through %s without losing its output",
-    async (mode) => {
-      const busy = deferred();
-      const f = await fixture([
-        tool("background_job", { action: "start", command: "controlled command" }),
-        answer(),
-        async (_transcript, options) => {
-          busy.resolve();
-          await new Promise<void>((_resolve, reject) => {
-            options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
-              once: true,
-            });
+  it.each(["Stop", "restart"])("hands a queued result to the Harness across %s", async (mode) => {
+    const busy = deferred();
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "controlled command" }),
+      answer(),
+      async (_transcript, options) => {
+        busy.resolve();
+        await new Promise<void>((_resolve, reject) => {
+          options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
+            once: true,
           });
-          return fauxAssistantMessage("Must not finish the interrupted turn");
-        },
-        answer(),
-        answer(),
-      ]);
-      await prompt(f.root);
-      await f.entered.promise;
-      await f.root.submit({ type: "input", content: "Hold a foreground turn" }, context);
-      await busy.promise;
-      const queued = deferred<SubmissionId>();
-      const inbox = (await f.harness.watchDoc(InboxDoc, f.root.id, context))!;
-      inbox.start(async (value) => {
-        const item = value?.items.find(
-          (item) => item.mode !== "write" && JSON.stringify(item.content).includes("FINAL-OUTPUT"),
-        );
-        if (item) queued.resolve(item.id);
-      });
-      f.finish.resolve();
-      const id = await queued.promise;
-      await inbox.stop();
-      expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]).toMatchObject({
-        status: "completed",
-        delivered: false,
-        output: "FINAL-OUTPUT\n",
-      });
-      let harness = f.harness;
-      let root = f.root;
-      if (mode === "Stop") {
-        await root.abort(context);
-        expect(await (await harness.submission(id, context))!.status(context)).toMatchObject({
-          status: "unanswered",
-          reason: "aborted",
         });
-      } else {
-        await harness.close(context);
-        harnesses.delete(harness);
-        harness = await f.open();
-        root = (await harness.conversation(root.id, context))!;
-        harness.resume();
-      }
-      const reports = await delivery(harness, root);
-      expect(JSON.stringify(reports)).toContain("FINAL-OUTPUT");
-      expect((await harness.snapshot(DurableJobs, root.id, context))!.jobs[0]).toMatchObject({
-        delivered: true,
-        output: "",
-        receiptId: mode === "Stop" ? "background-job:bash-1:1" : "background-job:bash-1",
+        return fauxAssistantMessage("Must not finish the interrupted turn");
+      },
+      answer(),
+      answer(),
+    ]);
+    await prompt(f.root);
+    await f.entered.promise;
+    await f.root.submit({ type: "input", content: "Hold a foreground turn" }, context);
+    await busy.promise;
+    const queued = deferred<SubmissionId>();
+    const inbox = (await f.harness.watchDoc(InboxDoc, f.root.id, context))!;
+    inbox.start(async (value) => {
+      const item = value?.items.find(
+        (item) => item.mode !== "write" && JSON.stringify(item.content).includes("FINAL-OUTPUT"),
+      );
+      if (item) queued.resolve(item.id);
+    });
+    f.finish.resolve();
+    const id = await queued.promise;
+    await inbox.stop();
+    await f.harness.waitForTask(await jobTask(f.harness, f.root), context);
+    expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]).toMatchObject({
+      status: "completed",
+      delivered: true,
+      output: "",
+    });
+    let harness = f.harness;
+    let root = f.root;
+    if (mode === "Stop") {
+      await root.abort(context);
+      expect(await (await harness.submission(id, context))!.status(context)).toMatchObject({
+        status: "unanswered",
+        reason: "aborted",
       });
-      expect(f.counts().executions).toBe(1);
-      const calls = f.faux.state.callCount;
+    } else {
       await harness.close(context);
       harnesses.delete(harness);
       harness = await f.open();
       root = (await harness.conversation(root.id, context))!;
       harness.resume();
-      await delivery(harness, root);
-      expect(f.faux.state.callCount).toBe(calls);
-      expect(f.counts().executions).toBe(1);
-    },
-  );
+    }
+    if (mode === "restart") {
+      const reports = await delivery(harness, root);
+      expect(JSON.stringify(reports)).toContain("FINAL-OUTPUT");
+    } else {
+      await root.waitForIdle(context);
+      expect(JSON.stringify((await root.context(context)).messages)).not.toContain("FINAL-OUTPUT");
+    }
+    expect((await harness.snapshot(DurableJobs, root.id, context))!.jobs[0]).toMatchObject({
+      delivered: true,
+      output: "",
+      receiptId: "background-job:bash-1",
+    });
+    expect(f.counts().executions).toBe(1);
+    const calls = f.faux.state.callCount;
+    await harness.close(context);
+    harnesses.delete(harness);
+    harness = await f.open();
+    root = (await harness.conversation(root.id, context))!;
+    harness.resume();
+    if (mode === "restart") await delivery(harness, root);
+    else {
+      await root.waitForIdle(context);
+      expect(JSON.stringify((await root.context(context)).messages)).not.toContain("FINAL-OUTPUT");
+    }
+    expect(f.faux.state.callCount).toBe(calls);
+    expect(f.counts().executions).toBe(1);
+  });
 
   it("bash replacement returns quick commands in foreground and trailing & immediately", async () => {
     const f = await fixture(

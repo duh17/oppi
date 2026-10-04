@@ -19,3 +19,18 @@ pi -e ./pi-extensions/background-jobs
 ```
 
 Then ask for a command that should keep running, or call the `background_job` tool with `start`.
+
+## Server-Durable implementation
+
+`durable.ts` uses conversation-owned background tasks and the reporter pattern
+from pi-durable's `test/examples/23-subagent-background.ts`. A stable request ID
+makes follow-up admission replay-safe; the Harness handles the queue. Stop drops
+reports already queued, rather than retrying them. A job finishing later can
+still wake the model. Interrupted shell commands are reported, never rerun.
+
+The model receives the complete bounded result, while Oppi displays a compact
+result card instead of a synthetic user bubble containing raw output. This uses
+generic input presentation metadata shared by live and history projections.
+The classic extension above is unchanged. See
+[Durable background jobs](../../dev/architecture-server/durable-extension-ui.md#background-jobs)
+for restart, output, and Stop details.

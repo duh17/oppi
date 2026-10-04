@@ -19,11 +19,17 @@ import { readSessionTraceOutlineFromEntries, type TraceOutlineResult } from "./t
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
 
+import { readDurableInputCards } from "./durable-input-cards.js";
+
 async function projectEntries(
   harness: Harness,
   records: readonly EntryRecord[],
   hiddenEntryIds?: ReadonlySet<EntryId>,
 ): Promise<SessionEntry[]> {
+  const inputCards = await readDurableInputCards(
+    harness,
+    records.map((entry) => entry.conversationId),
+  );
   const entries: SessionEntry[] = [];
   let parentId: string | null = null;
   for (const entry of records) {
@@ -36,17 +42,19 @@ async function projectEntries(
     const message = entry.model?.[0];
     const timestamp = new Date(message?.timestamp ?? 0).toISOString();
     const data = entry.data;
-    const card = !entry.model?.length
-      ? sanitizeTranscriptCard(
-          data && typeof data === "object" && !Array.isArray(data) ? data.card : undefined,
-        )
-      : undefined;
+    const card =
+      inputCards.entries.get(entry.id) ??
+      (!entry.model?.length
+        ? sanitizeTranscriptCard(
+            data && typeof data === "object" && !Array.isArray(data) ? data.card : undefined,
+          )
+        : undefined);
     entries.push(
       card
         ? {
             type: "custom",
             customType: entry.kind,
-            data: entry.data,
+            data: inputCards.entries.has(entry.id) ? { card } : entry.data,
             id: String(entry.id),
             parentId,
             timestamp: new Date(card.at).toISOString(),

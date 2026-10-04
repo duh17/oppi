@@ -1,3 +1,4 @@
+import type { TranscriptCard } from "./transcript-card.js";
 import type { Context, JsonValue } from "@earendil-works/chord";
 import {
   defineDoc,
@@ -219,3 +220,19 @@ export async function requestUI(
     await watch.stop();
   }
 }
+
+/** Display metadata for extension-generated inputs, keyed by stable submission
+ * request ID. Publish BEFORE submit so live projection cannot expose raw input
+ * while waiting for metadata. Model content and admission remain Harness-owned.
+ * This is not an extension-name or message-text rendering convention.
+ */
+export const DurableInputCards = defineDoc<{
+  requests: Record<string, TranscriptCard>;
+}>({
+  kind: "oppi.input-cards",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  initial: () => ({ requests: {} }),
+});
