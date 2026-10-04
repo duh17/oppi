@@ -367,6 +367,23 @@ struct TailnetPeerStatusTests {
         #expect(Self.peer("box", os: os).canHostOppi)
     }
 
+    @Test func setupCheckNamesTheHostOS() {
+        #expect(Self.peer("studio", os: "macOS").setupCheckTitle == "Check this Mac")
+        #expect(Self.peer("box", os: "linux").setupCheckTitle == "Check this Linux machine")
+        #expect(Self.peer("box", os: "Linux").setupCheckTitle == "Check this Linux machine")
+        #expect(Self.peer("pc", os: "windows").setupCheckTitle == "Check this machine")
+        #expect(Self.peer("mystery", os: nil).setupCheckTitle == "Check this machine")
+    }
+
+    @Test func preferredSetupPeerSkipsPhonesAndPrefersMacThenLinux() {
+        let phone = Self.peer("iphone", os: "iOS")
+        let linux = Self.peer("build-box", os: "linux")
+        let mac = Self.peer("mac-studio", os: "macOS")
+        #expect(TailnetPeer.preferredSetupPeer(among: [phone, linux, mac])?.hostName == "mac-studio")
+        #expect(TailnetPeer.preferredSetupPeer(among: [phone, linux])?.hostName == "build-box")
+        #expect(TailnetPeer.preferredSetupPeer(among: [phone]) == nil)
+    }
+
     @Test func pairedHostMatchIgnoresCaseAndRootDot() {
         let studio = Self.peer("mac-studio")
         #expect(TailnetPeerStatus.derive(

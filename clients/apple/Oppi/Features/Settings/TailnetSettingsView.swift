@@ -159,7 +159,7 @@ struct TailnetSettingsView: View {
             if let pairingMessage {
                 Text(pairingMessage)
             } else {
-                Text("Pair with a Mac that runs Oppi and is signed into the same Tailscale account.")
+                Text("Pair with a Mac or Linux machine that runs Oppi and is signed into the same Tailscale account.")
             }
         }
     }
@@ -259,7 +259,7 @@ struct TailnetSettingsView: View {
         }
     }
 
-    /// The Mac does not answer as an Oppi server; the SSH check says why.
+    /// The machine does not answer as an Oppi server; the SSH check says why.
     private func setupRow(
         _ peer: TailnetPeer,
         @ViewBuilder status: () -> some View
@@ -271,7 +271,7 @@ struct TailnetSettingsView: View {
                 peerTitle(peer)
                 status()
                     .font(.footnote)
-                Text("Check this Mac")
+                Text(peer.setupCheckTitle)
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(.tint)
             }
@@ -317,10 +317,10 @@ struct TailnetSettingsView: View {
 
     private var setupCheckSection: some View {
         Section {
-            NavigationLink("Check a Mac for Oppi") {
+            NavigationLink("Check a machine for Oppi") {
                 SSHPreflightView(onPaired: onPaired)
             }
-            .accessibilityIdentifier("tailnet.checkMac")
+            .accessibilityIdentifier("tailnet.checkMachine")
         } footer: {
             Text("Signs in over SSH to see what Oppi needs. If Oppi is already serving HTTPS, you can pair from that screen. Nothing is installed.")
         }

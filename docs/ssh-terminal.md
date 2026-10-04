@@ -17,7 +17,7 @@ For example, on a Mac with an Ed25519 host key:
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-After you save a host, **Terminal** appears directly below **MCP Servers** in the workspace sidebar. Tap it to open the host page, then tap **Connect**; opening the page never dials or asks for Face ID. **Edit Host** returns to setup. Turning the experiment off hides both entry points and does not create a key. **Tailscale → Check a Mac** remains available independently.
+After you save a host, **Terminal** appears directly below **MCP Servers** in the workspace sidebar. Tap it to open the host page, then tap **Connect**; opening the page never dials or asks for Face ID. **Edit Host** returns to setup. Turning the experiment off hides both entry points and does not create a key. **Tailscale → Check a machine** remains available independently.
 
 ## Run on Connect
 
@@ -62,7 +62,7 @@ When `herdr` is on the host, the terminal checks Herdr's API (`herdr api snapsho
 - An unsaved password is used for one connection attempt. Reconnect asks for it again.
 - A saved password is in the app’s private Keychain, not the app group. It does not sync or migrate to another device. A device passcode is required to save it; reading it at connect requires Face ID, Touch ID, or device-passcode approval.
 - On a physical device, the per-device P-256 SSH key is in the Secure Enclave. Signing requires user presence. The simulator uses an explicitly labelled software key. Selecting password sign-in does not create a key.
-- Trusted host keys are stored in the app-private, this-device-only Keychain, shared by SSH Terminal and Check a Mac. A changed host key blocks sign-in. **Forget Trusted Key** requires confirmation; independently verify why it changed before trusting its replacement.
+- Trusted host keys are stored in the app-private, this-device-only Keychain, shared by SSH Terminal and Check a machine. A changed host key blocks sign-in. **Forget Trusted Key** requires confirmation; independently verify why it changed before trusting its replacement.
 - **Delete Host** deletes the profile and saved password. It does not remove the per-device key or trusted host keys.
 
 ## Network and reconnect

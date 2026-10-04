@@ -20,7 +20,7 @@ Use `oppi ...` for normal installs. Source checkouts can use `node dist/src/cli.
 
 2. Open Oppi on iPhone, then choose **Scan QR Code**, **Connect through Tailscale**, or **Enter manually / Connect to Server**. Opening an `oppi://connect` invite also starts pairing.
 
-   **Connect through Tailscale** opens Oppi's in-app Tailscale connection. After you sign in, Oppi lists Macs on the same tailnet and can pair with one that is already running Oppi over Tailscale HTTPS. It does not install the Tailscale VPN. QR and manual pairing stay available.
+   **Connect through Tailscale** opens Oppi's in-app Tailscale connection. After you sign in, Oppi lists Mac and Linux machines on the same tailnet and can pair with one that is already running Oppi over Tailscale HTTPS. It does not install the Tailscale VPN. QR and manual pairing stay available.
 
 3. Confirm server trust. If local authentication is enabled, iOS asks for it before accepting the server identity.
 
@@ -51,7 +51,7 @@ With `self-signed` or `manual` TLS, pair through a LAN host or the server's Tail
 
 Before pairing, the app probes HTTPS health and then sends exactly one pair request. If a connection error occurs after pairing starts, pairing might have succeeded; request a fresh invite instead of retrying the old one.
 
-You can also pair by signing in to the Mac over SSH from **Tailscale → Check a Mac**. Oppi runs `oppi pair --json` only after `oppi status` says HTTPS and `https://127.0.0.1:<port>/health` answers on that Mac. A stopped server does not mint an invite. A `*.ts.net` name uses Oppi's Tailscale connection and is not dialed on the system network while that connection is off. Any other host, including a public name, uses the current network. An unknown or changed SSH host key sends no password. This does not install or start the server.
+You can also pair by signing in over SSH from **Tailscale → Check a machine**. That works for a Mac (Remote Login) or a Linux machine (`sshd`). Oppi runs `oppi pair --json` only after `oppi status` says HTTPS and `https://127.0.0.1:<port>/health` answers on that machine. A stopped server does not mint an invite. A `*.ts.net` name uses Oppi's Tailscale connection and is not dialed on the system network while that connection is off. Any other host, including a public name, uses the current network. An unknown or changed SSH host key sends no password. This does not install or start the server.
 
 ## Pair another device
 

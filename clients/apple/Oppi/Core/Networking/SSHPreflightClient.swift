@@ -3,7 +3,7 @@ import NIOCore
 import NIOPosix
 import NIOSSH
 
-/// Signs in to macOS Remote Login (sshd) with a password over an already
+/// Signs in to OpenSSH (macOS Remote Login or Linux sshd) with a password over an already
 /// connected socket (a `tailscale_dial` socketpair end) and runs
 /// `SSHPreflightProbe` once. No PTY, shell session, or port forwarding.
 ///
@@ -192,7 +192,7 @@ enum SSHPreflightClient {
     private static func failure(_ error: any Error) -> SSHPreflightFailure {
         if let failure = error as? SSHPreflightFailure { return failure }
         if let error = error as? NIOSSHError, error.type == .keyExchangeNegotiationFailure {
-            return .handshakeFailed("this Mac offers no SSH algorithms Oppi supports")
+            return .handshakeFailed("this machine offers no SSH algorithms Oppi supports")
         }
         // Darwin fails fcntl with EINVAL on a socket whose peer already hung up.
         if error is ChannelError || error is NIOFcntlFailedError {
@@ -226,7 +226,7 @@ private final class HostKeyDelegate: NIOSSHClientServerAuthenticationDelegate {
 }
 
 /// Offers the password once. A second request means the server rejected it.
-/// Shared by Check a Mac and the interactive terminal. Never logs credentials.
+/// Shared by the machine setup check and the interactive terminal. Never logs credentials.
 final class SSHPasswordAuthDelegate: NIOSSHClientUserAuthenticationDelegate {
     private let username: String
     private var password: String?

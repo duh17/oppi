@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Checks whether a Mac on the tailnet is ready for Oppi: signs in to its
-/// Remote Login (sshd) through the embedded Tailscale node with a password,
-/// runs one read-only probe, and lists what is installed. Nothing is installed
-/// and only the Mac's SSH host key is saved.
+/// Checks whether a Mac or Linux machine on the tailnet is ready for Oppi:
+/// signs in to its sshd (macOS Remote Login, or Linux sshd) through the
+/// embedded Tailscale node with a password, runs one read-only probe, and
+/// lists what is installed. Nothing is installed and only the SSH host key
+/// is saved.
 struct SSHPreflightView: View {
     private enum Phase {
         case idle
@@ -47,7 +48,7 @@ struct SSHPreflightView: View {
             actionSection
             resultSection
         }
-        .navigationTitle("Check a Mac")
+        .navigationTitle("Check a machine")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             tailnet.startIfEnabled()
@@ -72,7 +73,7 @@ struct SSHPreflightView: View {
     private var machineSection: some View {
         Section {
             Picker("Machine", selection: $selection) {
-                ForEach(tailnet.onlinePeers) { peer in
+                ForEach(tailnet.onlinePeers.filter(\.canHostOppi)) { peer in
                     Text(peer.displayName).tag(peer.dialHost)
                 }
                 Text("Other…").tag(Self.manualSelection)
@@ -87,16 +88,16 @@ struct SSHPreflightView: View {
                     .accessibilityIdentifier("sshPreflight.host")
             }
         } header: {
-            Text("Mac")
+            Text("Machine")
         } footer: {
-            Text("Turn on Remote Login on the Mac in System Settings → General → Sharing.")
+            Text("Turn on SSH. On a Mac, that is Remote Login in System Settings → General → Sharing. On Linux, start sshd.")
         }
         .disabled(isChecking)
     }
 
     private var signInSection: some View {
         Section {
-            TextField("Mac Username", text: $username)
+            TextField("Username", text: $username)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .textContentType(.username)
@@ -107,7 +108,7 @@ struct SSHPreflightView: View {
         } header: {
             Text("Sign In")
         } footer: {
-            Text("Oppi sends your password only to a Mac whose SSH key you trusted, and does not save it.")
+            Text("Oppi sends your password only to a machine whose SSH key you trusted, and does not save it.")
         }
         .disabled(isChecking)
     }
@@ -126,7 +127,7 @@ struct SSHPreflightView: View {
                         .accessibilityIdentifier("sshPreflight.cancel")
                 }
             } else {
-                Button("Check Mac") { check() }
+                Button("Check") { check() }
                     .disabled(!canCheck)
                     .accessibilityIdentifier("sshPreflight.check")
             }
@@ -191,7 +192,7 @@ struct SSHPreflightView: View {
         switch failure {
         case .unknownHostKey(let key):
             fingerprintRow("Fingerprint", key)
-            Text("On the Mac, `ssh-keygen -lf /etc/ssh/ssh_host_\(Self.keyFileStem(key))_key.pub` prints the same value.")
+            Text("On the machine, `ssh-keygen -lf /etc/ssh/ssh_host_\(Self.keyFileStem(key))_key.pub` prints the same value.")
                 .font(.footnote)
                 .foregroundStyle(.themeComment)
             Button("Trust Key and Check") { check(trusting: key, host: host) }
@@ -272,9 +273,7 @@ struct SSHPreflightView: View {
 
     private func selectDefaultMachine() {
         guard selection.isEmpty else { return }
-        let peers = tailnet.onlinePeers
-        let mac = peers.first { $0.os?.lowercased() == "macos" } ?? peers.first
-        selection = mac?.dialHost ?? Self.manualSelection
+        selection = TailnetPeer.preferredSetupPeer(among: tailnet.onlinePeers)?.dialHost ?? Self.manualSelection
     }
 
     private func check(trusting key: SSHHostKey? = nil, host: String? = nil) {
@@ -326,12 +325,12 @@ struct SSHPreflightView: View {
             return "Oppi is serving HTTPS. Pair signs this phone in with a one-time invite."
         }
         if report.checks.contains(where: { $0.status == .missing }) {
-            return "Fix the missing items on the Mac, then check again."
+            return "Fix the missing items on this machine, then check again."
         }
         if report.isReadyToPair {
             return "Ready — go back and tap Pair."
         }
-        return "This Mac has what Oppi's installer needs."
+        return "This machine has what Oppi's installer needs."
     }
 
     private func pair(host: String) {

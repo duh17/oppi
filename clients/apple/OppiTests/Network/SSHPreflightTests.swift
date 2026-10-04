@@ -221,13 +221,88 @@ struct SSHPreflightProbeTests {
         }
     }
 
-    @Test func nonMacHostIsFlagged() throws {
+    @Test func linuxHostIsSupportedAndDoesNotNeedCommandLineTools() throws {
         let linux = """
         user=chen
         kernel=Linux
         release=6.8.0
         arch=x86_64
         macos=
+        os=Ubuntu 24.04.1 LTS
+        node=/usr/bin/node
+        npm=/usr/bin/npm
+        git=/usr/bin/git
+        oppi=
+        tailscale=/usr/bin/tailscale
+        node_version=v22.20.0
+        clt=0
+        end=1
+        """
+        let report = try SSHPreflightProbe.parse(linux)
+        #expect(report.isLinux)
+        #expect(report.isSupportedHost)
+        #expect(!report.isMacOS)
+        #expect(report.osRelease == "Ubuntu 24.04.1 LTS")
+        let quoted = try SSHPreflightProbe.parse(linux.replacingOccurrences(of: "os=Ubuntu 24.04.1 LTS", with: "os=\"Ubuntu 24.04.1 LTS\""))
+        #expect(quoted.osRelease == "Ubuntu 24.04.1 LTS")
+        #expect(statuses(report)["System"] == .ok)
+        #expect(report.checks.first { $0.title == "System" }?.detail == "Ubuntu 24.04.1 LTS (x86_64)")
+        // `/usr/bin/git` is real git on Linux. The Command Line Tools rule is macOS-only.
+        #expect(statuses(report)["git"] == .ok)
+    }
+
+    @Test func linuxWithoutOsReleaseStillCounts() throws {
+        let report = try SSHPreflightProbe.parse("""
+        user=chen
+        kernel=Linux
+        release=6.8.0-alpine
+        arch=aarch64
+        macos=
+        os=
+        node=
+        npm=
+        git=
+        oppi=
+        tailscale=
+        node_version=
+        clt=0
+        end=1
+        """)
+        #expect(report.osRelease == nil)
+        #expect(report.checks.first { $0.title == "System" }?.detail == "Linux 6.8.0-alpine (aarch64)")
+        #expect(statuses(report)["System"] == .ok)
+    }
+
+    @Test func linuxServingTailscaleHTTPSIsReadyToPair() throws {
+        let report = try SSHPreflightProbe.parse("""
+        user=chen
+        kernel=Linux
+        release=6.8.0
+        arch=x86_64
+        os=Debian GNU/Linux 12 (bookworm)
+        node=/usr/bin/node
+        node_version=v22.19.0
+        npm=/usr/bin/npm
+        git=/usr/bin/git
+        oppi=/usr/local/bin/oppi
+        tailscale=/usr/bin/tailscale
+        clt=0
+        oppi_status=\(Self.oppiStatusLine)
+        end=1
+        """)
+        #expect(report.isReadyToPair)
+        #expect(report.canPairOverSSH)
+    }
+
+    @Test(arguments: ["Windows_NT", "FreeBSD"])
+    func otherKernelsAreUnsupported(kernel: String) throws {
+        let report = try SSHPreflightProbe.parse("""
+        user=chen
+        kernel=\(kernel)
+        release=10.0
+        arch=x86_64
+        macos=
+        os=
         node=/usr/bin/node
         npm=/usr/bin/npm
         git=/usr/bin/git
@@ -236,12 +311,10 @@ struct SSHPreflightProbeTests {
         node_version=v22.20.0
         clt=0
         end=1
-        """
-        let report = try SSHPreflightProbe.parse(linux)
-        #expect(!report.isMacOS)
+        """)
+        #expect(!report.isSupportedHost)
         #expect(statuses(report)["System"] == .missing)
-        // The Command Line Tools rule only applies to the macOS stub.
-        #expect(statuses(report)["git"] == .ok)
+        #expect(report.checks.first { $0.title == "System" }?.detail.contains("supports macOS and Linux") == true)
     }
 }
 
@@ -294,6 +367,8 @@ struct SSHPairMintTests {
         #expect(!SSHPairMint.statusScript.contains("oppi pair"))
         #expect(SSHPairMint.statusScript.contains("https://127.0.0.1:${port}/health"))
         #expect(SSHPairMint.statusScript.contains("curl -sk --max-time 5"))
+        #expect(SSHPairMint.statusScript.contains("NODE_TLS_REJECT_UNAUTHORIZED=0"))
+        #expect(SSHPairMint.statusScript.contains("wget -qO- --no-check-certificate"))
     }
 
     @Test func tailscaleNameDoesNotDialTheSystemNetwork() {

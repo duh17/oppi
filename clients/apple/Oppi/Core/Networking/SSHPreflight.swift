@@ -1,16 +1,17 @@
 import Foundation
 
-// Transport-free parts of the read-only Mac setup check. Host trust is shared
+// Transport-free parts of the read-only setup check. Host trust is shared
 // with interactive SSH and lives in SSHHostTrust.swift; probe concerns stay here.
+// The same script runs on macOS and Linux; nothing here is Mac-only.
 
 // MARK: - Probe
 
-/// Read-only facts about the Mac, gathered with one non-interactive exec.
+/// Read-only facts about a macOS or Linux host, gathered with one non-interactive exec.
 ///
 /// The exec command is `/bin/sh -s` with `script` on stdin, so the user's login
 /// shell (zsh, bash, or fish) only has to start `sh`. sshd's non-interactive PATH
-/// lacks Homebrew and similar, so the script adopts the login shell's PATH: the
-/// one a Terminal install would see from `~/.zprofile` and friends.
+/// lacks Homebrew, nvm, and similar, so the script adopts the login shell's PATH:
+/// the one a Terminal install would see from `~/.zprofile` or `~/.profile`.
 enum SSHPreflightProbe {
     static let command = "/bin/sh -s"
 
@@ -22,6 +23,14 @@ enum SSHPreflightProbe {
     echo "release=$(uname -r)"
     echo "arch=$(uname -m)"
     echo "macos=$(sw_vers -productVersion 2>/dev/null)"
+    os=
+    if [ -r /etc/os-release ]; then
+      os=$(sed -n 's/^PRETTY_NAME="\\(.*\\)"$/\\1/p' /etc/os-release | head -n 1)
+      if [ -z "$os" ]; then
+        os=$(sed -n 's/^PRETTY_NAME=\\(.*\\)$/\\1/p' /etc/os-release | head -n 1)
+      fi
+    fi
+    echo "os=$os"
     for tool in node npm git oppi tailscale; do echo "$tool=$(command -v "$tool" 2>/dev/null)"; done
     echo "node_version=$(node --version 2>/dev/null)"
     if xcode-select -p >/dev/null 2>&1; then echo clt=1; else echo clt=0; fi
@@ -53,6 +62,7 @@ enum SSHPreflightProbe {
             release: values["release"] ?? "",
             arch: values["arch"] ?? "",
             macOSVersion: nonEmpty(values["macos"]),
+            osRelease: nonEmpty(values["os"]).map(unquote),
             nodePath: nonEmpty(values["node"]),
             nodeVersion: nonEmpty(values["node_version"]),
             npmPath: nonEmpty(values["npm"]),
@@ -67,6 +77,12 @@ enum SSHPreflightProbe {
     private static func nonEmpty(_ value: String?) -> String? {
         guard let value, !value.isEmpty else { return nil }
         return value
+    }
+
+    /// os-release values are quoted. A sed miss that keeps the quotes still displays the name.
+    private static func unquote(_ value: String) -> String {
+        guard value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") else { return value }
+        return String(value.dropFirst().dropLast())
     }
 }
 
@@ -112,6 +128,8 @@ struct SSHPreflightReport: Equatable, Sendable {
     let release: String
     let arch: String
     let macOSVersion: String?
+    /// `PRETTY_NAME` from `/etc/os-release` on Linux. Nil on macOS.
+    let osRelease: String?
     let nodePath: String?
     let nodeVersion: String?
     let npmPath: String?
@@ -123,6 +141,10 @@ struct SSHPreflightReport: Equatable, Sendable {
     let hasCommandLineTools: Bool
 
     var isMacOS: Bool { kernel == "Darwin" }
+    var isLinux: Bool { kernel == "Linux" }
+    /// Oppi's installer and this check support these two. Other kernels stay listed
+    /// so the row can say why, instead of pretending the Mac steps apply.
+    var isSupportedHost: Bool { isMacOS || isLinux }
 
     var checks: [SSHPreflightCheck] {
         [systemCheck, nodeCheck, npmCheck, gitCheck, tailscaleCheck, oppiCheck, tailscaleHTTPSCheck]
@@ -140,13 +162,17 @@ struct SSHPreflightReport: Equatable, Sendable {
     }
 
     private var systemCheck: SSHPreflightCheck {
-        let arch = arch.isEmpty ? "" : " (\(arch))"
+        let archSuffix = arch.isEmpty ? "" : " (\(arch))"
         if isMacOS {
-            return SSHPreflightCheck(title: "System", detail: "macOS \(macOSVersion ?? release)\(arch)", status: .ok)
+            return SSHPreflightCheck(title: "System", detail: "macOS \(macOSVersion ?? release)\(archSuffix)", status: .ok)
+        }
+        if isLinux {
+            let name = osRelease ?? "Linux \(release)"
+            return SSHPreflightCheck(title: "System", detail: "\(name)\(archSuffix)", status: .ok)
         }
         return SSHPreflightCheck(
             title: "System",
-            detail: "\(kernel) \(release)\(arch). This setup guide is for macOS.",
+            detail: "\(kernel) \(release)\(archSuffix). This check supports macOS and Linux.",
             status: .missing
         )
     }
@@ -256,7 +282,7 @@ struct SSHPreflightReport: Equatable, Sendable {
 struct SSHPreflightCheck: Equatable, Identifiable, Sendable {
     enum Status: Equatable, Sendable {
         case ok
-        /// A prerequisite the Mac lacks.
+        /// A prerequisite the machine lacks.
         case missing
         /// Neither good nor bad, e.g. Oppi not installed yet.
         case info
@@ -299,39 +325,42 @@ enum SSHPreflightFailure: Error, Equatable, Sendable {
         case .tailnetNotRunning:
             "Tailscale is not connected."
         case .dialFailed(let reason):
-            "Could not reach port 22: \(reason). Check that Remote Login is on "
-                + "(System Settings → General → Sharing)."
+            "Could not reach port 22: \(reason). \(Self.sshHint)"
         case .dialTimedOut:
-            "Port 22 did not answer. Check that the Mac is awake and Remote Login is on "
-                + "(System Settings → General → Sharing)."
+            "Port 22 did not answer. Check that the machine is awake. \(Self.sshHint)"
         case .unknownHostKey:
-            "Oppi has not seen this Mac's SSH key before. Compare the fingerprint "
+            "Oppi has not seen this machine's SSH key before. Compare the fingerprint "
                 + "before you trust it; your password is not sent until you do."
         case .hostKeyMismatch:
-            "This Mac's SSH key changed since you trusted it. That can mean macOS "
+            "This machine's SSH key changed since you trusted it. That can mean the system "
                 + "was reinstalled, or that another machine is answering. Your password was not sent."
         case .passwordNotAllowed:
-            "This Mac does not accept password sign-in over SSH."
+            "This machine does not accept password sign-in over SSH."
         case .authenticationFailed:
             "The username or password was not accepted."
         case .signInTimedOut:
-            "The Mac did not finish SSH sign-in in time."
+            "The machine did not finish SSH sign-in in time."
         case .handshakeFailed(let reason):
             "SSH sign-in failed: \(reason)"
         case .probeRefused:
-            "The Mac refused to run the check command."
+            "The machine refused to run the check command."
         case .probeTimedOut:
             "The check command did not finish in time."
         case .probeIncomplete:
             "The check command ended before reporting all results."
         case .serverNotServingHTTPS:
-            "Oppi is not serving HTTPS on this Mac. Start `oppi serve`, then try again."
+            "Oppi is not serving HTTPS on this machine. Start `oppi serve`, then try again."
         case .inviteRefused:
             "The server did not issue a pairing invite. Start `oppi serve`, then try again."
         case .inviteInvalid:
             "The server's pairing invite was not usable. Request a fresh one and try again."
         }
     }
+
+    /// macOS Remote Login and Linux sshd are the same port. The hint names both
+    /// so a Linux host is not told to open System Settings.
+    private static let sshHint =
+        "Turn on SSH: Remote Login on a Mac (System Settings → General → Sharing), or sshd on Linux."
 }
 
 // MARK: - SSH invite mint
@@ -365,7 +394,8 @@ enum SSHPairMint {
     """
 
     /// Prints `end=1` only after loopback `/health` answers. Config that says
-    /// HTTPS while `oppi serve` is stopped does not.
+    /// HTTPS while `oppi serve` is stopped does not. curl is tried first;
+    /// Node (which Oppi already needs) and wget cover a Linux host without curl.
     static let statusScript = loginPathPreamble + """
 
     status=$(oppi status --json </dev/null 2>/dev/null | tr -d '\\r\\n')
@@ -376,7 +406,16 @@ enum SSHPairMint {
       ''|*[!0-9]*) exit 0 ;;
     esac
     [ "$transport" = "https" ] || exit 0
-    body=$(curl -sk --max-time 5 "https://127.0.0.1:${port}/health" || true)
+    body=
+    if command -v curl >/dev/null 2>&1; then
+      body=$(curl -sk --max-time 5 "https://127.0.0.1:${port}/health" || true)
+    fi
+    if [ -z "$body" ] && command -v node >/dev/null 2>&1; then
+      body=$(OPPI_PORT="$port" NODE_TLS_REJECT_UNAUTHORIZED=0 node -e 'const h=require("https");const p=process.env.OPPI_PORT;const r=h.get({hostname:"127.0.0.1",port:p,path:"/health",timeout:5000},s=>{let b="";s.on("data",c=>b+=c);s.on("end",()=>process.stdout.write(b));});r.on("error",()=>{});r.on("timeout",()=>r.destroy());' 2>/dev/null || true)
+    fi
+    if [ -z "$body" ] && command -v wget >/dev/null 2>&1; then
+      body=$(wget -qO- --no-check-certificate --timeout=5 "https://127.0.0.1:${port}/health" || true)
+    fi
     case "$body" in
       *'"ok":true'*'"protocol":2'*|*'"ok": true'*'"protocol": 2'*) echo end=1 ;;
     esac
