@@ -1005,300 +1005,83 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     await expect(queuePromise).rejects.toThrow("pi-tui did not return queue state");
   });
 
-  it("projects the terminal current queue when authoritative set_queue CAS rejects", async () => {
+  it("bridges Remove and take while keeping withdrawn input out of queue state", async () => {
     const { runtime } = makeRuntime();
     const { ws, sessionId } = connectBridge(runtime);
-    const received: ServerMessage[] = [];
-    runtime.subscribe(sessionId, (message) => received.push(message));
-
-    ws.receive({
-      type: "queue_state",
-      queue: {
-        version: 1,
-        steering: [{ id: "a", message: "A", createdAt: 1 }],
-        followUp: [],
-      },
-    });
-    const setPromise = runtime.setMessageQueue(sessionId, {
-      baseVersion: 1,
-      steering: [{ id: "stale", message: "stale replacement" }],
-      followUp: [],
-    });
-    const rejection = expect(setPromise).rejects.toThrow(
-      "Queue version mismatch: expected 2, got 1",
-    );
-    const command = latestCommand(ws);
-
+    const remove = runtime.removeQueuedMessage(sessionId, "one");
+    const removing = await waitForLatestCommand(ws);
+    expect(removing.command).toEqual({ type: "remove_queued_message", itemId: "one" });
     ws.receive({
       type: "command_result",
-      id: command.id,
-      success: false,
-      error: "Queue version mismatch: expected 2, got 1",
-      data: {
-        code: "queue_version_mismatch",
-        queue: {
-          version: 2,
-          steering: [{ id: "b", message: "B", createdAt: 2 }],
-          followUp: [],
-        },
-      },
+      id: removing.id,
+      success: true,
+      data: { queue: { version: 1, steering: [], followUp: [] } },
     });
-
-    await rejection;
-    expect(received.at(-1)).toEqual({
-      type: "queue_state",
-      queue: {
-        version: 2,
-        steering: [{ id: "b", message: "B", createdAt: 2 }],
-        followUp: [],
-      },
-    });
-  });
-
-  it.each([
-    ["fractional", 1.5],
-    ["negative", -1],
-    ["unsafe", Number.MAX_SAFE_INTEGER + 1],
-    ["NaN serialized as null", Number.NaN],
-    ["positive infinity serialized as null", Number.POSITIVE_INFINITY],
-    ["string", "2"],
-    ["missing", undefined],
-  ] as const)(
-    "rejects a %s authoritative mismatch queue version without poisoning projection or broadcast",
-    async (_name, version) => {
-      const { runtime } = makeRuntime();
-      const { ws, sessionId } = connectBridge(runtime);
-      ws.receive({
-        type: "queue_state",
-        queue: {
-          version: 1,
-          steering: [{ id: "trusted", message: "trusted intent", createdAt: 1 }],
-          followUp: [],
-        },
-      });
-      const received: ServerMessage[] = [];
-      runtime.subscribe(sessionId, (message) => received.push(message));
-
-      const rejected = runtime.setMessageQueue(sessionId, {
-        baseVersion: 1,
-        steering: [{ id: "stale", message: "stale replacement" }],
-        followUp: [],
-      });
-      const rejectedCommand = latestCommand(ws);
-      const rejection = expect(rejected).rejects.toThrow(
-        "pi-tui queue version mismatch did not return current queue state",
-      );
-      ws.receive({
-        type: "command_result",
-        id: rejectedCommand.id,
-        success: false,
-        error: "Queue version mismatch: invalid terminal queue",
-        data: {
-          code: "queue_version_mismatch",
-          queue: { version, steering: [], followUp: [] },
-        },
-      });
-
-      await rejection;
-      expect(received).toEqual([]);
-
-      // The malformed mismatch is not authoritative: retry from the last trusted state.
-      const retry = runtime.setMessageQueue(sessionId, {
-        baseVersion: 1,
-        steering: [{ id: "recovered", message: "recovered intent" }],
-        followUp: [],
-      });
-      const retryCommand = await waitForNextCommand(ws, rejectedCommand.id);
-      ws.receive({
-        type: "command_result",
-        id: retryCommand.id,
-        success: true,
-        data: {
-          queue: {
-            version: 2,
-            steering: [{ id: "recovered", message: "recovered intent", createdAt: 2 }],
-            followUp: [],
-          },
-        },
-      });
-
-      await expect(retry).resolves.toEqual({
-        version: 2,
-        steering: [{ id: "recovered", message: "recovered intent", createdAt: 2 }],
-        followUp: [],
-      });
-      expect(received).toEqual([
-        {
-          type: "queue_state",
-          queue: {
-            version: 2,
-            steering: [{ id: "recovered", message: "recovered intent", createdAt: 2 }],
-            followUp: [],
-          },
-        },
-      ]);
-    },
-  );
-
-  it.each([0, 2, Number.MAX_SAFE_INTEGER])(
-    "projects a valid nonnegative safe integer authoritative mismatch queue version (%d)",
-    async (version) => {
-      const { runtime } = makeRuntime();
-      const { ws, sessionId } = connectBridge(runtime);
-      const received: ServerMessage[] = [];
-      runtime.subscribe(sessionId, (message) => received.push(message));
-
-      const rejected = runtime.setMessageQueue(sessionId, {
-        baseVersion: 0,
-        steering: [{ id: "stale", message: "stale replacement" }],
-        followUp: [],
-      });
-      const command = latestCommand(ws);
-      const rejection = expect(rejected).rejects.toThrow(
-        `Queue version mismatch: expected ${version}, got 0`,
-      );
-      ws.receive({
-        type: "command_result",
-        id: command.id,
-        success: false,
-        error: `Queue version mismatch: expected ${version}, got 0`,
-        data: {
-          code: "queue_version_mismatch",
-          queue: {
-            version,
-            steering: [{ id: "terminal", message: "terminal intent", createdAt: 1 }],
-            followUp: [],
-          },
-        },
-      });
-
-      await rejection;
-      expect(received).toEqual([
-        {
-          type: "queue_state",
-          queue: {
-            version,
-            steering: [{ id: "terminal", message: "terminal intent", createdAt: 1 }],
-            followUp: [],
-          },
-        },
-      ]);
-    },
-  );
-
-  it("keeps terminal exhaustion authoritative and rejects stale and current retries safely", async () => {
-    const maxVersion = Number.MAX_SAFE_INTEGER;
-    const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
-    ws.receive({
-      type: "queue_state",
-      queue: {
-        version: maxVersion,
-        steering: [{ id: "at-max", message: "at max", createdAt: 1 }],
-        followUp: [],
-      },
-    });
-    const received: ServerMessage[] = [];
-    runtime.subscribe(sessionId, (message) => received.push(message));
-
-    const rejectExhausted = async (id: string): Promise<void> => {
-      const pending = runtime.setMessageQueue(sessionId, {
-        baseVersion: maxVersion,
-        steering: [{ id, message: id }],
-        followUp: [],
-      });
-      const command = await waitForLatestCommand(ws);
-      ws.receive({
-        type: "command_result",
-        id: command.id,
-        success: false,
-        error: `Queue version exhausted at ${maxVersion}; start a new session to reset the queue counter`,
-        data: {
-          code: "queue_version_exhausted",
-          queue: {
-            version: maxVersion,
-            steering: [{ id: "at-max", message: "at max", createdAt: 1 }],
-            followUp: [],
-          },
-        },
-      });
-      await expect(pending).rejects.toThrow(
-        `Queue version exhausted at ${maxVersion}; start a new session to reset the queue counter`,
-      );
+    expect(await remove).toMatchObject({ steering: [], followUp: [] });
+    const take = runtime.takeMessageQueue(sessionId);
+    const taking = await waitForLatestCommand(ws);
+    expect(taking.command).toEqual({ type: "take_queue" });
+    const withdrawn = {
+      version: 2,
+      steering: [{ id: "two", message: "edit", createdAt: 1 }],
+      followUp: [],
     };
-
-    await rejectExhausted("exhausted");
-    const commandCount = ws.sent.filter((message) => message.type === "command").length;
-    await expect(
-      runtime.setMessageQueue(sessionId, {
-        baseVersion: maxVersion - 1,
-        steering: [{ id: "stale", message: "stale" }],
-        followUp: [],
-      }),
-    ).rejects.toThrow(`Queue version mismatch: expected ${maxVersion}, got ${maxVersion - 1}`);
-    expect(ws.sent.filter((message) => message.type === "command")).toHaveLength(commandCount);
-
-    await rejectExhausted("exhausted-retry");
-    expect(received).toEqual([
-      {
-        type: "queue_state",
-        queue: {
-          version: maxVersion,
-          steering: [{ id: "at-max", message: "at max", createdAt: 1 }],
-          followUp: [],
-        },
-      },
-      {
-        type: "queue_state",
-        queue: {
-          version: maxVersion,
-          steering: [{ id: "at-max", message: "at max", createdAt: 1 }],
-          followUp: [],
-        },
-      },
-    ]);
-  });
-
-  it("forwards set_queue and broadcasts the returned queue state", async () => {
-    const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
-    const received: ServerMessage[] = [];
-    runtime.subscribe(sessionId, (message) => received.push(message));
-
-    const setPromise = runtime.setMessageQueue(sessionId, {
-      baseVersion: 0,
-      steering: [{ id: "s1", message: "edited steer" }],
-      followUp: [],
-    });
-    const command = latestCommand(ws);
-    expect(command.command).toMatchObject({
-      type: "set_queue",
-      baseVersion: 0,
-      steering: [{ id: "s1", message: "edited steer" }],
-      followUp: [],
-    });
-
     ws.receive({
       type: "command_result",
-      id: command.id,
+      id: taking.id,
+      success: true,
+      data: { queue: { version: 2, steering: [], followUp: [] }, withdrawn },
+    });
+    expect(await take).toEqual(withdrawn);
+  });
+
+  it("preserves image attachment refs from a mirror take while discarding materialized base64", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const attachment = {
+      type: "attachment",
+      id: "photo",
+      source: "upload",
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      kind: "image",
+      workspacePath: ".pi/attachments/photo.png",
+    };
+    const take = runtime.takeMessageQueue(sessionId);
+    const taking = await waitForLatestCommand(ws);
+    ws.receive({
+      type: "command_result",
+      id: taking.id,
       success: true,
       data: {
-        queue: {
+        queue: { version: 2, steering: [], followUp: [] },
+        withdrawn: {
           version: 1,
-          steering: [{ id: "s1", message: "edited steer", createdAt: 10 }],
+          steering: [
+            {
+              id: "mirror_q_photo",
+              message: "photo",
+              createdAt: 1,
+              images: [{ data: "aW1n", mimeType: "image/png" }],
+              attachments: [attachment],
+            },
+          ],
           followUp: [],
         },
       },
     });
-
-    await expect(setPromise).resolves.toMatchObject({ version: 1 });
-    expect(received).toContainEqual({
-      type: "queue_state",
-      queue: {
-        version: 1,
-        steering: [{ id: "s1", message: "edited steer", createdAt: 10 }],
-        followUp: [],
-      },
+    expect(await take).toEqual({
+      version: 1,
+      steering: [
+        {
+          id: "mirror_q_photo",
+          message: "photo",
+          createdAt: 1,
+          attachments: [attachment],
+        },
+      ],
+      followUp: [],
     });
   });
 
@@ -2121,6 +1904,20 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       message: `read this\n\nAttached files:\n- note.txt: .pi/attachments/${sessionId}/turn-attachment/note.txt`,
       requestId: "req-attachment",
       clientTurnId: "turn-attachment",
+      queueDisplay: {
+        message: "read this",
+        attachments: [
+          {
+            type: "attachment",
+            id: "att-1",
+            source: "workspace",
+            name: "note.txt",
+            mimeType: "text/plain",
+            sizeBytes: 21,
+            workspacePath: "note.txt",
+          },
+        ],
+      },
     });
     await expect(
       readFile(join(root, ".pi", "attachments", sessionId, "turn-attachment", "note.txt"), "utf8"),
@@ -2224,6 +2021,20 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       requestId: "req-image",
       clientTurnId: "turn-image",
       images: [{ type: "image", data: imageBytes.toString("base64"), mimeType: "image/png" }],
+      queueDisplay: {
+        message: "look at this",
+        attachments: [
+          {
+            type: "attachment",
+            id: "att-image",
+            source: "workspace",
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: imageBytes.length,
+            workspacePath: "shot.png",
+          },
+        ],
+      },
     });
 
     ws.receive({

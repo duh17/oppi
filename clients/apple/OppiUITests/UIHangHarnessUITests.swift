@@ -935,7 +935,7 @@ final class UIMessageQueueHarnessUITests: UIHarnessTestCase {
         XCTAssertEqual(waitForDiagnostic("diag.queueSteeringCount", equals: 1, timeout: 4), 1)
         XCTAssertEqual(waitForDiagnostic("diag.queueFollowUpCount", equals: 0, timeout: 4), 0)
 
-        let queueContainer = app.descendants(matching: .any)["harness.queue.container"]
+        let queueContainer = app.descendants(matching: .any)["chat.messageQueue.toggle"]
         XCTAssertTrue(queueContainer.waitForExistence(timeout: 4))
 
         let startSteer = app.descendants(matching: .any)["harness.queue.startSteer"]
@@ -950,7 +950,7 @@ final class UIMessageQueueHarnessUITests: UIHarnessTestCase {
         )
     }
 
-    func testQueueHeaderToggleRevealsAndHidesEditorControls() throws {
+    func testQueueHeaderToggleRevealsAndHidesActions() throws {
         launchQueueHarness()
 
         let clearQueue = app.descendants(matching: .any)["harness.queue.clear"]
@@ -970,16 +970,16 @@ final class UIMessageQueueHarnessUITests: UIHarnessTestCase {
         )
         queueToggle.tap()
 
-        let refreshButton = app.descendants(matching: .any)["chat.messageQueue.refresh"]
+        let refreshButton = app.descendants(matching: .any)["chat.messageQueue.editInComposer"]
         XCTAssertTrue(
             refreshButton.waitForExistence(timeout: 4),
-            "Expanding queue should reveal refresh control"
+            "Expanding queue should reveal Edit in composer"
         )
 
         queueToggle.tap()
         XCTAssertTrue(
             waitForElementToDisappear(refreshButton, timeout: 2),
-            "Collapsing queue should hide refresh control"
+            "Collapsing queue should hide Edit in composer"
         )
     }
 
@@ -1015,12 +1015,42 @@ final class UIMessageQueueHarnessUITests: UIHarnessTestCase {
         XCTAssertEqual(fileAttachment.label, "Attachment notes.txt")
     }
 
-    private func launchQueueHarness() {
+    func testRemoveAndEditInComposerWhileStreaming() throws {
+        launchQueueHarness(realBusyLane: true)
+        XCTAssertEqual(waitForDiagnostic("diag.isBusy", equals: 1, timeout: 4), 1)
+        XCTAssertEqual(waitForDiagnostic("diag.streaming", equals: 1, timeout: 4), 1)
+        let charactersBefore = pollDiagnostic("diag.streamChars", timeout: 4)
+        app.descendants(matching: .any)["harness.stream.pulse"].tap()
+        XCTAssertGreaterThan(pollDiagnostic("diag.streamChars", timeout: 4), charactersBefore)
+        let clear = app.descendants(matching: .any)["harness.queue.clear"]
+        XCTAssertTrue(clear.waitForExistence(timeout: 4))
+        clear.tap()
+        app.descendants(matching: .any)["harness.queue.enqueueSteer"].tap()
+        app.descendants(matching: .any)["harness.queue.enqueueFollow"].tap()
+        app.descendants(matching: .any)["chat.messageQueue.toggle"].tap()
+        let remove = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat.messageQueue.remove.")).firstMatch
+        XCTAssertTrue(remove.waitForExistence(timeout: 4))
+        XCTAssertGreaterThanOrEqual(remove.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(remove.frame.height, 44)
+        remove.tap()
+        XCTAssertEqual(waitForDiagnostic("diag.queueSteeringCount", equals: 0, timeout: 4), 0)
+        XCTAssertEqual(waitForDiagnostic("diag.queueFollowUpCount", equals: 1, timeout: 4), 1)
+        app.descendants(matching: .any)["chat.messageQueue.editInComposer"].tap()
+        XCTAssertEqual(waitForDiagnostic("diag.queueVisible", equals: 0, timeout: 4), 0)
+        let input = app.textFields["harness.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 4))
+        XCTAssertTrue((input.value as? String ?? "").contains("Harness follow-up message"))
+        XCTAssertEqual(pollDiagnostic("diag.isBusy", timeout: 4), 1)
+        XCTAssertEqual(pollDiagnostic("diag.streaming", timeout: 4), 1)
+    }
+
+    private func launchQueueHarness(realBusyLane: Bool = false) {
         launchHarness(
-            noStream: true,
+            noStream: false,
             includeVisualFixtures: false,
             mixedContent: false,
-            queueHarness: true
+            queueHarness: true,
+            realBusyLane: realBusyLane
         )
     }
 }

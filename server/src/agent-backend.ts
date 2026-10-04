@@ -8,16 +8,12 @@ import type { CacheMissModelPriceSource } from "./cache-miss.js";
 import type { CanonicalSessionTree } from "./canonical-message.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import type { PiMessage, PiStateSnapshot } from "./pi-events.js";
-import type {
-  QueuedModelTurnBatch,
-  QueuedModelTurnsAuthority,
-  SdkBackendDisposeResult,
-} from "./sdk-backend.js";
+import type { QueuedModelTurnBatch, SdkBackendDisposeResult } from "./sdk-backend.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 import type { SessionTreeManager } from "./session-tree.js";
 import type { ThinkingLevel } from "./thinking-levels.js";
 import type { LiveEntryRendererSet } from "./trace.js";
-import type { SessionPromptCacheWarmer } from "./types.js";
+import type { ChatAttachmentRef, MessageQueueState, SessionPromptCacheWarmer } from "./types.js";
 
 type BackendToolDefinition = { label?: string; namespace?: { name: string } };
 
@@ -30,12 +26,6 @@ export interface AgentBackend {
   readonly isQueueReconciliationRequired: boolean;
   /** Native abort atomically withdraws its inbox; no host queue replacement. */
   readonly abortClearsQueuedModelTurns?: boolean;
-  /**
-   * While a queue replacement is inside its lifecycle transaction, ignore native
-   * inbox refresh. The Oppi store commit is the editor's rich result; refreshing
-   * early would publish text-only items and rewind the CAS version.
-   */
-  readonly defersNativeQueueRefresh?: boolean;
   /** Idle edits stay queued. The next real admission places them; do not start a prompt here. */
   readonly retainsIdleQueueUntilAdmission?: boolean;
   /** Abort owns UI cancellation; don't answer the waiting tool just before stopping it. */
@@ -49,6 +39,7 @@ export interface AgentBackend {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
       streamingBehavior?: "steer" | "followUp";
       clientTurnId?: string;
+      queueDisplay?: { message: string; attachments?: ChatAttachmentRef[] };
       onPreflightAccepted?: () => void;
     },
     permit?: SessionRuntimeTransactionPermit,
@@ -70,21 +61,17 @@ export interface AgentBackend {
     operation: (permit: SessionRuntimeTransactionPermit) => Promise<T>,
     options?: { allowDisposed?: boolean },
   ): Promise<T>;
-  captureQueuedModelTurnsAuthority(
-    permit: SessionRuntimeTransactionPermit,
-  ): QueuedModelTurnsAuthority;
-  assertQueuedModelTurnsAuthority(
-    authority: QueuedModelTurnsAuthority,
-    permit: SessionRuntimeTransactionPermit,
-    phase?: "before_replay" | "during_replay" | "after_replay",
-  ): void;
   replaceQueuedModelTurns(
     batch: QueuedModelTurnBatch,
     rollback?: QueuedModelTurnBatch,
     permit?: SessionRuntimeTransactionPermit,
-    authority?: QueuedModelTurnsAuthority,
-  ): Promise<QueuedModelTurnsAuthority | undefined>;
+  ): Promise<void>;
   clearQueuedModelTurns(permit: SessionRuntimeTransactionPermit): void;
+  nativeMessageQueue?(): Promise<MessageQueueState>;
+  withdrawNativeQueue?(
+    itemId: string | undefined,
+    permit: SessionRuntimeTransactionPermit,
+  ): Promise<MessageQueueState>;
   queuedMessages(): { steering: readonly string[]; followUp: readonly string[] };
   respondToExtensionUIRequest(response: ExtensionUIResponsePayload): boolean | Promise<boolean>;
   reloadResources(reloadRuntimeConfig?: () => void): Promise<{ success: true }>;

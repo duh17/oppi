@@ -1069,7 +1069,7 @@ describe("oppi mirror input preflight", () => {
     });
   });
 
-  it("rejects stale set_queue at the terminal authority without losing local intent", async () => {
+  it("removes one terminal item by id and takes only the remainder", async () => {
     await withInteractiveTerminal(async () => {
       vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
       vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
@@ -1081,49 +1081,227 @@ describe("oppi mirror input preflight", () => {
       const agentSession = new piAgentMock.FakeAgentSession();
       agentSession.bindExtensions();
       const socket = await startMirror(pi, ctx);
+      agentSession.replaceTerminalQueue(["same", "same"], ["follow"]);
+      await drainMicrotasks();
+      const queue = socket.sent.map((line) => JSON.parse(line) as Record<string, unknown>)
+        .findLast((message) => message.type === "queue_state")!.queue as MessageQueueState;
+      socket.receive(JSON.stringify({ type: "command", id: "remove", command: { type: "remove_queued_message", itemId: queue.steering[0]!.id } }));
+      await drainMicrotasks();
+      expect(agentSession.getSteeringMessages()).toEqual(["same"]);
+      expect(sentCommandResults(socket, "remove")).toEqual([expect.objectContaining({ success: true, data: { queue: expect.objectContaining({ steering: [expect.objectContaining({ id: queue.steering[1]!.id })] }) } })]);
+      socket.receive(JSON.stringify({ type: "command", id: "take", command: { type: "take_queue" } }));
+      await drainMicrotasks();
+      expect(agentSession.getSteeringMessages()).toEqual([]);
+      expect(agentSession.getFollowUpMessages()).toEqual([]);
+      expect(sentCommandResults(socket, "take")).toEqual([expect.objectContaining({ success: true, data: {
+        queue: expect.objectContaining({ steering: [], followUp: [] }),
+        withdrawn: expect.objectContaining({ steering: [expect.objectContaining({ id: queue.steering[1]!.id })], followUp: [expect.objectContaining({ message: "follow" })] }),
+      } })]);
+    });
+  });
 
-      agentSession.replaceTerminalQueue(["A"], []);
-      const queueAfterA = socket.sent
-        .map((line) => JSON.parse(line) as Record<string, unknown>)
-        .findLast((message) => message.type === "queue_state")
-        ?.queue as MessageQueueState;
-      agentSession.replaceTerminalQueue(["B"], []);
-      const queueAfterB = socket.sent
-        .map((line) => JSON.parse(line) as Record<string, unknown>)
-        .findLast((message) => message.type === "queue_state")
-        ?.queue as MessageQueueState;
-      expect(queueAfterB.version).toBe(queueAfterA.version + 1);
-      socket.sent.length = 0;
+  it.each([
+    { type: "steer", kind: "steer" },
+    { type: "follow_up", kind: "follow_up" },
+    { type: "prompt", kind: "steer" },
+    { type: "prompt", kind: "follow_up" },
+  ] as const)(
+    "takes $type/$kind photos as raw composer text while Pi receives materialized content",
+    async ({ type, kind }) => {
+      await withInteractiveTerminal(async () => {
+        vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+        vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+        vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+        const pi = createMockPi();
+        await oppiPiMirror(pi as never);
+        const ctx = createMockContext();
+        await startSession(pi, ctx);
+        const agentSession = new piAgentMock.FakeAgentSession();
+        agentSession.bindExtensions();
+        const socket = await startMirror(pi, ctx);
+        const attachment = {
+          type: "attachment",
+          id: "photo",
+          source: "upload",
+          name: "photo.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+          kind: "image",
+          workspacePath: ".pi/attachments/photo.png",
+        };
+        const images = [{ data: "aW1n", mimeType: "image/png" }];
+        const materialized =
+          "photo\n\nAttached files:\n- photo.png: .pi/attachments/photo.png";
+        socket.receive(
+          JSON.stringify({
+            type: "command",
+            id: "enqueue-photo",
+            command: {
+              type,
+              message: materialized,
+              images,
+              queueDisplay: { message: "photo", attachments: [attachment] },
+              ...(type === "prompt" ? { streamingBehavior: kind === "steer" ? "steer" : "followUp" } : {}),
+            },
+          }),
+        );
+        await drainMicrotasks();
+        agentSession.acceptNext();
+        await drainMicrotasks();
+        expect(agentSession.promptCalls).toHaveLength(1);
+        expect(agentSession.promptCalls[0]!.text).toBe(materialized);
+        expect(agentSession.promptCalls[0]!.options).toMatchObject({
+          images: [{ type: "image", ...images[0] }],
+          streamingBehavior: kind === "steer" ? "steer" : "followUp",
+        });
+        const key = kind === "steer" ? "steering" : "followUp";
+        agentSession.replaceTerminalQueue(
+          [...agentSession.getSteeringMessages()],
+          [...agentSession.getFollowUpMessages()],
+        );
+        await drainMicrotasks();
+        const state = socket.sent
+          .map((line) => JSON.parse(line) as Record<string, unknown>)
+          .findLast((message) => message.type === "queue_state")!
+          .queue as MessageQueueState;
+        expect(state[key]).toEqual([
+          expect.objectContaining({
+            message: "photo",
+            images,
+            attachments: [attachment],
+          }),
+        ]);
+        expect(state[key][0]!.message).not.toContain("Attached files:");
+        // No intermediate queue publication may leak materialized display text.
+        const published = socket.sent
+          .map((line) => JSON.parse(line) as Record<string, unknown>)
+          .filter((message) => message.type === "queue_state")
+          .flatMap((message) => (message.queue as MessageQueueState)[key]);
+        expect(
+          published.every(
+            (item) => item.message === "photo" && !("runtimeMessage" in item),
+          ),
+        ).toBe(true);
+        socket.receive(
+          JSON.stringify({
+            type: "command",
+            id: "take-photo",
+            command: { type: "take_queue" },
+          }),
+        );
+        await drainMicrotasks();
+        expect(sentCommandResults(socket, "take-photo")).toEqual([
+          expect.objectContaining({
+            success: true,
+            data: {
+              queue: expect.objectContaining({ steering: [], followUp: [] }),
+              withdrawn: expect.objectContaining({ [key]: state[key] }),
+            },
+          }),
+        ]);
+        expect(agentSession.getSteeringMessages()).toEqual([]);
+        expect(agentSession.getFollowUpMessages()).toEqual([]);
+        expect(agentSession.agent.clearAllQueues).toHaveBeenCalled();
+      });
+    },
+  );
 
+  it("replays a remaining photo's materialized text and one image after Remove without changing its raw take content", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      const agentSession = new piAgentMock.FakeAgentSession();
+      agentSession.bindExtensions();
+      const socket = await startMirror(pi, ctx);
+      const attachment = {
+        type: "attachment",
+        id: "photo",
+        source: "upload",
+        name: "photo.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+        kind: "image",
+      };
+      const images = [{ data: "aW1n", mimeType: "image/png" }];
+      const materialized =
+        "photo\n\nAttached files:\n- photo.png: .pi/attachments/photo.png";
+      for (const command of [
+        { type: "steer", message: "remove me" },
+        {
+          type: "steer",
+          message: materialized,
+          images,
+          queueDisplay: { message: "photo", attachments: [attachment] },
+        },
+      ]) {
+        socket.receive(
+          JSON.stringify({
+            type: "command",
+            id: `enqueue-${command.message}`,
+            command,
+          }),
+        );
+        await drainMicrotasks();
+        agentSession.acceptNext();
+        await drainMicrotasks();
+      }
+      const queue = socket.sent
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .findLast((message) => message.type === "queue_state")!
+        .queue as MessageQueueState;
       socket.receive(
         JSON.stringify({
           type: "command",
-          id: "stale-set-queue",
+          id: "remove",
           command: {
-            type: "set_queue",
-            baseVersion: queueAfterA.version,
-            steering: [{ id: "stale", message: "stale replacement" }],
-            followUp: [],
+            type: "remove_queued_message",
+            itemId: queue.steering[0]!.id,
           },
         }),
       );
       await drainMicrotasks();
-
-      expect(agentSession.getSteeringMessages()).toEqual(["B"]);
-      expect(sentCommandResults(socket, "stale-set-queue")).toEqual([
+      expect(agentSession.getSteeringMessages()).toEqual([materialized]);
+      expect(agentSession.agent.steer).toHaveBeenCalledExactlyOnceWith({
+        role: "user",
+        content: [
+          { type: "text", text: materialized },
+          { type: "image", ...images[0] },
+        ],
+        timestamp: queue.steering[1]!.createdAt,
+      });
+      agentSession.replaceTerminalQueue([materialized], []);
+      await drainMicrotasks();
+      socket.receive(
+        JSON.stringify({
+          type: "command",
+          id: "take",
+          command: { type: "take_queue" },
+        }),
+      );
+      await drainMicrotasks();
+      expect(sentCommandResults(socket, "take")).toEqual([
         expect.objectContaining({
-          success: false,
-          error: `Queue version mismatch: expected ${queueAfterB.version}, got ${queueAfterA.version}`,
+          success: true,
           data: {
-            code: "queue_version_mismatch",
-            queue: expect.objectContaining({
-              version: queueAfterB.version,
-              steering: [expect.objectContaining({ message: "B" })],
-              followUp: [],
+            queue: expect.objectContaining({ steering: [], followUp: [] }),
+            withdrawn: expect.objectContaining({
+              steering: [
+                expect.objectContaining({
+                  id: queue.steering[1]!.id,
+                  message: "photo",
+                  attachments: [attachment],
+                }),
+              ],
             }),
           },
         }),
       ]);
+      expect(agentSession.getSteeringMessages()).toEqual([]);
     });
   });
 
@@ -1907,16 +2085,24 @@ describe("oppi mirror canonical flush wiring", () => {
       }
 
       const events = socket.sent
-        .map((line) => JSON.parse(line) as { type?: string; event?: { type?: string; entryId?: string } })
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              type?: string;
+              event?: { type?: string; entryId?: string };
+            },
+        )
         .filter((frame) => frame.type === "event")
         .map((frame) => frame.event);
       const types = events.map((event) => event?.type);
       expect(types.indexOf("message_end")).toBeGreaterThanOrEqual(0);
       expect(types.indexOf("auto_retry_end")).toBeGreaterThanOrEqual(0);
-      expect(types.indexOf("message_end")).toBeLessThan(types.indexOf("auto_retry_end"));
-      expect(events.find((event) => event?.type === "message_end")?.entryId).toBe(
-        "persisted-1",
+      expect(types.indexOf("message_end")).toBeLessThan(
+        types.indexOf("auto_retry_end"),
       );
+      expect(
+        events.find((event) => event?.type === "message_end")?.entryId,
+      ).toBe("persisted-1");
     });
   });
 
@@ -1943,7 +2129,13 @@ describe("oppi mirror canonical flush wiring", () => {
       }
 
       const events = socket.sent
-        .map((line) => JSON.parse(line) as { type?: string; event?: { type?: string; role?: string } })
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              type?: string;
+              event?: { type?: string; role?: string };
+            },
+        )
         .filter((frame) => frame.type === "event")
         .map((frame) => frame.event?.type);
       expect(events.filter((type) => type === "message_end")).toHaveLength(1);
@@ -1983,7 +2175,10 @@ describe("oppi mirror canonical flush wiring", () => {
       const events = socket.sent
         .map(
           (line) =>
-            JSON.parse(line) as { type?: string; event?: Record<string, unknown> },
+            JSON.parse(line) as {
+              type?: string;
+              event?: Record<string, unknown>;
+            },
         )
         .filter((frame) => frame.type === "event")
         .map((frame) => frame.event);
@@ -2089,20 +2284,21 @@ describe("oppi mirror log rotation", () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
 
-    try {
-      writeFileSync(candidatePath, "preserve unless expired daily log\n");
-      writeMirrorLog("info", "unit_test_exact_daily_name", {});
-      expect(existsSync(candidatePath)).toBe(!pruned);
-      if (!pruned) {
-        expect(readFileSync(candidatePath, "utf8")).toBe(
-          "preserve unless expired daily log\n",
-        );
+      try {
+        writeFileSync(candidatePath, "preserve unless expired daily log\n");
+        writeMirrorLog("info", "unit_test_exact_daily_name", {});
+        expect(existsSync(candidatePath)).toBe(!pruned);
+        if (!pruned) {
+          expect(readFileSync(candidatePath, "utf8")).toBe(
+            "preserve unless expired daily log\n",
+          );
+        }
+        expect(existsSync(join(logDir, "custom-2026-03-25.log"))).toBe(true);
+      } finally {
+        rmSync(logDir, { recursive: true, force: true });
       }
-      expect(existsSync(join(logDir, "custom-2026-03-25.log"))).toBe(true);
-    } finally {
-      rmSync(logDir, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it.each([
     ["custom", "custom-2020-01-01.log", "custom-2026-03-25.log"],

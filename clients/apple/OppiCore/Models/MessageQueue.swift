@@ -78,25 +78,6 @@ struct MessageQueueState: Codable, Sendable, Equatable {
     }
 }
 
-struct MessageQueueDraftItem: Codable, Sendable, Equatable, Identifiable {
-    var id: String?
-    var message: String
-    var attachments: [ChatAttachmentRef]?
-    var createdAt: Int?
-
-    init(
-        id: String?,
-        message: String,
-        attachments: [ChatAttachmentRef]? = nil,
-        createdAt: Int?
-    ) {
-        self.id = id
-        self.message = message
-        self.attachments = attachments
-        self.createdAt = createdAt
-    }
-}
-
 enum MessageQueueVisibleAttachment: Equatable, Identifiable, Sendable {
     case photo(id: String, name: String, image: ImageAttachment?)
     case file(id: String, name: String)

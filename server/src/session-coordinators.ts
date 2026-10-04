@@ -233,7 +233,6 @@ export function createSessionCoordinatorBundle(
     sendCommand: (key, command, permit, onPreflightAccepted) =>
       deps.sendCommand(key, command, permit, onPreflightAccepted),
     uploadStoreConfig,
-    reserveQueuedMessage: (...args) => queueCoordinator.reserveQueuedMessage(...args),
     enqueueQueuedMessage: (key, kind, message, attachments, idHint, sdkMessage, sdkImages) =>
       queueCoordinator.enqueueQueuedMessage(
         key,

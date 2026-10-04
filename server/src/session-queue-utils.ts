@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import type { PiMessage } from "./pi-events.js";
 import type {
   ChatAttachmentRef,
-  MessageQueueDraftItem,
   MessageQueueItem,
   MessageQueueKind,
   MessageQueueState,
@@ -106,8 +105,7 @@ export function assertQueueVersion(value: unknown): asserts value is number {
 }
 
 /**
- * Queue versions never wrap: wrapping would let a pre-rollover stale CAS match
- * again. Exhaustion is recoverable by starting a new session, whose queue starts
+ * Queue versions never wrap: each observable mutation has a distinct version. Exhaustion is recoverable by starting a new session, whose queue starts
  * at version zero. Callers must compute the next version before mutating state.
  */
 export function nextQueueVersion(value: unknown): number {
@@ -135,17 +133,6 @@ export function requireQueueState(value: unknown, errorMessage: string): Message
     throw new Error(errorMessage);
   }
   return queue;
-}
-
-export function assertQueueBaseVersion(
-  queue: Pick<MutableMessageQueueState, "version">,
-  baseVersion: number,
-): void {
-  assertQueueVersion(queue.version);
-  assertQueueVersion(baseVersion);
-  if (baseVersion !== queue.version) {
-    throw new Error(`Queue version mismatch: expected ${queue.version}, got ${baseVersion}`);
-  }
 }
 
 function parseQueueItems(value: unknown): MessageQueueItem[] | undefined {
@@ -275,22 +262,4 @@ export function normalizeQueueMessage(message: string): string {
   }
 
   return message;
-}
-
-export function normalizeDraftItems(items: MessageQueueDraftItem[]): MessageQueueItem[] {
-  const normalized: MessageQueueItem[] = [];
-
-  for (const item of items) {
-    normalized.push({
-      id: normalizeQueueId(item.id),
-      message: normalizeQueueMessage(item.message),
-      attachments: cloneAttachmentRefs(item.attachments),
-      createdAt:
-        typeof item.createdAt === "number" && Number.isFinite(item.createdAt)
-          ? Math.trunc(item.createdAt)
-          : Date.now(),
-    });
-  }
-
-  return normalized;
 }

@@ -131,7 +131,7 @@ enum ServerMessageEffects {
         data: JSONValue?
     ) -> ServerMessageQueueEffects {
         guard success,
-              command == "get_queue" || command == "set_queue",
+              command == "get_queue" || command == "remove_queued_message",
               let queue = decodeQueueStateFromCommandData(data) else {
             return ServerMessageQueueEffects()
         }

@@ -604,20 +604,20 @@ final class MessageSender {
         }
     }
 
-    func setMessageQueue(
-        baseVersion: Int,
-        steering: [MessageQueueDraftItem],
-        followUp: [MessageQueueDraftItem],
-        sessionIdOverride: String? = nil
-    ) async throws {
-        _ = try await sendCommandAwaitingResult(command: "set_queue", sessionIdOverride: sessionIdOverride) { requestId in
-            .setQueue(
-                baseVersion: baseVersion,
-                steering: steering,
-                followUp: followUp,
-                requestId: requestId
-            )
+    func removeQueuedMessage(itemId: String, sessionIdOverride: String? = nil) async throws {
+        _ = try await sendCommandAwaitingResult(command: "remove_queued_message", sessionIdOverride: sessionIdOverride) { requestId in
+            .removeQueuedMessage(itemId: itemId, requestId: requestId)
         }
+    }
+
+    func takeMessageQueue(sessionIdOverride: String? = nil) async throws -> MessageQueueState {
+        let data = try await sendCommandAwaitingResult(command: "take_queue", sessionIdOverride: sessionIdOverride) { requestId in
+            .takeQueue(requestId: requestId)
+        }
+        guard let withdrawn = ServerMessageEffects.decodeQueueStateFromCommandData(data) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Missing withdrawn queue"))
+        }
+        return withdrawn
     }
 
     func getForkMessages() async throws -> [ForkMessage] {

@@ -1,6 +1,5 @@
 export const OPPI_MIRROR_BRIDGE_PROTOCOL_VERSION = 2;
 export const OPPI_MIRROR_INPUT_PREFLIGHT_CAPABILITY = "input_preflight:v1";
-export const OPPI_MIRROR_QUEUE_VERSION_MISMATCH_CODE = "queue_version_mismatch";
 export const OPPI_MIRROR_QUEUE_VERSION_EXHAUSTED_CODE =
   "queue_version_exhausted";
 export const OPPI_MIRROR_QUEUE_VERSION_INVALID_ERROR =
@@ -51,7 +50,8 @@ export const OPPI_MIRROR_SERVER_REMOTE_COMMANDS = [
   "abort",
   "reload",
   "get_queue",
-  "set_queue",
+  "remove_queued_message",
+  "take_queue",
 ] as const;
 
 export const OPPI_MIRROR_TERMINAL_CONTROL_COMMANDS = [

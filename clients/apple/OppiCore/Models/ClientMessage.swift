@@ -21,7 +21,8 @@ enum ClientMessage: Sendable {
 
     // ── Message queue ──
     case getQueue(requestId: String? = nil)
-    case setQueue(baseVersion: Int, steering: [MessageQueueDraftItem], followUp: [MessageQueueDraftItem], requestId: String? = nil)
+    case removeQueuedMessage(itemId: String, requestId: String? = nil)
+    case takeQueue(requestId: String? = nil)
 
     // ── Model ──
     case setModel(provider: String, modelId: String, requestId: String? = nil, persist: Bool? = nil)
@@ -265,11 +266,13 @@ extension ClientMessage: Encodable {
             try c.encode("get_queue", forKey: .type)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
-        case .setQueue(let baseVersion, let steering, let followUp, let reqId):
-            try c.encode("set_queue", forKey: .type)
-            try c.encode(baseVersion, forKey: .baseVersion)
-            try c.encode(steering, forKey: .steering)
-            try c.encode(followUp, forKey: .followUp)
+        case .removeQueuedMessage(let itemId, let reqId):
+            try c.encode("remove_queued_message", forKey: .type)
+            try c.encode(itemId, forKey: .itemId)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+
+        case .takeQueue(let reqId):
+            try c.encode("take_queue", forKey: .type)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
         // ── Model ──
@@ -420,7 +423,7 @@ extension ClientMessage: Encodable {
         case provider, modelId, persist, level, name, mode, enabled
         case customInstructions, entryId, filterMode
         case targetId, summarize, replaceInstructions, label
-        case baseVersion, steering, followUp
+        case itemId
     }
 }
 
@@ -440,7 +443,8 @@ extension ClientMessage {
         case .getMessages: return "get_messages"
         case .getSessionStats: return "get_session_stats"
         case .getQueue: return "get_queue"
-        case .setQueue: return "set_queue"
+        case .removeQueuedMessage: return "remove_queued_message"
+        case .takeQueue: return "take_queue"
         case .setModel: return "set_model"
         case .cycleModel: return "cycle_model"
         case .setThinkingLevel: return "set_thinking_level"

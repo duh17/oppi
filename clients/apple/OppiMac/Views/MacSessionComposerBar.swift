@@ -319,8 +319,29 @@ struct MacSessionComposerBar: View {
         return true
     }
 
+    private func restoreQueueInComposer() async throws {
+        let originatingTarget = store.selectedTarget
+        let withdrawn = try await store.takeMessageQueueFromLocalConfig()
+        guard store.selectedTarget == originatingTarget,
+              let content = MessageQueueComposerRestore.content(queue: withdrawn, currentText: composerState.draft) else { return }
+        composerState.draft = content.text
+        let restored = content.attachments.map { MacPendingAttachment(uploaded: $0) }
+        let ids = Set(restored.map(\.id))
+        composerState.pendingAttachments = restored + composerState.pendingAttachments.filter { !ids.contains($0.id) }
+    }
+
     private func stopTurn() {
-        Task { await store.stopTurnFromLocalConfig() }
+        let originatingTarget = store.selectedTarget
+        Task {
+            await MessageQueueComposerRestore.stopAfterRestoring(
+                restore: { try await restoreQueueInComposer() },
+                abort: {
+                    guard store.selectedTarget == originatingTarget else { return }
+                    await store.stopTurnFromLocalConfig()
+                },
+                onError: { store.reportMessageQueueError($0, target: originatingTarget) }
+            )
+        }
     }
 
     private func resumeSession() {
@@ -381,15 +402,10 @@ struct MacSessionComposerBar: View {
             if showsMessageQueueEditor {
                 MacMessageQueueCard(
                     queue: store.messageQueue,
-                    busyStreamingBehavior: Binding(
-                        get: { store.busyStreamingBehavior },
-                        set: { store.busyStreamingBehavior = $0 }
-                    ),
-                    isRefreshing: store.isRefreshingQueue,
                     isUpdating: store.isUpdatingQueue,
                     error: store.messageQueueError,
-                    refresh: { await store.refreshQueueFromLocalConfig() },
-                    apply: { request in try await store.applyQueueMutationFromLocalConfig(request) }
+                    remove: { itemId in try await store.removeQueuedMessageFromLocalConfig(itemId: itemId) },
+                    editInComposer: { try await restoreQueueInComposer() }
                 )
             }
 
@@ -1708,245 +1724,78 @@ private extension View {
 
 private struct MacMessageQueueCard: View {
     let queue: MessageQueueState
-    @Binding var busyStreamingBehavior: StreamingBehavior
-    let isRefreshing: Bool
     let isUpdating: Bool
     let error: String?
-    let refresh: () async -> Void
-    let apply: (MacMessageQueueMutationRequest) async throws -> Void
-
-    @Environment(\.theme) private var theme
+    let remove: (String) async throws -> Void
+    let editInComposer: () async throws -> Void
     @State private var isExpanded = false
-    @State private var editorState: MacMessageQueueEditorState
     @State private var localError: String?
-
-    init(
-        queue: MessageQueueState,
-        busyStreamingBehavior: Binding<StreamingBehavior>,
-        isRefreshing: Bool,
-        isUpdating: Bool,
-        error: String?,
-        refresh: @escaping () async -> Void,
-        apply: @escaping (MacMessageQueueMutationRequest) async throws -> Void
-    ) {
-        self.queue = queue
-        _busyStreamingBehavior = busyStreamingBehavior
-        self.isRefreshing = isRefreshing
-        self.isUpdating = isUpdating
-        self.error = error
-        self.refresh = refresh
-        self.apply = apply
-        _editorState = State(initialValue: MacMessageQueueEditorState(queue: queue))
-    }
-
-    private var controlsDisabled: Bool { isRefreshing || isUpdating }
+    @State private var isWorking = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Button {
-                isExpanded.toggle()
-            } label: {
-                HStack(spacing: 8) {
-                    Label("Message Queue", systemImage: "text.append")
-                        .font(.headline)
-                    Text("\(editorState.displayedQueue.steering.count) steering · \(editorState.displayedQueue.followUp.count) follow-up")
-                        .font(.caption)
-                        .foregroundStyle(theme.text.secondary)
+            Button { isExpanded.toggle() } label: {
+                HStack {
+                    Label("Message Queue", systemImage: "text.append").font(.headline)
+                    Text("\(queue.steering.count) steering · \(queue.followUp.count) follow-up")
+                        .font(.caption).foregroundStyle(.themeComment)
                     Spacer()
-                    if controlsDisabled {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .foregroundStyle(theme.text.secondary)
                 }
             }
             .buttonStyle(.plain)
-
+            if let error = localError ?? error {
+                Text(error).font(.caption).foregroundStyle(.themeRed)
+                    .accessibilityIdentifier("mac.messageQueue.error")
+            }
             if isExpanded {
-                Picker("Send while busy", selection: $busyStreamingBehavior) {
-                    Text("Steer").tag(StreamingBehavior.steer)
-                    Text("Follow-up").tag(StreamingBehavior.followUp)
-                }
-                .pickerStyle(.segmented)
-                .disabled(controlsDisabled)
-
-                if let visibleError = localError ?? error, !visibleError.isEmpty {
-                    Text(visibleError)
-                        .font(.caption)
-                        .foregroundStyle(theme.accent.red)
-                }
-
-                if editorState.isEmpty {
-                    Text("Queue is empty. Messages sent while the session is busy will appear here.")
-                        .font(.caption)
-                        .foregroundStyle(theme.text.secondary)
-                } else {
-                    queueSection(title: "Steering", kind: .steer, items: editorState.displayedQueue.steering)
-                    queueSection(title: "Follow-up", kind: .followUp, items: editorState.displayedQueue.followUp)
-                }
-
-                footer
+                queueSection(title: "Steering", items: queue.steering)
+                queueSection(title: "Follow-up", items: queue.followUp)
+                Button("Edit in composer") { update(editInComposer) }
+                    .disabled(isWorking || isUpdating || queue.steering.isEmpty && queue.followUp.isEmpty)
+                    .accessibilityIdentifier("mac.messageQueue.editInComposer")
             }
         }
         .padding(12)
-        .background(theme.bg.secondary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(theme.text.tertiary.opacity(0.25), lineWidth: 1)
-        )
-        .onChange(of: queue) { _, latest in
-            editorState.receiveServerQueue(latest)
-        }
+        .background(.themeRecessedInset, in: RoundedRectangle(cornerRadius: 14))
     }
 
-    private func queueSection(title: String, kind: MessageQueueKind, items: [MessageQueueItem]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(theme.text.secondary)
-            ForEach(items, id: \.id) { item in
-                queueRow(kind: kind, id: item.id)
-            }
-        }
-    }
-
-    private func queueRow(kind: MessageQueueKind, id: String) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 6) {
-                queueMessageField(kind: kind, id: id)
-                    .frame(minWidth: 220)
-                queueRowControls(kind: kind, id: id)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                queueMessageField(kind: kind, id: id)
-                queueRowControls(kind: kind, id: id)
-            }
-        }
-        .font(.caption)
-    }
-
-    private func queueMessageField(kind: MessageQueueKind, id: String) -> some View {
-        TextField("Queued message", text: messageBinding(kind: kind, id: id), axis: .vertical)
-            .macComposerAuxiliaryFieldSurface()
-            .lineLimit(1...4)
-            .disabled(controlsDisabled)
-    }
-
-    private func queueRowControls(kind: MessageQueueKind, id: String) -> some View {
-        HStack(spacing: 2) {
-            Button {
-                applyImmediate(editorState.moveItem(kind: kind, id: id, direction: -1))
-            } label: {
-                Image(systemName: "arrow.up")
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .disabled(controlsDisabled || !editorState.canMove(kind: kind, id: id, direction: -1))
-            .accessibilityLabel("Move queued message earlier")
-            .help("Move queued message earlier")
-
-            Button {
-                applyImmediate(editorState.moveItem(kind: kind, id: id, direction: 1))
-            } label: {
-                Image(systemName: "arrow.down")
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .disabled(controlsDisabled || !editorState.canMove(kind: kind, id: id, direction: 1))
-            .accessibilityLabel("Move queued message later")
-            .help("Move queued message later")
-
-            Button {
-                applyImmediate(editorState.moveBetweenQueues(kind: kind, id: id))
-            } label: {
-                Image(systemName: kind == .steer ? "arrow.down.right" : "arrow.up.left")
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .disabled(controlsDisabled)
-            .accessibilityLabel(
-                "Move queued message to \(kind == .steer ? "Follow-up" : "Steering")"
-            )
-            .help(kind == .steer ? "Move to Follow-up" : "Move to Steering")
-
-            Button(role: .destructive) {
-                applyImmediate(editorState.deleteItem(kind: kind, id: id))
-            } label: {
-                Image(systemName: "trash")
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .disabled(controlsDisabled)
-            .accessibilityLabel("Delete queued message")
-            .help("Delete queued message")
-        }
-        .buttonStyle(.borderless)
-    }
-
-    private var footer: some View {
-        HStack(spacing: 8) {
-            Button("Refresh") {
-                Task { await refresh() }
-            }
-            .disabled(controlsDisabled)
-
-            Spacer()
-
-            if editorState.isDraftMode {
-                Button("Discard") {
-                    editorState.discardDraft()
-                    localError = nil
+    @ViewBuilder
+    private func queueSection(title: String, items: [MessageQueueItem]) -> some View {
+        if !items.isEmpty {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.themeComment)
+            ForEach(items) { item in
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(item.message).frame(maxWidth: .infinity, alignment: .leading)
+                        ForEach(MessageQueueAttachmentPresentation.visibleAttachments(for: item)) { attachment in
+                            Label(attachment.name, systemImage: {
+                                if case .photo = attachment { return "photo" }
+                                return "doc"
+                            }()).font(.caption).foregroundStyle(.themeComment)
+                        }
+                    }
+                    Button { update { try await remove(item.id) } } label: {
+                        Image(systemName: "trash").frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(isWorking || isUpdating)
+                    .accessibilityLabel("Remove queued message")
+                    .accessibilityIdentifier("mac.messageQueue.remove.\(item.id)")
                 }
-                .disabled(controlsDisabled)
-
-                Button("Save") {
-                    saveDraft()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(controlsDisabled)
+                .font(.caption)
             }
         }
-        .font(.caption)
     }
 
-    private func messageBinding(kind: MessageQueueKind, id: String) -> Binding<String> {
-        Binding(
-            get: { editorState.item(kind: kind, id: id)?.message ?? "" },
-            set: { value in
-                if editorState.updateMessage(kind: kind, id: id, message: value) {
-                    localError = nil
-                }
-            }
-        )
-    }
-
-    private func applyImmediate(_ request: MacMessageQueueMutationRequest?) {
-        guard let request else { return }
-        Task { await applyRequest(request, rollsBackOnFailure: true) }
-    }
-
-    private func saveDraft() {
-        guard let request = editorState.draftRequest() else { return }
-        Task { await applyRequest(request, rollsBackOnFailure: false) }
-    }
-
-    private func applyRequest(
-        _ request: MacMessageQueueMutationRequest,
-        rollsBackOnFailure: Bool
-    ) async {
+    private func update(_ operation: @escaping () async throws -> Void) {
+        guard !isWorking else { return }
+        isWorking = true
         localError = nil
-        do {
-            try await apply(request)
-            if !rollsBackOnFailure {
-                editorState.acceptDraft(request)
-            }
-        } catch {
-            if rollsBackOnFailure {
-                editorState.rollbackRejectedImmediateMutation()
-            }
-            localError = error.localizedDescription
+        Task { @MainActor in
+            defer { isWorking = false }
+            do { try await operation() }
+            catch { localError = error.localizedDescription }
         }
     }
 }

@@ -107,11 +107,6 @@ export interface MessageQueueState {
   followUp: MessageQueueItem[];
 }
 
-export interface MessageQueueDraftItem extends MessageQueuePayload {
-  id?: string;
-  createdAt?: number;
-}
-
 export interface ShareSessionRedactionPolicy {
   secrets?: boolean;
   emails?: boolean;
@@ -165,13 +160,8 @@ export type ClientMessage = // ── Prompting ──
     | { type: "get_session_stats"; requestId?: string }
     // ── Message queue ──
     | { type: "get_queue"; requestId?: string }
-    | {
-        type: "set_queue";
-        baseVersion: number;
-        steering: MessageQueueDraftItem[];
-        followUp: MessageQueueDraftItem[];
-        requestId?: string;
-      }
+    | { type: "remove_queued_message"; itemId: string; requestId?: string }
+    | { type: "take_queue"; requestId?: string }
     // ── Model ──
     | {
         type: "set_model";

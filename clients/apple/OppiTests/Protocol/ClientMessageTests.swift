@@ -28,29 +28,15 @@ struct ClientMessageTests {
         #expect(json["requestId"] as? String == "req-q1")
     }
 
-    @Test func encodesSetQueue() throws {
-        let msg = ClientMessage.setQueue(
-            baseVersion: 3,
-            steering: [
-                MessageQueueDraftItem(
-                    id: "q1",
-                    message: "steer this",
-                    attachments: nil,
-                    createdAt: 123
-                ),
-            ],
-            followUp: [],
-            requestId: "req-q2"
-        )
-
-        let json = try decode(msg)
-        #expect(json["type"] as? String == "set_queue")
-        #expect(json["baseVersion"] as? Int == 3)
-        #expect(json["requestId"] as? String == "req-q2")
-        let steering = json["steering"] as? [[String: Any]]
-        #expect(steering?.count == 1)
-        #expect(steering?.first?["id"] as? String == "q1")
-        #expect(steering?.first?["message"] as? String == "steer this")
+    @Test func encodesQueueWithdrawalCommands() throws {
+        let remove = try decode(ClientMessage.removeQueuedMessage(itemId: "submission-1", requestId: "remove"))
+        #expect(remove["type"] as? String == "remove_queued_message")
+        #expect(remove["itemId"] as? String == "submission-1")
+        #expect(remove["requestId"] as? String == "remove")
+        #expect(remove["baseVersion"] == nil)
+        let take = try decode(ClientMessage.takeQueue(requestId: "take"))
+        #expect(take["type"] as? String == "take_queue")
+        #expect(take["requestId"] as? String == "take")
     }
 
     @Test func encodesExtensionUIResponse() throws {

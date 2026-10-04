@@ -42,8 +42,6 @@ import {
   isPiTuiMirrorRemoteCommand,
   PI_TUI_MIRROR_BRIDGE_PROTOCOL_VERSION,
   PI_TUI_MIRROR_INPUT_PREFLIGHT_CAPABILITY,
-  PI_TUI_MIRROR_QUEUE_VERSION_EXHAUSTED_CODE,
-  PI_TUI_MIRROR_QUEUE_VERSION_MISMATCH_CODE,
   PI_TUI_MIRROR_SUPPORTED_BRIDGE_PROTOCOL_VERSIONS,
   piTuiMirrorPersistUnsupportedReason,
   piTuiMirrorUnsupportedRemoteCommandReason,
@@ -58,7 +56,6 @@ import { SessionEventProcessor } from "./session-events.js";
 import { SessionInputCoordinator } from "./session-input.js";
 import { readSessionJsonlMeta } from "./session-jsonl-meta.js";
 import {
-  assertQueueBaseVersion,
   cloneQueueState,
   dequeueQueueItemByText,
   extractQueuedUserText,
@@ -80,7 +77,6 @@ import type { Storage } from "./storage.js";
 import { resolveWorkspaceWorktreeForPath } from "./worktrees.js";
 import type {
   ChatAttachmentRef,
-  MessageQueueDraftItem,
   MessageQueueItem,
   MessageQueueKind,
   MessageQueueState,
@@ -946,26 +942,15 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     return this.dispatchBridgeQueueCommand(sessionId, { type: "get_queue" });
   }
 
-  async setMessageQueue(
-    sessionId: string,
-    payload: {
-      baseVersion: number;
-      steering: MessageQueueDraftItem[];
-      followUp: MessageQueueDraftItem[];
-    },
-  ): Promise<MessageQueueState> {
-    if (!this.connectedBridgeForSession(sessionId)) {
-      throw new Error("pi-tui is not connected");
-    }
-    const active = this.requireActive(sessionId);
-    assertQueueBaseVersion(active.messageQueue, payload.baseVersion);
+  async removeQueuedMessage(sessionId: string, itemId: string): Promise<MessageQueueState> {
+    return this.dispatchBridgeQueueCommand(sessionId, { type: "remove_queued_message", itemId });
+  }
 
-    return this.dispatchBridgeQueueCommand(sessionId, {
-      type: "set_queue",
-      baseVersion: payload.baseVersion,
-      steering: payload.steering,
-      followUp: payload.followUp,
-    });
+  async takeMessageQueue(sessionId: string): Promise<MessageQueueState> {
+    const data = await this.dispatchBridgeCommand(sessionId, { type: "take_queue" });
+    // Bridge data distinguishes the withdrawn input from the remaining queue.
+    this.applyQueueFromCommandData(sessionId, data, "command_result:take_queue");
+    return requireQueueState(asRecord(data)?.withdrawn, "pi-tui did not return withdrawn items");
   }
 
   async sendAbort(sessionId: string): Promise<void> {
@@ -1434,31 +1419,12 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   ): void {
     const pendingCommandType = connection.pendingCommands.get(message.id)?.commandType;
     const matched = this.bridgeCommandDriver.resolveResult(connection, message, () => {
-      const resultData = asRecord(message.data);
       if (
         message.success &&
         pendingCommandType === "navigate_tree" &&
         navigationCreatedBranchSummary(message.data)
       ) {
         resetCacheMissTracker(this.requireActive(connection.sessionId).cacheMissTracker);
-      }
-      const queueErrorCode = resultData?.code;
-      if (
-        !message.success &&
-        pendingCommandType === "set_queue" &&
-        (queueErrorCode === PI_TUI_MIRROR_QUEUE_VERSION_MISMATCH_CODE ||
-          queueErrorCode === PI_TUI_MIRROR_QUEUE_VERSION_EXHAUSTED_CODE)
-      ) {
-        this.applyBridgeQueueState(
-          this.requireActive(connection.sessionId),
-          requireQueueState(
-            resultData?.queue,
-            queueErrorCode === PI_TUI_MIRROR_QUEUE_VERSION_MISMATCH_CODE
-              ? "pi-tui queue version mismatch did not return current queue state"
-              : "pi-tui queue version exhaustion did not return current queue state",
-          ),
-          `command_result:set_queue_version_${queueErrorCode === PI_TUI_MIRROR_QUEUE_VERSION_MISMATCH_CODE ? "mismatch" : "exhausted"}`,
-        );
       }
       if (message.state) {
         const active = this.requireActive(connection.sessionId);

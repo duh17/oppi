@@ -4,7 +4,6 @@ import type { ExtensionUIResponse } from "./extension-ui-state.js";
 import type {
   ChatAttachmentRef,
   ClientMessage,
-  MessageQueueDraftItem,
   MessageQueueState,
   ServerMessage,
   Session,
@@ -60,12 +59,6 @@ export interface RuntimeQueuedInputOptions {
   attachments?: ChatAttachmentRef[];
   clientTurnId?: string;
   requestId?: string;
-}
-
-export interface RuntimeSetQueuePayload {
-  baseVersion: number;
-  steering: MessageQueueDraftItem[];
-  followUp: MessageQueueDraftItem[];
 }
 
 export type RuntimeCommandResultMessage = Extract<ServerMessage, { type: "command_result" }>;
@@ -216,7 +209,8 @@ export interface AgentRuntimeCommandTransport {
   sendSteer(sessionId: string, message: string, opts: RuntimeQueuedInputOptions): Promise<void>;
   sendFollowUp(sessionId: string, message: string, opts: RuntimeQueuedInputOptions): Promise<void>;
   getMessageQueue(sessionId: string): MessageQueueState | Promise<MessageQueueState>;
-  setMessageQueue(sessionId: string, payload: RuntimeSetQueuePayload): Promise<MessageQueueState>;
+  removeQueuedMessage(sessionId: string, itemId: string): Promise<MessageQueueState>;
+  takeMessageQueue(sessionId: string): Promise<MessageQueueState>;
   sendAbort(sessionId: string): Promise<void>;
   stopSession(sessionId: string): Promise<void>;
   /** True when this runtime currently owns a live process/bridge for the session. */

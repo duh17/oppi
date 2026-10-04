@@ -56,6 +56,7 @@ import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import {
   DurableUI,
+  DurableInputCards,
   requestUI,
   type UIResponse,
   type UINotification,
@@ -1675,7 +1676,7 @@ describe("server durable managed runtime", () => {
     ).rejects.toThrow("reserved durable requestId namespace");
     expect(f.faux.state.callCount).toBe(0);
     expect(await f.manager.runCommand(f.session.id, { type: "get_messages" })).toEqual([]);
-    expect(f.manager.getMessageQueue(f.session.id)).toMatchObject({ followUp: [] });
+    expect(await f.manager.getMessageQueue(f.session.id)).toMatchObject({ followUp: [] });
     const observed = observe(f.manager, f.session.id);
     const end = observed.next((message) => message.type === "agent_end");
     const delta = observed.next((message) => message.type === "text_delta");
@@ -1686,7 +1687,7 @@ describe("server durable managed runtime", () => {
         clientTurnId: "background-job:bash-1:2",
       }),
     ).rejects.toThrow("reserved durable requestId namespace");
-    expect(f.manager.getMessageQueue(f.session.id)).toMatchObject({ followUp: [] });
+    expect(await f.manager.getMessageQueue(f.session.id)).toMatchObject({ followUp: [] });
     await end;
     observed.unsubscribe();
     expect(f.faux.state.callCount).toBe(1);
@@ -2022,7 +2023,15 @@ describe("server durable managed runtime", () => {
       for (const frame of failedFrames)
         expect([...frame.queue.steering, ...frame.queue.followUp]).toEqual([]);
       const acceptedAt = projection.messages.length;
+      const richFrame = projection.next(
+        (message) =>
+          message.type === "queue_state" &&
+          [...message.queue.steering, ...message.queue.followUp].some(
+            (item) => item.message === "Rich input",
+          ),
+      );
       await send("Rich input", "rich-image-turn");
+      await richFrame;
       expect(f.storage.listRestartResume()).toEqual([]);
       const inbox = await harness.snapshot(InboxDoc, conversation.id, context);
       expect(inbox!.items).toHaveLength(1);
@@ -2036,14 +2045,23 @@ describe("server durable managed runtime", () => {
         { type: "input", content: "Native refresh tick", whenBusy: "followUp" },
         context,
       );
+      const refreshed = projection.next(
+        (message) =>
+          message.type === "queue_state" &&
+          [...message.queue.steering, ...message.queue.followUp].length === 1,
+      );
       await transient.abort(context);
+      await refreshed;
+      const receipt = (await harness.inspect(context)).submissions.find(
+        (record) => record.requestId === "rich-image-turn",
+      )!;
       const frames = projection.messages
         .slice(acceptedAt)
         .filter((message) => message.type === "queue_state");
       expect(frames.length).toBeGreaterThan(0);
       for (const frame of frames) {
         const rich = [...frame.queue.steering, ...frame.queue.followUp].filter(
-          (item) => item.id === "rich-image-turn",
+          (item) => item.id === String(receipt.id),
         );
         expect(rich).toHaveLength(1);
         expect(rich[0]).toMatchObject({ message: "Rich input", attachments: [attachment] });
@@ -2154,11 +2172,14 @@ describe("server durable managed runtime", () => {
     await f.manager.sendPrompt(f.session.id, "Stream slowly", { clientTurnId: "stop-turn" });
     await delta;
     await f.manager.sendFollowUp(f.session.id, "Do not run this", { clientTurnId: "queued-turn" });
-    expect(f.manager.getMessageQueue(f.session.id).followUp).toHaveLength(1);
+    expect((await f.manager.getMessageQueue(f.session.id)).followUp).toHaveLength(1);
     const confirmed = projection.next((message) => message.type === "stop_confirmed");
     await f.manager.sendAbort(f.session.id);
     await confirmed;
-    expect(f.manager.getMessageQueue(f.session.id)).toMatchObject({ steering: [], followUp: [] });
+    expect(await f.manager.getMessageQueue(f.session.id)).toMatchObject({
+      steering: [],
+      followUp: [],
+    });
     expect(
       projection.messages.filter((message) => message.type === "queue_state").at(-1),
     ).toMatchObject({ queue: { steering: [], followUp: [] } });
@@ -2184,7 +2205,7 @@ describe("server durable managed runtime", () => {
         clientTurnId: "queued-turn",
       }),
     ).rejects.toThrow("clientTurnId conflict");
-    expect(restarted.getMessageQueue(f.session.id).followUp).toEqual([]);
+    expect((await restarted.getMessageQueue(f.session.id)).followUp).toEqual([]);
     expect(f.faux.state.callCount).toBe(1);
   });
 
@@ -2218,14 +2239,46 @@ describe("server durable managed runtime", () => {
     await expect(
       f.manager.runCommand(f.session.id, { type: "get_session_tree" }),
     ).rejects.toBeInstanceOf(DurableNotSupportedError);
-    await expect(
-      f.manager.setMessageQueue(f.session.id, { steering: [], followUp: [], baseVersion: 0 }),
-    ).resolves.toMatchObject({ version: 1, steering: [], followUp: [] });
+    expect(await f.manager.takeMessageQueue(f.session.id)).toMatchObject({
+      steering: [],
+      followUp: [],
+    });
   });
 
-  it("edits a streaming durable queue instead of rejecting set_queue", async () => {
+  it("publishes durable queue_item_started by submission identity without text reconciliation", async () => {
     const f = await fixture(
-      [fauxAssistantMessage("A long streaming answer leaves time to edit the follow-up queue.")],
+      [
+        fauxAssistantMessage(
+          "A long streaming answer leaves time for deterministic native queue admission.",
+        ),
+        fauxAssistantMessage("Answered the queued input."),
+      ],
+      { slow: true },
+    );
+    const harness = await openHarness(f.dir, f.models);
+    vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+    await f.manager.startSession(f.session.id, f.workspace);
+    const projection = observe(f.manager, f.session.id);
+    await f.manager.sendPrompt(f.session.id, "start");
+    const started = projection.next((message) => message.type === "queue_item_started");
+    await f.manager.sendFollowUp(f.session.id, "same", { clientTurnId: "queued-delivery" });
+    const queue = await f.manager.getMessageQueue(f.session.id);
+    expect(queue.followUp).toHaveLength(1);
+    const event = await started;
+    expect(event).toMatchObject({
+      type: "queue_item_started",
+      kind: "follow_up",
+      item: queue.followUp[0],
+    });
+    expect(event.type === "queue_item_started" && event.queueVersion).toBeGreaterThan(
+      queue.version,
+    );
+    projection.unsubscribe();
+  });
+
+  it("removes identical-text durable submissions independently and restores raw attachment metadata", async () => {
+    const f = await fixture(
+      [fauxAssistantMessage("A long streaming answer leaves the queue pending.")],
       { slow: true },
     );
     const harness = await openHarness(f.dir, f.models);
@@ -2233,106 +2286,235 @@ describe("server durable managed runtime", () => {
     const creating = vi.spyOn(harness, "createConversation");
     await f.manager.startSession(f.session.id, f.workspace);
     const conversation = await creating.mock.results[0]!.value;
-    const png = Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jE0YAAAAASUVORK5CYII=",
-      "base64",
-    );
-    writeFileSync(join(f.dir, "queue.png"), png);
+    writeFileSync(join(f.dir, "notes.txt"), "note");
     const attachment: ChatAttachmentRef = {
       type: "attachment",
-      id: "image-proof",
+      id: "notes",
       source: "workspace",
-      name: "queue.png",
-      mimeType: "image/png",
-      kind: "image",
-      sizeBytes: png.length,
-      workspacePath: "queue.png",
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 4,
+      workspacePath: "notes.txt",
     };
     const projection = observe(f.manager, f.session.id);
-    const delta = projection.next((message) => message.type === "text_delta");
+    const started = projection.next((message) => message.type === "text_delta");
     await f.manager.sendPrompt(f.session.id, "Stream");
-    await delta;
-    await f.manager.sendFollowUp(f.session.id, "Drop this follow-up", {
-      clientTurnId: "drop-follow-up",
-    });
-    await f.manager.sendFollowUp(f.session.id, "Keep the picture", {
-      clientTurnId: "keep-picture",
+    await started;
+    await f.manager.sendFollowUp(f.session.id, "same", { clientTurnId: "one" });
+    await f.manager.sendFollowUp(f.session.id, "same", {
+      clientTurnId: "two",
       attachments: [attachment],
     });
-    const before = f.manager.getMessageQueue(f.session.id);
-    expect(before.followUp.map((item) => item.message)).toEqual([
-      "Drop this follow-up",
-      "Keep the picture",
-    ]);
-    const kept = before.followUp[1]!;
-    const edited = await f.manager.setMessageQueue(f.session.id, {
-      baseVersion: before.version,
-      steering: [{ id: "moved-steer", message: "Steer this instead" }],
-      followUp: [{ id: kept.id, message: "Keep the picture", attachments: kept.attachments }],
-    });
-    expect(edited.steering.map((item) => item.message)).toEqual(["Steer this instead"]);
-    expect(edited.followUp).toMatchObject([
-      { id: kept.id, message: "Keep the picture", attachments: [attachment] },
-    ]);
-    expect(f.manager.getMessageQueue(f.session.id).followUp).toMatchObject([
-      { id: kept.id, message: "Keep the picture", attachments: [attachment] },
-    ]);
+    const before = await f.manager.getMessageQueue(f.session.id);
     const inbox = await harness.snapshot(InboxDoc, conversation.id, context);
-    expect(inbox!.items.filter((item) => item.mode !== "write")).toEqual([
-      expect.objectContaining({ mode: "steer", content: "Steer this instead" }),
-      expect.objectContaining({
-        mode: "followUp",
-        content: expect.arrayContaining([
-          expect.objectContaining({ type: "text" }),
-          { type: "image", data: png.toString("base64"), mimeType: "image/png" },
-        ]),
-      }),
-    ]);
-    expect(projection.messages.filter((message) => message.type === "prompt_error")).toEqual([]);
+    expect(before.followUp.map((item) => item.id)).toEqual(
+      inbox!.items.filter((item) => item.mode === "followUp").map((item) => String(item.id)),
+    );
+    expect(before.followUp.map((item) => item.message)).toEqual(["same", "same"]);
+    expect(before.followUp[1]!.attachments).toEqual([attachment]);
+    const receipt = await harness.submission(Number(before.followUp[0]!.id) as never, context);
+    const waiting = receipt!.wait(context);
+    const removed = await f.manager.removeQueuedMessage(f.session.id, before.followUp[0]!.id);
+    expect(removed.followUp.map((item) => item.id)).toEqual([before.followUp[1]!.id]);
+    expect(await waiting).toMatchObject({ status: "unanswered", reason: "aborted" });
+    const taken = await f.manager.takeMessageQueue(f.session.id);
+    expect(taken.followUp).toEqual([before.followUp[1]]);
+    expect(await f.manager.getMessageQueue(f.session.id)).toMatchObject({
+      steering: [],
+      followUp: [],
+    });
     await f.manager.sendAbort(f.session.id);
     projection.unsubscribe();
   });
 
-  it("leaves an idle durable queue edit queued instead of starting a turn", async () => {
+  it("never lists a report admitted after a queue read's card transaction", async () => {
     const f = await fixture([]);
     const harness = await openHarness(f.dir, f.models);
-    vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
-    const creating = vi.spyOn(harness, "createConversation");
-    await f.manager.startSession(f.session.id, f.workspace);
-    const conversation = await creating.mock.results[0]!.value;
-    const projection = observe(f.manager, f.session.id);
-    const visible = projection.next(
-      (message) =>
-        message.type === "queue_state" &&
-        message.queue.followUp.some((item) => item.message === "Waiting"),
-    );
-    await conversation.commit(async (tx) => {
-      const created = await tx.createSubmission({
+    const b = await backend(harness, f.models, f.session, f.dir);
+    const native = (
+      b as unknown as { conversation: Awaited<ReturnType<typeof harness.conversation>> }
+    ).conversation!;
+    const commit = native.commit.bind(native);
+    const one = await commit(async (tx) => {
+      await tx.doc(DurableInputCards, native.id);
+      const submission = await tx.createSubmission({
+        conversationId: native.id,
+        type: "input",
+        status: "queued",
+      });
+      (await tx.doc(InboxDoc, native.id)).items.push({
+        id: submission.id,
+        mode: "followUp",
+        content: "user input",
+      });
+      return submission.id;
+    }, context);
+    let admitReport = true;
+    const afterRead = async () => {
+      if (!admitReport) return;
+      admitReport = false;
+      // Deterministic barrier: publication is between the committed card read
+      // and its caller continuing. No sleeps or scheduler timing assumptions.
+      await commit(async (tx) => {
+        const report = await tx.createSubmission({
+          conversationId: native.id,
+          type: "input",
+          status: "queued",
+          requestId: "background-job:race",
+        });
+        (await tx.doc(DurableInputCards, native.id)).requests["background-job:race"] = {
+          title: "Background result",
+          body: "done",
+          at: 1,
+        };
+        (await tx.doc(InboxDoc, native.id)).items.push({
+          id: report.id,
+          mode: "followUp",
+          content: "internal report",
+        });
+      }, context);
+    };
+    // Cover both the former harness-only card read and the atomic conversation
+    // read: the new code must return its detached inbox, not a later view.
+    const harnessCommit = harness.commit.bind(harness);
+    vi.spyOn(harness, "commit").mockImplementation(async (change, ctx) => {
+      const result = await harnessCommit(change, ctx);
+      await afterRead();
+      return result;
+    });
+    vi.spyOn(native, "commit").mockImplementation(async (change, ctx) => {
+      const result = await commit(change, ctx);
+      await afterRead();
+      return result;
+    });
+    const queue = await b.nativeMessageQueue();
+    expect(admitReport).toBe(false);
+    expect((await harness.snapshot(InboxDoc, native.id, context))!.items).toHaveLength(2);
+    expect(queue.followUp.map((item) => item.id)).toEqual([String(one)]);
+    expect((await b.nativeMessageQueue()).followUp).toEqual(queue.followUp);
+    await b.dispose();
+  });
+
+  it("preserves generated input cards during Remove and take, and omits placement that wins the withdrawal race", async () => {
+    const f = await fixture([]);
+    const harness = await openHarness(f.dir, f.models);
+    const b = await backend(harness, f.models, f.session, f.dir);
+    const conversation = (await harness.conversation(
+      f.session.serverDurable!.conversationId! as ConversationId,
+      context,
+    ))!;
+    const ids = await conversation.commit(async (tx) => {
+      const one = await tx.createSubmission({
         conversationId: conversation.id,
         type: "input",
         status: "queued",
       });
+      const two = await tx.createSubmission({
+        conversationId: conversation.id,
+        type: "input",
+        status: "queued",
+      });
+      const report = await tx.createSubmission({
+        conversationId: conversation.id,
+        type: "input",
+        status: "queued",
+        requestId: "background-job:test",
+      });
+      const cards = await tx.doc(DurableInputCards, conversation.id);
+      cards.requests["background-job:test"] = { title: "Background result", body: "done", at: 1 };
       const inbox = await tx.doc(InboxDoc, conversation.id);
-      inbox.items.push({ id: created.id, mode: "followUp", content: "Waiting" });
+      inbox.items.push(
+        { id: one.id, mode: "steer", content: "one" },
+        { id: two.id, mode: "followUp", content: "two" },
+        { id: report.id, mode: "followUp", content: "generated report" },
+      );
+      return { one: one.id, two: two.id, report: report.id };
     }, context);
-    await visible;
-    const before = f.manager.getMessageQueue(f.session.id);
-    const edited = await f.manager.setMessageQueue(f.session.id, {
-      baseVersion: before.version,
-      steering: [],
-      followUp: [{ message: "Edited while idle" }],
+    await b.withRuntimeLifecycleTransaction("remove", (permit) =>
+      b.withdrawNativeQueue(String(ids.one), permit),
+    );
+    expect(
+      (await harness.submission(ids.report, context)) &&
+        (await (await harness.submission(ids.report, context))!.status(context)),
+    ).toMatchObject({ status: "queued" });
+    const native = (b as unknown as { conversation: typeof conversation }).conversation;
+    const commit = native.commit.bind(native);
+    let intercept = true;
+    vi.spyOn(native, "commit").mockImplementation(async (change, ctx) => {
+      if (intercept) {
+        intercept = false;
+        await commit(async (tx) => {
+          const entry = await tx.appendEntry(conversation.id, {
+            kind: "pi.user",
+            model: [{ role: "user", content: "two", timestamp: 1 }],
+          });
+          tx.placeSubmission(ids.two, entry.id);
+          const inbox = await tx.doc(InboxDoc, conversation.id);
+          inbox.items.splice(
+            inbox.items.findIndex((item) => item.id === ids.two),
+            1,
+          );
+        }, ctx);
+      }
+      return commit(change, ctx);
     });
-    expect(edited.followUp.map((item) => item.message)).toEqual(["Edited while idle"]);
-    expect(edited.steering).toEqual([]);
-    expect(await harness.snapshot(LiveDoc, conversation.id, context)).not.toMatchObject({
-      run: expect.anything(),
+    const taken = await b.withRuntimeLifecycleTransaction("take", (permit) =>
+      b.withdrawNativeQueue(undefined, permit),
+    );
+    expect(taken).toMatchObject({ steering: [], followUp: [] });
+    expect(
+      (await harness.snapshot(InboxDoc, conversation.id, context))!.items.map((item) => item.id),
+    ).toEqual([ids.report]);
+    expect(await (await harness.submission(ids.two, context))!.status(context)).toMatchObject({
+      status: "placed",
     });
-    expect(f.faux.state.callCount).toBe(0);
-    const inbox = await harness.snapshot(InboxDoc, conversation.id, context);
-    expect(inbox!.items.filter((item) => item.mode !== "write")).toEqual([
-      expect.objectContaining({ mode: "followUp", content: "Edited while idle" }),
-    ]);
-    projection.unsubscribe();
+    await b.detachForRestart();
+  });
+
+  it("reopens durable queue attachment metadata from SQLite without an Oppi queue copy", async () => {
+    const f = await fixture([]);
+    let harness = await openHarness(f.dir, f.models);
+    let b = await backend(harness, f.models, f.session, f.dir);
+    const conversation = (await harness.conversation(
+      f.session.serverDurable!.conversationId! as ConversationId,
+      context,
+    ))!;
+    // A parked run keeps admission queued without starting a provider request.
+    await conversation.commit(async (tx) => {
+      (await tx.doc(LiveDoc, conversation.id)).run = {
+        taskId: 999 as never,
+        inputs: [998 as never],
+      };
+    }, context);
+    const attachment: ChatAttachmentRef = {
+      type: "attachment",
+      id: "a",
+      source: "workspace",
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 4,
+      workspacePath: "notes.txt",
+    };
+    await b.prompt("materialized bytes", {
+      streamingBehavior: "followUp",
+      clientTurnId: "reload-metadata",
+      queueDisplay: { message: "raw composer", attachments: [attachment] },
+    });
+    const before = await b.nativeMessageQueue();
+    expect(before.followUp[0]).toMatchObject({
+      message: "raw composer",
+      attachments: [attachment],
+    });
+    await b.detachForRestart();
+    await harness.close(context);
+    harness = await openHarness(f.dir, f.models);
+    b = await backend(harness, f.models, f.session, f.dir);
+    expect((await b.nativeMessageQueue()).followUp).toEqual(before.followUp);
+    const taken = await b.withRuntimeLifecycleTransaction("take", (permit) =>
+      b.withdrawNativeQueue(undefined, permit),
+    );
+    expect(taken.followUp).toEqual(before.followUp);
+    await b.detachForRestart();
   });
 
   it("rebinds SQLite state and resumes the same unfinished submission without a continuation user message", async () => {
@@ -2986,9 +3168,9 @@ describe("server durable managed runtime", () => {
       context,
     );
     await queued;
-    expect(f.manager.getMessageQueue(f.session.id).followUp.map((item) => item.message)).toEqual([
-      "Native follow-up",
-    ]);
+    expect(
+      (await f.manager.getMessageQueue(f.session.id)).followUp.map((item) => item.message),
+    ).toEqual(["Native follow-up"]);
     await f.manager.sendAbort(f.session.id);
     projection.unsubscribe();
   });

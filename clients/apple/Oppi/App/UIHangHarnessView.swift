@@ -637,7 +637,6 @@ struct UIHangHarnessView: View {
 
     @State private var queueStates: [HarnessSession: MessageQueueState] = [:]
     @State private var queueBusyStreamingBehavior: StreamingBehavior = .steer
-    @State private var queueEditorState = MessageQueueEditorState(queue: .empty)
     @State private var queueSystemEventSerial = 0
     @State private var assistantOverlapPhaseBySession: [HarnessSession: Int] = [:]
     @State private var assistantOverlapReadySnapshot = 0
@@ -861,16 +860,22 @@ struct UIHangHarnessView: View {
             controlsBar
 
             if UIHangHarnessConfig.queueHarnessEnabled, showsQueueContainer {
-                MessageQueueContainer(
+                MessageQueueContainer(configuration: MessageQueueSurfaceConfiguration(
                     queue: currentQueueState,
-                    busyStreamingBehavior: $queueBusyStreamingBehavior,
-                    editorState: $queueEditorState,
-                    onApply: { baseVersion, steering, followUp in
-                        try applyQueueDraft(baseVersion: baseVersion, steering: steering, followUp: followUp)
+                    onRemove: { itemId in
+                        var queue = currentQueueState
+                        queue.steering.removeAll { $0.id == itemId }
+                        queue.followUp.removeAll { $0.id == itemId }
+                        queue.version += 1
+                        setCurrentQueueState(queue)
                     },
-                    onRefresh: {}
-                )
-                .accessibilityIdentifier("harness.queue.container")
+                    onEditInComposer: {
+                        if let plan = MessageQueueComposerRestore.plan(queue: currentQueueState, currentText: inputText) {
+                            inputText = plan.text
+                            clearQueueItems()
+                        }
+                    }
+                ))
             }
 
             ChatTimelineCollectionHost(
@@ -912,7 +917,12 @@ struct UIHangHarnessView: View {
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("harness.input")
 
-            diagnosticsBar
+            // Diagnostics must not impose their combined intrinsic width on
+            // the queue/composer; growing counters otherwise push Remove offscreen.
+            ScrollView(.horizontal, showsIndicators: false) {
+                diagnosticsBar
+            }
+            .frame(height: 16)
         }
         .padding()
         .background(Color.themeBg.ignoresSafeArea())
@@ -1630,43 +1640,6 @@ struct UIHangHarnessView: View {
         queueStates[selectedSession] = state
     }
 
-    private func applyQueueDraft(
-        baseVersion: Int,
-        steering: [MessageQueueDraftItem],
-        followUp: [MessageQueueDraftItem]
-    ) throws {
-        let current = currentQueueState
-        guard baseVersion == current.version else {
-            throw QueueHarnessError.versionMismatch
-        }
-
-        let steeringItems = steering.map {
-            MessageQueueItem(
-                id: $0.id ?? UUID().uuidString,
-                message: $0.message,
-                attachments: $0.attachments,
-                createdAt: $0.createdAt ?? Int(Date().timeIntervalSince1970 * 1_000)
-            )
-        }
-
-        let followUpItems = followUp.map {
-            MessageQueueItem(
-                id: $0.id ?? UUID().uuidString,
-                message: $0.message,
-                attachments: $0.attachments,
-                createdAt: $0.createdAt ?? Int(Date().timeIntervalSince1970 * 1_000)
-            )
-        }
-
-        setCurrentQueueState(
-            MessageQueueState(
-                version: current.version + 1,
-                steering: steeringItems,
-                followUp: followUpItems
-            )
-        )
-    }
-
     private func enqueueQueueItem(kind: MessageQueueKind) {
         let now = Int(Date().timeIntervalSince1970 * 1_000)
         let item = MessageQueueItem(
@@ -1921,17 +1894,6 @@ private struct HarnessControlFlowLayout: Layout {
         let height = y + rowHeight
         let width = maxWidth.isFinite ? maxWidth : usedWidth
         return (CGSize(width: width, height: height), origins, sizes)
-    }
-}
-
-private enum QueueHarnessError: LocalizedError {
-    case versionMismatch
-
-    var errorDescription: String? {
-        switch self {
-        case .versionMismatch:
-            return "Queue version mismatch"
-        }
     }
 }
 

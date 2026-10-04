@@ -26,7 +26,6 @@ import {
   type LiveState,
   type InboxState,
   type UsageState,
-  type SubmissionId,
 } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import type { AgentDefinition } from "./agent-launch-service.js";
@@ -39,23 +38,30 @@ import { DurableEventProjection } from "./durable-event-projection.js";
 import type { PiMessage, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import type { SdkBackendDisposeResult } from "./sdk-backend.js";
 import {
-  QueuedModelTurnsAuthorityError,
   SdkBackend,
   resolveSandboxGuestCwd,
   resolveSessionSeedModel,
   resolveSdkSessionCwd,
   type QueuedModelTurnBatch,
-  type QueuedModelTurnsAuthority,
 } from "./sdk-backend.js";
 import {
   SessionRuntimeTransaction,
   type SessionRuntimeTransactionPermit,
 } from "./session-runtime-transaction.js";
 import { isThinkingLevel, THINKING_LEVELS, type ThinkingLevel } from "./thinking-levels.js";
-import type { Session, Workspace } from "./types.js";
+import type {
+  ChatAttachmentRef,
+  MessageQueueItem,
+  MessageQueueState,
+  Session,
+  Workspace,
+} from "./types.js";
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
 import { DurableBackgroundJobs } from "../extensions/durable/background-jobs/durable.js";
-import { DURABLE_RESERVED_REQUEST_ID_PREFIXES } from "./durable-request-ids.js";
+import {
+  DURABLE_QUEUE_REQUEST_ID_PREFIX,
+  DURABLE_RESERVED_REQUEST_ID_PREFIXES,
+} from "./durable-request-ids.js";
 import { DurableGoal } from "../extensions/durable/goal/durable.js";
 import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
 import {
@@ -79,7 +85,7 @@ export class DurableNotSupportedError extends Error {
 
 // Submission records omit content after queued input withdrawal. Keep its
 // fingerprint durable too, so a later replay cannot silently change that input.
-const RequestContent = defineDocFamily<{ content: string }, null>({
+const RequestContent = defineDocFamily<{ content: string; display?: string }, null>({
   kind: "oppi.request-content",
   version: 1,
   family: true,
@@ -151,9 +157,8 @@ export class DurableBackend implements AgentBackend {
   readonly isQueueReconciliationRequired = false;
   readonly showCacheMissNotices = false;
   readonly retainsIdleQueueUntilAdmission = true;
-  private replacingQueue = false;
-  private queueAuthorityGeneration = 0;
-  private readonly queueAuthorityFingerprints = new Map<number, string>();
+  private queueVersion = 0;
+  private queueFingerprint = "";
 
   private constructor(
     private readonly harness: Harness,
@@ -446,7 +451,47 @@ export class DurableBackend implements AgentBackend {
               message: card.body ? `${card.title} — ${card.body}` : card.title,
             });
         }
-        if (event.type === "inbox_update" && !this.replacingQueue)
+        // Native placement carries identity. Recover display metadata by request,
+        // never by matching user text or keeping an Oppi queue shadow.
+        if (
+          event.type === "submission" &&
+          event.record.type === "input" &&
+          event.record.status === "placed" &&
+          event.record.requestId
+        ) {
+          const metadata = await this.harness.snapshot(
+            RequestContent,
+            this.conversation.id,
+            event.record.requestId,
+            BACKGROUND_CONTEXT,
+          );
+          const display = metadata?.display
+            ? (JSON.parse(metadata.display) as {
+                message: string;
+                attachments: ChatAttachmentRef[];
+                createdAt: number;
+                kind?: string;
+              })
+            : undefined;
+          if (
+            display &&
+            (display.kind === "steer" || display.kind === "followUp") &&
+            !this.projection.inputCards.submissions.has(event.record.id)
+          ) {
+            this.onEvent({
+              type: "queue_item_started",
+              kind: display.kind === "steer" ? "steer" : "follow_up",
+              item: {
+                id: String(event.record.id),
+                message: display.message,
+                createdAt: display.createdAt,
+                ...(display.attachments.length ? { attachments: display.attachments } : {}),
+              },
+              queueVersion: this.inboxVersion(),
+            });
+          }
+        }
+        if (event.type === "inbox_update")
           this.onEvent({ type: "queue_update", ...this.queuedMessages() });
         if (event.type === "task_failed" && event.kind !== "pi.compaction")
           this.onEvent({ type: "prompt_error", error: event.message });
@@ -494,13 +539,7 @@ export class DurableBackend implements AgentBackend {
     options?: { allowDisposed?: boolean },
   ): Promise<T> {
     if (!options?.allowDisposed) this.assertOpen();
-    return this.transactions.withExclusive(operation).finally(() => {
-      this.replacingQueue = false;
-    });
-  }
-
-  get defersNativeQueueRefresh(): boolean {
-    return this.replacingQueue;
+    return this.transactions.withExclusive(operation);
   }
 
   async prompt(
@@ -519,6 +558,7 @@ export class DurableBackend implements AgentBackend {
       DURABLE_RESERVED_REQUEST_ID_PREFIXES.some((prefix) => clientTurnId.startsWith(prefix))
     )
       throw new Error("clientTurnId uses a reserved durable requestId namespace");
+    const requestId = clientTurnId ?? `${DURABLE_QUEUE_REQUEST_ID_PREFIX}${randomUUID()}`;
     const content = options?.images?.length
       ? [{ type: "text" as const, text: message }, ...options.images]
       : message;
@@ -528,48 +568,46 @@ export class DurableBackend implements AgentBackend {
     const admission = this.admissions.then(async () => {
       this.assertOpen();
       this.owner.assertSchedulingReady();
-      const existing = clientTurnId
-        ? await this.conversation.commit(async (tx) => {
-            const record = await tx.submissionByRequest(this.conversation.id, clientTurnId);
-            const queued =
-              record && record.entry === undefined
-                ? (await tx.doc(InboxDoc, this.conversation.id)).items.find(
-                    (item) => item.id === record.id,
-                  )
-                : undefined;
-            const stored =
-              record?.entry !== undefined
-                ? (await tx.entry(record.entry))?.model?.find((item) => item.role === "user")
-                    ?.content
-                : queued && queued.mode !== "write"
-                  ? queued.content
-                  : undefined;
-            const fingerprint = await tx.doc(
-              RequestContent,
-              this.conversation.id,
-              clientTurnId,
-              null,
-            );
-            if (!record) {
-              fingerprint.content = JSON.stringify(content);
-              return undefined;
-            }
-            if (
-              stored !== undefined
-                ? !isDeepStrictEqual(content, stored)
-                : fingerprint.content !== JSON.stringify(content)
-            )
-              throw new Error(
-                "clientTurnId conflict: the stored durable submission has different content",
-              );
-            return record;
-          }, BACKGROUND_CONTEXT)
-        : undefined;
+      const existing = await this.conversation.commit(async (tx) => {
+        const record = await tx.submissionByRequest(this.conversation.id, requestId);
+        const queued =
+          record && record.entry === undefined
+            ? (await tx.doc(InboxDoc, this.conversation.id)).items.find(
+                (item) => item.id === record.id,
+              )
+            : undefined;
+        const stored =
+          record?.entry !== undefined
+            ? (await tx.entry(record.entry))?.model?.find((item) => item.role === "user")?.content
+            : queued && queued.mode !== "write"
+              ? queued.content
+              : undefined;
+        const fingerprint = await tx.doc(RequestContent, this.conversation.id, requestId, null);
+        if (!record) {
+          fingerprint.content = JSON.stringify(content);
+          fingerprint.display = JSON.stringify({
+            message: options?.queueDisplay?.message ?? message,
+            attachments: options?.queueDisplay?.attachments ?? [],
+            createdAt: Date.now(),
+            kind: options?.streamingBehavior,
+          });
+          return undefined;
+        }
+        if (
+          stored !== undefined
+            ? !isDeepStrictEqual(content, stored)
+            : fingerprint.content !== JSON.stringify(content)
+        )
+          throw new Error(
+            "clientTurnId conflict: the stored durable submission has different content",
+          );
+        return record;
+      }, BACKGROUND_CONTEXT);
       const submission = await this.conversation.submit(
         {
           type: "input",
           content,
-          requestId: clientTurnId,
+          requestId,
           whenBusy: options?.streamingBehavior ?? "reject",
         },
         BACKGROUND_CONTEXT,
@@ -649,19 +687,76 @@ export class DurableBackend implements AgentBackend {
     };
   }
 
+  private inboxVersion(items = this.currentInbox()?.items ?? []): number {
+    const fingerprint = JSON.stringify(items);
+    if (fingerprint !== this.queueFingerprint) {
+      this.queueFingerprint = fingerprint;
+      this.queueVersion += 1;
+    }
+    return this.queueVersion;
+  }
+
+  private async queueItem(
+    item: Exclude<NonNullable<InboxState>["items"][number], { mode: "write" }>,
+  ): Promise<MessageQueueItem> {
+    const receipt = await this.harness.submission(item.id, BACKGROUND_CONTEXT);
+    const record = await receipt?.status(BACKGROUND_CONTEXT);
+    const metadata = record?.requestId
+      ? await this.harness.snapshot(
+          RequestContent,
+          this.conversation.id,
+          record.requestId,
+          BACKGROUND_CONTEXT,
+        )
+      : undefined;
+    const text =
+      typeof item.content === "string"
+        ? item.content
+        : item.content.map((block) => (block.type === "text" ? block.text : "")).join("");
+    const display = metadata?.display
+      ? (JSON.parse(metadata.display) as {
+          message: string;
+          attachments: ChatAttachmentRef[];
+          createdAt: number;
+        })
+      : undefined;
+    return {
+      id: String(item.id),
+      message: display?.message ?? text,
+      ...(display?.attachments?.length ? { attachments: display.attachments } : {}),
+      createdAt: display?.createdAt ?? 0,
+    };
+  }
+
+  async nativeMessageQueue(): Promise<MessageQueueState> {
+    await this.admissions;
+    const { internal, items, version } = await this.conversation.commit(async (tx) => {
+      // Cards and inbox membership must share a mutation line: a generated
+      // report admitted after the card read must not flash as user input.
+      const { submissions: internal } = await resolveDurableInputCards(tx, this.conversation.id);
+      const inbox = await tx.doc(InboxDoc, this.conversation.id);
+      const items = JSON.parse(JSON.stringify(inbox.items)) as InboxState["items"];
+      return { internal, items, version: this.inboxVersion(items) };
+    }, BACKGROUND_CONTEXT);
+    const queue: MessageQueueState = { version, steering: [], followUp: [] };
+    for (const item of items) {
+      if (item.mode === "write" || internal.has(item.id)) continue;
+      queue[item.mode === "steer" ? "steering" : "followUp"].push(await this.queueItem(item));
+    }
+    return queue;
+  }
+
   queuedMessages(): { steering: readonly string[]; followUp: readonly string[] } {
-    const inbox = this.view.value.docs["pi.inbox"] as InboxState | undefined;
-    const items = inbox?.items.filter(
+    const items = (this.currentInbox()?.items ?? []).filter(
       (item) => !this.projection.inputCards.submissions.has(item.id),
     );
-    const text = (content: string | readonly { type: string; text?: string }[]): string =>
+    const text = (content: string | readonly { type: string; text?: string }[]) =>
       typeof content === "string"
         ? content
         : content.map((block) => (block.type === "text" ? (block.text ?? "") : "")).join("");
     return {
-      steering: items?.flatMap((item) => (item.mode === "steer" ? [text(item.content)] : [])) ?? [],
-      followUp:
-        items?.flatMap((item) => (item.mode === "followUp" ? [text(item.content)] : [])) ?? [],
+      steering: items.flatMap((item) => (item.mode === "steer" ? [text(item.content)] : [])),
+      followUp: items.flatMap((item) => (item.mode === "followUp" ? [text(item.content)] : [])),
     };
   }
   messages(): PiMessage[] {
@@ -824,86 +919,8 @@ export class DurableBackend implements AgentBackend {
     throw new DurableNotSupportedError(operation);
   }
 
-  captureQueuedModelTurnsAuthority(
-    permit: SessionRuntimeTransactionPermit,
-  ): QueuedModelTurnsAuthority {
-    this.transactions.assertPermit(permit, "exclusive");
-    this.assertOpen();
-    // Hold native refresh until this lifecycle transaction commits the editor's
-    // rich items. Clearing the flag is the transaction's finally, not this method.
-    this.replacingQueue = true;
-    return this.rememberQueueAuthority();
-  }
-
-  assertQueuedModelTurnsAuthority(
-    authority: QueuedModelTurnsAuthority,
-    permit: SessionRuntimeTransactionPermit,
-    phase: QueuedModelTurnsAuthorityError["phase"] = "after_replay",
-  ): void {
-    this.transactions.assertPermit(permit, "exclusive");
-    this.assertOpen();
-    const expected = this.queueAuthorityFingerprints.get(authority.generation);
-    if (expected === undefined || expected !== this.userInboxFingerprint(this.currentInbox()))
-      throw new QueuedModelTurnsAuthorityError(phase);
-  }
-
-  async replaceQueuedModelTurns(
-    batch: QueuedModelTurnBatch,
-    _rollback?: QueuedModelTurnBatch,
-    permit?: SessionRuntimeTransactionPermit,
-    authority?: QueuedModelTurnsAuthority,
-  ): Promise<QueuedModelTurnsAuthority | undefined> {
-    if (!permit)
-      return this.withRuntimeLifecycleTransaction("queue replacement", (token) =>
-        this.replaceQueuedModelTurns(batch, _rollback, token, authority),
-      );
-    this.transactions.assertPermit(permit, "exclusive");
-    this.assertOpen();
-    this.replacingQueue = true;
-    if (batch.prompt) throw new Error("Server durable queue replacement cannot start a prompt");
-    if (authority) this.assertQueuedModelTurnsAuthority(authority, permit, "before_replay");
-    const captured = this.userInboxFingerprint(this.currentInbox());
-    const internal = await this.conversation.commit(async (tx) => {
-      const inbox = await tx.doc(InboxDoc, this.conversation.id);
-      const { submissions } = await resolveDurableInputCards(tx, this.conversation.id);
-      if (authority && this.userInboxFingerprint(inbox, submissions) !== captured)
-        throw new QueuedModelTurnsAuthorityError("during_replay");
-      // Edit is withdrawal plus admission. `aborted` keeps the original send's
-      // wait quiet; a later retry of that clientTurnId conflicts or no-ops.
-      for (let index = inbox.items.length - 1; index >= 0; index -= 1) {
-        const item = inbox.items[index];
-        // Only Stop withdraws generated reports. Queue edits must preserve the
-        // original receipt and bytes, even when deleting every user message.
-        if (!item || item.mode === "write" || submissions.has(item.id)) continue;
-        tx.settleSubmission(item.id, { status: "unanswered", reason: "aborted" });
-        inbox.items.splice(index, 1);
-      }
-      for (const item of [
-        ...batch.steering.map((entry) => ({ mode: "steer" as const, entry })),
-        ...batch.followUp.map((entry) => ({ mode: "followUp" as const, entry })),
-      ]) {
-        const created = await tx.createSubmission({
-          conversationId: this.conversation.id,
-          type: "input",
-          status: "queued",
-        });
-        inbox.items.push({
-          id: created.id,
-          mode: item.mode,
-          content: this.queuedInputContent(item.entry),
-        });
-      }
-      return submissions;
-    }, BACKGROUND_CONTEXT);
-    for (const id of internal) this.projection.inputCards.submissions.add(id);
-    // The view mount publishes on a microtask. Wait for it before the caller
-    // compares authority with no further await.
-    await new Promise<void>((resolve) => {
-      queueMicrotask(() => resolve());
-    });
-    if (this.userInboxFingerprint(this.currentInbox()) !== this.expectedInboxFingerprint(batch))
-      throw new QueuedModelTurnsAuthorityError("during_replay");
-    return this.rememberQueueAuthority();
+  replaceQueuedModelTurns(_batch: QueuedModelTurnBatch): never {
+    return this.unsupported("replaceQueuedModelTurns");
   }
 
   clearQueuedModelTurns(): never {
@@ -914,58 +931,48 @@ export class DurableBackend implements AgentBackend {
     return this.view.value.docs["pi.inbox"] as InboxState | undefined;
   }
 
-  private rememberQueueAuthority(): QueuedModelTurnsAuthority {
-    const generation = ++this.queueAuthorityGeneration;
-    this.queueAuthorityFingerprints.set(generation, this.userInboxFingerprint(this.currentInbox()));
-    if (this.queueAuthorityFingerprints.size > 8) {
-      const oldest = this.queueAuthorityFingerprints.keys().next().value;
-      if (oldest !== undefined) this.queueAuthorityFingerprints.delete(oldest);
+  async withdrawNativeQueue(
+    itemId: string | undefined,
+    permit: SessionRuntimeTransactionPermit,
+  ): Promise<MessageQueueState> {
+    this.transactions.assertPermit(permit, "exclusive");
+    this.assertOpen();
+    const withdrawn: MessageQueueState = {
+      version: this.inboxVersion(),
+      steering: [],
+      followUp: [],
+    };
+    // Snapshot identities only. Each commit checks current inbox membership and
+    // current internal-card receipts; placement in between is a successful no-op.
+    const ids = (this.currentInbox()?.items ?? [])
+      .filter(
+        (item) => item.mode !== "write" && (itemId === undefined || String(item.id) === itemId),
+      )
+      .map((item) => item.id);
+    for (const id of ids) {
+      const item = await this.conversation.commit(async (tx) => {
+        const inbox = await tx.doc(InboxDoc, this.conversation.id);
+        const { submissions } = await resolveDurableInputCards(tx, this.conversation.id);
+        const index = inbox.items.findIndex(
+          (item) => item.id === id && item.mode !== "write" && !submissions.has(item.id),
+        );
+        const item = inbox.items[index];
+        if (!item || item.mode === "write") return undefined;
+        // Mirrors pi-durable inbox.js withdrawQueuedInputs/removeInboxItem.
+        // Membership on this mutation line means queued in this conversation;
+        // placement and settlement remove it atomically. Never re-admit inputs.
+        const snapshot = JSON.parse(JSON.stringify(item)) as typeof item;
+        tx.settleSubmission(item.id, { status: "unanswered", reason: "aborted" });
+        inbox.items.splice(index, 1);
+        return snapshot;
+      }, BACKGROUND_CONTEXT);
+      if (item)
+        withdrawn[item.mode === "steer" ? "steering" : "followUp"].push(await this.queueItem(item));
     }
-    return { generation };
+    withdrawn.version = this.inboxVersion();
+    return withdrawn;
   }
 
-  private userInboxFingerprint(
-    inbox: InboxState | undefined,
-    internal: ReadonlySet<SubmissionId> = this.projection.inputCards.submissions,
-  ): string {
-    return JSON.stringify(
-      (inbox?.items ?? []).flatMap((item) =>
-        item.mode === "write" || internal.has(item.id)
-          ? []
-          : [{ mode: item.mode, content: item.content }],
-      ),
-    );
-  }
-
-  private expectedInboxFingerprint(batch: QueuedModelTurnBatch): string {
-    return JSON.stringify([
-      ...batch.steering.map((entry) => ({
-        mode: "steer",
-        content: this.queuedInputContent(entry),
-      })),
-      ...batch.followUp.map((entry) => ({
-        mode: "followUp",
-        content: this.queuedInputContent(entry),
-      })),
-    ]);
-  }
-
-  private queuedInputContent(item: {
-    message: string;
-    images?: ReadonlyArray<{ type: "image"; data: string; mimeType: string }>;
-  }):
-    | string
-    | Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> {
-    if (!item.images?.length) return item.message;
-    return [
-      { type: "text", text: item.message },
-      ...item.images.map((image) => ({
-        type: "image" as const,
-        data: image.data,
-        mimeType: image.mimeType,
-      })),
-    ];
-  }
   respondToExtensionUIRequest(response: ExtensionUIResponsePayload): Promise<boolean> {
     this.assertOpen();
     return this.ui.respond(response);

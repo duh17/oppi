@@ -16,7 +16,6 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { AgentRuntimeTransport, RuntimeClientCommand } from "./agent-runtime-transport.js";
 import type {
   ChatAttachmentRef,
-  MessageQueueDraftItem,
   MessageQueueState,
   Session,
   SessionPromptCacheWarmer,
@@ -433,21 +432,17 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     this.claimFromRestartResume(sessionId);
   }
 
-  getMessageQueue(sessionId: string): MessageQueueState {
+  getMessageQueue(sessionId: string): MessageQueueState | Promise<MessageQueueState> {
     const key = this.sessionKey(sessionId);
     return this.queueCoordinator.getQueue(key);
   }
 
-  async setMessageQueue(
-    sessionId: string,
-    payload: {
-      baseVersion: number;
-      steering: MessageQueueDraftItem[];
-      followUp: MessageQueueDraftItem[];
-    },
-  ): Promise<MessageQueueState> {
-    const key = this.sessionKey(sessionId);
-    return this.queueCoordinator.setQueue(key, payload);
+  removeQueuedMessage(sessionId: string, itemId: string): Promise<MessageQueueState> {
+    return this.queueCoordinator.removeQueuedMessage(this.sessionKey(sessionId), itemId);
+  }
+
+  takeMessageQueue(sessionId: string): Promise<MessageQueueState> {
+    return this.queueCoordinator.takeQueue(this.sessionKey(sessionId));
   }
 
   /**

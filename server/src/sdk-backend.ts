@@ -702,31 +702,8 @@ export type QueuedModelTurnBatch = {
   followUp: QueuedModelTurnInput[];
 };
 
-export interface QueuedModelTurnsAuthority {
-  readonly generation: number;
-}
-
-export class QueuedModelTurnsAuthorityError extends Error {
-  constructor(readonly phase: "before_replay" | "during_replay" | "after_replay") {
-    super(`Pi queue authority changed ${phase.replaceAll("_", " ")}`);
-    this.name = "QueuedModelTurnsAuthorityError";
-  }
-}
-
-/**
- * A queue replay was refused while Pi's queues still held exactly what did
- * queue. Carries the settled-state authority so the caller can re-check it in
- * the same JavaScript turn as the rollback's clearQueue().
- */
-class QueuedModelTurnsReplayRejected {
-  constructor(
-    readonly reason: unknown,
-    readonly authority: QueuedModelTurnsAuthority,
-  ) {}
-}
-
 export const QUEUE_RECONCILIATION_REQUIRED_ERROR =
-  "Queue reconciliation required: retry setQueue from the last acknowledged queue version";
+  "Queue reconciliation required: restart the session to reconcile its native queue";
 
 export const SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS = 5_000;
 
@@ -762,7 +739,7 @@ export class QueuedModelTurnsReconciliationError extends Error {
     readonly rollbackError: unknown,
   ) {
     super(
-      `Queue reconciliation required: ${safeErrorMessage(replacementError)} and ${safeErrorMessage(rollbackError)}; retry setQueue from the last acknowledged queue version`,
+      `Queue reconciliation required: ${safeErrorMessage(replacementError)} and ${safeErrorMessage(rollbackError)}; restart the session to reconcile its native queue`,
     );
     this.name = "QueuedModelTurnsReconciliationError";
   }
@@ -975,7 +952,6 @@ export class SdkBackend implements AgentBackend {
   private runtimeTransaction = new SessionRuntimeTransaction();
   private requestedExclusiveOperations: Array<{ name: string }> = [];
   private queueReconciliationRequired = false;
-  private queueAuthorityGeneration = 0;
   private disposed = false;
   private localCleanupFailures: string[] = [];
 
@@ -1850,9 +1826,6 @@ export class SdkBackend implements AgentBackend {
   private subscribeToCurrentSession(): void {
     this.unsub?.();
     this.unsub = this.piSession.subscribe((event: AgentSessionEvent) => {
-      if (event.type === "queue_update") {
-        this.queueAuthorityGeneration = (this.queueAuthorityGeneration ?? 0) + 1;
-      }
       this.emitEvent(event);
     });
   }
@@ -2133,35 +2106,14 @@ export class SdkBackend implements AgentBackend {
     );
   }
 
-  captureQueuedModelTurnsAuthority(
-    permit: SessionRuntimeTransactionPermit,
-  ): QueuedModelTurnsAuthority {
-    this.getRuntimeTransaction().assertPermit(permit, "exclusive");
-    this.assertNotDisposed();
-    return { generation: this.queueAuthorityGeneration ?? 0 };
-  }
-
-  assertQueuedModelTurnsAuthority(
-    authority: QueuedModelTurnsAuthority,
-    permit: SessionRuntimeTransactionPermit,
-    phase: QueuedModelTurnsAuthorityError["phase"] = "after_replay",
-  ): void {
-    this.getRuntimeTransaction().assertPermit(permit, "exclusive");
-    this.assertNotDisposed();
-    if ((this.queueAuthorityGeneration ?? 0) !== authority.generation) {
-      throw new QueuedModelTurnsAuthorityError(phase);
-    }
-  }
-
   async replaceQueuedModelTurns(
     batch: QueuedModelTurnBatch,
     rollback?: QueuedModelTurnBatch,
     permit?: SessionRuntimeTransactionPermit,
-    authority?: QueuedModelTurnsAuthority,
-  ): Promise<QueuedModelTurnsAuthority | undefined> {
+  ): Promise<void> {
     if (!permit) {
       return this.withExclusiveRuntimeOperation("queue replacement", (transaction) =>
-        this.replaceQueuedModelTurns(batch, rollback, transaction, authority),
+        this.replaceQueuedModelTurns(batch, rollback, transaction),
       );
     }
 
@@ -2170,30 +2122,9 @@ export class SdkBackend implements AgentBackend {
     if (batch.prompt) this.assertSelectedResourceInvariant();
     const previous = rollback ?? this.sdkQueueSnapshot();
     try {
-      const replayAuthority = authority
-        ? await this.replayQueuedModelTurnsWithAuthority(batch, authority, permit)
-        : (await this.replayQueuedModelTurns(batch), undefined);
+      await this.replayQueuedModelTurns(batch);
       this.queueReconciliationRequired = false;
-      return replayAuthority;
-    } catch (caught) {
-      const rejected = caught instanceof QueuedModelTurnsReplayRejected ? caught : undefined;
-      const error = rejected ? rejected.reason : caught;
-      if (error instanceof QueuedModelTurnsAuthorityError) {
-        if (error.phase !== "before_replay") this.queueReconciliationRequired = false;
-        throw error;
-      }
-      try {
-        // The content check ran before the rejection reached this catch. Pi may
-        // have consumed a queued message since, and rollback would restore it.
-        // Re-check with no await before replayQueuedModelTurns() clears the queue.
-        if (rejected)
-          this.assertQueuedModelTurnsAuthority(rejected.authority, permit, "during_replay");
-      } catch (authorityError) {
-        if (authorityError instanceof QueuedModelTurnsAuthorityError) {
-          this.queueReconciliationRequired = false;
-        }
-        throw authorityError;
-      }
+    } catch (error) {
       try {
         await this.replayQueuedModelTurns(previous);
       } catch (rollbackError) {
@@ -2232,73 +2163,6 @@ export class SdkBackend implements AgentBackend {
     if (batch.prompt) {
       await this.promptWithoutTransaction(batch.prompt.message, { images: batch.prompt.images });
     }
-  }
-
-  private async replayQueuedModelTurnsWithAuthority(
-    batch: QueuedModelTurnBatch,
-    authority: QueuedModelTurnsAuthority,
-    permit: SessionRuntimeTransactionPermit,
-  ): Promise<QueuedModelTurnsAuthority> {
-    if (batch.prompt) {
-      throw new Error("Authoritative queue replacement cannot start a prompt");
-    }
-    this.assertQueuedModelTurnsAuthority(authority, permit, "before_replay");
-
-    // Pi exposes no queue mutation barrier. clearQueue() mutates synchronously,
-    // but steer()/followUp() await input handlers before they queue, so each
-    // one appends and emits its own queue_update on a later microtask. Start the
-    // whole batch in one JavaScript turn so clear and replay stay adjacent, then
-    // wait for every replay to settle: none may still be pending when a rollback
-    // or the Oppi commit runs.
-    const replays: ReturnType<AgentSession["steer"]>[] = [];
-    this.piSession.clearQueue();
-    for (const item of batch.steering) {
-      replays.push(this.piSession.steer(item.message, item.images));
-    }
-    for (const item of batch.followUp) {
-      replays.push(this.piSession.followUp(item.message, item.images));
-    }
-    const settled = await Promise.allSettled(replays);
-    const fulfilled = (
-      offset: number,
-      items: QueuedModelTurnBatch["steering"],
-    ): QueuedModelTurnBatch["steering"] =>
-      items.filter((_, index) => settled[offset + index]?.status === "fulfilled");
-    const expected = {
-      steering: fulfilled(0, batch.steering),
-      followUp: fulfilled(batch.steering.length, batch.followUp),
-    };
-
-    // Everything settled, so Oppi's own queue_update events have all landed and
-    // the generation captured here is the baseline for anything Pi does next.
-    // Capturing earlier would count our own events as a foreign change, and a
-    // generation count cannot tell them apart. Compare content instead: Pi's
-    // queues must hold exactly the items whose replay succeeded, in order.
-    const replayAuthority = this.captureQueuedModelTurnsAuthority(permit);
-    const queueMatches = this.piQueueMatches(expected);
-
-    const rejected = settled.find(
-      (result): result is PromiseRejectedResult => result.status === "rejected",
-    );
-    if (rejected) {
-      // A replay was refused. Rolling back is only safe if Pi still holds exactly
-      // what did queue. If Pi started one of those messages meanwhile, restoring
-      // the pre-edit queue would send it a second time, so reconcile instead.
-      if (!queueMatches) throw new QueuedModelTurnsAuthorityError("during_replay");
-      throw new QueuedModelTurnsReplayRejected(rejected.reason, replayAuthority);
-    }
-    if (!queueMatches) throw new QueuedModelTurnsAuthorityError("during_replay");
-    return replayAuthority;
-  }
-
-  private piQueueMatches(expected: Pick<QueuedModelTurnBatch, "steering" | "followUp">): boolean {
-    const same = (live: readonly string[], items: QueuedModelTurnBatch["steering"]): boolean =>
-      live.length === items.length &&
-      live.every((message, index) => message === items[index]?.message);
-    return (
-      same(this.piSession.getSteeringMessages(), expected.steering) &&
-      same(this.piSession.getFollowUpMessages(), expected.followUp)
-    );
   }
 
   private async promptWithoutTransaction(

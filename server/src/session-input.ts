@@ -29,6 +29,7 @@ export interface SessionInputSessionState extends TurnSessionState {
       | "isDisposed"
       | "withModelTurnAdmission"
       | "abortClearsQueuedModelTurns"
+      | "nativeMessageQueue"
     >
   >;
 }
@@ -60,12 +61,6 @@ function requireAcceptedTurn(turn: { clientTurnId?: string; duplicate: boolean }
   return turn;
 }
 
-function isPromiseLike(value: void | Promise<unknown>): value is Promise<unknown> {
-  return Boolean(
-    value && typeof value === "object" && typeof (value as { then?: unknown }).then === "function",
-  );
-}
-
 export interface SessionInputCoordinatorDeps {
   config: ServerConfig;
   getActiveSession: (key: string) => SessionInputSessionState | undefined;
@@ -86,7 +81,6 @@ export interface SessionInputCoordinatorDeps {
     data: unknown,
   ) => void | Promise<void>;
   enqueueQueuedMessage?: EnqueueQueuedMessage;
-  reserveQueuedMessage?: (...args: Parameters<EnqueueQueuedMessage>) => (accepted: boolean) => void;
   resolveWorkspaceRoot?: (session: Session) => string | null;
   onFirstMessage?: (session: Session) => void;
   assertModelTurnAdmissionAllowed?: (key: string) => void;
@@ -271,6 +265,14 @@ export class SessionInputCoordinator {
     const cmd: Record<string, unknown> = {
       type: "prompt",
       message: dispatchMessage,
+      ...(opts?.attachments?.length || active.sdkBackend?.nativeMessageQueue
+        ? {
+            queueDisplay: {
+              message,
+              ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
+            },
+          }
+        : {}),
       ...(opts?.requestId ? { requestId: opts.requestId } : {}),
       ...(opts?.clientTurnId ? { clientTurnId: opts.clientTurnId } : {}),
     };
@@ -304,28 +306,11 @@ export class SessionInputCoordinator {
           ? "steer"
           : "follow_up"
         : undefined;
-    const data = await this.dispatchModelTurn(
-      key,
-      active,
-      cmd,
-      permit,
-      () => {
-        acceptPreflight();
-        // Pi can synchronously emit agent_start immediately after preflight.
-        dispatchAcceptedTurn();
-      },
-      queueKind
-        ? [
-            key,
-            queueKind,
-            message,
-            opts?.attachments,
-            opts?.clientTurnId,
-            dispatchMessage,
-            dispatchImages,
-          ]
-        : undefined,
-    );
+    const data = await this.dispatchModelTurn(key, active, cmd, permit, () => {
+      acceptPreflight();
+      // Pi can synchronously emit agent_start immediately after preflight.
+      dispatchAcceptedTurn();
+    });
     if (data && typeof data === "object" && "duplicate" in data && data.duplicate === true)
       return { duplicate: true };
     acceptPreflight();
@@ -466,6 +451,14 @@ export class SessionInputCoordinator {
     const cmd: Record<string, unknown> = {
       type: kind,
       message: dispatchMessage,
+      ...(opts?.attachments?.length || active.sdkBackend?.nativeMessageQueue
+        ? {
+            queueDisplay: {
+              message,
+              ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
+            },
+          }
+        : {}),
       ...(opts?.requestId ? { requestId: opts.requestId } : {}),
       ...(opts?.clientTurnId ? { clientTurnId: opts.clientTurnId } : {}),
     };
@@ -485,17 +478,10 @@ export class SessionInputCoordinator {
       attachmentCount: opts?.attachments?.length ?? 0,
     });
 
-    const data = await this.dispatchModelTurn(
-      key,
-      active,
-      cmd,
-      permit,
-      () => {
-        acceptPreflight();
-        dispatchAcceptedTurn();
-      },
-      [key, kind, message, opts?.attachments, opts?.clientTurnId, dispatchMessage, dispatchImages],
-    );
+    const data = await this.dispatchModelTurn(key, active, cmd, permit, () => {
+      acceptPreflight();
+      dispatchAcceptedTurn();
+    });
     if (data && typeof data === "object" && "duplicate" in data && data.duplicate === true)
       return { duplicate: true };
     acceptPreflight();
@@ -523,23 +509,9 @@ export class SessionInputCoordinator {
     command: Record<string, unknown>,
     permit: SessionRuntimeTransactionPermit | undefined,
     onPreflightAccepted: () => void,
-    queued?: Parameters<EnqueueQueuedMessage>,
   ): Promise<unknown> {
-    const settle =
-      queued && active.sdkBackend?.abortClearsQueuedModelTurns
-        ? this.deps.reserveQueuedMessage?.(...queued)
-        : undefined;
-    try {
-      const result = this.deps.sendCommand(key, command, permit, onPreflightAccepted);
-      const data = isPromiseLike(result) ? await result : result;
-      settle?.(
-        !(data && typeof data === "object" && "duplicate" in data && data.duplicate === true),
-      );
-      return data;
-    } catch (error) {
-      settle?.(false);
-      throw error;
-    }
+    const result = this.deps.sendCommand(key, command, permit, onPreflightAccepted);
+    return result;
   }
 
   private assertPreflightOwnerActive(key: string, active: SessionInputSessionState): void {

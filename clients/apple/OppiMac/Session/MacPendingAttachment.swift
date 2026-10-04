@@ -9,6 +9,9 @@ struct MacPendingAttachment: Identifiable, Sendable, Equatable {
     let displayName: String
     let mimeType: String
     let sizeBytes: Int
+    /// Server identity retained when a queued attachment is restored.
+    let uploadedReference: ChatAttachmentRef?
+
     /// True when this file was written to `oppi-mac-pasted-attachments` and
     /// must be deleted on remove, successful send, or composer teardown.
     let ownsTemporaryFile: Bool
@@ -32,7 +35,19 @@ struct MacPendingAttachment: Identifiable, Sendable, Equatable {
         self.displayName = trimmedName.isEmpty ? url.lastPathComponent : trimmedName
         self.mimeType = mimeType ?? Self.mimeType(for: url)
         self.sizeBytes = try sizeBytes ?? Self.fileSize(url: url)
+        self.uploadedReference = nil
         self.ownsTemporaryFile = ownsTemporaryFile
+    }
+
+    init(uploaded reference: ChatAttachmentRef) {
+        id = reference.id
+        // Uploaded inputs do not need local bytes; resending uses the server ref.
+        url = URL(fileURLWithPath: reference.workspacePath ?? reference.name)
+        displayName = reference.name
+        mimeType = reference.mimeType
+        sizeBytes = reference.sizeBytes
+        ownsTemporaryFile = false
+        uploadedReference = reference
     }
 
     static func mimeType(for url: URL) -> String {
@@ -126,7 +141,7 @@ enum MacPendingAttachmentPreview: Equatable {
 
 enum MacPendingAttachmentThumbnail {
     static func image(for attachment: MacPendingAttachment, maxPixelSize: CGFloat = 96) -> NSImage? {
-        guard attachment.isImage else { return nil }
+        guard attachment.isImage, attachment.uploadedReference == nil else { return nil }
         return image(at: attachment.url, maxPixelSize: maxPixelSize)
     }
 

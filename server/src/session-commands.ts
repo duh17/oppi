@@ -487,6 +487,9 @@ export class SessionCommandCoordinator {
           images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
           streamingBehavior: command.streamingBehavior as "steer" | "followUp" | undefined,
           clientTurnId: command.clientTurnId as string | undefined,
+          queueDisplay: command.queueDisplay as NonNullable<
+            Parameters<AgentBackend["prompt"]>[1]
+          >["queueDisplay"],
           ...(onPreflightAccepted ? { onPreflightAccepted } : {}),
         };
         return permit
@@ -498,6 +501,9 @@ export class SessionCommandCoordinator {
           images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
           streamingBehavior: "steer" as const,
           clientTurnId: command.clientTurnId as string | undefined,
+          queueDisplay: command.queueDisplay as NonNullable<
+            Parameters<AgentBackend["prompt"]>[1]
+          >["queueDisplay"],
           ...(onPreflightAccepted ? { onPreflightAccepted } : {}),
         };
         return permit
@@ -509,6 +515,9 @@ export class SessionCommandCoordinator {
           images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
           streamingBehavior: "followUp" as const,
           clientTurnId: command.clientTurnId as string | undefined,
+          queueDisplay: command.queueDisplay as NonNullable<
+            Parameters<AgentBackend["prompt"]>[1]
+          >["queueDisplay"],
           ...(onPreflightAccepted ? { onPreflightAccepted } : {}),
         };
         return permit

@@ -2730,8 +2730,12 @@ final class ServerConnection {
         try await sender.requestMessageQueue(timeout: timeout, sessionIdOverride: sessionIdOverride)
     }
 
-    func setMessageQueue(baseVersion: Int, steering: [MessageQueueDraftItem], followUp: [MessageQueueDraftItem], sessionIdOverride: String? = nil) async throws {
-        try await sender.setMessageQueue(baseVersion: baseVersion, steering: steering, followUp: followUp, sessionIdOverride: sessionIdOverride)
+    func removeQueuedMessage(itemId: String, sessionIdOverride: String? = nil) async throws {
+        try await sender.removeQueuedMessage(itemId: itemId, sessionIdOverride: sessionIdOverride)
+    }
+
+    func takeMessageQueue(sessionIdOverride: String? = nil) async throws -> MessageQueueState {
+        try await sender.takeMessageQueue(sessionIdOverride: sessionIdOverride)
     }
 
     func sendCommandAwaitingResult(

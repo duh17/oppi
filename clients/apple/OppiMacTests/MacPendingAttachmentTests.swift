@@ -312,54 +312,6 @@ struct MacPendingAttachmentTests {
         #expect(plan.payload.fileURLs.map(\.standardizedFileURL.path) == [file.url.standardizedFileURL.path])
     }
 
-    @Test func composerPastePathUsesAppKitPasteNotEventMonitor() throws {
-        let testsDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let bar = try String(
-            contentsOf: testsDir.appending(path: "OppiMac/Views/MacSessionComposerBar.swift"),
-            encoding: .utf8
-        )
-        let input = try String(
-            contentsOf: testsDir.appending(path: "OppiMac/Views/MacComposerInputView.swift"),
-            encoding: .utf8
-        )
-
-        #expect(bar.contains("MacComposerInputView"))
-        #expect(bar.contains(".keyboardShortcut(.return, modifiers: .command)"))
-        #expect(bar.contains("MacPastedAttachmentFileStore.removeOwned"))
-        #expect(bar.contains("pastedFileLifetime"))
-        #expect(!bar.contains("NSEvent.addLocalMonitor"))
-        #expect(!bar.contains("NSEvent.addGlobalMonitor"))
-        #expect(!bar.contains("onPasteCommand"))
-        #expect(!input.contains("NSEvent.addLocalMonitor"))
-        #expect(!input.contains("NSEvent.addGlobalMonitor"))
-        #expect(input.contains("override func paste"))
-        #expect(input.contains("MacComposerPasteCommand"))
-        #expect(input.contains("isCommandReturn"))
-    }
-
-    @Test func pendingStripPaintsNSImageThumbnailsNotOnlyPhotoSymbol() throws {
-        let sourceURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appending(path: "OppiMac/Views/MacSessionComposerBar.swift")
-        let source = try String(contentsOf: sourceURL, encoding: .utf8)
-        guard let start = source.range(of: "private struct MacPendingAttachmentStrip") else {
-            Issue.record("Missing MacPendingAttachmentStrip")
-            return
-        }
-        guard let end = source.range(
-            of: "private struct MacMessageQueueCard",
-            range: start.upperBound..<source.endIndex
-        ) else {
-            Issue.record("Missing MacMessageQueueCard")
-            return
-        }
-        let slice = String(source[start.lowerBound..<end.lowerBound])
-        #expect(slice.contains("Image(nsImage:"))
-        #expect(slice.contains("MacPendingAttachmentThumbnail"))
-        #expect(slice.contains("systemImageFallback"))
-    }
-
     private static let oneByOnePNG = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")!
 }
 

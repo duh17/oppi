@@ -111,6 +111,11 @@ export class SessionAgentEventCoordinator {
 
     this.flushPendingCanonicalMessage(key, active);
 
+    if (data.type === "queue_item_started") {
+      this.deps.broadcast(key, data);
+      return;
+    }
+
     if (data.type === "queue_update" && active.sdkBackend?.abortClearsQueuedModelTurns) {
       this.deps.refreshQueuedMessages?.(key);
       return;

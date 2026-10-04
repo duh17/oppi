@@ -55,7 +55,8 @@ function makeHandler() {
     sendSteer: vi.fn(async () => {}),
     sendFollowUp: vi.fn(async () => {}),
     getMessageQueue: vi.fn(() => ({ version: 0, steering: [], followUp: [] })),
-    setMessageQueue: vi.fn(async () => ({ version: 0, steering: [], followUp: [] })),
+    removeQueuedMessage: vi.fn(async () => ({ version: 0, steering: [], followUp: [] })),
+    takeMessageQueue: vi.fn(async () => ({ version: 0, steering: [], followUp: [] })),
     sendAbort: vi.fn(async () => {}),
     stopSession: vi.fn(async () => {}),
     getActiveSession: vi.fn(() => undefined as Session | undefined),
@@ -74,10 +75,7 @@ function makeHandler() {
   };
 }
 
-function dispatch(
-  harness: ReturnType<typeof makeHandler>,
-  msg: ClientMessage,
-): Promise<void> {
+function dispatch(harness: ReturnType<typeof makeHandler>, msg: ClientMessage): Promise<void> {
   return harness.handler.handleClientMessage(harness.session, msg, (outbound) => {
     harness.sent.push(outbound);
   });

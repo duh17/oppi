@@ -311,22 +311,20 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
 
       // Enqueue a follow-up while the agent is busy
       stream.send({
-        type: "set_queue",
+        type: "follow_up",
         sessionId,
-        baseVersion: 0,
-        steering: [],
-        followUp: [{ message: "Now say goodbye. Do not use any tools." }],
-        requestId: "req-set-queue",
+        message: "Now say goodbye. Do not use any tools.",
+        requestId: "req-follow-up",
       });
 
-      // Verify the set_queue command was accepted
+      // Verify the follow_up command was accepted
       const { event: queueResult } = await waitForEvent(
         stream,
         (e) =>
           e.direction === "in" &&
           (e.type === "command_result" || e.type === "rpc_result") &&
-          e.requestId === "req-set-queue",
-        "set_queue result",
+          e.requestId === "req-follow-up",
+        "follow_up result",
         { timeoutMs: 120_000 },
       );
       expect(queueResult.success).toBe(true);

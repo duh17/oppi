@@ -4,6 +4,61 @@ import Testing
 
 @Suite("Stopping a busy turn with queued messages")
 struct MessageQueueComposerRestoreTests {
+    @Test @MainActor
+    func failedTakeLeavesStopRetryableAndShowsQueueCardError() async {
+        let sender = MessageSender()
+        var commands: [ClientMessage] = []
+        var failTake = true
+        var errorText: String?
+        var composerText = "current draft"
+        sender._sendMessageForTesting = { message in
+            commands.append(message)
+            if case .takeQueue(let requestId) = message, let requestId {
+                _ = sender.commands.resolveCommandResult(
+                    command: "take_queue", requestId: requestId, success: !failTake,
+                    data: failTake ? nil : ["version": 1, "steering": [["id": "one", "message": "queued", "createdAt": 1]], "followUp": []],
+                    error: failTake ? "Withdrawal failed" : nil
+                )
+            } else if case .stop(let requestId) = message, let requestId {
+                #expect(composerText == "queued\n\ncurrent draft", "Restore before Stop is sent")
+                _ = sender.commands.resolveCommandResult(
+                    command: "stop", requestId: requestId, success: true, data: nil, error: nil
+                )
+            } else {
+                Issue.record("Unexpected command")
+            }
+        }
+        let stop = {
+            await MessageQueueComposerRestore.stopAfterRestoring(
+                restore: {
+                    errorText = nil
+                    let withdrawn = try await sender.takeMessageQueue()
+                    if let plan = MessageQueueComposerRestore.plan(queue: withdrawn, currentText: composerText) {
+                        composerText = plan.text
+                    }
+                },
+                abort: {
+                    do { try await sender.sendStop() }
+                    catch { Issue.record("Stop unexpectedly failed: \(error)") }
+                },
+                onError: { errorText = $0.localizedDescription }
+            )
+        }
+        await stop()
+        let card = MessageQueueSurfaceConfiguration(
+            queue: .empty, onRemove: { _ in }, onEditInComposer: {}, error: errorText
+        )
+        #expect(commands.count == 1)
+        #expect(card.error == CommandRequestError.rejected(command: "take_queue", reason: "Withdrawal failed").localizedDescription)
+        #expect(composerText == "current draft")
+
+        // The same Stop can retry; the real sender must observe restore first.
+        failTake = false
+        await stop()
+        #expect(commands.count == 3)
+        #expect(errorText == nil)
+    }
+
     @Test("Given steering and follow-up messages, when stop restores the queue, then every queued message moves into the composer")
     func queuedMessagesArePrependedToComposerText() {
         let queue = MessageQueueState(
@@ -24,9 +79,6 @@ struct MessageQueueComposerRestoreTests {
 
         #expect(plan?.restoredCount == 3)
         #expect(plan?.text == "first steer\n\nsecond steer\n\nfirst follow-up\n\ncurrent draft")
-        #expect(plan?.clearedQueue.version == 13)
-        #expect(plan?.clearedQueue.steering.isEmpty == true)
-        #expect(plan?.clearedQueue.followUp.isEmpty == true)
     }
 
     @Test("Given queued messages and an empty composer, when stop restores the queue, then the composer contains only queued text")
@@ -46,7 +98,6 @@ struct MessageQueueComposerRestoreTests {
 
         #expect(plan?.restoredCount == 1)
         #expect(plan?.text == "retry this")
-        #expect(plan?.clearedQueue.version == 2)
     }
 
     @Test("Given an empty queue, when stop asks for restore text, then no composer update is produced")
@@ -99,7 +150,6 @@ struct MessageQueueComposerRestoreTests {
         } else {
             Issue.record("Queued attachment was not restored as an uploaded pending attachment")
         }
-        #expect(plan?.clearedQueue.version == 3)
     }
 
     @Test("Given queued and current attachments, when stop restores the queue, then all attachments stay on the bar")

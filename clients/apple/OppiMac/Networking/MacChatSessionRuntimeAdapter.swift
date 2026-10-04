@@ -484,7 +484,7 @@ final class MacChatSessionRuntimeAdapter:
         // a timeline error. Ask/queue chrome stays on live effects.
         switch command {
         case "prompt", "steer", "follow_up",
-             "get_queue", "set_queue",
+             "get_queue", "remove_queued_message", "take_queue",
              "set_model", "cycle_model",
              "set_thinking_level", "cycle_thinking_level":
             return true

@@ -40,8 +40,8 @@ final class MacSessionTraceStore {
     private var completedMountHydrationSteps: Set<MountHydrationStep> = []
     private enum CommandAck {
         case expected
-        case waiting(CheckedContinuation<Void, Error>)
-        case finished(Result<Void, Error>)
+        case waiting(CheckedContinuation<JSONValue?, Error>)
+        case finished(Result<JSONValue?, Error>)
     }
 
     private var pendingCommandAcks: [String: CommandAck] = [:]
@@ -1167,19 +1167,27 @@ final class MacSessionTraceStore {
         )
     }
 
-    func applyQueueMutationFromLocalConfig(_ request: MacMessageQueueMutationRequest) async throws {
-        guard let selectedTarget else { return }
-        guard let client = MacWorkspaceClient.localOwner() else {
-            let message = "Local server config is not initialized yet."
-            messageQueueError = message
-            throw MacSessionTraceStoreError.commandRejected(message)
-        }
+    func removeQueuedMessageFromLocalConfig(itemId: String) async throws {
+        _ = try await withdrawQueueFromLocalConfig(itemId: itemId)
+    }
 
-        try await applyQueueMutation(
-            request,
-            target: selectedTarget,
-            client: client
-        )
+    func reportMessageQueueError(_ error: Error, target: MacSelectedSessionTarget?) {
+        guard selectedTarget == target else { return }
+        messageQueueError = error.localizedDescription
+    }
+
+    func takeMessageQueueFromLocalConfig() async throws -> MessageQueueState {
+        guard let queue = try await withdrawQueueFromLocalConfig(itemId: nil) else {
+            throw MacSessionTraceStoreError.commandRejected("Missing withdrawn queue.")
+        }
+        return queue
+    }
+
+    private func withdrawQueueFromLocalConfig(itemId: String?) async throws -> MessageQueueState? {
+        guard let target = selectedTarget, let client = MacWorkspaceClient.localOwner() else {
+            throw MacSessionTraceStoreError.commandRejected("Local server config is not initialized yet.")
+        }
+        return try await withdrawQueue(itemId: itemId, target: target, client: client)
     }
 
     func refreshQueue(target: MacSelectedSessionTarget, client: MacWorkspaceClient) async {
@@ -1208,72 +1216,27 @@ final class MacSessionTraceStore {
         }
     }
 
-    func applyQueueMutation(
-        _ request: MacMessageQueueMutationRequest,
+    func withdrawQueue(
+        itemId: String?,
         target: MacSelectedSessionTarget,
         client: MacWorkspaceClient
-    ) async throws {
+    ) async throws -> MessageQueueState? {
         guard selectedTarget == target, !Task.isCancelled else {
             throw MacSessionTraceStoreError.commandRejected("Session selection changed.")
         }
         isUpdatingQueue = true
         messageQueueError = nil
-        defer {
-            if selectedTarget == target {
-                isUpdatingQueue = false
-            }
-        }
-
+        defer { if selectedTarget == target { isUpdatingQueue = false } }
         await installSessionRuntime(target: target, client: client)
-        guard selectedTarget == target, !Task.isCancelled else {
-            throw MacSessionTraceStoreError.commandRejected("Session selection changed.")
-        }
+        let requestId = UUID().uuidString
+        let message: ClientMessage = itemId.map { .removeQueuedMessage(itemId: $0, requestId: requestId) }
+            ?? .takeQueue(requestId: requestId)
         do {
-            let requestId = UUID().uuidString
-            try await sendSessionCommand(
-                .setQueue(
-                    baseVersion: request.baseVersion,
-                    steering: request.steering,
-                    followUp: request.followUp,
-                    requestId: requestId
-                ),
-                target: target,
-                requestId: requestId,
-                awaitResult: true
-            )
+            let data = try await sendSessionCommand(message, target: target, requestId: requestId, awaitResult: true)
+            return ServerMessageEffects.decodeQueueStateFromCommandData(data)
         } catch {
-            let mutationError = error
-            guard selectedTarget == target, !Task.isCancelled else {
-                throw mutationError
-            }
-
-            var surfacedError: Error = mutationError
-            do {
-                // A rejected compare-and-swap means the editor's base snapshot
-                // may be stale. Re-read before returning the rejection so the
-                // subsequent optimistic rollback converges on server state.
-                let reconciliationRequestId = UUID().uuidString
-                try await sendSessionCommand(
-                    .getQueue(requestId: reconciliationRequestId),
-                    target: target,
-                    requestId: reconciliationRequestId,
-                    awaitResult: true
-                )
-            } catch {
-                if selectedTarget == target, !Task.isCancelled {
-                    surfacedError = MacSessionTraceStoreError.commandRejected(
-                        "\(mutationError.localizedDescription) Queue refresh failed: \(error.localizedDescription)"
-                    )
-                    macSessionTraceLogger.warning(
-                        "Queue reconciliation failed: \(error.localizedDescription, privacy: .public)"
-                    )
-                }
-            }
-
-            if selectedTarget == target, !Task.isCancelled {
-                messageQueueError = surfacedError.localizedDescription
-            }
-            throw surfacedError
+            if selectedTarget == target { messageQueueError = error.localizedDescription }
+            throw error
         }
     }
 
@@ -1407,6 +1370,10 @@ final class MacSessionTraceStore {
         for (index, attachment) in attachments.enumerated() {
             guard isCurrentRuntime(boundManager, for: target) else {
                 throw MacSessionTraceStoreError.commandRejected("Session selection changed.")
+            }
+            if let reference = attachment.uploadedReference {
+                uploaded.append(reference)
+                continue
             }
             attachmentPreparationText = "Uploading attachment \(index + 1) of \(attachments.count)…"
             let upload = try await client.createSessionAttachmentUpload(
@@ -1799,12 +1766,13 @@ final class MacSessionTraceStore {
         }
     }
 
+    @discardableResult
     private func sendSessionCommand(
         _ message: ClientMessage,
         target: MacSelectedSessionTarget,
         requestId: String? = nil,
         awaitResult: Bool = false
-    ) async throws {
+    ) async throws -> JSONValue? {
         guard selectedTarget == target, !Task.isCancelled else {
             throw MacSessionTraceStoreError.commandRejected("Session selection changed.")
         }
@@ -1831,20 +1799,19 @@ final class MacSessionTraceStore {
             // Mark this request before send can yield. Unrelated command_result
             // IDs are not buffered.
             pendingCommandAcks[requestId] = .expected
-            async let acknowledged: Void = waitForCommandResult(requestId: requestId)
+            async let acknowledged: JSONValue? = waitForCommandResult(requestId: requestId)
             do {
                 try await sendLiveMessage(
                     message,
                     target: target,
                     boundManager: boundManager
                 )
-                try await acknowledged
+                return try await acknowledged
             } catch {
                 abandonCommandAck(requestId: requestId)
                 _ = try? await acknowledged
                 throw error
             }
-            return
         }
 
         try await sendLiveMessage(
@@ -1852,6 +1819,7 @@ final class MacSessionTraceStore {
             target: target,
             boundManager: boundManager
         )
+        return nil
     }
 
     private func sendLiveMessage(
@@ -1879,14 +1847,13 @@ final class MacSessionTraceStore {
         try await boundManager.focusedStreamPort.send(message)
     }
 
-    private func waitForCommandResult(requestId: String) async throws {
+    private func waitForCommandResult(requestId: String) async throws -> JSONValue? {
         if case .finished(let result) = pendingCommandAcks.removeValue(forKey: requestId) {
-            try result.get()
-            return
+            return try result.get()
         }
 
         let timeout = _commandAckTimeoutForTesting ?? ChatSessionManager.focusedStreamBindTimeout
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<JSONValue?, Error>) in
             if case .finished(let result) = pendingCommandAcks.removeValue(forKey: requestId) {
                 continuation.resume(with: result)
                 return
@@ -1903,8 +1870,8 @@ final class MacSessionTraceStore {
         }
     }
 
-    private func completeCommandAck(requestId: String, error: Error?) {
-        let result: Result<Void, Error> = error.map { .failure($0) } ?? .success(())
+    private func completeCommandAck(requestId: String, error: Error?, data: JSONValue?) {
+        let result: Result<JSONValue?, Error> = error.map { .failure($0) } ?? .success(data)
         switch pendingCommandAcks.removeValue(forKey: requestId) {
         case .waiting(let continuation):
             continuation.resume(with: result)
@@ -1918,7 +1885,7 @@ final class MacSessionTraceStore {
     private func abandonCommandAck(requestId: String) {
         switch pendingCommandAcks.removeValue(forKey: requestId) {
         case .waiting(let continuation):
-            continuation.resume()
+            continuation.resume(returning: nil)
         case .expected, .finished, nil:
             break
         }
@@ -2069,6 +2036,11 @@ final class MacSessionTraceStore {
     }
 
     private func applyQueueEffects(from message: ServerMessage, target: MacSelectedSessionTarget) {
+        if case .connected(let session) = message, session.id == target.sessionId {
+            // Display versions restart with the backend; bootstrap replaces
+            // the previous connection's projection, not a persisted queue.
+            messageQueueStore.clear(sessionId: target.sessionId)
+        }
         applyQueueEffects(ServerMessageEffects.queueEffects(for: message), sessionId: target.sessionId)
 
         if case .commandResult(let command, _, let success, let data, let error) = message {
@@ -2080,7 +2052,7 @@ final class MacSessionTraceStore {
                 ),
                 sessionId: target.sessionId
             )
-            if !success, command == "get_queue" || command == "set_queue" {
+            if !success, command == "get_queue" || command == "remove_queued_message" || command == "take_queue" {
                 messageQueueError = error?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
                     ? error
                     : "\(command) failed"
@@ -2205,7 +2177,7 @@ final class MacSessionTraceStore {
     }
 
     private func applyPendingCommandResult(from message: ServerMessage) -> String? {
-        guard case .commandResult(let command, let requestId, let success, _, let error) = message,
+        guard case .commandResult(let command, let requestId, let success, let data, let error) = message,
               let requestId else {
             return nil
         }
@@ -2227,7 +2199,8 @@ final class MacSessionTraceStore {
 
         completeCommandAck(
             requestId: requestId,
-            error: failure.map(MacSessionTraceStoreError.commandRejected)
+            error: failure.map(MacSessionTraceStoreError.commandRejected),
+            data: data
         )
         return failure
     }

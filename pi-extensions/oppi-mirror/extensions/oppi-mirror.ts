@@ -23,14 +23,12 @@ import { messageFromMirrorEvent } from "./canonical-message.ts";
 import {
   assertOppiMirrorQueueVersion,
   isOppiMirrorBridgeCommand,
-  isOppiMirrorQueueVersion,
   nextOppiMirrorQueueVersion,
   OPPI_MIRROR_BRIDGE_PROTOCOL_VERSION,
   OPPI_MIRROR_CAPABILITIES,
   OPPI_MIRROR_INPUT_PREFLIGHT_CAPABILITY,
   OPPI_MIRROR_QUEUE_VERSION_EXHAUSTED_CODE,
   OPPI_MIRROR_QUEUE_VERSION_EXHAUSTED_ERROR,
-  OPPI_MIRROR_QUEUE_VERSION_MISMATCH_CODE,
   type OppiMirrorBridgeCommand,
 } from "./oppi-mirror-contract.ts";
 
@@ -56,17 +54,25 @@ export interface QueueImageContent {
   mimeType: string;
 }
 
-export interface MessageQueueDraftItem {
-  id?: string;
-  message: string;
-  images?: QueueImageContent[];
-  createdAt?: number;
+// Display references travel beside Pi's materialized images so withdrawal can
+// restore the original uploaded chips without reuploading base64 data.
+export interface ChatAttachmentRef {
+  type: "attachment";
+  id: string;
+  source: "upload" | "workspace";
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256?: string;
+  kind?: "image" | "text" | "pdf" | "audio" | "video" | "archive" | "unknown";
+  workspacePath?: string;
 }
 
 export interface MessageQueueItem {
   id: string;
   message: string;
   images?: QueueImageContent[];
+  attachments?: ChatAttachmentRef[];
   createdAt: number;
 }
 
@@ -1537,6 +1543,9 @@ function cloneQueueItem(item: MessageQueueItem): MessageQueueItem {
     ...(item.images
       ? { images: item.images.map((image) => ({ ...image })) }
       : {}),
+    ...(item.attachments?.length
+      ? { attachments: item.attachments.map((attachment) => ({ ...attachment })) }
+      : {}),
     createdAt: item.createdAt,
   };
 }
@@ -1549,31 +1558,31 @@ function cloneQueueState(queue: MessageQueueState): MessageQueueState {
   };
 }
 
-function draftToItem(item: MessageQueueDraftItem): MessageQueueItem {
-  return {
-    id: item.id?.trim() || queueId(),
-    message: item.message,
-    ...(item.images
-      ? { images: item.images.map((image) => ({ ...image })) }
-      : {}),
-    createdAt: item.createdAt ?? Date.now(),
-  };
+// Only the projection/replay path retains materialized text. Public snapshots
+// carry the raw composer message and original refs.
+type MirrorQueueItem = MessageQueueItem & { runtimeMessage?: string };
+
+function runtimeMessage(item: MirrorQueueItem): string {
+  return item.runtimeMessage ?? item.message;
 }
 
 function itemsFromTexts(
   texts: readonly string[],
-  previous: MessageQueueItem[],
-): MessageQueueItem[] {
+  previous: MirrorQueueItem[],
+): MirrorQueueItem[] {
   const used = new Set<number>();
   return texts.map((message) => {
     const previousIndex = previous.findIndex(
-      (item, index) => !used.has(index) && item.message === message,
+      (item, index) => !used.has(index) && runtimeMessage(item) === message,
     );
     if (previousIndex !== -1) {
       used.add(previousIndex);
-      return cloneQueueItem(previous[previousIndex]!);
+      return {
+        ...cloneQueueItem(previous[previousIndex]!),
+        runtimeMessage: runtimeMessage(previous[previousIndex]!),
+      };
     }
-    return draftToItem({ message });
+    return { id: queueId(), message, createdAt: Date.now() };
   });
 }
 
@@ -1584,7 +1593,7 @@ function queueTextMatches(
 ): boolean {
   const messagesMatch = (items: MessageQueueItem[], texts: readonly string[]) =>
     items.length === texts.length &&
-    items.every((item, index) => item.message === texts[index]);
+    items.every((item, index) => runtimeMessage(item) === texts[index]);
   return (
     messagesMatch(queue.steering, steering) &&
     messagesMatch(queue.followUp, followUp)
@@ -1608,24 +1617,6 @@ type ProjectionStartedItem = {
   queue: MessageQueueState;
 };
 
-class MirrorQueueVersionMismatchError extends Error {
-  readonly data: { code: string; queue: MessageQueueState };
-
-  constructor(
-    expectedVersion: number,
-    baseVersion: number,
-    queue: MessageQueueState,
-  ) {
-    super(
-      `Queue version mismatch: expected ${expectedVersion}, got ${baseVersion}`,
-    );
-    this.data = {
-      code: OPPI_MIRROR_QUEUE_VERSION_MISMATCH_CODE,
-      queue: cloneQueueState(queue),
-    };
-  }
-}
-
 class MirrorQueueVersionExhaustedError extends Error {
   readonly data: { code: string; queue: MessageQueueState };
 
@@ -1639,7 +1630,11 @@ class MirrorQueueVersionExhaustedError extends Error {
 }
 
 export class MirrorQueueProjection {
-  private queue: MessageQueueState;
+  private queue: {
+    version: number;
+    steering: MirrorQueueItem[];
+    followUp: MirrorQueueItem[];
+  };
 
   constructor(
     initialQueue: MessageQueueState = {
@@ -1670,6 +1665,28 @@ export class MirrorQueueProjection {
     return cloneQueueState(this.queue);
   }
 
+  matchingCount(kind: "steer" | "follow_up", message: string): number {
+    return (
+      kind === "steer" ? this.queue.steering : this.queue.followUp
+    ).filter((item) => runtimeMessage(item) === message).length;
+  }
+
+  replayQueue(nextQueue: MessageQueueState): MessageQueueState {
+    const entries = [...this.queue.steering, ...this.queue.followUp];
+    const replay = (items: MessageQueueItem[]) =>
+      items.map((item) => ({
+        ...cloneQueueItem(item),
+        message: runtimeMessage(
+          entries.find((entry) => entry.id === item.id) ?? item,
+        ),
+      }));
+    return {
+      version: nextQueue.version,
+      steering: replay(nextQueue.steering),
+      followUp: replay(nextQueue.followUp),
+    };
+  }
+
   pendingCount(): number {
     return this.queue.steering.length + this.queue.followUp.length;
   }
@@ -1690,8 +1707,21 @@ export class MirrorQueueProjection {
 
   replace(nextQueue: MessageQueueState): ProjectionChange {
     assertOppiMirrorQueueVersion(nextQueue.version);
-    const changed = JSON.stringify(this.queue) !== JSON.stringify(nextQueue);
-    this.queue = cloneQueueState(nextQueue);
+    const changed =
+      JSON.stringify(this.snapshot()) !== JSON.stringify(nextQueue);
+    const entries = [...this.queue.steering, ...this.queue.followUp];
+    const retain = (items: MessageQueueItem[]): MirrorQueueItem[] =>
+      items.map((item) => ({
+        ...cloneQueueItem(item),
+        runtimeMessage: runtimeMessage(
+          entries.find((entry) => entry.id === item.id) ?? item,
+        ),
+      }));
+    this.queue = {
+      version: nextQueue.version,
+      steering: retain(nextQueue.steering),
+      followUp: retain(nextQueue.followUp),
+    };
     return { changed, queue: this.snapshot() };
   }
 
@@ -1708,47 +1738,31 @@ export class MirrorQueueProjection {
     return { changed: true, queue: this.snapshot() };
   }
 
-  queueFromDrafts(
-    baseVersion: number,
-    steering: MessageQueueDraftItem[],
-    followUp: MessageQueueDraftItem[],
-  ): MessageQueueState {
-    if (!isOppiMirrorQueueVersion(baseVersion)) {
-      throw new Error(
-        "Invalid set_queue payload: expected a nonnegative safe integer baseVersion",
-      );
-    }
-    if (baseVersion !== this.queue.version) {
-      throw new MirrorQueueVersionMismatchError(
-        this.queue.version,
-        baseVersion,
-        this.queue,
-      );
-    }
-    return {
-      version: this.nextVersion(),
-      steering: steering.map(draftToItem),
-      followUp: followUp.map(draftToItem),
-    };
-  }
-
   enqueueOptimistic(
     kind: "steer" | "follow_up",
     message: string,
     images?: QueueImageContent[],
-    options: { previousMatchingCount?: number } = {},
+    options: {
+      previousMatchingCount?: number;
+      attachments?: ChatAttachmentRef[];
+      displayMessage?: string;
+    } = {},
   ): ProjectionChange {
-    const item: MessageQueueItem = {
+    const item: MirrorQueueItem = {
       id: queueId(),
-      message,
+      message: options.displayMessage ?? message,
+      runtimeMessage: message,
       ...(images?.length
         ? { images: images.map((image) => ({ ...image })) }
+        : {}),
+      ...(options.attachments?.length
+        ? { attachments: options.attachments.map((attachment) => ({ ...attachment })) }
         : {}),
       createdAt: Date.now(),
     };
     const list = kind === "steer" ? this.queue.steering : this.queue.followUp;
     const matchingItems = list.filter(
-      (candidate) => candidate.message === message,
+      (candidate) => runtimeMessage(candidate) === message,
     );
     const runtimeUpdateAlreadyAddedItem =
       options.previousMatchingCount !== undefined &&
@@ -1756,9 +1770,23 @@ export class MirrorQueueProjection {
 
     if (runtimeUpdateAlreadyAddedItem) {
       const existing = matchingItems.at(-1);
-      if (existing && images?.length && !existing.images?.length) {
+      if (
+        existing &&
+        ((images?.length && !existing.images?.length) ||
+          (options.attachments?.length && !existing.attachments?.length) ||
+          (options.displayMessage !== undefined &&
+            existing.message !== options.displayMessage))
+      ) {
         const version = this.nextVersion();
-        existing.images = images.map((image) => ({ ...image }));
+        if (options.displayMessage !== undefined) {
+          existing.runtimeMessage = message;
+          existing.message = options.displayMessage;
+        }
+        if (images?.length)
+          existing.images = images.map((image) => ({ ...image }));
+        if (options.attachments?.length) {
+          existing.attachments = options.attachments.map((attachment) => ({ ...attachment }));
+        }
         this.queue.version = version;
         return { changed: true, queue: this.snapshot() };
       }
@@ -1777,10 +1805,10 @@ export class MirrorQueueProjection {
 
     const dequeue = (
       kind: "steer" | "follow_up",
-      list: MessageQueueItem[],
+      list: MirrorQueueItem[],
     ): ProjectionStartedItem | null => {
       const index = list.findIndex(
-        (item) => item.message.trim() === normalized,
+        (item) => runtimeMessage(item).trim() === normalized,
       );
       if (index === -1) return null;
       const version = this.nextVersion();
@@ -2064,8 +2092,7 @@ function commandError(message: string, id: string, error: unknown) {
     id,
     success: false,
     error: error instanceof Error ? error.message : String(error),
-    ...(error instanceof MirrorQueueVersionMismatchError ||
-    error instanceof MirrorQueueVersionExhaustedError
+    ...(error instanceof MirrorQueueVersionExhaustedError
       ? { data: error.data }
       : {}),
   };
@@ -3601,7 +3628,9 @@ async function createTuiMirrorRuntime(
   ) {
     if (!runtimeActive) return;
     if (!syncQueueFromTexts(steering, followUp, "queue_update")) return;
-    sendQueueState();
+    // Pi emits queue_update before preflightResult. Publish after the accepted
+    // input has enriched that same item with its raw display text and refs.
+    queueMicrotask(sendQueueState);
     renderIndicator();
   }
 
@@ -3627,7 +3656,10 @@ async function createTuiMirrorRuntime(
     };
   }
 
-  function syncQueueFromEditableSession(ctx: ExtensionContext): boolean {
+  function syncQueueFromEditableSession(
+    ctx: ExtensionContext,
+    publish = true,
+  ): boolean {
     const texts = queueTextsFromAgentSession(findEditableAgentSession(ctx));
     if (!texts) return false;
     if (
@@ -3638,7 +3670,7 @@ async function createTuiMirrorRuntime(
       )
     )
       return false;
-    sendQueueState();
+    if (publish) sendQueueState();
     renderIndicator();
     return true;
   }
@@ -3669,7 +3701,7 @@ async function createTuiMirrorRuntime(
     const previous = queueProjection.snapshot();
     queueReplacementInProgress = true;
     try {
-      replaceAgentSessionQueue(session, nextQueue);
+      replaceAgentSessionQueue(session, queueProjection.replayQueue(nextQueue));
     } finally {
       queueReplacementInProgress = false;
     }
@@ -3680,7 +3712,7 @@ async function createTuiMirrorRuntime(
         bridgeId,
         sessionId: connectedSessionId,
         workspaceId: connectedWorkspaceId,
-        source: "set_queue",
+        source: "queue_withdrawal",
         previousVersion: previous.version,
         version: result.queue.version,
         previousSteeringCount: previous.steering.length,
@@ -3751,7 +3783,11 @@ async function createTuiMirrorRuntime(
     kind: "steer" | "followUp",
     message: string,
     images?: QueueImageContent[],
-    options: { previousMatchingCount?: number } = {},
+    options: {
+      previousMatchingCount?: number;
+      attachments?: ChatAttachmentRef[];
+      displayMessage?: string;
+    } = {},
   ) {
     const result = queueProjection.enqueueOptimistic(
       kind === "steer" ? "steer" : "follow_up",
@@ -3772,6 +3808,7 @@ async function createTuiMirrorRuntime(
       type,
       message: command.message,
       images: command.images,
+      queueDisplay: command.queueDisplay,
       streamingBehavior: command.streamingBehavior,
     });
   }
@@ -3849,13 +3886,20 @@ async function createTuiMirrorRuntime(
 
       const message = String(command.message ?? "");
       const images = imagesFromCommand(command.images);
+      const display = command.queueDisplay as
+        | { message?: unknown; attachments?: unknown }
+        | undefined;
+      const displayMessage =
+        typeof display?.message === "string" ? display.message : message;
+      const attachments = Array.isArray(display?.attachments)
+        ? (display.attachments as ChatAttachmentRef[])
+        : undefined;
       const queueKind = streamingBehavior;
       const previousMatchingCount = queueKind
-        ? queueProjection
-            .snapshot()
-            [
-              queueKind === "steer" ? "steering" : "followUp"
-            ].filter((item) => item.message === message).length
+        ? queueProjection.matchingCount(
+            queueKind === "steer" ? "steer" : "follow_up",
+            message,
+          )
         : 0;
       const piSessionId = ctx.sessionManager.getSessionId();
       const session = exactEditableAgentSessionForContext(ctx);
@@ -3892,7 +3936,11 @@ async function createTuiMirrorRuntime(
           pendingInputBootstrapSessionId = null;
         }
         if (queueKind) {
-          enqueueShadow(queueKind, message, images, { previousMatchingCount });
+          enqueueShadow(queueKind, message, images, {
+            previousMatchingCount,
+            attachments,
+            displayMessage,
+          });
         }
         writeMirrorLog("info", "input_bootstrap_public_dispatch", {
           runtime: "pi-tui",
@@ -3930,15 +3978,17 @@ async function createTuiMirrorRuntime(
         const acceptOnce = (): void => {
           if (settled) return;
           try {
-            syncQueueFromEditableSession(ctx);
+            syncQueueFromEditableSession(ctx, false);
             if (queueKind) {
-              const queue = queueProjection.snapshot();
-              const matchingCount = queue[
-                queueKind === "steer" ? "steering" : "followUp"
-              ].filter((item) => item.message === message).length;
+              const matchingCount = queueProjection.matchingCount(
+                queueKind === "steer" ? "steer" : "follow_up",
+                message,
+              );
               if (matchingCount > previousMatchingCount) {
                 enqueueShadow(queueKind, message, images, {
                   previousMatchingCount,
+                  attachments,
+                  displayMessage,
                 });
               }
             }
@@ -4816,29 +4866,27 @@ async function createTuiMirrorRuntime(
         return { queue: latestQueue };
       }
 
-      case "set_queue": {
-        const baseVersion = command.baseVersion;
-        if (!isOppiMirrorQueueVersion(baseVersion)) {
-          throw new Error(
-            "Invalid set_queue payload: expected a nonnegative safe integer baseVersion",
-          );
+      case "remove_queued_message":
+      case "take_queue": {
+        const latest = refreshQueueFromRuntime();
+        if (command.type === "remove_queued_message" &&
+            (typeof command.itemId !== "string" || !command.itemId.trim())) {
+          throw new Error("Invalid payload: expected itemId");
         }
-        const steering = Array.isArray(command.steering)
-          ? (command.steering as MessageQueueDraftItem[])
-          : [];
-        const followUp = Array.isArray(command.followUp)
-          ? (command.followUp as MessageQueueDraftItem[])
-          : [];
-        const requestedQueue = queueProjection.queueFromDrafts(
-          baseVersion,
-          steering,
-          followUp,
-        );
-
-        replaceLocalQueue(ctx, requestedQueue);
+        const take = command.type === "take_queue";
+        const selected = (items: MessageQueueItem[]) => items.filter((item) => take || item.id === command.itemId);
+        const remaining = (items: MessageQueueItem[]) => items.filter((item) => !take && item.id !== command.itemId);
+        const withdrawn = { version: latest.version, steering: selected(latest.steering), followUp: selected(latest.followUp) };
+        if (withdrawn.steering.length || withdrawn.followUp.length) {
+          replaceLocalQueue(ctx, {
+            version: nextOppiMirrorQueueVersion(latest.version),
+            steering: remaining(latest.steering),
+            followUp: remaining(latest.followUp),
+          });
+        }
         sendQueueState();
         renderIndicator();
-        return { queue: queueProjection.snapshot() };
+        return { queue: queueProjection.snapshot(), ...(take ? { withdrawn } : {}) };
       }
 
       case "get_state":

@@ -351,18 +351,10 @@ describe("native Durable background jobs", () => {
         const before = (await f.harness.snapshot(InboxDoc, f.root.id, context))!.items.find(
           (item) => item.mode !== "write" && JSON.stringify(item.content).includes("FINAL-OUTPUT"),
         )!;
-        const followUp = mode === "edit" ? [{ message: "Edited user follow-up" }] : [];
-        // Exercise the same captured authority used by set_queue, not just a raw write.
-        await backend.withRuntimeLifecycleTransaction("queue proof", async (permit) => {
-          const authority = backend.captureQueuedModelTurnsAuthority(permit);
-          const next = await backend.replaceQueuedModelTurns(
-            { steering: [], followUp },
-            undefined,
-            permit,
-            authority,
-          );
-          backend.assertQueuedModelTurnsAuthority(next!, permit);
-        });
+        const user = (await backend.nativeMessageQueue()).followUp[0]!;
+        await backend.withRuntimeLifecycleTransaction("queue proof", (permit) =>
+          backend.withdrawNativeQueue(mode === "edit" ? user.id : undefined, permit),
+        );
         const after = (await f.harness.snapshot(InboxDoc, f.root.id, context))!.items;
         expect(after.find((item) => item.id === before.id)).toEqual(before);
         expect(
@@ -373,7 +365,7 @@ describe("native Durable background jobs", () => {
         });
         expect(backend.queuedMessages()).toEqual({
           steering: [],
-          followUp: followUp.map((item) => item.message),
+          followUp: [],
         });
         release.resolve();
         await delivery(f.harness, f.root);

@@ -102,11 +102,11 @@ struct ChatView: View {
 
     @State private var composerTextBeforeRecording: String?
     @State private var pendingAttachments: [PendingAttachment] = []
+    @State private var messageQueueError: String?
 #if DEBUG
     @State private var hasSeededE2EChatImageAttachment = false
 #endif
     @State private var busyStreamingBehavior: StreamingBehavior = .steer
-    @State private var messageQueueEditorState = MessageQueueEditorState(queue: .empty)
     @State private var isPreparingAttachments = false
     @State private var attachmentPreparationText: String?
 
@@ -451,28 +451,18 @@ struct ChatView: View {
 
     private var showsMessageQueue: Bool {
         !messageQueueState.steering.isEmpty || !messageQueueState.followUp.isEmpty
-    }
-
-    private var hasMessageQueueDraft: Bool {
-        messageQueueEditorState.isDraftMode || messageQueueEditorState.hasStashedDraft
+            || messageQueueError != nil
     }
 
     private var messageQueueSurfaceConfiguration: MessageQueueSurfaceConfiguration {
         MessageQueueSurfaceConfiguration(
             queue: messageQueueState,
-            busyStreamingBehavior: $busyStreamingBehavior,
-            editorState: $messageQueueEditorState,
-            onApply: { baseVersion, steering, followUp in
-                try await connection.setMessageQueue(
-                    baseVersion: baseVersion,
-                    steering: steering,
-                    followUp: followUp,
-                    sessionIdOverride: sessionId
-                )
+            onRemove: { itemId in
+                messageQueueError = nil
+                try await connection.removeQueuedMessage(itemId: itemId, sessionIdOverride: sessionId)
             },
-            onRefresh: {
-                try? await connection.requestMessageQueue(sessionIdOverride: sessionId)
-            }
+            onEditInComposer: { try await restoreQueuedMessagesToComposer() },
+            error: messageQueueError
         )
     }
 
@@ -1019,7 +1009,6 @@ struct ChatView: View {
                 showOutline = false
                 isFilePanelVisible = false
                 selectedFilePanelTab = ChatFileBrowserPanelTabStore.shared.tab(for: newId)
-                messageQueueEditorState = MessageQueueEditorState(queue: .empty)
                 showContextInspector = false
                 attachComposerDraftIfPossible()
             }
@@ -1123,13 +1112,12 @@ struct ChatView: View {
                         showsReviewCommentPill: showsReviewCommentPill,
                         showsNowPlayingPill: showsNowPlayingPill,
                         hasAboveEditorSurface: surface.hasVisibleContent(in: .aboveEditor),
-                        showsMessageQueue: showsMessageQueue,
-                        hasMessageQueueDraft: hasMessageQueueDraft
+                        showsMessageQueue: showsMessageQueue
                     ) {
                         ExtensionSurfacePanel(
                             surface: surface,
                             placement: .aboveEditor,
-                            messageQueue: (showsMessageQueue || hasMessageQueueDraft) ? messageQueueSurfaceConfiguration : nil,
+                            messageQueue: showsMessageQueue ? messageQueueSurfaceConfiguration : nil,
                             linkContext: extensionSurfaceLinkContext,
                             onOpenURL: openExtensionSurfaceURL,
                             onExpandedEntryChange: handleExtensionDrawerExpansion,
@@ -1601,38 +1589,34 @@ struct ChatView: View {
     }
 
     private func stopTurn() {
-        restoreQueuedMessagesToComposerBeforeStop()
-        actionHandler.stop(
-            connection: connection,
-            reducer: reducer,
-            sessionStore: sessionStore,
-            sessionManager: sessionManager,
-            sessionId: sessionId
-        )
+        Task { @MainActor in
+            await MessageQueueComposerRestore.stopAfterRestoring(
+                restore: { try await restoreQueuedMessagesToComposer() },
+                abort: {
+                    guard connection.isFocusedSession(sessionId) else { return }
+                    actionHandler.stop(
+                        connection: connection, reducer: reducer, sessionStore: sessionStore,
+                        sessionManager: sessionManager, sessionId: sessionId
+                    )
+                },
+                onError: { error in messageQueueError = error.localizedDescription }
+            )
+        }
     }
 
-    @discardableResult
-    private func restoreQueuedMessagesToComposerBeforeStop() -> Bool {
-        guard connection.isFocusedSession(sessionId),
-              let plan = MessageQueueComposerRestore.plan(
-                  queue: messageQueueState,
-                  currentText: composerDraftController.text,
-                  currentPendingAttachments: pendingAttachments
-              ) else {
-            return false
-        }
-
-        composerDraftController.replaceMessage(
-            text: plan.text,
-            pendingAttachments: plan.pendingAttachments
-        )
+    private func restoreQueuedMessagesToComposer() async throws {
+        guard connection.isFocusedSession(sessionId) else { return }
+        messageQueueError = nil
+        let withdrawn = try await connection.takeMessageQueue(sessionIdOverride: sessionId)
+        guard let plan = MessageQueueComposerRestore.plan(
+            queue: withdrawn,
+            currentText: composerDraftController.text,
+            currentPendingAttachments: pendingAttachments
+        ) else { return }
+        composerDraftController.replaceMessage(text: plan.text, pendingAttachments: plan.pendingAttachments)
         pendingAttachments = plan.pendingAttachments
         composerTextBeforeRecording = nil
-        messageQueueStore.apply(plan.clearedQueue, for: sessionId)
-        if !showComposer {
-            composerExternalFocusRequestID &+= 1
-        }
-        return true
+        if !showComposer { composerExternalFocusRequestID &+= 1 }
     }
 
     private func sendActiveReviewComment() {

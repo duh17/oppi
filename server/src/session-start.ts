@@ -15,7 +15,11 @@ import type { Storage } from "./storage.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import type { WorkspaceRuntime, WorkspaceSessionIdentity } from "./workspace-runtime.js";
 
-export interface SessionStartActiveSession extends RuntimeSessionStateScaffold<SessionMessageQueueStore> {
+export interface SessionStartActiveSession extends Omit<
+  RuntimeSessionStateScaffold<SessionMessageQueueStore>,
+  "messageQueue"
+> {
+  messageQueue?: SessionMessageQueueStore;
   sdkBackend: AgentBackend;
   workspaceId: string;
 }
@@ -143,6 +147,7 @@ export class SessionStartCoordinator {
           workspaceId: identity.workspaceId,
         };
 
+        if (sdkBackend.nativeMessageQueue) delete activeSession.messageQueue;
         this.deps.registerActiveSession(key, activeSession);
         this.deps.runtimeManager.markSessionReady(identity);
 

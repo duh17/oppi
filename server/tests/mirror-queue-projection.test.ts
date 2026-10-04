@@ -606,55 +606,6 @@ describe("MirrorQueueProjection", () => {
     });
   });
 
-  it("builds set_queue replacements from the current projection version", () => {
-    const projection = new MirrorQueueProjection(queue(4, ["existing"]));
-
-    const replacement = projection.queueFromDrafts(
-      4,
-      [{ id: "edited", message: "edited steer", createdAt: 12 }],
-      [{ id: "follow", message: "edited follow", createdAt: 13 }],
-    );
-    projection.replace(replacement);
-
-    expect(projection.snapshot()).toEqual({
-      version: 5,
-      steering: [{ id: "edited", message: "edited steer", createdAt: 12 }],
-      followUp: [{ id: "follow", message: "edited follow", createdAt: 13 }],
-    });
-  });
-
-  it("reaches MAX_SAFE_INTEGER once, then rejects stale and current retries without overflow", () => {
-    const maxVersion = Number.MAX_SAFE_INTEGER;
-    const projection = new MirrorQueueProjection(queue(maxVersion - 1, ["before max"]));
-
-    const atMax = projection.queueFromDrafts(
-      maxVersion - 1,
-      [{ id: "at-max", message: "at max", createdAt: 2 }],
-      [],
-    );
-    projection.replace(atMax);
-    expect(projection.snapshot()).toEqual({
-      version: maxVersion,
-      steering: [{ id: "at-max", message: "at max", createdAt: 2 }],
-      followUp: [],
-    });
-
-    expect(() =>
-      projection.queueFromDrafts(maxVersion - 1, [{ id: "stale", message: "stale" }], []),
-    ).toThrow(`Queue version mismatch: expected ${maxVersion}, got ${maxVersion - 1}`);
-
-    for (const id of ["exhausted", "exhausted-retry"]) {
-      expect(() => projection.queueFromDrafts(maxVersion, [{ id, message: id }], [])).toThrow(
-        `Queue version exhausted at ${maxVersion}; start a new session to reset the queue counter`,
-      );
-      expect(projection.snapshot()).toEqual({
-        version: maxVersion,
-        steering: [{ id: "at-max", message: "at max", createdAt: 2 }],
-        followUp: [],
-      });
-    }
-  });
-
   it.each([
     [
       "runtime reconciliation",

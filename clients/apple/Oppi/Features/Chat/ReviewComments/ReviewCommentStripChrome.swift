@@ -58,14 +58,12 @@ enum ReviewCommentStripChrome {
         showsReviewCommentPill: Bool,
         showsNowPlayingPill: Bool,
         hasAboveEditorSurface: Bool,
-        showsMessageQueue: Bool,
-        hasMessageQueueDraft: Bool
+        showsMessageQueue: Bool
     ) -> Bool {
         showsReviewCommentPill
             || showsNowPlayingPill
             || hasAboveEditorSurface
             || showsMessageQueue
-            || hasMessageQueueDraft
     }
 
     static func toggleComments(_ state: ExpansionState) -> ExpansionState {

@@ -285,7 +285,7 @@ struct MacChatSessionRuntimeAdapterTests {
             sessionId: "sess-1"
         ))
         #expect(adapter.handleCommandResult(
-            command: "set_queue",
+            command: "remove_queued_message",
             requestId: "queue-2",
             success: false,
             data: nil,

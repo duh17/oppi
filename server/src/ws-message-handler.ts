@@ -19,7 +19,6 @@ import { composeModelId } from "./session-state.js";
 import type {
   ChatAttachmentRef,
   ClientMessage,
-  MessageQueueDraftItem,
   ModelInfo,
   ServerMessage,
   Session,
@@ -31,13 +30,6 @@ interface TurnCommandMessage {
   message: string;
   attachments?: ChatAttachmentRef[];
   clientTurnId?: string;
-  requestId?: string;
-}
-
-interface SetQueueMessage {
-  baseVersion: number;
-  steering: MessageQueueDraftItem[];
-  followUp: MessageQueueDraftItem[];
   requestId?: string;
 }
 
@@ -146,8 +138,9 @@ export class WsMessageHandler {
         return;
       }
 
-      case "set_queue": {
-        await this.handleSetQueueCommand(session, msg, send, meta);
+      case "remove_queued_message":
+      case "take_queue": {
+        await this.handleQueueWithdrawalCommand(session, msg, send);
         return;
       }
 
@@ -508,62 +501,29 @@ export class WsMessageHandler {
     }
   }
 
-  private async handleSetQueueCommand(
+  private async handleQueueWithdrawalCommand(
     session: Session,
-    msg: SetQueueMessage,
+    msg: Extract<ClientMessage, { type: "remove_queued_message" | "take_queue" }>,
     send: (msg: ServerMessage) => void,
-    meta: WsCommandMeta,
   ): Promise<void> {
-    const startedAt = Date.now();
-    const requestId = msg.requestId;
-
-    log.debug("ws.queue_command.received", {
-      connId: meta.connId,
-      sessionId: session.id,
-      runtime: runtimeLogTag(session),
-      command: "set_queue",
-      requestId,
-      baseVersion: msg.baseVersion,
-      steeringCount: msg.steering.length,
-      followUpCount: msg.followUp.length,
-    });
-
     try {
-      const queue = await this.deps.sessions.setMessageQueue(session.id, {
-        baseVersion: msg.baseVersion,
-        steering: msg.steering,
-        followUp: msg.followUp,
-      });
-      if (requestId) {
-        send(runtimeCommandSuccess("set_queue", requestId, queue));
-      }
-      log.debug("ws.queue_command.completed", {
-        connId: meta.connId,
+      const result =
+        msg.type === "take_queue"
+          ? await this.deps.sessions.takeMessageQueue(session.id)
+          : await this.deps.sessions.removeQueuedMessage(session.id, msg.itemId);
+      if (msg.requestId) send(runtimeCommandSuccess(msg.type, msg.requestId, result));
+      // Take returns withdrawn items, never an authoritative queue snapshot.
+      const queue = await this.deps.sessions.getMessageQueue(session.id);
+      send({ type: "queue_state", queue });
+    } catch (error) {
+      log.warn("ws.queue_withdrawal.failed", {
         sessionId: session.id,
-        runtime: runtimeLogTag(session),
-        command: "set_queue",
-        requestId,
-        durationMs: Date.now() - startedAt,
-        queueVersion: queue.version,
-        steeringCount: queue.steering.length,
-        followUpCount: queue.followUp.length,
+        command: msg.type,
+        error: safeErrorMessage(error),
       });
-    } catch (err: unknown) {
-      const message = safeErrorMessage(err);
-      log.warn("ws.queue_command.failed", {
-        connId: meta.connId,
-        sessionId: session.id,
-        runtime: runtimeLogTag(session),
-        command: "set_queue",
-        requestId,
-        durationMs: Date.now() - startedAt,
-        error: message,
-      });
-      if (requestId) {
-        send(runtimeCommandFailure("set_queue", requestId, message));
-        return;
-      }
-      throw err;
+      if (msg.requestId)
+        send(runtimeCommandFailure(msg.type, msg.requestId, safeErrorMessage(error)));
+      else throw error;
     }
   }
 

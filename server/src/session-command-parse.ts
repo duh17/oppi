@@ -99,6 +99,9 @@ function validateKnownCommand(type: string, command: Record<string, unknown>): v
     case "follow_up":
       validateRequiredMessage(command);
       return;
+    case "remove_queued_message":
+      readRequiredString(command.itemId, "itemId");
+      return;
     case "set_model":
       validateSetModel(command);
       return;
@@ -124,7 +127,7 @@ function validateKnownCommand(type: string, command: Record<string, unknown>): v
     case "get_messages":
     case "get_session_stats":
     case "get_queue":
-    case "set_queue":
+    case "take_queue":
     case "cycle_model":
     case "cycle_thinking_level":
     case "reload":

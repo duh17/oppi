@@ -110,123 +110,72 @@ export default function (pi) {
   return { active, backend, broadcast, coordinator };
 }
 
-describe("SessionMessageQueueCoordinator with a real Pi session", () => {
-  it("commits a steering-to-follow-up move without reporting a version mismatch", async () => {
-    const { backend, broadcast, coordinator } = await makeRealPiHarness();
-
-    // Seed the busy queue the way the sessions layer does: Pi queues first,
-    // then Oppi records the same item in its authoritative queue.
-    await backend.session.steer("seed steer");
-    coordinator.enqueueQueuedMessage("queue-real-pi", "steer", "seed steer", undefined, "item-a");
-    const seeded = coordinator.getQueue("queue-real-pi");
-    expect(seeded.steering.map((item) => item.id)).toEqual(["item-a"]);
-    const item = seeded.steering[0];
-    if (!item) throw new Error("expected seeded item");
-
-    const moved = await coordinator.setQueue("queue-real-pi", {
-      baseVersion: seeded.version,
-      steering: [],
-      followUp: [{ id: item.id, message: item.message, createdAt: item.createdAt }],
-    });
-
-    expect(moved.version).toBe(seeded.version + 1);
-    expect(moved.steering).toEqual([]);
-    expect(moved.followUp.map((entry) => entry.id)).toEqual(["item-a"]);
-    expect(backend.session.getSteeringMessages()).toEqual([]);
-    expect(backend.session.getFollowUpMessages()).toEqual(["seed steer"]);
-    expect(coordinator.getQueue("queue-real-pi")).toEqual(moved);
-    const states = broadcast.mock.calls
-      .map(([, message]) => message)
-      .filter((message) => message.type === "queue_state");
-    expect(states.at(-1)).toMatchObject({ queue: { version: moved.version } });
+describe("native queue withdrawal with a real Pi session", () => {
+  it("removes one item by id and preserves both remaining queues", async () => {
+    const { backend, coordinator } = await makeRealPiHarness();
+    await backend.session.steer("duplicate");
+    await backend.session.steer("duplicate");
+    await backend.session.followUp("follow");
+    coordinator.enqueueQueuedMessage("queue-real-pi", "steer", "duplicate", undefined, "a");
+    coordinator.enqueueQueuedMessage("queue-real-pi", "steer", "duplicate", undefined, "b");
+    coordinator.enqueueQueuedMessage("queue-real-pi", "follow_up", "follow", undefined, "c");
+    const queue = await coordinator.removeQueuedMessage("queue-real-pi", "a");
+    expect(queue.steering.map((item) => item.id)).toEqual(["b"]);
+    expect(queue.followUp.map((item) => item.id)).toEqual(["c"]);
+    expect(backend.session.getSteeringMessages()).toEqual(["duplicate"]);
+    expect(backend.session.getFollowUpMessages()).toEqual(["follow"]);
+    expect(await coordinator.removeQueuedMessage("queue-real-pi", "already-delivered")).toEqual(
+      queue,
+    );
   });
 
-  it("still rejects and reconciles when Pi starts a queued message during the replacement", async () => {
+  it("takes all queued items with attachments and clears native Pi", async () => {
     const { backend, coordinator } = await makeRealPiHarness();
-    const piSession = backend.session;
-    await piSession.steer("A");
-    await piSession.steer("B");
-    coordinator.enqueueQueuedMessage("queue-real-pi", "steer", "A", undefined, "item-a");
-    coordinator.enqueueQueuedMessage("queue-real-pi", "steer", "B", undefined, "item-b");
-    const seeded = coordinator.getQueue("queue-real-pi");
-
-    // Pi starts "A" as soon as the replacement has replayed both messages.
-    let started = false;
-    const unsubscribe = piSession.subscribe((event) => {
-      if (event.type !== "queue_update" || event.steering.length !== 2 || started) return;
-      started = true;
-      void (
-        piSession as unknown as {
-          _handleAgentEvent: (event: unknown) => Promise<void>;
-        }
-      )._handleAgentEvent({
-        type: "message_start",
-        message: { role: "user", content: "A", timestamp: 1 },
-      });
-    });
-    cleanups.push(unsubscribe);
-
-    await expect(
-      coordinator.setQueue("queue-real-pi", {
-        baseVersion: seeded.version,
-        steering: [
-          { id: "item-b", message: "B" },
-          { id: "item-a", message: "A" },
-        ],
-        followUp: [],
-      }),
-    ).rejects.toThrow(
-      `Queue version mismatch: expected ${seeded.version + 1}, got ${seeded.version}`,
-    );
-
-    expect(piSession.getSteeringMessages()).toEqual(["B"]);
-    expect(coordinator.getQueue("queue-real-pi")).toMatchObject({
-      version: seeded.version + 1,
-      steering: [{ id: "item-b", message: "B" }],
+    const attachment = {
+      type: "attachment" as const,
+      id: "file",
+      source: "workspace" as const,
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 4,
+      workspacePath: "notes.txt",
+    };
+    await backend.session.steer("steer");
+    await backend.session.followUp("follow");
+    coordinator.enqueueQueuedMessage("queue-real-pi", "steer", "steer", [attachment], "a");
+    coordinator.enqueueQueuedMessage("queue-real-pi", "follow_up", "follow", undefined, "b");
+    const withdrawn = await coordinator.takeQueue("queue-real-pi");
+    expect(withdrawn.steering).toMatchObject([{ id: "a", attachments: [attachment] }]);
+    expect(withdrawn.followUp.map((item) => item.id)).toEqual(["b"]);
+    expect(backend.session.getSteeringMessages()).toEqual([]);
+    expect(backend.session.getFollowUpMessages()).toEqual([]);
+    expect(coordinator.getQueue("queue-real-pi")).toMatchObject({ steering: [], followUp: [] });
+    expect(await coordinator.takeQueue("queue-real-pi")).toMatchObject({
+      steering: [],
       followUp: [],
     });
   });
 
-  it("reconciles instead of rolling back when a replay is refused after Pi started a sibling", async () => {
+  it("does not resurrect a remainder consumed by Pi during remove replay", async () => {
     const { backend, coordinator } = await makeRealPiHarness();
-    const piSession = backend.session;
-    await piSession.steer("A");
-    coordinator.enqueueQueuedMessage("queue-real-pi", "steer", "A", undefined, "item-a");
-    const seeded = coordinator.getQueue("queue-real-pi");
-
-    // The replacement queues "/boom" in steering (Pi refuses it) and "A" in
-    // follow-up. Pi starts "A" the moment it lands, before the batch settles.
-    let started = false;
-    const unsubscribe = piSession.subscribe((event) => {
-      if (event.type !== "queue_update" || event.followUp.length !== 1 || started) return;
-      started = true;
-      void (
-        piSession as unknown as {
-          _handleAgentEvent: (event: unknown) => Promise<void>;
-        }
-      )._handleAgentEvent({
-        type: "message_start",
-        message: { role: "user", content: "A", timestamp: 1 },
-      });
+    await backend.session.steer("remove");
+    await backend.session.followUp("delivered during replay");
+    coordinator.enqueueQueuedMessage("queue-real-pi", "steer", "remove", undefined, "a");
+    coordinator.enqueueQueuedMessage(
+      "queue-real-pi",
+      "follow_up",
+      "delivered during replay",
+      undefined,
+      "b",
+    );
+    const original = backend.session.followUp.bind(backend.session);
+    vi.spyOn(backend.session, "followUp").mockImplementation(async (...args) => {
+      await original(...args);
+      backend.session.clearQueue();
     });
-    cleanups.push(unsubscribe);
-
-    const error = await coordinator
-      .setQueue("queue-real-pi", {
-        baseVersion: seeded.version,
-        steering: [{ id: "item-boom", message: "/boom" }],
-        followUp: [{ id: "item-a", message: "A" }],
-      })
-      .catch((caught: unknown) => caught);
-
-    expect(started).toBe(true);
-    // Rollback would have put the consumed "A" back and sent it twice.
-    expect(piSession.getSteeringMessages()).toEqual([]);
-    expect(piSession.getFollowUpMessages()).toEqual([]);
-    expect(String(error)).toMatch(/Queue version mismatch/);
-    expect(coordinator.getQueue("queue-real-pi").version).toBeGreaterThan(seeded.version);
-    expect(coordinator.getQueue("queue-real-pi").steering.map((item) => item.message)).not.toEqual([
-      "A",
-    ]);
+    expect(await coordinator.removeQueuedMessage("queue-real-pi", "a")).toMatchObject({
+      steering: [],
+      followUp: [],
+    });
   });
 });

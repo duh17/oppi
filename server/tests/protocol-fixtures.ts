@@ -442,6 +442,41 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     success: true,
     data: { model: { provider: "anthropic", id: "claude-sonnet-4-0" } },
   },
+  command_result_remove_queued_message: {
+    type: "command_result",
+    command: "remove_queued_message",
+    requestId: "req-remove",
+    success: true,
+    data: { version: 3, steering: [], followUp: [] },
+  },
+  command_result_take_queue: {
+    type: "command_result",
+    command: "take_queue",
+    requestId: "req-take",
+    success: true,
+    data: {
+      version: 4,
+      steering: [
+        {
+          id: "submission-1",
+          message: "edit me",
+          createdAt: 1,
+          attachments: [
+            {
+              type: "attachment",
+              id: "file-1",
+              source: "workspace",
+              name: "notes.txt",
+              mimeType: "text/plain",
+              sizeBytes: 4,
+              workspacePath: "notes.txt",
+            },
+          ],
+        },
+      ],
+      followUp: [],
+    },
+  },
   command_result_error: {
     type: "command_result",
     command: "set_model",
@@ -727,6 +762,8 @@ const SERVER_MESSAGE_ORDER = [
   "turn_ack",
   "command_result_success",
   "command_result_error",
+  "command_result_remove_queued_message",
+  "command_result_take_queue",
   "compaction_start",
   "compaction_end",
   "compaction_end_error",

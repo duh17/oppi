@@ -218,6 +218,9 @@ extension ServerConnection {
     // MARK: - Connected / State
 
     func handleConnected(_ session: Session) {
+        // Display versions are scoped to the backend instance. A fresh
+        // stream bootstrap may follow a server/backend restart at version 1.
+        messageQueueStore.clear(sessionId: session.id)
         sessionStore.upsert(session)
         emitSessionUsageMetricsIfNeeded(session)
         syncThinkingLevel(from: session)
@@ -379,7 +382,7 @@ extension ServerConnection {
             return true
         }
 
-        if command == "get_queue" || command == "set_queue" {
+        if command == "get_queue" || command == "remove_queued_message" {
             let effects = ServerMessageEffects.queueEffectsForCommandResult(
                 command: command,
                 success: success,

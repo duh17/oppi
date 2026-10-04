@@ -1,3 +1,4 @@
+import type { MessageQueueItem, MessageQueueKind } from "./types.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import type { ExtensionUIProtocolRequest } from "./extension-ui-contract.js";
@@ -63,6 +64,12 @@ export interface ExtensionAudioStreamEvent extends AudioStreamEvent {
 }
 
 export type SessionBackendEvent =
+  | {
+      type: "queue_item_started";
+      kind: MessageQueueKind;
+      item: MessageQueueItem;
+      queueVersion: number;
+    }
   | { type: "notice"; id: string; message: string }
   | AgentSessionEvent
   | ExtensionUIRequestEvent

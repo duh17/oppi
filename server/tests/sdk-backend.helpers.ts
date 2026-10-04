@@ -15,7 +15,6 @@ export function makeSdkBackendStub(): {
 
   const steeringMessages: string[] = [];
   const followUpMessages: string[] = [];
-  let queueAuthorityGeneration = 0;
 
   const prompt = vi.fn(
     async (
@@ -28,10 +27,8 @@ export function makeSdkBackendStub(): {
     ) => {
       if (opts?.streamingBehavior === "steer") {
         steeringMessages.push(text);
-        queueAuthorityGeneration += 1;
       } else if (opts?.streamingBehavior === "followUp") {
         followUpMessages.push(text);
-        queueAuthorityGeneration += 1;
       }
       opts?.onPreflightAccepted?.();
     },
@@ -55,17 +52,14 @@ export function makeSdkBackendStub(): {
     steer: vi.fn(async (text: string, images?: unknown[]) => {
       void images;
       steeringMessages.push(text);
-      queueAuthorityGeneration += 1;
     }),
     followUp: vi.fn(async (text: string, images?: unknown[]) => {
       void images;
       followUpMessages.push(text);
-      queueAuthorityGeneration += 1;
     }),
     clearQueue: vi.fn(() => {
       steeringMessages.length = 0;
       followUpMessages.length = 0;
-      queueAuthorityGeneration += 1;
       return { steering: [], followUp: [] };
     }),
     getSteeringMessages: vi.fn(() => [...steeringMessages]),
@@ -90,14 +84,6 @@ export function makeSdkBackendStub(): {
         timeoutMs: 6_000,
       };
     }),
-    captureQueuedModelTurnsAuthority: vi.fn(() => ({
-      generation: queueAuthorityGeneration,
-    })),
-    assertQueuedModelTurnsAuthority: vi.fn((authority: { generation: number }) => {
-      if (authority.generation !== queueAuthorityGeneration) {
-        throw new Error("Pi queue authority changed");
-      }
-    }),
     clearQueuedModelTurns: vi.fn(() => session.clearQueue()),
     replaceQueuedModelTurns: vi.fn(
       async (batch: {
@@ -109,7 +95,6 @@ export function makeSdkBackendStub(): {
         for (const item of batch.steering) await session.steer(item.message, item.images);
         for (const item of batch.followUp) await session.followUp(item.message, item.images);
         if (batch.prompt) await prompt(batch.prompt.message, { images: batch.prompt.images });
-        return { generation: queueAuthorityGeneration };
       },
     ),
     setModel: vi.fn(async () => ({ success: true })),

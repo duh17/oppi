@@ -2,22 +2,17 @@ import type { PiMessage } from "./pi-events.js";
 import type { AgentBackend } from "./agent-backend.js";
 import {
   QUEUE_RECONCILIATION_REQUIRED_ERROR,
-  QueuedModelTurnsAuthorityError,
   QueuedModelTurnsReconciliationError,
   type QueuedModelTurnBatch,
-  type QueuedModelTurnsAuthority,
 } from "./sdk-backend.js";
-import { materializeChatAttachments } from "./chat-attachments.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { UploadStoreConfigResolved } from "./uploads/local-upload-store.js";
 import {
-  assertQueueBaseVersion,
   cloneQueueItem,
   cloneQueueState,
   dequeueQueueItemByText,
   extractQueuedUserText,
-  normalizeDraftItems,
   normalizeQueueId,
   normalizeQueueMessage,
   nextQueueVersion,
@@ -30,7 +25,6 @@ import {
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 import type {
   ChatAttachmentRef,
-  MessageQueueDraftItem,
   MessageQueueItem,
   MessageQueueKind,
   MessageQueueState,
@@ -74,13 +68,6 @@ export interface SessionMessageQueueCoordinatorDeps {
 }
 
 export class SessionMessageQueueCoordinator {
-  // Native inbox publication can beat prompt admission's continuation. Keep
-  // rich pending rows available to reconciliation, without publishing a chip
-  // until the inbox actually contains it (or duplicating an existing replay).
-  private readonly pendingAdmissions = new WeakMap<
-    SessionMessageQueueState,
-    Map<string, { kind: MessageQueueKind; item: QueueStoreItem }>
-  >();
   private readonly abortQueueSnapshots = new WeakMap<
     SessionAbortQueueClear,
     {
@@ -117,10 +104,11 @@ export class SessionMessageQueueCoordinator {
   assertModelTurnAdmissionAllowed(key: string): void {
     const active = this.deps.getActiveSession(key);
     if (!active) throw new Error(`Session not active: ${key}`);
+    if (active.sdkBackend.nativeMessageQueue) return;
     const queue = this.ensureQueueStore(active);
     this.assertQueueReconciled(active, queue);
     // Once exhausted, a turn could consume or enqueue intent that cannot be
-    // assigned a distinct CAS version. Fail before Pi accepts the turn.
+    // assigned a distinct display version. Fail before Pi accepts the turn.
     nextQueueVersion(queue.version);
   }
 
@@ -211,21 +199,8 @@ export class SessionMessageQueueCoordinator {
       };
     }
 
-    const pending = [...(this.pendingAdmissions.get(active)?.values() ?? [])];
-    const basis = (kind: MessageQueueKind, items: QueueStoreItem[]) => [
-      ...items,
-      ...pending
-        .filter((entry) => entry.kind === kind && !items.some((item) => item.id === entry.item.id))
-        .map((entry) => entry.item),
-    ];
-    const nextSteering = this.reconcileItemsWithSdkTextQueue(
-      basis("steer", queue.steering),
-      sdkSteering,
-    );
-    const nextFollowUp = this.reconcileItemsWithSdkTextQueue(
-      basis("follow_up", queue.followUp),
-      sdkFollowUp,
-    );
+    const nextSteering = this.reconcileItemsWithSdkTextQueue(queue.steering, sdkSteering);
+    const nextFollowUp = this.reconcileItemsWithSdkTextQueue(queue.followUp, sdkFollowUp);
 
     const removedSteering = this.removedItemsByID(queue.steering, nextSteering);
     const removedFollowUp = this.removedItemsByID(queue.followUp, nextFollowUp);
@@ -279,7 +254,7 @@ export class SessionMessageQueueCoordinator {
     const active = this.deps.getActiveSession(key);
     if (!active) return undefined;
     // Durable abort owns inbox withdrawal in the same operation as cancellation.
-    // Queue edits go through replaceQueuedModelTurns, not this abort clear.
+    // Individual withdrawals use the native inbox operation instead.
     if (active.sdkBackend.abortClearsQueuedModelTurns) return undefined;
     const queue = this.ensureQueueStore(active);
     this.assertQueueReconciled(active, queue);
@@ -345,8 +320,8 @@ export class SessionMessageQueueCoordinator {
     }
 
     // The last acknowledged Oppi intent remains authoritative even if Pi
-    // cannot replay it. Reconciliation then blocks reads until setQueue retries
-    // from this preserved version instead of silently claiming an empty queue.
+    // cannot replay it. Reconciliation then blocks reads rather than silently
+    // claiming an empty queue.
     queue.reconciliationRequired = reconciliationRequired;
     queue.steering = snapshot.steering;
     queue.followUp = snapshot.followUp;
@@ -357,13 +332,27 @@ export class SessionMessageQueueCoordinator {
   /** Native inbox changes (including abort) are authoritative, even while busy. */
   refreshQueuedMessages(key: string): void {
     const active = this.deps.getActiveSession(key);
-    if (!active || active.sdkBackend.defersNativeQueueRefresh) return;
+    if (!active) return;
+    if (active.sdkBackend.nativeMessageQueue) {
+      void active.sdkBackend
+        .nativeMessageQueue()
+        .then((queue) => {
+          if (this.deps.getActiveSession(key) === active)
+            this.deps.broadcast(key, queueStateMessage(queue));
+        })
+        .catch((error: unknown) =>
+          log.error("session_queue.native_refresh.failed", { error: safeErrorMessage(error) }),
+        );
+      return;
+    }
+    if (active.sdkBackend.isRuntimeLifecycleTransactionExclusive) return;
     this.broadcastQueueState(key, this.syncFromSdk(active));
   }
 
-  getQueue(key: string): MessageQueueState {
+  getQueue(key: string): MessageQueueState | Promise<MessageQueueState> {
     const active = this.deps.getActiveSession(key);
     if (!active) throw new Error(`Session not active: ${key}`);
+    if (active.sdkBackend.nativeMessageQueue) return active.sdkBackend.nativeMessageQueue();
     const queue = this.ensureQueueStore(active);
     this.assertQueueReconciled(active, queue);
     // SDK clear/replay is invisible to readers until the Oppi queue commits.
@@ -371,41 +360,6 @@ export class SessionMessageQueueCoordinator {
       return cloneQueueState(queue);
     }
     return cloneQueueState(this.syncFromSdk(active));
-  }
-
-  /** Reserve rich metadata before native submission; settle only after admission. */
-  reserveQueuedMessage(
-    key: string,
-    kind: MessageQueueKind,
-    message: string,
-    attachments?: ChatAttachmentRef[],
-    idHint?: string,
-    sdkMessage?: string,
-    sdkImages?: QueueImageContent[],
-  ): (accepted: boolean) => void {
-    const active = this.deps.getActiveSession(key);
-    if (!active) return () => {};
-    const queue = this.ensureQueueStore(active);
-    const item = this.makeQueuedItem(message, attachments, idHint, sdkMessage, sdkImages);
-    if ([...queue.steering, ...queue.followUp].some((existing) => existing.id === item.id))
-      return () => {};
-    const pending = this.pendingAdmissions.get(active) ?? new Map();
-    this.pendingAdmissions.set(active, pending);
-    pending.set(item.id, { kind, item });
-    let settled = false;
-    return (accepted) => {
-      if (settled) return;
-      settled = true;
-      // Reconcile while the reservation still supplies metadata, even if the
-      // watch callback has not yet arrived or another inbox event raced submit.
-      if (accepted && this.deps.getActiveSession(key) === active) this.syncFromSdk(active);
-      pending.delete(item.id);
-      if (!accepted) {
-        queue.steering = queue.steering.filter((entry) => entry.id !== item.id);
-        queue.followUp = queue.followUp.filter((entry) => entry.id !== item.id);
-      }
-      if (this.deps.getActiveSession(key) === active) this.refreshQueuedMessages(key);
-    };
   }
 
   private makeQueuedItem(
@@ -453,46 +407,14 @@ export class SessionMessageQueueCoordinator {
     this.broadcastQueueState(key, queue);
   }
 
-  private async materializeQueueItemForSdk(
-    active: SessionMessageQueueState,
-    item: MessageQueueItem,
-  ): Promise<QueueStoreItem> {
-    if (!item.attachments?.length) {
-      return {
-        ...cloneQueueItem(item),
-        sdkMessage: item.message,
-      };
-    }
-
-    const workspaceRoot = this.deps.resolveWorkspaceRoot?.(active.session);
-    if (!workspaceRoot) {
-      throw new Error("Attachments require a workspace-backed session");
-    }
-
-    const materialized = await materializeChatAttachments({
-      workspaceRoot,
-      workspaceId: active.session.workspaceId,
-      sessionId: active.session.id,
-      turnId: item.id,
-      message: item.message,
-      attachments: item.attachments,
-      maxTurnBytes: this.deps.maxTurnAttachmentBytes,
-      uploadStore: this.deps.uploadStoreConfig,
-    });
-
-    const materializedImages = queueImagesFromPromptImages(materialized.imageInputs) ?? [];
-
-    return {
-      ...cloneQueueItem(item),
-      message: item.message,
-      sdkMessage: materialized.message,
-      sdkImages: materializedImages.length > 0 ? materializedImages : undefined,
-    };
-  }
-
   markQueuedMessageStarted(key: string, message: PiMessage): void {
     const active = this.deps.getActiveSession(key);
-    if (!active || active.sdkBackend.isRuntimeLifecycleTransactionExclusive) return;
+    if (
+      !active ||
+      active.sdkBackend.nativeMessageQueue ||
+      active.sdkBackend.isRuntimeLifecycleTransactionExclusive
+    )
+      return;
 
     const queue = this.ensureQueueStore(active);
     if (queue.reconciliationRequired || active.sdkBackend.isQueueReconciliationRequired) return;
@@ -566,10 +488,9 @@ export class SessionMessageQueueCoordinator {
     batch: QueuedModelTurnBatch,
     rollback: QueuedModelTurnBatch,
     permit: SessionRuntimeTransactionPermit,
-    authority?: QueuedModelTurnsAuthority,
-  ): Promise<QueuedModelTurnsAuthority | undefined> {
+  ): Promise<void> {
     try {
-      return await active.sdkBackend.replaceQueuedModelTurns(batch, rollback, permit, authority);
+      return await active.sdkBackend.replaceQueuedModelTurns(batch, rollback, permit);
     } catch (error) {
       if (error instanceof QueuedModelTurnsReconciliationError) {
         queue.reconciliationRequired = true;
@@ -580,52 +501,6 @@ export class SessionMessageQueueCoordinator {
       }
       throw error;
     }
-  }
-
-  private rejectChangedQueueAuthority(
-    key: string,
-    active: SessionMessageQueueState,
-    queue: SessionMessageQueueStore,
-    baseVersion: number,
-    error: QueuedModelTurnsAuthorityError,
-    replayedSteering: QueueStoreItem[],
-    replayedFollowUp: QueueStoreItem[],
-  ): never {
-    const basisSteering = error.phase === "before_replay" ? queue.steering : replayedSteering;
-    const basisFollowUp = error.phase === "before_replay" ? queue.followUp : replayedFollowUp;
-    const queued = active.sdkBackend.queuedMessages();
-    const nextSteering = this.reconcileItemsWithSdkTextQueue(basisSteering, queued.steering);
-    const nextFollowUp = this.reconcileItemsWithSdkTextQueue(basisFollowUp, queued.followUp);
-    const removedSteering = this.removedItemsByID(basisSteering, nextSteering);
-    const removedFollowUp = this.removedItemsByID(basisFollowUp, nextFollowUp);
-    const version = nextQueueVersion(queue.version);
-
-    queue.reconciliationRequired = false;
-    queue.steering = nextSteering;
-    queue.followUp = nextFollowUp;
-    queue.version = version;
-
-    for (const item of removedSteering) {
-      this.deps.broadcast(
-        key,
-        queueItemStartedMessage({ kind: "steer", item, queueVersion: queue.version }),
-      );
-    }
-    for (const item of removedFollowUp) {
-      this.deps.broadcast(
-        key,
-        queueItemStartedMessage({ kind: "follow_up", item, queueVersion: queue.version }),
-      );
-    }
-    this.broadcastQueueState(key, queue);
-
-    log.warn("session_queue.authority_changed", {
-      sessionId: active.session.id,
-      phase: error.phase,
-      baseVersion,
-      authoritativeVersion: queue.version,
-    });
-    throw new Error(`Queue version mismatch: expected ${queue.version}, got ${baseVersion}`);
   }
 
   async flushIdleQueuedMessages(key: string): Promise<boolean> {
@@ -690,98 +565,63 @@ export class SessionMessageQueueCoordinator {
     return true;
   }
 
-  async setQueue(
-    key: string,
-    payload: {
-      baseVersion: number;
-      steering: MessageQueueDraftItem[];
-      followUp: MessageQueueDraftItem[];
-    },
-  ): Promise<MessageQueueState> {
+  removeQueuedMessage(key: string, itemId: string): Promise<MessageQueueState> {
+    return this.withdrawQueue(key, itemId);
+  }
+
+  takeQueue(key: string): Promise<MessageQueueState> {
+    return this.withdrawQueue(key);
+  }
+
+  private async withdrawQueue(key: string, itemId?: string): Promise<MessageQueueState> {
     const active = this.deps.getActiveSession(key);
     if (!active) throw new Error(`Session not active: ${key}`);
-    return active.sdkBackend.withRuntimeLifecycleTransaction(
-      "queue replacement",
-      async (permit) => {
-        const current = this.deps.getActiveSession(key);
-        if (current !== active) throw new Error(`Session not active: ${key}`);
-
-        // CAS validation, attachment materialization, SDK replay, Oppi commit, and
-        // broadcast are one exclusive transaction. A same-base waiter validates
-        // only after the preceding commit and deterministically becomes stale.
-        const storedQueue = this.ensureQueueStore(active);
-        const queue =
-          storedQueue.reconciliationRequired || active.sdkBackend.isQueueReconciliationRequired
-            ? storedQueue
-            : this.syncFromSdk(active);
-        assertQueueBaseVersion(queue, payload.baseVersion);
-        const authority = active.sdkBackend.captureQueuedModelTurnsAuthority(permit);
-        const steeringItems = normalizeDraftItems(payload.steering);
-        const followUpItems = normalizeDraftItems(payload.followUp);
-        const hasNextItems = steeringItems.length > 0 || followUpItems.length > 0;
-        const hasExistingItems = queue.steering.length > 0 || queue.followUp.length > 0;
-        const shouldFlushAfterSave =
-          !active.sdkBackend.isStreaming && hasNextItems && hasExistingItems;
-        const replacementVersion = nextQueueVersion(queue.version);
-        if (shouldFlushAfterSave) {
-          // Reserve the automatic flush version before replaying anything into Pi.
-          nextQueueVersion(replacementVersion);
-        }
-
-        if (!active.sdkBackend.isStreaming && hasNextItems && !hasExistingItems) {
-          throw new Error("Message queue can only contain items while a turn is streaming");
-        }
-
-        const sdkSteeringItems = await Promise.all(
-          steeringItems.map((item) => this.materializeQueueItemForSdk(active, item)),
-        );
-        const sdkFollowUpItems = await Promise.all(
-          followUpItems.map((item) => this.materializeQueueItemForSdk(active, item)),
-        );
-        try {
-          const replayAuthority = await this.replaceQueuedModelTurns(
-            active,
-            queue,
-            {
-              steering: this.queueBatchItems(sdkSteeringItems),
-              followUp: this.queueBatchItems(sdkFollowUpItems),
-            },
-            this.queueBatch(queue),
-            permit,
-            authority,
-          );
-          if (!replayAuthority) {
-            throw new Error("Queue replacement completed without an authority token");
-          }
-          // No await is allowed between this final check and the Oppi commit.
-          active.sdkBackend.assertQueuedModelTurnsAuthority(replayAuthority, permit);
-        } catch (error) {
-          if (error instanceof QueuedModelTurnsAuthorityError) {
-            this.rejectChangedQueueAuthority(
-              key,
-              active,
-              queue,
-              payload.baseVersion,
-              error,
-              sdkSteeringItems,
-              sdkFollowUpItems,
-            );
-          }
-          throw error;
-        }
-
-        queue.reconciliationRequired = false;
-        queue.steering = sdkSteeringItems;
-        queue.followUp = sdkFollowUpItems;
-        queue.version = replacementVersion;
-        this.broadcastQueueState(key, queue);
-
-        if (shouldFlushAfterSave && !active.sdkBackend.retainsIdleQueueUntilAdmission) {
-          await this.flushIdleQueuedMessagesInTransaction(key, active, permit);
-        }
-        return cloneQueueState(queue);
-      },
-    );
+    return active.sdkBackend.withRuntimeLifecycleTransaction("queue withdrawal", async (permit) => {
+      if (this.deps.getActiveSession(key) !== active) throw new Error(`Session not active: ${key}`);
+      if (active.sdkBackend.withdrawNativeQueue) {
+        const withdrawn = await active.sdkBackend.withdrawNativeQueue(itemId, permit);
+        const current = await active.sdkBackend.nativeMessageQueue!();
+        this.deps.broadcast(key, queueStateMessage(current));
+        return itemId === undefined ? withdrawn : current;
+      }
+      this.assertQueueReconciled(active, this.ensureQueueStore(active));
+      const queue = this.syncFromSdk(active);
+      const selected = (items: QueueStoreItem[]) =>
+        items.filter((item) => itemId === undefined || item.id === itemId);
+      const withdrawn: MessageQueueState = {
+        version: queue.version,
+        steering: [],
+        followUp: [],
+      };
+      // Snapshot and clear are adjacent synchronous operations. The lifecycle
+      // transaction excludes Oppi admissions, while native Pi remains the
+      // authority for anything consumed during replay of the remaining items.
+      const version = nextQueueVersion(queue.version);
+      const remaining = (items: QueueStoreItem[]) =>
+        items.filter((item) => itemId !== undefined && item.id !== itemId);
+      const steering = remaining(queue.steering);
+      const followUp = remaining(queue.followUp);
+      withdrawn.steering = selected(queue.steering).map(cloneQueueItem);
+      withdrawn.followUp = selected(queue.followUp).map(cloneQueueItem);
+      if (!withdrawn.steering.length && !withdrawn.followUp.length)
+        return itemId === undefined ? withdrawn : cloneQueueState(queue);
+      await this.replaceQueuedModelTurns(
+        active,
+        queue,
+        {
+          steering: this.queueBatchItems(steering),
+          followUp: this.queueBatchItems(followUp),
+        },
+        this.queueBatch(queue),
+        permit,
+      );
+      queue.steering = steering;
+      queue.followUp = followUp;
+      queue.version = version;
+      this.broadcastQueueState(key, this.syncFromSdk(active));
+      withdrawn.version = queue.version;
+      return itemId === undefined ? withdrawn : cloneQueueState(queue);
+    });
   }
 
   private queueBatchItems(items: QueueStoreItem[]): Array<{

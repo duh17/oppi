@@ -145,8 +145,11 @@ export class SessionRuntimes implements AgentRuntimeTransport {
   getMessageQueue: AgentRuntimeTransport["getMessageQueue"] = (sessionId) =>
     this.runtimeFor(sessionId).getMessageQueue(sessionId);
 
-  setMessageQueue: AgentRuntimeTransport["setMessageQueue"] = (sessionId, payload) =>
-    this.runtimeFor(sessionId).setMessageQueue(sessionId, payload);
+  removeQueuedMessage: AgentRuntimeTransport["removeQueuedMessage"] = (sessionId, itemId) =>
+    this.runtimeFor(sessionId).removeQueuedMessage(sessionId, itemId);
+
+  takeMessageQueue: AgentRuntimeTransport["takeMessageQueue"] = (sessionId) =>
+    this.runtimeFor(sessionId).takeMessageQueue(sessionId);
 
   sendAbort: AgentRuntimeTransport["sendAbort"] = (sessionId) =>
     this.runtimeFor(sessionId).sendAbort(sessionId);

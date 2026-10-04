@@ -16,6 +16,21 @@ struct ServerConnectionRoutingTests {
         #expect(conn.sessionStore.sessions[0].status == .ready)
     }
 
+    @Test func reconnectAcceptsQueueVersionFromRestartedBackend() {
+        let (conn, pipe) = makeTestConnection()
+        conn.messageQueueStore.apply(
+            MessageQueueState(version: 9, steering: [MessageQueueItem(id: "old", message: "old", createdAt: 1)], followUp: []),
+            for: "s1"
+        )
+        pipe.handle(.connected(session: makeTestSession()), sessionId: "s1")
+        pipe.handle(
+            .queueState(queue: MessageQueueState(version: 1, steering: [MessageQueueItem(id: "new", message: "new", createdAt: 2)], followUp: [])),
+            sessionId: "s1"
+        )
+        #expect(conn.messageQueueStore.queue(for: "s1").version == 1)
+        #expect(conn.messageQueueStore.queue(for: "s1").steering.map(\.id) == ["new"])
+    }
+
     @Test func routeState() {
         let (conn, pipe) = makeTestConnection()
         let session = makeTestSession(status: .busy)
@@ -496,7 +511,7 @@ struct ServerConnectionRoutingTests {
 
         pipe.handle(
             .commandResult(
-                command: "set_queue",
+                command: "remove_queued_message",
                 requestId: "req-fail",
                 success: false,
                 data: nil,
@@ -510,7 +525,7 @@ struct ServerConnectionRoutingTests {
             if case .error = $0 { return true }
             return false
         }
-        #expect(errors.isEmpty, "Failed set_queue command_result should not leak to timeline")
+        #expect(errors.isEmpty, "Failed remove_queued_message command_result should not leak to timeline")
     }
 
     @Test func routeStopRequestedMarksStopping() {

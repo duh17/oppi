@@ -17,7 +17,8 @@ interface HandlerHarness {
     sendSteer: ReturnType<typeof vi.fn>;
     sendFollowUp: ReturnType<typeof vi.fn>;
     getMessageQueue: ReturnType<typeof vi.fn>;
-    setMessageQueue: ReturnType<typeof vi.fn>;
+    removeQueuedMessage: ReturnType<typeof vi.fn>;
+    takeMessageQueue: ReturnType<typeof vi.fn>;
     sendAbort: ReturnType<typeof vi.fn>;
     stopSession: ReturnType<typeof vi.fn>;
     getActiveSession: ReturnType<typeof vi.fn>;
@@ -54,7 +55,8 @@ function makeHarness(): HandlerHarness {
     sendSteer: vi.fn(async () => {}),
     sendFollowUp: vi.fn(async () => {}),
     getMessageQueue: vi.fn(() => ({ version: 0, steering: [], followUp: [] })),
-    setMessageQueue: vi.fn(async () => ({ version: 0, steering: [], followUp: [] })),
+    removeQueuedMessage: vi.fn(async () => ({ version: 0, steering: [], followUp: [] })),
+    takeMessageQueue: vi.fn(async () => ({ version: 0, steering: [], followUp: [] })),
     sendAbort: vi.fn(async () => {}),
     stopSession: vi.fn(async () => {}),
     getActiveSession: vi.fn(() => undefined as Session | undefined),
@@ -211,38 +213,33 @@ describe("WsMessageHandler", () => {
     ]);
   });
 
-  it("forwards set_queue and emits command_result", async () => {
+  it("forwards remove by id and returns the current queue", async () => {
     const harness = makeHarness();
-    const queue = {
-      version: 4,
-      steering: [{ id: "q1", message: "steer", createdAt: 1 }],
+    await dispatch(harness, { type: "remove_queued_message", itemId: "q1", requestId: "remove" });
+    expect(harness.sessions.removeQueuedMessage).toHaveBeenCalledWith("s1", "q1");
+    expect(harness.sent).toContainEqual(
+      expect.objectContaining({ command: "remove_queued_message", success: true }),
+    );
+    expect(harness.sent).toContainEqual(expect.objectContaining({ type: "queue_state" }));
+  });
+
+  it("returns withdrawn items separately from authoritative queue state", async () => {
+    const harness = makeHarness();
+    const withdrawn = {
+      version: 1,
+      steering: [{ id: "q1", message: "edit", createdAt: 1 }],
       followUp: [],
     };
-    harness.sessions.setMessageQueue.mockResolvedValue(queue);
-
-    await dispatch(harness, {
-      type: "set_queue",
-      baseVersion: 3,
-      steering: [{ id: "q1", message: "steer" }],
-      followUp: [],
-      requestId: "req-queue-2",
+    harness.sessions.takeMessageQueue.mockResolvedValue(withdrawn);
+    await dispatch(harness, { type: "take_queue", requestId: "take" });
+    expect(harness.sessions.takeMessageQueue).toHaveBeenCalledWith("s1");
+    expect(harness.sent).toContainEqual(
+      expect.objectContaining({ command: "take_queue", data: withdrawn }),
+    );
+    expect(harness.sent).toContainEqual({
+      type: "queue_state",
+      queue: { version: 0, steering: [], followUp: [] },
     });
-
-    expect(harness.sessions.setMessageQueue).toHaveBeenCalledWith("s1", {
-      baseVersion: 3,
-      steering: [{ id: "q1", message: "steer" }],
-      followUp: [],
-    });
-
-    expect(harness.sent).toEqual([
-      {
-        type: "command_result",
-        command: "set_queue",
-        requestId: "req-queue-2",
-        success: true,
-        data: queue,
-      },
-    ]);
   });
 
   it("reports missing extension UI requests", async () => {

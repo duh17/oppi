@@ -65,8 +65,7 @@ struct ReviewCommentStripChromeTests {
                 showsReviewCommentPill: true,
                 showsNowPlayingPill: false,
                 hasAboveEditorSurface: false,
-                showsMessageQueue: false,
-                hasMessageQueueDraft: false
+                showsMessageQueue: false
             )
         )
         #expect(
@@ -74,8 +73,7 @@ struct ReviewCommentStripChromeTests {
                 showsReviewCommentPill: false,
                 showsNowPlayingPill: false,
                 hasAboveEditorSurface: false,
-                showsMessageQueue: false,
-                hasMessageQueueDraft: false
+                showsMessageQueue: false
             )
         )
     }
