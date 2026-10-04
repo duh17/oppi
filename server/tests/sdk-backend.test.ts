@@ -27,6 +27,7 @@ import {
   SdkBackend,
 } from "../src/sdk-backend.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
+import { loadDurableProjectResources } from "../src/durable-project-resources.js";
 import {
   callerSessionIdentityShellPrefix,
   OPPI_CALLER_SESSION_ID_ENV,
@@ -477,7 +478,13 @@ describe("SdkBackend sandbox", () => {
 
     try {
       // Durable creates the shared VM through this entry point before SDK loads.
-      await SdkBackend.ensureSandboxWorkspaceVm(workspace, cwd);
+      const durable = await loadDurableProjectResources({
+        hostCwd: cwd,
+        agentDir,
+        sandboxGuestCwd: resolveSandboxGuestCwd(workspace),
+        projectTrusted: true,
+      });
+      await SdkBackend.ensureSandboxWorkspaceVm(workspace, cwd, [...durable.readonlyMounts]);
       const durableMounts = manager.ensureWorkspaceVm.mock.calls[0][3];
       expect(durableMounts).toContainEqual({
         hostPath: selectedSkill,

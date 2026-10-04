@@ -1,14 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AttachedReplicatedState } from "@earendil-works/chord";
 import {
-  CONFIG_DIR_NAME,
   ModelRegistry,
   SettingsManager,
   getAgentDir,
+  hasTrustRequiringProjectResources,
   type ModelRuntime,
   type CompactionResult,
 } from "@earendil-works/pi-coding-agent";
@@ -55,6 +53,7 @@ import {
   resolveSandboxGuestCwd,
   resolveSessionSeedModel,
   resolveSdkSessionCwd,
+  toCommandLocation,
   type QueuedModelTurnBatch,
 } from "./sdk-backend.js";
 import {
@@ -84,6 +83,17 @@ import {
 import { DurableUIProjection } from "./durable-ui-projection.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { DurableMcp } from "./durable-mcp.js";
+import {
+  expandSkillCommand,
+  loadDurableProjectResources,
+  renderProjectContext,
+  renderSkills,
+  type DurableProjectResources,
+} from "./durable-project-resources.js";
+import {
+  ProjectContextDoc,
+  DurableProjectContext,
+} from "../extensions/durable/project-context/durable.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { managedProjectTrustContext, resolveManagedProjectTrust } from "./project-trust.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
@@ -124,16 +134,16 @@ interface DurableBackendOptions {
 }
 
 /**
- * Durable sessions load only MCP from the project, so trust is asked only when the project
- * has an `mcp.json`. Same decision as an SDK session start: trust extensions, the remembered
- * answer, `defaultProjectTrust`, then a bounded phone dialog.
+ * Gates project MCP servers, settings, and Skills. Same decision as an SDK session start:
+ * nothing to gate is trusted; otherwise trust extensions, the remembered answer,
+ * `defaultProjectTrust`, then a bounded phone dialog.
  */
-async function resolveProjectMcpTrust(
+async function resolveProjectTrust(
   cwd: string,
   agentDir: string,
   options: DurableBackendOptions,
 ): Promise<boolean> {
-  if (!existsSync(join(cwd, CONFIG_DIR_NAME, "mcp.json"))) return false;
+  if (!hasTrustRequiringProjectResources(cwd)) return true;
   const bridge = new SdkUiBridge(options.onEvent, () => false);
   options.onUIBridgeReady?.(bridge);
   try {
@@ -153,6 +163,27 @@ async function resolveProjectMcpTrust(
   } finally {
     options.onUIBridgeReady?.(undefined);
   }
+}
+
+/** Store the rendered sections; a changed section reaches the model on its next request. */
+async function syncProjectContext(
+  conversation: Conversation,
+  resources: DurableProjectResources,
+): Promise<void> {
+  const tools = (await conversation.agent(BACKGROUND_CONTEXT)).tools.map((tool) => tool.name);
+  const next = {
+    projectContext: renderProjectContext(resources.contextFiles),
+    skills: renderSkills(resources.skills, tools),
+  };
+  await conversation.commit(async (tx) => {
+    const doc = await tx.doc(ProjectContextDoc, conversation.id);
+    for (const key of ["projectContext", "skills"] as const) {
+      const value = next[key];
+      if (doc[key] === value) continue;
+      if (value === undefined) delete doc[key];
+      else doc[key] = value;
+    }
+  }, BACKGROUND_CONTEXT);
 }
 
 /** An AgentBackend over a conversation; the Harness owns execution and queues. */
@@ -183,6 +214,8 @@ export class DurableBackend implements AgentBackend {
     private readonly events: AgentEventStream,
     private readonly onEvent: (event: SessionBackendEvent) => void,
     private readonly mcp: DurableMcp | undefined,
+    private resources: DurableProjectResources,
+    private readonly loadResources: () => Promise<DurableProjectResources>,
   ) {
     this.registry = new ModelRegistry(models);
     this.projection = new DurableEventProjection(harness, () => owner.retrySettings ?? {});
@@ -191,12 +224,9 @@ export class DurableBackend implements AgentBackend {
   static async create(options: DurableBackendOptions): Promise<DurableBackend> {
     const { models, session, agentDefinition } = options;
     if (session.ephemeral) throw new DurableNotSupportedError("Incognito sessions");
-    if (
-      agentDefinition?.resources?.extensionIds?.length ||
-      agentDefinition?.resources?.skillPaths?.length
-    ) {
-      throw new DurableNotSupportedError("Saved Agent Skills/Extensions");
-    }
+    // Classic extension factories cannot run in a durable conversation.
+    if (agentDefinition?.resources?.extensionIds?.length)
+      throw new DurableNotSupportedError("Saved Agent Extensions");
     const workspace = options.workspace;
     const sandbox = workspace?.runtime === "sandbox";
     if (sandbox && options.workspace?.sandboxConfig?.mcpServers?.length)
@@ -204,16 +234,25 @@ export class DurableBackend implements AgentBackend {
     const hostCwd = resolveSdkSessionCwd(options.workspace, session, { dataDir: options.dataDir });
     const cwd = sandbox ? resolveSandboxGuestCwd(workspace) : hostCwd;
     const owner = options.owner;
+    const agentDir = getAgentDir();
+    // Sandboxes see only the workspace, as SDK sandbox sessions: trusted.
+    const projectTrusted = sandbox || (await resolveProjectTrust(hostCwd, agentDir, options));
+    const resources = await loadDurableProjectResources({
+      hostCwd,
+      agentDir,
+      ...(sandbox ? { sandboxGuestCwd: cwd } : {}),
+      projectTrusted,
+      agentDefinition,
+    });
     const mcp = sandbox
       ? undefined
       : await owner.replaceMcp(session.id, async () => {
-          const agentDir = getAgentDir();
           const registry = new ModelRegistry(models);
           return DurableMcp.open({
             sessionId: session.id,
             cwd: hostCwd,
             agentDir,
-            projectTrusted: await resolveProjectMcpTrust(hostCwd, agentDir, options),
+            projectTrusted,
             policy: session.launch?.tools,
             providerToken: (provider) => registry.getApiKeyForProvider(provider),
             install: (extension) => owner.installExtension(extension),
@@ -221,7 +260,20 @@ export class DurableBackend implements AgentBackend {
           });
         });
     try {
-      return await DurableBackend.bind(options, { hostCwd, cwd, mcp });
+      return await DurableBackend.bind(options, {
+        hostCwd,
+        cwd,
+        mcp,
+        resources,
+        loadResources: () =>
+          loadDurableProjectResources({
+            hostCwd,
+            agentDir,
+            ...(sandbox ? { sandboxGuestCwd: cwd } : {}),
+            projectTrusted,
+            agentDefinition,
+          }),
+      });
     } catch (error) {
       await owner.closeMcp(session.id);
       throw error;
@@ -230,10 +282,16 @@ export class DurableBackend implements AgentBackend {
 
   private static async bind(
     options: DurableBackendOptions,
-    target: { hostCwd: string; cwd: string; mcp: DurableMcp | undefined },
+    target: {
+      hostCwd: string;
+      cwd: string;
+      mcp: DurableMcp | undefined;
+      resources: DurableProjectResources;
+      loadResources: () => Promise<DurableProjectResources>;
+    },
   ): Promise<DurableBackend> {
     const { harness, models, session, agentDefinition } = options;
-    const { hostCwd, cwd, mcp } = target;
+    const { hostCwd, cwd, mcp, resources } = target;
     const workspace = options.workspace;
     const sandbox = workspace?.runtime === "sandbox";
     const id = session.serverDurable?.conversationId;
@@ -261,6 +319,7 @@ export class DurableBackend implements AgentBackend {
               DurableWorkingWords,
               DurableBackgroundJobs,
               DurableGoal,
+              DurableProjectContext,
               ...(mcp ? [mcp.selection] : []),
             ],
           },
@@ -341,6 +400,7 @@ export class DurableBackend implements AgentBackend {
                   DurableWorkingWords,
                   DurableBackgroundJobs,
                   DurableGoal,
+                  DurableProjectContext,
                 ]
               : [
                   CodingTools,
@@ -348,6 +408,7 @@ export class DurableBackend implements AgentBackend {
                   DurableWorkingWords,
                   DurableBackgroundJobs,
                   DurableGoal,
+                  DurableProjectContext,
                   ...(mcp ? [mcp.selection] : []),
                 ],
             model: { provider: model.provider, modelId: model.id },
@@ -377,8 +438,11 @@ export class DurableBackend implements AgentBackend {
       // only an empty unbound conversation, never a duplicated user turn.
       options.persistBinding();
     }
+    await syncProjectContext(conversation, resources);
     if (sandbox) {
-      const vm = await SdkBackend.ensureSandboxWorkspaceVm(workspace, hostCwd);
+      const vm = await SdkBackend.ensureSandboxWorkspaceVm(workspace, hostCwd, [
+        ...resources.readonlyMounts,
+      ]);
       const probe = await vm.exec(["/usr/bin/setsid", "/bin/true"]);
       if (!probe.ok) throw new Error("Durable sandbox execution requires guest setsid");
       const env = new GondolinExecutionEnv(vm, workspace.id, cwd);
@@ -403,6 +467,8 @@ export class DurableBackend implements AgentBackend {
         events,
         options.onEvent,
         mcp,
+        resources,
+        target.loadResources,
       );
       backend.ui = await DurableUIProjection.create(harness, conversation, options.onEvent);
       await backend.projection.refreshInputCards([
@@ -572,9 +638,11 @@ export class DurableBackend implements AgentBackend {
     )
       throw new Error("clientTurnId uses a reserved durable requestId namespace");
     const requestId = clientTurnId ?? `${DURABLE_QUEUE_REQUEST_ID_PREFIX}${randomUUID()}`;
+    // The model sees the expanded Skill; queue display keeps what the user typed.
+    const text = expandSkillCommand(message, this.resources);
     const content = options?.images?.length
-      ? [{ type: "text" as const, text: message }, ...options.images]
-      : message;
+      ? [{ type: "text" as const, text }, ...options.images]
+      : text;
     await this.mcp?.beforePrompt();
     // Shared lifecycle permits allow concurrent prompts. Serialize only durable
     // admission so two copies of one request cannot both append a local user row.
@@ -834,11 +902,19 @@ export class DurableBackend implements AgentBackend {
       cost += value.cost.total;
     }
     // The effective prompt is the replay of the active context's `pi.system` entries.
-    // Durable sessions load no AGENTS files or skills.
     const systemPromptChars = getCurrentSystemPrompt(
       this.view.value.entries.flatMap((entry) => entry.model ?? []),
     ).length;
     const agent = await this.conversation.agent(BACKGROUND_CONTEXT);
+    const agentsFiles = this.resources.contextFiles.map((file) => ({
+      path: file.path,
+      chars: file.content.length,
+      tokens: estimateTokensFromChars(file.content.length),
+    }));
+    const agentsChars = agentsFiles.reduce((sum, file) => sum + file.chars, 0);
+    const skillsListingChars =
+      (await this.harness.snapshot(ProjectContextDoc, this.conversation.id, BACKGROUND_CONTEXT))
+        ?.skills?.length ?? 0;
     return {
       cacheWaste: computeCacheWaste(
         (await this.historyEntries()).flatMap((entry) =>
@@ -852,14 +928,18 @@ export class DurableBackend implements AgentBackend {
       contextComposition: {
         piSystemPromptChars: systemPromptChars,
         piSystemPromptTokens: estimateTokensFromChars(systemPromptChars),
-        agentsChars: 0,
-        agentsTokens: 0,
-        agentsFiles: [],
-        skillsListingChars: 0,
-        skillsListingTokens: 0,
+        agentsChars,
+        agentsTokens: agentsFiles.reduce((sum, file) => sum + file.tokens, 0),
+        agentsFiles,
+        skillsListingChars,
+        skillsListingTokens: estimateTokensFromChars(skillsListingChars),
       },
       loadedResources: {
-        skills: [],
+        skills: this.resources.skills.map((skill) => ({
+          name: skill.name,
+          description: skill.description,
+          path: skill.baseDir,
+        })),
         extensions: agent.extensions.map((extension) => ({ name: extension.name, path: "" })),
       },
       sessionId: this.session.id,
@@ -1049,8 +1129,15 @@ export class DurableBackend implements AgentBackend {
     this.assertOpen();
     return this.ui.respond(response);
   }
-  reloadResources(): never {
-    return this.unsupported("reloadResources");
+  /** Reload AGENTS files and Skills; the next request sends the changed sections. */
+  async reloadResources(reloadRuntimeConfig?: () => void): Promise<{ success: true }> {
+    this.assertOpen();
+    reloadRuntimeConfig?.();
+    const resources = await this.loadResources();
+    this.assertOpen();
+    await syncProjectContext(this.conversation, resources);
+    this.resources = resources;
+    return { success: true };
   }
   forkMessages(): never {
     return this.unsupported("forkMessages");
@@ -1064,8 +1151,23 @@ export class DurableBackend implements AgentBackend {
   navigateTree(): never {
     return this.unsupported("navigateTree");
   }
-  commands(): never {
-    return this.unsupported("commands");
+  commands(): ReturnType<AgentBackend["commands"]> {
+    return {
+      commands: [
+        {
+          name: "reload",
+          description: "Reload skills and context files",
+          source: "builtin",
+        },
+        ...this.resources.skills.map((skill) => ({
+          name: `skill:${skill.name}`,
+          description: skill.description,
+          source: "skill" as const,
+          location: toCommandLocation(skill.sourceInfo.source),
+          path: skill.filePath,
+        })),
+      ],
+    };
   }
   exportToHtml(): never {
     return this.unsupported("exportToHtml");

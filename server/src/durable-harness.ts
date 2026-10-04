@@ -24,6 +24,7 @@ import {
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { DurableGoal } from "../extensions/durable/goal/durable.js";
 import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
+import { DurableProjectContext } from "../extensions/durable/project-context/durable.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 import type { DurableMcp } from "./durable-mcp.js";
 
@@ -39,6 +40,7 @@ const BASE_EXTENSIONS: Extension[] = [
   DurableGoal,
   DurableWorkingWords,
   DurableBackgroundJobs,
+  DurableProjectContext,
 ];
 
 /** Persist the execution boundary so a resumed conversation cannot change runtime. */

@@ -101,7 +101,9 @@ import {
 } from "./session-runtime-transaction.js";
 import { createLiveEntryRendererLookup, type LiveEntryRendererSet } from "./trace.js";
 
-function toCommandLocation(value: string | undefined): "user" | "project" | "path" | undefined {
+export function toCommandLocation(
+  value: string | undefined,
+): "user" | "project" | "path" | undefined {
   if (value === "user" || value === "project" || value === "path") {
     return value;
   }
@@ -420,7 +422,7 @@ type SkillLoadResult = {
 
 type ExtensionLoadResult = ReturnType<DefaultResourceLoader["getExtensions"]>;
 
-function assertSelectedAgentResourcesAvailable(
+export function assertSelectedAgentResourcesAvailable(
   selectedSkillPaths: string[] | undefined,
   selectedExtensionPaths: string[] | undefined,
 ): void {
@@ -446,7 +448,7 @@ function assertSelectedAgentResourcesAvailable(
   }
 }
 
-function assertSelectedAgentSkillsLoaded(
+export function assertSelectedAgentSkillsLoaded(
   selectedPaths: string[] | undefined,
   result: SkillLoadResult,
 ): void {
@@ -510,7 +512,49 @@ function canonicalPath(path: string): string {
   }
 }
 
-function hostWorkspacePathToGuest(
+/** Saved Agent Skill paths resolved against the session's host cwd. */
+export function normalizeSelectedAgentSkillPaths(
+  paths: string[] | undefined,
+  hostCwd: string,
+): string[] | undefined {
+  return paths?.map((path) => (isAbsolute(path) ? path : resolvePath(hostCwd, path)));
+}
+
+/**
+ * Explicit Skill paths are CLI resources to Pi. They must not bypass a host
+ * session's denial of protected project directories. Compare real paths so a
+ * symlinked cwd (or a skill path given through the real location) cannot slip
+ * past the protected-directory check.
+ */
+export function assertSelectedAgentSkillsOutsideUntrustedProject(
+  selectedPaths: string[] | undefined,
+  hostCwd: string,
+): void {
+  const canonicalCwd = canonicalPath(hostCwd);
+  const canonicalHome = canonicalPath(homedir());
+  // `.pi` itself may be a symlink; canonicalize it like the .agents/skills walk.
+  const canonicalProjectPi = canonicalPath(join(canonicalCwd, ".pi"));
+  const unavailableSkills = (selectedPaths ?? []).filter((original) => {
+    const path = canonicalPath(original);
+    if (isPathWithin(canonicalProjectPi, path)) return true;
+    for (let parent = canonicalCwd; ; parent = resolvePath(parent, "..")) {
+      if (
+        parent !== canonicalHome &&
+        isPathWithin(canonicalPath(join(parent, ".agents", "skills")), path)
+      )
+        return true;
+      if (parent === resolvePath(parent, "..")) return false;
+    }
+  });
+  if (unavailableSkills.length > 0)
+    throw new AgentConfigurationError(
+      "agent_skills_unavailable",
+      { unavailableSkills },
+      `Selected Agent Skill is unavailable in an untrusted project: ${unavailableSkills.join(", ")}`,
+    );
+}
+
+export function hostWorkspacePathToGuest(
   hostCwd: string,
   guestCwd: string,
   hostPath: string,
@@ -533,8 +577,8 @@ function safeGuestSegment(value: string): string {
   );
 }
 
-/** One mapping for both SDK presentation and durable-first shared VM mounts. */
-function sandboxGuestSkills(
+/** One mapping for both SDK presentation and durable shared VM mounts. */
+export function sandboxGuestSkills(
   skills: Skill[],
   guestCwd: string,
   mounts: Map<string, ReadonlyMount>,
@@ -554,7 +598,7 @@ function replaceAllLiteral(value: string, search: string, replacement: string): 
   return search ? value.split(search).join(replacement) : value;
 }
 
-function redactHostEnvironment(value: string, hostCwd: string, guestCwd: string): string {
+export function redactHostEnvironment(value: string, hostCwd: string, guestCwd: string): string {
   let redacted = replaceAllLiteral(value, hostCwd, guestCwd);
   const home = homedir();
   redacted = replaceAllLiteral(redacted, home, "/workspace/.host-home");
@@ -616,7 +660,7 @@ function buildSdkAppendSystemPrompt(
   return prompts.length > 0 ? prompts : undefined;
 }
 
-function normalizeAgentContextFiles(
+export function normalizeAgentContextFiles(
   agentDefinition: AgentDefinition | undefined,
   sandboxGuestCwd?: string,
 ): AgentContextFile[] {
@@ -839,31 +883,8 @@ export class SdkBackend implements AgentBackend {
   static async ensureSandboxWorkspaceVm(
     workspace: Workspace,
     hostCwd: string,
-    readonlyMounts?: ReadonlyMountSpec[],
+    readonlyMounts: ReadonlyMountSpec[],
   ): Promise<GondolinVm> {
-    if (readonlyMounts === undefined) {
-      // Discover exactly the normal sandbox Skills, but never execute classic
-      // extensions just to attach a durable environment to the shared VM.
-      const mounts = new Map<string, ReadonlyMount>();
-      const agentDir = getAgentDir();
-      const loader = new DefaultResourceLoader({
-        cwd: hostCwd,
-        agentDir,
-        settingsManager: SettingsManager.create(hostCwd, agentDir, { projectTrusted: true }),
-        noExtensions: true,
-        noPromptTemplates: true,
-        noThemes: true,
-        noContextFiles: true,
-        systemPrompt: "",
-        appendSystemPrompt: [],
-        skillsOverride: (base) => ({
-          ...base,
-          skills: sandboxGuestSkills(base.skills, resolveSandboxGuestCwd(workspace), mounts),
-        }),
-      });
-      await loader.reload();
-      readonlyMounts = [...mounts.values()];
-    }
     const { GondolinManager, isQemuAvailable } = await import("./gondolin-manager.js");
     if (!(await isQemuAvailable())) throw new Error("Sandbox mode requires QEMU on the server");
     SdkBackend._gondolinManager ??= new GondolinManager();
@@ -1172,37 +1193,15 @@ export class SdkBackend implements AgentBackend {
         }
         return prompts;
       };
-      const normalizedSelectedAgentSkillPaths = selectedAgentSkillPaths?.map((path) =>
-        isAbsolute(path) ? path : resolvePath(hostCwd, path),
+      const normalizedSelectedAgentSkillPaths = normalizeSelectedAgentSkillPaths(
+        selectedAgentSkillPaths,
+        hostCwd,
       );
-      if (trustManagedProject && !settingsManager.isProjectTrusted()) {
-        // Explicit Skill paths are CLI resources to Pi. They must not bypass
-        // the host session's denial of protected project directories.
-        // Compare real paths so a symlinked cwd (or a skill path given through
-        // the real location) cannot slip past the protected-directory check.
-        const canonicalCwd = canonicalPath(hostCwd);
-        const canonicalHome = canonicalPath(homedir());
-        // `.pi` itself may be a symlink; canonicalize it like the .agents/skills walk.
-        const canonicalProjectPi = canonicalPath(join(canonicalCwd, ".pi"));
-        const unavailableSkills = (normalizedSelectedAgentSkillPaths ?? []).filter((original) => {
-          const path = canonicalPath(original);
-          if (isPathWithin(canonicalProjectPi, path)) return true;
-          for (let parent = canonicalCwd; ; parent = resolvePath(parent, "..")) {
-            if (
-              parent !== canonicalHome &&
-              isPathWithin(canonicalPath(join(parent, ".agents", "skills")), path)
-            )
-              return true;
-            if (parent === resolvePath(parent, "..")) return false;
-          }
-        });
-        if (unavailableSkills.length > 0)
-          throw new AgentConfigurationError(
-            "agent_skills_unavailable",
-            { unavailableSkills },
-            `Selected Agent Skill is unavailable in an untrusted project: ${unavailableSkills.join(", ")}`,
-          );
-      }
+      if (trustManagedProject && !settingsManager.isProjectTrusted())
+        assertSelectedAgentSkillsOutsideUntrustedProject(
+          normalizedSelectedAgentSkillPaths,
+          hostCwd,
+        );
       assertSelectedResourcesAvailableBeforeReload = () =>
         assertSelectedAgentResourcesAvailable(
           normalizedSelectedAgentSkillPaths,

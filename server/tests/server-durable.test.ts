@@ -1,8 +1,8 @@
-import { mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import {
@@ -27,6 +27,7 @@ import {
   defineTool,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { SdkBackend, resolveSandboxGuestCwd } from "../src/sdk-backend.js";
@@ -72,10 +73,17 @@ import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 const managers: SessionManager[] = [];
 const harnesses: Harness[] = [];
+// Durable sessions discover Skills and AGENTS files under the agent dir: never the developer's.
+const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+beforeEach(() => {
+  process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "oppi-server-durable-agent-"));
+});
 afterEach(async () => {
   await Promise.all(managers.splice(0).map((manager) => manager.close()));
   await Promise.all(harnesses.splice(0).map((harness) => harness.close(context)));
   vi.restoreAllMocks();
+  if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 });
 
 async function fixture(
@@ -2207,6 +2215,67 @@ describe("server durable managed runtime", () => {
     projection.unsubscribe();
   });
 
+  it("presents AGENTS files and Skills like an SDK session, expands /skill:, and reloads them", async () => {
+    const prompts: string[] = [];
+    const users: string[] = [];
+    const capture =
+      (text: string): FauxResponseStep =>
+      (transcript) => {
+        prompts.push(getCurrentSystemPrompt(transcript.messages));
+        const user = transcript.messages.findLast((message) => message.role === "user");
+        users.push(
+          typeof user?.content === "string" ? user.content : JSON.stringify(user?.content),
+        );
+        return fauxAssistantMessage(text);
+      };
+    const f = await fixture([capture("FIRST"), capture("SECOND")]);
+    const skillDir = join(process.env.PI_CODING_AGENT_DIR!, "skills", "release-notes");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: release-notes\ndescription: Write release notes.\n---\nList user-visible changes only.\n",
+    );
+    writeFileSync(join(f.dir, "AGENTS.md"), "Use tabs.");
+    await f.manager.startSession(f.session.id, f.workspace);
+    const projection = observe(f.manager, f.session.id);
+
+    let end = projection.next((message) => message.type === "agent_end");
+    await f.manager.sendPrompt(f.session.id, "/skill:release-notes for 1.2");
+    await end;
+    expect(prompts[0]).toContain(
+      `<project_context>\nProject-specific instructions and guidelines:\n\n<project_instructions path="${join(f.dir, "AGENTS.md")}">\nUse tabs.\n</project_instructions>\n</project_context>`,
+    );
+    expect(prompts[0]).toContain("<name>release-notes</name>");
+    expect(prompts[0]).toContain(`<location>${join(skillDir, "SKILL.md")}</location>`);
+    expect(users[0]).toBe(
+      `<skill name="release-notes" location="${join(skillDir, "SKILL.md")}">\nReferences are relative to ${skillDir}.\n\nList user-visible changes only.\n</skill>\n\nfor 1.2`,
+    );
+    expect(await f.manager.runCommand(f.session.id, { type: "get_commands" })).toMatchObject({
+      commands: expect.arrayContaining([
+        expect.objectContaining({ name: "skill:release-notes", source: "skill" }),
+      ]),
+    });
+    expect(await f.manager.runCommand(f.session.id, { type: "get_session_stats" })).toMatchObject({
+      contextComposition: {
+        agentsFiles: [{ path: join(f.dir, "AGENTS.md"), chars: "Use tabs.".length }],
+        skillsListingTokens: expect.any(Number),
+      },
+      loadedResources: {
+        skills: [{ name: "release-notes", description: "Write release notes.", path: skillDir }],
+      },
+    });
+
+    // Reload replaces the stored sections; the next request sends the new context.
+    writeFileSync(join(f.dir, "AGENTS.md"), "Use spaces.");
+    await f.manager.runCommand(f.session.id, { type: "reload" });
+    end = projection.next((message) => message.type === "agent_end");
+    await f.manager.sendPrompt(f.session.id, "Again");
+    await end;
+    expect(prompts[1]).toContain("Use spaces.");
+    expect(prompts[1]).not.toContain("Use tabs.");
+    projection.unsubscribe();
+  });
+
   it("aborts a stream and queued follow-up using native inbox withdrawal, then remains stopped after reopening", async () => {
     const f = await fixture(
       [fauxAssistantMessage("A long answer that must be interrupted before it finishes.")],
@@ -2278,9 +2347,11 @@ describe("server durable managed runtime", () => {
   it("fails unsupported commands with a typed error instead of pretending success", async () => {
     const f = await fixture([]);
     await f.manager.startSession(f.session.id, f.workspace);
-    await expect(f.manager.runCommand(f.session.id, { type: "reload" })).rejects.toMatchObject({
+    await expect(
+      f.manager.runCommand(f.session.id, { type: "set_steering_mode", mode: "all" }),
+    ).rejects.toMatchObject({
       code: "server_durable_not_supported",
-      message: "reloadResources is not supported for server durable sessions",
+      message: "setSteeringMode is not supported for server durable sessions",
     });
     await expect(
       f.manager.runCommand(f.session.id, { type: "get_session_tree" }),
