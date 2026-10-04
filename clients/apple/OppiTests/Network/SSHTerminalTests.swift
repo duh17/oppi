@@ -484,6 +484,27 @@ struct SSHTerminalTests {
         #expect(channel.engine.frame().rows[0].prefix(6).map(\.text).joined() == "onetwo")
     }
 
+    @Test func directTypingTapOpensTheKeyboardEvenWhenTheAppWantsClicks() {
+        #expect(SSHTerminalTapAction.resolve(
+            terminalTyping: true, keyboardUp: false, otherInputFocused: false, appWantsClicks: true
+        ) == .typeInTerminal)
+        #expect(SSHTerminalTapAction.resolve(
+            terminalTyping: true, keyboardUp: false, otherInputFocused: true, appWantsClicks: true
+        ) == .typeInTerminal)
+        #expect(SSHTerminalTapAction.resolve(
+            terminalTyping: true, keyboardUp: true, otherInputFocused: false, appWantsClicks: true
+        ) == .hideKeyboard)
+        #expect(SSHTerminalTapAction.resolve(
+            terminalTyping: false, keyboardUp: false, otherInputFocused: false, appWantsClicks: true
+        ) == .mouseClick)
+        #expect(SSHTerminalTapAction.resolve(
+            terminalTyping: false, keyboardUp: false, otherInputFocused: true, appWantsClicks: true
+        ) == .dismissOtherInput)
+        #expect(SSHTerminalTapAction.resolve(
+            terminalTyping: false, keyboardUp: false, otherInputFocused: false, appWantsClicks: false
+        ) == .focusChatBar)
+    }
+
     @Test func touchesBecomeMouseReportsOnlyWhileTheAppAsksForThem() throws {
         let engine = try SSHTerminalEngine(geometry: .init(columns: 20, rows: 10)) { _ in }
         #expect(!engine.mouseTracking)

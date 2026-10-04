@@ -77,10 +77,7 @@ struct SSHTerminalView: View {
                                paste: requestPaste, followChanged: { detached = !$0 },
                                rawKeyboardChanged: { rawKeyboard = $0 },
                                focusComposer: { composerFocusRequest += 1 },
-                               useChatBar: {
-                                   if detectedMode != .chat { modeOverride = .chat }
-                                   focusComposerAfterRaw = true
-                               },
+                               useChatBar: showChatBar,
                                topBarHiddenChanged: { hidden in
                                    guard hidden != topBarHidden else { return }
                                    withAnimation(.easeInOut(duration: 0.2)) { topBarHidden = hidden }
@@ -94,12 +91,12 @@ struct SSHTerminalView: View {
                             .accessibilityIdentifier("sshTerminal.backToLive")
                     }
                 }
-            // An agent gets the chat bar; a shell gets direct typing. Raw typing
-            // has its own key bar above the keyboard; the chat bar returns when
-            // that keyboard goes down.
+            // An agent gets the chat bar; a shell gets direct typing. The chat
+            // bar's keyboard button and Type in Terminal both stay in direct
+            // typing until Use Chat Bar or a foreground change.
             if inputMode == .chat && !rawKeyboard {
                 SSHTerminalComposer(channel: channel, focusRequest: composerFocusRequest, keyActions: keymap.actions) {
-                    keyboardRequest += 1
+                    showTerminalKeyboard()
                 }
             }
         }
@@ -129,10 +126,10 @@ struct SSHTerminalView: View {
                 }
                 Menu {
                     if inputMode == .chat {
-                        Button("Type in Terminal", systemImage: "keyboard") { modeOverride = .terminal }
+                        Button("Type in Terminal", systemImage: "keyboard", action: showTerminalKeyboard)
                             .accessibilityIdentifier("sshTerminal.useTerminalInput")
                     } else {
-                        Button("Use Chat Bar", systemImage: "text.bubble") { modeOverride = .chat }
+                        Button("Use Chat Bar", systemImage: "text.bubble", action: showChatBar)
                             .accessibilityIdentifier("sshTerminal.useChatBar")
                     }
                     Button("Edit Host", systemImage: "pencil", action: editHost)
@@ -220,6 +217,21 @@ struct SSHTerminalView: View {
 
     private var pasteLineCount: Int { SSHTerminalEngine.pasteLineCount(pendingPaste ?? "") }
 
+    /// Chat bar keyboard button and Type in Terminal: stay in direct typing and
+    /// open the keyboard. A later tap opens it again, even if the app wants clicks.
+    private func showTerminalKeyboard() {
+        modeOverride = .terminal
+        keyboardRequest += 1
+    }
+
+    /// Use Chat Bar, from the menu or the terminal keyboard. Clears a typing
+    /// override when the foreground program already wants the chat bar.
+    private func showChatBar() {
+        modeOverride = detectedMode == .chat ? nil : .chat
+        focusComposerAfterRaw = true
+        resignRawKeyboardRequest += 1
+    }
+
     private func showPasteNotice(_ text: String) {
         pasteNotice = text
         pasteNoticeTask?.cancel()
@@ -250,15 +262,39 @@ struct SSHTerminalView: View {
     }
 }
 
+/// What a tap on the terminal grid does. Direct typing owns the tap so the
+/// keyboard can be shown or hidden after leaving the chat bar. Chat mode still
+/// clicks when the remote app asked for mouse reports.
+enum SSHTerminalTapAction: Equatable {
+    case hideKeyboard
+    case typeInTerminal
+    case dismissOtherInput
+    case mouseClick
+    case focusChatBar
+
+    static func resolve(
+        terminalTyping: Bool,
+        keyboardUp: Bool,
+        otherInputFocused: Bool,
+        appWantsClicks: Bool
+    ) -> SSHTerminalTapAction {
+        if keyboardUp { return .hideKeyboard }
+        if terminalTyping { return .typeInTerminal }
+        if otherInputFocused { return .dismissOtherInput }
+        if appWantsClicks { return .mouseClick }
+        return .focusChatBar
+    }
+}
+
 private struct SSHTerminalSurface: UIViewRepresentable {
     let channel: SSHTerminalChannel
     let themeID: ThemeID
-    /// Bumped by the composer's keyboard button: raw typing into the grid. In
-    /// a mouse-reporting app a tap clicks, so this cannot be a tap.
+    /// Bumped to open the raw keyboard. A mouse-reporting app would otherwise
+    /// treat a tap as a click, so the chat bar's keyboard button cannot be a tap.
     let keyboardRequest: Int
     /// Bumped to put the raw keyboard down.
     let resignRequest: Int
-    /// Shell input: a tap opens the raw keyboard instead of the chat bar.
+    /// Direct typing: a tap opens the raw keyboard instead of the chat bar.
     let tapTypesInTerminal: Bool
     let keyActions: [SSHTerminalKeyAction]
     let paste: () -> Void
@@ -473,21 +509,27 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
             entry.button.accessibilityValue = armed ? "On" : "Off"
         }
     }
-    /// A tap first dismisses whichever keyboard is up (raw or composer). With
-    /// it down, a tap is a click for an app that asked for mouse reports
-    /// (Herdr tabs, panes and agents) and otherwise starts typing: in the
-    /// terminal for a shell, in the chat bar for an agent.
+    /// Direct typing owns the tap, including after switching off the chat bar,
+    /// so the keyboard can come back even when the app asked for mouse reports.
+    /// Chat mode still clicks in those apps, and otherwise focuses the chat bar.
     @objc private func tapped(_ gesture: UITapGestureRecognizer) {
-        if isFirstResponder {
+        let otherFocused = window.map { Self.hasFirstResponder(in: $0) } ?? false
+        switch SSHTerminalTapAction.resolve(
+            terminalTyping: tapTypesInTerminal,
+            keyboardUp: isFirstResponder,
+            otherInputFocused: otherFocused,
+            appWantsClicks: channel.connected && channel.engine.mouseTracking
+        ) {
+        case .hideKeyboard:
             _ = resignFirstResponder()
-        } else if let window, Self.hasFirstResponder(in: window) {
-            window.endEditing(true)
-        } else if channel.connected, channel.engine.mouseTracking {
+        case .typeInTerminal:
+            _ = becomeFirstResponder()
+        case .dismissOtherInput:
+            window?.endEditing(true)
+        case .mouseClick:
             let cell = self.cell(at: gesture.location(in: self))
             channel.mouse(.click, column: cell.column, row: cell.row)
-        } else if tapTypesInTerminal {
-            _ = becomeFirstResponder()
-        } else {
+        case .focusChatBar:
             focusComposer()
         }
     }

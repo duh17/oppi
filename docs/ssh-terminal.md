@@ -27,7 +27,7 @@ After you save a host, **Terminal** appears directly below **MCP Servers** in th
 
 The terminal picks its input from what runs in the foreground. About every two seconds, Oppi runs `ps` in a side command channel on the same connection to find the process in front of this terminal's PTY. A coding agent (`pi`, `claude`, `codex`, `opencode`, `gemini`, `amp`, `aider`, and similar) gets the chat input bar. A Herdr client gets it when Herdr's focused pane runs an agent. Anything else, such as a shell, `vim`, or `tmux`, gets direct terminal typing: the bar is hidden and a tap opens the keyboard with the Esc/Tab/Ctrl/arrow bar. To switch by hand, use **Use Chat Bar** or **Type in Terminal** in the … menu, or the chat button on the terminal keyboard's bar; the automatic choice returns when the foreground program changes.
 
-The chat input bar is Oppi's chat composer. Type or dictate (same dictation as chat), edit, then **Send**: Oppi pastes the text as one block (bracketed paste when the app supports it) and presses Enter. Send with an empty bar presses Enter alone. Autocorrect, capitals, and smart punctuation are off. While the bar is focused, a key strip offers Esc, Ctrl-C, Tab, ↑ and ↓ immediately, and a keyboard button switches to typing straight into the terminal with the Esc/Tab/Ctrl/arrow bar; the input bar returns when that keyboard goes down. Starting an agent from the terminal keyboard moves typing to the input bar.
+The chat input bar is Oppi's chat composer. Type or dictate (same dictation as chat), edit, then **Send**: Oppi pastes the text as one block (bracketed paste when the app supports it) and presses Enter. Send with an empty bar presses Enter alone. Autocorrect, capitals, and smart punctuation are off. While the bar is focused, a key strip offers Esc, Ctrl-C, Tab, ↑ and ↓ immediately, and a keyboard button switches to typing straight into the terminal with the Esc/Tab/Ctrl/arrow bar. That switch stays in direct typing: tapping the terminal hides the keyboard, and tapping it again opens the keyboard, including when the app asked for mouse input. **Use Chat Bar** (in the … menu, or the chat button on the terminal keyboard) returns to the input bar. Starting an agent from the terminal keyboard moves typing to the input bar.
 
 ### Program shortcuts
 
@@ -45,8 +45,8 @@ The file is read once each time the program takes the foreground, through the sa
 Photos and files from **+** or a pasted image are saved on the host before Send, in an owner-only `oppi-ssh` folder under `$TMPDIR` (or `/tmp`), over the same SSH connection. The prompt then lists each file's path on its own line, so the agent can read it. Each file is limited to 32 MB.
 
 - Tap the terminal to hide whichever keyboard is up.
-- With the keyboard hidden, a tap starts typing (in the input bar for an agent, in the terminal otherwise), unless the app asked for mouse input.
-- When an app asks for mouse input (Herdr, tmux with `mouse on`, many TUIs), that tap is a click at the cell, and dragging sends scroll-wheel steps to the app.
+- With the keyboard hidden, a tap starts typing: into the terminal when that is the input (a shell, or after the keyboard button or **Type in Terminal**), even if the app asked for mouse input; into the input bar for an agent.
+- While the chat bar is the input and an app asks for mouse input (Herdr, tmux with `mouse on`, many TUIs), that tap is a click at the cell. Dragging still sends scroll-wheel steps to the app whenever it asked for mouse input.
 - Otherwise, dragging reads local history; **Back to Live** returns to the bottom.
 - Dragging up (toward newer output) hides the navigation bar for more rows; dragging down shows it again. A broken connection always shows it.
 
