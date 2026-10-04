@@ -582,8 +582,7 @@ private struct SSHTerminalTopBarHandle: View {
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.themeFg)
                 .frame(width: 52, height: 22)
-                .background(.themeBg.opacity(0.88), in: Capsule())
-                .overlay(Capsule().strokeBorder(.themeFg.opacity(0.22), lineWidth: 0.5))
+                .themedSurface(.floatingControl, in: Capsule())
                 .frame(minWidth: 44, minHeight: 44)
                 .contentShape(Rectangle())
         }
