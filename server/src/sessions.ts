@@ -12,6 +12,7 @@
 
 import { EventEmitter } from "node:events";
 
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { AgentRuntimeTransport, RuntimeClientCommand } from "./agent-runtime-transport.js";
 import type {
   ChatAttachmentRef,
@@ -707,6 +708,18 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     } finally {
       await (await this.durableHarness)?.close(resumeIds);
     }
+  }
+
+  /** Fail closed if production opens the Harness without the catalog model runtime. */
+  async expectDurableModelRuntime(): Promise<void> {
+    await this.durableHarness?.then((harness) => harness.requireDiscoveredModels());
+  }
+
+  /** Share the server ModelRuntime so global provider overlays apply to durable inference. */
+  async bindDurableModels(models: ModelRuntime): Promise<void> {
+    if (!this.durableHarness) return;
+    await this.durableHarness.then((harness) => harness.bindModelRuntime(models));
+    log.info("sessions.durable_models_bound");
   }
 
   /** Attach every crash-resumed projection before enabling the shared scheduler. */

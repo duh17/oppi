@@ -55,6 +55,9 @@ export const DurableRuntime = defineDoc<{ kind: "host" | "sandbox"; workspaceId?
 export class DurableHarness {
   private opening?: Promise<{ harness: Harness; models: ModelRuntime }>;
   private closed = false;
+  /** Server catalog runtime. Carries global `registerProvider` overlays such as Anthropic OMP. */
+  private boundModels?: ModelRuntime;
+  private discoveredModelsRequired = false;
   // Created before the local HTTP listener. No conversation may enable the
   // harness-wide scheduler until startup has resolved every persisted binding.
   private resumeHeld = true;
@@ -169,6 +172,22 @@ export class DurableHarness {
 
   constructor(private readonly dataDir: string) {}
 
+  /** Production open must not invent a runtime that skipped extension provider discovery. */
+  requireDiscoveredModels(): void {
+    if (this.opening) {
+      throw new Error("Server durable model runtime cannot be required after the Harness opens");
+    }
+    this.discoveredModelsRequired = true;
+  }
+
+  /** Adopt the server ModelRuntime. Call before open(); later catalog resyncs stay on this object. */
+  bindModelRuntime(models: ModelRuntime): void {
+    if (this.opening) {
+      throw new Error("Server durable model runtime cannot change after the Harness opens");
+    }
+    this.boundModels = models;
+  }
+
   open(): Promise<{ harness: Harness; models: ModelRuntime }> {
     if (this.closed) return Promise.reject(new Error("Server durable Harness is closed"));
     return (this.opening ??= this.openInner());
@@ -176,10 +195,17 @@ export class DurableHarness {
 
   private async openInner(): Promise<{ harness: Harness; models: ModelRuntime }> {
     const agentDir = getAgentDir();
-    const models = await ModelRuntime.create({
-      authPath: join(agentDir, "auth.json"),
-      modelsPath: join(agentDir, "models.json"),
-    });
+    if (this.discoveredModelsRequired && !this.boundModels) {
+      throw new Error(
+        "Server durable Harness opened before the discovered model runtime was bound",
+      );
+    }
+    const models =
+      this.boundModels ??
+      (await ModelRuntime.create({
+        authPath: join(agentDir, "auth.json"),
+        modelsPath: join(agentDir, "models.json"),
+      }));
     // Run policy is global to the Harness, not the first workspace to open it.
     const settings = SettingsManager.create(homedir(), agentDir, { projectTrusted: false });
     this.runSettings = harnessSettings(settings);

@@ -792,6 +792,9 @@ export class Server {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+    // Same object the catalog just registered. Later enable/disable resyncs stay visible
+    // to durable streams; a second ModelRuntime would keep Pi's built-in Anthropic provider.
+    await this.sessions.bindDurableModels(this.modelRuntime);
     this.mcp = new McpService({ agentDir, listWorkspaces: () => this.storage.listWorkspaces() });
     this.providerAuth = new ProviderAuthManager({
       modelRuntime: this.modelRuntime,
@@ -915,6 +918,7 @@ export class Server {
       log.warn("startup.security.warning", { warning });
     }
 
+    await this.sessions.expectDurableModelRuntime();
     await this.initializeModelServices();
 
     // Prime model catalog so first picker open is fast.
