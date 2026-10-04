@@ -279,7 +279,7 @@ export class SessionMessageQueueCoordinator {
     const active = this.deps.getActiveSession(key);
     if (!active) return undefined;
     // Durable abort owns inbox withdrawal in the same operation as cancellation.
-    // Queue editing/compensation is intentionally unsupported for that backend.
+    // Queue edits go through replaceQueuedModelTurns, not this abort clear.
     if (active.sdkBackend.abortClearsQueuedModelTurns) return undefined;
     const queue = this.ensureQueueStore(active);
     this.assertQueueReconciled(active, queue);
@@ -357,7 +357,7 @@ export class SessionMessageQueueCoordinator {
   /** Native inbox changes (including abort) are authoritative, even while busy. */
   refreshQueuedMessages(key: string): void {
     const active = this.deps.getActiveSession(key);
-    if (!active) return;
+    if (!active || active.sdkBackend.defersNativeQueueRefresh) return;
     this.broadcastQueueState(key, this.syncFromSdk(active));
   }
 
@@ -630,7 +630,7 @@ export class SessionMessageQueueCoordinator {
 
   async flushIdleQueuedMessages(key: string): Promise<boolean> {
     const active = this.deps.getActiveSession(key);
-    if (!active) return false;
+    if (!active || active.sdkBackend.retainsIdleQueueUntilAdmission) return false;
     return active.sdkBackend.withRuntimeLifecycleTransaction("queue flush", (permit) => {
       const current = this.deps.getActiveSession(key);
       if (current !== active) throw new Error(`Session not active: ${key}`);
@@ -776,7 +776,7 @@ export class SessionMessageQueueCoordinator {
         queue.version = replacementVersion;
         this.broadcastQueueState(key, queue);
 
-        if (shouldFlushAfterSave) {
+        if (shouldFlushAfterSave && !active.sdkBackend.retainsIdleQueueUntilAdmission) {
           await this.flushIdleQueuedMessagesInTransaction(key, active, permit);
         }
         return cloneQueueState(queue);

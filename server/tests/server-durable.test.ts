@@ -19,6 +19,7 @@ import {
   ToolTask,
   AssistantEntry,
   InboxDoc,
+  LiveDoc,
   watchEvents,
   type AgentEvent,
   type ConversationId,
@@ -35,6 +36,7 @@ import { Storage } from "../src/storage.js";
 import { SessionManager } from "../src/sessions.js";
 import { DurableHarness } from "../src/durable-harness.js";
 import { SessionTraceService } from "../src/session-trace-service.js";
+import { readDurableTrace } from "../src/durable-history.js";
 import { SessionAgentEventCoordinator } from "../src/session-agent-events.js";
 import { SessionStopCoordinator } from "../src/session-stop.js";
 import { SessionMessageQueueCoordinator } from "../src/session-queue.js";
@@ -1756,7 +1758,25 @@ describe("server durable managed runtime", () => {
             message.role === "user" &&
             JSON.stringify(message.content).includes("Background job bash-1"),
         ),
+      ).toHaveLength(0);
+      const conversation = (await harness.conversation(id, context))!;
+      const modelHistory = (await conversation.context(context)).messages;
+      expect(
+        modelHistory.filter(
+          (message) =>
+            message.role === "user" && JSON.stringify(message.content).includes("HOST_RESULT"),
+        ),
       ).toHaveLength(1);
+      const trace = await readDurableTrace(harness, id, "full");
+      expect(
+        trace.filter((event) => event.presentation?.title === "Background job bash-1"),
+      ).toEqual([
+        expect.objectContaining({
+          type: "system",
+          presentation: expect.objectContaining({ status: "completed" }),
+        }),
+      ]);
+      expect(JSON.stringify(trace)).not.toContain("HOST_RESULT");
       expect(
         history.filter(
           (message) =>
@@ -2200,7 +2220,119 @@ describe("server durable managed runtime", () => {
     ).rejects.toBeInstanceOf(DurableNotSupportedError);
     await expect(
       f.manager.setMessageQueue(f.session.id, { steering: [], followUp: [], baseVersion: 0 }),
-    ).rejects.toBeInstanceOf(DurableNotSupportedError);
+    ).resolves.toMatchObject({ version: 1, steering: [], followUp: [] });
+  });
+
+  it("edits a streaming durable queue instead of rejecting set_queue", async () => {
+    const f = await fixture(
+      [fauxAssistantMessage("A long streaming answer leaves time to edit the follow-up queue.")],
+      { slow: true },
+    );
+    const harness = await openHarness(f.dir, f.models);
+    vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+    const creating = vi.spyOn(harness, "createConversation");
+    await f.manager.startSession(f.session.id, f.workspace);
+    const conversation = await creating.mock.results[0]!.value;
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jE0YAAAAASUVORK5CYII=",
+      "base64",
+    );
+    writeFileSync(join(f.dir, "queue.png"), png);
+    const attachment: ChatAttachmentRef = {
+      type: "attachment",
+      id: "image-proof",
+      source: "workspace",
+      name: "queue.png",
+      mimeType: "image/png",
+      kind: "image",
+      sizeBytes: png.length,
+      workspacePath: "queue.png",
+    };
+    const projection = observe(f.manager, f.session.id);
+    const delta = projection.next((message) => message.type === "text_delta");
+    await f.manager.sendPrompt(f.session.id, "Stream");
+    await delta;
+    await f.manager.sendFollowUp(f.session.id, "Drop this follow-up", {
+      clientTurnId: "drop-follow-up",
+    });
+    await f.manager.sendFollowUp(f.session.id, "Keep the picture", {
+      clientTurnId: "keep-picture",
+      attachments: [attachment],
+    });
+    const before = f.manager.getMessageQueue(f.session.id);
+    expect(before.followUp.map((item) => item.message)).toEqual([
+      "Drop this follow-up",
+      "Keep the picture",
+    ]);
+    const kept = before.followUp[1]!;
+    const edited = await f.manager.setMessageQueue(f.session.id, {
+      baseVersion: before.version,
+      steering: [{ id: "moved-steer", message: "Steer this instead" }],
+      followUp: [{ id: kept.id, message: "Keep the picture", attachments: kept.attachments }],
+    });
+    expect(edited.steering.map((item) => item.message)).toEqual(["Steer this instead"]);
+    expect(edited.followUp).toMatchObject([
+      { id: kept.id, message: "Keep the picture", attachments: [attachment] },
+    ]);
+    expect(f.manager.getMessageQueue(f.session.id).followUp).toMatchObject([
+      { id: kept.id, message: "Keep the picture", attachments: [attachment] },
+    ]);
+    const inbox = await harness.snapshot(InboxDoc, conversation.id, context);
+    expect(inbox!.items.filter((item) => item.mode !== "write")).toEqual([
+      expect.objectContaining({ mode: "steer", content: "Steer this instead" }),
+      expect.objectContaining({
+        mode: "followUp",
+        content: expect.arrayContaining([
+          expect.objectContaining({ type: "text" }),
+          { type: "image", data: png.toString("base64"), mimeType: "image/png" },
+        ]),
+      }),
+    ]);
+    expect(projection.messages.filter((message) => message.type === "prompt_error")).toEqual([]);
+    await f.manager.sendAbort(f.session.id);
+    projection.unsubscribe();
+  });
+
+  it("leaves an idle durable queue edit queued instead of starting a turn", async () => {
+    const f = await fixture([]);
+    const harness = await openHarness(f.dir, f.models);
+    vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+    const creating = vi.spyOn(harness, "createConversation");
+    await f.manager.startSession(f.session.id, f.workspace);
+    const conversation = await creating.mock.results[0]!.value;
+    const projection = observe(f.manager, f.session.id);
+    const visible = projection.next(
+      (message) =>
+        message.type === "queue_state" &&
+        message.queue.followUp.some((item) => item.message === "Waiting"),
+    );
+    await conversation.commit(async (tx) => {
+      const created = await tx.createSubmission({
+        conversationId: conversation.id,
+        type: "input",
+        status: "queued",
+      });
+      const inbox = await tx.doc(InboxDoc, conversation.id);
+      inbox.items.push({ id: created.id, mode: "followUp", content: "Waiting" });
+    }, context);
+    await visible;
+    const before = f.manager.getMessageQueue(f.session.id);
+    const edited = await f.manager.setMessageQueue(f.session.id, {
+      baseVersion: before.version,
+      steering: [],
+      followUp: [{ message: "Edited while idle" }],
+    });
+    expect(edited.followUp.map((item) => item.message)).toEqual(["Edited while idle"]);
+    expect(edited.steering).toEqual([]);
+    expect(await harness.snapshot(LiveDoc, conversation.id, context)).not.toMatchObject({
+      run: expect.anything(),
+    });
+    expect(f.faux.state.callCount).toBe(0);
+    const inbox = await harness.snapshot(InboxDoc, conversation.id, context);
+    expect(inbox!.items.filter((item) => item.mode !== "write")).toEqual([
+      expect.objectContaining({ mode: "followUp", content: "Edited while idle" }),
+    ]);
+    projection.unsubscribe();
   });
 
   it("rebinds SQLite state and resumes the same unfinished submission without a continuation user message", async () => {

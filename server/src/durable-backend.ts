@@ -37,10 +37,13 @@ import { DurableEventProjection } from "./durable-event-projection.js";
 import type { PiMessage, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import type { SdkBackendDisposeResult } from "./sdk-backend.js";
 import {
+  QueuedModelTurnsAuthorityError,
   SdkBackend,
   resolveSandboxGuestCwd,
   resolveSessionSeedModel,
   resolveSdkSessionCwd,
+  type QueuedModelTurnBatch,
+  type QueuedModelTurnsAuthority,
 } from "./sdk-backend.js";
 import {
   SessionRuntimeTransaction,
@@ -145,6 +148,10 @@ export class DurableBackend implements AgentBackend {
   readonly cancelsExtensionUIOnAbort = true;
   readonly isQueueReconciliationRequired = false;
   readonly showCacheMissNotices = false;
+  readonly retainsIdleQueueUntilAdmission = true;
+  private replacingQueue = false;
+  private queueAuthorityGeneration = 0;
+  private readonly queueAuthorityFingerprints = new Map<number, string>();
 
   private constructor(
     private readonly harness: Harness,
@@ -424,7 +431,7 @@ export class DurableBackend implements AgentBackend {
               message: card.body ? `${card.title} — ${card.body}` : card.title,
             });
         }
-        if (event.type === "inbox_update")
+        if (event.type === "inbox_update" && !this.replacingQueue)
           this.onEvent({ type: "queue_update", ...this.queuedMessages() });
         if (event.type === "task_failed" && event.kind !== "pi.compaction")
           this.onEvent({ type: "prompt_error", error: event.message });
@@ -472,7 +479,13 @@ export class DurableBackend implements AgentBackend {
     options?: { allowDisposed?: boolean },
   ): Promise<T> {
     if (!options?.allowDisposed) this.assertOpen();
-    return this.transactions.withExclusive(operation);
+    return this.transactions.withExclusive(operation).finally(() => {
+      this.replacingQueue = false;
+    });
+  }
+
+  get defersNativeQueueRefresh(): boolean {
+    return this.replacingQueue;
   }
 
   async prompt(
@@ -637,7 +650,9 @@ export class DurableBackend implements AgentBackend {
   }
   messages(): PiMessage[] {
     return this.view.value.entries.flatMap((entry) =>
-      this.projection.recoveredEntryIds.has(entry.id) ? [] : (entry.model ?? []),
+      this.projection.recoveredEntryIds.has(entry.id)
+        ? []
+        : (entry.model ?? []),
     );
   }
   getStateSnapshot(): PiStateSnapshot {
@@ -791,17 +806,138 @@ export class DurableBackend implements AgentBackend {
   private unsupported(operation: string): never {
     throw new DurableNotSupportedError(operation);
   }
-  captureQueuedModelTurnsAuthority(): never {
-    return this.unsupported("captureQueuedModelTurnsAuthority");
+
+  captureQueuedModelTurnsAuthority(
+    permit: SessionRuntimeTransactionPermit,
+  ): QueuedModelTurnsAuthority {
+    this.transactions.assertPermit(permit, "exclusive");
+    this.assertOpen();
+    // Hold native refresh until this lifecycle transaction commits the editor's
+    // rich items. Clearing the flag is the transaction's finally, not this method.
+    this.replacingQueue = true;
+    return this.rememberQueueAuthority();
   }
-  assertQueuedModelTurnsAuthority(): never {
-    return this.unsupported("assertQueuedModelTurnsAuthority");
+
+  assertQueuedModelTurnsAuthority(
+    authority: QueuedModelTurnsAuthority,
+    permit: SessionRuntimeTransactionPermit,
+    phase: QueuedModelTurnsAuthorityError["phase"] = "after_replay",
+  ): void {
+    this.transactions.assertPermit(permit, "exclusive");
+    this.assertOpen();
+    const expected = this.queueAuthorityFingerprints.get(authority.generation);
+    if (expected === undefined || expected !== this.userInboxFingerprint(this.currentInbox()))
+      throw new QueuedModelTurnsAuthorityError(phase);
   }
-  replaceQueuedModelTurns(): never {
-    return this.unsupported("replaceQueuedModelTurns");
+
+  async replaceQueuedModelTurns(
+    batch: QueuedModelTurnBatch,
+    _rollback?: QueuedModelTurnBatch,
+    permit?: SessionRuntimeTransactionPermit,
+    authority?: QueuedModelTurnsAuthority,
+  ): Promise<QueuedModelTurnsAuthority | undefined> {
+    if (!permit)
+      return this.withRuntimeLifecycleTransaction("queue replacement", (token) =>
+        this.replaceQueuedModelTurns(batch, _rollback, token, authority),
+      );
+    this.transactions.assertPermit(permit, "exclusive");
+    this.assertOpen();
+    this.replacingQueue = true;
+    if (batch.prompt) throw new Error("Server durable queue replacement cannot start a prompt");
+    if (authority) this.assertQueuedModelTurnsAuthority(authority, permit, "before_replay");
+    const captured = this.userInboxFingerprint(this.currentInbox());
+    await this.conversation.commit(async (tx) => {
+      const inbox = await tx.doc(InboxDoc, this.conversation.id);
+      if (authority && this.userInboxFingerprint(inbox) !== captured)
+        throw new QueuedModelTurnsAuthorityError("during_replay");
+      // Edit is withdrawal plus admission. `aborted` keeps the original send's
+      // wait quiet; a later retry of that clientTurnId conflicts or no-ops.
+      for (let index = inbox.items.length - 1; index >= 0; index -= 1) {
+        const item = inbox.items[index];
+        if (!item || item.mode === "write") continue;
+        tx.settleSubmission(item.id, { status: "unanswered", reason: "aborted" });
+        inbox.items.splice(index, 1);
+      }
+      for (const item of [
+        ...batch.steering.map((entry) => ({ mode: "steer" as const, entry })),
+        ...batch.followUp.map((entry) => ({ mode: "followUp" as const, entry })),
+      ]) {
+        const created = await tx.createSubmission({
+          conversationId: this.conversation.id,
+          type: "input",
+          status: "queued",
+        });
+        inbox.items.push({
+          id: created.id,
+          mode: item.mode,
+          content: this.queuedInputContent(item.entry),
+        });
+      }
+    }, BACKGROUND_CONTEXT);
+    // The view mount publishes on a microtask. Wait for it before the caller
+    // compares authority with no further await.
+    await new Promise<void>((resolve) => {
+      queueMicrotask(() => resolve());
+    });
+    if (this.userInboxFingerprint(this.currentInbox()) !== this.expectedInboxFingerprint(batch))
+      throw new QueuedModelTurnsAuthorityError("during_replay");
+    return this.rememberQueueAuthority();
   }
+
   clearQueuedModelTurns(): never {
     return this.unsupported("clearQueuedModelTurns");
+  }
+
+  private currentInbox(): InboxState | undefined {
+    return this.view.value.docs["pi.inbox"] as InboxState | undefined;
+  }
+
+  private rememberQueueAuthority(): QueuedModelTurnsAuthority {
+    const generation = ++this.queueAuthorityGeneration;
+    this.queueAuthorityFingerprints.set(generation, this.userInboxFingerprint(this.currentInbox()));
+    if (this.queueAuthorityFingerprints.size > 8) {
+      const oldest = this.queueAuthorityFingerprints.keys().next().value;
+      if (oldest !== undefined) this.queueAuthorityFingerprints.delete(oldest);
+    }
+    return { generation };
+  }
+
+  private userInboxFingerprint(inbox: InboxState | undefined): string {
+    return JSON.stringify(
+      (inbox?.items ?? []).flatMap((item) =>
+        item.mode === "write" ? [] : [{ mode: item.mode, content: item.content }],
+      ),
+    );
+  }
+
+  private expectedInboxFingerprint(batch: QueuedModelTurnBatch): string {
+    return JSON.stringify([
+      ...batch.steering.map((entry) => ({
+        mode: "steer",
+        content: this.queuedInputContent(entry),
+      })),
+      ...batch.followUp.map((entry) => ({
+        mode: "followUp",
+        content: this.queuedInputContent(entry),
+      })),
+    ]);
+  }
+
+  private queuedInputContent(item: {
+    message: string;
+    images?: ReadonlyArray<{ type: "image"; data: string; mimeType: string }>;
+  }):
+    | string
+    | Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> {
+    if (!item.images?.length) return item.message;
+    return [
+      { type: "text", text: item.message },
+      ...item.images.map((image) => ({
+        type: "image" as const,
+        data: image.data,
+        mimeType: image.mimeType,
+      })),
+    ];
   }
   respondToExtensionUIRequest(response: ExtensionUIResponsePayload): Promise<boolean> {
     this.assertOpen();

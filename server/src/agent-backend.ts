@@ -30,6 +30,14 @@ export interface AgentBackend {
   readonly isQueueReconciliationRequired: boolean;
   /** Native abort atomically withdraws its inbox; no host queue replacement. */
   readonly abortClearsQueuedModelTurns?: boolean;
+  /**
+   * While a queue replacement is inside its lifecycle transaction, ignore native
+   * inbox refresh. The Oppi store commit is the editor's rich result; refreshing
+   * early would publish text-only items and rewind the CAS version.
+   */
+  readonly defersNativeQueueRefresh?: boolean;
+  /** Idle edits stay queued. The next real admission places them; do not start a prompt here. */
+  readonly retainsIdleQueueUntilAdmission?: boolean;
   /** Abort owns UI cancellation; don't answer the waiting tool just before stopping it. */
   readonly cancelsExtensionUIOnAbort?: boolean;
   readonly showCacheMissNotices: boolean;
