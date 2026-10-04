@@ -26,8 +26,21 @@ import {
   type LiveState,
   type InboxState,
   type UsageState,
+  type EntryRecord,
+  CompactionEntry,
+  ResetEntry,
 } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
+import { computeCacheWaste } from "./cache-miss.js";
+import {
+  addUsageToModelBreakdown,
+  estimateTokensFromChars,
+  sortedModelUsage,
+  TOOLS_SUMMARIES_USAGE_KEY,
+  TOOLS_SUMMARIES_USAGE_LABEL,
+  type SessionModelUsageSnapshot,
+} from "./session-stats.js";
 import type { AgentDefinition } from "./agent-launch-service.js";
 import type { AgentBackend } from "./agent-backend.js";
 import { DurableRuntime, type DurableHarness } from "./durable-harness.js";
@@ -784,11 +797,31 @@ export class DurableBackend implements AgentBackend {
       isCompacting: this.isCompacting,
     };
   }
-  getSessionStats(): ReturnType<AgentBackend["getSessionStats"]> {
+  async getSessionStats(): Promise<Awaited<ReturnType<AgentBackend["getSessionStats"]>>> {
     const messages = this.messages();
     const usage = this.view.value.docs["pi.usage"] as UsageState | undefined;
     const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
     let cost = 0;
+    const byModel = new Map<string, SessionModelUsageSnapshot>();
+    for (const [key, value] of Object.entries(usage?.models ?? {})) {
+      // `pi.usage` keys models as `provider/modelId`.
+      const slash = key.indexOf("/");
+      addUsageToModelBreakdown(
+        byModel,
+        key,
+        slash < 0 ? key : key.slice(slash + 1),
+        slash < 0 ? undefined : key.slice(0, slash),
+        value,
+      );
+    }
+    for (const value of Object.values(usage?.tools ?? {}))
+      addUsageToModelBreakdown(
+        byModel,
+        TOOLS_SUMMARIES_USAGE_KEY,
+        TOOLS_SUMMARIES_USAGE_LABEL,
+        undefined,
+        value,
+      );
     for (const value of [
       ...Object.values(usage?.models ?? {}),
       ...Object.values(usage?.tools ?? {}),
@@ -800,7 +833,35 @@ export class DurableBackend implements AgentBackend {
       tokens.total += value.totalTokens;
       cost += value.cost.total;
     }
+    // The effective prompt is the replay of the active context's `pi.system` entries.
+    // Durable sessions load no AGENTS files or skills.
+    const systemPromptChars = getCurrentSystemPrompt(
+      this.view.value.entries.flatMap((entry) => entry.model ?? []),
+    ).length;
+    const agent = await this.conversation.agent(BACKGROUND_CONTEXT);
     return {
+      cacheWaste: computeCacheWaste(
+        (await this.historyEntries()).flatMap((entry) =>
+          CompactionEntry.is(entry) || ResetEntry.is(entry)
+            ? [{ type: "compaction" }]
+            : (entry.model ?? []).map((message) => ({ type: "message", message })),
+        ),
+        this.registry,
+      ),
+      modelBreakdown: sortedModelUsage(byModel),
+      contextComposition: {
+        piSystemPromptChars: systemPromptChars,
+        piSystemPromptTokens: estimateTokensFromChars(systemPromptChars),
+        agentsChars: 0,
+        agentsTokens: 0,
+        agentsFiles: [],
+        skillsListingChars: 0,
+        skillsListingTokens: 0,
+      },
+      loadedResources: {
+        skills: [],
+        extensions: agent.extensions.map((extension) => ({ name: extension.name, path: "" })),
+      },
       sessionId: this.session.id,
       sessionFile: undefined,
       userMessages: messages.filter((message) => message.role === "user").length,
@@ -818,6 +879,17 @@ export class DurableBackend implements AgentBackend {
       tokens,
       cost,
     };
+  }
+  /** Every entry of this conversation, oldest first, including entries before the active head. */
+  private async historyEntries(): Promise<EntryRecord[]> {
+    const records: EntryRecord[] = [];
+    let cursor;
+    do {
+      const page = await this.conversation.entries({}, 500, cursor, BACKGROUND_CONTEXT);
+      records.push(...page.items);
+      cursor = page.next;
+    } while (cursor !== undefined);
+    return records.reverse();
   }
   async setModel(modelId: string): Promise<Awaited<ReturnType<AgentBackend["setModel"]>>> {
     this.assertOpen();

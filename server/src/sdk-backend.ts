@@ -50,7 +50,14 @@ import type { AgentDefinition } from "./agent-launch-service.js";
 import { computeCacheWaste, type CacheMissModelPriceSource } from "./cache-miss.js";
 import type { AgentBackend } from "./agent-backend.js";
 import { extensionNameForAllowlist } from "./extension-loader.js";
-import { toRecord } from "./session-command-parse.js";
+import {
+  addUsageToModelBreakdown,
+  estimateTokensFromChars,
+  sortedModelUsage,
+  TOOLS_SUMMARIES_USAGE_KEY,
+  TOOLS_SUMMARIES_USAGE_LABEL,
+  type SessionModelUsageSnapshot,
+} from "./session-stats.js";
 import {
   modelCandidatesFromRegistry,
   modelUnavailableMessage,
@@ -102,13 +109,6 @@ function toCommandLocation(value: string | undefined): "user" | "project" | "pat
 }
 
 type SessionCommandDescriptor = ReturnType<AgentBackend["commands"]>["commands"][number];
-
-function estimateTokensFromChars(chars: number): number {
-  if (chars <= 0) {
-    return 0;
-  }
-  return Math.max(1, Math.ceil(chars / 4));
-}
 
 function collectSessionContextComposition(session: AgentSession): {
   piSystemPromptChars: number;
@@ -167,41 +167,6 @@ function collectLoadedSessionResources(session: AgentSession): {
   return { skills, extensions };
 }
 
-interface SessionModelUsageSnapshot {
-  provider?: string;
-  model: string;
-  tokens: number;
-  cost: number;
-}
-
-function finiteNonNegative(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
-}
-
-function addUsageToModelBreakdown(
-  byModel: Map<string, SessionModelUsageSnapshot>,
-  key: string,
-  model: string,
-  provider: string | undefined,
-  value: unknown,
-): void {
-  const usage = toRecord(value);
-  const cost = toRecord(usage.cost);
-  const current = byModel.get(key) ?? {
-    ...(provider ? { provider } : {}),
-    model,
-    tokens: 0,
-    cost: 0,
-  };
-  current.tokens +=
-    finiteNonNegative(usage.input) +
-    finiteNonNegative(usage.output) +
-    finiteNonNegative(usage.cacheRead) +
-    finiteNonNegative(usage.cacheWrite);
-  current.cost += finiteNonNegative(cost.total);
-  byModel.set(key, current);
-}
-
 function collectModelUsage(entries: readonly unknown[]): SessionModelUsageSnapshot[] {
   const byModel = new Map<string, SessionModelUsageSnapshot>();
 
@@ -222,8 +187,8 @@ function collectModelUsage(entries: readonly unknown[]): SessionModelUsageSnapsh
       } else if (message.role === "toolResult") {
         addUsageToModelBreakdown(
           byModel,
-          "tools-summaries",
-          "Tools & summaries",
+          TOOLS_SUMMARIES_USAGE_KEY,
+          TOOLS_SUMMARIES_USAGE_LABEL,
           undefined,
           message.usage,
         );
@@ -231,17 +196,15 @@ function collectModelUsage(entries: readonly unknown[]): SessionModelUsageSnapsh
     } else if (entry.type === "compaction" || entry.type === "branch_summary") {
       addUsageToModelBreakdown(
         byModel,
-        "tools-summaries",
-        "Tools & summaries",
+        TOOLS_SUMMARIES_USAGE_KEY,
+        TOOLS_SUMMARIES_USAGE_LABEL,
         undefined,
         entry.usage,
       );
     }
   }
 
-  return [...byModel.values()]
-    .filter((entry) => entry.tokens > 0 || entry.cost > 0)
-    .sort((left, right) => right.cost - left.cost);
+  return sortedModelUsage(byModel);
 }
 
 const BUILTIN_SLASH_COMMANDS: readonly SessionCommandDescriptor[] = [

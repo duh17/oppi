@@ -2188,7 +2188,22 @@ describe("server durable managed runtime", () => {
       assistantMessages: 1,
       totalMessages: expect.any(Number),
       tokens: { total: expect.any(Number) },
+      cacheWaste: { missedTokens: 0, missCount: 0 },
+      modelBreakdown: [expect.objectContaining({ provider: "faux", model: "faux-1" })],
+      contextComposition: {
+        piSystemPromptTokens: expect.any(Number),
+        agentsTokens: 0,
+        agentsFiles: [],
+        skillsListingTokens: 0,
+      },
+      loadedResources: {
+        skills: [],
+        extensions: expect.arrayContaining([{ name: DurableGoal.name, path: "" }]),
+      },
     });
+    const composition = (stats as { contextComposition: { piSystemPromptTokens: number } })
+      .contextComposition;
+    expect(composition.piSystemPromptTokens).toBeGreaterThan(0);
     projection.unsubscribe();
   });
 

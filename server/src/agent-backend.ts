@@ -93,7 +93,9 @@ export interface AgentBackend {
   cycleThinkingLevel(): ThinkingLevel | undefined | Promise<ThinkingLevel | undefined>;
   setSessionName(name: string): void;
   getStateSnapshot(): PiStateSnapshot;
-  getSessionStats(): SessionStats & Record<string, unknown>;
+  getSessionStats():
+    | (SessionStats & Record<string, unknown>)
+    | Promise<SessionStats & Record<string, unknown>>;
   messages(): PiMessage[];
   forkMessages(): Array<{ entryId: string; text: string }>;
   sessionTree(): SessionTreeManager & CanonicalSessionTree;
