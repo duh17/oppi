@@ -696,6 +696,8 @@ final class FullScreenCodeViewController: UIViewController {
             textAndFirstLine = (text, 1)
         case .document(let family):
             textAndFirstLine = (family.text, 1)
+        case .notebook(let plan):
+            textAndFirstLine = (plan.sources.map(\.code).joined(separator: "\n\n"), 1)
         case .diff(let document):
             textAndFirstLine = (document.reconstructedNewSideText, 1)
         case .liveSource(let snapshot, _):
@@ -1512,6 +1514,11 @@ final class FullScreenCodeViewController: UIViewController {
                 palette: palette,
                 readerPreferences: readerPreferences(for: content)
             )
+        case .notebook(let plan):
+            let cell = NotebookCellView()
+            cell.apply(plan)
+            cell.backgroundColor = UIColor(palette.bg)
+            return cell
         }
     }
 
@@ -1856,6 +1863,8 @@ final class FullScreenCodeViewController: UIViewController {
             return nil
         case .document(let family):
             return family.readerFamily
+        case .notebook:
+            return nil
         case .liveSource(let snapshot, _):
             return readerFamily(for: bodyContent(for: snapshot))
         }
@@ -2055,6 +2064,8 @@ final class FullScreenCodeViewController: UIViewController {
             return text
         case .document(let family):
             return family.text
+        case .notebook(let plan):
+            return plan.sources.map(\.code).joined(separator: "\n\n")
         }
     }
 
@@ -2191,6 +2202,8 @@ final class FullScreenCodeViewController: UIViewController {
             return .plainText(document.copyText, fileName: diffName)
         case .liveSource(let snapshot, _):
             return .plainText(snapshot.text, fileName: snapshot.filePath)
+        case .notebook(let plan):
+            return .plainText(plan.sources.map(\.code).joined(separator: "\n\n"))
         }
     }
 

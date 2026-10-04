@@ -105,7 +105,7 @@ enum ToolPresentationBuilder {
         // Expanded presentation
         let expanded: ExpandedPresentation
         if isExpanded || isVoicePresentationResult {
-            expanded = buildExpanded(inspection)
+            expanded = buildExpanded(inspection, isDone: isDone, isError: isError, details: context.details)
         } else {
             expanded = ExpandedPresentation()
         }
@@ -318,6 +318,13 @@ enum ToolPresentationBuilder {
                 result.languageBadge = nil
                 result.toolNamePrefix = nil
                 result.toolNameColor = UIColor(Color.themePurple)
+            } else if let line = NotebookCellPlan.collapsedTitle(from: inspection.input) {
+                // No title segments: the first code line is the cell, the way a
+                // shell row shows the command. Segments, when present, still win
+                // in the header.
+                result.title = line
+                result.toolNamePrefix = nil
+                result.languageBadge = NotebookCellPlan.languageBadge(from: inspection.input)
             } else if let display, !display.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 result.title = display.label(fallback: tool)
                 result.toolNamePrefix = nil
@@ -344,6 +351,9 @@ enum ToolPresentationBuilder {
         case diff(lines: [DiffLine], path: String?)
         /// Code viewer with line numbers, syntax highlighting, horizontal scroll
         case code(text: String, language: SyntaxLanguage?, startLine: Int?, filePath: String?)
+        /// Code-role input painted as a notebook cell. The markdown document
+        /// remains the descriptor leaf for raw text and copy.
+        case notebook(NotebookCellPlan)
         /// Rendered markdown (read .md)
         case markdown(text: String, filePath: String? = nil)
         /// Rendered CSV/TSV table or GeoJSON/TopoJSON map in the expanded tool row.
@@ -368,11 +378,29 @@ enum ToolPresentationBuilder {
         var rawMarkdownOutputPrefix: String?
     }
 
-    private static func buildExpanded(_ inspection: ToolInspection) -> ExpandedPresentation {
+    private static func buildExpanded(
+        _ inspection: ToolInspection,
+        isDone: Bool,
+        isError: Bool,
+        details: JSONValue?
+    ) -> ExpandedPresentation {
         return ExpandedPresentation(
             content: inspection.output.first.map { descriptor in
                 if inspection.terminalOutput, case .terminal(let terminal) = descriptor {
                     return .bash(command: inspection.commandText, output: terminal.output, unwrapped: true)
+                }
+                if !inspection.isInteractive, inspection.file == nil, !inspection.mediaOutput,
+                   let notebook = NotebookCellPlan.make(
+                    input: inspection.input,
+                    calls: inspection.calls,
+                    output: inspection.raw,
+                    details: details,
+                    isDone: isDone,
+                    isError: isError,
+                    previewOnly: inspection.previewOnly,
+                    totalBytes: inspection.totalBytes
+                   ) {
+                    return .notebook(notebook)
                 }
                 return expandedContent(from: descriptor)
             },

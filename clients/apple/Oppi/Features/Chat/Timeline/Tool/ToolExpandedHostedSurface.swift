@@ -165,6 +165,24 @@ final class ToolExpandedHostedSurface {
         return true
     }
 
+    /// Code-role notebook cell. Reuses the mounted view so output deltas do not
+    /// reset the reader's scroll. Returns true when the row should remeasure.
+    @discardableResult
+    func installNotebook(_ plan: NotebookCellPlan) -> Bool {
+        let cell: NotebookCellView
+        let mounted: Bool
+        if let existing = contentView as? NotebookCellView {
+            cell = existing
+            mounted = false
+        } else {
+            clearContent()
+            cell = NotebookCellView()
+            mountContentView(cell)
+            mounted = true
+        }
+        return cell.apply(plan) || mounted
+    }
+
     /// CSV/TSV table or GeoJSON/TopoJSON map. The family builds the view and says
     /// whether the mounted one already shows the document. Returns true when a
     /// new content view was mounted.

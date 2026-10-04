@@ -50,5 +50,6 @@ struct ExpandedRenderOutput {
             textSelectionEnabled: Bool
         )
         case document(DocumentFamily)
+        case notebook(NotebookCellPlan)
     }
 }

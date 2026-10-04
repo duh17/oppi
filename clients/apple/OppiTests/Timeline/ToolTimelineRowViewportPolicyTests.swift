@@ -145,6 +145,28 @@ struct ToolTimelineRowViewportPolicyTests {
                 expectedPriority: .required
             ),
             PolicyCase(
+                name: "notebook cell",
+                content: .notebook(NotebookCellPlan(
+                    sources: [.init(label: nil, language: "javascript", code: "await lookup()")],
+                    metadata: [],
+                    calls: [],
+                    omittedCalls: 0,
+                    callsIncomplete: false,
+                    output: .none,
+                    availabilityNote: nil,
+                    running: false,
+                    failed: false
+                )),
+                toolNamePrefix: nil,
+                expectedSurface: .compactHostedView,
+                expectedMode: .text,
+                expectedHeightBehavior: .compactMeasured(
+                    minHeight: 72,
+                    maxHeight: ToolTimelineRowContentView.maxOutputViewportHeight
+                ),
+                expectedPriority: .required
+            ),
+            PolicyCase(
                 name: "geojson map",
                 content: .document(.geoJSON(text: "{}", filePath: "park.geojson")),
                 toolNamePrefix: "read",

@@ -596,6 +596,7 @@ extension ChatTimelineCollectionHost.Controller {
         case .audioMessage: return "audioMessage"
         case .status: return "status"
         case .text: return "text"
+        case .notebook: return "notebook"
         }
     }
 

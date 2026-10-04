@@ -1,0 +1,193 @@
+import Foundation
+
+/// UI-free notebook cell for a code-role tool input.
+///
+/// Selected from the code role, never from a tool name. iOS paints this;
+/// the markdown document remains the descriptor leaf for raw text, copy, and Mac.
+struct NotebookCellPlan: Equatable, Hashable, Sendable {
+    struct Source: Equatable, Hashable, Sendable {
+        var label: String?
+        var language: String?
+        var code: String
+
+        var languageName: String? {
+            guard let language, !language.isEmpty else { return nil }
+            let detected = SyntaxLanguage.detect(language)
+            return detected == .unknown ? language : detected.displayName
+        }
+
+        var syntaxLanguage: SyntaxLanguage {
+            SyntaxLanguage.detect(language ?? "")
+        }
+    }
+
+    struct Call: Equatable, Hashable, Sendable {
+        var name: String
+        var status: String
+        var duration: String?
+        var arguments: String?
+        var error: String?
+    }
+
+    enum Output: Equatable, Hashable, Sendable {
+        case none
+        case stdout(String)
+        case rich(String)
+    }
+
+    var sources: [Source]
+    var metadata: [String]
+    var calls: [Call]
+    var omittedCalls: Int
+    var callsIncomplete: Bool
+    var output: Output
+    var availabilityNote: String?
+    var running: Bool
+    var failed: Bool
+
+    var hasOutputWell: Bool {
+        if case .none = output, calls.isEmpty, omittedCalls == 0, !callsIncomplete, availabilityNote == nil, !running {
+            return false
+        }
+        return true
+    }
+
+    /// Nil unless at least one code-role field has text. Callers still reject
+    /// terminal, file, media, and interactive inspections.
+    static func make(
+        input: [ToolInspection.Field],
+        calls: NestedToolCalls?,
+        output: String,
+        details: JSONValue?,
+        isDone: Bool,
+        isError: Bool,
+        previewOnly: Bool,
+        totalBytes: Int?
+    ) -> NotebookCellPlan? {
+        let sources = input.compactMap { field -> Source? in
+            guard field.role == "code" else { return nil }
+            let code = codeText(field.value)
+            guard !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return Source(label: field.name, language: field.language, code: code)
+        }
+        guard !sources.isEmpty else { return nil }
+        let labeled = sources.count > 1
+        let fragment = ToolCallDocumentBuilder.outputFragment(
+            output: output, details: details, previewOnly: previewOnly, totalBytes: totalBytes
+        )
+        let recorded = calls?.calls ?? []
+        let shown = recorded.prefix(256)
+        return NotebookCellPlan(
+            sources: sources.map {
+                Source(label: labeled ? $0.label : nil, language: $0.language, code: $0.code)
+            },
+            metadata: metadata(input),
+            calls: shown.map(call),
+            omittedCalls: max(0, recorded.count - shown.count),
+            callsIncomplete: calls?.complete == false,
+            output: classify(fragment.body),
+            availabilityNote: fragment.note,
+            running: !isDone,
+            failed: isError
+        )
+    }
+
+    static func collapsedTitle(from fields: [ToolInspection.Field]) -> String? {
+        for field in fields where field.role == "code" {
+            let text = codeText(field.value)
+            if let line = text.split(whereSeparator: \.isNewline)
+                .map({ $0.trimmingCharacters(in: .whitespaces) })
+                .first(where: { !$0.isEmpty }) {
+                return String(line.prefix(240))
+            }
+        }
+        return nil
+    }
+
+    static func languageBadge(from fields: [ToolInspection.Field]) -> String? {
+        fields.first { $0.role == "code" }?.language.flatMap { language in
+            guard !language.isEmpty else { return nil }
+            let detected = SyntaxLanguage.detect(language)
+            return detected == .unknown ? language : detected.displayName
+        }
+    }
+
+    private static func codeText(_ value: JSONValue) -> String {
+        if let string = value.stringValue { return string }
+        return OrderedJSON.from(value).json(pretty: true)
+    }
+
+    private static func metadata(_ input: [ToolInspection.Field]) -> [String] {
+        let fields = input.filter { field in
+            field.role != "code" && field.value != .null && field.value != .string("")
+        }
+        let shown = fields.prefix(4).map { field in
+            let value = OrderedJSON.from(field.value)
+            let text = value.scalar ?? value.json()
+            return field.name + " " + clip(text, 40)
+        }
+        var lines = [shown.joined(separator: " · ")]
+        if fields.count > shown.count {
+            lines.append("\(fields.count - shown.count) more fields")
+        }
+        return lines.filter { !$0.isEmpty }
+    }
+
+    private static func call(_ record: NestedToolCallRecord) -> Call {
+        let arguments: String?
+        if let args = record.arguments {
+            let text = OrderedJSON.from(.object(args)).json()
+            arguments = text == "{}" ? nil : clip(text, 180)
+        } else if let bytes = record.argumentsBytes {
+            arguments = "[\(bytes) bytes]"
+        } else {
+            arguments = nil
+        }
+        let error = record.status == "error" ? record.error.flatMap { error in
+            let trimmed = error.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : clip(trimmed.replacingOccurrences(of: "\n", with: " "), 240)
+        } : nil
+        return Call(
+            name: record.display?.label(fallback: record.name) ?? record.name,
+            status: record.status,
+            duration: record.durationMs.map(duration),
+            arguments: arguments,
+            error: error
+        )
+    }
+
+    private static func duration(_ ms: Double) -> String {
+        ms < 1000 ? "\(Int(ms)) ms" : String(format: "%.1f s", locale: Locale(identifier: "en_US_POSIX"), ms / 1000)
+    }
+
+    private static func classify(_ body: String) -> Output {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .none }
+        if let inner = unwrapSingleFence(trimmed) {
+            return .stdout(inner)
+        }
+        if trimmed.contains("```") || trimmed.contains("\n| ") || trimmed.hasPrefix("| ")
+            || trimmed.contains("\n# ") || trimmed.hasPrefix("#") {
+            return .rich(trimmed)
+        }
+        return .stdout(trimmed.replacingOccurrences(of: "  \n", with: "\n"))
+    }
+
+    /// A document that is exactly one fence. The cell shows the inside as stdout.
+    private static func unwrapSingleFence(_ text: String) -> String? {
+        guard text.hasPrefix("`") else { return nil }
+        let markerCount = text.prefix { $0 == "`" }.count
+        guard markerCount >= 3 else { return nil }
+        let marker = String(repeating: "`", count: markerCount)
+        guard text.hasSuffix("\n" + marker), !text.dropFirst(markerCount).hasPrefix(marker) else { return nil }
+        let rest = text.dropFirst(markerCount)
+        guard let newline = rest.firstIndex(of: "\n") else { return nil }
+        let inner = rest[rest.index(after: newline)...].dropLast(marker.count + 1)
+        guard !inner.contains("\n" + marker) else { return nil }
+        return String(inner)
+    }
+
+    private static func clip(_ text: String, _ cap: Int) -> String {
+        text.count > cap ? String(text.prefix(cap - 1)) + "…" : text
+    }
+}

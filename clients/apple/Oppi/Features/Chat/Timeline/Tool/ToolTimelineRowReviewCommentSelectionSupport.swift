@@ -172,7 +172,7 @@ enum ToolTimelineRowReviewCommentSelectionSupport {
                 timelineItemId: timelineItemId
             )
 
-        case .bash, .markdown, .readMedia, .audioMessage, .status, .document:
+        case .bash, .markdown, .readMedia, .audioMessage, .status, .document, .notebook:
             return nil
         }
     }

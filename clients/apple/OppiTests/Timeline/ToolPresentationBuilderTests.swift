@@ -2582,6 +2582,8 @@ private func modeName(_ content: ToolPresentationBuilder.ToolExpandedContent?) -
         return "text"
     case .document(let family):
         return family.kindName
+    case .notebook:
+        return "notebook"
     case nil:
         return "nil"
     }

@@ -180,8 +180,20 @@ struct ToolRowViewportPolicy {
             return .text
         case .document(let family):
             return .document(family.inline)
+        case .notebook:
+            return .notebook
         }
     }
+
+    static let notebook = ToolRowViewportPolicy(
+        surface: .compactHostedView,
+        viewportMode: .text,
+        heightBehavior: .compactMeasured(
+            minHeight: 72,
+            maxHeight: ToolTimelineRowContentView.maxOutputViewportHeight
+        ),
+        constraintPriority: .required
+    )
 
     static func document(_ traits: DocumentFamily.InlineTraits) -> ToolRowViewportPolicy {
         ToolRowViewportPolicy(

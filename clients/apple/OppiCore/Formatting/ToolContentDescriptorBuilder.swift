@@ -275,7 +275,11 @@ enum ToolContentDescriptorBuilder {
         case "diffOfEdits": return "arrow.left.arrow.right"
         case "fileContent":
             return input?.fields.values.contains { $0.role == "fileContent" } == true ? "pencil" : "magnifyingglass"
-        default: return nil
+        default:
+            if input?.fields.values.contains(where: { $0.role == "code" }) == true {
+                return "chevron.left.forwardslash.chevron.right"
+            }
+            return nil
         }
     }
 

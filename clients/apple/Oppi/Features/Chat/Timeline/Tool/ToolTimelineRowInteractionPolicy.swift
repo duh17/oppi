@@ -11,6 +11,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
         case status
         case text
         case document
+        case notebook
     }
 
     let mode: ExpandedMode
@@ -53,7 +54,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
                 allowsHorizontalScroll: false
             )
 
-        case .markdown, .document, .text:
+        case .markdown, .document, .text, .notebook:
             return Self(
                 mode: mode,
                 enablesTapCopyGesture: true,
@@ -86,6 +87,8 @@ private extension ToolTimelineRowInteractionPolicy.ExpandedMode {
             self = .text
         case .document:
             self = .document
+        case .notebook:
+            self = .notebook
         }
     }
 }

@@ -211,9 +211,10 @@ struct ToolCallDocumentTests {
     }
 
     @Test @MainActor func fullScreenUsesSameDocumentAndRawToggle() throws {
-        var context = ToolPresentationBuilder.Context(args: ["source": "text(1)", "unused": .null],
+        let context = ToolPresentationBuilder.Context(args: ["source": "text(1)", "unused": .null],
             expandedItemIDs: ["t"], fullOutput: "{\"z\":1}", isLoadingOutput: false)
-        context.inputPresentation = .init(fields: ["source": .init(role: "code", language: "javascript")])
+        // A code-role field paints the notebook cell. This test keeps the
+        // generic document's Raw toggle, so the field stays unlabeled.
         let config = ToolPresentationBuilder.build(itemID: "t", tool: "arbitrary", argsSummary: "",
             outputPreview: "", isError: false, isDone: true, context: context)
         let content = try #require(ToolTimelineRowFullScreenSupport.staticFullScreenContent(

@@ -43,6 +43,9 @@ enum ToolTimelineRowFullScreenSupport {
                     stream: terminalStream
                 )
 
+            case .notebook(let plan):
+                return .notebook(plan)
+
             case .code, .diff, .markdown, .document:
                 guard let snapshot = liveSourceSnapshot(
                     configuration: configuration,
@@ -158,6 +161,10 @@ enum ToolTimelineRowFullScreenSupport {
                 stream: nil
             )
 
+        case .notebook(let plan):
+            guard !plan.sources.isEmpty else { return nil }
+            return .notebook(plan)
+
         case .readMedia, .audioMessage, .status:
             return nil
         }
@@ -233,6 +240,15 @@ enum ToolTimelineRowFullScreenSupport {
                 filePath: nil,
                 isDone: configuration.isDone,
                 finalContent: nil
+            )
+
+        case .notebook(let plan):
+            guard !plan.sources.isEmpty else { return nil }
+            return SourceTraceStream.Snapshot(
+                text: plan.sources.map(\.code).joined(separator: "\n\n"),
+                filePath: nil,
+                isDone: configuration.isDone,
+                finalContent: .notebook(plan)
             )
 
         case .bash, .readMedia, .audioMessage, .status:

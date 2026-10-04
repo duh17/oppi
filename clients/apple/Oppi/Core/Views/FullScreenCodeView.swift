@@ -241,6 +241,8 @@ final class SourceTraceStream {
             return "graphviz"
         case .document(let family):
             return family.kindName
+        case .notebook:
+            return "notebook"
         case nil:
             return nil
         }
@@ -293,6 +295,8 @@ indirect enum FullScreenCodeContent {
     case graphviz(content: String, filePath: String?)
     /// CSV/TSV table or GeoJSON/TopoJSON map; `DocumentFamily` owns the per-kind behavior.
     case document(DocumentFamily)
+    /// Code-role notebook cell. Same view as the expanded row.
+    case notebook(NotebookCellPlan)
 
     /// Build content from raw text and a file path by detecting the file type.
     static func fromText(_ text: String, filePath: String?) -> FullScreenCodeContent {

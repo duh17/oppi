@@ -1467,7 +1467,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         switch content {
         case .audioMessage(let text, let attachmentId, _, _, _):
             return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachmentId.isEmpty
-        case .bash, .diff, .code, .markdown, .document, .readMedia, .status, .text:
+        case .bash, .diff, .code, .markdown, .document, .notebook, .readMedia, .status, .text:
             return true
         }
     }
@@ -1762,6 +1762,24 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 viewportPolicy: viewportPolicy
             )
 
+        case .notebook(let plan):
+            var hasher = Hasher()
+            hasher.combine(plan)
+            hasher.combine(ThemeRuntimeState.currentThemeID())
+            return ExpandedRenderOutput(
+                renderSignature: hasher.finalize(),
+                renderedText: plan.sources.map(\.code).joined(separator: "\n"),
+                shouldAutoFollow: false,
+                viewportPolicy: viewportPolicy,
+                verticalLock: false,
+                scrollBehavior: .preserve,
+                lineBreakMode: .byWordWrapping,
+                horizontalScroll: false,
+                deferredHighlight: nil,
+                invalidateLayout: true,
+                installAction: .notebook(plan)
+            )
+
         case .document(let family):
             var hasher = Hasher()
             hasher.combine(family.text)
@@ -1835,6 +1853,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         case .document(let family):
             if hostedSurface.installDocument(itemID: currentConfiguration.itemID, family: family) {
                 scheduleHostedRemeasure()
+            }
+        case .notebook(let plan):
+            if hostedSurface.installNotebook(plan) {
+                scheduleHostedRemeasure()
+            }
+            if let cell = hostedSurface.contentView as? NotebookCellView {
+                cell.onOpenReader = { [weak self] in self?.showFullScreenContent() }
             }
         }
 
