@@ -118,6 +118,7 @@ Example:
 
 ### Fixed
 
+- **Client:** SSH Terminal paints agent output with far less main-thread work: a spinner or status-line update repaints only the rows that changed, drawn as same-style runs, instead of redrawing every cell of the screen on each tick, and a repaint too large for one frame (a resize, a scroll, a screen of styled cells) spreads over several frames. Whole-screen redraws were the confirmed cost behind the terminal's UI stalls while Codex output arrived.
 - **Client:** SSH Terminal: the chat bar's keyboard button and Type in Terminal stay in direct typing, and tapping the terminal opens that keyboard even when Codex, Herdr, or tmux asked for mouse clicks. Chat-bar mode still sends those taps as clicks.
 - **Client:** Sending no longer intermittently bounces the message back into the composer: leaving and reopening a chat can't drop its live connection, and Send shows Connecting… and reconnects first when the connection is down.
 - **Client:** Session WebSockets keep retrying after temporary upgrade failures, including repeated 503s, instead of getting stuck until an HTTP watchdog reload. Failed route probes leave the current socket retrying; authentication and missing-session failures keep their existing behavior.

@@ -705,6 +705,42 @@ struct SSHTerminalTests {
         #expect(SSHTerminalComposer.prompt("", paths: ["/tmp/a.png"]) == "/tmp/a.png")
     }
 
+    @Test func repaintTouchesOnlyChangedRowsAndDrawsSameStyleRuns() throws {
+        let engine = try SSHTerminalEngine(geometry: .init(columns: 40, rows: 10)) { _ in }
+        let line = String(repeating: "abcdefghij", count: 4)
+        engine.receive(Data((Array(repeating: line, count: 10).joined(separator: "\r\n") + "\u{1b}[5;1H").utf8))
+        let before = engine.frame()
+        #expect(SSHTerminalPaintPlan.changedRows(from: nil, to: before) == nil)
+        #expect(SSHTerminalPaintPlan.changedRows(from: before, to: engine.frame()) == IndexSet())
+
+        engine.receive(Data("x".utf8)) // one cell, and the cursor moves along the same row
+        let after = engine.frame()
+        #expect(SSHTerminalPaintPlan.changedRows(from: before, to: after) == IndexSet(integer: 4))
+        engine.receive(Data("\u{1b}[10;1H".utf8)) // only the cursor moves: its old and new rows
+        #expect(SSHTerminalPaintPlan.changedRows(from: after, to: engine.frame()) == IndexSet([4, 9]))
+        engine.resize(.init(columns: 40, rows: 8))
+        #expect(SSHTerminalPaintPlan.changedRows(from: after, to: engine.frame()) == nil)
+
+        // A uniform row is one text draw. Style splits it; a wide grapheme
+        // stands alone so its fallback font cannot shift later columns.
+        #expect(SSHTerminalPaintPlan.runs(after.rows[0]).map(\.columns) == [40])
+        engine.receive(Data("\u{1b}[2J\u{1b}[Hab\u{1b}[31mcd\u{1b}[0m中e".utf8))
+        let runs = SSHTerminalPaintPlan.runs(engine.frame().rows[0])
+        #expect(runs.map(\.text) == ["ab", "cd", "中", "e" + String(repeating: " ", count: 33)])
+        #expect(runs.map(\.column) == [0, 2, 4, 6])
+        #expect(runs.map(\.columns) == [2, 2, 2, 34])
+        #expect(runs.map(\.fixedPitch) == [true, true, false, true])
+
+        // Cheap rows repaint in one tick; costly ones spread a full repaint
+        // over ticks, a bounded window at a time, so the main thread yields.
+        let all = IndexSet(integersIn: 0..<40)
+        #expect(SSHTerminalPaintPlan.rowsWithinBudget(all, secondsPerRow: 0.0001, budget: 0.008) == all)
+        #expect(SSHTerminalPaintPlan.rowsWithinBudget(all, secondsPerRow: 0.002, budget: 0.008) == IndexSet(integersIn: 0..<4))
+        #expect(SSHTerminalPaintPlan.rowsWithinBudget(IndexSet([2, 3, 30]), secondsPerRow: 0.002, budget: 0.008) == IndexSet([2, 3]))
+        #expect(SSHTerminalPaintPlan.rowsWithinBudget(IndexSet([5]), secondsPerRow: 1, budget: 0.008) == IndexSet([5]))
+        #expect(SSHTerminalPaintPlan.rowsWithinBudget([], secondsPerRow: 0.002, budget: 0.008).isEmpty)
+    }
+
     @Test func pasteLineCountIgnoresATrailingTerminator() {
         #expect(SSHTerminalEngine.pasteLineCount("echo one\recho two\r") == 2)
         #expect(SSHTerminalEngine.pasteLineCount("echo one\necho two\n") == 2)

@@ -286,6 +286,204 @@ enum SSHTerminalTapAction: Equatable {
     }
 }
 
+/// How one cell paints: colors after inverse, and the attributes text drawing
+/// reads. Equal neighbours on a row share one fill and one text draw.
+struct SSHTerminalPaintStyle: Equatable {
+    let foreground: UInt32
+    let background: UInt32
+    let bold: Bool
+    let italic: Bool
+    let faint: Bool
+    let invisible: Bool
+    let underline: Bool
+    let strikethrough: Bool
+
+    init(_ cell: SSHTerminalCell) {
+        let style = cell.style
+        foreground = Self.pack(style.inverse ? cell.background : cell.foreground)
+        background = Self.pack(style.inverse ? cell.foreground : cell.background)
+        bold = style.bold
+        italic = style.italic
+        faint = style.faint
+        invisible = style.invisible
+        underline = style.underline != 0
+        strikethrough = style.strikethrough
+    }
+
+    static func pack(_ rgb: GhosttyColorRgb) -> UInt32 { UInt32(rgb.r) << 16 | UInt32(rgb.g) << 8 | UInt32(rgb.b) }
+}
+
+/// A stretch of one row painted with one fill and one text draw. Printable
+/// ASCII neighbours of one style share a run, kerned onto the cell grid. Any
+/// other grapheme (wide, combining, non-ASCII) is its own run, so a fallback
+/// font's advance cannot shift the columns after it.
+struct SSHTerminalPaintRun: Equatable {
+    let column: Int
+    let columns: Int
+    let text: String
+    let style: SSHTerminalPaintStyle
+    let fixedPitch: Bool
+}
+
+/// What a repaint touches. Agent TUIs redraw a spinner or a status line many
+/// times a second; repainting the whole grid one cell at a time for each of
+/// those cost about 73 ms per frame at 48x40 and pinned the main thread.
+enum SSHTerminalPaintPlan {
+    static func runs(_ row: [SSHTerminalCell]) -> [SSHTerminalPaintRun] {
+        var runs = [SSHTerminalPaintRun]()
+        var start = 0
+        var text = ""
+        var count = 0
+        var style: SSHTerminalPaintStyle?
+        func flush() {
+            if let style, count > 0 {
+                runs.append(.init(column: start, columns: count, text: text, style: style, fixedPitch: true))
+            }
+            style = nil
+            text = ""
+            count = 0
+        }
+        for (column, cell) in row.enumerated() {
+            // A wide tail is painted by its head.
+            guard cell.width > 0 else { continue }
+            let cellStyle = SSHTerminalPaintStyle(cell)
+            if cell.width == 1, let character = Self.fixedPitchCharacter(cell.text) {
+                if cellStyle != style || start + count != column {
+                    flush()
+                    start = column
+                    style = cellStyle
+                }
+                text.append(character)
+                count += 1
+            } else {
+                flush()
+                runs.append(.init(column: column, columns: cell.width, text: cell.text, style: cellStyle, fixedPitch: false))
+            }
+        }
+        flush()
+        return runs
+    }
+
+    /// Rows whose cells or cursor differ from the last painted frame. Nil when
+    /// the grid's shape or default background changed: repaint everything.
+    static func changedRows(from old: SSHTerminalFrame?, to new: SSHTerminalFrame) -> IndexSet? {
+        guard let old, old.rows.count == new.rows.count,
+              SSHTerminalPaintStyle.pack(old.background) == SSHTerminalPaintStyle.pack(new.background) else { return nil }
+        var rows = IndexSet()
+        for y in new.rows.indices {
+            let before = old.rows[y], after = new.rows[y]
+            guard before.count == after.count else { return nil }
+            let same = zip(before, after).allSatisfy {
+                $0.text == $1.text && $0.width == $1.width && SSHTerminalPaintStyle($0) == SSHTerminalPaintStyle($1)
+            }
+            if !same { rows.insert(y) }
+        }
+        if !sameCursor(old.cursor, new.cursor) {
+            for y in [cursorRow(old), cursorRow(new)].compactMap({ $0 }) where new.rows.indices.contains(y) { rows.insert(y) }
+        }
+        return rows
+    }
+
+    /// The next rows to invalidate within one tick's paint budget, from the
+    /// first pending row. A window, not a scattered pick: UIKit draws the
+    /// bounding box of what is invalidated, so the box is what costs time.
+    static func rowsWithinBudget(_ pending: IndexSet, secondsPerRow: Double, budget: Double) -> IndexSet {
+        guard let first = pending.first else { return [] }
+        let rows = max(1, Int(budget / max(secondsPerRow, .ulpOfOne)))
+        return pending.intersection(IndexSet(integersIn: first..<first + rows))
+    }
+
+    static func cursorRow(_ frame: SSHTerminalFrame) -> Int? {
+        frame.cursor.visible && frame.cursor.viewport_has_value ? Int(frame.cursor.viewport_y) : nil
+    }
+
+    private static func sameCursor(_ a: GhosttyRenderStateCursor, _ b: GhosttyRenderStateCursor) -> Bool {
+        a.visible == b.visible && a.viewport_has_value == b.viewport_has_value && a.viewport_x == b.viewport_x
+            && a.viewport_y == b.viewport_y && a.wide_tail == b.wide_tail && a.visual_style == b.visual_style
+    }
+
+    /// A blank cell paints as a space; printable ASCII keeps the font's one advance.
+    private static func fixedPitchCharacter(_ text: String) -> Character? {
+        if text.isEmpty { return " " }
+        let scalars = text.unicodeScalars
+        guard scalars.count == 1, let scalar = scalars.first, (0x20...0x7E).contains(scalar.value) else { return nil }
+        return Character(scalar)
+    }
+}
+
+/// Draws planned runs with cached faces. Fixed-pitch runs are kerned so each
+/// glyph lands on its cell even though the cell width is the font's rounded-up
+/// advance.
+@MainActor
+final class SSHTerminalGridPainter {
+    let cellSize: CGSize
+    private let font: UIFont
+    private var faces = [Int: (font: UIFont, kern: CGFloat)]()
+
+    init(font: UIFont) {
+        self.font = font
+        cellSize = CGSize(width: ceil(("M" as NSString).size(withAttributes: [.font: font]).width),
+                          height: ceil(font.lineHeight))
+    }
+
+    func paint(_ frame: SSHTerminalFrame, rows: Range<Int>, cursorColor: UIColor, in context: CGContext) {
+        for y in rows where frame.rows.indices.contains(y) {
+            let top = CGFloat(y) * cellSize.height
+            for run in SSHTerminalPaintPlan.runs(frame.rows[y]) { paint(run, top: top, in: context) }
+        }
+        guard let y = SSHTerminalPaintPlan.cursorRow(frame), rows.contains(y) else { return }
+        var area = CGRect(x: CGFloat(frame.cursor.viewport_x) * cellSize.width, y: CGFloat(y) * cellSize.height,
+                          width: cellSize.width, height: cellSize.height)
+        cursorColor.setStroke()
+        if frame.cursor.visual_style == GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR { area.size.width = 2 }
+        if frame.cursor.visual_style == GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE {
+            area.origin.y += cellSize.height - 2
+            area.size.height = 2
+        }
+        context.stroke(area.insetBy(dx: 0.5, dy: 0.5))
+    }
+
+    private func paint(_ run: SSHTerminalPaintRun, top: CGFloat, in context: CGContext) {
+        let style = run.style
+        let area = CGRect(x: CGFloat(run.column) * cellSize.width, y: top,
+                          width: CGFloat(run.columns) * cellSize.width, height: cellSize.height)
+        Self.color(style.background).setFill()
+        context.fill(area)
+        guard !style.invisible else { return }
+        if run.fixedPitch, !style.underline, !style.strikethrough, run.text.allSatisfy({ $0 == " " }) { return }
+        let face = face(bold: style.bold, italic: style.italic)
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: face.font,
+            .foregroundColor: Self.color(style.foreground).withAlphaComponent(style.faint ? 0.5 : 1),
+        ]
+        if run.fixedPitch { attributes[.kern] = face.kern }
+        if style.underline { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+        if style.strikethrough { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+        context.saveGState()
+        context.clip(to: area)
+        (run.text as NSString).draw(at: area.origin, withAttributes: attributes)
+        context.restoreGState()
+    }
+
+    private func face(bold: Bool, italic: Bool) -> (font: UIFont, kern: CGFloat) {
+        let key = (bold ? 1 : 0) | (italic ? 2 : 0)
+        if let face = faces[key] { return face }
+        var traits: UIFontDescriptor.SymbolicTraits = []
+        if bold { traits.insert(.traitBold) }
+        if italic { traits.insert(.traitItalic) }
+        let styled = font.fontDescriptor.withSymbolicTraits(traits).map { UIFont(descriptor: $0, size: font.pointSize) } ?? font
+        let advance = ("M" as NSString).size(withAttributes: [.font: styled]).width
+        let face = (styled, cellSize.width - advance)
+        faces[key] = face
+        return face
+    }
+
+    private static func color(_ packed: UInt32) -> UIColor {
+        UIColor(red: CGFloat(packed >> 16 & 0xFF) / 255, green: CGFloat(packed >> 8 & 0xFF) / 255,
+                blue: CGFloat(packed & 0xFF) / 255, alpha: 1)
+    }
+}
+
 private struct SSHTerminalSurface: UIViewRepresentable {
     let channel: SSHTerminalChannel
     let themeID: ThemeID
@@ -350,8 +548,27 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     /// Finger travel in one direction since the last top-bar decision.
     private var barTravel: CGFloat = 0
     var paintedChangeCount = -1
-    private let font = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-    private var cellSize = CGSize(width: 8, height: 17)
+    private let painter = SSHTerminalGridPainter(font: .monospacedSystemFont(ofSize: 13, weight: .regular))
+    private var cellSize: CGSize { painter.cellSize }
+    /// The frame `draw(_:)` paints from. Each tick replaces it and invalidates
+    /// only the rows that differ from it.
+    private var shown: SSHTerminalFrame?
+    /// A new bounds size exposes or stretches pixels outside any row.
+    private var needsFullPaint = true
+    /// Changed rows not yet invalidated: a repaint bigger than one tick's
+    /// budget (a resize, a scroll, a screenful of styled cells) spreads over
+    /// ticks so the main thread keeps answering between them.
+    private var pendingRows = IndexSet()
+    private var pendingMargin = false
+    /// Rows invalidated and not yet drawn. `draw(_:)` paints only these.
+    private var invalidRows = IndexSet()
+    /// Measured paint cost, smoothed. Plain text is a fraction of a millisecond
+    /// per row; one style per cell is about two.
+    private var secondsPerRow = 0.0005
+    private static let paintBudget = 0.008
+    var hasPendingPaint: Bool { !pendingRows.isEmpty || pendingMargin }
+    private var paintedSize = CGSize.zero
+    private var appliedTheme: ThemeID?
     private var lastGeometry: SSHTerminalGeometry?
     private var modifierButtons: [(button: UIButton, modifier: GhosttyMods, label: String)] = []
     private var arrowButtons: [SSHTerminalArrowButton] = []
@@ -376,9 +593,10 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         requestPaste = paste
         self.followChanged = followChanged
         super.init(frame: .zero)
-        cellSize = CGSize(width: ceil(("M" as NSString).size(withAttributes: [.font: font]).width),
-                          height: ceil(font.lineHeight))
         isOpaque = true
+        // Rows not invalidated keep their pixels; a resize must not stretch them.
+        clearsContextBeforeDrawing = false
+        contentMode = .topLeft
         clipsToBounds = true
         accessibilityIdentifier = "sshTerminal.grid"
         accessibilityLabel = "SSH terminal. Tap to type or to hide the keyboard. Drag to scroll."
@@ -414,6 +632,11 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     override func layoutSubviews() {
         super.layoutSubviews()
         guard bounds.width > 0, bounds.height > 0 else { return }
+        if bounds.size != paintedSize {
+            paintedSize = bounds.size
+            needsFullPaint = true
+            needsPaint = true
+        }
         let scale = window?.screen.scale ?? 2
         let geometry = SSHTerminalGeometry(
             columns: min(500, max(1, Int(bounds.width / cellSize.width))),
@@ -426,7 +649,11 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         }
     }
 
+    /// Called on every SwiftUI update; only a different theme changes colors.
+    /// The new default background then repaints the whole grid.
     func applyTheme(_ themeID: ThemeID) {
+        guard themeID != appliedTheme else { return }
+        appliedTheme = themeID
         let theme = themeID.appTheme
         foreground = UIColor(theme.text.primary)
         let background = UIColor(theme.bg.primary)
@@ -438,47 +665,65 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         needsPaint = true
     }
 
+    /// Paints the invalidated rows of the last planned frame; UIKit keeps the
+    /// layer's other pixels. A system redraw (first display, purged backing
+    /// store) asks for more than was invalidated and gets every row in `rect`.
     override func draw(_ rect: CGRect) {
         guard let context = UIGraphicsGetCurrentContext() else { return }
-        let frame = channel.engine.frame()
-        UIColor(frame.background).setFill()
-        context.fill(bounds)
-        for (y, row) in frame.rows.enumerated() {
-            for (x, cell) in row.enumerated() {
-                // The head painted both cells. A wide tail must not erase it.
-                guard cell.width > 0 else { continue }
-                let style = cell.style
-                let fg = UIColor(style.inverse ? cell.background : cell.foreground)
-                let bg = UIColor(style.inverse ? cell.foreground : cell.background)
-                let origin = CGPoint(x: CGFloat(x) * cellSize.width, y: CGFloat(y) * cellSize.height)
-                let area = CGRect(origin: origin, size: CGSize(width: cellSize.width * CGFloat(max(1, cell.width)), height: cellSize.height))
-                bg.setFill()
-                context.fill(area)
-                guard !style.invisible else { continue }
-                var traits: UIFontDescriptor.SymbolicTraits = []
-                if style.bold { traits.insert(.traitBold) }
-                if style.italic { traits.insert(.traitItalic) }
-                let face = font.fontDescriptor.withSymbolicTraits(traits).map { UIFont(descriptor: $0, size: font.pointSize) } ?? font
-                var attributes: [NSAttributedString.Key: Any] = [.font: face, .foregroundColor: style.faint ? fg.withAlphaComponent(0.5) : fg]
-                if style.underline != 0 { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-                if style.strikethrough { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
-                context.saveGState()
-                context.clip(to: area)
-                (cell.text as NSString).draw(at: origin, withAttributes: attributes)
-                context.restoreGState()
-            }
+        let frame = shown ?? channel.engine.frame()
+        shown = frame
+        let height = cellSize.height
+        let gridBottom = CGFloat(frame.rows.count) * height
+        let first = max(0, Int(rect.minY / height))
+        let last = min(frame.rows.count, Int(ceil(rect.maxY / height)))
+        var rows = IndexSet(integersIn: first..<max(first, last))
+        if let low = invalidRows.first, let high = invalidRows.last,
+           rect.minY >= CGFloat(low) * height - 0.5, min(rect.maxY, gridBottom) <= CGFloat(high + 1) * height + 0.5 {
+            rows.formIntersection(invalidRows)
         }
-        if frame.cursor.visible, frame.cursor.viewport_has_value {
-            var area = CGRect(x: CGFloat(frame.cursor.viewport_x) * cellSize.width,
-                              y: CGFloat(frame.cursor.viewport_y) * cellSize.height,
-                              width: cellSize.width, height: cellSize.height)
-            foreground.withAlphaComponent(0.65).setStroke()
-            if frame.cursor.visual_style == GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR { area.size.width = 2 }
-            if frame.cursor.visual_style == GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE {
-                area.origin.y += cellSize.height - 2
-                area.size.height = 2
+        invalidRows.removeAll()
+        let background = UIColor(frame.background)
+        background.setFill()
+        if rect.maxY > gridBottom {
+            context.fill(CGRect(x: rect.minX, y: max(rect.minY, gridBottom), width: rect.width, height: rect.maxY - max(rect.minY, gridBottom)))
+        }
+        guard !rows.isEmpty else { return }
+        let started = CACurrentMediaTime()
+        for range in rows.rangeView {
+            background.setFill()
+            context.fill(CGRect(x: 0, y: CGFloat(range.lowerBound) * height, width: bounds.width, height: CGFloat(range.count) * height))
+            painter.paint(frame, rows: range, cursorColor: foreground.withAlphaComponent(0.65), in: context)
+        }
+        let perRow = (CACurrentMediaTime() - started) / Double(rows.count)
+        secondsPerRow = secondsPerRow * 0.7 + perRow * 0.3
+    }
+
+    /// One display-link tick: read the frame, note the rows that changed, and
+    /// invalidate as many as the paint budget allows.
+    func repaintChangedRows() {
+        let next = channel.engine.frame()
+        if !needsFullPaint, let changed = SSHTerminalPaintPlan.changedRows(from: shown, to: next) {
+            pendingRows.formUnion(changed)
+        } else {
+            pendingRows = IndexSet(integersIn: 0..<next.rows.count)
+            pendingMargin = true
+        }
+        needsFullPaint = false
+        shown = next
+        let take = SSHTerminalPaintPlan.rowsWithinBudget(pendingRows, secondsPerRow: secondsPerRow, budget: Self.paintBudget)
+        pendingRows.subtract(take)
+        invalidRows.formUnion(take)
+        let height = cellSize.height
+        for rows in take.rangeView {
+            setNeedsDisplay(CGRect(x: 0, y: CGFloat(rows.lowerBound) * height, width: bounds.width, height: CGFloat(rows.count) * height))
+        }
+        // The strip below the last row goes with the final chunk.
+        if pendingMargin, pendingRows.isEmpty {
+            pendingMargin = false
+            let gridBottom = CGFloat(next.rows.count) * height
+            if bounds.height > gridBottom {
+                setNeedsDisplay(CGRect(x: 0, y: gridBottom, width: bounds.width, height: bounds.height - gridBottom))
             }
-            context.stroke(area.insetBy(dx: 0.5, dy: 0.5))
         }
     }
 
@@ -799,10 +1044,10 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
             guard let view else { return }
             // A hold has a one-second deadline even if no more bytes arrive.
             let changes = view.channel.engine.changeCount
-            if view.needsPaint || view.paintedChangeCount != changes || view.channel.engine.renderHeld {
+            if view.needsPaint || view.paintedChangeCount != changes || view.channel.engine.renderHeld || view.hasPendingPaint {
                 view.needsPaint = false
                 view.paintedChangeCount = changes
-                view.setNeedsDisplay()
+                view.repaintChangedRows()
             }
         }
     }
