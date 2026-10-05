@@ -103,7 +103,10 @@ struct ToolCallDocumentPreview: View {
                 reader = Reader(content: content)
             }
         }
-        .sheet(item: $reader) { payload in FullScreenCodeView(content: payload.content).ignoresSafeArea() }
+        .fullScreenViewer(
+            isPresented: Binding(get: { reader != nil }, set: { if !$0 { reader = nil } }),
+            content: reader?.content ?? .plainText(content: "", filePath: nil)
+        )
         .environment(\.themeID, themeID).preferredColorScheme(themeID.preferredColorScheme)
     }
 
