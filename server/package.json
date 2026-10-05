@@ -98,13 +98,13 @@
     "check:server": "node scripts/check-installed-deps.mjs && prettier --version >/dev/null && bash -c 'pids=(); npm run typecheck & pids+=($!); npm run protocol:fixtures:typecheck & pids+=($!); eslint src/ extensions/ bench/ & pids+=($!); knip & pids+=($!); prettier --check --ignore-unknown src/ extensions/ bench/ & pids+=($!); bun scripts/check-architecture-boundaries.ts --scope server & pids+=($!); bun scripts/check-compose-mounts.ts & pids+=($!); rc=0; for p in \"${pids[@]}\"; do wait \"$p\" || rc=1; done; exit $rc'"
   },
   "dependencies": {
-    "@earendil-works/chord": "1.0.2",
+    "@earendil-works/chord": "1.0.3",
     "@earendil-works/gondolin": "0.12.0",
-    "@earendil-works/pi-ai": "1.0.2",
-    "@earendil-works/pi-coding-agent": "1.0.2",
-    "@earendil-works/pi-durable": "1.0.2",
-    "@earendil-works/pi-server": "1.0.2",
-    "@earendil-works/pi-tui": "1.0.2",
+    "@earendil-works/pi-ai": "1.0.3",
+    "@earendil-works/pi-coding-agent": "1.0.3",
+    "@earendil-works/pi-durable": "1.0.3",
+    "@earendil-works/pi-server": "1.0.3",
+    "@earendil-works/pi-tui": "1.0.3",
     "diff-match-patch": "^1.0.5",
     "typebox": "1.1.28",
     "ws": "8.21.2"

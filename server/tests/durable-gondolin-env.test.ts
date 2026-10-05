@@ -231,6 +231,90 @@ describe("Durable sandbox file capability", () => {
     await expect(env.cleanup(context)).rejects.toThrow("Failed to kill");
   });
 
+  it("refuses to watch because the guest reports no changes", async () => {
+    const { env } = fixture();
+    const result = await env.watch([{ path: "skills", recursive: true }], () => {}, context);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("not_supported");
+  });
+
+  function execReturning(
+    exitCode: number,
+    chunks: Array<{ stream: "stdout" | "stderr"; data: Buffer }>,
+  ) {
+    const { env, vm } = fixture();
+    const calls: Array<string[] | string> = [];
+    vm.exec = vi.fn((args) => {
+      calls.push(args);
+      return Object.assign(
+        Promise.resolve({
+          ok: exitCode === 0,
+          exitCode,
+          stdout: "",
+          stdoutBuffer: Buffer.alloc(0),
+        }),
+        {
+          async *output() {
+            for (const chunk of chunks) yield chunk;
+          },
+          write() {},
+          end() {},
+        },
+      );
+    });
+    return { env, calls };
+  }
+
+  it("runs an argv command without a shell and reports each stream to onOutput", async () => {
+    const { env, calls } = execReturning(0, [
+      { stream: "stdout", data: Buffer.from("42 12345\n") },
+      { stream: "stdout", data: Buffer.from([0x6f, 0xc3]) },
+      { stream: "stderr", data: Buffer.from([0x65, 0xc3]) },
+      { stream: "stdout", data: Buffer.from([0xa9]) },
+      { stream: "stderr", data: Buffer.from([0xa9]) },
+    ]);
+    const seen: Array<[string, string]> = [];
+    const result = await env.exec(
+      ["printf", "%s", "it's $(x)"],
+      { onOutput: (text, _ctx, info) => seen.push([info.stream, text]) },
+      context,
+    );
+    expect(result).toEqual({ ok: true, value: { exitCode: 0 } });
+    // The program and its arguments follow the wrapper name untouched.
+    expect((calls[0] as string[]).slice(-3)).toEqual(["printf", "%s", "it's $(x)"]);
+    // A character split across chunks is decoded per stream, not across streams.
+    expect(
+      seen
+        .filter(([stream]) => stream === "stdout")
+        .map(([, text]) => text)
+        .join(""),
+    ).toBe("o\u00e9");
+    expect(
+      seen
+        .filter(([stream]) => stream === "stderr")
+        .map(([, text]) => text)
+        .join(""),
+    ).toBe("e\u00e9");
+  });
+
+  it.each([
+    ["printf x", "shell_unavailable"],
+    [["missing-program"], "spawn_error"],
+  ] as const)("maps a wrapper that found no program for %j to %s", async (command, code) => {
+    const { env } = execReturning(127, []);
+    const result = await env.exec(command, undefined, context);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe(code);
+  });
+
+  it("rejects an empty argv without guest work", async () => {
+    const { env, calls } = execReturning(0, []);
+    const result = await env.exec([], undefined, context);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("spawn_error");
+    expect(calls).toHaveLength(0);
+  });
+
   it("shares a file namespace across sessions of the same workspace, not other workspaces", () => {
     const { env, vm } = fixture();
     expect(new GondolinExecutionEnv(vm, "w1", "/workspace/project").id).toBe(env.id);

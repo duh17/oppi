@@ -5,16 +5,23 @@ import type { Context } from "@earendil-works/chord";
 import {
   ExecutionError,
   FileError,
+  LineScanner,
   err,
   ok,
   toError,
+  type BinaryReader,
+  type DirReader,
   type ExecutionEnv,
+  type FileWatcher,
+  type LineScan,
   type Result,
   type FileInfo,
   type ShellExecOptions,
   type ShellExecResult,
   type TextLineReader,
   type TextLine,
+  type WatchChange,
+  type WatchTarget,
 } from "@earendil-works/pi-durable/env";
 import {
   resolveSandboxToolPath,
@@ -25,14 +32,17 @@ import {
 // The trusted wrapper emits identity before allowing user code to run. The
 // host ACK is on this exec's stdin, not a same-user, guest-writable pid file.
 const EXEC_HANDSHAKE = [
-  'shell="$1"; command="$2"',
+  // Before any identity: the host reads exit 127 without identity as "no such program".
+  'command -v "$1" >/dev/null 2>&1 || exit 127',
   "IFS= read -r stat < /proc/$$/stat || exit 125",
   // eslint-disable-next-line no-template-curly-in-string -- Guest shell parameter expansion.
-  "fields=${stat##*) }; set -- $fields; shift 19",
-  'printf "%s %s\\n" "$$" "$1"',
+  "fields=${stat##*) }",
+  // The function has its own positional parameters, so "$@" stays the program to run.
+  'identity() { shift 19; printf "%s %s\\n" "$$" "$1"; }',
+  "identity $fields",
   "IFS= read -r ack || exit 125",
   '[ "$ack" = go ] || exit 125',
-  'exec "$shell" -lc "$command"',
+  'exec "$@"',
 ].join("\n");
 
 const KILL_GROUP = [
@@ -78,6 +88,65 @@ function fileError(error: unknown, path?: string): FileError {
             ? "is_directory"
             : "unknown";
   return new FileError(code, cause.message, path, cause);
+}
+
+/** Positional reads of one file's bytes as they were when it was opened. */
+class SnapshotBinaryReader implements BinaryReader {
+  private closed = false;
+
+  constructor(
+    private readonly file: FileInfo,
+    private readonly bytes: Uint8Array,
+  ) {}
+
+  private unavailable(context: Context): FileError | undefined {
+    if (context.abortSignal?.aborted) return new FileError("aborted", "aborted", this.file.path);
+    if (this.closed) return new FileError("invalid", "Binary reader is closed", this.file.path);
+    return undefined;
+  }
+
+  async info(context: Context): Promise<Result<FileInfo, FileError>> {
+    const failure = this.unavailable(context);
+    return failure ? err(failure) : ok(this.file);
+  }
+
+  async read(
+    offset: number,
+    length: number,
+    context: Context,
+  ): Promise<Result<Uint8Array, FileError>> {
+    const failure = this.unavailable(context);
+    if (failure) return err(failure);
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 0)
+      return err(
+        new FileError(
+          "invalid",
+          "Offset and length must be non-negative safe integers",
+          this.file.path,
+        ),
+      );
+    return ok(this.bytes.slice(offset, offset + length));
+  }
+
+  async scanLines(
+    options: { startLine: number; endLine?: number },
+    context: Context,
+  ): Promise<Result<LineScan, FileError>> {
+    const failure = this.unavailable(context);
+    if (failure) return err(failure);
+    let scanner: LineScanner;
+    try {
+      scanner = new LineScanner(options.startLine, options.endLine);
+    } catch {
+      return err(new FileError("invalid", "Invalid line range", this.file.path));
+    }
+    scanner.push(this.bytes);
+    return ok(scanner.finish());
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+  }
 }
 
 /** One conversation's capabilities over the manager-owned, shared workspace VM. */
@@ -170,6 +239,43 @@ export class GondolinExecutionEnv implements ExecutionEnv {
     return this.file(path, context, (resolved) =>
       this.vm.fs.readFile(resolved, { signal: context.abortSignal }),
     );
+  }
+  /**
+   * VmFs has no positional read, so the reader holds a snapshot of the opened file.
+   * That also gives the contract's same-file guarantee when the path is renamed.
+   */
+  openBinaryReader(
+    path: string,
+    options: { noFollow?: boolean } | undefined,
+    context: Context,
+  ): Promise<Result<BinaryReader, FileError>> {
+    return this.file(path, context, async (resolved) => {
+      if (!this.vm.fs.stat) throw new FileError("not_supported", "VM filesystem has no stat");
+      if (options?.noFollow) {
+        // VmFs.stat follows links, so ask the guest about the final component.
+        const probe = await this.vm.exec(
+          ["/bin/sh", "-c", 'test -L "$1"', "oppi-islink", resolved],
+          { signal: context.abortSignal, stdout: "buffer", stderr: "buffer" },
+        );
+        if (probe.exitCode === 0)
+          throw new FileError("invalid", "Refusing to follow a symbolic link", resolved);
+      }
+      const stat = await this.vm.fs.stat(resolved, { signal: context.abortSignal });
+      if (stat.isDirectory())
+        throw new FileError("is_directory", "EISDIR: illegal operation on a directory", resolved);
+      if (!stat.isFile?.()) throw new FileError("invalid", "Not a regular file", resolved);
+      const bytes = await this.vm.fs.readFile(resolved, { signal: context.abortSignal });
+      return new SnapshotBinaryReader(
+        {
+          name: posix.basename(resolved),
+          path: resolved,
+          kind: "file",
+          size: bytes.length,
+          mtimeMs: stat.mtimeMs ?? 0,
+        },
+        bytes,
+      );
+    });
   }
   async readTextFile(path: string, context: Context): Promise<Result<string, FileError>> {
     const result = await this.readBinaryFile(path, context);
@@ -316,6 +422,43 @@ export class GondolinExecutionEnv implements ExecutionEnv {
       return files;
     });
   }
+  openDirReader(path: string, context: Context): Promise<Result<DirReader, FileError>> {
+    return this.file(path, context, async (resolved) => {
+      if (!this.vm.fs.listDir) throw new FileError("not_supported", "VM filesystem has no listDir");
+      const names = await this.vm.fs.listDir(resolved, { signal: context.abortSignal });
+      let index = 0;
+      let closed = false;
+      return {
+        next: async (maxEntries, ctx) => {
+          if (ctx.abortSignal?.aborted) return err(new FileError("aborted", "aborted", resolved));
+          if (closed) return err(new FileError("invalid", "Directory reader is closed", resolved));
+          if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0)
+            return err(
+              new FileError("invalid", "maxEntries must be a positive safe integer", resolved),
+            );
+          const entries: FileInfo[] = [];
+          while (index < names.length && entries.length < maxEntries) {
+            const info = await this.fileInfo(posix.join(resolved, names[index++]), ctx);
+            if (info.ok) entries.push(info.value);
+            // Removed since enumeration, or an unsupported kind: not part of the listing.
+            else if (info.error.code !== "not_found" && info.error.code !== "invalid") return info;
+          }
+          return ok({ entries, done: index >= names.length });
+        },
+        close: async () => {
+          closed = true;
+        },
+      };
+    });
+  }
+  /** The guest VM offers no change notification; callers get a typed refusal, not silence. */
+  async watch(
+    _targets: readonly WatchTarget[],
+    _onChange: (change: WatchChange) => void,
+    _context: Context,
+  ): Promise<Result<FileWatcher, FileError>> {
+    return err(new FileError("not_supported", "VM filesystem cannot watch for changes"));
+  }
   canonicalPath(path: string, context: Context): Promise<Result<string, FileError>> {
     return this.file(path, context, async (resolved) => {
       // VmFs has no realpath API. Resolve in the guest, then check confinement
@@ -398,7 +541,7 @@ export class GondolinExecutionEnv implements ExecutionEnv {
   }
 
   exec(
-    command: string,
+    command: string | readonly string[],
     options: ShellExecOptions | undefined,
     context: Context,
   ): Promise<Result<ShellExecResult, ExecutionError>> {
@@ -411,12 +554,17 @@ export class GondolinExecutionEnv implements ExecutionEnv {
   }
 
   private async run(
-    command: string,
+    command: string | readonly string[],
     options: ShellExecOptions | undefined,
     context: Context,
     controller: AbortController,
   ): Promise<Result<ShellExecResult, ExecutionError>> {
     if (context.abortSignal?.aborted) return err(new ExecutionError("aborted", "aborted"));
+    // A string runs through the guest login shell; an array runs its first item directly.
+    const argv =
+      typeof command === "string" ? [this.vm.shellPath ?? "/bin/sh", "-lc", command] : [...command];
+    if (argv.length === 0 || !argv[0])
+      return err(new ExecutionError("spawn_error", "Empty command"));
     const timeout = options?.timeout;
     if (
       timeout !== undefined &&
@@ -459,21 +607,14 @@ export class GondolinExecutionEnv implements ExecutionEnv {
     let bytes = 0;
     let newlines = 0;
     let lastByte: number | undefined;
-    const decoder = new StringDecoder("utf8");
+    // Each stream decodes on its own so a character split across chunks survives.
+    const decoders = { stdout: new StringDecoder("utf8"), stderr: new StringDecoder("utf8") };
     try {
       const cwd = this.path(options?.cwd ?? this.cwd);
       // setsid is required. Capture both identity fields on the exec stream
       // before ACK: the workload cannot replace them after it starts.
       const proc = this.vm.exec(
-        [
-          "/usr/bin/setsid",
-          "/bin/sh",
-          "-c",
-          EXEC_HANDSHAKE,
-          "oppi-exec",
-          this.vm.shellPath ?? "/bin/sh",
-          command,
-        ],
+        ["/usr/bin/setsid", "/bin/sh", "-c", EXEC_HANDSHAKE, "oppi-exec", ...argv],
         {
           cwd,
           env: options?.env,
@@ -515,7 +656,9 @@ export class GondolinExecutionEnv implements ExecutionEnv {
         }
         if (signal.aborted) continue;
         try {
-          options?.onOutput?.(decoder.write(chunk.data), context);
+          options?.onOutput?.(decoders[chunk.stream].write(chunk.data), context, {
+            stream: chunk.stream,
+          });
         } catch (error) {
           throw new ExecutionError("callback_error", toError(error).message, toError(error));
         }
@@ -541,14 +684,23 @@ export class GondolinExecutionEnv implements ExecutionEnv {
         }
       }
       const result = await resultPromise;
-      if (!identity)
+      if (!identity) {
+        if (result.exitCode === 127)
+          throw new ExecutionError(
+            typeof command === "string" ? "shell_unavailable" : "spawn_error",
+            `Program not found: ${argv[0]}`,
+          );
         throw new ExecutionError("unknown", "Guest process identity handshake missing");
+      }
       if (signal.aborted)
         throw new ExecutionError(
           timedOut ? "timeout" : "aborted",
           timedOut ? "Command timed out" : "aborted",
         );
-      options?.onOutput?.(decoder.end(), context);
+      for (const stream of ["stdout", "stderr"] as const) {
+        const rest = decoders[stream].end();
+        if (rest) options?.onOutput?.(rest, context, { stream });
+      }
       return ok({ exitCode: result.exitCode, ...(spillPath ? { spillPath } : {}) });
     } catch (error) {
       // A callback/fs failure must also kill its still-running guest command.

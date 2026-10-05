@@ -46,7 +46,7 @@ interface CacheWriteUnsupportedRule {
 const costModels = builtinModels();
 
 const COST_PROVIDER_FALLBACKS: Partial<Record<KnownProvider, KnownProvider[]>> = {
-  "openai-codex": ["openai", "azure-openai-responses"],
+  "openai-codex": ["openai", "azure"],
 };
 
 const CACHE_WRITE_INFERENCE_RULES: CacheWriteInferenceRule[] = [
@@ -60,7 +60,7 @@ const CACHE_WRITE_INFERENCE_RULES: CacheWriteInferenceRule[] = [
       const isOpenAIFamily =
         lower.startsWith("openai/") ||
         lower.startsWith("openai-codex/") ||
-        lower.startsWith("azure-openai-responses/") ||
+        lower.startsWith("azure/") ||
         lower.includes("/openai/");
       return isOpenAIFamily && lower.includes("gpt-");
     },

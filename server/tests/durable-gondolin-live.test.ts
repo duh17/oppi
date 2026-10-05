@@ -1,9 +1,11 @@
 import { mkdtempSync, symlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context, withAbortSignal } from "@earendil-works/chord/context";
 import { createEditTool } from "@earendil-works/pi-durable/tools";
+import { createEnvConformance, createExpectAssertions } from "@earendil-works/pi-durable/testing";
 import {
   GondolinManager,
   isQemuAvailable,
@@ -234,4 +236,23 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("permission_denied");
   });
+
+  // Pi's own ExecutionEnv contract, run against a real guest. The guest has no
+  // change notification, so watch must refuse (below) instead of passing these.
+  for (const testCase of createEnvConformance({
+    assertions: createExpectAssertions(expect),
+    withEnv: async (use) => {
+      const env = new GondolinExecutionEnv(vm, "conformance", root);
+      const cwd = `${root}/conformance-${randomUUID()}`;
+      await vm.fs.mkdir(cwd, { recursive: true });
+      env.cwd = cwd;
+      await use(env);
+    },
+  })) {
+    if (testCase.name.startsWith("watch ")) continue;
+    it(`ExecutionEnv conformance: ${testCase.name}`, async () => {
+      if (!qemuAvailable) return;
+      await testCase.run();
+    });
+  }
 });
