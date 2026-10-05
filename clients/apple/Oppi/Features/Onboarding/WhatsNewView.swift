@@ -78,35 +78,42 @@ struct WhatsNewView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
-    /// Build 52 · Changes since Build 51
+    /// Build 53 · Changes since Build 52
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            id: "voice-orbs",
-            icon: "waveform",
-            iconColor: .themePurple,
-            title: String(localized: "New animated orbs"),
-            description: String(localized: "The dictation orb responds to your voice. A separate orb animates while the agent is thinking or working.")
-        ),
-        WhatsNewFeature(
-            id: "dictation-dictionary",
-            icon: "text.book.closed",
+            id: "message-queue",
+            icon: "tray.full",
             iconColor: .themeGreen,
-            title: String(localized: "Dictation Dictionary"),
-            description: String(localized: "Add jargon on iPhone or through the CLI, for all workspaces or just one. Agents can curate the same lists from past sessions.")
+            title: String(localized: "Simpler message queue"),
+            description: String(localized: "Remove a queued message, or move the queue back into the composer with Edit in composer. Stop does the same first. Editing in place, reordering, and moving between steer and follow-up are gone. Needs server 0.51.0.")
         ),
         WhatsNewFeature(
-            id: "annotate-documents",
-            icon: "text.bubble",
+            id: "connections",
+            icon: "wifi",
             iconColor: .themeBlue,
-            title: String(localized: "Annotate HTML and diagrams"),
-            description: String(localized: "Pick an HTML element or Mermaid object for a review comment. Visual Markup has its own control.")
+            title: String(localized: "Steadier connections"),
+            description: String(localized: "On Wi-Fi, Oppi tries your local network first. Settings → Network → Tailscale joins your tailnet without the Tailscale app, and setup can pair through it.")
         ),
         WhatsNewFeature(
-            id: "pi-runtime",
-            icon: "terminal",
+            id: "mcp-servers",
+            icon: "puzzlepiece.extension",
+            iconColor: .themePurple,
+            title: String(localized: "MCP servers and Pi 1.0"),
+            description: String(localized: "Manage MCP servers and project trust from iPhone. The server now bundles Pi 1.0.2.")
+        ),
+        WhatsNewFeature(
+            id: "restart-resume",
+            icon: "arrow.clockwise",
             iconColor: .themeOrange,
-            title: String(localized: "Pi 0.87.1"),
-            description: String(localized: "The server now bundles Pi 0.87.1 for managed sessions.")
+            title: String(localized: "Sessions resume after a restart"),
+            description: String(localized: "Sessions running when the server restarts continue on the next start. A session caught mid-turn is asked to carry on.")
+        ),
+        WhatsNewFeature(
+            id: "experiments",
+            icon: "testtube.2",
+            iconColor: .themeComment,
+            title: String(localized: "Opt-in experiments"),
+            description: String(localized: "Session Threads and SSH Terminal are off by default. Turn them on under Settings → Experiments.")
         ),
     ]
 
