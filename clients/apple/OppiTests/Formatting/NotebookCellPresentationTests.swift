@@ -162,6 +162,29 @@ struct NotebookCellPresentationTests {
         #expect(size.height > 40)
         #expect(size.height < 500)
         #expect(view.accessibilityIdentifier == "tool.notebook.cell")
+        #expect(buttons(in: view).isEmpty)
+    }
+
+    private func buttons(in view: UIView) -> [UIButton] {
+        var found: [UIButton] = []
+        if let button = view as? UIButton { found.append(button) }
+        for subview in view.subviews {
+            found.append(contentsOf: buttons(in: subview))
+        }
+        return found
+    }
+
+    @Test @MainActor func notebookPinchLivesOnTheExpandedContainer() {
+        let config = expanded(
+            tool: "script",
+            args: ["code": .string("await lookup()")],
+            output: "3",
+            hints: codeHints()
+        )
+        let row = ToolTimelineRowContentView(configuration: config)
+        let pinch = row.expandedContainer.gestureRecognizers?.first { $0 is UIPinchGestureRecognizer }
+        #expect(pinch?.isEnabled == true)
+        #expect(row.expandedScrollView.gestureRecognizers?.contains { $0 is UIPinchGestureRecognizer } != true)
     }
 
     @Test @MainActor func expandedCellDoesNotScroll() {

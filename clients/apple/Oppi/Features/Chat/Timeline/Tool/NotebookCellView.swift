@@ -12,8 +12,6 @@ import UIKit
 /// wraps the cell in its own scroll view.
 @MainActor
 final class NotebookCellView: UIView {
-    var onOpenReader: (() -> Void)?
-
     private let contentStack = UIStackView()
     private let card = UIView()
     private let accent = UIView()
@@ -22,7 +20,6 @@ final class NotebookCellView: UIView {
     private let phaseIcon = UIImageView()
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let languageLabel = UILabel()
-    private let openButton = UIButton(type: .system)
     private let outputStack = UIStackView()
     private var sourceViews: [UITextView] = []
     private var appliedPlan: NotebookCellPlan?
@@ -95,21 +92,12 @@ final class NotebookCellView: UIView {
         spinner.hidesWhenStopped = true
         languageLabel.font = ToolFont.small
         languageLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        var openConfig = UIButton.Configuration.plain()
-        openConfig.image = UIImage(systemName: "arrow.up.left.and.arrow.down.right")
-        openConfig.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 11, weight: .regular)
-        openConfig.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 4)
-        openButton.configuration = openConfig
-        openButton.accessibilityLabel = "Open reader"
-        openButton.accessibilityIdentifier = "tool.notebook.open"
-        openButton.addTarget(self, action: #selector(openReader), for: .touchUpInside)
-        openButton.setContentHuggingPriority(.required, for: .horizontal)
+        languageLabel.textAlignment = .right
         let spacer = UIView()
         headerRow.addArrangedSubview(phaseIcon)
         headerRow.addArrangedSubview(spinner)
         headerRow.addArrangedSubview(spacer)
         headerRow.addArrangedSubview(languageLabel)
-        headerRow.addArrangedSubview(openButton)
         cardStack.addArrangedSubview(headerRow)
 
         outputStack.axis = .vertical
@@ -139,8 +127,6 @@ final class NotebookCellView: UIView {
             cardStack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -8),
             phaseIcon.widthAnchor.constraint(equalToConstant: 14),
             phaseIcon.heightAnchor.constraint(equalToConstant: 14),
-            openButton.widthAnchor.constraint(equalToConstant: 28),
-            openButton.heightAnchor.constraint(equalToConstant: 28),
         ])
     }
 
@@ -152,7 +138,6 @@ final class NotebookCellView: UIView {
         accent.backgroundColor = UIColor(accentColor)
         languageLabel.textColor = UIColor(palette.comment)
         languageLabel.text = plan.sources.compactMap(\.languageName).first
-        openButton.tintColor = UIColor(palette.comment)
         spinner.color = UIColor(palette.blue)
 
         if plan.running {
@@ -356,7 +341,4 @@ final class NotebookCellView: UIView {
         }
     }
 
-    @objc private func openReader() {
-        onOpenReader?()
-    }
 }

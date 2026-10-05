@@ -1046,7 +1046,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedContainerDoubleTapGesture.require(toFail: expandedDoubleTapGesture)
         expandedSingleTapBlocker.require(toFail: expandedContainerDoubleTapGesture)
         expandedContainer.addGestureRecognizer(expandedContainerDoubleTapGesture)
-        expandedScrollView.addGestureRecognizer(expandedPinchGesture)
+        // The notebook cell is hosted outside the scroll view. The pinch has to
+        // live on the container so it reaches that cell and the other rows.
+        expandedContainer.addGestureRecognizer(expandedPinchGesture)
 
         commandContainer.addGestureRecognizer(commandSingleTapBlocker)
         outputContainer.addGestureRecognizer(outputSingleTapBlocker)
@@ -1857,9 +1859,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         case .notebook(let plan):
             if hostedSurface.installNotebook(plan) {
                 scheduleHostedRemeasure()
-            }
-            if let cell = hostedSurface.contentView as? NotebookCellView {
-                cell.onOpenReader = { [weak self] in self?.showFullScreenContent() }
             }
         }
 
