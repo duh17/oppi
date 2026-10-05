@@ -81,39 +81,53 @@ struct WhatsNewView: View {
     /// Build 53 · Changes since Build 52
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
+            id: "tailscale",
+            icon: "point.3.connected.trianglepath.dotted",
+            iconColor: .themeBlue,
+            title: String(localized: "Built-in Tailscale"),
+            description: String(localized: "Oppi joins your tailnet itself, without the Tailscale app, and setup can pair through it. Check a Mac or Linux machine over SSH and pair from there; on Wi-Fi, Oppi tries your local network first.")
+        ),
+        WhatsNewFeature(
             id: "message-queue",
             icon: "tray.full",
             iconColor: .themeGreen,
             title: String(localized: "Simpler message queue"),
-            description: String(localized: "Remove a queued message, or move the queue back into the composer with Edit in composer. Stop does the same first. Editing in place, reordering, and moving between steer and follow-up are gone. Needs server 0.51.0.")
+            description: String(localized: "Remove one queued message, or move the whole queue back into the composer; Stop does that first. Editing in place and reordering are gone. Needs server 0.51.0.")
         ),
         WhatsNewFeature(
-            id: "connections",
-            icon: "wifi",
-            iconColor: .themeBlue,
-            title: String(localized: "Steadier connections"),
-            description: String(localized: "On Wi-Fi, Oppi tries your local network first. Settings → Network → Tailscale joins your tailnet without the Tailscale app, and setup can pair through it.")
+            id: "tool-calls",
+            icon: "doc.text.magnifyingglass",
+            iconColor: .themeCyan,
+            title: String(localized: "Clearer tool calls"),
+            description: String(localized: "Code tool calls, including codemode, open as notebook cells. Other tools open as an Input, Calls, and Output document.")
         ),
         WhatsNewFeature(
             id: "mcp-servers",
             icon: "puzzlepiece.extension",
             iconColor: .themePurple,
-            title: String(localized: "MCP servers and Pi 1.0"),
-            description: String(localized: "Manage MCP servers and project trust from iPhone. The server now bundles Pi 1.0.3.")
+            title: String(localized: "MCP servers on iPhone"),
+            description: String(localized: "See each server's status, tools, and errors. Turn servers on or off, add or remove them, and sign in, for all workspaces or one.")
+        ),
+        WhatsNewFeature(
+            id: "siri",
+            icon: "waveform",
+            iconColor: .themeYellow,
+            title: String(localized: "Start sessions with Siri"),
+            description: String(localized: "Siri and Shortcuts show the exact prompt before starting a session. Canceling sends nothing.")
         ),
         WhatsNewFeature(
             id: "restart-resume",
             icon: "arrow.clockwise",
             iconColor: .themeOrange,
-            title: String(localized: "Sessions resume after a restart"),
-            description: String(localized: "Sessions running when the server restarts continue on the next start. A session caught mid-turn is asked to carry on.")
+            title: String(localized: "Sessions resume"),
+            description: String(localized: "Sessions running when the server restarts continue on the next start. One caught mid-turn is asked to carry on, which costs a turn.")
         ),
         WhatsNewFeature(
             id: "experiments",
             icon: "testtube.2",
             iconColor: .themeComment,
             title: String(localized: "Opt-in experiments"),
-            description: String(localized: "Session Threads and SSH Terminal are off by default. Turn them on under Settings → Experiments.")
+            description: String(localized: "Session Threads, SSH Terminal, and Durable Sessions are under Settings → Experiments. Durable Sessions also needs the server's durable setting turned on.")
         ),
     ]
 
