@@ -80,7 +80,7 @@ type ActiveSession = SessionStartActiveSession;
 
 import type { DurableHarness } from "./durable-harness.js";
 import { isServerDurableSession } from "./session-runtime-capabilities.js";
-import type { ConversationId, Harness } from "@earendil-works/pi-durable";
+import type { ConversationId, EntryId, Harness } from "@earendil-works/pi-durable";
 
 export class SessionManager extends EventEmitter implements AgentRuntimeTransport {
   private readonly durableHarness?: Promise<DurableHarness>;
@@ -537,6 +537,28 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const { harness } = await (await this.durableHarness).open();
     const { readDurableTrace } = await import("./durable-history.js");
     return readDurableTrace(harness, id as ConversationId, view, this.getEntryRenderers(sessionId));
+  }
+
+  /**
+   * Fork a bound server durable conversation at a trace/fork-point entry id. Resolves the new
+   * conversation id, or `undefined` when the entry is not part of the source's history.
+   */
+  async forkServerDurableConversation(
+    sessionId: string,
+    entryId: string,
+  ): Promise<ConversationId | undefined> {
+    const id = this.storage.getSession(sessionId)?.serverDurable?.conversationId;
+    if (id === undefined || !this.durableHarness) {
+      throw new Error(
+        "Server durable fork requires a bound conversation and experimental.serverDurable",
+      );
+    }
+    // Trace entry ids are the decimal Durable entry ids.
+    if (!/^[1-9]\d*$/.test(entryId) || !Number.isSafeInteger(Number(entryId))) return undefined;
+    return (await this.durableHarness).forkConversation(
+      id as ConversationId,
+      Number(entryId) as EntryId,
+    );
   }
 
   /**

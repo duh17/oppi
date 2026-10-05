@@ -79,6 +79,7 @@ function makeService(
     storedSession?: Session;
     stopError?: Error;
     forkSession?: Session;
+    durableForkConversationId?: number;
     runCommandError?: Error;
     sendPromptError?: Error;
     startSessionError?: Error;
@@ -99,6 +100,7 @@ function makeService(
   listSessions: ReturnType<typeof vi.fn>;
   saveSession: ReturnType<typeof vi.fn>;
   runCommand: ReturnType<typeof vi.fn>;
+  forkServerDurableConversation: ReturnType<typeof vi.fn>;
   sendPrompt: ReturnType<typeof vi.fn>;
   startSession: ReturnType<typeof vi.fn>;
   stopSession: ReturnType<typeof vi.fn>;
@@ -179,6 +181,7 @@ function makeService(
   const runCommand = vi.fn(async () => {
     if (options.runCommandError) throw options.runCommandError;
   });
+  const forkServerDurableConversation = vi.fn(async () => options.durableForkConversationId);
   const sendPrompt = vi.fn(async () => {
     if (options.sendPromptHandler) await options.sendPromptHandler();
     if (options.sendPromptError) throw options.sendPromptError;
@@ -210,7 +213,7 @@ function makeService(
       claimSessionLaunchRecovery,
       clearRestartResume: vi.fn(),
     },
-    sessions: { runCommand, sendPrompt, startSession, stopSession },
+    sessions: { runCommand, forkServerDurableConversation, sendPrompt, startSession, stopSession },
     sessionRuntimes: {
       isSessionConnected,
       getSessionSnapshot,
@@ -237,6 +240,7 @@ function makeService(
     listSessions,
     saveSession,
     runCommand,
+    forkServerDurableConversation,
     sendPrompt,
     startSession,
     stopSession,
@@ -1679,17 +1683,35 @@ describe("SessionLifecycleService", () => {
   });
 
   describe("forkSession", () => {
-    it("rejects durable forks with a typed error before creating or rebinding anything", async () => {
-      const { service, createSession, refreshSessionState } = makeService();
+    it("binds a durable fork to its own conversation without a Pi file fork or tree navigation", async () => {
+      const { service, saveSession, startSession, runCommand, refreshSessionState } = makeService({
+        durableForkConversationId: 42,
+      });
+      const result = await service.forkSession({
+        workspace: makeWorkspace(),
+        sourceSession: makeSession({ serverDurable: { conversationId: 1 } }),
+        entryId: "7",
+      });
+      expect(result.session.serverDurable).toEqual({ conversationId: 42 });
+      expect(result.session.piSessionFile).toBeUndefined();
+      expect(saveSession).toHaveBeenCalledWith(
+        expect.objectContaining({ serverDurable: { conversationId: 42 } }),
+      );
+      expect(startSession).toHaveBeenCalledTimes(1);
+      expect(runCommand).not.toHaveBeenCalled();
+      expect(refreshSessionState).not.toHaveBeenCalled();
+    });
+    it("rejects a durable fork at an unknown entry before creating a session", async () => {
+      const { service, createSession, startSession } = makeService();
       await expect(
         service.forkSession({
           workspace: makeWorkspace(),
           sourceSession: makeSession({ serverDurable: { conversationId: 1 } }),
           entryId: "entry-1",
         }),
-      ).rejects.toMatchObject({ code: "server_durable_not_supported", operation: "fork" });
+      ).rejects.toMatchObject({ statusCode: 404 });
       expect(createSession).not.toHaveBeenCalled();
-      expect(refreshSessionState).not.toHaveBeenCalled();
+      expect(startSession).not.toHaveBeenCalled();
     });
     it("creates a timeline fork with source trace ancestry and inherited settings", async () => {
       const sourceSession = makeSession({

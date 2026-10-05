@@ -44,7 +44,7 @@ import type { AgentBackend } from "./agent-backend.js";
 import { DurableRuntime, type DurableHarness } from "./durable-harness.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { DurableSandboxTools } from "./durable-sandbox-tools.js";
-import { resolveDurableInputCards } from "./durable-input-cards.js";
+import { readDurableInputCards, resolveDurableInputCards } from "./durable-input-cards.js";
 import { DurableEventProjection } from "./durable-event-projection.js";
 import type { PiMessage, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import type { SdkBackendDisposeResult } from "./sdk-backend.js";
@@ -166,6 +166,24 @@ async function resolveProjectTrust(
 }
 
 /** Store the rendered sections; a changed section reaches the model on its next request. */
+/**
+ * Fork-list text for a user message, empty when the trace shows no user row for it. The trace
+ * emits a row for text and for image/audio blocks that carry data, so a media-only message
+ * lists a placeholder rather than copying the media.
+ */
+function forkMessageText(content: string | ReadonlyArray<object>): string {
+  if (typeof content === "string") return content;
+  let text = "";
+  let media: "[Image]" | "[Audio]" | undefined;
+  for (const block of content as ReadonlyArray<Record<string, unknown>>) {
+    if (block.type === "text" && typeof block.text === "string") text += block.text;
+    else if (!block.data) continue;
+    else if (block.type === "image") media = "[Image]";
+    else if (block.type === "audio" || block.type === "output_audio") media ??= "[Audio]";
+  }
+  return text || media || "";
+}
+
 async function syncProjectContext(
   conversation: Conversation,
   resources: DurableProjectResources,
@@ -1139,8 +1157,25 @@ export class DurableBackend implements AgentBackend {
     this.resources = resources;
     return { success: true };
   }
-  forkMessages(): never {
-    return this.unsupported("forkMessages");
+  /**
+   * Fork points: the user rows of the durable trace, by the same decimal entry ids. Generated
+   * inputs (cards) and compaction entries (a user-role summary the trace shows as a compaction)
+   * are not user rows. Media-only messages are, so they list with a placeholder, not their bytes.
+   */
+  async forkMessages(): Promise<Array<{ entryId: string; text: string }>> {
+    this.assertOpen();
+    const records = await this.historyEntries();
+    const cards = await readDurableInputCards(
+      this.harness,
+      records.map((entry) => entry.conversationId),
+    );
+    return records.flatMap((entry) => {
+      const message = entry.model?.[0];
+      if (message?.role !== "user" || entry.kind === "pi.compaction" || cards.entries.has(entry.id))
+        return [];
+      const text = forkMessageText(message.content);
+      return text ? [{ entryId: String(entry.id), text }] : [];
+    });
   }
   sessionTree(): never {
     return this.unsupported("sessionTree");

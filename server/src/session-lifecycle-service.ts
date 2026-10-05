@@ -167,6 +167,7 @@ export interface SessionLifecycleServiceDeps {
       },
     ): Promise<void>;
     runCommand(sessionId: string, command: Record<string, unknown>): Promise<unknown>;
+    forkServerDurableConversation(sessionId: string, entryId: string): Promise<number | undefined>;
     stopSession(sessionId: string): Promise<void>;
   };
   sessionRuntimes: Pick<
@@ -673,20 +674,35 @@ export class SessionLifecycleService {
     entryId: string;
     name?: string;
   }): Promise<ForkSessionResult> {
-    if (params.sourceSession.serverDurable) {
-      const { DurableNotSupportedError } = await import("./durable-backend.js");
-      throw new DurableNotSupportedError("fork");
-    }
     const binding = await this.ensureManagedWorktreeBinding(params.sourceSession, params.workspace);
-    await this.deps.sessionRuntimes.refreshSessionState(params.sourceSession.id);
+    const durableSource = params.sourceSession.serverDurable !== undefined;
+    // Durable sources have no Pi session file or Pi tree state to refresh.
+    if (!durableSource)
+      await this.deps.sessionRuntimes.refreshSessionState(params.sourceSession.id);
 
     const latestSource = this.deps.storage.getSession(params.sourceSession.id) || binding.session;
-    const sourceSessionFile =
-      latestSource.piSessionFile ||
-      latestSource.piSessionFiles?.[latestSource.piSessionFiles.length - 1];
-
-    if (!sourceSessionFile) {
-      throw new SessionLifecycleError("Source session has no trace file to fork from", 409);
+    // A durable source forks its conversation first, so an unknown entry fails before any
+    // Session row exists, and never falls back to a Pi JSONL fork.
+    let forkConversationId: number | undefined;
+    let sourceSessionFile: string | undefined;
+    if (durableSource) {
+      if (latestSource.serverDurable?.conversationId === undefined) {
+        throw new SessionLifecycleError("Source session has no durable conversation to fork", 409);
+      }
+      forkConversationId = await this.deps.sessions.forkServerDurableConversation(
+        latestSource.id,
+        params.entryId,
+      );
+      if (forkConversationId === undefined) {
+        throw new SessionLifecycleError("Fork entry not found in this session", 404);
+      }
+    } else {
+      sourceSessionFile =
+        latestSource.piSessionFile ||
+        latestSource.piSessionFiles?.[latestSource.piSessionFiles.length - 1];
+      if (!sourceSessionFile) {
+        throw new SessionLifecycleError("Source session has no trace file to fork from", 409);
+      }
     }
 
     const sourceName = latestSource.name?.trim() || `Session ${latestSource.id.slice(0, 8)}`;
@@ -713,32 +729,39 @@ export class SessionLifecycleService {
     if (latestSource.thinkingLevel) forkSession.thinkingLevel = latestSource.thinkingLevel;
     if (latestSource.contextWindow) forkSession.contextWindow = latestSource.contextWindow;
 
-    const forkCwd = resolveSdkSessionCwd(params.workspace, forkSession, {
-      dataDir: this.deps.storage.getDataDir(),
-    });
-    let forkedFile: string;
-    try {
-      const forked = forkPiSessionFrom(sourceSessionFile, forkCwd, forkSession.id);
-      if (!forked.sessionFile) {
-        throw new SessionLifecycleError("Failed to create forked session file", 500);
+    if (sourceSessionFile === undefined) {
+      // Bound before start: the backend attaches to this conversation instead of creating one.
+      forkSession.serverDurable = { conversationId: forkConversationId };
+    } else {
+      const forkCwd = resolveSdkSessionCwd(params.workspace, forkSession, {
+        dataDir: this.deps.storage.getDataDir(),
+      });
+      let forkedFile: string;
+      try {
+        const forked = forkPiSessionFrom(sourceSessionFile, forkCwd, forkSession.id);
+        if (!forked.sessionFile) {
+          throw new SessionLifecycleError("Failed to create forked session file", 500);
+        }
+        forkedFile = forked.sessionFile;
+      } catch (error: unknown) {
+        this.deps.storage.deleteSession(forkSession.id);
+        throw error;
       }
-      forkedFile = forked.sessionFile;
-    } catch (error: unknown) {
-      this.deps.storage.deleteSession(forkSession.id);
-      throw error;
+      forkSession.piSessionFile = forkedFile;
+      forkSession.piSessionFiles = [forkedFile];
     }
-    forkSession.piSessionFile = forkedFile;
-    forkSession.piSessionFiles = [forkedFile];
 
     this.deps.storage.saveSession(forkSession);
 
     try {
       await this.deps.sessions.startSession(forkSession.id, params.workspace);
-      await this.deps.sessions.runCommand(forkSession.id, {
-        type: "navigate_tree",
-        targetId: params.entryId,
-      });
-      await this.deps.sessionRuntimes.refreshSessionState(forkSession.id);
+      if (sourceSessionFile !== undefined) {
+        await this.deps.sessions.runCommand(forkSession.id, {
+          type: "navigate_tree",
+          targetId: params.entryId,
+        });
+        await this.deps.sessionRuntimes.refreshSessionState(forkSession.id);
+      }
     } catch (error: unknown) {
       await this.deps.sessions.stopSession(forkSession.id).catch(() => {});
       this.deps.storage.deleteSession(forkSession.id);

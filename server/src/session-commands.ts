@@ -161,7 +161,7 @@ export class SessionCommandCoordinator {
 
   private static readonly SESSION_PASSTHROUGH_HANDLERS = new Map<string, BackendCommandHandler>([
     ["get_messages", (session) => session.messages()],
-    ["get_fork_messages", (session) => ({ messages: session.forkMessages() })],
+    ["get_fork_messages", async (session) => ({ messages: await session.forkMessages() })],
     [
       "get_session_tree",
       (session, cmd) =>

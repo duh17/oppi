@@ -1,13 +1,16 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { ModelRuntime, SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
+  AgentDoc,
   Harness,
   createRegistry,
   defineDoc,
   type Extension,
   type HarnessSettings,
   type ConversationId,
+  type EntryId,
   type Registry,
+  type Tx,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
@@ -238,6 +241,69 @@ export class DurableHarness {
       BACKGROUND_CONTEXT,
     );
     return { harness, models };
+  }
+
+  /**
+   * Fork `sourceId` at `entryId` into a new ownerless conversation, as classic fork does with
+   * `navigate_tree`: a user message is excluded (the branch point is the visible entry before
+   * it), any other entry is included. The first user message has no earlier entry, so the fork
+   * is a fresh conversation carrying the source's stored agent. Resolves `undefined` when the
+   * entry is not visible from the source. The fork keeps the source's execution runtime:
+   * `DurableRuntime` forks as its initial value, which would turn a sandbox conversation into
+   * a host one.
+   */
+  async forkConversation(
+    sourceId: ConversationId,
+    entryId: EntryId,
+  ): Promise<ConversationId | undefined> {
+    const { harness } = await this.open();
+    const source = await harness.conversation(sourceId, BACKGROUND_CONTEXT);
+    if (!source) throw new Error(`Server durable conversation ${sourceId} is missing`);
+    // Newest first: the chosen entry, then the visible entry before it.
+    const { items } = await source.entries(
+      { maxEntryId: entryId },
+      2,
+      undefined,
+      BACKGROUND_CONTEXT,
+    );
+    const [chosen, previous] = items;
+    if (chosen?.id !== entryId) return undefined;
+    const runtime = await harness.snapshot(DurableRuntime, sourceId, BACKGROUND_CONTEXT);
+    const copyRuntime = async (tx: Tx, id: ConversationId): Promise<void> => {
+      if (!runtime) return;
+      const doc = await tx.doc(DurableRuntime, id);
+      doc.kind = runtime.kind;
+      if (runtime.workspaceId !== undefined) doc.workspaceId = runtime.workspaceId;
+    };
+    const ownership = { kind: "ownerless" } as const;
+    // A compaction entry carries a user-role summary but is not a user message: branch at it,
+    // so the fork keeps the summary instead of the pre-compaction transcript.
+    const isUserMessage = chosen.model?.[0]?.role === "user" && chosen.kind !== "pi.compaction";
+    const branchPoint = isUserMessage ? previous?.id : chosen.id;
+    if (branchPoint !== undefined) {
+      const fork = await source.fork(
+        branchPoint,
+        { ownership, init: copyRuntime },
+        BACKGROUND_CONTEXT,
+      );
+      return fork.id;
+    }
+    const agent = await harness.snapshot(AgentDoc, sourceId, BACKGROUND_CONTEXT);
+    const fresh = await harness.createConversation(
+      {
+        ownership,
+        init: async (tx, id) => {
+          await copyRuntime(tx, id);
+          if (!agent) return;
+          // The stored selection, by name: resolved objects would drop tools whose
+          // extension (such as MCP) is not attached yet.
+          const doc = await tx.doc(AgentDoc, id);
+          Object.assign(doc, structuredClone(agent));
+        },
+      },
+      BACKGROUND_CONTEXT,
+    );
+    return fresh.id;
   }
 
   /** Mark cancellation without Conversation.abort(), which enables ALL scheduling. */

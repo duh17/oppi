@@ -18,11 +18,15 @@ import {
   createRegistry,
   ToolTask,
   AssistantEntry,
+  AgentDoc,
+  UserEntry,
+  CompactionEntry,
   InboxDoc,
   LiveDoc,
   watchEvents,
   type AgentEvent,
   type ConversationId,
+  type EntryId,
   type ToolRegistration,
   defineTool,
 } from "@earendil-works/pi-durable";
@@ -35,7 +39,7 @@ import type { GondolinVm } from "../src/gondolin-ops.js";
 import { DurableBackend, DurableNotSupportedError } from "../src/durable-backend.js";
 import { Storage } from "../src/storage.js";
 import { SessionManager } from "../src/sessions.js";
-import { DurableHarness } from "../src/durable-harness.js";
+import { DurableHarness, DurableRuntime } from "../src/durable-harness.js";
 import { SessionTraceService } from "../src/session-trace-service.js";
 import { readDurableTrace } from "../src/durable-history.js";
 import { SessionAgentEventCoordinator } from "../src/session-agent-events.js";
@@ -2360,6 +2364,322 @@ describe("server durable managed runtime", () => {
       steering: [],
       followUp: [],
     });
+  });
+
+  it("forks a durable session at a user message into an independent durable session that survives restart", async () => {
+    const f = await fixture([
+      fauxAssistantMessage("ANSWER_ONE"),
+      fauxAssistantMessage("ANSWER_TWO"),
+      fauxAssistantMessage("ANSWER_THREE"),
+      fauxAssistantMessage("FORK_ANSWER"),
+      fauxAssistantMessage("SOURCE_ANSWER"),
+      fauxAssistantMessage("FRESH_FORK_ANSWER"),
+      fauxAssistantMessage("RESUMED_FORK_ANSWER"),
+    ]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    await f.manager.runCommand(f.session.id, { type: "set_thinking_level", level: "high" });
+    async function ask(manager: SessionManager, sessionId: string, text: string) {
+      const observed = observe(manager, sessionId);
+      const end = observed.next((message) => message.type === "agent_end");
+      await manager.sendPrompt(sessionId, text);
+      await end;
+      observed.unsubscribe();
+    }
+    await ask(f.manager, f.session.id, "first question");
+    await ask(f.manager, f.session.id, "second question");
+    await ask(f.manager, f.session.id, "third question");
+
+    // The ids the phone lists as fork points are the ids of the user rows in the trace.
+    const { messages: forkPoints } = (await f.manager.runCommand(f.session.id, {
+      type: "get_fork_messages",
+    })) as { messages: Array<{ entryId: string; text: string }> };
+    expect(forkPoints.map((point) => point.text)).toEqual([
+      "first question",
+      "second question",
+      "third question",
+    ]);
+    const sourceTrace = (await f.manager.getServerDurableTrace(f.session.id, "full"))!;
+    expect(sourceTrace.filter((event) => event.type === "user").map((event) => event.id)).toEqual(
+      forkPoints.map((point) => point.entryId),
+    );
+    const sourceConversation = f.storage.getSession(f.session.id)!.serverDurable!.conversationId!;
+    const sourceBefore = JSON.stringify(sourceTrace);
+
+    const dispatch = createSessionRoutes(
+      {
+        storage: f.storage,
+        sessions: f.manager,
+        sessionRuntimes: f.manager,
+        ensureSessionContextWindow: (session: Session) => session,
+      } as unknown as RouteContext,
+      createRouteHelpers(),
+    );
+    async function fork(entryId: string) {
+      const path = `/workspaces/${f.workspace.id}/sessions/${f.session.id}/fork`;
+      const res = makeResponse();
+      await dispatch({
+        method: "POST",
+        path,
+        url: new URL(path, "http://localhost"),
+        req: makeRequest({ entryId }),
+        res: res as never,
+      });
+      return res;
+    }
+    expect((await fork("999999")).statusCode).toBe(404);
+    expect((await fork("not-an-entry")).statusCode).toBe(404);
+
+    // Like classic fork, the branch point is the entry before the chosen user message.
+    const res = await fork(forkPoints[1]!.entryId);
+    expect(res.statusCode).toBe(201);
+    const forked = (JSON.parse(res.body) as { session: Session }).session;
+    expect(forked).toMatchObject({
+      name: "Fork: Durable proof",
+      workspaceId: f.workspace.id,
+      serverDurable: { conversationId: expect.any(Number) },
+    });
+    expect(forked.serverDurable!.conversationId).not.toBe(sourceConversation);
+    expect(forked.piSessionFile).toBeUndefined();
+
+    const forkTrace = async (manager: SessionManager) =>
+      (await manager.getServerDurableTrace(forked.id, "full"))!
+        .filter((event) => event.type === "user" || event.type === "assistant")
+        .map((event) => `${event.type}:${event.text}`);
+    expect(await forkTrace(f.manager)).toEqual(["user:first question", "assistant:ANSWER_ONE"]);
+
+    await ask(f.manager, forked.id, "fork follow-up");
+    expect(await forkTrace(f.manager)).toEqual([
+      "user:first question",
+      "assistant:ANSWER_ONE",
+      "user:fork follow-up",
+      "assistant:FORK_ANSWER",
+    ]);
+    // The source neither saw the fork's turn nor lost its own history, and still runs.
+    expect(JSON.stringify(await f.manager.getServerDurableTrace(f.session.id, "full"))).toBe(
+      sourceBefore,
+    );
+    await ask(f.manager, f.session.id, "source follow-up");
+    expect(JSON.stringify(await forkTrace(f.manager))).not.toContain("source follow-up");
+
+    // The first user message has no earlier entry: the fork starts empty but keeps the
+    // source's agent and runtime.
+    const freshRes = await fork(forkPoints[0]!.entryId);
+    expect(freshRes.statusCode).toBe(201);
+    const fresh = (JSON.parse(freshRes.body) as { session: Session }).session;
+    expect(
+      (await f.manager.getServerDurableTrace(fresh.id, "full"))!.filter(
+        (e) => e.type === "user" || e.type === "assistant",
+      ),
+    ).toEqual([]);
+    const durable = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
+      .durableHarness;
+    const { harness: live } = await durable.open();
+    const stored = async (id: number) => ({
+      agent: await live.snapshot(AgentDoc, id as ConversationId, context),
+      runtime: await live.snapshot(DurableRuntime, id as ConversationId, context),
+    });
+    const freshState = await stored(fresh.serverDurable!.conversationId!);
+    expect(freshState.agent).toMatchObject({
+      model: { provider: "faux", modelId: "faux-1" },
+      thinkingLevel: "high",
+      cwd: expect.any(String),
+    });
+    // Attaching rewrites the extension selection as an `{ add }` edit, so compare the rest.
+    const { model, thinkingLevel, cwd, instructions } = (await stored(sourceConversation)).agent!;
+    expect(freshState.agent).toMatchObject({ model, thinkingLevel, cwd, instructions });
+    expect(freshState.runtime).toEqual({ kind: "host" });
+    await ask(f.manager, fresh.id, "fresh question");
+    expect(
+      (await f.manager.getServerDurableTrace(fresh.id, "full"))!
+        .filter((e) => e.type === "user" || e.type === "assistant")
+        .map((e) => `${e.type}:${e.text}`),
+    ).toEqual(["user:fresh question", "assistant:FRESH_FORK_ANSWER"]);
+
+    // A new server process attaches the same forked conversation from storage.
+    await f.manager.close();
+    managers.splice(managers.indexOf(f.manager), 1);
+    const restarted = new SessionManager(f.storage);
+    managers.push(restarted);
+    await restarted.resumeDurableSessions();
+    await restarted.startSession(forked.id, f.workspace);
+    expect(await forkTrace(restarted)).toHaveLength(4);
+    await ask(restarted, forked.id, "after restart");
+    expect((await forkTrace(restarted)).slice(-2)).toEqual([
+      "user:after restart",
+      "assistant:RESUMED_FORK_ANSWER",
+    ]);
+  }, 20_000);
+
+  it("keeps runtime and agent on both fork shapes", async () => {
+    const f = await fixture([]);
+    const owner = new DurableHarness(f.dir);
+    const harness = await openHarness(f.dir, f.models);
+    vi.spyOn(owner, "open").mockResolvedValue({ harness, models: f.models });
+    const source = await harness.createConversation(
+      {
+        ownership: { kind: "ownerless" },
+        agent: {
+          model: { provider: "faux", modelId: "faux-1" },
+          thinkingLevel: "high",
+          cwd: f.dir,
+        },
+        init: async (tx, id) => {
+          const runtime = await tx.doc(DurableRuntime, id);
+          runtime.kind = "sandbox";
+          runtime.workspaceId = "workspace-1";
+        },
+      },
+      context,
+    );
+    const [first, second] = await source.commit(
+      async (tx) => [
+        await tx.appendEntry(UserEntry, source.id, {
+          model: [{ role: "user", content: "one", timestamp: 1 }],
+        }),
+        await tx.appendEntry(UserEntry, source.id, {
+          model: [{ role: "user", content: "two", timestamp: 2 }],
+        }),
+      ],
+      context,
+    );
+    const sandbox = { kind: "sandbox", workspaceId: "workspace-1" };
+    const history = async (id: ConversationId) =>
+      (await (await harness.conversation(id, context))!.entries({}, 10, undefined, context)).items;
+
+    // Mid-transcript: the fork ends before the chosen user message.
+    const midId = (await owner.forkConversation(source.id, second!.id))!;
+    expect((await history(midId)).map((entry) => entry.id)).toEqual([first!.id]);
+    expect(await harness.snapshot(DurableRuntime, midId, context)).toEqual(sandbox);
+
+    // First message: nothing earlier, so a fresh conversation with the source's stored agent.
+    const freshId = (await owner.forkConversation(source.id, first!.id))!;
+    expect(await history(freshId)).toEqual([]);
+    expect(await harness.snapshot(DurableRuntime, freshId, context)).toEqual(sandbox);
+    expect(await harness.snapshot(AgentDoc, freshId, context)).toEqual(
+      await harness.snapshot(AgentDoc, source.id, context),
+    );
+    expect(await harness.snapshot(AgentDoc, freshId, context)).toMatchObject({
+      thinkingLevel: "high",
+      cwd: f.dir,
+    });
+  });
+
+  it("forks at a compaction entry by keeping the summary, not the compacted transcript", async () => {
+    const f = await fixture([]);
+    const owner = new DurableHarness(f.dir);
+    const harness = await openHarness(f.dir, f.models);
+    vi.spyOn(owner, "open").mockResolvedValue({ harness, models: f.models });
+    const source = await harness.createConversation({ ownership: { kind: "ownerless" } }, context);
+    const [first, second] = await source.commit(
+      async (tx) => [
+        await tx.appendEntry(UserEntry, source.id, {
+          model: [{ role: "user", content: "old question", timestamp: 1 }],
+        }),
+        await tx.appendEntry(UserEntry, source.id, {
+          model: [{ role: "user", content: "kept question", timestamp: 2 }],
+        }),
+      ],
+      context,
+    );
+    const [compaction] = await source.commit(
+      async (tx) => [
+        await tx.appendEntry(CompactionEntry, source.id, {
+          head: second!.id,
+          model: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "<summary>\nOLD_SUMMARY\n</summary>" }],
+              timestamp: 3,
+            },
+          ],
+          data: { reason: "manual" },
+        }),
+      ],
+      context,
+    );
+    const history = async (id: ConversationId) =>
+      (await (await harness.conversation(id, context))!.entries({}, 10, undefined, context)).items;
+
+    // The compaction summary is user-role but not a user message: the branch includes it.
+    const forkId = (await owner.forkConversation(source.id, compaction!.id))!;
+    expect((await history(forkId)).map((entry) => entry.id)).toEqual([
+      compaction!.id,
+      second!.id,
+      first!.id,
+    ]);
+    // A real user message after it still branches before itself.
+    const [after] = await source.commit(
+      async (tx) => [
+        await tx.appendEntry(UserEntry, source.id, {
+          model: [{ role: "user", content: "after", timestamp: 4 }],
+        }),
+      ],
+      context,
+    );
+    const afterId = (await owner.forkConversation(source.id, after!.id))!;
+    expect((await history(afterId))[0]!.id).toBe(compaction!.id);
+  });
+
+  it("lists exactly the trace user rows as fork points, including media-only messages", async () => {
+    const f = await fixture([]);
+    const harness = await openHarness(f.dir, f.models);
+    vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+    await f.manager.startSession(f.session.id, f.workspace);
+    const conversationId = f.storage.getSession(f.session.id)!.serverDurable!
+      .conversationId as ConversationId;
+    const source = (await harness.conversation(conversationId, context))!;
+    const bytes = "QUJD".repeat(1024);
+    const [typed] = await source.commit(
+      async (tx) => [
+        await tx.appendEntry(UserEntry, conversationId, {
+          model: [{ role: "user", content: "typed", timestamp: 1 }],
+        }),
+        await tx.appendEntry(UserEntry, conversationId, {
+          model: [
+            {
+              role: "user",
+              content: [{ type: "image", data: bytes, mimeType: "image/png" }],
+              timestamp: 2,
+            },
+          ],
+        }),
+      ],
+      context,
+    );
+    await source.commit(
+      async (tx) => [
+        await tx.appendEntry(CompactionEntry, conversationId, {
+          head: typed!.id,
+          model: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "<summary>\nS\n</summary>" }],
+              timestamp: 3,
+            },
+          ],
+          data: { reason: "manual" },
+        }),
+      ],
+      context,
+    );
+
+    const { messages: points } = (await f.manager.runCommand(f.session.id, {
+      type: "get_fork_messages",
+    })) as { messages: Array<{ entryId: string; text: string }> };
+    const userRows = (await f.manager.getServerDurableTrace(f.session.id, "full"))!.filter(
+      (event) => event.type === "user",
+    );
+    expect(points.map((point) => point.entryId)).toEqual(userRows.map((event) => event.id));
+    expect(points.map((point) => point.text)).toEqual(["typed", "[Image]"]);
+    expect(JSON.stringify(points)).not.toContain(bytes);
+
+    // Each listed point forks: the image-only message branches before itself.
+    const forkId = await f.manager.forkServerDurableConversation(f.session.id, points[1]!.entryId);
+    expect(forkId).toBeDefined();
+    const fork = (await harness.conversation(forkId!, context))!;
+    expect((await fork.entries({}, 10, undefined, context)).items.map((e) => e.id)).toEqual([
+      Number(points[0]!.entryId),
+    ]);
   });
 
   it("publishes durable queue_item_started by submission identity without text reconciliation", async () => {

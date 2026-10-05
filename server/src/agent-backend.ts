@@ -97,7 +97,9 @@ export interface AgentBackend {
     | (SessionStats & Record<string, unknown>)
     | Promise<SessionStats & Record<string, unknown>>;
   messages(): PiMessage[];
-  forkMessages(): Array<{ entryId: string; text: string }>;
+  forkMessages():
+    | Array<{ entryId: string; text: string }>
+    | Promise<Array<{ entryId: string; text: string }>>;
   sessionTree(): SessionTreeManager & CanonicalSessionTree;
   leafId(): string | null;
   toolDefinition(name: string): BackendToolDefinition | undefined;
