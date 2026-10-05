@@ -10,6 +10,8 @@ struct DurableSessionsView: View {
     @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var experimentEnabled = false
 
     @State private var error: String?
+    /// Full-history durable sessions; the live store only holds the recent window.
+    @State private var history: [Session] = []
 
     private var activeServerId: String? { coordinator.activeServerId }
 
@@ -25,7 +27,10 @@ struct DurableSessionsView: View {
     }
 
     private var sessions: [Session] {
-        DurableSessionsPlayground.sessions(from: connection?.sessionStore.listProjectionSessions ?? [])
+        DurableSessionsPlayground.sessions(
+            history: history,
+            live: connection?.sessionStore.listProjectionSessions ?? []
+        )
     }
 
     var body: some View {
@@ -79,9 +84,14 @@ struct DurableSessionsView: View {
                 .accessibilityIdentifier("durableSessions.new")
             }
         }
+        .task(id: isAvailable ? activeServerId : nil) {
+            history = []
+            await loadHistory()
+        }
         .refreshable {
             guard let activeServerId else { return }
             await coordinator.refreshServer(activeServerId, force: true)
+            await loadHistory()
         }
         .alert("Error", isPresented: Binding(
             get: { error != nil },
@@ -90,6 +100,17 @@ struct DurableSessionsView: View {
             Button("OK", role: .cancel) { error = nil }
         } message: {
             Text(error ?? "")
+        }
+    }
+
+    private func loadHistory() async {
+        guard isAvailable, let api = connection?.apiClient else { return }
+        do {
+            history = try await api.listDurableSessions()
+        } catch {
+            // Leaving the screen or switching servers cancels the load.
+            guard !Task.isCancelled else { return }
+            self.error = "Loading durable sessions failed: \(error.localizedDescription)"
         }
     }
 

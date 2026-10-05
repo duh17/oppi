@@ -509,6 +509,26 @@ struct APIClientTests {
         #expect(sessions[0].currentTurnStartedAt == Date(timeIntervalSince1970: 1.5))
     }
 
+    @Test func listDurableSessionsReadsFullHistoryAndKeepsOnlyDurable() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/sessions/recent")
+            #expect(request.url?.query == "recentDays=0")
+            return self.mockResponse(json: """
+            {"sessions":[
+                {"id":"old-durable","workspaceId":"w1","status":"stopped","createdAt":0,"lastActivity":1000,"messageCount":2,"tokens":{"input":0,"output":0},"cost":0,"engine":"durable"},
+                {"id":"classic","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":3000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0},
+                {"id":"new-durable","workspaceId":"w2","status":"ready","createdAt":0,"lastActivity":2000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"engine":"durable"}
+            ]}
+            """)
+        }
+
+        let sessions = try await client.listDurableSessions()
+        #expect(sessions.map(\.id) == ["new-durable", "old-durable"])
+    }
+
     @Test func getWorkspaceSessionListUsesResourceEndpoints() async throws {
         let client = makeClient()
         defer { cleanup() }

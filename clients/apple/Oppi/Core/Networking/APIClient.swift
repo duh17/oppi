@@ -1543,6 +1543,12 @@ actor APIClient: ClientLogUploading {
         return summaries.map(\.session)
     }
 
+    /// Every durable session on the server, not only the recent window: `recentDays=0`
+    /// reads the full history, so older stopped durable sessions stay listed.
+    func listDurableSessions() async throws -> [Session] {
+        DurableSessionsPlayground.sessions(from: try await listSessionsFromWorkspaces(recentDays: 0))
+    }
+
     /// Create a new session in a specific workspace.
     /// Create a new session in a workspace.
     ///

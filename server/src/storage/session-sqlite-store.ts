@@ -582,6 +582,7 @@ export class SessionSqliteStore {
     }
 
     this.ensureSessionColumns();
+    this.reconcileServerDurableProjection();
     this.ensureSessionIndexesAndSchemaVersion();
     this.backfillMissingSessionJson();
     this.migrateStoredIconChoices();
@@ -654,15 +655,29 @@ export class SessionSqliteStore {
         this.db.exec(`ALTER TABLE session_state_sessions ADD COLUMN ${name} ${definition}`);
       }
     }
-    if (!columns.has("server_durable_json")) {
-      // Rows enrolled before the column existed keep their engine in list projections.
-      this.db.exec(`
-        UPDATE session_state_sessions
-        SET server_durable_json = json_extract(session_json, '$.serverDurable')
-        WHERE json_valid(session_json)
-          AND json_type(session_json, '$.serverDurable') = 'object'
-      `);
-    }
+  }
+
+  /**
+   * List projections read the durable engine from server_durable_json; session_json
+   * is the source of truth. They diverge when a crash lands between adding the column
+   * and filling it, or when an older server rewrites session_json without knowing the
+   * column. Reconcile on every open rather than once behind a migration marker: a
+   * marker cannot see a later downgrade-and-return. Current writers keep both equal,
+   * so the UPDATE matches nothing on a healthy database.
+   */
+  private reconcileServerDurableProjection(): void {
+    this.db.exec(`
+      UPDATE session_state_sessions
+      SET server_durable_json = CASE
+        WHEN json_type(session_json, '$.serverDurable') = 'object'
+          THEN json_extract(session_json, '$.serverDurable')
+      END
+      WHERE json_valid(session_json)
+        AND server_durable_json IS NOT CASE
+          WHEN json_type(session_json, '$.serverDurable') = 'object'
+            THEN json_extract(session_json, '$.serverDurable')
+        END
+    `);
   }
 
   private ensureSessionIndexesAndSchemaVersion(): void {

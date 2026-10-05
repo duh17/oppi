@@ -4,6 +4,7 @@ import { actionableAgentConfigurationMessage } from "../agent-launch-errors.js";
 import {
   AgentLaunchService,
   DelegationPolicyError,
+  durableUnsupportedFeature,
   parseRequestedEngine,
   requiredModelLaunchFailureMessage,
   type AgentDefinition,
@@ -184,6 +185,22 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       });
       if (worktreeSelection.error) {
         helpers.error(res, 400, worktreeSelection.error);
+        return true;
+      }
+      const durableUnsupported =
+        requestedEngine.engine === "durable"
+          ? durableUnsupportedFeature({
+              ephemeral: body.ephemeral === true,
+              agentDefinition: agent.definition,
+              workspace,
+            })
+          : undefined;
+      if (durableUnsupported) {
+        helpers.error(
+          res,
+          400,
+          `${durableUnsupported} cannot run on the durable engine; omit engine`,
+        );
         return true;
       }
 

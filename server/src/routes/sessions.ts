@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  durableUnsupportedFeature,
   parseRequestedEngine,
   requiredModelLaunchFailureMessage,
 } from "../agent-launch-service.js";
@@ -205,6 +206,18 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
     if (body.piSessionFile && requestedEngine.engine === "durable") {
       helpers.error(res, 400, "Imported Pi sessions stay classic; omit engine");
+      return;
+    }
+    const durableUnsupported =
+      requestedEngine.engine === "durable"
+        ? durableUnsupportedFeature({ ephemeral: body.ephemeral === true, workspace })
+        : undefined;
+    if (durableUnsupported) {
+      helpers.error(
+        res,
+        400,
+        `${durableUnsupported} cannot run on the durable engine; omit engine`,
+      );
       return;
     }
     const delegationFieldError = invalidDelegationFields(

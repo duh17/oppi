@@ -154,6 +154,24 @@ export function parseRequestedEngine(
   return { engine: "durable" };
 }
 
+/**
+ * What a durable session cannot carry, or undefined when it can. DurableBackend
+ * refuses these at start; create routes refuse them before a session exists, so
+ * a durable request never leaves a shell that can only fail.
+ */
+export function durableUnsupportedFeature(params: {
+  ephemeral?: boolean;
+  agentDefinition?: AgentDefinition;
+  workspace?: Workspace;
+}): string | undefined {
+  if (params.ephemeral) return "Incognito sessions";
+  // Classic extension factories cannot run in a durable conversation.
+  if (params.agentDefinition?.resources?.extensionIds?.length) return "Saved Agent Extensions";
+  if (params.workspace?.runtime === "sandbox" && params.workspace.sandboxConfig?.mcpServers?.length)
+    return "Sandbox MCP servers";
+  return undefined;
+}
+
 export class DelegationPolicyError extends Error {
   constructor(message: string) {
     super(message);
@@ -181,6 +199,7 @@ export class AgentLaunchService {
       if (existing) {
         this.assertIdempotentDelegationMatches(existing, delegation);
         this.assertIdempotentAutoStopMatches(existing, request.autoStop);
+        this.assertIdempotentEngineMatches(existing, request.engine);
         const existingResult = this.resultForExistingLaunch(existing, now);
         if (
           existingResult.kind === "existing" &&
@@ -202,6 +221,7 @@ export class AgentLaunchService {
       if (existing) {
         this.assertIdempotentDelegationMatches(existing, delegation);
         this.assertIdempotentAutoStopMatches(existing, request.autoStop);
+        this.assertIdempotentEngineMatches(existing, request.engine);
         return this.resultForExistingLaunch(existing, now);
       }
       throw error;
@@ -495,6 +515,14 @@ export class AgentLaunchService {
     if (existingAutoStop !== requestedAutoStop) {
       throw new DelegationPolicyError(
         "Idempotency key is already associated with a different autoStop value",
+      );
+    }
+  }
+
+  private assertIdempotentEngineMatches(existing: Session, engine?: SessionEngine): void {
+    if ((engine === "durable") !== (existing.serverDurable !== undefined)) {
+      throw new DelegationPolicyError(
+        "Idempotency key is already associated with a different engine",
       );
     }
   }

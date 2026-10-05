@@ -39,7 +39,7 @@ import {
   TOOLS_SUMMARIES_USAGE_LABEL,
   type SessionModelUsageSnapshot,
 } from "./session-stats.js";
-import type { AgentDefinition } from "./agent-launch-service.js";
+import { durableUnsupportedFeature, type AgentDefinition } from "./agent-launch-service.js";
 import type { AgentBackend } from "./agent-backend.js";
 import { DurableRuntime, type DurableHarness } from "./durable-harness.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
@@ -241,14 +241,14 @@ export class DurableBackend implements AgentBackend {
 
   static async create(options: DurableBackendOptions): Promise<DurableBackend> {
     const { models, session, agentDefinition } = options;
-    if (session.ephemeral) throw new DurableNotSupportedError("Incognito sessions");
-    // Classic extension factories cannot run in a durable conversation.
-    if (agentDefinition?.resources?.extensionIds?.length)
-      throw new DurableNotSupportedError("Saved Agent Extensions");
     const workspace = options.workspace;
+    const unsupported = durableUnsupportedFeature({
+      ephemeral: session.ephemeral,
+      agentDefinition,
+      workspace,
+    });
+    if (unsupported) throw new DurableNotSupportedError(unsupported);
     const sandbox = workspace?.runtime === "sandbox";
-    if (sandbox && options.workspace?.sandboxConfig?.mcpServers?.length)
-      throw new DurableNotSupportedError("Sandbox MCP servers");
     const hostCwd = resolveSdkSessionCwd(options.workspace, session, { dataDir: options.dataDir });
     const cwd = sandbox ? resolveSandboxGuestCwd(workspace) : hostCwd;
     const owner = options.owner;

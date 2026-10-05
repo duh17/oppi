@@ -61,6 +61,36 @@ struct DurableSessionsPlaygroundTests {
         #expect(listed.map(\.id) == ["new-durable", "old-durable"])
     }
 
+    @Test func listKeepsOlderHistoryAndPrefersLiveCopies() {
+        let now = Date()
+        func session(_ id: String, status: SessionStatus, daysAgo: Double, engine: SessionEngine = .durable) -> Session {
+            Session(
+                id: id,
+                workspaceId: "ws",
+                status: status,
+                createdAt: now,
+                lastActivity: now.addingTimeInterval(-daysAgo * 86_400),
+                messageCount: 0,
+                tokens: TokenUsage(input: 0, output: 0),
+                cost: 0,
+                engine: engine
+            )
+        }
+        let listed = DurableSessionsPlayground.sessions(
+            history: [
+                session("month-old", status: .stopped, daysAgo: 30),
+                session("recent", status: .ready, daysAgo: 1),
+            ],
+            live: [
+                session("recent", status: .busy, daysAgo: 0),
+                session("just-created", status: .ready, daysAgo: 0.5),
+                session("classic", status: .ready, daysAgo: 0, engine: .classic),
+            ]
+        )
+        #expect(listed.map(\.id) == ["recent", "just-created", "month-old"])
+        #expect(listed.first?.status == .busy)
+    }
+
     @Test func serverInfoAdvertisesDurableSessionsOnlyWhenPresent() throws {
         func capabilities(_ extra: String) throws -> ServerInfo.Capabilities? {
             let json = """

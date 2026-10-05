@@ -504,6 +504,67 @@ describe("session sqlite store", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it("heals durable projections left out of step with session_json on every open", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-durable-heal-"));
+    let sqliteStore: SessionSqliteStore | undefined;
+    const session = (id: string, serverDurable?: Session["serverDurable"]): Session => ({
+      id,
+      workspaceId: "ws-1",
+      status: "stopped",
+      createdAt: 1,
+      lastActivity: 10,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      ...(serverDurable ? { serverDurable } : {}),
+    });
+    const engines = () =>
+      new Map(
+        sqliteStore!
+          .listAllWorkspaceSessionSnapshots("ws-1")
+          .map((snapshot) => [snapshot.id, snapshot.serverDurable]),
+      );
+
+    try {
+      sqliteStore = new SessionSqliteStore(dataDir);
+      sqliteStore.upsertSession(session("bound", { conversationId: 3 }));
+      sqliteStore.upsertSession(session("enrolled", {}));
+      sqliteStore.upsertSession(session("unenrolled", {}));
+      sqliteStore.upsertSession(session("classic"));
+      sqliteStore.close();
+      sqliteStore = undefined;
+
+      // The column exists but the backfill never ran (a crash after ALTER), or an
+      // older server rewrote session_json without knowing about the column.
+      const db = openDatabase(join(dataDir, "session-state.db"));
+      try {
+        db.exec(
+          "UPDATE session_state_sessions SET server_durable_json = NULL WHERE id IN ('bound', 'enrolled')",
+        );
+        db.exec(
+          "UPDATE session_state_sessions SET session_json = json_remove(session_json, '$.serverDurable') WHERE id = 'unenrolled'",
+        );
+      } finally {
+        db.close();
+      }
+
+      const healed = new Map<string, Session["serverDurable"]>([
+        ["bound", { conversationId: 3 }],
+        ["enrolled", {}],
+        ["unenrolled", undefined],
+        ["classic", undefined],
+      ]);
+      sqliteStore = new SessionSqliteStore(dataDir);
+      expect(engines()).toEqual(healed);
+      sqliteStore.close();
+      sqliteStore = new SessionSqliteStore(dataDir);
+      expect(engines()).toEqual(healed);
+    } finally {
+      sqliteStore?.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("workspace session snapshots", () => {

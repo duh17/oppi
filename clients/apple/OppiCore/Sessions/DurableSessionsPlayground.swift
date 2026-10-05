@@ -9,6 +9,15 @@ enum DurableSessionsPlayground {
         experimentEnabled && serverOffersDurable
     }
 
+    /// Durable sessions from the server's full history (`recentDays=0`) merged
+    /// with the live store, whose copies are newer and include sessions created
+    /// after the history loaded.
+    static func sessions(history: [Session], live: [Session]) -> [Session] {
+        var byId = Dictionary(history.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
+        for session in live { byId[session.id] = session }
+        return sessions(from: Array(byId.values))
+    }
+
     /// Durable workspace sessions, most recent activity first.
     static func sessions(from sessions: [Session]) -> [Session] {
         sessions
