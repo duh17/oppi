@@ -118,7 +118,7 @@ struct NotebookCellPresentationTests {
         )
         #expect(config.title == "const hits = await lookup()")
         #expect(config.languageBadge == "JavaScript")
-        #expect(config.glyph == "chevron.left.forwardslash.chevron.right")
+        #expect(config.glyph == "function")
         #expect(config.expandedContent == nil)
     }
 

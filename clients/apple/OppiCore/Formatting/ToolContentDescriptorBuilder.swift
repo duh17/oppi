@@ -275,7 +275,7 @@ enum ToolContentDescriptorBuilder {
             return input?.fields.values.contains { $0.role == "fileContent" } == true ? "pencil" : "magnifyingglass"
         default:
             if input?.fields.values.contains(where: { $0.role == "code" }) == true {
-                return "chevron.left.forwardslash.chevron.right"
+                return "function"
             }
             return nil
         }
