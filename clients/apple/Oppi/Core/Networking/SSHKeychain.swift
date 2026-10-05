@@ -2,6 +2,14 @@ import Foundation
 import LocalAuthentication
 import Security
 
+/// The three Keychain operations the SSH profile store is allowed to perform.
+/// Callers name an account. Nothing here lists or matches other items.
+protocol SSHCredentialStoring: Sendable {
+    func load(account: String, requirePresence: Bool) throws -> Data?
+    func save(_ data: Data, account: String, requirePresence: Bool) throws
+    func delete(account: String) throws
+}
+
 /// SSH items are app-private, never synchronised or placed in the app group.
 struct SSHKeychain: Sendable {
     let service: String
@@ -67,6 +75,8 @@ struct SSHKeychain: Sendable {
         guard status == errSecSuccess || status == errSecItemNotFound else { throw SSHKeychainError.status(status) }
     }
 }
+
+extension SSHKeychain: SSHCredentialStoring {}
 
 enum SSHKeychainError: LocalizedError, Equatable {
     case status(OSStatus), accessControl, passwordRequired

@@ -151,7 +151,7 @@ enum WorkspaceSidebarPrimaryUtilities {
     static func items(
         for idiom: UIUserInterfaceIdiom,
         sshTerminalEnabled: Bool = AppPreferences.Experiments.sshTerminalEnabled,
-        hasSSHProfile: Bool = SSHTerminalProfileStore().load()?.isConfigured == true,
+        hasSSHProfile: Bool = SSHTerminalProfileStore().hasConfiguredHost,
         durableSessionsAvailable: Bool = false
     ) -> [WorkspaceSidebarPrimaryUtilityItem] {
         var result = items
@@ -159,7 +159,7 @@ enum WorkspaceSidebarPrimaryUtilities {
             result.append(.init(
                 target: .sshTerminal, title: "Terminal", systemImage: "terminal",
                 accessibilityLabel: "Open SSH Terminal", accessibilityIdentifier: "workspace.terminal.open",
-                minimumHitHeight: 44, accessibilityHint: "Connect to your SSH host"
+                minimumHitHeight: 44, accessibilityHint: "Opens your saved SSH hosts"
             ))
         }
         if durableSessionsAvailable { result.append(durableSessions) }
@@ -689,7 +689,7 @@ struct SessionInboxView: View {
                 case .mcpServers:
                     McpServersView(scopeId: McpScopeSnapshot.globalId)
                 case .sshTerminal:
-                    SSHTerminalSetupView()
+                    SSHTerminalHostListView()
                 case .durableSessions:
                     SessionInboxView(scope: .durable)
                 case .desktopStill:
@@ -1612,7 +1612,8 @@ struct WorkspaceSessionInboxStackRootView: View {
 struct WorkspaceSidebarView: View {
     @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var sshTerminalEnabled = false
     @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableSessionsEnabled = false
-    @AppStorage(SSHTerminalProfileStore.storageKey) private var sshProfileData = Data()
+    @AppStorage(SSHTerminalProfileStore.catalogKey) private var sshCatalogData = Data()
+    @AppStorage(SSHTerminalProfileStore.storageKey) private var sshLegacyProfileData = Data()
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
@@ -1648,7 +1649,9 @@ struct WorkspaceSidebarView: View {
                         WorkspaceSidebarPrimaryUtilities.items(
                             for: UIDevice.current.userInterfaceIdiom,
                             sshTerminalEnabled: sshTerminalEnabled,
-                            hasSSHProfile: (try? JSONDecoder().decode(SSHTerminalProfile.self, from: sshProfileData))?.isConfigured == true,
+                            hasSSHProfile: SSHTerminalProfileStore.hasConfiguredHost(
+                                catalogData: sshCatalogData, legacyData: sshLegacyProfileData
+                            ),
                             durableSessionsAvailable: DurableSessionsPlayground.isAvailable(
                                 experimentEnabled: durableSessionsEnabled,
                                 serverOffersDurable: selectedServer

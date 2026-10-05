@@ -237,7 +237,7 @@ enum WorkspaceUtilityNavTarget: Hashable {
         case .desktopStill:
             ReleaseFeatures.desktopStillEnabled
         case .sshTerminal:
-            AppPreferences.Experiments.sshTerminalEnabled && SSHTerminalProfileStore().load()?.isConfigured == true
+            AppPreferences.Experiments.sshTerminalEnabled && SSHTerminalProfileStore().hasConfiguredHost
         case .durableSessions:
             AppPreferences.Experiments.durableSessionsEnabled
         case .skills, .extensions, .mcpServers, .manageServers, .appSettings:

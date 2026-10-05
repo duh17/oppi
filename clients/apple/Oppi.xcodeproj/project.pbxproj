@@ -769,6 +769,7 @@
 		654AA40BE5EAAA72621472F5 /* GeneratedH264Fixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = C95C8232C23FC95071664893 /* GeneratedH264Fixture.swift */; };
 		655509F180456AE0D04216E5 /* MacMarkdownUSDZView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 013F0DE25BDFA86D97A8093A /* MacMarkdownUSDZView.swift */; };
 		6576066B2EFEA65E9CCADEA4 /* WorkspaceMediaOverlayNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02092FB1F170CB19F9A286D5 /* WorkspaceMediaOverlayNavigation.swift */; };
+		65AB07E896B3A7D20A02F19F /* SSHTerminalHostListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BAEBFA4650D544EA7426022 /* SSHTerminalHostListView.swift */; };
 		65D69B784A811E89CAD8EDD3 /* MacComposerInputMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAA450DAA9B0220AE2542B00 /* MacComposerInputMetricsTests.swift */; };
 		660C9ED83A4696A33B193AF5 /* TimelineReducerBasicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8BFD07507D57A0FBB97E3A3 /* TimelineReducerBasicTests.swift */; };
 		66172AD9D139CCEC807D7FF6 /* UIValidateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADC590D9C770E04CAD2BE337 /* UIValidateTests.swift */; };
@@ -1704,6 +1705,7 @@
 		E139F70C66EB1E438C46C256 /* Workspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4CF2DCA9F90102E5D75300B /* Workspace.swift */; };
 		E13FE62BA7E19B798CDDD78C /* BottomOverlapScrollGapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27806A6C72201BADCF5532F9 /* BottomOverlapScrollGapTests.swift */; };
 		E1677AEB78E3CA8303AB5CCC /* FreshnessStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A8D3D2D8061C577E399968E /* FreshnessStateTests.swift */; };
+		E17CB949F4B8F528B830EDD2 /* SSHTerminalConnectSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B69A0FD4B8E42D904683F95 /* SSHTerminalConnectSession.swift */; };
 		E181E83736CAF8B1AAED7554 /* cmark-gfm in Frameworks */ = {isa = PBXBuildFile; productRef = 73D0CD745CBFC835A738B5C3 /* cmark-gfm */; };
 		E1C059ADF75005C63407087F /* SessionStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 731B79B1082AA5B7395C7AC2 /* SessionStats.swift */; };
 		E1C7DEC4B647AFA919AF9F29 /* BuiltInToolFactsPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 297029F5FF9AD59ABAF23F30 /* BuiltInToolFactsPreview.swift */; };
@@ -2233,6 +2235,7 @@
 		1B654E5ACCE8CDBA55EAC875 /* PastableTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PastableTextView.swift; sourceTree = "<group>"; };
 		1B6DF6118CCD51A710EFA8FC /* MacSessionSearchPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionSearchPresentation.swift; sourceTree = "<group>"; };
 		1B86007A3133A50F6D08D972 /* SyntaxLanguagesPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyntaxLanguagesPreview.swift; sourceTree = "<group>"; };
+		1BAEBFA4650D544EA7426022 /* SSHTerminalHostListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalHostListView.swift; sourceTree = "<group>"; };
 		1BE5F2899DD892BC49AFA151 /* ServerReleaseVersion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerReleaseVersion.swift; sourceTree = "<group>"; };
 		1C2526925920C92F7FEF2A86 /* MarkdownTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTextTests.swift; sourceTree = "<group>"; };
 		1C2F15E704F4BD87418BEAA4 /* DeviceAuthIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAuthIntegrationTests.swift; sourceTree = "<group>"; };
@@ -2823,6 +2826,7 @@
 		7AF1B0D0BA36107442C46714 /* TimelineScrollConformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineScrollConformanceTests.swift; sourceTree = "<group>"; };
 		7B128777B9D6A2FBEE5840F9 /* SessionContentAccessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionContentAccessTests.swift; sourceTree = "<group>"; };
 		7B4A0BC08E57EFDD5CAA5753 /* ServerProcessManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerProcessManager.swift; sourceTree = "<group>"; };
+		7B69A0FD4B8E42D904683F95 /* SSHTerminalConnectSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalConnectSession.swift; sourceTree = "<group>"; };
 		7B82EFA2E8FA19C245EEFF26 /* MacToolDocumentColumnTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacToolDocumentColumnTests.swift; sourceTree = "<group>"; };
 		7B8F6E6D73A13DF4A43420CD /* SyntaxHighlightOwnershipTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyntaxHighlightOwnershipTests.swift; sourceTree = "<group>"; };
 		7BBA38291D83E36C46AE54EC /* MacSessionTraceStoreProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionTraceStoreProjectionTests.swift; sourceTree = "<group>"; };
@@ -5840,7 +5844,9 @@
 				491FE68E4FDCD214D7D60AFD /* SSHTerminalArrowControl.swift */,
 				353DCB2C42D2506A8FB1E917 /* SSHTerminalChannel.swift */,
 				530A9E927F8C08482F429B83 /* SSHTerminalComposer.swift */,
+				7B69A0FD4B8E42D904683F95 /* SSHTerminalConnectSession.swift */,
 				555E01FCFE0ADCEA18DD9236 /* SSHTerminalEngine.swift */,
+				1BAEBFA4650D544EA7426022 /* SSHTerminalHostListView.swift */,
 				5F1318955097C657E0A1264D /* SSHTerminalKeymap.swift */,
 				B488362E8AD725D3820A3F0F /* SSHTerminalSetupView.swift */,
 				49728C075AEAF29906AF5776 /* SSHTerminalView.swift */,
@@ -8626,7 +8632,9 @@
 				85F814797633890EF841906B /* SSHTerminalArrowControl.swift in Sources */,
 				63FD9760B8095D8383C20A37 /* SSHTerminalChannel.swift in Sources */,
 				09CD796076A0A76CD657F4E3 /* SSHTerminalComposer.swift in Sources */,
+				E17CB949F4B8F528B830EDD2 /* SSHTerminalConnectSession.swift in Sources */,
 				633E3686C8AA2E6906E3F903 /* SSHTerminalEngine.swift in Sources */,
+				65AB07E896B3A7D20A02F19F /* SSHTerminalHostListView.swift in Sources */,
 				C99D6386B175545386509DDA /* SSHTerminalKeymap.swift in Sources */,
 				6328AEEC7DC51DFEB540409F /* SSHTerminalProfile.swift in Sources */,
 				D800CF76E01E19C0F8913B46 /* SSHTerminalScreenshotPreview.swift in Sources */,

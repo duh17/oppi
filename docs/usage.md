@@ -96,7 +96,7 @@ Create and edit sheets can open a **Pi Control** session (ordinary Pi with globa
 
 ## SSH Terminal experiment
 
-Turn on **Settings → Experiments → SSH Terminal** to configure one SSH host with password or per-device key sign-in. The workspace sidebar then offers **Terminal** below **MCP Servers**. Saved passwords and trusted host keys stay in this device’s Keychain; saved-password reads and Secure Enclave signing require user presence. See [SSH Terminal](ssh-terminal.md) for setup, host trust, reconnect behavior, and supported algorithms.
+Turn on **Settings → Experiments → SSH Terminal** to save SSH hosts on this device, with password or per-device key sign-in. **Settings → Network → SSH Terminal**, and **Terminal** below **MCP Servers**, open that list. Saved passwords and trusted host keys stay in this device’s Keychain; saved-password reads and Secure Enclave signing require user presence. See [SSH Terminal](ssh-terminal.md) for setup, host trust, reconnect behavior, and supported algorithms.
 
 ## Durable Sessions experiment
 

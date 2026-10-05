@@ -404,7 +404,7 @@ struct SettingsView: View {
 
                 if sshTerminalEnabled {
                     NavigationLink {
-                        SSHTerminalSetupView()
+                        SSHTerminalHostListView()
                     } label: {
                         Label("SSH Terminal", systemImage: "terminal")
                     }

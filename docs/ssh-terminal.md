@@ -1,15 +1,16 @@
 # SSH Terminal experiment
 
-SSH Terminal opens an interactive shell on one host from iPhone or iPad. It is an opt-in experiment, off by default. It does not run through the Oppi server and does not change Pi session ownership.
+SSH Terminal opens an interactive shell on a host saved on this iPhone or iPad. It is an opt-in experiment, off by default. It does not run through the Oppi server and does not change Pi session ownership.
 
 ## Set up a host
 
 1. Turn on **Settings → Experiments → SSH Terminal**.
-2. Open **Settings → Network → SSH Terminal**. Enter a host, port (default 22), and username. The host has no default. Enable Remote Login or `sshd` on that host.
-3. Choose **Password** or **This Device’s Key**.
+2. Open **Settings → Network → SSH Terminal**. That opens the host list. Opening the list does not dial and does not read the Keychain, so it does not ask for Face ID.
+3. Tap **Add**. Enter a host, port (default 22), and username. The host has no default. Enable Remote Login or `sshd` on that host. **Edit** opens the same form for a saved host.
+4. Choose **Password** or **This Device’s Key**.
    - **Password:** enter the password at connect. **Save Password** is optional.
    - **This Device’s Key:** copy the public key and add it as one line to `~/.ssh/authorized_keys` on the host. Oppi does not install it for you.
-4. Tap **Connect**. Compare the displayed host-key fingerprint with the host’s fingerprint through an independent, trusted channel. Trust it only after they match. Oppi sends no credentials before host-key validation succeeds.
+5. Tap **Connect**. Compare the displayed host-key fingerprint with the host’s fingerprint through an independent, trusted channel. Trust it only after they match. Oppi sends no credentials before host-key validation succeeds. You can also tap **Save Host** and connect later from the list.
 
 For example, on a Mac with an Ed25519 host key:
 
@@ -17,7 +18,7 @@ For example, on a Mac with an Ed25519 host key:
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-After you save a host, **Terminal** appears directly below **MCP Servers** in the workspace sidebar. Tap it to open the host page, then tap **Connect**; opening the page never dials or asks for Face ID. **Edit Host** returns to setup. Turning the experiment off hides both entry points and does not create a key. **Tailscale → Check a machine** remains available independently.
+After you save a host, **Terminal** appears directly below **MCP Servers** in the workspace sidebar. Tap it to open the same list. Tap a row to connect and open the shell. The password sheet and host-key prompt appear on the list or the form, whichever you tapped Connect from. A row shows `user@host`, the port when it is not 22, and the Run on Connect command, or **Login shell**. Two rows can use the same machine with different Run on Connect commands. Swipe **Delete Host** removes that saved host and its password only. An existing single host moves into the list without a Face ID prompt; its password stays in this phone’s Keychain until the next connect. **Edit Host** in the live terminal opens the form for the connected host. Turning the experiment off hides both entry points and does not create a key. **Tailscale → Check a machine** remains available independently.
 
 ## Run on Connect
 
@@ -58,12 +59,13 @@ When `herdr` is on the host, the terminal checks Herdr's API (`herdr api snapsho
 
 ## Credentials and host trust
 
-- Profile metadata (host, port, username, and sign-in choice) is stored in app preferences. Passwords are never stored there or logged.
+- Profile metadata (host, port, username, sign-in choice, and Run on Connect) is stored in app preferences. Passwords are never stored there or logged. Each saved host has its own id. Changing that host’s hostname, port, username, or sign-in method cannot keep its password, and does not change another host’s password.
 - An unsaved password is used for one connection attempt. Reconnect asks for it again.
-- A saved password is in the app’s private Keychain, not the app group. It does not sync or migrate to another device. A device passcode is required to save it; reading it at connect requires Face ID, Touch ID, or device-passcode approval.
+- A saved password is in the app’s private Keychain, not the app group. It does not sync or migrate to another device. A device passcode is required to save it; reading it at connect requires Face ID, Touch ID, or device-passcode approval. The saved secret is bound to that host’s id, so copying one host’s secret onto another host’s item does not sign in.
+- A host saved before the list keeps its password at the previous Keychain item. The next connect reads it, writes the per-host item, and then deletes the previous item. Opening the list does not. If that write fails, the previous item stays.
 - On a physical device, the per-device P-256 SSH key is in the Secure Enclave. Signing requires user presence. The simulator uses an explicitly labelled software key. Selecting password sign-in does not create a key.
 - Trusted host keys are stored in the app-private, this-device-only Keychain, shared by SSH Terminal and Check a machine. A changed host key blocks sign-in. **Forget Trusted Key** requires confirmation; independently verify why it changed before trusting its replacement.
-- **Delete Host** deletes the profile and saved password. It does not remove the per-device key or trusted host keys.
+- **Delete Host**, including swipe delete on the list, deletes that saved host and its saved password. It does not remove the per-device key or trusted host keys. Trusted host keys stay keyed by host and port. The device key stays one per device. If the host list cannot be read, **Delete Saved Password** removes only the previous single-host password item. It does not search the Keychain.
 
 ## Network and reconnect
 
@@ -75,7 +77,7 @@ Entering the background disconnects the shell. On return, tap **Reconnect**. Aft
 
 ## Limits
 
-- One host profile. No private-key import, keyboard-interactive, or forwarding.
+- Hosts are saved on this device only. No private-key import, keyboard-interactive, or forwarding.
 - The SSH library supports Ed25519/ECDSA host and user keys, Curve25519/ECDH key exchange, and AES-GCM encryption. RSA-only and legacy-only servers fail with an unsupported-algorithm error. A server that offers only keyboard-interactive cannot accept password sign-in here.
 - Connection, authentication, and terminal-opening waits are bounded. A rejected credential, changed host key, unreachable host, or unsupported algorithm produces a visible error.
 - Secure Enclave and biometric approval need physical-device testing. A simulator software key is not evidence of hardware protection.
