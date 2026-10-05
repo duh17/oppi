@@ -13,6 +13,13 @@ export function isServerDurableSession(
   return !isPiTuiSession(session) && session.serverDurable !== undefined;
 }
 
+/** Bound to a durable conversation: needs the Harness whether or not new sessions still enroll. */
+export function hasServerDurableBinding(
+  session: Pick<Session, "runtime" | "serverDurable">,
+): boolean {
+  return isServerDurableSession(session) && session.serverDurable?.conversationId !== undefined;
+}
+
 export function runtimeLogTag(session: Pick<Session, "runtime">): SessionRuntimeKind {
   return isPiTuiSession(session) ? "pi-tui" : "oppi";
 }

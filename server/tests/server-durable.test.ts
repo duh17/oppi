@@ -3673,4 +3673,98 @@ describe("server durable managed runtime", () => {
     const terminal = f.storage.createSession("Terminal", undefined, { durable: false });
     expect(terminal.serverDurable).toBeUndefined();
   });
+
+  describe("with experimental.serverDurable turned off after sessions were bound", () => {
+    // Chen flips the flag off to go back to classic sessions; the durable rows
+    // already bound to a conversation must keep their history and resume.
+    async function boundThenFlagOff() {
+      const f = await fixture([
+        fauxAssistantMessage("BOUND_ANSWER"),
+        fauxAssistantMessage("SECOND"),
+      ]);
+      await f.manager.startSession(f.session.id, f.workspace);
+      const observed = observe(f.manager, f.session.id);
+      const ended = observed.next((message) => message.type === "agent_end");
+      await f.manager.sendPrompt(f.session.id, "bound prompt");
+      await ended;
+      observed.unsubscribe();
+      await f.manager.stopSession(f.session.id);
+      await f.manager.close();
+      managers.splice(managers.indexOf(f.manager), 1);
+      const storage = new Storage(f.dir);
+      storage.updateConfig({ experimental: { serverDurable: false } });
+      const conversationId = storage.getSession(f.session.id)!.serverDurable!.conversationId;
+      expect(conversationId).toBeDefined();
+      const manager = new SessionManager(storage);
+      managers.push(manager);
+      // Server startup: with a bound row the Harness must exist and release its resume hold.
+      await manager.resumeDurableSessions();
+      return { ...f, storage, manager, conversationId: conversationId! };
+    }
+
+    it("reads trace history and resumes the bound conversation on DurableBackend", async () => {
+      const f = await boundThenFlagOff();
+      const full = await f.manager.getServerDurableTrace(f.session.id, "full");
+      expect(full?.filter((event) => event.type === "user").map((event) => event.text)).toEqual([
+        "bound prompt",
+      ]);
+      const page = await f.manager.getServerDurableTracePage(f.session.id, { targetEvents: 50 });
+      expect(page?.trace.some((event) => event.type === "user")).toBe(true);
+      await expect(f.manager.getServerDurableTraceOutline(f.session.id)).resolves.not.toBeNull();
+
+      const sdkCreate = vi.spyOn(SdkBackend, "create");
+      await f.manager.startSession(f.session.id, f.workspace);
+      expect(sdkCreate).not.toHaveBeenCalled();
+      const active = f.manager.getActiveSession(f.session.id)!;
+      expect(active).toBeDefined();
+      const history = (await f.manager.runCommand(f.session.id, { type: "get_messages" })) as {
+        role: string;
+        content: unknown;
+      }[];
+      expect(
+        history.some(
+          (message) =>
+            message.role === "assistant" &&
+            JSON.stringify(message.content).includes("BOUND_ANSWER"),
+        ),
+      ).toBe(true);
+      expect(f.storage.getSession(f.session.id)?.serverDurable?.conversationId).toBe(
+        f.conversationId,
+      );
+      // Continuing the resumed conversation works, still bound to the same one.
+      const observed = observe(f.manager, f.session.id);
+      const ended = observed.next((message) => message.type === "agent_end");
+      await f.manager.sendPrompt(f.session.id, "second prompt");
+      await ended;
+      observed.unsubscribe();
+      await f.manager.stopSession(f.session.id);
+    });
+
+    it("stops an inactive bound session through the durable harness", async () => {
+      const f = await boundThenFlagOff();
+      const abort = vi.spyOn(DurableHarness.prototype, "abortConversations");
+      await f.manager.stopSession(f.session.id);
+      expect(abort).toHaveBeenCalledWith(new Set([f.conversationId]));
+    });
+
+    it("starts new sessions classic and drops an unbound enrollment", async () => {
+      const f = await boundThenFlagOff();
+      const fresh = f.storage.createSession("Classic", "faux/faux-1");
+      expect(fresh.serverDurable).toBeUndefined();
+      const enrolled = f.storage.createSession("Enrolled earlier", "faux/faux-1");
+      enrolled.serverDurable = {};
+      enrolled.workspaceId = f.workspace.id;
+      f.storage.saveSession(enrolled);
+      const sdkCreate = vi
+        .spyOn(SdkBackend, "create")
+        .mockResolvedValue({ dispose: async () => {} } as SdkBackend);
+      const opening = vi.spyOn(DurableHarness.prototype, "open");
+      await f.manager.startSession(enrolled.id, f.workspace);
+      expect(sdkCreate).toHaveBeenCalledOnce();
+      expect(opening).not.toHaveBeenCalled();
+      expect(f.storage.getSession(enrolled.id)?.serverDurable).toBeUndefined();
+      // The stub backend cannot run the real stop flow during teardown.
+      (f.manager as unknown as { active: Map<string, unknown> }).active.clear();
+    });
+  });
 });

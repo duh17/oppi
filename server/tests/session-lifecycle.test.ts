@@ -61,6 +61,7 @@ function makeManagerHarness(
   let sessionRef: Session | null = null;
   const storage = {
     getConfig: () => TEST_CONFIG,
+    listSessions: () => [],
     saveSession: vi.fn(),
     addSessionMessage: vi.fn(),
     getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
@@ -150,6 +151,7 @@ describe("SessionManager startSession", () => {
     });
     const storage = {
       getConfig: () => TEST_CONFIG,
+      listSessions: () => [],
       getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
       getSession: vi.fn((id: string) => (id === session.id ? session : null)),
       getWorkspace: vi.fn((id: string) => (id === workspace.id ? workspace : null)),
@@ -2286,6 +2288,7 @@ describe("SessionManager setInactiveSessionModel", () => {
     });
     const storage = {
       getConfig: () => TEST_CONFIG,
+      listSessions: () => [],
       getDataDir: () => TEST_CONFIG.dataDir,
       getSession: vi.fn((id: string) => (id === stored.id ? stored : null)),
       saveSession: vi.fn(),

@@ -79,7 +79,7 @@ type ActiveSession = SessionStartActiveSession;
 // ─── Session Manager ───
 
 import type { DurableHarness } from "./durable-harness.js";
-import { isServerDurableSession } from "./session-runtime-capabilities.js";
+import { hasServerDurableBinding } from "./session-runtime-capabilities.js";
 import type { ConversationId, EntryId, Harness } from "@earendil-works/pi-durable";
 
 export class SessionManager extends EventEmitter implements AgentRuntimeTransport {
@@ -125,7 +125,13 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     if (metrics) this.opsMetrics = metrics;
     const config = storage.getConfig();
     this.config = config;
-    if (config.experimental?.serverDurable === true) {
+    // The flag only gates enrolling NEW sessions. Rows already bound to a
+    // conversation still need the Harness for history, resume, and Stop, so a
+    // flag-off host with none stays zero-cost and never imports durable code.
+    if (
+      config.experimental?.serverDurable === true ||
+      storage.listSessions().some(hasServerDurableBinding)
+    ) {
       this.durableHarness = import("./durable-harness.js").then(
         ({ DurableHarness }) => new DurableHarness(storage.getDataDir()),
       );
@@ -509,7 +515,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     );
   }
 
-  /** Read-only Harness access for the search index; undefined unless serverDurable is enabled. */
+  /** Read-only Harness access for the search index; undefined when no Harness exists (flag off, nothing bound). */
   durableSearchSource(): DurableSearchSource | undefined {
     const durableHarness = this.durableHarness;
     if (!durableHarness) return undefined;
@@ -772,12 +778,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   /** Attach every crash-resumed projection before enabling the shared scheduler. */
   async resumeDurableSessions(): Promise<void> {
     if (!this.durableHarness) return;
-    const bound = this.storage
-      .listSessions()
-      .filter(
-        (session) =>
-          isServerDurableSession(session) && session.serverDurable?.conversationId !== undefined,
-      );
+    const bound = this.storage.listSessions().filter(hasServerDurableBinding);
     const durableHarness = await this.durableHarness;
     if (!bound.length) {
       await durableHarness.releaseResume();

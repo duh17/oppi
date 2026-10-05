@@ -74,27 +74,31 @@ export class SessionStartCoordinator {
           workspace?.runtime === "sandbox" ||
           session.launch?.target?.runtime === "sandbox" ||
           agentDefinition?.launchConstraints?.requiredRuntime === "sandbox";
-        if (session.serverDurable && sandboxRequired && !this.deps.durableHarness) {
-          // Preserve the disabled experiment's unbound-enrollment fallback.
-          // A bound conversation still cannot change runtime ownership.
-          if (session.serverDurable.conversationId !== undefined)
-            throw new Error("A server durable session cannot switch to a sandbox");
+        // The flag only decides enrollment of new sessions. A bound conversation
+        // always resumes on DurableBackend; an unbound enrollment left over from
+        // a flag-on period goes back to the classic SDK backend while it is off.
+        if (
+          session.serverDurable &&
+          session.serverDurable.conversationId === undefined &&
+          this.deps.config.experimental?.serverDurable !== true
+        ) {
           delete session.serverDurable;
-          session.warnings = [
-            ...(session.warnings ?? []),
-            "Server durable is host-only; using the SDK backend for this sandbox session",
-          ];
+          if (sandboxRequired) {
+            session.warnings = [
+              ...(session.warnings ?? []),
+              "Server durable is host-only; using the SDK backend for this sandbox session",
+            ];
+          }
         }
         if (session.serverDurable && sandboxRequired && workspace?.runtime !== "sandbox") {
           throw new Error("Server durable sandbox sessions require a sandbox workspace");
         }
-        if (session.serverDurable?.conversationId !== undefined && !this.deps.durableHarness) {
+        const useDurable = isServerDurableSession(session) && !session.piSessionFile;
+        if (useDurable && !this.deps.durableHarness) {
           throw new Error(
-            "Enable experimental.serverDurable to resume this server durable session",
+            "Server durable session cannot start: the durable harness is unavailable",
           );
         }
-        const useDurable =
-          this.deps.durableHarness && isServerDurableSession(session) && !session.piSessionFile;
         const durableHarness = useDurable ? await this.deps.durableHarness : undefined;
         const DurableBackend = useDurable
           ? (await import("./durable-backend.js")).DurableBackend

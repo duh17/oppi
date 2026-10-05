@@ -41,6 +41,7 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
 } {
   const storage = {
     getConfig: () => TEST_CONFIG,
+    listSessions: () => [],
     getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
     saveSession: vi.fn(),
     getWorkspace: vi.fn(() => undefined),

@@ -310,6 +310,7 @@ function makeManagerHarness(status: Session["status"] = "busy", stopTimers?: Ses
   const saveSession = vi.fn();
   const storage = {
     getConfig: () => TEST_CONFIG,
+    listSessions: () => [],
     getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
     saveSession,
     getWorkspace: vi.fn(() => undefined),

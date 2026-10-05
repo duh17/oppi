@@ -268,7 +268,7 @@ export class SearchIndex {
   /** Per-session tail of queued durable indexing; see syncDurableSession. */
   private durableTails = new Map<string, Promise<void>>();
 
-  /** Set when serverDurable is enabled. Durable sessions are then indexed from the harness. */
+  /** Set when the server has a durable Harness. Durable sessions are then indexed from it. */
   durableSource?: DurableSearchSource;
   /**
    * Sessions that bound a durable conversation after a file walk snapshotted
