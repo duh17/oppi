@@ -215,10 +215,14 @@ final class NotebookCellView: UIView {
     private func sourceTextView() -> UITextView {
         // A plain selectable text view still begins its pan when scrolling is
         // off and blocks the timeline. BaselineSafeTextView refuses that pan.
+        // Double-tap selection is stopped by the row gesture, which cancels
+        // touches and no longer waits on the hidden scroll view.
         let view = BaselineSafeTextView()
         view.isEditable = false
         view.isSelectable = true
         view.isScrollEnabled = false
+        view.showsVerticalScrollIndicator = false
+        view.showsHorizontalScrollIndicator = false
         view.backgroundColor = .clear
         view.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         view.textContainer.lineFragmentPadding = 0

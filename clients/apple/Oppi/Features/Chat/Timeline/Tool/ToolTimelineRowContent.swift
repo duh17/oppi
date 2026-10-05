@@ -124,7 +124,7 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
 
 }
 
-final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDelegate {
+final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     static var activeInlineFeatureTipIDs: Set<String> = []
 #if DEBUG
     static var forcesInlineFeatureTipsForTesting = false
@@ -255,7 +255,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private lazy var expandedContainerDoubleTapGesture = DoubleTapCopyGesture.makeGesture(
         target: self,
         action: #selector(handleExpandedDoubleTap),
-        cancelsTouchesInView: false
+        cancelsTouchesInView: true
     )
 
     private lazy var expandedPinchGesture: UIPinchGestureRecognizer = {
@@ -1043,7 +1043,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         commandContainer.addGestureRecognizer(commandDoubleTapGesture)
         outputContainer.addGestureRecognizer(outputDoubleTapGesture)
         expandedScrollView.addGestureRecognizer(expandedDoubleTapGesture)
-        expandedContainerDoubleTapGesture.require(toFail: expandedDoubleTapGesture)
+        // The notebook cell sits outside the scroll view. A permanent
+        // require-to-fail would wait on a hidden gesture and never open the
+        // reader. The delegate waits only while that scroll view is visible.
+        expandedContainerDoubleTapGesture.delegate = self
         expandedSingleTapBlocker.require(toFail: expandedContainerDoubleTapGesture)
         expandedContainer.addGestureRecognizer(expandedContainerDoubleTapGesture)
         // The notebook cell is hosted outside the scroll view. The pinch has to
@@ -2408,6 +2411,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         if resumesTailFollow {
             scheduleExpandedAutoScrollToBottomIfNeeded()
         }
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        gestureRecognizer === expandedContainerDoubleTapGesture
+            && otherGestureRecognizer === expandedDoubleTapGesture
+            && !expandedScrollView.isHidden
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {

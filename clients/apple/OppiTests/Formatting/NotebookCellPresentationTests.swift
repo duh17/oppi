@@ -174,7 +174,7 @@ struct NotebookCellPresentationTests {
         return found
     }
 
-    @Test @MainActor func notebookPinchLivesOnTheExpandedContainer() {
+    @Test @MainActor func notebookPinchLivesOnTheExpandedContainer() throws {
         let config = expanded(
             tool: "script",
             args: ["code": .string("await lookup()")],
@@ -185,6 +185,17 @@ struct NotebookCellPresentationTests {
         let pinch = row.expandedContainer.gestureRecognizers?.first { $0 is UIPinchGestureRecognizer }
         #expect(pinch?.isEnabled == true)
         #expect(row.expandedScrollView.gestureRecognizers?.contains { $0 is UIPinchGestureRecognizer } != true)
+        let containerDoubleTap = row.expandedContainer.gestureRecognizers?
+            .compactMap { $0 as? UITapGestureRecognizer }
+            .first { $0.numberOfTapsRequired == 2 }
+        let scrollDoubleTap = row.expandedScrollView.gestureRecognizers?
+            .compactMap { $0 as? UITapGestureRecognizer }
+            .first { $0.numberOfTapsRequired == 2 }
+        let opener = try #require(containerDoubleTap)
+        let hiddenOpener = try #require(scrollDoubleTap)
+        #expect(opener.cancelsTouchesInView)
+        #expect(row.expandedScrollView.isHidden)
+        #expect(!row.gestureRecognizer(opener, shouldRequireFailureOf: hiddenOpener))
     }
 
     @Test @MainActor func expandedCellDoesNotScroll() {
