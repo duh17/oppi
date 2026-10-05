@@ -1271,11 +1271,11 @@ struct HTMLDOMElementAnnotationTests {
         let composer = try #require(await waitForView("review-comment.inline-composer", in: fixture.host.view))
         let dismiss = try #require(find("review-comment.inline-dismiss", in: composer) as? UIButton)
         dismiss.sendActions(for: .touchUpInside)
-        try await Task.sleep(for: .milliseconds(200))
+        // Dismissal animates out; wait for it rather than a fixed sleep.
+        #expect(await waitUntil { find("review-comment.inline-composer", in: fixture.host.view) == nil })
         #expect(harness.store.stagedComments.isEmpty)
         #expect(harness.saves.isEmpty)
         #expect(harness.dispatches.isEmpty)
-        #expect(find("review-comment.inline-composer", in: fixture.host.view) == nil)
     }
 
     private static let focusFixture = """
