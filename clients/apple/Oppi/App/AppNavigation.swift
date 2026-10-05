@@ -1349,6 +1349,7 @@ final class AppNavigation {
         case .extensions: "extensions"
         case .mcpServers: "mcp_servers"
         case .sshTerminal: "ssh_terminal"
+        case .durableSessions: "durable_sessions"
         case .desktopStill: "desktop_still"
         case .manageServers: "manage_servers"
         case .appSettings: "app_settings"
@@ -1615,6 +1616,8 @@ struct QuickSessionLaunchContext: Equatable, Sendable {
     let worktreeId: String?
     /// Thread launch: the new session becomes a child of this session.
     let threadParent: QuickSessionThreadParent?
+    /// Durable playground launch asks the server for the durable engine.
+    let engine: SessionEngine
 
     /// Agent management launch. Workspace still follows last-used / default.
     init(serverId: String, agentId: String) {
@@ -1623,6 +1626,18 @@ struct QuickSessionLaunchContext: Equatable, Sendable {
         self.workspaceId = nil
         self.worktreeId = nil
         self.threadParent = nil
+        self.engine = .classic
+    }
+
+    /// Durable playground launch. Workspace follows last-used on this server;
+    /// the picker stays on this server because the engine is per server.
+    init(durableOnServer serverId: String) {
+        self.serverId = serverId
+        self.agentId = nil
+        self.workspaceId = nil
+        self.worktreeId = nil
+        self.threadParent = nil
+        self.engine = .durable
     }
 
     /// Session-list launch. Pre-focuses Quick Session to this workspace and
@@ -1633,6 +1648,7 @@ struct QuickSessionLaunchContext: Equatable, Sendable {
         self.workspaceId = workspaceId
         self.worktreeId = worktreeId
         self.threadParent = threadParent
+        self.engine = .classic
     }
 }
 

@@ -67,6 +67,8 @@ struct ServerInfo: Codable, Sendable, Equatable {
         var currentFiles: CapabilityVersion? = nil
         /// Guarded `PUT /files/current?origin=workspace`. Missing means read-only.
         var workspaceFileEditing: WorkspaceFileEditingCapability? = nil
+        /// Create requests may ask for `engine: "durable"` (`experimental.serverDurable`).
+        var durableSessions: CapabilityVersion? = nil
     }
 
     struct WorkspaceFileEditingCapability: Codable, Sendable, Equatable {

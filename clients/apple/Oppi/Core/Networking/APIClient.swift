@@ -1559,7 +1559,8 @@ actor APIClient: ClientLogUploading {
         worktreeId: String? = nil,
         attachments: [ChatAttachmentRef]? = nil,
         launchIdempotencyKey: String? = nil,
-        parentSessionId: String? = nil
+        parentSessionId: String? = nil,
+        engine: SessionEngine = .classic
     ) async throws -> CreateSessionResponse {
         struct Body: Encodable {
             let name: String?
@@ -1571,6 +1572,8 @@ actor APIClient: ClientLogUploading {
             let attachments: [ChatAttachmentRef]?
             let launchIdempotencyKey: String?
             let parentSessionId: String?
+            /// Omitted for classic, the server default.
+            let engine: SessionEngine?
         }
         let (data, response) = try await request(
             "POST",
@@ -1584,7 +1587,8 @@ actor APIClient: ClientLogUploading {
                 worktreeId: worktreeId,
                 attachments: attachments,
                 launchIdempotencyKey: launchIdempotencyKey,
-                parentSessionId: parentSessionId
+                parentSessionId: parentSessionId,
+                engine: engine == .durable ? engine : nil
             )
         )
         if let http = response as? HTTPURLResponse, http.statusCode == 409 {

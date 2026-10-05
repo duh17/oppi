@@ -18,6 +18,13 @@ enum SessionStatus: String, Codable, Sendable {
     }
 }
 
+/// Agent engine behind a managed session. Summaries carry `engine: "durable"`;
+/// full `Session` payloads mark the durable engine with `serverDurable`. Absent is classic.
+enum SessionEngine: String, Codable, Sendable {
+    case classic
+    case durable
+}
+
 enum SessionRuntimeKind: String, Codable, Sendable {
     case oppi
     case piTui = "pi-tui"
@@ -194,6 +201,8 @@ struct Session: Identifiable, Sendable, Equatable {
     /// Non-fatal session notices from the server. Not part of SessionSummary.
     var warnings: [String]? = nil
 
+    var engine: SessionEngine = .classic
+
     /// Display title: name, first message preview, or session ID prefix.
     var displayTitle: String {
         if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
@@ -289,6 +298,7 @@ struct SessionSummary: Sendable, Equatable {
     var agentIcon: IconChoice? = nil
     var parentSessionId: String? = nil
     var ephemeral: Bool?
+    var engine: SessionEngine = .classic
     var pendingAskCount: Int {
         didSet { hasPendingAskCount = true }
     }
@@ -325,7 +335,8 @@ struct SessionSummary: Sendable, Equatable {
             control: control,
             launch: agentId.map { SessionLaunchMetadata(agentId: $0, agentIcon: agentIcon) },
             parentSessionId: parentSessionId,
-            ephemeral: ephemeral
+            ephemeral: ephemeral,
+            engine: engine
         )
     }
 }
@@ -359,6 +370,7 @@ extension SessionSummary {
         self.agentIcon = session.launch?.agentIcon
         self.parentSessionId = session.parentSessionId
         self.ephemeral = session.ephemeral
+        self.engine = session.engine
         self.pendingAskCount = 0
         self.hasPendingAskCount = false
     }
@@ -371,6 +383,7 @@ private enum SessionWireCodingKeys: String, CodingKey {
     case contextTokens, contextWindow, firstMessage, lastMessage
     case thinkingLevel, runtime, mirror, control, launch, agentId, agentIcon, parentSessionId, ephemeral, warnings
     case pendingAskCount
+    case engine, serverDurable
 }
 
 private struct LaunchParentWire: Decodable {
@@ -407,6 +420,7 @@ private struct DecodedSessionWireFields {
     let parentSessionId: String?
     let ephemeral: Bool?
     let warnings: [String]?
+    let engine: SessionEngine
 
     init(from container: KeyedDecodingContainer<SessionWireCodingKeys>) throws {
         id = try container.decode(String.self, forKey: .id)
@@ -441,6 +455,15 @@ private struct DecodedSessionWireFields {
             ?? container.decodeIfPresent(LaunchParentWire.self, forKey: .launch)?.parentSessionId
         ephemeral = try container.decodeIfPresent(Bool.self, forKey: .ephemeral)
         warnings = try container.decodeIfPresent([String].self, forKey: .warnings)
+        // Summaries name the engine; full sessions carry the `serverDurable` enrollment.
+        // An unknown future engine is not durable, so it reads as classic.
+        if let engineName = try container.decodeIfPresent(String.self, forKey: .engine) {
+            engine = SessionEngine(rawValue: engineName) ?? .classic
+        } else if container.contains(.serverDurable), try !container.decodeNil(forKey: .serverDurable) {
+            engine = .durable
+        } else {
+            engine = .classic
+        }
     }
 }
 
@@ -476,7 +499,8 @@ private extension DecodedSessionWireFields {
             launch: presentationLaunch,
             parentSessionId: parentSessionId,
             ephemeral: ephemeral,
-            warnings: warnings
+            warnings: warnings,
+            engine: engine
         )
     }
 
@@ -544,6 +568,9 @@ extension Session: Codable {
         try c.encodeIfPresent(parentSessionId, forKey: .parentSessionId)
         try c.encodeIfPresent(ephemeral, forKey: .ephemeral)
         try c.encodeIfPresent(warnings, forKey: .warnings)
+        if engine == .durable {
+            try c.encode(engine, forKey: .engine)
+        }
 
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)
         try c.encode(lastActivity.timeIntervalSince1970 * 1000, forKey: .lastActivity)

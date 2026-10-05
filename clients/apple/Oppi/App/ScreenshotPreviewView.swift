@@ -36,6 +36,12 @@ struct ScreenshotPreviewView: View {
                 .accessibilityIdentifier("screenshot.ready")
         case "ssh-terminal":
             SSHTerminalScreenshotPreview()
+        case "durable-sessions-settings":
+            DurableSessionsScreenshotPreview(surface: .settings)
+        case "durable-sessions-sidebar":
+            DurableSessionsScreenshotPreview(surface: .sidebar)
+        case "durable-sessions-list":
+            DurableSessionsScreenshotPreview(surface: .list)
         case "whats-new-build53-light", "whats-new-build52-light", "whats-new-build51-light", "whats-new-build50-light", "whats-new-build49-light":
             WhatsNewScreenshotPreview(themeID: .light)
         case "whats-new-build53-dark", "whats-new-build52-dark", "whats-new-build51-dark", "whats-new-build50-dark", "whats-new-build49-dark":

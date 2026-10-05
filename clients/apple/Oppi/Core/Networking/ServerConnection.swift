@@ -251,6 +251,8 @@ final class ServerConnection {
     /// Updated from server capabilities and `stream_connected` messages.
     private(set) var serverDictationAvailable = false
     private(set) var controlSessionsAvailable = false
+    /// The server accepts durable-engine creates. Gates the Durable playground.
+    private(set) var durableSessionsAvailable = false
 
     // Stores
     let sessionStore = SessionStore()
@@ -972,6 +974,7 @@ final class ServerConnection {
         self.endpointSelection = endpointSelection
         self.connectedServerVersion = nil
         self.dictationStreamAvailable = false
+        self.durableSessionsAvailable = false
         self.appEventStreamAvailable = false
         self.appEventStreamTransportState = .disconnected
         self.missingRequiredSplitStreamCapabilities = []
@@ -1379,6 +1382,7 @@ final class ServerConnection {
         dictationStreamAvailable = capabilities?.dictationStream?.version ?? 0 >= 1
         appEventStreamAvailable = capabilities?.appEventStream?.version ?? 0 >= 1
         controlSessionsAvailable = capabilities?.controlSessions?.version ?? 0 >= 1
+        durableSessionsAvailable = capabilities?.durableSessions?.version ?? 0 >= 1
         missingRequiredSplitStreamCapabilities = ServerInfo.Capabilities
             .missingRequiredSplitStreamCapabilities(in: capabilities)
         streamCapabilitiesRefreshFailed = false
@@ -3024,9 +3028,11 @@ final class ServerConnection {
     func setSplitStreamCapabilitiesForTesting(
         sessionStream: Bool = true,
         dictationStream: Bool = false,
-        appEventStream: Bool = false
+        appEventStream: Bool = false,
+        durableSessions: Bool = false
     ) {
         dictationStreamAvailable = dictationStream
+        durableSessionsAvailable = durableSessions
         appEventStreamAvailable = appEventStream
         var missing: [String] = []
         if !sessionStream { missing.append("sessionStream") }

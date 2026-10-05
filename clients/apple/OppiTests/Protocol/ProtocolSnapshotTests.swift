@@ -190,6 +190,40 @@ struct ProtocolSnapshotTests {
         #expect(summary.session.launch?.agentIcon == .symbol("checkmark.shield"))
     }
 
+    @Test func engineDecodesFromFullSessionEnrollmentAndSummaryField() throws {
+        func stateEngine(_ key: String) throws -> SessionEngine? {
+            guard case .state(let session) = try decodeMessage(key) else { return nil }
+            return session.engine
+        }
+        func summaryEngine(_ key: String) throws -> SessionEngine? {
+            guard case .sessionSummary(let summary) = try decodeMessage(key) else { return nil }
+            #expect(summary.session.engine == summary.engine)
+            return summary.engine
+        }
+        // Full sessions mark durable with `serverDurable`; summaries with `engine`.
+        #expect(try stateEngine("state_durable") == .durable)
+        #expect(try stateEngine("state") == .classic)
+        #expect(try summaryEngine("session_summary_durable") == .durable)
+        #expect(try summaryEngine("session_summary") == .classic)
+    }
+
+    @Test func durableEngineSurvivesSessionEncodeRoundTrip() throws {
+        guard case .state(let session) = try decodeMessage("state_durable") else {
+            Issue.record("Expected .state")
+            return
+        }
+        let reencoded = try JSONDecoder().decode(Session.self, from: JSONEncoder().encode(session))
+        #expect(reencoded.engine == .durable)
+        let classic = try JSONDecoder().decode(
+            Session.self,
+            from: JSONEncoder().encode(Session(
+                id: "c", status: .ready, createdAt: Date(), lastActivity: Date(),
+                messageCount: 0, tokens: TokenUsage(input: 0, output: 0), cost: 0
+            ))
+        )
+        #expect(classic.engine == .classic)
+    }
+
     @Test func parentServerMessagesPreserveIconFallbackAcrossEveryTaggedAndFutureCase() throws {
         let assetId = "ia_" + String(repeating: "A", count: 43)
         let cases: [(String, IconChoice)] = [

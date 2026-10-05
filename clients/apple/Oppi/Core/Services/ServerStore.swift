@@ -15,6 +15,13 @@ final class ServerStore {
         load()
     }
 
+    #if DEBUG
+    /// Screenshot previews only: an in-memory server list that never touches the Keychain.
+    func replaceServersForPreview(_ servers: [PairedServer]) {
+        self.servers = servers
+    }
+    #endif
+
     // MARK: - CRUD
 
     /// Add a new paired server, or update an existing one's credentials

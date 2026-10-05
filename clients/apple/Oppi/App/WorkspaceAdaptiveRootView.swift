@@ -227,6 +227,8 @@ private struct WorkspaceUtilityDestinationView: View {
                 McpServersView(scopeId: McpScopeSnapshot.globalId)
             case .sshTerminal:
                 SSHTerminalSetupView()
+            case .durableSessions:
+                DurableSessionsView()
             case .desktopStill:
                 DesktopCurrentStillViewerView()
             case .manageServers:

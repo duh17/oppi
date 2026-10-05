@@ -51,6 +51,16 @@ struct AppEventMessageTests {
         )
     }
 
+    @Test func sessionCreatedCarriesDurableEngine() throws {
+        guard case .sessionCreated(_, _, _, let durable) = try decodeSnapshot("session_created_durable"),
+              case .sessionCreated(_, _, _, let classic) = try decodeSnapshot("session_created") else {
+            Issue.record("Expected .sessionCreated")
+            return
+        }
+        #expect(durable.engine == .durable)
+        #expect(classic.engine == .classic)
+    }
+
     @Test func decodesConnectionFrame() throws {
         let event = try AppEventMessage.decode(from: #"{"type":"app_events_connected","serverTime":1791650000000,"snapshotRequired":true}"#)
 

@@ -76,6 +76,7 @@ struct ChatView: View {
 
     @Environment(ServerConnection.self) private var connection
     @Environment(ChatSessionState.self) private var chatState
+    @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableSessionsExperimentEnabled = false
     @Environment(AskRequestStore.self) private var askRequestStore
     @Environment(SessionStore.self) private var sessionStore
     @Environment(AudioPlayerService.self) private var audioPlayer
@@ -1519,7 +1520,8 @@ struct ChatView: View {
             agentIcon: session?.launch?.agentIcon,
             cost: session?.cost,
             terminalMirrorIndicator: TerminalMirrorIndicatorPresentation(session: session),
-            maxWidth: chatPrincipalTitleMaxWidth
+            maxWidth: chatPrincipalTitleMaxWidth,
+            showsDurableLabel: durableSessionsExperimentEnabled && session?.engine == .durable
         )
     }
 
@@ -2942,6 +2944,8 @@ struct ChatSessionTitleView: View {
     let cost: Double?
     let terminalMirrorIndicator: TerminalMirrorIndicatorPresentation?
     let maxWidth: CGFloat
+    /// Durable Sessions experiment: marks a durable-engine session.
+    var showsDurableLabel = false
     var iconIsDecorative = true
     var iconAccessibilityIdentifier: String?
 
@@ -2970,6 +2974,14 @@ struct ChatSessionTitleView: View {
 
                 if let terminalMirrorIndicator {
                     TerminalMirrorIndicatorView(presentation: terminalMirrorIndicator)
+                }
+
+                if showsDurableLabel {
+                    Text("Durable")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.themeComment)
+                        .fixedSize()
+                        .accessibilityIdentifier("chat.title.durable")
                 }
             }
         }

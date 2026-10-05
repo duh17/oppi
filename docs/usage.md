@@ -98,6 +98,14 @@ Create and edit sheets can open a **Pi Control** session (ordinary Pi with globa
 
 Turn on **Settings → Experiments → SSH Terminal** to configure one SSH host with password or per-device key sign-in. The workspace sidebar then offers **Terminal** below **MCP Servers**. Saved passwords and trusted host keys stay in this device’s Keychain; saved-password reads and Secure Enclave signing require user presence. See [SSH Terminal](ssh-terminal.md) for setup, host trust, reconnect behavior, and supported algorithms.
 
+## Durable Sessions experiment
+
+Durable sessions run on the server's durable engine instead of the classic Pi session. A server offers them only after `oppi config set experimental.serverDurable true` and a restart; the setting never turns existing or new classic sessions durable.
+
+Turn on **Settings → Experiments → Durable Sessions** (off by default, saved on this device). When the visible server offers durable sessions, the workspace sidebar shows **Durable** right after **Terminal**. It lists that server's durable sessions with the usual rows, and **New durable session** opens Quick Session to pick a workspace and write the first prompt; the session it starts is durable. Durable chats open in the normal chat view, with a small **Durable** label next to the title. All Sessions and workspace lists keep showing every session, durable or classic.
+
+From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session; it fails while the server flag is off.
+
 ## Models and quota
 
 Pick models from the in-app picker. Remaining provider quota and pace live on **Server** detail → **Model Providers**. The CLI also has `oppi quota` and `oppi models`. See [Provider quotas](provider-quotas.md).

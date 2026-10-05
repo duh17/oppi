@@ -128,6 +128,8 @@ struct QuickSessionSheet: View {
     @State private var shouldRememberAgentSelection = true
     /// Set when launched from a thread; the new session joins that thread.
     @State private var threadParent: QuickSessionThreadParent?
+    /// Server whose durable engine this launch uses (Durable playground); nil is classic.
+    @State private var durableServerId: String?
     /// When an Agent is selected, model/thinking only apply if the user sets them.
     @State private var agentModelOverride: String?
     @State private var agentThinkingOverride: ThinkingLevel?
@@ -169,10 +171,18 @@ struct QuickSessionSheet: View {
     }
 
     private var allServerWorkspaces: [(serverId: String, workspace: Workspace)] {
-        guard let constraints = effectiveLaunchConstraints else { return rawServerWorkspaces }
-        return rawServerWorkspaces.filter { entry in
+        // A durable launch stays on the server that offered the durable engine.
+        let candidates = durableServerId.map { serverId in
+            rawServerWorkspaces.filter { $0.serverId == serverId }
+        } ?? rawServerWorkspaces
+        guard let constraints = effectiveLaunchConstraints else { return candidates }
+        return candidates.filter { entry in
             entry.serverId == selectedServerId && constraints.allows(entry.workspace)
         }
+    }
+
+    private var engine: SessionEngine {
+        durableServerId == nil ? .classic : .durable
     }
 
     private var workspacePickerSections: [QuickSessionWorkspacePickerSection] {
@@ -488,6 +498,9 @@ struct QuickSessionSheet: View {
                 if let threadParent {
                     threadParentPill(threadParent)
                 }
+                if durableServerId != nil {
+                    durableEnginePill
+                }
             }
             .padding(.horizontal, 16)
 
@@ -745,6 +758,21 @@ struct QuickSessionSheet: View {
         .accessibilityIdentifier("quickSession.threadParent")
     }
 
+    /// Marks a Durable playground launch. Display only: the playground decides the engine.
+    private var durableEnginePill: some View {
+        Label("Durable", systemImage: "infinity")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.themeFg)
+            .labelStyle(.titleAndIcon)
+            .frame(minHeight: 17)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .glassEffect(.regular, in: Capsule())
+            .frame(minHeight: ComposerInputMetrics.controlDiameter)
+            .accessibilityLabel("Durable session")
+            .accessibilityIdentifier("quickSession.durableEngine")
+    }
+
     /// Parent id for a launch on `serverId`; a session id only means something on its own server.
     private func threadParentSessionId(onServer serverId: String) -> String? {
         guard let threadParent, threadParent.serverId == serverId else { return nil }
@@ -853,6 +881,7 @@ struct QuickSessionSheet: View {
         navigation.pendingQuickSessionLaunchContext = nil
         shouldRememberAgentSelection = launchContext?.agentId == nil
         threadParent = launchContext?.threadParent
+        durableServerId = launchContext?.engine == .durable ? launchContext?.serverId : nil
 
         // Inbox workspace+worktree beats last-used. Agent launch still filters
         // to that server, then last used > explicit default > first available.
@@ -1253,6 +1282,7 @@ struct QuickSessionSheet: View {
             "has_model": modelId == nil ? "0" : "1",
             "has_agent": selectedAgentId == nil ? "0" : "1",
             "worktree": plan.worktreeId == WorkspaceWorktree.mainId ? "main" : "other",
+            "engine": engine.rawValue,
         ]
 
         // Capture references before dismiss invalidates environment
@@ -1260,6 +1290,7 @@ struct QuickSessionSheet: View {
         let serverId = selectedServerId ?? coordinator.activeServerId ?? "default"
         let attachments = pendingAttachments
         let parentSessionId = threadParentSessionId(onServer: serverId)
+        let launchEngine = self.engine
 
         Task { @MainActor in
             do {
@@ -1281,7 +1312,8 @@ struct QuickSessionSheet: View {
                         model: modelId,
                         thinking: thinking.rawValue,
                         worktreeId: plan.worktreeId,
-                        parentSessionId: parentSessionId
+                        parentSessionId: parentSessionId,
+                        engine: launchEngine
                     )
                     session = response.session
                     autoSendMessage = plan.shouldAutoSend ? transportText : nil
@@ -1329,6 +1361,7 @@ struct QuickSessionSheet: View {
                                 model: modelId,
                                 thinkingLevel: agentThinking,
                                 parentSessionId: parentSessionId,
+                                engine: launchEngine,
                                 idempotencyKey: attempt.launchIdempotencyKey
                             )
                             // Create-only launch: prompt is sent after attachment upload.

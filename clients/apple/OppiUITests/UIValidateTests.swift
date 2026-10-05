@@ -51,6 +51,25 @@ final class UIValidateTests: XCTestCase {
             let point = identifier.split(separator: ":").compactMap { Double($0) }
             if point.count == 2 {
                 app.coordinate(withNormalizedOffset: CGVector(dx: point[0], dy: point[1])).tap()
+            } else if identifier.hasPrefix("scrollto:") {
+                // Drag without momentum until a row deep in a lazy list sits mid-screen.
+                let target = app.descendants(matching: .any)
+                    .matching(identifier: String(identifier.dropFirst("scrollto:".count))).firstMatch
+                let height = app.frame.height
+                for _ in 0..<40 {
+                    let midY = target.exists ? target.frame.midY : height
+                    if midY > height * 0.3 && midY < height * 0.6 { break }
+                    // A held drag stops without a fling; move up or back down toward the middle.
+                    let (from, to) = midY >= height * 0.6 ? (0.65, 0.5) : (0.5, 0.65)
+                    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: from))
+                        .press(
+                            forDuration: 0.3,
+                            thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: to)),
+                            withVelocity: .slow,
+                            thenHoldForDuration: 0.3
+                        )
+                }
+                XCTAssertTrue(target.isHittable, "Missing action: \(identifier)")
             } else {
                 let doubleTap = identifier.hasPrefix("doubletap:")
                 let swipeUp = identifier.hasPrefix("swipeup:")

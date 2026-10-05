@@ -72,6 +72,13 @@ enum AppPreferences {
     enum Experiments {
         static let sessionThreadsKey = "\(AppIdentifiers.subsystem).experiments.sessionThreads"
         static let sshTerminalKey = "\(AppIdentifiers.subsystem).experiments.sshTerminal"
+        static let durableSessionsKey = "\(AppIdentifiers.subsystem).experiments.durableSessions"
+
+        /// Durable Sessions: the Durable playground list and its New durable session
+        /// action, shown only for servers that advertise durable sessions.
+        static var durableSessionsEnabled: Bool {
+            UserDefaults.standard.bool(forKey: durableSessionsKey)
+        }
 
         static var sshTerminalEnabled: Bool {
             UserDefaults.standard.bool(forKey: sshTerminalKey)

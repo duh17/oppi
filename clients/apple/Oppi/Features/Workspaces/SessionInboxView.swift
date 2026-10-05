@@ -137,10 +137,22 @@ enum WorkspaceSidebarPrimaryUtilities {
         accessibilityHint: "Inspect the current remote screen"
     )
 
+    static let durableSessions = WorkspaceSidebarPrimaryUtilityItem(
+        target: .durableSessions,
+        title: "Durable",
+        systemImage: "infinity",
+        accessibilityLabel: "Open Durable Sessions",
+        accessibilityIdentifier: "workspace.durableSessions.open",
+        minimumHitHeight: 44,
+        accessibilityHint: "Lists this server's durable sessions"
+    )
+
+    /// `durableSessionsAvailable` is `DurableSessionsPlayground.isAvailable` for the shown server.
     static func items(
         for idiom: UIUserInterfaceIdiom,
         sshTerminalEnabled: Bool = AppPreferences.Experiments.sshTerminalEnabled,
-        hasSSHProfile: Bool = SSHTerminalProfileStore().load()?.isConfigured == true
+        hasSSHProfile: Bool = SSHTerminalProfileStore().load()?.isConfigured == true,
+        durableSessionsAvailable: Bool = false
     ) -> [WorkspaceSidebarPrimaryUtilityItem] {
         var result = items
         if sshTerminalEnabled && hasSSHProfile {
@@ -150,6 +162,7 @@ enum WorkspaceSidebarPrimaryUtilities {
                 minimumHitHeight: 44, accessibilityHint: "Connect to your SSH host"
             ))
         }
+        if durableSessionsAvailable { result.append(durableSessions) }
         if idiom == .phone { result.append(desktopStill) }
         return result
     }
@@ -564,6 +577,8 @@ struct SessionInboxView: View {
                     McpServersView(scopeId: McpScopeSnapshot.globalId)
                 case .sshTerminal:
                     SSHTerminalSetupView()
+                case .durableSessions:
+                    DurableSessionsView()
                 case .desktopStill:
                     DesktopCurrentStillViewerView()
                 case .manageServers:
@@ -1428,6 +1443,7 @@ struct WorkspaceSessionInboxStackRootView: View {
 
 struct WorkspaceSidebarView: View {
     @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var sshTerminalEnabled = false
+    @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableSessionsEnabled = false
     @AppStorage(SSHTerminalProfileStore.storageKey) private var sshProfileData = Data()
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
@@ -1464,7 +1480,13 @@ struct WorkspaceSidebarView: View {
                         WorkspaceSidebarPrimaryUtilities.items(
                             for: UIDevice.current.userInterfaceIdiom,
                             sshTerminalEnabled: sshTerminalEnabled,
-                            hasSSHProfile: (try? JSONDecoder().decode(SSHTerminalProfile.self, from: sshProfileData))?.isConfigured == true
+                            hasSSHProfile: (try? JSONDecoder().decode(SSHTerminalProfile.self, from: sshProfileData))?.isConfigured == true,
+                            durableSessionsAvailable: DurableSessionsPlayground.isAvailable(
+                                experimentEnabled: durableSessionsEnabled,
+                                serverOffersDurable: selectedServer
+                                    .flatMap { coordinator.connection(for: $0.id) }?
+                                    .durableSessionsAvailable == true
+                            )
                         )
                             .filter { $0.target.isReleaseEnabled },
                         id: \.target

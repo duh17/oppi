@@ -24,6 +24,7 @@ struct SettingsView: View {
     @State private var workStripStyle = AppPreferences.ChatDisplay.workStripStyle
     @State private var presentsRowEditor = false
     @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var sshTerminalEnabled = false
+    @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableSessionsEnabled = false
 
     var body: some View {
         List {
@@ -369,6 +370,13 @@ struct SettingsView: View {
 
                 Toggle("SSH Terminal", isOn: $sshTerminalEnabled)
                     .accessibilityIdentifier("settings.experiments.sshTerminal")
+
+                Toggle("Durable Sessions", isOn: $durableSessionsEnabled)
+                    .accessibilityIdentifier("settings.experiments.durableSessions")
+
+                Text("Adds a Durable list for starting and finding durable sessions on servers that offer them.")
+                    .font(.footnote)
+                    .foregroundStyle(.themeComment)
             } header: {
                 Text("Experiments")
             } footer: {
@@ -445,6 +453,7 @@ struct SettingsView: View {
             dictationIndicatorStyle = AppPreferences.Appearance.dictationIndicatorStyle
         }
         .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
+        .accessibilityIdentifier("settings.list")
         .themedListSurface()
         .navigationTitle("Settings")
         .sheet(isPresented: $presentsRowEditor) {
