@@ -395,6 +395,7 @@ enum ToolPresentationBuilder {
                     calls: inspection.calls,
                     output: inspection.raw,
                     details: details,
+                    outputPresentation: inspection.outputPresentation,
                     isDone: isDone,
                     isError: isError,
                     previewOnly: inspection.previewOnly,

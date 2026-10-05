@@ -1523,16 +1523,25 @@ final class FullScreenCodeViewController: UIViewController {
             scrollView.showsVerticalScrollIndicator = true
             scrollView.backgroundColor = UIColor(palette.bg)
             scrollView.accessibilityIdentifier = "fullscreen-notebook.scroll"
-            let cell = NotebookCellView()
+            let language = plan.sources.first?.language
+            let cell = NotebookCellView(mode: .reader(.init(
+                router: reviewCommentSelectionContext?.dispatcher,
+                code: makeSourceContext(surface: .fullScreenCode, languageHint: language),
+                output: makeSourceContext(surface: .fullScreenSource),
+                markdown: makeSourceContext(surface: .fullScreenMarkdown)
+            )))
             cell.apply(plan)
             cell.translatesAutoresizingMaskIntoConstraints = false
             scrollView.addSubview(cell)
+            // Readable margins; the width tracks the screen so code wraps
+            // instead of scrolling sideways.
+            let inset: CGFloat = 16
             NSLayoutConstraint.activate([
-                cell.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-                cell.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-                cell.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-                cell.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-                cell.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+                cell.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: inset),
+                cell.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -inset),
+                cell.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 12),
+                cell.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -32),
+                cell.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -2 * inset),
             ])
             return scrollView
         }

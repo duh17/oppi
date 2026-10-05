@@ -18,7 +18,8 @@ struct NotebookCellPresentationTests {
         isError: Bool = false,
         isDone: Bool = true,
         previewOnly: Bool = false,
-        totalBytes: Int? = nil
+        totalBytes: Int? = nil,
+        outputPresentation: ToolOutputPresentation? = nil
     ) -> ToolTimelineRowConfiguration {
         var context = ToolPresentationBuilder.Context(
             args: args,
@@ -31,6 +32,7 @@ struct NotebookCellPresentationTests {
         context.display = display
         context.previewOnly = previewOnly
         context.totalBytes = totalBytes
+        context.outputPresentation = outputPresentation
         return ToolPresentationBuilder.build(
             itemID: "cell",
             tool: tool,
@@ -80,6 +82,75 @@ struct NotebookCellPresentationTests {
         #expect(opened.calls == plan.calls)
     }
 
+    @Test func declaredStatusHeaderIsHiddenFromTheCellButNotFromCopy() {
+        let header = ToolOutputPresentation(
+            kind: "structured",
+            statusHeader: "Script (completed|failed)\\nWall time [0-9.]+ seconds\\nOutput:\\n\\n?"
+        )
+        let raw = "Script completed\nWall time 1.6 seconds\nOutput:\n\ntags: 14\nreleases: 3"
+        let config = expanded(
+            tool: "script",
+            args: ["code": .string("text(1)")],
+            output: raw,
+            hints: codeHints(),
+            outputPresentation: header
+        )
+        guard case .notebook(let plan) = config.expandedContent else {
+            Issue.record("Code-role input paints a notebook cell")
+            return
+        }
+        #expect(plan.output == .stdout("tags: 14\nreleases: 3"))
+
+        // Printed lines ending in a returned object stay printed text, not
+        // an escaped markdown document.
+        let mixed = expanded(
+            tool: "script",
+            args: ["code": .string("text(1)")],
+            output: "Script completed\nWall time 0.1 seconds\nOutput:\n\nnames:\n[\"voice_create\"]\n{\"stored\":1}",
+            hints: codeHints(),
+            outputPresentation: header
+        )
+        guard case .notebook(let printed) = mixed.expandedContent else {
+            Issue.record("Code-role input paints a notebook cell")
+            return
+        }
+        #expect(printed.output == .stdout("names:\n[\"voice_create\"]\n{\"stored\":1}"))
+        #expect(config.copyOutputText == raw)
+
+        // Without a match (rejected input has no header), nothing is hidden.
+        let rejected = expanded(
+            tool: "script",
+            args: ["code": .string("text(1)")],
+            output: "Script completed early",
+            hints: codeHints(),
+            outputPresentation: header
+        )
+        guard case .notebook(let unchanged) = rejected.expandedContent else {
+            Issue.record("Code-role input paints a notebook cell")
+            return
+        }
+        #expect(unchanged.output == .stdout("Script completed early"))
+    }
+
+    @Test func callArgumentsReadAsValuesNotJSON() throws {
+        let config = expanded(
+            tool: "script",
+            args: ["code": .string("await tools.bash()")],
+            output: "",
+            hints: codeHints(),
+            calls: NestedToolCalls(calls: [
+                .init(id: "1", name: "bash", arguments: ["command": .string("git log\n-5")], status: "ok"),
+                .init(id: "2", name: "read", arguments: ["path": .string("A.md"), "limit": .number(80)], status: "ok"),
+                .init(id: "3", name: "ping", arguments: [:], status: "ok"),
+            ], complete: true)
+        )
+        guard case .notebook(let plan) = config.expandedContent else {
+            Issue.record("Code-role input paints a notebook cell")
+            return
+        }
+        #expect(plan.calls.map(\.arguments) == ["git log -5", "limit: 80  path: A.md", nil])
+    }
+
     @Test func toolNameDoesNotSelectTheCell() {
         let named = expanded(
             tool: "codemode",
@@ -118,6 +189,19 @@ struct NotebookCellPresentationTests {
         )
         #expect(config.title == "const hits = await lookup()")
         #expect(config.languageBadge == "JavaScript")
+
+        var directiveContext = ToolPresentationBuilder.Context(
+            args: ["code": .string("// @options: {\"timeout_ms\": 60000}\n// Find release tags\nawait tools.bash()")],
+            expandedItemIDs: [],
+            fullOutput: "",
+            isLoadingOutput: false
+        )
+        directiveContext.inputPresentation = codeHints()
+        let directive = ToolPresentationBuilder.build(
+            itemID: "cell", tool: "codemode", argsSummary: "",
+            outputPreview: "", isError: false, isDone: false, context: directiveContext
+        )
+        #expect(directive.title == "// Find release tags")
         #expect(config.glyph == "function")
         #expect(config.expandedContent == nil)
     }
@@ -137,6 +221,27 @@ struct NotebookCellPresentationTests {
         #expect(plan.running)
         #expect(plan.output == .none)
         #expect(config.copyOutputText == nil)
+
+        // Progress details repeat the calls; they are not output.
+        var context = ToolPresentationBuilder.Context(
+            args: ["code": .string("await tools.bash()")],
+            details: .object(["calls": .array([.object(["name": .string("bash"), "status": .string("running")])])]),
+            expandedItemIDs: ["cell"],
+            fullOutput: "",
+            isLoadingOutput: false
+        )
+        context.inputPresentation = codeHints()
+        context.nestedCalls = NestedToolCalls(calls: [.init(id: "1", name: "bash", status: "running")], complete: true)
+        let progress = ToolPresentationBuilder.build(
+            itemID: "cell", tool: "script", argsSummary: "", outputPreview: "",
+            isError: false, isDone: false, context: context
+        )
+        guard case .notebook(let running) = progress.expandedContent else {
+            Issue.record("A running code cell is still a notebook")
+            return
+        }
+        #expect(running.output == .none)
+        #expect(running.calls.count == 1)
     }
 
     @Test @MainActor func cellFitsItsSource() {
@@ -193,9 +298,120 @@ struct NotebookCellPresentationTests {
             .first { $0.numberOfTapsRequired == 2 }
         let opener = try #require(containerDoubleTap)
         let hiddenOpener = try #require(scrollDoubleTap)
-        #expect(opener.cancelsTouchesInView)
         #expect(row.expandedScrollView.isHidden)
         #expect(!row.gestureRecognizer(opener, shouldRequireFailureOf: hiddenOpener))
+    }
+
+    @Test @MainActor func inlineCellLeavesDoubleTapToTheRowAndTheReaderSelects() {
+        let plan = NotebookCellPlan(
+            sources: [.init(label: nil, language: "javascript", code: "await lookup()")],
+            metadata: [],
+            calls: [],
+            omittedCalls: 0,
+            callsIncomplete: false,
+            output: .stdout("3"),
+            availabilityNote: nil,
+            running: false,
+            failed: false
+        )
+        let inline = NotebookCellView()
+        inline.apply(plan)
+        let inlineTexts = scrollViews(in: inline).compactMap { $0 as? UITextView }
+        #expect(inlineTexts.count == 2)
+        #expect(inlineTexts.allSatisfy { !$0.isSelectable })
+
+        let reader = NotebookCellView(mode: .reader(.init()))
+        reader.apply(plan)
+        let readerTexts = scrollViews(in: reader).compactMap { $0 as? UITextView }
+        #expect(readerTexts.count == 2)
+        #expect(readerTexts.allSatisfy { $0.isSelectable })
+    }
+
+    @Test @MainActor func inlineCellTrimsLongSectionsAndTheReaderShowsAll() {
+        let code = (1...40).map { "const line\($0) = \($0)" }.joined(separator: "\n")
+        let calls = (1...9).map { _ in NotebookCellPlan.Call(name: "bash", status: "ok", duration: nil, arguments: "ls", error: nil) }
+        let plan = NotebookCellPlan(
+            sources: [.init(label: nil, language: "javascript", code: code)],
+            metadata: [],
+            calls: calls,
+            omittedCalls: 0,
+            callsIncomplete: false,
+            output: .stdout("done"),
+            availabilityNote: nil,
+            running: false,
+            failed: false
+        )
+        let inline = NotebookCellView()
+        inline.apply(plan)
+        let inlineCode = scrollViews(in: inline).compactMap { $0 as? UITextView }
+            .first { $0.accessibilityIdentifier == "tool.notebook.code" }
+        #expect(inlineCode?.text.hasSuffix("const line12 = 12") == true)
+        #expect(labels(in: inline).contains("+28 more lines"))
+        #expect(labels(in: inline).contains("+3 more calls"))
+        #expect(views(in: inline, id: "tool.notebook.call").count == 6)
+
+        let reader = NotebookCellView(mode: .reader(.init()))
+        reader.apply(plan)
+        let readerCode = scrollViews(in: reader).compactMap { $0 as? UITextView }
+            .first { $0.accessibilityIdentifier == "tool.notebook.code" }
+        #expect(readerCode?.text == code)
+        #expect(views(in: reader, id: "tool.notebook.call").count == 9)
+    }
+
+    @Test @MainActor func cellNeitherStretchesNorSqueezesItsRows() throws {
+        let plan = NotebookCellPlan(
+            sources: [.init(label: nil, language: "javascript", code: (1...20).map { "const a\($0) = 1" }.joined(separator: "\n"))],
+            metadata: [],
+            calls: [
+                .init(name: "bash", status: "ok", duration: "39 ms", arguments: "git tag --list", error: nil),
+                .init(name: "bash", status: "running", duration: nil, arguments: "gh release list", error: nil),
+            ],
+            omittedCalls: 0,
+            callsIncomplete: false,
+            output: .none,
+            availabilityNote: nil,
+            running: true,
+            failed: false
+        )
+        let view = NotebookCellView()
+        view.apply(plan)
+        let fit = view.systemLayoutSizeFitting(
+            CGSize(width: 340, height: 0),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        func rowHeights(cellHeight: CGFloat) -> [CGFloat] {
+            view.frame = CGRect(x: 0, y: 0, width: 340, height: cellHeight)
+            view.layoutIfNeeded()
+            return views(in: view, id: "tool.notebook.call").map(\.bounds.height)
+        }
+        let natural = rowHeights(cellHeight: fit.height)
+        #expect(natural.count == 2)
+        // A row taller than the content leaves space below; rows keep their size.
+        #expect(rowHeights(cellHeight: fit.height + 120) == natural)
+        // A capped row clips; captions keep their height instead of collapsing.
+        _ = rowHeights(cellHeight: fit.height - 60)
+        let caption = try #require(allLabels(in: view).first { $0.text == "+8 more lines" })
+        #expect(caption.bounds.height > 8)
+    }
+
+    private func allLabels(in view: UIView) -> [UILabel] {
+        var found: [UILabel] = (view as? UILabel).map { [$0] } ?? []
+        for subview in view.subviews { found.append(contentsOf: allLabels(in: subview)) }
+        return found
+    }
+
+    private func labels(in view: UIView) -> [String] {
+        var found: [String] = []
+        if let label = view as? UILabel, let text = label.text { found.append(text) }
+        for subview in view.subviews { found.append(contentsOf: labels(in: subview)) }
+        return found
+    }
+
+    private func views(in view: UIView, id: String) -> [UIView] {
+        var found: [UIView] = view.accessibilityIdentifier == id ? [view] : []
+        for subview in view.subviews { found.append(contentsOf: views(in: subview, id: id)) }
+        return found
     }
 
     @Test @MainActor func expandedCellDoesNotScroll() {
@@ -223,7 +439,7 @@ struct NotebookCellPresentationTests {
             #expect(!text.isScrollEnabled)
             #expect(
                 text.gestureRecognizerShouldBegin(text.panGestureRecognizer) == false,
-                "Selectable notebook text should pass vertical drags to the timeline"
+                "Notebook text should pass vertical drags to the timeline"
             )
         }
     }

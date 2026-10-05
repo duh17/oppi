@@ -35,6 +35,27 @@ describe("MobileRendererRegistry", () => {
       settingEffect: "voiceReplyMode",
     });
   });
+  it("declares the codemode status header that clients may hide", () => {
+    const registry = new MobileRendererRegistry();
+    const fact = registry.outputPresentation("codemode", { calls: [] });
+    expect(fact?.kind).toBe("structured");
+    const header = new RegExp(`^(?:${fact?.statusHeader})`);
+    // Live results join content items with "", history with "\n".
+    for (const output of [
+      "Script completed\nWall time 1.6 seconds\nOutput:\nhello",
+      "Script failed\nWall time 0.1 seconds\nOutput:\n\nScript error:\nTypeError",
+    ]) {
+      expect(header.test(output)).toBe(true);
+      expect(output.replace(header, "").startsWith("\n")).toBe(false);
+    }
+    expect(header.test("Rejected input: timeout_ms must be positive")).toBe(false);
+    // A result cannot declare its own header.
+    expect(
+      registry.outputPresentation("unrelated", {
+        outputPresentation: { kind: "structured", statusHeader: ".*" },
+      }),
+    ).toEqual({ kind: "structured" });
+  });
   it("declares file roles and requested/result semantics independently of summaries", () => {
     const reg = new MobileRendererRegistry();
     expect(reg.inputPresentation("read")).toEqual({

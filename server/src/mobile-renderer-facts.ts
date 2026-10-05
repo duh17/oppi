@@ -23,9 +23,20 @@ export const BUILTIN_OUTPUT_PRESENTATIONS: Record<string, ToolOutputPresentation
   write: { kind: "fileContent", provenance: "requested" },
   edit: { kind: "diffOfEdits", provenance: "result" },
   ask: { kind: "interactive" },
+  // Pi's codemode result starts with this header; the row already shows status and duration.
+  codemode: {
+    kind: "structured",
+    statusHeader: "Script (completed|failed)\\nWall time [0-9.]+ seconds\\nOutput:\\n\\n?",
+  },
 };
 
-/** A result can override content semantics, but cannot grant itself a setting effect. */
+/** Longest declared status-header pattern clients are asked to apply. */
+const STATUS_HEADER_MAX_LENGTH = 200;
+
+/**
+ * A result can override content semantics, but cannot grant itself a setting
+ * effect or a status header. Both stay owned by the tool's declaration.
+ */
 export function resolveOutputPresentation(
   declaration: unknown,
   details: unknown,
@@ -34,6 +45,13 @@ export function resolveOutputPresentation(
   const effect =
     asRecord(declaration)?.settingEffect === "voiceReplyMode"
       ? ("voiceReplyMode" as const)
+      : undefined;
+  const declaredHeader = asRecord(declaration)?.statusHeader;
+  const statusHeader =
+    typeof declaredHeader === "string" &&
+    declaredHeader.length > 0 &&
+    declaredHeader.length <= STATUS_HEADER_MAX_LENGTH
+      ? declaredHeader
       : undefined;
   const fact =
     payload?.outputPresentation !== undefined
@@ -46,7 +64,13 @@ export function resolveOutputPresentation(
                 : ("structured" as const),
           }
         : validatedOutputPresentation(declaration);
-  return fact ? { ...fact, ...(effect ? { settingEffect: effect } : {}) } : undefined;
+  return fact
+    ? {
+        ...fact,
+        ...(effect ? { settingEffect: effect } : {}),
+        ...(statusHeader ? { statusHeader } : {}),
+      }
+    : undefined;
 }
 
 function validatedOutputPresentation(value: unknown): ToolOutputPresentation | undefined {

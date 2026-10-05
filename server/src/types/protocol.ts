@@ -43,6 +43,9 @@ export interface ToolOutputPresentation {
   provenance?: "requested" | "result";
   /** Registry-declared session-setting effect, never inferred from result details. */
   settingEffect?: "voiceReplyMode";
+  /** Registry-declared regular expression for a status preamble at the start
+   * of the output. Clients anchor it at the start and may hide the match. */
+  statusHeader?: string;
 }
 
 /** Pi result text completeness; source uses toolCallId, never a private path.

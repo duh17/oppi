@@ -63,15 +63,32 @@ struct ToolOutputPresentation: Codable, Equatable, Sendable {
     var provenance: String? = nil
     var isInteractive: Bool { kind == "interactive" }
     var settingEffect: String? = nil
-    init(kind: String, provenance: String? = nil, settingEffect: String? = nil) {
+    /// Producer-declared pattern for a status preamble at the start of the
+    /// output. The row already shows status and duration, so readers may hide it.
+    var statusHeader: String? = nil
+    init(kind: String, provenance: String? = nil, settingEffect: String? = nil, statusHeader: String? = nil) {
         self.kind = kind; self.provenance = provenance; self.settingEffect = settingEffect
+        self.statusHeader = statusHeader
     }
-    private enum CodingKeys: String, CodingKey { case kind, provenance, settingEffect }
+    private enum CodingKeys: String, CodingKey { case kind, provenance, settingEffect, statusHeader }
     init(from decoder: Decoder) throws {
         let c = try? decoder.container(keyedBy: CodingKeys.self)
         kind = (try? c?.decode(String.self, forKey: .kind)) ?? ""
         provenance = try? c?.decode(String.self, forKey: .provenance)
         settingEffect = try? c?.decode(String.self, forKey: .settingEffect)
+        statusHeader = try? c?.decode(String.self, forKey: .statusHeader)
+    }
+
+    /// Output without the declared status preamble. Only a match anchored at
+    /// the start counts, and only the first 512 characters are searched.
+    func hidingStatusHeader(in output: String) -> String {
+        guard let statusHeader, !statusHeader.isEmpty,
+              let regex = try? NSRegularExpression(pattern: "^(?:" + statusHeader + ")") else { return output }
+        let head = String(output.prefix(512))
+        guard let match = regex.firstMatch(in: head, range: NSRange(head.startIndex..., in: head)),
+              match.range.length > 0,
+              let range = Range(match.range, in: head) else { return output }
+        return String(output.dropFirst(head[..<range.upperBound].count))
     }
 }
 

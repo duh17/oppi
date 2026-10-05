@@ -59,6 +59,7 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
         calls: NestedToolCalls?,
         output: String,
         details: JSONValue?,
+        outputPresentation: ToolOutputPresentation? = nil,
         isDone: Bool,
         isError: Bool,
         previewOnly: Bool,
@@ -72,8 +73,10 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
         }
         guard !sources.isEmpty else { return nil }
         let labeled = sources.count > 1
+        // The status preamble repeats the row's status and duration.
+        let body = outputPresentation?.hidingStatusHeader(in: output) ?? output
         let fragment = ToolCallDocumentBuilder.outputFragment(
-            output: output, details: details, previewOnly: previewOnly, totalBytes: totalBytes
+            output: body, details: details, previewOnly: previewOnly, totalBytes: totalBytes
         )
         let recorded = calls?.calls ?? []
         let shown = recorded.prefix(256)
@@ -85,23 +88,35 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
             calls: shown.map(call),
             omittedCalls: max(0, recorded.count - shown.count),
             callsIncomplete: calls?.complete == false,
-            output: classify(fragment.body),
+            output: cellOutput(
+                printed: body, details: details, document: fragment.body,
+                detailsAreRedundant: !isDone || !recorded.isEmpty
+            ),
             availabilityNote: fragment.note,
             running: !isDone,
             failed: isError
         )
     }
 
+    /// First meaningful code line. Directive comments such as `// @options:`
+    /// or `# @flag` configure the run and say nothing about what it does.
     static func collapsedTitle(from fields: [ToolInspection.Field]) -> String? {
         for field in fields where field.role == "code" {
             let text = codeText(field.value)
             if let line = text.split(whereSeparator: \.isNewline)
                 .map({ $0.trimmingCharacters(in: .whitespaces) })
-                .first(where: { !$0.isEmpty }) {
+                .first(where: { !$0.isEmpty && !isDirectiveComment($0) }) {
                 return String(line.prefix(240))
             }
         }
         return nil
+    }
+
+    private static func isDirectiveComment(_ line: String) -> Bool {
+        for marker in ["//", "#", "--"] where line.hasPrefix(marker) {
+            return line.dropFirst(marker.count).trimmingCharacters(in: .whitespaces).hasPrefix("@")
+        }
+        return false
     }
 
     static func languageBadge(from fields: [ToolInspection.Field]) -> String? {
@@ -136,8 +151,7 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
     private static func call(_ record: NestedToolCallRecord) -> Call {
         let arguments: String?
         if let args = record.arguments {
-            let text = OrderedJSON.from(.object(args)).json()
-            arguments = text == "{}" ? nil : clip(text, 180)
+            arguments = argumentSummary(args).map { clip($0, 240) }
         } else if let bytes = record.argumentsBytes {
             arguments = "[\(bytes) bytes]"
         } else {
@@ -156,8 +170,47 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
         )
     }
 
+    /// One readable line: a lone scalar argument is the value itself
+    /// (`git log -5`), otherwise `name: value` pairs sorted by name.
+    private static func argumentSummary(_ args: [String: JSONValue]) -> String? {
+        guard case .object(let fields) = OrderedJSON.from(.object(args)) else { return nil }
+        let present = fields.filter { $0.value != .null && $0.value != .string("") }
+        func flat(_ value: OrderedJSON) -> String {
+            (value.scalar ?? value.json()).replacingOccurrences(of: "\n", with: " ")
+        }
+        if present.count == 1, let only = present.first, only.value.scalar != nil {
+            return flat(only.value)
+        }
+        let text = present.map { $0.key + ": " + flat($0.value) }.joined(separator: "  ")
+        return text.isEmpty ? nil : text
+    }
+
     private static func duration(_ ms: Double) -> String {
         ms < 1000 ? "\(Int(ms)) ms" : String(format: "%.1f s", locale: Locale(identifier: "en_US_POSIX"), ms / 1000)
+    }
+
+    /// Printed text stays printed, the way a notebook shows stdout. Only a
+    /// result that is entirely one JSON value, or producer `expandedText`,
+    /// takes the rendered document (tables, lists).
+    ///
+    /// With no printed text the document falls back to raw `details`. While
+    /// the script runs, or when nested calls are already listed, those details
+    /// are progress records that repeat the CALLS section, so the cell shows
+    /// no output instead.
+    private static func cellOutput(
+        printed: String,
+        details: JSONValue?,
+        document: String,
+        detailsAreRedundant: Bool
+    ) -> Output {
+        let text = printed.trimmingCharacters(in: .whitespacesAndNewlines)
+        let expanded = details?.objectValue?["expandedText"]?.stringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        if text.isEmpty, !expanded, detailsAreRedundant { return .none }
+        if text.isEmpty || expanded || OrderedJSON.parse(text) != nil {
+            return classify(document)
+        }
+        return .stdout(ANSIParser.strip(text))
     }
 
     private static func classify(_ body: String) -> Output {
