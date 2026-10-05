@@ -17,6 +17,18 @@ enum QuickSessionLaunchSelection {
         var worktreeId: String?
     }
 
+    /// Saved Agents cannot start durable sessions yet: the server refuses an
+    /// Agent launch with the durable engine, so a durable Quick Session hides
+    /// the Agent picker and always launches plain Pi.
+    static func allowsAgents(engine: SessionEngine) -> Bool {
+        engine == .classic
+    }
+
+    /// Agent the launch sends; never an Agent with the durable engine.
+    static func launchAgentId(selected: String?, engine: SessionEngine) -> String? {
+        allowsAgents(engine: engine) ? selected : nil
+    }
+
     static func initialWorkspace(
         launchContext: QuickSessionLaunchContext?,
         workspaces: [Candidate],

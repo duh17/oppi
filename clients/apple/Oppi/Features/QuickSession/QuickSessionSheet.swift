@@ -606,7 +606,34 @@ struct QuickSessionSheet: View {
 
     // MARK: - Agent Picker
 
+    @ViewBuilder
     private var agentPickerPill: some View {
+        if QuickSessionLaunchSelection.allowsAgents(engine: engine) {
+            agentPickerButton
+        } else {
+            durableAgentNote
+        }
+    }
+
+    /// Replaces the Agent picker on a durable launch, which always runs plain Pi.
+    private var durableAgentNote: some View {
+        // Short enough to sit beside Model and thinking without truncating.
+        Text("No Agents on durable yet")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.themeComment)
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+        .frame(minHeight: 17)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+        .glassEffect(.regular, in: Capsule())
+        .frame(minHeight: ComposerInputMetrics.controlDiameter)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Runs Pi. Saved Agents can't run durable sessions yet.")
+        .accessibilityIdentifier("quickSession.durableAgentNote")
+    }
+
+    private var agentPickerButton: some View {
         Button {
             showAgentPicker.toggle()
         } label: {
@@ -1167,6 +1194,13 @@ struct QuickSessionSheet: View {
     }
 
     private func loadAgentsForSelectedServer(requestedAgentId: String? = nil) async {
+        guard QuickSessionLaunchSelection.allowsAgents(engine: engine) else {
+            agentLoadGeneration &+= 1
+            availableAgents = []
+            selectedAgentId = nil
+            isLoadingAgents = false
+            return
+        }
         guard let targetServerId = selectedServerId ?? coordinator.activeServerId else {
             availableAgents = []
             selectedAgentId = nil
@@ -1243,7 +1277,7 @@ struct QuickSessionSheet: View {
                     selectedId: selectedWorktreeId,
                     worktrees: worktrees
                 ),
-                agentId: selectedAgentId,
+                agentId: QuickSessionLaunchSelection.launchAgentId(selected: selectedAgentId, engine: engine),
                 prompt: transportText,
                 hasAttachments: !pendingAttachments.isEmpty,
                 hasRepoReferences: !pendingRepoPointers.isEmpty
@@ -1361,7 +1395,6 @@ struct QuickSessionSheet: View {
                                 model: modelId,
                                 thinkingLevel: agentThinking,
                                 parentSessionId: parentSessionId,
-                                engine: launchEngine,
                                 idempotencyKey: attempt.launchIdempotencyKey
                             )
                             // Create-only launch: prompt is sent after attachment upload.

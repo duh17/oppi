@@ -1365,13 +1365,13 @@ describe("agent routes", () => {
     }
   });
 
-  it("launches a saved Agent durable only when the request asks and the server allows it", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-engine-routes-"));
+  it("refuses a durable saved-Agent launch before saving a session, and still launches classic", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-engine-refusal-"));
     const store = new AgentDefinitionStore(dataDir);
     const sessions: Session[] = [];
-    let durableAvailable = false;
     try {
       const agent = store.createAgent({ name: "Reviewer" });
+      const startSession = vi.fn(async (sessionId: string) => makeSession({ id: sessionId }));
       const ctx = {
         storage: {
           getAgentDefinitionStore: () => store,
@@ -1396,9 +1396,9 @@ describe("agent routes", () => {
           claimSessionLaunchRecovery: vi.fn(),
         },
         sessions: {
-          startSession: vi.fn(async (sessionId: string) => makeSession({ id: sessionId })),
+          startSession,
           sendPrompt: vi.fn(async () => undefined),
-          durableSessionsAvailable: () => durableAvailable,
+          durableSessionsAvailable: () => true,
         },
         ensureSessionContextWindow: vi.fn((session: Session) => session),
         appEvents: { emitSessionCreated: vi.fn(), emitSessionSummary: vi.fn() },
@@ -1420,94 +1420,18 @@ describe("agent routes", () => {
         return res;
       };
 
-      const refused = await launch({ engine: "durable" });
-      expect(refused.statusCode).toBe(409);
-      expect(JSON.parse(refused.body).error).toContain("experimental.serverDurable");
-      expect(sessions).toHaveLength(0);
-
-      durableAvailable = true;
-      expect((await launch({})).statusCode).toBe(201);
-      expect((await launch({ engine: "durable" })).statusCode).toBe(201);
-      expect(sessions.map((session) => session.serverDurable)).toEqual([undefined, {}]);
-    } finally {
-      store.close();
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  });
-
-  it("refuses a durable saved-Agent launch the durable engine cannot run, before saving a session", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-engine-refusal-"));
-    const store = new AgentDefinitionStore(dataDir);
-    const sessions: Session[] = [];
-    try {
-      const plain = store.createAgent({ name: "Reviewer" });
-      const withExtensions = store.createAgent({
-        name: "Extended",
-        resources: { extensionIds: ["builtin:mcp"] },
-      });
-      const workspaces = {
-        "ws-1": { id: "ws-1", name: "Oppi" },
-        "ws-mcp": {
-          id: "ws-mcp",
-          name: "Sandbox",
-          runtime: "sandbox",
-          sandboxConfig: { mcpServers: ["github"] },
-        },
-      } as Record<string, unknown>;
-      const startSession = vi.fn(async (sessionId: string) => makeSession({ id: sessionId }));
-      const ctx = {
-        storage: {
-          getAgentDefinitionStore: () => store,
-          getWorkspace: vi.fn((workspaceId: string) => workspaces[workspaceId]),
-          getDataDir: vi.fn(() => dataDir),
-          createSession: vi.fn((name?: string, model?: string) =>
-            makeSession({ id: `sess-${sessions.length + 1}`, name, model }),
-          ),
-          saveSession: vi.fn((session: Session) => sessions.push(structuredClone(session))),
-          getSession: vi.fn(),
-          listSessions: vi.fn(() => sessions),
-          findSessionByLaunchIdempotencyKey: vi.fn(),
-        },
-        sessions: {
-          startSession,
-          sendPrompt: vi.fn(async () => undefined),
-          durableSessionsAvailable: () => true,
-        },
-        ensureSessionContextWindow: vi.fn((session: Session) => session),
-        appEvents: { emitSessionCreated: vi.fn(), emitSessionSummary: vi.fn() },
-      } as unknown as RouteContext;
-      const dispatch = createAgentRoutes(ctx, createRouteHelpers());
-      const launch = async (agentId: string, body: Record<string, unknown>) => {
-        const res = makeResponse();
-        await dispatch({
-          method: "POST",
-          path: `/agents/${agentId}/sessions`,
-          url: new URL(`http://localhost/agents/${agentId}/sessions`),
-          req: makeRequest({
-            prompt: { text: "Review this" },
-            target: { workspaceId: "ws-1" },
-            engine: "durable",
-            ...body,
-          }) as never,
-          res: res as never,
-        });
-        return { status: res.statusCode, error: JSON.parse(res.body).error as string };
-      };
-
-      expect(await launch(plain.id, { ephemeral: true })).toEqual({
-        status: 400,
-        error: expect.stringContaining("Incognito sessions"),
-      });
-      expect(await launch(withExtensions.id, {})).toEqual({
-        status: 400,
-        error: expect.stringContaining("Saved Agent Extensions"),
-      });
-      expect(await launch(plain.id, { target: { workspaceId: "ws-mcp" } })).toEqual({
-        status: 400,
-        error: expect.stringContaining("Sandbox MCP servers"),
+      // The server offers durable sessions; saved Agents still cannot use them.
+      const refused = await launch({ engine: "durable", idempotencyKey: "agent-durable-1" });
+      expect(refused.statusCode).toBe(400);
+      expect(JSON.parse(refused.body)).toEqual({
+        error:
+          "Saved Agents cannot start durable sessions yet; start a plain durable session instead.",
       });
       expect(sessions).toEqual([]);
       expect(startSession).not.toHaveBeenCalled();
+
+      expect((await launch({ engine: "classic" })).statusCode).toBe(201);
+      expect(sessions.map((session) => session.serverDurable)).toEqual([undefined]);
     } finally {
       store.close();
       rmSync(dataDir, { recursive: true, force: true });

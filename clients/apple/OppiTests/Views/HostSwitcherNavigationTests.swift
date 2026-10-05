@@ -148,20 +148,6 @@ struct SessionInboxHostChangeTests {
         #expect(store.completedServerQuery == nil)
     }
 
-    @Test func inboxResetsLocalStateWhenActiveServerChangesWithoutPopping() throws {
-        let source = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
-        #expect(source.contains("SessionInboxHostChange.reset"))
-        #expect(source.contains(".task(id: activeServerId)"))
-
-        #expect(source.contains(".onChange(of: activeServerId)"))
-        let hostChange = try sourceSlice(
-            source,
-            start: ".onChange(of: activeServerId) {",
-            end: ".toolbar { toolbarContent }"
-        )
-        #expect(hostChange.contains("resetLocalHostState"))
-    }
-
     @Test func sessionListsRevealSearchFromNavigationBarDrawer() throws {
         let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
         let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")

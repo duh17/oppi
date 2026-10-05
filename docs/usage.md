@@ -102,9 +102,9 @@ Turn on **Settings → Experiments → SSH Terminal** to configure one SSH host 
 
 Durable sessions run on the server's durable engine instead of the classic Pi session. A server offers them only after `oppi config set experimental.serverDurable true` and a restart; the setting never turns existing or new classic sessions durable.
 
-Turn on **Settings → Experiments → Durable Sessions** (off by default, saved on this device). When the visible server offers durable sessions, the workspace sidebar shows **Durable** right after **Terminal**. It lists that server's durable sessions with the usual rows, and **New durable session** opens Quick Session to pick a workspace and write the first prompt; the session it starts is durable. Durable chats open in the normal chat view, with a small **Durable** label next to the title. All Sessions and workspace lists keep showing every session, durable or classic.
+Turn on **Settings → Experiments → Durable Sessions** (off by default, saved on this device). When the visible server offers durable sessions, the workspace sidebar shows **Durable** right after **Terminal**. It is All Sessions narrowed to that server's durable sessions, with the same sections, search, swipe actions, and quick session bar; stopped durable sessions stay listed past All Sessions' three-day window. **Start** and **Dictate** in the bar open Quick Session to pick a workspace and write the first prompt; the session it starts is durable. Saved Agents can't start durable sessions yet, so a durable Quick Session runs plain Pi and shows "No Agents on durable yet" in place of the Agent picker. Durable chats open in the normal chat view, with a small **Durable** label next to the title. All Sessions and workspace lists keep showing every session, durable or classic.
 
-From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session; it fails while the server flag is off.
+From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session; it fails while the server flag is off. Adding `--agent` fails too: saved Agents can't start durable sessions yet.
 
 ## Models and quota
 

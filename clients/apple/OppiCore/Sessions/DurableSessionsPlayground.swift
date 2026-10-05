@@ -1,6 +1,6 @@
 import Foundation
 
-/// Rules for the Durable Sessions experiment: a per-device playground list of
+/// Rules for the Durable Sessions experiment: the All Sessions list scoped to
 /// one server's durable sessions. Main session lists keep showing every session.
 enum DurableSessionsPlayground {
     /// The Durable item shows only when this device opted in and the server
@@ -21,10 +21,15 @@ enum DurableSessionsPlayground {
     /// Durable workspace sessions, most recent activity first.
     static func sessions(from sessions: [Session]) -> [Session] {
         sessions
-            .filter { $0.engine == .durable && $0.control == nil }
+            .filter(isListed)
             .sorted { lhs, rhs in
                 if lhs.lastActivity != rhs.lastActivity { return lhs.lastActivity > rhs.lastActivity }
                 return lhs.id < rhs.id
             }
+    }
+
+    /// A durable workspace session; control sessions stay out of the playground.
+    static func isListed(_ session: Session) -> Bool {
+        session.engine == .durable && session.control == nil
     }
 }

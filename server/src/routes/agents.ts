@@ -4,8 +4,6 @@ import { actionableAgentConfigurationMessage } from "../agent-launch-errors.js";
 import {
   AgentLaunchService,
   DelegationPolicyError,
-  durableUnsupportedFeature,
-  parseRequestedEngine,
   requiredModelLaunchFailureMessage,
   type AgentDefinition,
 } from "../agent-launch-service.js";
@@ -26,6 +24,13 @@ import { normalizeSessionWorktreeId } from "../worktrees.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const log = createLogger({ base: { component: "agent_routes" } });
+
+/**
+ * Saved Agents cannot start durable sessions yet: Agent resources, overrides,
+ * and launch recovery are classic-only. Refused before any session row exists.
+ */
+const SAVED_AGENT_DURABLE_REFUSAL =
+  "Saved Agents cannot start durable sessions yet; start a plain durable session instead.";
 
 export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   function agentStore(): AgentDefinitionStore {
@@ -157,11 +162,12 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         helpers.error(res, 400, "autoStop must be a boolean");
         return true;
       }
-      const requestedEngine = parseRequestedEngine(body.engine, () =>
-        ctx.sessions.durableSessionsAvailable(),
-      );
-      if ("error" in requestedEngine) {
-        helpers.error(res, requestedEngine.status, requestedEngine.error);
+      if (body.engine === "durable") {
+        helpers.error(res, 400, SAVED_AGENT_DURABLE_REFUSAL);
+        return true;
+      }
+      if (body.engine !== undefined && body.engine !== "classic") {
+        helpers.error(res, 400, 'engine must be "classic"');
         return true;
       }
       const parsedPrompt = parsePrompt(body.prompt);
@@ -187,23 +193,6 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         helpers.error(res, 400, worktreeSelection.error);
         return true;
       }
-      const durableUnsupported =
-        requestedEngine.engine === "durable"
-          ? durableUnsupportedFeature({
-              ephemeral: body.ephemeral === true,
-              agentDefinition: agent.definition,
-              workspace,
-            })
-          : undefined;
-      if (durableUnsupported) {
-        helpers.error(
-          res,
-          400,
-          `${durableUnsupported} cannot run on the durable engine; omit engine`,
-        );
-        return true;
-      }
-
       const launchService = new AgentLaunchService({
         storage: ctx.storage,
         sessions: ctx.sessions,
@@ -231,7 +220,6 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         source: "agent",
         sessionName: body.sessionName,
         ephemeral: body.ephemeral,
-        engine: requestedEngine.engine,
       });
 
       if (result.kind === "launch_in_progress") {
@@ -439,7 +427,7 @@ interface CreateAgentSessionRequest {
   ephemeral?: boolean;
   sessionName?: string;
   launchLeaseOwner?: string;
-  /** Per launch, never part of the Agent definition. Omitted means classic. */
+  /** Only classic: saved Agents cannot start durable sessions yet. */
   engine?: unknown;
 }
 

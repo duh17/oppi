@@ -10,7 +10,8 @@ struct SessionInboxStoppedDayGroup<Item>: Identifiable {
 /// Calendar-day window and labels for the global session inbox stopped groups.
 ///
 /// The root inbox shows stopped sessions from the three most recent calendar
-/// days. Today's group starts expanded; earlier days start collapsed.
+/// days; a `nil` day limit keeps every day (the Durable playground's full
+/// history). Today's group starts expanded; earlier days start collapsed.
 /// Stopped incognito sessions are omitted because they have no resumable history.
 struct SessionInboxStoppedDayPolicy {
     static let visibleDayCount = 3
@@ -19,24 +20,25 @@ struct SessionInboxStoppedDayPolicy {
         session.ephemeral != true
     }
 
-    static func visibleRangeStart(now: Date, calendar: Calendar) -> Date {
+    static func visibleRangeStart(now: Date, calendar: Calendar, dayCount: Int = visibleDayCount) -> Date {
         let today = calendar.startOfDay(for: now)
-        return calendar.date(byAdding: .day, value: -(visibleDayCount - 1), to: today) ?? today
+        return calendar.date(byAdding: .day, value: -(dayCount - 1), to: today) ?? today
     }
 
     static func groups<Item>(
         _ items: [Item],
         now: Date,
         calendar: Calendar,
+        dayLimit: Int? = visibleDayCount,
         activityDate: (Item) -> Date
     ) -> [SessionInboxStoppedDayGroup<Item>] {
-        let rangeStart = visibleRangeStart(now: now, calendar: calendar)
+        let rangeStart = dayLimit.map { visibleRangeStart(now: now, calendar: calendar, dayCount: $0) }
         var itemsByDay: [Date: [Item]] = [:]
-        itemsByDay.reserveCapacity(visibleDayCount)
+        itemsByDay.reserveCapacity(dayLimit ?? visibleDayCount)
 
         for item in items {
             let date = activityDate(item)
-            guard date >= rangeStart else { continue }
+            if let rangeStart, date < rangeStart { continue }
             let day = calendar.startOfDay(for: date)
             itemsByDay[day, default: []].append(item)
         }
@@ -103,7 +105,8 @@ enum SessionInboxGrouping {
         calendar: Calendar,
         session: (Item) -> Session,
         attention: (Item) -> SessionListAttentionCounts,
-        sectionKind: ((Item) -> SessionListActiveSectionKind?)? = nil
+        sectionKind: ((Item) -> SessionListActiveSectionKind?)? = nil,
+        stoppedDayLimit: Int? = SessionInboxStoppedDayPolicy.visibleDayCount
     ) -> SessionInboxSections<Item> {
         let split = split(items: items, session: session, attention: attention, sectionKind: sectionKind)
         return SessionInboxSections(
@@ -113,6 +116,7 @@ enum SessionInboxGrouping {
                 split.stopped.filter { SessionInboxStoppedDayPolicy.includesStoppedSession(session($0)) },
                 now: now,
                 calendar: calendar,
+                dayLimit: stoppedDayLimit,
                 activityDate: { session($0).lastActivity }
             )
         )

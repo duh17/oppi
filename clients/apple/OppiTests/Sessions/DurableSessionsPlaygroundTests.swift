@@ -105,8 +105,47 @@ struct DurableSessionsPlaygroundTests {
         #expect(try capabilities("")?.durableSessions == nil)
     }
 
-    @Test func durableQuickSessionLaunchStaysOnItsServer() {
-        let context = QuickSessionLaunchContext(durableOnServer: "server-a")
+    @Test func durableScopeKeepsStoppedHistoryPastTheAllSessionsWindow() {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        func stopped(_ id: String, daysAgo: Double) -> Session {
+            Session(
+                id: id,
+                workspaceId: "ws",
+                status: .stopped,
+                createdAt: now,
+                lastActivity: now.addingTimeInterval(-daysAgo * 86_400),
+                messageCount: 0,
+                tokens: TokenUsage(input: 0, output: 0),
+                cost: 0,
+                engine: .durable
+            )
+        }
+        let sessions = [stopped("today", daysAgo: 0), stopped("month-old", daysAgo: 30)]
+        func stoppedIds(_ scope: SessionInboxScope) -> [String] {
+            SessionInboxGrouping.make(
+                items: sessions,
+                now: now,
+                calendar: calendar,
+                session: { $0 },
+                attention: { _ in .none },
+                stoppedDayLimit: scope.stoppedDayLimit
+            ).stoppedGroups.flatMap { $0.items.map(\.id) }
+        }
+        #expect(stoppedIds(.all) == ["today"])
+        #expect(stoppedIds(.durable) == ["today", "month-old"])
+    }
+
+    @Test func durableQuickSessionBarLaunchesDurableOnItsServerOnly() {
+        #expect(SessionInboxScope.all.quickSessionLaunch(serverId: "server-a", durableAvailable: false) == .standard)
+        #expect(SessionInboxScope.durable.quickSessionLaunch(serverId: "server-a", durableAvailable: false) == .unavailable)
+        #expect(SessionInboxScope.durable.quickSessionLaunch(serverId: nil, durableAvailable: true) == .unavailable)
+
+        let launch = SessionInboxScope.durable.quickSessionLaunch(serverId: "server-a", durableAvailable: true)
+        guard case .context(let context) = launch else {
+            Issue.record("Durable scope must hand Quick Session a launch context, got \(launch)")
+            return
+        }
         #expect(context.engine == .durable)
         let pick = QuickSessionLaunchSelection.initialWorkspace(
             launchContext: context,
@@ -117,5 +156,21 @@ struct DurableSessionsPlaygroundTests {
             preferred: nil
         )
         #expect(pick?.serverId == "server-a")
+    }
+
+    @Test func durableQuickSessionCannotLaunchASavedAgent() throws {
+        #expect(!QuickSessionLaunchSelection.allowsAgents(engine: .durable))
+        #expect(QuickSessionLaunchSelection.launchAgentId(selected: "reviewer", engine: .classic) == "reviewer")
+
+        // A remembered Agent selection cannot turn a durable launch into an Agent launch.
+        let agentId = QuickSessionLaunchSelection.launchAgentId(selected: "reviewer", engine: .durable)
+        let plan = try QuickSessionLaunchRouting.plan(for: QuickSessionLaunchRequest(
+            workspaceId: "ws",
+            agentId: agentId,
+            prompt: "Review this",
+            hasAttachments: false,
+            hasRepoReferences: false
+        )).get()
+        #expect(plan.mode == .plainPi)
     }
 }

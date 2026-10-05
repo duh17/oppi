@@ -3,7 +3,9 @@ import SwiftUI
 
 /// Durable Sessions experiment surfaces over an in-memory server that
 /// advertises durable sessions: the Settings toggle, the sidebar's Durable
-/// item under Terminal, and the Durable list. No network or Keychain writes.
+/// item under Terminal, and the Durable scope of All Sessions with its quick
+/// session bar, which opens the real Quick Session overlay. Requests go to an
+/// in-process stub; no network or Keychain writes.
 struct DurableSessionsScreenshotPreview: View {
     enum Surface {
         case settings
@@ -23,13 +25,22 @@ struct DurableSessionsScreenshotPreview: View {
 
     var body: some View {
         content
+            .accessibilityIdentifier("screenshot.ready")
+            // Mirrors ContentView's Quick Session overlay so Start opens the real sheet.
+            .overlay {
+                if navigation.showQuickSession {
+                    ZStack(alignment: .bottom) {
+                        Color.black.opacity(0.34).ignoresSafeArea()
+                        QuickSessionSheet { navigation.showQuickSession = false }
+                    }
+                }
+            }
             .environment(coordinator)
             .environment(coordinator.serverStore)
             .withServerScopedEnvironment(coordinator.activeConnection)
             .environment(navigation)
             .environment(ThemeStore())
             .preferredColorScheme(.dark)
-            .accessibilityIdentifier("screenshot.ready")
     }
 
     @ViewBuilder
@@ -40,7 +51,7 @@ struct DurableSessionsScreenshotPreview: View {
         case .sidebar:
             WorkspaceSidebarView()
         case .list:
-            NavigationStack { DurableSessionsView() }
+            NavigationStack { SessionInboxView(scope: .durable) }
         }
     }
 
@@ -71,6 +82,7 @@ struct DurableSessionsScreenshotPreview: View {
         guard coordinator.switchToServer(server),
               let connection = coordinator.connection(for: server.id) else { return coordinator }
         connection.setSplitStreamCapabilitiesForTesting(durableSessions: true)
+        connection.setAPIClientForTesting(DurablePreviewAPI.makeClient())
         for workspace in workspaces {
             connection.workspaceStore.upsert(workspace, serverId: server.id)
         }
@@ -102,6 +114,18 @@ struct DurableSessionsScreenshotPreview: View {
             status: .ready, minutesAgo: 5, engine: .classic
         ),
     ]
+
+    /// Full-history load (`recentDays=0`): adds a month-old stopped durable
+    /// session that the live store's recent window does not hold.
+    fileprivate static let historyJSON: Data = {
+        let monthAgo = Int(Date().addingTimeInterval(-30 * 86_400).timeIntervalSince1970 * 1000)
+        return Data("""
+        {"sessions":[{"id":"durable-old","workspaceId":"kypu","workspaceName":"kypu",
+         "name":"Migrate run splits to the new schema","status":"stopped",
+         "createdAt":\(monthAgo - 600_000),"lastActivity":\(monthAgo),"messageCount":14,
+         "tokens":{"input":40000,"output":8000},"cost":1.2,"engine":"durable"}]}
+        """.utf8)
+    }()
 
     private static func workspace(id: String, name: String, icon: String) -> Workspace {
         Workspace(
@@ -141,5 +165,51 @@ struct DurableSessionsScreenshotPreview: View {
             engine: engine
         )
     }
+}
+
+private enum DurablePreviewAPI {
+    static func makeClient() -> APIClient {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [DurablePreviewURLProtocol.self]
+        return APIClient(
+            baseURL: URL(string: "https://durable-preview.oppi") ?? URL(fileURLWithPath: "/"),
+            token: "preview-token",
+            configuration: config
+        )
+    }
+}
+
+/// Answers the durable history load; every other request is a 404.
+private final class DurablePreviewURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "durable-preview.oppi"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        let isHistory = url.path == "/sessions/recent"
+        let body = isHistory ? DurableSessionsScreenshotPreview.historyJSON : Data(#"{"error":"Not found"}"#.utf8)
+        guard let response = HTTPURLResponse(
+            url: url,
+            statusCode: isHistory ? 200 : 404,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
 #endif

@@ -228,7 +228,7 @@ private struct WorkspaceUtilityDestinationView: View {
             case .sshTerminal:
                 SSHTerminalSetupView()
             case .durableSessions:
-                DurableSessionsView()
+                SessionInboxView(scope: .durable)
             case .desktopStill:
                 DesktopCurrentStillViewerView()
             case .manageServers:
