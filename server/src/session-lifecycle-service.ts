@@ -37,7 +37,13 @@ import {
 } from "./session-jsonl-meta.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import type { Storage } from "./storage.js";
-import type { ChatAttachmentRef, ControlSessionMetadata, Session, Workspace } from "./types.js";
+import type {
+  ChatAttachmentRef,
+  ControlSessionMetadata,
+  Session,
+  SessionEngine,
+  Workspace,
+} from "./types.js";
 import { listWorkspaceWorktrees, WorkspaceWorktreeError } from "./worktrees.js";
 
 const CONTROL_LAUNCH_LEASE_OWNER = "control-session-create";
@@ -210,6 +216,7 @@ export class SessionLifecycleService {
     parentSessionId?: string;
     allowNestedDelegation?: boolean;
     autoStop?: boolean;
+    engine?: SessionEngine;
   }): Promise<CreateWorkspaceSessionResult> {
     const inlineAgent: AgentDefinition = {
       name: params.name?.trim() || params.workspace.name || "Workspace session",
@@ -241,6 +248,7 @@ export class SessionLifecycleService {
         autoStop: params.autoStop,
         sessionName: params.name,
         ephemeral: params.ephemeral,
+        engine: params.engine,
         source: "workspace-wrapper",
       });
     } catch (error) {
@@ -625,7 +633,6 @@ export class SessionLifecycleService {
     }
     const session = this.deps.storage.createSession(sessionName, modelSelection.model, {
       id: localHeader.sessionId,
-      durable: false,
     });
 
     session.workspaceId = params.workspace.id;
@@ -714,9 +721,7 @@ export class SessionLifecycleService {
     const forkModelSelection = resolveInitialChatModel({
       sourceSessionModel: latestSource.model,
     });
-    const forkSession = this.deps.storage.createSession(forkName, forkModelSelection.model, {
-      durable: false,
-    });
+    const forkSession = this.deps.storage.createSession(forkName, forkModelSelection.model);
 
     // Pi records file-level ancestry for forks in the JSONL header (`parentSession`).
     // Timeline forks stay independent root sessions in the workspace list.

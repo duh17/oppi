@@ -12,7 +12,7 @@ import {
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import type { Storage } from "./storage.js";
 import type { ThinkingLevel } from "./thinking-levels.js";
-import type { ChatAttachmentRef, IconChoice, Session, Workspace } from "./types.js";
+import type { ChatAttachmentRef, IconChoice, Session, SessionEngine, Workspace } from "./types.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 
 export type { ThinkingLevel } from "./thinking-levels.js";
@@ -68,6 +68,8 @@ export interface AgentLaunchRequest {
   modelPolicy?: NonNullable<Session["launch"]>["modelPolicy"];
   sessionName?: string;
   ephemeral?: boolean;
+  /** Durable only when the caller asked for it; routes check server availability. */
+  engine?: SessionEngine;
 }
 
 export type PromptDispatchStatus = "delivered" | "not_sent";
@@ -130,6 +132,26 @@ export function requiredModelLaunchFailureMessage(session: Session): string | un
     return undefined;
   }
   return launch.promptError;
+}
+
+/**
+ * Parse a create request's `engine`. Omitted means classic. Durable needs
+ * `experimental.serverDurable`, which makes durable sessions available but
+ * never enrolls a session on its own.
+ */
+export function parseRequestedEngine(
+  engine: unknown,
+  durableAvailable: () => boolean,
+): { engine: SessionEngine } | { status: 400 | 409; error: string } {
+  if (engine === undefined || engine === "classic") return { engine: "classic" };
+  if (engine !== "durable") return { status: 400, error: 'engine must be "classic" or "durable"' };
+  if (!durableAvailable()) {
+    return {
+      status: 409,
+      error: "Durable sessions are not available on this server; enable experimental.serverDurable",
+    };
+  }
+  return { engine: "durable" };
 }
 
 export class DelegationPolicyError extends Error {
@@ -303,6 +325,10 @@ export class AgentLaunchService {
     }
     if (request.ephemeral === true) {
       session.ephemeral = true;
+    }
+    if (request.engine === "durable") {
+      // Enrolled now; the conversation binds before the first submission.
+      session.serverDurable = {};
     }
     if (defaults.thinkingLevel) {
       session.thinkingLevel = defaults.thinkingLevel;

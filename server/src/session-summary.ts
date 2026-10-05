@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path";
 
+import { isServerDurableSession } from "./session-runtime-capabilities.js";
 import type { Session, SessionSummary, SessionSummaryChangeStats } from "./types.js";
 
 /**
@@ -40,6 +41,7 @@ export function buildSessionSummary(session: Session): SessionSummary {
     control: session.control,
     ephemeral: session.ephemeral,
     ...(session.launch?.parentSessionId ? { parentSessionId: session.launch.parentSessionId } : {}),
+    ...(isServerDurableSession(session) ? { engine: "durable" as const } : {}),
   };
 }
 

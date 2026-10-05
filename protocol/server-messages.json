@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 62
+    "messageCount": 64
   },
   "messages": {
     "connected": {
@@ -261,6 +261,101 @@
           "targetId": "skill-reviewer",
           "targetName": "Reviewer Skill"
         }
+      }
+    },
+    "state_durable": {
+      "type": "state",
+      "session": {
+        "id": "test-session-1",
+        "workspaceId": "ws-1",
+        "workspaceName": "My Workspace",
+        "name": "Test Session",
+        "status": "ready",
+        "createdAt": 1739750400000,
+        "lastActivity": 1739750460000,
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "messageCount": 5,
+        "tokens": {
+          "input": 1500,
+          "output": 800,
+          "cacheRead": 250,
+          "cacheWrite": 100
+        },
+        "cost": 0.012,
+        "changeStats": {
+          "mutatingToolCalls": 3,
+          "filesChanged": 6,
+          "changedFiles": [
+            "src/main.ts",
+            "README.md"
+          ],
+          "changedFilesOverflow": 4,
+          "addedLines": 45,
+          "removedLines": 12
+        },
+        "contextTokens": 2300,
+        "contextWindow": 200000,
+        "lastMessage": "I've updated the README with the new API docs.",
+        "thinkingLevel": "high",
+        "launch": {
+          "source": "agent",
+          "agentId": "agent-reviewer",
+          "agentVersion": 4,
+          "agentIcon": {
+            "kind": "symbol",
+            "name": "checkmark.shield"
+          },
+          "parentSessionId": "parent-session-1",
+          "status": "accepted",
+          "requestedAt": 1739750399000,
+          "completedAt": 1739750400000
+        },
+        "serverDurable": {
+          "conversationId": 7
+        }
+      }
+    },
+    "session_summary_durable": {
+      "type": "session_summary",
+      "summary": {
+        "id": "test-session-1",
+        "workspaceId": "ws-1",
+        "workspaceName": "My Workspace",
+        "name": "Test Session",
+        "status": "ready",
+        "createdAt": 1739750400000,
+        "lastActivity": 1739750460000,
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "messageCount": 5,
+        "tokens": {
+          "input": 1500,
+          "output": 800,
+          "cacheRead": 250,
+          "cacheWrite": 100
+        },
+        "cost": 0.012,
+        "changeStats": {
+          "mutatingToolCalls": 3,
+          "filesChanged": 6,
+          "changedFiles": [
+            "src/main.ts",
+            "README.md"
+          ],
+          "changedFilesOverflow": 4,
+          "addedLines": 45,
+          "removedLines": 12
+        },
+        "contextTokens": 2300,
+        "contextWindow": 200000,
+        "lastMessage": "I've updated the README with the new API docs.",
+        "thinkingLevel": "high",
+        "agentId": "agent-reviewer",
+        "agentIcon": {
+          "kind": "symbol",
+          "name": "checkmark.shield"
+        },
+        "parentSessionId": "parent-session-1",
+        "engine": "durable"
       }
     },
     "state_icon_default": {

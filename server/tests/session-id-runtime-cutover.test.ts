@@ -230,10 +230,7 @@ describe("Pi-native session identity cutover", () => {
         expect(result.session.id).toBe(headerId);
         expect(result.session).not.toHaveProperty("piSessionId");
         expect(result.session.piSessionFile).toBe(jsonlPath);
-        expect(createSession).toHaveBeenCalledWith(undefined, undefined, {
-          id: headerId,
-          durable: false,
-        });
+        expect(createSession).toHaveBeenCalledWith(undefined, undefined, { id: headerId });
       } finally {
         rmSync(piSessionDir, { recursive: true, force: true });
         rmSync(workspaceDir, { recursive: true, force: true });

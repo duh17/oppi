@@ -528,6 +528,14 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     );
   }
 
+  /**
+   * Whether create requests may ask for `engine: "durable"`. Read at startup,
+   * like the Harness it implies; already-bound durable sessions run either way.
+   */
+  durableSessionsAvailable(): boolean {
+    return this.config.experimental?.serverDurable === true;
+  }
+
   /** Read-only Harness access for the search index; undefined when no Harness exists (flag off, nothing bound). */
   durableSearchSource(): DurableSearchSource | undefined {
     const durableHarness = this.durableHarness;
@@ -568,9 +576,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   ): Promise<ConversationId | undefined> {
     const id = this.storage.getSession(sessionId)?.serverDurable?.conversationId;
     if (id === undefined || !this.durableHarness) {
-      throw new Error(
-        "Server durable fork requires a bound conversation and experimental.serverDurable",
-      );
+      throw new Error("Server durable fork requires a bound conversation");
     }
     // Trace entry ids are the decimal Durable entry ids.
     if (!/^[1-9]\d*$/.test(entryId) || !Number.isSafeInteger(Number(entryId))) return undefined;

@@ -1365,6 +1365,76 @@ describe("agent routes", () => {
     }
   });
 
+  it("launches a saved Agent durable only when the request asks and the server allows it", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-engine-routes-"));
+    const store = new AgentDefinitionStore(dataDir);
+    const sessions: Session[] = [];
+    let durableAvailable = false;
+    try {
+      const agent = store.createAgent({ name: "Reviewer" });
+      const ctx = {
+        storage: {
+          getAgentDefinitionStore: () => store,
+          getWorkspace: vi.fn((workspaceId: string) =>
+            workspaceId === "ws-1" ? { id: "ws-1", name: "Oppi" } : undefined,
+          ),
+          getDataDir: vi.fn(() => dataDir),
+          createSession: vi.fn((name?: string, model?: string) =>
+            makeSession({ id: `sess-${sessions.length + 1}`, name, model }),
+          ),
+          saveSession: vi.fn((session: Session) => {
+            const index = sessions.findIndex((candidate) => candidate.id === session.id);
+            if (index >= 0) sessions[index] = structuredClone(session);
+            else sessions.push(structuredClone(session));
+          }),
+          deleteSession: vi.fn(() => false),
+          getSession: vi.fn((sessionId: string) =>
+            sessions.find((candidate) => candidate.id === sessionId),
+          ),
+          listSessions: vi.fn(() => sessions),
+          findSessionByLaunchIdempotencyKey: vi.fn(),
+          claimSessionLaunchRecovery: vi.fn(),
+        },
+        sessions: {
+          startSession: vi.fn(async (sessionId: string) => makeSession({ id: sessionId })),
+          sendPrompt: vi.fn(async () => undefined),
+          durableSessionsAvailable: () => durableAvailable,
+        },
+        ensureSessionContextWindow: vi.fn((session: Session) => session),
+        appEvents: { emitSessionCreated: vi.fn(), emitSessionSummary: vi.fn() },
+      } as unknown as RouteContext;
+      const dispatch = createAgentRoutes(ctx, createRouteHelpers());
+      const launch = async (body: Record<string, unknown>) => {
+        const res = makeResponse();
+        await dispatch({
+          method: "POST",
+          path: `/agents/${agent.id}/sessions`,
+          url: new URL(`http://localhost/agents/${agent.id}/sessions`),
+          req: makeRequest({
+            prompt: { text: "Review this" },
+            target: { workspaceId: "ws-1" },
+            ...body,
+          }) as never,
+          res: res as never,
+        });
+        return res;
+      };
+
+      const refused = await launch({ engine: "durable" });
+      expect(refused.statusCode).toBe(409);
+      expect(JSON.parse(refused.body).error).toContain("experimental.serverDurable");
+      expect(sessions).toHaveLength(0);
+
+      durableAvailable = true;
+      expect((await launch({})).statusCode).toBe(201);
+      expect((await launch({ engine: "durable" })).statusCode).toBe(201);
+      expect(sessions.map((session) => session.serverDurable)).toEqual([undefined, {}]);
+    } finally {
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     [{ parentSessionId: 42 }, "parentSessionId must be a non-empty string"],
     [{ parentSessionId: "   " }, "parentSessionId must be a non-empty string"],

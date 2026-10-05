@@ -321,6 +321,8 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         } satisfies WorkspaceFileEditingCapability,
         appEventStream: { version: 1 },
         dictationStream: isDictationStreamEnabled(config.asr) ? { version: 1 } : undefined,
+        // Create requests may ask for engine "durable" (experimental.serverDurable).
+        durableSessions: ctx.sessions.durableSessionsAvailable() ? { version: 1 } : undefined,
         extensionNativeUI: {
           version: 1,
           capabilities: [...EXTENSION_NATIVE_UI_SERVER_CAPABILITIES],

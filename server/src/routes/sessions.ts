@@ -1,5 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { requiredModelLaunchFailureMessage } from "../agent-launch-service.js";
+import {
+  parseRequestedEngine,
+  requiredModelLaunchFailureMessage,
+} from "../agent-launch-service.js";
 import { SessionLifecycleError, SessionLifecycleService } from "../session-lifecycle-service.js";
 import {
   type ChatAttachmentRef,
@@ -191,7 +194,19 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       parentSessionId?: string;
       allowNestedDelegation?: boolean;
       autoStop?: boolean;
+      engine?: unknown;
     }>(req);
+    const requestedEngine = parseRequestedEngine(body.engine, () =>
+      ctx.sessions.durableSessionsAvailable(),
+    );
+    if ("error" in requestedEngine) {
+      helpers.error(res, requestedEngine.status, requestedEngine.error);
+      return;
+    }
+    if (body.piSessionFile && requestedEngine.engine === "durable") {
+      helpers.error(res, 400, "Imported Pi sessions stay classic; omit engine");
+      return;
+    }
     const delegationFieldError = invalidDelegationFields(
       body.parentSessionId,
       body.allowNestedDelegation,
@@ -282,6 +297,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         parentSessionId: body.parentSessionId,
         allowNestedDelegation: body.allowNestedDelegation === true,
         autoStop: body.autoStop === true,
+        engine: requestedEngine.engine,
       });
       const requiredModelFailure = requiredModelLaunchFailureMessage(result.session);
       if (requiredModelFailure) {

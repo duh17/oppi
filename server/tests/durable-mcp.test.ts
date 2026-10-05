@@ -75,6 +75,7 @@ async function fixture(responses: FauxResponseStep[]) {
   storage.updateConfig({ experimental: { serverDurable: true } });
   const workspace = storage.createWorkspace({ name: "Durable MCP", hostMount: dir });
   const session = storage.createSession("Durable MCP", "faux/faux-1");
+  session.serverDurable = {};
   session.workspaceId = workspace.id;
   storage.saveSession(session);
   const manager = new SessionManager(storage);

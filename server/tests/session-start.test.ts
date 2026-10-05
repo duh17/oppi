@@ -102,7 +102,7 @@ describe("SessionStartCoordinator status persistence", () => {
     expect(session.serverDurable).toBeUndefined();
   });
 
-  it("keeps the flag-off SDK fallback for an unbound sandbox enrollment", async () => {
+  it("starts an unbound durable request classic, with a warning, once the flag is off", async () => {
     const session = makeSession({ serverDurable: {} });
     const deps = makeDeps(session);
     const workspace = { ...makeWorkspace(), runtime: "sandbox" as const };
@@ -111,7 +111,7 @@ describe("SessionStartCoordinator status persistence", () => {
     expect(create).toHaveBeenCalledOnce();
     expect(session.serverDurable).toBeUndefined();
     expect(session.warnings).toContain(
-      "Server durable is off; using the SDK backend for this sandbox session",
+      "Durable sessions are no longer available on this server; this session uses the classic engine",
     );
   });
   it("persists starting during SDK startup, then ready after registration", async () => {

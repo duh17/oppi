@@ -28,6 +28,9 @@ export interface SessionSummaryChangeStats {
 
 export type SessionRuntimeKind = "oppi" | "pi-tui";
 
+/** Agent engine a create request selects. Omitted means classic. */
+export type SessionEngine = "classic" | "durable";
+
 export interface PiTuiMirrorTerminalInfo {
   bridgeId?: string;
   hostname?: string;
@@ -194,7 +197,11 @@ export interface Session {
   runtime?: SessionRuntimeKind;
   mirror?: PiTuiMirrorSessionMetadata;
 
-  /** Internal durable enrollment; the binding is saved before first submission. */
+  /**
+   * Durable-engine enrollment, set only when the create request asked for
+   * `engine: "durable"`; the binding is saved before first submission. Full
+   * `Session` payloads carry it as is; `SessionSummary` projects it as `engine`.
+   */
   serverDurable?: { conversationId?: number };
 
   // Trace metadata (used for trace recovery/replay)
@@ -252,6 +259,8 @@ export interface SessionSummary {
   ephemeral?: boolean;
   /** Launching session; clients build session threads from this edge. */
   parentSessionId?: string;
+  /** Present only for durable-engine sessions; omitted means classic. */
+  engine?: "durable";
   /** Cold-list ask badge count; omitted outside list endpoints. */
   pendingAskCount?: number;
 }

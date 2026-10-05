@@ -4,6 +4,7 @@ import { actionableAgentConfigurationMessage } from "../agent-launch-errors.js";
 import {
   AgentLaunchService,
   DelegationPolicyError,
+  parseRequestedEngine,
   requiredModelLaunchFailureMessage,
   type AgentDefinition,
 } from "../agent-launch-service.js";
@@ -155,6 +156,13 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         helpers.error(res, 400, "autoStop must be a boolean");
         return true;
       }
+      const requestedEngine = parseRequestedEngine(body.engine, () =>
+        ctx.sessions.durableSessionsAvailable(),
+      );
+      if ("error" in requestedEngine) {
+        helpers.error(res, requestedEngine.status, requestedEngine.error);
+        return true;
+      }
       const parsedPrompt = parsePrompt(body.prompt);
       if (parsedPrompt.error) {
         helpers.error(res, 400, parsedPrompt.error);
@@ -206,6 +214,7 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         source: "agent",
         sessionName: body.sessionName,
         ephemeral: body.ephemeral,
+        engine: requestedEngine.engine,
       });
 
       if (result.kind === "launch_in_progress") {
@@ -413,6 +422,8 @@ interface CreateAgentSessionRequest {
   ephemeral?: boolean;
   sessionName?: string;
   launchLeaseOwner?: string;
+  /** Per launch, never part of the Agent definition. Omitted means classic. */
+  engine?: unknown;
 }
 
 function serializeAgent(agent: StoredAgentDefinition): Record<string, unknown> {

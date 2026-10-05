@@ -20,6 +20,7 @@ import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import { recordLiveSessionsForRestart } from "../src/session-restart-resume.js";
 import { createRouteHelpers } from "../src/routes/http.js";
+import { createIdentityRoutes } from "../src/routes/identity.js";
 import { createSessionRoutes } from "../src/routes/sessions.js";
 import type { RouteContext } from "../src/routes/types.js";
 import type { ServerMessage, Session, SessionThreadResponse } from "../src/types.js";
@@ -85,7 +86,7 @@ const spawnCall = (args: Record<string, unknown>) =>
 const toolCall = (name: string, args: Record<string, unknown>) =>
   fauxAssistantMessage([fauxToolCall(name, args)], { stopReason: "toolUse" });
 
-async function fixture(responses: FauxResponseStep[]) {
+async function fixture(responses: FauxResponseStep[], options?: { serverDurable?: boolean }) {
   const dir = mkdtempSync(join(tmpdir(), "oppi-durable-sessions-test-"));
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
@@ -109,10 +110,11 @@ async function fixture(responses: FauxResponseStep[]) {
   );
   const opening = vi.spyOn(DurableHarness.prototype, "open");
   const storage = new Storage(dir);
-  storage.updateConfig({ experimental: { serverDurable: true } });
+  storage.updateConfig({ experimental: { serverDurable: options?.serverDurable ?? true } });
   const workspace = storage.createWorkspace({ name: "Durable threads", hostMount: dir });
   const session = (name: string) => {
     const created = storage.createSession(name, "faux/faux-1");
+    created.serverDurable = {};
     created.workspaceId = workspace.id;
     storage.saveSession(created);
     return created;
@@ -939,5 +941,135 @@ describe("durable-native threads", () => {
         children.map((child) => child.id).sort(),
       );
     }
+  });
+});
+
+describe("durable engine on create requests", () => {
+  async function route(
+    f: Fixture,
+    method: "GET" | "POST",
+    path: string,
+    body?: Record<string, unknown>,
+  ) {
+    const routeContext = {
+      storage: f.storage,
+      sessions: f.manager,
+      sessionRuntimes: f.manager,
+      ensureSessionContextWindow: (session: Session) => session,
+      getModelPromptCache: () => undefined,
+    } as unknown as RouteContext;
+    const res = makeResponse();
+    const url = new URL(`http://localhost${path}`);
+    const routes =
+      path === "/server/info"
+        ? createIdentityRoutes(
+            {
+              ...routeContext,
+              skillRegistry: { list: () => [] },
+              getModelCatalog: () => [],
+              serverStartedAt: Date.now(),
+              serverVersion: "test",
+              piVersion: "test",
+            } as unknown as RouteContext,
+            createRouteHelpers(),
+          )
+        : createSessionRoutes(routeContext, createRouteHelpers());
+    // List handlers read their query from req.url.
+    const req = Object.assign(makeRequest(body), { url: path });
+    await routes({ method, path: url.pathname, url, req: req as never, res: res as never });
+    return { status: res.statusCode, body: JSON.parse(res.body) as Record<string, unknown> };
+  }
+
+  it("starts durable only on request, binds on the first prompt, and its child stays durable", async () => {
+    const f = await fixture(
+      model(({ last, text }) => {
+        if (last.role === "toolResult") return fauxAssistantMessage("PARENT_DONE");
+        if (text.includes("Delegate"))
+          return spawnCall({ task: "CHILD_TASK scout", name: "Scout" });
+        return fauxAssistantMessage("CHILD_ANSWER");
+      }),
+    );
+    const created = await route(f, "POST", `/workspaces/${f.workspace.id}/sessions`, {
+      prompt: "Delegate the scouting",
+      engine: "durable",
+    });
+    expect(created.status).toBe(201);
+    const sessionId = (created.body.session as Session).id;
+    const conversation = conversationOf(f.storage, sessionId);
+    expect(conversation).toBeDefined();
+    const harness = await f.harness();
+    await until(
+      async () =>
+        (await toolResults(harness, conversation)).length === 1 &&
+        (await harness.snapshot(LiveDoc, conversation, context))?.run === undefined,
+      "the durable parent finishing its spawn",
+    );
+    expect(await userTexts(harness, conversation)).toEqual(["Delegate the scouting"]);
+
+    const child = f.storage
+      .listSessions()
+      .find((session) => session.launch?.parentSessionId === sessionId)!;
+    expect(conversationOf(f.storage, child)).toBeDefined();
+
+    // Every summary the app reads names the engine: thread rows and workspace list rows.
+    const thread = await getThread(f, sessionId);
+    expect(thread.sessions.map((session) => [session.id, session.engine]).sort()).toEqual(
+      [
+        [sessionId, "durable"],
+        [child.id, "durable"],
+      ].sort(),
+    );
+    const list = await route(f, "GET", `/workspaces/${f.workspace.id}/sessions?status=active`);
+    const rows = list.body.active as Array<{ id: string; engine?: string }>;
+    expect(rows.find((row) => row.id === sessionId)?.engine).toBe("durable");
+    expect(rows.find((row) => row.id === child.id)?.engine).toBe("durable");
+
+    // Stopped rows come from the SQLite projection, not the live runtime.
+    await f.manager.stopSession(sessionId);
+    const stopped = await route(
+      f,
+      "GET",
+      `/workspaces/${f.workspace.id}/sessions?status=stopped&sinceMs=0&untilMs=${Date.now() + 60_000}`,
+    );
+    const stoppedRows = stopped.body.stopped as Array<{ id: string; engine?: string }>;
+    expect(stoppedRows.find((row) => row.id === sessionId)?.engine).toBe("durable");
+  });
+
+  it("keeps an omitted or classic engine classic while durable is available", async () => {
+    const f = await fixture([]);
+    for (const engine of [undefined, "classic"]) {
+      const created = await route(f, "POST", `/workspaces/${f.workspace.id}/sessions`, {
+        name: `Classic ${engine ?? "omitted"}`,
+        ...(engine ? { engine } : {}),
+      });
+      expect(created.status).toBe(201);
+      const session = f.storage.getSession((created.body.session as Session).id)!;
+      expect(session.serverDurable).toBeUndefined();
+    }
+    const list = await route(f, "GET", `/workspaces/${f.workspace.id}/sessions?status=active`);
+    const rows = list.body.active as Array<{ name?: string; engine?: string }>;
+    expect(rows.filter((row) => row.name?.startsWith("Classic"))).toHaveLength(2);
+    expect(rows.filter((row) => row.name?.startsWith("Classic") && row.engine)).toEqual([]);
+    expect((await route(f, "GET", "/server/info")).body.capabilities).toMatchObject({
+      durableSessions: { version: 1 },
+    });
+  });
+
+  it("rejects a durable request while durable sessions are off, and says so in server info", async () => {
+    const f = await fixture([], { serverDurable: false });
+    const before = f.storage.listSessions().length;
+    const created = await route(f, "POST", `/workspaces/${f.workspace.id}/sessions`, {
+      prompt: "Should not start",
+      engine: "durable",
+    });
+    expect(created.status).toBe(409);
+    expect(created.body.error).toContain("experimental.serverDurable");
+    expect(f.storage.listSessions()).toHaveLength(before);
+    const invalid = await route(f, "POST", `/workspaces/${f.workspace.id}/sessions`, {
+      engine: "fast",
+    });
+    expect(invalid.status).toBe(400);
+    const info = await route(f, "GET", "/server/info");
+    expect(info.body.capabilities).not.toHaveProperty("durableSessions");
   });
 });

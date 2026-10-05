@@ -74,21 +74,19 @@ export class SessionStartCoordinator {
           workspace?.runtime === "sandbox" ||
           session.launch?.target?.runtime === "sandbox" ||
           agentDefinition?.launchConstraints?.requiredRuntime === "sandbox";
-        // The flag only decides enrollment of new sessions. A bound conversation
-        // always resumes on DurableBackend; an unbound enrollment left over from
-        // a flag-on period goes back to the classic SDK backend while it is off.
+        // The flag decides whether durable sessions can be created. A bound
+        // conversation always resumes on DurableBackend; a durable request that
+        // never bound one goes back to the classic SDK backend while it is off.
         if (
           session.serverDurable &&
           session.serverDurable.conversationId === undefined &&
           this.deps.config.experimental?.serverDurable !== true
         ) {
           delete session.serverDurable;
-          if (sandboxRequired) {
-            session.warnings = [
-              ...(session.warnings ?? []),
-              "Server durable is off; using the SDK backend for this sandbox session",
-            ];
-          }
+          session.warnings = [
+            ...(session.warnings ?? []),
+            "Durable sessions are no longer available on this server; this session uses the classic engine",
+          ];
         }
         if (session.serverDurable && sandboxRequired && workspace?.runtime !== "sandbox") {
           throw new Error("Server durable sandbox sessions require a sandbox workspace");

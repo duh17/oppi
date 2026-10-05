@@ -137,6 +137,20 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     type: "session_summary",
     summary: TEST_CONTROL_SESSION_SUMMARY,
   },
+  // Full sessions mark the durable engine with `serverDurable`; summaries with `engine`.
+  state_durable: {
+    type: "state",
+    session: {
+      ...TEST_SESSION,
+      piSessionFile: undefined,
+      piSessionFiles: undefined,
+      serverDurable: { conversationId: 7 },
+    },
+  },
+  session_summary_durable: {
+    type: "session_summary",
+    summary: { ...TEST_SESSION_SUMMARY, engine: "durable" },
+  },
   state_icon_default: {
     type: "state",
     session: {
@@ -704,6 +718,8 @@ const SERVER_MESSAGE_ORDER = [
   "session_summary",
   "state_control",
   "session_summary_control",
+  "state_durable",
+  "session_summary_durable",
   "state_icon_default",
   "state_icon_emoji",
   "state_icon_genmoji",
@@ -871,6 +887,11 @@ const APP_EVENT_CANONICAL_EXAMPLES = {
     emittedAt: appEventEmittedAt,
     summary: appEventControlSummary,
   },
+  session_created_durable: {
+    type: "session_created",
+    ...appEventSessionBase,
+    summary: { ...appEventSummary, engine: "durable" },
+  },
   session_summary_icon_default: {
     type: "session_summary",
     ...appEventSessionBase,
@@ -987,6 +1008,7 @@ const APP_EVENT_MESSAGE_ORDER = [
   "session_discovered",
   "session_summary",
   "session_summary_control",
+  "session_created_durable",
   "session_summary_icon_default",
   "session_summary_icon_emoji",
   "session_summary_icon_genmoji",

@@ -417,6 +417,7 @@ describe("session sqlite store", () => {
           status: "accepted",
           requestedAt: 1,
         },
+        serverDurable: { conversationId: 7 },
       });
       sqliteStore.close();
       sqliteStore = undefined;
@@ -447,6 +448,57 @@ describe("session sqlite store", () => {
         agentVersion: 4,
         agentIcon: { kind: "symbol", name: "checkmark.shield" },
       });
+      // List rows report the durable engine from the projection, not session_json.
+      expect(sessions[0]?.serverDurable).toEqual({ conversationId: 7 });
+    } finally {
+      sqliteStore?.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("backfills durable enrollment into projections of rows saved before the column existed", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-durable-backfill-"));
+    let sqliteStore: SessionSqliteStore | undefined;
+    const session = (id: string, serverDurable?: Session["serverDurable"]): Session => ({
+      id,
+      workspaceId: "ws-1",
+      status: "stopped",
+      createdAt: 1,
+      lastActivity: 10,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      ...(serverDurable ? { serverDurable } : {}),
+    });
+
+    try {
+      sqliteStore = new SessionSqliteStore(dataDir);
+      sqliteStore.upsertSession(session("bound", { conversationId: 3 }));
+      sqliteStore.upsertSession(session("enrolled", {}));
+      sqliteStore.upsertSession(session("classic"));
+      sqliteStore.close();
+      sqliteStore = undefined;
+
+      const db = openDatabase(join(dataDir, "session-state.db"));
+      try {
+        db.exec("ALTER TABLE session_state_sessions DROP COLUMN server_durable_json");
+      } finally {
+        db.close();
+      }
+
+      sqliteStore = new SessionSqliteStore(dataDir);
+      const byId = new Map(
+        sqliteStore
+          .listAllWorkspaceSessionSnapshots("ws-1")
+          .map((snapshot) => [snapshot.id, snapshot.serverDurable]),
+      );
+      expect(byId).toEqual(
+        new Map<string, Session["serverDurable"]>([
+          ["bound", { conversationId: 3 }],
+          ["enrolled", {}],
+          ["classic", undefined],
+        ]),
+      );
     } finally {
       sqliteStore?.close();
       rmSync(dataDir, { recursive: true, force: true });

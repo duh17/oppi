@@ -71,6 +71,7 @@ interface SessionProjectionRow {
   launch_lease_owner: string | null;
   launch_lease_until_ms: number | null;
   launch_metadata_json: string | null;
+  server_durable_json: string | null;
 }
 
 interface WorkspaceSummaryRow {
@@ -134,7 +135,8 @@ const SESSION_PROJECTION_COLUMNS = `
   launch_status,
   launch_lease_owner,
   launch_lease_until_ms,
-  launch_metadata_json
+  launch_metadata_json,
+  server_durable_json
 `;
 
 const SESSION_COLUMN_DEFINITIONS = [
@@ -179,6 +181,8 @@ const SESSION_COLUMN_DEFINITIONS = [
   ["schedule_run_id", "TEXT"],
   ["launch_idempotency_key", "TEXT"],
   ["launch_metadata_json", "TEXT"],
+  // Durable-engine enrollment, so list projections can report `engine` without session_json.
+  ["server_durable_json", "TEXT"],
   ["session_json", "TEXT NOT NULL DEFAULT ''"],
   ["updated_at", "INTEGER NOT NULL DEFAULT 0"],
 ] as const;
@@ -218,11 +222,7 @@ export class SessionSqliteStore {
     this.db.close();
   }
 
-  createSession(
-    name?: string,
-    model?: string,
-    options?: { id?: string; serverDurable?: boolean },
-  ): Session {
+  createSession(name?: string, model?: string, options?: { id?: string }): Session {
     const now = Date.now();
     const id = options?.id ?? mintSessionId();
     const session: Session = {
@@ -236,7 +236,6 @@ export class SessionSqliteStore {
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       cost: 0,
       runtime: "oppi",
-      ...(options?.serverDurable ? { serverDurable: {} } : {}),
     };
 
     this.saveSession(session);
@@ -295,6 +294,7 @@ export class SessionSqliteStore {
       normalized.launch?.schedule?.runId ?? null,
       normalized.launch?.idempotencyKey ?? null,
       normalized.launch ? JSON.stringify(normalized.launch) : null,
+      normalized.serverDurable ? JSON.stringify(normalized.serverDurable) : null,
       json,
       Date.now(),
     );
@@ -632,6 +632,7 @@ export class SessionSqliteStore {
         schedule_run_id TEXT,
         launch_idempotency_key TEXT,
         launch_metadata_json TEXT,
+        server_durable_json TEXT,
         session_json TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -652,6 +653,15 @@ export class SessionSqliteStore {
       if (!columns.has(name)) {
         this.db.exec(`ALTER TABLE session_state_sessions ADD COLUMN ${name} ${definition}`);
       }
+    }
+    if (!columns.has("server_durable_json")) {
+      // Rows enrolled before the column existed keep their engine in list projections.
+      this.db.exec(`
+        UPDATE session_state_sessions
+        SET server_durable_json = json_extract(session_json, '$.serverDurable')
+        WHERE json_valid(session_json)
+          AND json_type(session_json, '$.serverDurable') = 'object'
+      `);
     }
   }
 
@@ -808,10 +818,11 @@ export class SessionSqliteStore {
         schedule_run_id,
         launch_idempotency_key,
         launch_metadata_json,
+        server_durable_json,
         session_json,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         workspace_id = excluded.workspace_id,
         workspace_name = excluded.workspace_name,
@@ -854,6 +865,7 @@ export class SessionSqliteStore {
         schedule_run_id = excluded.schedule_run_id,
         launch_idempotency_key = excluded.launch_idempotency_key,
         launch_metadata_json = excluded.launch_metadata_json,
+        server_durable_json = excluded.server_durable_json,
         session_json = excluded.session_json,
         updated_at = excluded.updated_at
     `);
@@ -1113,6 +1125,13 @@ function buildProjectedSession(row: SessionProjectionRow): Session {
 
   const launch = parseJsonValue<Session["launch"]>(row.launch_metadata_json, row.id, "launch");
   if (launch) session.launch = launch;
+
+  const serverDurable = parseJsonValue<Session["serverDurable"]>(
+    row.server_durable_json,
+    row.id,
+    "serverDurable",
+  );
+  if (serverDurable) session.serverDurable = serverDurable;
 
   const changeStats = parseJsonValue<Session["changeStats"]>(
     row.change_stats_json,

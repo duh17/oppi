@@ -122,7 +122,7 @@ async function fixture(
   const storage = new Storage(dir);
   storage.updateConfig({ experimental: { serverDurable: true } });
   const workspace = storage.createWorkspace({ name: "Durable proof", hostMount: dir });
-  const session = storage.createSession("Durable proof", "faux/faux-1");
+  const session = createDurableSession(storage, "Durable proof");
   session.workspaceId = workspace.id;
   storage.saveSession(session);
   const manager = new SessionManager(storage);
@@ -197,6 +197,14 @@ async function openHarness(
   return harness;
 }
 
+/** Enrolled as an `engine: "durable"` create leaves it: durable, not yet bound. */
+function createDurableSession(storage: Storage, name: string): Session {
+  const session = storage.createSession(name, "faux/faux-1");
+  session.serverDurable = {};
+  storage.saveSession(session);
+  return session;
+}
+
 async function backend(harness: Harness, models: ModelRuntime, session: Session, dataDir: string) {
   const owner = new DurableHarness(dataDir);
   vi.spyOn(owner, "open").mockResolvedValue({ harness, models });
@@ -215,7 +223,7 @@ async function backend(harness: Harness, models: ModelRuntime, session: Session,
 }
 
 async function crashedQueuedTools(f: Awaited<ReturnType<typeof fixture>>) {
-  const sessions = [f.session, f.storage.createSession("Queued tool B", "faux/faux-1")];
+  const sessions = [f.session, createDurableSession(f.storage, "Queued tool B")];
   const secondWorkspace = f.storage.createWorkspace({
     name: "Second crash workspace",
     hostMount: f.dir,
@@ -3038,8 +3046,8 @@ describe("server durable managed runtime", () => {
     const f = await fixture([]);
     const sessions = [
       f.session,
-      f.storage.createSession("stopped-2", "faux/faux-1"),
-      f.storage.createSession("continue-3", "faux/faux-1"),
+      createDurableSession(f.storage, "stopped-2"),
+      createDurableSession(f.storage, "continue-3"),
     ];
     const effects: number[] = [];
     let recoveredAll!: () => void;
@@ -3173,7 +3181,7 @@ describe("server durable managed runtime", () => {
   it("rechecks the restart queue after an earlier attach so a startup stop wins", async () => {
     const f = await fixture([]);
     const harness = await openHarness(f.dir, f.models);
-    const second = f.storage.createSession("Stop during startup", "faux/faux-1");
+    const second = createDurableSession(f.storage, "Stop during startup");
     for (const session of [f.session, second]) {
       await backend(harness, f.models, session, f.dir);
       session.workspaceId = f.workspace.id;
@@ -3664,7 +3672,7 @@ describe("server durable managed runtime", () => {
     await activeBackend.detachForRestart();
   });
 
-  it("keeps disabled creation and existing sessions on the SDK path without opening durable storage", async () => {
+  it("keeps existing sessions on the SDK path without opening durable storage", async () => {
     const f = await fixture([]);
     f.storage.updateConfig({ experimental: { serverDurable: false } });
     const existing = f.storage.createSession("Existing");
@@ -3674,8 +3682,6 @@ describe("server durable managed runtime", () => {
     expect(existsSync(join(f.dir, "durable"))).toBe(false);
     f.storage.updateConfig({ experimental: { serverDurable: true } });
     expect(f.storage.getSession(existing.id)?.serverDurable).toBeUndefined();
-    const terminal = f.storage.createSession("Terminal", undefined, { durable: false });
-    expect(terminal.serverDurable).toBeUndefined();
   });
 
   describe("with experimental.serverDurable turned off after sessions were bound", () => {

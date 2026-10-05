@@ -41,7 +41,7 @@ async function getServerInfo(asr: unknown): Promise<{
       listSessions: () => [],
       getDataDir: () => tempDirs[0] ?? tmpdir(),
     },
-    sessions: { getActiveSessionIds: () => new Set() },
+    sessions: { getActiveSessionIds: () => new Set(), durableSessionsAvailable: () => false },
     sessionRuntimes: { getActiveSessionIds: () => new Set() },
     skillRegistry: { list: () => [] },
     getModelCatalog: () => [],

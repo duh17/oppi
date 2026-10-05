@@ -1612,7 +1612,6 @@ describe("SessionLifecycleService", () => {
 
         expect(createSession).toHaveBeenCalledWith("Imported Name", "openai-codex/gpt-5.6-sol", {
           id: "pi-session-1",
-          durable: false,
         });
         expect(saveSession).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -1738,7 +1737,6 @@ describe("SessionLifecycleService", () => {
       expect(createSession).toHaveBeenCalledWith(
         "Fork: Original Session",
         "anthropic/claude-sonnet-4",
-        { durable: false },
       );
       expect(saveSession).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1771,7 +1769,7 @@ describe("SessionLifecycleService", () => {
         name: "  Custom fork name  ",
       });
 
-      expect(createSession).toHaveBeenCalledWith("Custom fork name", undefined, { durable: false });
+      expect(createSession).toHaveBeenCalledWith("Custom fork name", undefined);
     });
 
     it("returns a typed conflict error when the source has no trace file", async () => {
