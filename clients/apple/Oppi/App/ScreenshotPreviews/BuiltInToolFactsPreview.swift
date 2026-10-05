@@ -96,7 +96,10 @@ private struct CompletionRowPreview: UIViewRepresentable {
             status: "completed", body: "npm run check", fields: [.init(label: "Result", value: "Exit 0")], accent: "success")
         card.output = .init(kind: "terminal", entryId: "123", command: "npm run check", truncated: nil)
         let item = ChatItem.customEvent(id: "result", message: "Completed", presentation: card)
-        return controller.toolRowConfiguration(itemID: "result", item: item)!.makeContentView()
+        guard let configuration = controller.toolRowConfiguration(itemID: "result", item: item) else {
+            return UIView()
+        }
+        return configuration.makeContentView()
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {}
