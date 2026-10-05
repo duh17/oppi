@@ -685,6 +685,7 @@ export class Server {
     // Initialize search index (SQLite FTS5)
     try {
       this.searchIndex = new SearchIndex(config.dataDir, (id) => this.storage.getSession(id));
+      this.searchIndex.durableSource = this.sessions.durableSearchSource();
       this.sessions.searchIndex = this.searchIndex;
       this.mirrorRuntime.searchIndex = this.searchIndex;
     } catch (err) {

@@ -3,6 +3,8 @@ import type { ConversationId, EntryId, EntryRecord, Harness } from "@earendil-wo
 import { performance } from "node:perf_hooks";
 import {
   buildSessionContext,
+  extractSearchTranscriptFromEntries,
+  type SearchTranscriptContent,
   type SessionEntry,
   type LiveEntryRendererSet,
   type TraceEvent,
@@ -110,6 +112,24 @@ export async function readDurableTrace(
     view,
     entryRenderers,
   });
+}
+
+/** Newest entry id, the harness-native freshness marker for derived read models ("" if none). */
+export async function readDurableTipEntryId(harness: Harness, id: ConversationId): Promise<string> {
+  const conversation = await harness.conversation(id, context);
+  const latest = await conversation?.entries({}, 1, undefined, context);
+  const tip = latest?.items[0]?.id;
+  return tip === undefined ? "" : String(tip);
+}
+
+/** FTS fields for search, extracted from the same projection the traces use. */
+export async function readDurableSearchTranscript(
+  harness: Harness,
+  id: ConversationId,
+): Promise<SearchTranscriptContent> {
+  return extractSearchTranscriptFromEntries(
+    await projectEntries(harness, await allEntries(harness, id)),
+  );
 }
 
 /** Ordinary pages scan only a newest-first ID-bounded window. Extend it when

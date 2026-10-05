@@ -17,7 +17,8 @@ import { join } from "node:path";
 
 import type { Session } from "./types.js";
 import { createLogger } from "./logger.js";
-import { extractSearchTranscriptFromFile } from "./trace.js";
+import { isServerDurableSession } from "./session-runtime-capabilities.js";
+import { extractSearchTranscriptFromFile, type SearchTranscriptContent } from "./trace.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,6 +36,17 @@ export interface SearchResult {
 export interface SearchFilters {
   sinceMs?: number;
   untilMs?: number;
+}
+
+/**
+ * Read-only access to server-durable history. Durable sessions have no JSONL
+ * file, so freshness is the conversation's newest entry id and content comes
+ * from the same entry projection the trace routes use.
+ */
+export interface DurableSearchSource {
+  /** Newest entry id for the conversation ("" when it has no entries). */
+  readTipEntryId(conversationId: number): Promise<string>;
+  readTranscript(conversationId: number): Promise<SearchTranscriptContent>;
 }
 
 export interface SearchIndexSyncResult {
@@ -253,6 +265,17 @@ export class SearchIndex {
   private getSession: (id: string) => Session | undefined;
   private closed = false;
   private backgroundSyncPromise: Promise<SearchIndexBackgroundSyncResult> | null = null;
+  /** Per-session tail of queued durable indexing; see syncDurableSession. */
+  private durableTails = new Map<string, Promise<void>>();
+
+  /** Set when serverDurable is enabled. Durable sessions are then indexed from the harness. */
+  durableSource?: DurableSearchSource;
+  /**
+   * Sessions that bound a durable conversation after a file walk snapshotted
+   * them as file-backed. The walk must not write their (nonexistent) JSONL over
+   * a durable row, so it hands them to the durable pass instead.
+   */
+  private lateDurableSessionIds = new Set<string>();
 
   constructor(dataDir: string, getSession: (id: string) => Session | undefined) {
     this.getSession = getSession;
@@ -299,9 +322,16 @@ export class SearchIndex {
       for (const row of identities) {
         update.run(row.workspace_id, row.title, row.session_id);
       }
-      this.db.prepare("INSERT OR REPLACE INTO fts_schema VALUES ('version', ?)").run("4");
     });
     txn();
+  }
+
+  /** v4 → v5: durable freshness marker. Existing rows carry NULL, so durable rows rebuild once. */
+  private migrateDurableMarkerColumn(): void {
+    if (!this.ftsMetaColumnNames().has("durable_marker")) {
+      this.db.exec("ALTER TABLE fts_meta ADD COLUMN durable_marker TEXT");
+    }
+    this.db.prepare("INSERT OR REPLACE INTO fts_schema VALUES ('version', ?)").run("5");
   }
 
   private ensureSchema(): void {
@@ -314,18 +344,21 @@ export class SearchIndex {
       const row = this.db.prepare("SELECT value FROM fts_schema WHERE key = 'version'").get() as
         | { value: string }
         | undefined;
-      if (row?.value === "4") {
-        const columns = this.ftsMetaColumnNames();
-        if (columns.has("workspace_id") && columns.has("title")) return;
-        this.migrateFtsMetaIdentityColumns();
+      if (row?.value === "5") {
+        if (this.ftsMetaColumnNames().has("durable_marker")) return;
+        this.migrateDurableMarkerColumn();
         return;
       }
-      if (row?.value === "3") {
-        this.migrateFtsMetaIdentityColumns();
+      if (row?.value === "4" || row?.value === "3") {
+        const columns = this.ftsMetaColumnNames();
+        if (row.value === "3" || !columns.has("workspace_id") || !columns.has("title")) {
+          this.migrateFtsMetaIdentityColumns();
+        }
+        this.migrateDurableMarkerColumn();
         return;
       }
 
-      // Unknown/older versions — drop and recreate at v4.
+      // Unknown/older versions — drop and recreate at v5.
       this.db.exec("DROP TABLE IF EXISTS session_fts");
       this.db.exec("DROP TABLE IF EXISTS fts_meta");
       this.db.exec("DROP TABLE IF EXISTS fts_schema");
@@ -349,7 +382,8 @@ export class SearchIndex {
         jsonl_size INTEGER,
         indexed_at INTEGER,
         workspace_id TEXT,
-        title TEXT
+        title TEXT,
+        durable_marker TEXT
       );
 
       CREATE TABLE IF NOT EXISTS fts_schema (
@@ -357,7 +391,7 @@ export class SearchIndex {
         value TEXT
       );
 
-      INSERT OR REPLACE INTO fts_schema VALUES ('version', '4');
+      INSERT OR REPLACE INTO fts_schema VALUES ('version', '5');
     `);
   }
 
@@ -387,13 +421,14 @@ export class SearchIndex {
         jsonl_size,
         indexed_at,
         workspace_id,
-        title
+        title,
+        durable_marker
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     this.stmtGetMeta = this.db.prepare(
-      "SELECT jsonl_path, jsonl_mtime_ms, jsonl_size, workspace_id, title FROM fts_meta WHERE session_id = ?",
+      "SELECT jsonl_path, jsonl_mtime_ms, jsonl_size, workspace_id, title, durable_marker FROM fts_meta WHERE session_id = ?",
     );
 
     // Skip checks only need identity fields. Avoid pulling transcript blobs on
@@ -507,8 +542,16 @@ export class SearchIndex {
   // Indexing
   // -------------------------------------------------------------------------
 
-  /** Index a single session from its JSONL file. */
+  /**
+   * Index a single session from its JSONL file. Server-durable sessions have no
+   * file: their (async) indexing is queued and this returns before it completes.
+   */
   indexSession(sessionId: string): void {
+    const live = this.getSession(sessionId);
+    if (live && this.isIndexedFromDurable(live)) {
+      this.queueDurableIndex(sessionId);
+      return;
+    }
     this.db.transaction(() => {
       const session = this.getSession(sessionId);
       if (!session) return;
@@ -561,6 +604,7 @@ export class SearchIndex {
     jsonlSize: number,
     workspaceId: string,
     title: string,
+    durableMarker: string | null = null,
   ): void {
     this.stmtUpsertMeta.run(
       sessionId,
@@ -570,6 +614,7 @@ export class SearchIndex {
       Date.now(),
       workspaceId,
       title,
+      durableMarker,
     );
   }
 
@@ -589,6 +634,147 @@ export class SearchIndex {
   deleteSession(sessionId: string): void {
     this.stmtDelete.run(sessionId);
     this.stmtDeleteMeta.run(sessionId);
+  }
+
+  /** Delete a missing/ephemeral session's rows and report whether any existed. */
+  private removeIndexedSession(sessionId: string): SearchIndexSyncResult {
+    const result = emptySyncResult();
+    const wasIndexed =
+      this.stmtGetMeta.get(sessionId) !== undefined ||
+      this.stmtGetIndexedIdentity.get(sessionId) !== undefined;
+    this.deleteSession(sessionId);
+    if (wasIndexed) result.removed = 1;
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // Server-durable sessions (async; content comes from the Harness)
+  // -------------------------------------------------------------------------
+
+  private isIndexedFromDurable(session: Session): boolean {
+    return (
+      this.durableSource !== undefined &&
+      isServerDurableSession(session) &&
+      session.serverDurable?.conversationId !== undefined
+    );
+  }
+
+  private queueDurableIndex(sessionId: string): void {
+    this.syncDurableSession(sessionId).catch((err: unknown) => {
+      log.error("search_index.durable_index.failed", {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
+
+  /**
+   * Index one durable session: skip when the conversation's newest entry id,
+   * title, and workspace are unchanged; otherwise re-extract from the Harness.
+   * Runs are serialized per session so an agent_end flush and startup warming
+   * cannot write an older read over a newer one.
+   */
+  syncDurableSession(sessionId: string): Promise<SearchIndexSyncResult> {
+    const previous = this.durableTails.get(sessionId) ?? Promise.resolve();
+    const run = previous.then(() => this.runDurableSync(sessionId));
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.durableTails.set(sessionId, tail);
+    void tail.then(() => {
+      if (this.durableTails.get(sessionId) === tail) this.durableTails.delete(sessionId);
+    });
+    return run;
+  }
+
+  /** Live session still bound to this conversation, or undefined after an await invalidated it. */
+  private liveDurableSession(sessionId: string, conversationId: number): Session | undefined {
+    const live = this.getSession(sessionId);
+    if (!live || live.ephemeral || live.serverDurable?.conversationId !== conversationId) {
+      return undefined;
+    }
+    return live;
+  }
+
+  private async runDurableSync(sessionId: string): Promise<SearchIndexSyncResult> {
+    const result = emptySyncResult();
+    const source = this.durableSource;
+    const initial = this.getSession(sessionId);
+    if (this.closed || !source) return result;
+    if (!initial || initial.ephemeral) return this.removeIndexedSession(sessionId);
+    const conversationId = initial.serverDurable?.conversationId;
+    if (!this.isIndexedFromDurable(initial) || conversationId === undefined) return result;
+
+    // Read the tip before the transcript: content may be newer than the stored
+    // marker (one harmless extra reindex), never older.
+    const marker = `${conversationId}:${await source.readTipEntryId(conversationId)}`;
+    let live = this.liveDurableSession(sessionId, conversationId);
+    if (this.closed || !live) return result;
+
+    const workspaceId = live.workspaceId ?? "";
+    const title = extractSessionTitle(live);
+    const meta = this.stmtGetMeta.get(sessionId) as
+      | { workspace_id: string | null; title: string | null; durable_marker: string | null }
+      | undefined;
+    if (meta?.durable_marker === marker) {
+      const indexedRow = this.stmtGetIndexedRow.get(sessionId) as
+        | { user_messages: string; assistant_messages: string; tool_names: string }
+        | undefined;
+      if (indexedRow) {
+        if (meta.workspace_id === workspaceId && meta.title === title) {
+          result.skipped = 1;
+          return result;
+        }
+        this.writeDurableRow(live, marker, title, indexedRow);
+        result.reindexed = 1;
+        result.reusedIndexedTranscript = 1;
+        return result;
+      }
+    }
+
+    const transcript = await source.readTranscript(conversationId);
+    live = this.liveDurableSession(sessionId, conversationId);
+    if (this.closed || !live) return result;
+    this.writeDurableRow(live, marker, extractSessionTitle(live), {
+      user_messages: transcript.userMessages,
+      assistant_messages: transcript.assistantMessages,
+      tool_names: transcript.toolNames,
+    });
+    result.transcriptsRead = 1;
+    result.transcriptsReindexed = 1;
+    if (meta) result.reindexed = 1;
+    else result.added = 1;
+    return result;
+  }
+
+  /** Durable rows have no file, so recency comes from session activity. */
+  private writeDurableRow(
+    session: Session,
+    marker: string,
+    title: string,
+    content: { user_messages: string; assistant_messages: string; tool_names: string },
+  ): void {
+    const workspaceId = session.workspaceId ?? "";
+    this.db.transaction(() => {
+      this.upsertRow(
+        session.id,
+        workspaceId,
+        title,
+        content.user_messages,
+        content.assistant_messages,
+        content.tool_names,
+      );
+      this.upsertMeta(
+        session.id,
+        null,
+        Math.floor(Number.isFinite(session.lastActivity) ? session.lastActivity : Date.now()),
+        0,
+        workspaceId,
+        title,
+        marker,
+      );
+    })();
   }
 
   // -------------------------------------------------------------------------
@@ -694,6 +880,8 @@ export class SearchIndex {
     if (!ftsIds.has(session.id)) return null;
     const liveSession = this.getSession(session.id);
     if (!liveSession || liveSession.ephemeral) return null;
+    // Durable freshness is not file-based; syncSession defers it to the durable pass.
+    if (this.isIndexedFromDurable(liveSession)) return null;
     if (!this.isUnchangedIndexedSession(liveSession)) return null;
     const result = emptySyncResult();
     result.skipped = 1;
@@ -707,12 +895,10 @@ export class SearchIndex {
     // cooperative warming is between event-loop turns.
     const liveSession = this.getSession(session.id);
     if (!liveSession || liveSession.ephemeral) {
-      const wasIndexed =
-        this.stmtGetMeta.get(session.id) !== undefined ||
-        this.stmtGetIndexedIdentity.get(session.id) !== undefined;
-      this.stmtDelete.run(session.id);
-      this.stmtDeleteMeta.run(session.id);
-      if (wasIndexed) result.removed = 1;
+      return this.removeIndexedSession(session.id);
+    }
+    if (this.isIndexedFromDurable(liveSession)) {
+      this.lateDurableSessionIds.add(liveSession.id);
       return result;
     }
 
@@ -1007,6 +1193,8 @@ export class SearchIndex {
     const startedAt = performance.now();
     const indexableSessions = sessions.filter((s) => !s.ephemeral);
     const sessionIds = new Set(indexableSessions.map((s) => s.id));
+    const durableSessions = indexableSessions.filter((s) => this.isIndexedFromDurable(s));
+    const fileSessions = indexableSessions.filter((s) => !this.isIndexedFromDurable(s));
     const ftsIds = this.loadFtsSessionIds();
     const yieldBetweenBatches = options.yieldToEventLoop ?? yieldToEventLoop;
     const result = emptySyncResult();
@@ -1021,14 +1209,14 @@ export class SearchIndex {
     });
 
     let sessionIndex = 0;
-    while (sessionIndex < indexableSessions.length) {
+    while (sessionIndex < fileSessions.length) {
       if (this.closed) {
         return this.completeBackgroundSync(startedAt, result, sessionsChecked, maxBatchMs, true);
       }
 
       const batchStartIndex = sessionIndex;
       const batchResult = this.syncSessionBatchWithinBudget(
-        indexableSessions,
+        fileSessions,
         sessionIndex,
         budgetMs,
         batchSize,
@@ -1040,8 +1228,35 @@ export class SearchIndex {
       maxBatchMs = Math.max(maxBatchMs, batchResult.elapsedMs);
       mergeSyncResults(result, batchResult.result);
 
-      if (sessionIndex < indexableSessions.length) {
+      if (sessionIndex < fileSessions.length) {
         await yieldBetweenBatches();
+      }
+    }
+
+    // Durable reads are async, so they cannot share the synchronous batch
+    // transaction above. Each session writes its own small transaction.
+    const snapshotDurableIds = new Set(durableSessions.map((s) => s.id));
+    const durableIds = new Set(snapshotDurableIds);
+    for (const id of this.lateDurableSessionIds) durableIds.add(id);
+    this.lateDurableSessionIds.clear();
+    let turnStartedAt = performance.now();
+    for (const sessionId of durableIds) {
+      if (this.closed) {
+        return this.completeBackgroundSync(startedAt, result, sessionsChecked, maxBatchMs, true);
+      }
+      try {
+        mergeSyncResults(result, await this.syncDurableSession(sessionId));
+      } catch (err: unknown) {
+        log.error("search_index.durable_index.failed", {
+          sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      // Late ids were already counted by the file walk that deferred them.
+      if (snapshotDurableIds.has(sessionId)) sessionsChecked++;
+      if (performance.now() - turnStartedAt >= budgetMs) {
+        await yieldBetweenBatches();
+        turnStartedAt = performance.now();
       }
     }
 
@@ -1084,7 +1299,7 @@ export class SearchIndex {
 
   /**
    * Synchronize the index with current session data in one atomic transaction.
-   * - Re-indexes sessions whose JSONL path/mtime/size changed
+   * - Re-indexes sessions whose JSONL path/mtime/size changed (not durable sessions; see below)
    * - Re-indexes sessions whose indexed metadata (title/workspace) changed
    * - Indexes new sessions not yet in the index
    * - Removes orphaned index entries for deleted sessions
@@ -1093,7 +1308,13 @@ export class SearchIndex {
     const start = performance.now();
     const indexableSessions = sessions.filter((s) => !s.ephemeral);
     const sessionIds = new Set(indexableSessions.map((s) => s.id));
-    const result = this.syncAllSessions(indexableSessions, sessionIds);
+    // Durable sessions need async Harness reads; blocking sync leaves their rows
+    // to startBackgroundSync and agent_end indexing.
+    const result = this.syncAllSessions(
+      indexableSessions.filter((s) => !this.isIndexedFromDurable(s)),
+      sessionIds,
+    );
+    this.lateDurableSessionIds.clear();
     const elapsed = performance.now() - start;
     log.info("search_index.sync_complete", {
       mode: "blocking",

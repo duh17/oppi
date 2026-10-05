@@ -45,7 +45,7 @@ import {
   type ExtensionUIState,
   type ExtensionUIResponse,
 } from "./extension-ui-state.js";
-import type { SearchIndex } from "./search-index.js";
+import type { DurableSearchSource, SearchIndex } from "./search-index.js";
 import { updateSearchIndexForSessionEvent } from "./session-search-indexing.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 import { SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS, SdkBackend } from "./sdk-backend.js";
@@ -80,7 +80,7 @@ type ActiveSession = SessionStartActiveSession;
 
 import type { DurableHarness } from "./durable-harness.js";
 import { isServerDurableSession } from "./session-runtime-capabilities.js";
-import type { ConversationId } from "@earendil-works/pi-durable";
+import type { ConversationId, Harness } from "@earendil-works/pi-durable";
 
 export class SessionManager extends EventEmitter implements AgentRuntimeTransport {
   private readonly durableHarness?: Promise<DurableHarness>;
@@ -507,6 +507,25 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       this.mobileRenderer,
       this.getEntryRenderers(sessionId),
     );
+  }
+
+  /** Read-only Harness access for the search index; undefined unless serverDurable is enabled. */
+  durableSearchSource(): DurableSearchSource | undefined {
+    const durableHarness = this.durableHarness;
+    if (!durableHarness) return undefined;
+    const openHarness = async (): Promise<Harness> => (await (await durableHarness).open()).harness;
+    return {
+      readTipEntryId: async (id) => {
+        const harness = await openHarness();
+        const { readDurableTipEntryId } = await import("./durable-history.js");
+        return readDurableTipEntryId(harness, id as ConversationId);
+      },
+      readTranscript: async (id) => {
+        const harness = await openHarness();
+        const { readDurableSearchTranscript } = await import("./durable-history.js");
+        return readDurableSearchTranscript(harness, id as ConversationId);
+      },
+    };
   }
 
   async getServerDurableTrace(

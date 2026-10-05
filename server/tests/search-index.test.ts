@@ -663,9 +663,15 @@ describe("SearchIndex indexes transcript content only", () => {
       const meta = after
         .prepare("SELECT workspace_id, title FROM fts_meta WHERE session_id = ?")
         .get(session.id) as { workspace_id: string; title: string };
-      expect(version.value).toBe("4");
+      expect(version.value).toBe("5");
       expect(columns).toEqual(
-        expect.arrayContaining(["workspace_id", "title", "jsonl_path", "jsonl_mtime_ms"]),
+        expect.arrayContaining([
+          "workspace_id",
+          "title",
+          "jsonl_path",
+          "jsonl_mtime_ms",
+          "durable_marker",
+        ]),
       );
       expect(ftsCountAfter).toBe(ftsCountBefore);
       expect(meta.workspace_id).toBe("ws-1");
