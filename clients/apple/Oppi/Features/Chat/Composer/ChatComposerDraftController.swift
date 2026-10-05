@@ -68,6 +68,11 @@ final class ChatComposerDraftController {
     @ObservationIgnored private var discardedAskSubmissionText: String?
     private(set) var isSubmissionInFlight = false
     @ObservationIgnored private var activeSubmissionID: UUID?
+    /// Exact composer text hidden because that send is already in the timeline
+    /// or queue. A text-view echo of it must not become a new draft. Cleared on
+    /// ack, failure, or any different edit.
+    @ObservationIgnored private var dispatchedVisibleClearEcho: String?
+    @ObservationIgnored private var dispatchedVisibleClearEchoUntil: Date?
 
     init(
         initialText: String = "",
@@ -182,6 +187,8 @@ final class ChatComposerDraftController {
         discardedAskSubmissionText = nil
         isSubmissionInFlight = false
         activeSubmissionID = nil
+        dispatchedVisibleClearEcho = nil
+        dispatchedVisibleClearEchoUntil = nil
         mode = .message
         applyVisiblePayload(.empty)
     }
@@ -211,9 +218,19 @@ final class ChatComposerDraftController {
             }
             return
         }
+        if shouldIgnoreDispatchedVisibleEcho(newText, for: newMode) {
+            return
+        }
         if newMode == .message {
             discardedAskSubmissionText = nil
             lastAskVisibleText = ""
+            // An empty binding write is the clear itself, not a new draft.
+            // Dropping the echo here would let the text view put the sent
+            // message back.
+            if !newText.isEmpty {
+                dispatchedVisibleClearEcho = nil
+                dispatchedVisibleClearEchoUntil = nil
+            }
         }
         setMode(newMode)
         if newMode == .ask, !newText.isEmpty {
@@ -311,6 +328,33 @@ final class ChatComposerDraftController {
         return snapshot
     }
 
+    /// The send is now visible (optimistic user row or queued item). Hide that
+    /// text immediately. The persisted draft stays until ack so a crash before
+    /// the frame is acknowledged can still restore it; failure paints the
+    /// in-memory snapshot back into the field.
+    func clearVisibleTextForDispatchedSubmission(_ snapshot: SubmissionSnapshot) {
+        guard activeSubmissionID == snapshot.id else { return }
+        guard snapshot.draftClearance == .afterSuccess, mode == .message else { return }
+        guard messagePayload.text == snapshot.payload.text,
+              messagePayload.repoPointers == snapshot.payload.repoPointers else {
+            return
+        }
+
+        let echo = snapshot.payload.text
+        if echo.isEmpty {
+            dispatchedVisibleClearEcho = nil
+            dispatchedVisibleClearEchoUntil = nil
+        } else {
+            dispatchedVisibleClearEcho = echo
+            dispatchedVisibleClearEchoUntil = Date().addingTimeInterval(1)
+        }
+        applyVisiblePayload(ComposerDraftPayload(
+            text: "",
+            repoPointers: [],
+            attachments: messagePayload.attachments
+        ))
+    }
+
     @discardableResult
     func completeSubmission(_ snapshot: SubmissionSnapshot) -> Bool {
         let ownsActiveSubmission = activeSubmissionID == snapshot.id
@@ -322,6 +366,8 @@ final class ChatComposerDraftController {
         if ownsActiveSubmission {
             activeSubmissionID = nil
             isSubmissionInFlight = false
+            dispatchedVisibleClearEcho = nil
+            dispatchedVisibleClearEchoUntil = nil
 
             if snapshot.draftClearance == .afterSuccess {
                 if messagePayload == snapshot.payload {
@@ -390,6 +436,8 @@ final class ChatComposerDraftController {
         guard activeSubmissionID == snapshot.id, key == snapshot.key else { return }
         activeSubmissionID = nil
         isSubmissionInFlight = false
+        dispatchedVisibleClearEcho = nil
+        dispatchedVisibleClearEchoUntil = nil
 
         if snapshot.draftClearance == .afterSuccess {
             if messagePayload.isEmpty {
@@ -430,6 +478,19 @@ final class ChatComposerDraftController {
         if mode == .message {
             applyVisiblePayload(messagePayload)
         }
+    }
+
+    private func shouldIgnoreDispatchedVisibleEcho(_ newText: String, for newMode: Mode) -> Bool {
+        guard newMode == .message,
+              text.isEmpty,
+              let echo = dispatchedVisibleClearEcho,
+              let until = dispatchedVisibleClearEchoUntil,
+              Date() < until,
+              !echo.isEmpty,
+              newText == echo else {
+            return false
+        }
+        return true
     }
 
     private func shouldIgnoreDiscardedAskSubmission(_ newText: String, for newMode: Mode) -> Bool {

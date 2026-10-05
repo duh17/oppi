@@ -477,7 +477,14 @@ struct PastableTextView: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
-            text = textView.text
+            let incoming = textView.text ?? ""
+            if let pastable = textView as? PastableUITextView,
+               !pastable.shouldCommitUserEdit(incoming) {
+                notifyLineCountIfNeeded(textView)
+                notifyDictationStateIfNeeded(textView)
+                return
+            }
+            text = incoming
 
             let lineHeight = textView.font?.lineHeight ?? 17
             let verticalInsets = textView.textContainerInset.top + textView.textContainerInset.bottom
@@ -678,7 +685,12 @@ struct FullSizeTextView: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
-            text = textView.text
+            let incoming = textView.text ?? ""
+            if let pastable = textView as? PastableUITextView,
+               !pastable.shouldCommitUserEdit(incoming) {
+                return
+            }
+            text = incoming
         }
 
         func updateKeyboardLanguage(from textView: UITextView) {
@@ -730,6 +742,10 @@ class PastableUITextView: UITextView {
     private var renderedVolatileColorCache: UIColor?
     private var renderedVolatileBackgroundColorCache: UIColor?
     private var renderedCorrectionUnderlineColorCache: UIColor?
+    private var programmaticTextDepth = 0
+    var isApplyingProgrammaticText: Bool { programmaticTextDepth > 0 }
+    private var programmaticClearEcho: String?
+    private var programmaticClearEchoDeadline: Date?
 
     /// When true, keyboard is hidden but cursor remains visible via empty `inputView`.
     private(set) var isKeyboardSuppressed = false
@@ -818,12 +834,29 @@ class PastableUITextView: UITextView {
 
         let previousSelection = self.selectedRange
         let previousTextLength = textStorage.length
+        let previousPlain = textStorage.string
         let keepCaretPinnedToEnd = previousSelection.length == 0 && previousSelection.location >= previousTextLength
         let baseAttributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: baseColor,
         ]
-        let replacement = Self.minimalTextReplacement(current: textStorage.string, incoming: text)
+        let replacement = Self.minimalTextReplacement(current: previousPlain, incoming: text)
+        let clearingSentDraft = text.isEmpty && !previousPlain.isEmpty
+        if clearingSentDraft {
+            // The keyboard and autocorrect can replay the draft we just sent.
+            // Remember it so that echo is not committed as a new edit.
+            programmaticClearEcho = previousPlain
+            programmaticClearEchoDeadline = Date().addingTimeInterval(1)
+        }
+        beginProgrammaticTextEdit()
+        defer { endProgrammaticTextEdit() }
+        if clearingSentDraft {
+            if effectiveMarkedTextRange != nil {
+                unmarkText()
+            }
+            inputDelegate?.selectionWillChange(self)
+            inputDelegate?.textWillChange(self)
+        }
 
         // `attributedText` assignment replaces the text view's entire value and
         // resets UIKit's editing state before we can restore the selection. During
@@ -880,6 +913,11 @@ class PastableUITextView: UITextView {
         }
         textStorage.endEditing()
         typingAttributes = baseAttributes
+        if clearingSentDraft {
+            inputDelegate?.textDidChange(self)
+            inputDelegate?.selectionDidChange(self)
+            undoManager?.removeAllActions()
+        }
 
         let maxSelectionLocation = totalLength
         let restoredSelection: NSRange
@@ -934,6 +972,57 @@ class PastableUITextView: UITextView {
         renderedVolatileColorCache = volatileColor
         renderedVolatileBackgroundColorCache = volatileBackgroundColor
         renderedCorrectionUnderlineColorCache = correctionUnderlineColor
+    }
+
+    /// False while a programmatic replace is in flight, and false when `incoming`
+    /// is the draft a send-clear just removed. The latter is reverted so the
+    /// keyboard cannot put the sent message back in the field.
+    func shouldCommitUserEdit(_ incoming: String) -> Bool {
+        if isApplyingProgrammaticText { return false }
+        if rejectProgrammaticClearEcho(incoming) { return false }
+        // Empty is the clear itself. Disarming on it lets a later keyboard
+        // replay of the sent draft through.
+        if !incoming.isEmpty {
+            programmaticClearEcho = nil
+            programmaticClearEchoDeadline = nil
+        }
+        return true
+    }
+
+    func rejectProgrammaticClearEcho(_ incoming: String) -> Bool {
+        guard let echo = programmaticClearEcho,
+              let deadline = programmaticClearEchoDeadline,
+              Date() < deadline,
+              !echo.isEmpty,
+              Self.hasExactUTF16Representation(echo, incoming) else {
+            return false
+        }
+        restoreProgrammaticClear()
+        return true
+    }
+
+    private func beginProgrammaticTextEdit() {
+        programmaticTextDepth += 1
+    }
+
+    private func endProgrammaticTextEdit() {
+        programmaticTextDepth = max(0, programmaticTextDepth - 1)
+    }
+
+    private func restoreProgrammaticClear() {
+        guard !Self.hasExactUTF16Representation(textStorage.string, "") else { return }
+        beginProgrammaticTextEdit()
+        defer { endProgrammaticTextEdit() }
+        textStorage.beginEditing()
+        textStorage.replaceCharacters(
+            in: NSRange(location: 0, length: textStorage.length),
+            with: ""
+        )
+        textStorage.endEditing()
+        selectedRange = NSRange(location: 0, length: 0)
+        renderedTextCache = ""
+        renderedVolatileSuffixLengthCache = 0
+        renderedCorrectionRangesCache = []
     }
 
     static func minimalTextReplacement(

@@ -2398,12 +2398,20 @@ struct ChatView: View {
                     sessionStore: sessionStore,
                     sessionManager: sessionManager,
                     onDispatchStarted: {
+                        // The timeline row or queue item is the send confirmation.
+                        // Waiting for ack left this draft in the field while the
+                        // agent was already working on it.
+                        composerDraftController.clearVisibleTextForDispatchedSubmission(submission)
+                        composerTextBeforeRecording = nil
                         if draftClearance == .immediately {
                             pendingAttachments = []
                         }
 
-                        // Scroll to bottom after sending
-                        scrollRef.requestScrollToBottom()
+                        // Scroll after the optimistic row is in the collection.
+                        // The draft clear above must not wait for that turn.
+                        DispatchQueue.main.async {
+                            scrollRef.requestScrollToBottom()
+                        }
                     },
                     onSendSucceeded: {
                         completeComposerSubmission(submission, draftClearance: draftClearance)

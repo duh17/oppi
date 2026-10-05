@@ -350,6 +350,86 @@ struct ChatComposerDraftControllerTests {
         #expect(store.record(for: key) == nil)
     }
 
+    @Test func dispatchedSubmissionHidesTextBeforeAcknowledgementAndRestoresOnFailure() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let controller = ChatComposerDraftController(initialText: "again how efficient")
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        controller.clearVisibleTextForDispatchedSubmission(submission)
+
+        #expect(controller.text.isEmpty)
+        // The frame is not on the wire yet. Keep the persisted draft so a
+        // crash before ack can still restore it; only the field is cleared.
+        #expect(store.record(for: key)?.payload.text == "again how efficient")
+        controller.updateVisibleText("again how efficient", for: .message)
+        #expect(controller.text.isEmpty)
+        controller.updateVisibleText("", for: .message)
+        #expect(controller.text.isEmpty)
+        controller.updateVisibleText("again how efficient", for: .message)
+        #expect(controller.text.isEmpty)
+
+        controller.failSubmission(submission)
+        #expect(controller.text == "again how efficient")
+        #expect(store.record(for: key)?.payload.text == "again how efficient")
+    }
+
+    @Test func dispatchedSubmissionDoesNotHideTextTheUserChanged() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let controller = ChatComposerDraftController(initialText: "send this")
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        controller.text = "still writing"
+        controller.clearVisibleTextForDispatchedSubmission(submission)
+
+        #expect(controller.text == "still writing")
+        #expect(store.record(for: key)?.payload.text == "still writing")
+        controller.completeSubmission(submission)
+        #expect(controller.text == "still writing")
+    }
+
+    @Test func dispatchedSubmissionKeepsAttachmentSidecarsUntilAcknowledgement() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let (video, videoBytes, draftURL) = try fixture.makeImportedVideo(
+            store: store,
+            named: "clip.mp4",
+            byte: 0x11
+        )
+        let controller = ChatComposerDraftController(initialText: "send this")
+        controller.attach(store: store, key: key, isEphemeral: false)
+        #expect(controller.setPendingAttachments([video]))
+
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        controller.clearVisibleTextForDispatchedSubmission(submission)
+
+        #expect(controller.text.isEmpty)
+        #expect(controller.pendingAttachments.map(\.id) == [video.id])
+        #expect(controller.pendingAttachments.first?.localFileURL?.standardizedFileURL == draftURL.standardizedFileURL)
+        #expect(store.record(for: key)?.payload.text == "send this")
+        #expect(store.record(for: key)?.payload.attachments.map(\.id) == [video.id])
+        #expect(try Data(contentsOf: draftURL) == videoBytes)
+
+        controller.updateVisibleText("next", for: .message)
+        controller.completeSubmission(submission)
+        #expect(controller.text == "next")
+        #expect(store.record(for: key)?.payload.text == "next")
+        #expect(store.record(for: key)?.payload.attachments.isEmpty == true)
+        #expect(!FileManager.default.fileExists(atPath: draftURL.path))
+    }
+
     @Test func retainedSubmissionFailureKeepsSharedDraftWithoutDuplication() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }

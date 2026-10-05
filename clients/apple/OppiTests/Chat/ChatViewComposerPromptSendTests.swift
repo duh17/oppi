@@ -205,6 +205,7 @@ struct ChatViewComposerPromptSendTests {
         #expect(source.contains("onSend: { sendComposerAction(draftClearance: .afterSuccess) }"))
         #expect(!source.contains("onSend: { sendComposerAction() }"))
         #expect(source.contains("draftClearance: ChatComposerDraftController.SubmissionDraftClearance = .afterSuccess"))
+        #expect(source.contains("clearVisibleTextForDispatchedSubmission(submission)"))
     }
 
     private static let uploadedVideoRef = ChatAttachmentRef(

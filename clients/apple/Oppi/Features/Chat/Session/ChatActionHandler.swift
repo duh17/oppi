@@ -255,11 +255,10 @@ final class ChatActionHandler {
                 } else {
                     nil
                 }
-                if let onDispatchStarted {
-                    DispatchQueue.main.async {
-                        onDispatchStarted()
-                    }
-                }
+                // Same turn as the optimistic row. Deferring this left the
+                // sent draft in the composer until the ack, which can take
+                // seconds after the message is already visible.
+                onDispatchStarted?()
                 do {
                     try await connection.sendPrompt(trimmed, attachments: sendAttachments, clientTurnId: promptTurnId, sessionIdOverride: sessionId, onAckStage: { stage in
                         self.updateSendAckStage(stage)

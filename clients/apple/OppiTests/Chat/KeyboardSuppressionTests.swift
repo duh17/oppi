@@ -431,6 +431,35 @@ struct KeyboardSuppressionTests {
         #expect(background?.isEqual(volatileBackground) == true)
     }
 
+    @Test("Programmatic clear rejects an input-system echo of the sent draft")
+    func programmaticClearRejectsEchoOfTheSentDraft() {
+        let textView = PastableUITextView()
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        textView.applyStyledText(
+            "again how efficient",
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 0,
+            volatileColor: .systemBlue
+        )
+
+        textView.applyStyledText(
+            "",
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 0,
+            volatileColor: .systemBlue
+        )
+        #expect(textView.text.isEmpty)
+        #expect(!textView.shouldCommitUserEdit("again how efficient"))
+        #expect(textView.text.isEmpty)
+        #expect(textView.shouldCommitUserEdit(""))
+        #expect(!textView.shouldCommitUserEdit("again how efficient"))
+        #expect(textView.text.isEmpty)
+        #expect(textView.shouldCommitUserEdit("next"))
+        #expect(textView.shouldCommitUserEdit("again how efficient"))
+    }
+
     @Test("Programmatic transcript updates keep a trailing caret pinned to the end")
     func programmaticUpdatesKeepTrailingCaretAtEnd() {
         let textView = PastableUITextView()
