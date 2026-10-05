@@ -99,7 +99,7 @@ struct WhatsNewView: View {
             icon: "puzzlepiece.extension",
             iconColor: .themePurple,
             title: String(localized: "MCP servers and Pi 1.0"),
-            description: String(localized: "Manage MCP servers and project trust from iPhone. The server now bundles Pi 1.0.2.")
+            description: String(localized: "Manage MCP servers and project trust from iPhone. The server now bundles Pi 1.0.3.")
         ),
         WhatsNewFeature(
             id: "restart-resume",

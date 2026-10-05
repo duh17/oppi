@@ -556,7 +556,7 @@ func providerMonogram(_ provider: String?) -> String {
 
     switch canonicalProviderBrandKey(provider) {
     case "anthropic": return "A"
-    case "openai", "azure-openai-responses": return "O"
+    case "openai", "azure": return "O"
     case "google", "google-vertex": return "G"
     case "deepseek", "ds4": return "D"
     case "openrouter": return "R"
@@ -1132,7 +1132,7 @@ private let providersWithLogoAsset: Set<String> = [
 private let knownProviderDisplayNames: [String: String] = [
     "amazon-bedrock": "Amazon Bedrock",
     "anthropic": "Anthropic",
-    "azure-openai-responses": "Azure OpenAI",
+    "azure": "Azure OpenAI",
     "cerebras": "Cerebras",
     "cursor": "Cursor",
     "deepseek": "DeepSeek",

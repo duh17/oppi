@@ -21,7 +21,7 @@ enum ProviderColor {
         switch canonicalProvider(provider) {
         case "anthropic":
             return palette.orange
-        case "openai", "azure-openai-responses", "github-copilot":
+        case "openai", "azure", "github-copilot":
             return palette.green
         case "google", "google-vertex", "google-antigravity", "google-gemini-cli", "deepseek", "ds4":
             return palette.blue
