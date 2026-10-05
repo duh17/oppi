@@ -231,6 +231,52 @@ describe("goal extension", () => {
     expect(nextGoal.continuationCount).toBe(2);
   });
 
+  it("keeps the system prompt stable when only elapsed time changes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-18T00:05:00.000Z"));
+    const pi = createMockPi();
+    createGoalExtension({ continuationDelayMs: 60_000 })(pi as never);
+    const ctx = createMockContext({
+      branch: [
+        customGoalEntry(
+          activeGoal({
+            tasks: [
+              {
+                id: "task-1",
+                title: "Write tests",
+                status: "in_progress",
+                startedAt: "2026-06-18T00:03:00.000Z",
+              },
+            ],
+          }),
+        ),
+      ],
+      pending: true,
+    });
+    await startSession(pi, ctx);
+    const handler = pi.handlers.get("before_agent_start")?.[0];
+    const event = {
+      type: "before_agent_start",
+      systemPrompt: "base prompt",
+      messages: [],
+    };
+    const first = await handler?.(event, ctx);
+    vi.setSystemTime(new Date("2026-06-18T02:05:00.000Z"));
+    const second = await handler?.(event, ctx);
+    expect(first).toEqual(second);
+    expect(JSON.stringify(first)).toContain("Ship goal runner");
+    expect(JSON.stringify(first)).toContain("[in_progress] Write tests");
+    expect(JSON.stringify(first)).not.toContain("Elapsed:");
+    expect(JSON.stringify(second)).not.toContain("2h 2m");
+
+    const widgetFactory = ctx.ui.setWidget.mock.calls[0][1] as (tui: {
+      requestRender(): void;
+    }) => { render: (width: number) => string[] };
+    expect(widgetFactory({ requestRender() {} }).render(80).join("\n")).toContain(
+      "2h 5m",
+    );
+  });
+
   it("loads active goal state and renders elapsed timing in the native widget", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-18T00:05:00.000Z"));

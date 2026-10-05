@@ -417,18 +417,32 @@ function goalSubtitle(goal: SessionGoal): string {
 
 function formatGoal(goal: SessionGoal | undefined): string {
   if (!goal) return "No active goal.";
+  return renderGoal(goal, true);
+}
+
+// The system prompt is a KV prefix. A live clock there rewrites the cache on
+// every request. Widgets, tool results, and continuation messages keep the clock.
+function formatGoalForPrompt(goal: SessionGoal): string {
+  return renderGoal(goal, false);
+}
+
+function renderGoal(goal: SessionGoal, liveClock: boolean): string {
   const lines = [
     `Goal ${goal.id} · ${statusLabel(goal.status)}`,
     `Objective: ${goal.objective}`,
     `Continuations: ${goal.continuationCount}/${goal.maxContinuations}`,
-    `Elapsed: ${formatDuration(goalElapsedMs(goal)) ?? "0s"}`,
   ];
+  if (liveClock) {
+    lines.push(`Elapsed: ${formatDuration(goalElapsedMs(goal)) ?? "0s"}`);
+  }
   if (goal.summary) lines.push(`Summary: ${goal.summary}`);
   if (goal.blocker) lines.push(`Blocker: ${goal.blocker}`);
   if (goal.tasks.length > 0) {
     lines.push("Tasks:");
     for (const [index, task] of goal.tasks.entries()) {
-      const duration = formatDuration(taskElapsedMs(task));
+      const duration = formatDuration(
+        liveClock ? taskElapsedMs(task) : task.elapsedMs,
+      );
       lines.push(
         `  ${index + 1}. [${task.status}] ${task.title}${duration ? ` · ${duration}` : ""}`,
       );
@@ -447,7 +461,7 @@ function buildSystemPrompt(goal: SessionGoal): string {
     "Set status=blocked with a concrete blocker when you cannot continue without user input, credentials, unavailable services, or a risky decision.",
     "Keep status=active when useful autonomous work remains, evidence is weak, or any listed task is still pending or in progress.",
     "",
-    formatGoal(goal),
+    formatGoalForPrompt(goal),
   ].join("\n");
 }
 

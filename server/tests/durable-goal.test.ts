@@ -631,6 +631,38 @@ describe("Durable goal", () => {
     await f.conversation.abort(context);
   });
 
+  it("keeps the goal section stable when only wall-clock time passes", async () => {
+    const sections: string[] = [];
+    function section(request: { messages: Array<{ role: string }> }): string {
+      return JSON.stringify(request.messages.filter((message) => message.role === "system").at(-1));
+    }
+    const f = await fixture([
+      tool("create_goal", {
+        objective: "Hold the prefix",
+        max_continuations: 1,
+        tasks: [{ title: "Work", status: "in_progress" }],
+      }),
+      async (request) => {
+        sections.push(section(request));
+        await new Promise((resolve) => setTimeout(resolve, 1100));
+        return tool("get_goal", {});
+      },
+      (request) => {
+        sections.push(section(request));
+        expect(JSON.stringify(request.messages)).toContain("Elapsed:");
+        return fauxAssistantMessage("Clock stays in the tool result");
+      },
+      fauxAssistantMessage("Continuation settles"),
+    ]);
+    await f.conversation.submit({ type: "input", content: "Create a goal and keep working" }, context);
+    await f.conversation.waitForIdle(context);
+    expect(sections).toHaveLength(2);
+    expect(sections[0]).toBe(sections[1]);
+    expect(sections[0]).toContain("Hold the prefix");
+    expect(sections[0]).toContain("[in_progress] Work");
+    expect(sections[0]).not.toContain("Elapsed:");
+  });
+
   it("injects goal state, settles before a new continuation run, and stops at the budget with a visible reason", async () => {
     let conversation!: Conversation;
     let original!: Awaited<ReturnType<Conversation["submit"]>>;

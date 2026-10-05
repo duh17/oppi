@@ -289,19 +289,34 @@ function label(status: GoalStatus): string {
 }
 function format(goal?: Goal): string {
   if (!goal) return "No active goal.";
+  return renderGoal(goal, true);
+}
+// Prompt text is folded into the leading system message. A live clock there
+// changes the prefix on every request and rewrites the provider KV cache.
+// Widgets, tool results, and continuation inputs still show elapsed time.
+function promptFormat(goal: Goal): string {
+  return renderGoal(goal, false);
+}
+function renderGoal(goal: Goal, liveClock: boolean): string {
   const lines = [
     `Goal ${goal.id} · ${label(goal.status)}`,
     `Objective: ${goal.objective}`,
     `Continuations: ${goal.continuationCount}/${goal.maxContinuations}`,
-    `Elapsed: ${duration(elapsed(goal.createdAt, goal.status === "active" ? undefined : (goal.completedAt ?? goal.updatedAt))) ?? "0s"}`,
   ];
+  if (liveClock) {
+    lines.push(
+      `Elapsed: ${duration(elapsed(goal.createdAt, goal.status === "active" ? undefined : (goal.completedAt ?? goal.updatedAt))) ?? "0s"}`,
+    );
+  }
   if (goal.summary) lines.push(`Summary: ${goal.summary}`);
   if (goal.blocker) lines.push(`Blocker: ${goal.blocker}`);
   if (goal.tasks.length) {
     lines.push("Tasks:");
     for (const [index, task] of goal.tasks.entries()) {
       const time = duration(
-        task.elapsedMs ?? elapsed(task.startedAt, task.completedAt),
+        liveClock
+          ? (task.elapsedMs ?? elapsed(task.startedAt, task.completedAt))
+          : task.elapsedMs,
       );
       lines.push(
         `  ${index + 1}. [${task.status}] ${task.title}${time ? ` · ${time}` : ""}`,
@@ -319,7 +334,7 @@ function prompt(goal: Goal): string {
     "Before status=complete, audit the objective against real evidence: inspect the relevant files, command output, tests, docs, or runtime state; map every explicit requirement to evidence; treat uncertainty as incomplete.",
     "Set status=blocked with a concrete blocker when you cannot continue without user input, credentials, unavailable services, or a risky decision.",
     "Keep status=active when useful autonomous work remains, evidence is weak, or any listed task is still pending or in progress.",
-    format(goal),
+    promptFormat(goal),
   ].join("\n\n");
 }
 function continuation(goal: Goal): string {
@@ -1105,7 +1120,7 @@ export const DurableGoal = defineExtension({
       const goal = doc?.goal;
       if (goal?.status !== "active") return undefined;
       return doc?.runnerStopped
-        ? `Goal runner stopped by user; do not call update_goal(status="active") unless the user explicitly asks to resume.\n\n${format(goal)}`
+        ? `Goal runner stopped by user; do not call update_goal(status="active") unless the user explicitly asks to resume.\n\n${promptFormat(goal)}`
         : prompt(goal);
     }),
   ],
