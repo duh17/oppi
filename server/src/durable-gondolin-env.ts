@@ -185,8 +185,10 @@ export class GondolinExecutionEnv implements ExecutionEnv {
           {
             cwd: options?.cwd,
             env: options?.env,
-            onOutput: (text) => {
-              output += text;
+            // find/grep parse this as stdout hits; guest warnings on stderr
+            // must not become paths or use up the match limit.
+            onOutput: (text, _context, info) => {
+              if (info.stream === "stdout") output += text;
             },
           },
           context,

@@ -112,7 +112,7 @@
   "overrides": {
     "fast-xml-builder": "^1.1.9",
     "protobufjs": "7.6.5",
-    "brace-expansion": "5.0.9",
+    "brace-expansion": "5.0.12",
     "@earendil-works/gondolin": {
       "undici": "6.28.0"
     }

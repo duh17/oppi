@@ -297,6 +297,16 @@ describe("Durable sandbox file capability", () => {
     ).toBe("e\u00e9");
   });
 
+  it("gives guest find/grep only stdout, so stderr warnings never become hits", async () => {
+    const { env } = execReturning(0, [
+      { stream: "stdout", data: Buffer.from("42 12345\nsrc/a.ts\nsrc/") },
+      { stream: "stderr", data: Buffer.from("find: 'locked': Permission denied\n") },
+      { stream: "stdout", data: Buffer.from("b.ts\n") },
+    ]);
+    const result = await env.cancellableVm(context).exec(["find", "."]);
+    expect(result.stdout).toBe("src/a.ts\nsrc/b.ts\n");
+  });
+
   it.each([
     ["printf x", "shell_unavailable"],
     [["missing-program"], "spawn_error"],
