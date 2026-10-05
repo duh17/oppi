@@ -1638,6 +1638,28 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
     }
 
+    /// The matching user row is still the open turn: nothing assistant, thinking,
+    /// or tool-shaped has followed it. A historical match after a model reply is
+    /// not open, so a later identical steer can still paint once.
+    func hasOpenUserTurn(matching text: String) -> Bool {
+        let comparable = UserMessageTextProjection.comparableText(text)
+        guard let matchIndex = items.lastIndex(where: { item in
+            guard case .userMessage(_, let existingText, _, _) = item else { return false }
+            let existing = UserMessageTextProjection.comparableText(existingText)
+            return comparable.isEmpty ? existing.isEmpty : existing == comparable
+        }) else {
+            return false
+        }
+        return !items[(matchIndex + 1)...].contains { item in
+            switch item {
+            case .assistantMessage, .thinking, .toolCall:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
     /// The latest composer photo row is the echo even when the server text
     /// has materialized paths or rewritten prose the composer never stored.
     func hasLatestImageUserMessage(matchingEcho text: String) -> Bool {

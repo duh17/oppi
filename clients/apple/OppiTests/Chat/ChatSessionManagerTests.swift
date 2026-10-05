@@ -2356,6 +2356,71 @@ struct ChatSessionManagerTests {
         manager.cleanup()
     }
 
+    @Test func queuedPlacementDoesNotDuplicateTheOpenUserTurn() async {
+        let sessionId = "queue-dedupe-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, status: .busy))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .busy)))
+        #expect(await waitForMainActorCondition { manager.entryState == .streaming })
+
+        let steer = "use pi directly"
+        streams.yield(index: 0, message: .messageEnd(role: "user", content: steer))
+        streams.yield(
+            index: 0,
+            message: .queueItemStarted(
+                kind: .steer,
+                item: MessageQueueItem(id: "placed-1", message: steer, createdAt: 1),
+                queueVersion: 2
+            )
+        )
+        #expect(await waitForMainActorCondition {
+            Self.userMessageTexts(manager) == [steer]
+        })
+
+        streams.yield(index: 0, message: .messageEnd(role: "assistant", content: "Launching with pi."))
+        #expect(await waitForMainActorCondition {
+            manager.reducer.items.contains { item in
+                if case .assistantMessage(_, let text, _) = item { return text == "Launching with pi." }
+                return false
+            }
+        })
+
+        streams.yield(
+            index: 0,
+            message: .queueItemStarted(
+                kind: .steer,
+                item: MessageQueueItem(id: "placed-2", message: steer, createdAt: 2),
+                queueVersion: 3
+            )
+        )
+        #expect(await waitForMainActorCondition {
+            Self.userMessageTexts(manager) == [steer, steer]
+        })
+
+        streams.finish(index: 0)
+        await connectTask.value
+        manager.cleanup()
+    }
+
+    private static func userMessageTexts(_ manager: ChatSessionManager) -> [String] {
+        manager.reducer.items.compactMap { item in
+            guard case .userMessage(_, let text, _, _) = item else { return nil }
+            return text
+        }
+    }
+
     @Test func connectWhilePresentationPausedAppliesCacheAndHistoryWithoutLivePublication() async {
         let sessionId = "paused-connect-\(UUID().uuidString)"
         let workspaceId = "paused-workspace"

@@ -1490,6 +1490,11 @@ final class ChatSessionManager {
                 text: item.message,
                 uploadedAttachments: item.attachments ?? []
             )
+            // Durable placement broadcasts the user message_end before
+            // queue_item_started. That echo already painted this open turn;
+            // appending again is the duplicate bubble. A later identical steer
+            // still appends once assistant, thinking, or tool content follows.
+            guard !reducer.hasOpenUserTurn(matching: displayText) else { break }
             reducer.appendUserMessage(displayText, images: item.optimisticImages ?? [])
 
         case .state, .sessionSummary:
