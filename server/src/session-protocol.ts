@@ -1093,7 +1093,8 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
               outputAvailability: {
                 complete: false,
                 totalBytes: producerAvailability.totalBytes ?? fullTextBytes,
-                ...(producerAvailability.complete !== false || producerAvailability.source === "sidecar"
+                ...(producerAvailability.complete !== false ||
+                producerAvailability.source === "sidecar"
                   ? { source: "sidecar" as const }
                   : {}),
               },
