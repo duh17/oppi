@@ -2,10 +2,11 @@ import Foundation
 
 /// Client-side floor for a paired Oppi server.
 ///
-/// Build 52 requires `oppi-server` 0.50.0. Compare against `GET /server/info`
-/// `version`. Unparseable versions are treated as unknown, not old.
+/// Build 53 requires `oppi-server` 0.51.0: Stop and the message queue use
+/// `take_queue` and `remove_queued_message`, which 0.50.0 lacks. Compare against
+/// `GET /server/info` `version`. Unparseable versions are treated as unknown, not old.
 enum ServerReleaseVersion {
-    static let minimumSupported = "0.50.0"
+    static let minimumSupported = "0.51.0"
 
     static func isBelowMinimum(_ version: String?, minimum: String = minimumSupported) -> Bool {
         guard let version else { return false }
