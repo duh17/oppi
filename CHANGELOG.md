@@ -119,6 +119,7 @@ Entries labeled **Mac** describe work on `main`; the Mac app is not part of the 
 
 ### Fixed
 
+- **Client:** In the SSH terminal, a tap while the direct keyboard is up is a click when the remote app asked for mouse input, so Herdr controls such as switch work without dismissing the keyboard. Hide that keyboard with ⌄ on the keyboard bar. A tap with the keyboard down still opens it.
 - **Client:** When the only available route keeps returning temporary server errors (such as 503), the app keeps retrying the session connection instead of leaving the session with no retry.
 - **Client:** Sending no longer intermittently bounces the message back into the composer: leaving and reopening a chat can't drop its live connection, a chat that missed its first connection frame reopens its stream, and Send shows Connecting… and reconnects first when the connection is down. The composer clears as soon as the message appears in the timeline, and the draft returns if the send fails. Re-pairing a server from an invite returns to the session inbox.
 - **Server:** The phone's context meter no longer collapses after a codemode helper call. Pi records the usage of `models.classify()` and `models.generateImages()` on the tool result, and the server copied that small request into the session's context size (a 152k meter fell to about 900 after one generated image). Only the session's own assistant turns set the context size now; cost and token totals still count every billed call.

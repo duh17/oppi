@@ -276,9 +276,10 @@ struct SSHTerminalView: View {
     }
 }
 
-/// What a tap on the terminal grid does. Direct typing owns the tap so the
-/// keyboard can be shown or hidden after leaving the chat bar. Chat mode still
-/// clicks when the remote app asked for mouse reports.
+/// What a tap on the terminal grid does. Direct typing owns a tap while the
+/// keyboard is down, so it can come back after leaving the chat bar. While
+/// that keyboard is up, a mouse-reporting app keeps the tap as a click
+/// (Herdr's switch, a tmux pane) and the keyboard stays; its bar hides it.
 enum SSHTerminalTapAction: Equatable {
     case hideKeyboard
     case typeInTerminal
@@ -292,7 +293,7 @@ enum SSHTerminalTapAction: Equatable {
         otherInputFocused: Bool,
         appWantsClicks: Bool
     ) -> SSHTerminalTapAction {
-        if keyboardUp { return .hideKeyboard }
+        if keyboardUp { return appWantsClicks ? .mouseClick : .hideKeyboard }
         if terminalTyping { return .typeInTerminal }
         if otherInputFocused { return .dismissOtherInput }
         if appWantsClicks { return .mouseClick }
@@ -851,9 +852,11 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
             entry.button.accessibilityValue = armed ? "On" : "Off"
         }
     }
-    /// Direct typing owns the tap, including after switching off the chat bar,
-    /// so the keyboard can come back even when the app asked for mouse reports.
-    /// Chat mode still clicks in those apps, and otherwise focuses the chat bar.
+    /// Direct typing owns a tap while the keyboard is down, including after
+    /// switching off the chat bar, so it can come back even when the app asked
+    /// for mouse reports. While that keyboard is up, the same app keeps the
+    /// tap as a click and the keyboard stays. Chat mode still clicks, and
+    /// otherwise focuses the chat bar.
     @objc private func tapped(_ gesture: UITapGestureRecognizer) {
         let otherFocused = window.map { Self.hasFirstResponder(in: $0) } ?? false
         switch SSHTerminalTapAction.resolve(

@@ -496,15 +496,23 @@ struct SSHTerminalTests {
         #expect(channel.engine.frame().rows[0].prefix(6).map(\.text).joined() == "onetwo")
     }
 
-    @Test func directTypingTapOpensTheKeyboardEvenWhenTheAppWantsClicks() {
+    @Test func directKeyboardTapClicksWhenTheAppWantsThemAndOtherwiseToggles() {
         #expect(SSHTerminalTapAction.resolve(
             terminalTyping: true, keyboardUp: false, otherInputFocused: false, appWantsClicks: true
         ) == .typeInTerminal)
         #expect(SSHTerminalTapAction.resolve(
             terminalTyping: true, keyboardUp: false, otherInputFocused: true, appWantsClicks: true
         ) == .typeInTerminal)
+        // Herdr's switch, while the direct keyboard is up, is a click. The
+        // keyboard stays; its bar hides it.
         #expect(SSHTerminalTapAction.resolve(
             terminalTyping: true, keyboardUp: true, otherInputFocused: false, appWantsClicks: true
+        ) == .mouseClick)
+        #expect(SSHTerminalTapAction.resolve(
+            terminalTyping: false, keyboardUp: true, otherInputFocused: false, appWantsClicks: true
+        ) == .mouseClick)
+        #expect(SSHTerminalTapAction.resolve(
+            terminalTyping: true, keyboardUp: true, otherInputFocused: false, appWantsClicks: false
         ) == .hideKeyboard)
         #expect(SSHTerminalTapAction.resolve(
             terminalTyping: false, keyboardUp: false, otherInputFocused: false, appWantsClicks: true
