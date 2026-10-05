@@ -164,10 +164,12 @@ enum ToolContentDescriptorBuilder {
             return .init(inspection: .init(input: input, calls: context.nestedCalls, output: leaf.map { [$0] } ?? [],
                                           raw: output, previewOnly: previewOnly, totalBytes: totalBytes,
                                           terminalOutput: false, file: file,
-                                          supplement: { if case .file(let native) = leaf,
-                                              native.fileType == .image || native.fileType == .audio || native.fileType == .video {
-                                              return ToolCallDocumentBuilder.supplement(args: context.args, inputPresentation: context.inputPresentation, nestedCalls: context.nestedCalls)
-                                          }; return nil }()), copyCommandText: nil,
+                                          supplement: fileMediaSupplement(
+                                              leaf: leaf,
+                                              args: context.args,
+                                              inputPresentation: context.inputPresentation,
+                                              nestedCalls: context.nestedCalls
+                                          )), copyCommandText: nil,
                          copyOutputText: copy.isEmpty ? nil : copy)
         }
         // Collapsed rows need semantic input and glyph facts, not a JSON/Markdown
@@ -261,6 +263,30 @@ enum ToolContentDescriptorBuilder {
             copyCommandText: nil,
             copyOutputText: copyOutput
         )
+    }
+
+    /// Image, audio, and video reads paint the file natively. The row header
+    /// already shows the path, as a text read does, so that field is not an Input
+    /// row. Other arguments and nested calls stay, because the native leaf has
+    /// nowhere else to show them.
+    private static func fileMediaSupplement(
+        leaf: ToolContentDescriptor?,
+        args: [String: JSONValue]?,
+        inputPresentation: ToolInputPresentation?,
+        nestedCalls: NestedToolCalls?
+    ) -> ToolContentDescriptor.Markdown? {
+        guard case .file(let native) = leaf,
+              native.fileType == .image || native.fileType == .audio || native.fileType == .video else {
+            return nil
+        }
+        var args = args ?? [:]
+        if let displayedPath = native.filePath, !displayedPath.isEmpty {
+            let redundant = args.keys.filter { key in
+                inputPresentation?.fields[key]?.role == "filePath" && args[key]?.stringValue == displayedPath
+            }
+            for key in redundant { args.removeValue(forKey: key) }
+        }
+        return ToolCallDocumentBuilder.supplement(args: args, inputPresentation: inputPresentation, nestedCalls: nestedCalls)
     }
 
     /// Shared fact-to-glyph translation. A raw name/summary never chooses a glyph.

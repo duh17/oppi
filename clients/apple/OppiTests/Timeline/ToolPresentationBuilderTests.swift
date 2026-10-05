@@ -2396,6 +2396,31 @@ struct ToolPresentationBuilderTests {
         #expect(attachments.first?.height == 220)
     }
 
+    @Test("expanded image read does not repeat the header path as input")
+    func readImageExpandedOmitsRedundantPathInput() {
+        let path = "/Users/chenda/workspace/oppi/.internal/release-notes/artifacts/build-53-whats-new-light-v2.png"
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "read",
+            argsSummary: "path: \(path)",
+            outputPreview: "Read image file [image/png]",
+            isError: false, isDone: true,
+            context: emptyContext(
+                fileOperation: "read",
+                args: ["path": .string(path)],
+                expanded: ["t1"],
+                fullOutput: "Read image file [image/png]"
+            )
+        )
+
+        #expect(config.inspectionSupplement == nil)
+        #expect(config.title.contains("build-53-whats-new-light-v2.png"))
+        #expect(!config.title.hasPrefix("read "))
+        guard case .readMedia = config.expandedContent else {
+            Issue.record("Expected image read media")
+            return
+        }
+    }
+
     @Test("generic image tool does not use raw details image for collapsed preview")
     func genericImageHasNoCollapsedPreviewFromDetails() {
         let details: JSONValue = .object([

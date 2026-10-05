@@ -75,8 +75,32 @@ struct InteractiveMediaInspectionTests {
                 outputPresentation: .init(kind: "fileContent", provenance: "result")))
         guard case .file(let file) = result.content else { Issue.record("Expected native file media"); return }
         #expect(file.fileType == .image)
-        #expect(result.inspection.supplement?.text.contains("## Input") == true)
+        #expect(result.inspection.supplement?.text.contains("image.png") != true)
+        #expect(result.inspection.supplement?.text.contains("## Input") != true)
         #expect(result.inspection.supplement?.text.contains("## Calls") == true)
+    }
+
+    @Test func imageReadDoesNotRepeatHeaderPath() {
+        let path = "/Users/chenda/workspace/oppi/.internal/release-notes/artifacts/build-53-whats-new-light-v2.png"
+        let result = ToolContentDescriptorBuilder.build(tool: "read", argsSummary: "", outputPreview: "Read image file [image/png]",
+            isError: false, isDone: true,
+            context: .init(args: ["path": .string(path)], fullOutput: "Read image file [image/png]"))
+        guard case .file(let file) = result.content else { Issue.record("Expected image read"); return }
+        #expect(file.fileType == .image)
+        #expect(file.filePath == path)
+        #expect(result.inspection.supplement == nil)
+    }
+
+    @Test func imageReadKeepsInputThatIsNotTheHeaderPath() {
+        let result = ToolContentDescriptorBuilder.build(tool: "fetch_picture", argsSummary: "", outputPreview: "Image result",
+            isError: false, isDone: true,
+            context: .init(args: ["path": .string("image.png"), "page": .number(2)],
+                inputPresentation: .init(fields: ["path": .init(role: "filePath")]),
+                outputPresentation: .init(kind: "fileContent", provenance: "result")))
+        let text = result.inspection.supplement?.text ?? ""
+        #expect(text.contains("page"))
+        #expect(text.contains("2"))
+        #expect(!text.contains("image.png"))
     }
 
     @Test(arguments: [false, true])
