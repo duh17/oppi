@@ -680,6 +680,10 @@ export class Server {
       this.appEventStreamMux.handleSessionBroadcastEvent(payload);
     };
     this.sessions.on("session_event", handleSessionEvent);
+    // A durable child gets its Session when its parent spawns it, not through an API route.
+    this.sessions.on("session_created", (session: Session) =>
+      this.appEventStreamMux.emitSessionCreated(this.models.ensureSessionContextWindow(session)),
+    );
     this.mirrorRuntime.on("session_event", handleSessionEvent);
 
     // Initialize search index (SQLite FTS5)

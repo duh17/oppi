@@ -28,23 +28,13 @@ import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { DurableGoal } from "../extensions/durable/goal/durable.js";
 import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
 import { DurableProjectContext } from "../extensions/durable/project-context/durable.js";
+import {
+  SESSION_REPORTER_TASK,
+  createDurableSessions,
+} from "../extensions/durable/sessions/durable.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 import type { DurableMcp } from "./durable-mcp.js";
-
-/**
- * Extensions every process installs, in install order. They are also the Harness default
- * selection, so a conversation whose stored selection is an `{ add }` edit never picks up
- * another session's MCP extension from the registry.
- */
-const BASE_EXTENSIONS: Extension[] = [
-  CodingTools,
-  DurableSandboxTools,
-  DurableAsk,
-  DurableGoal,
-  DurableWorkingWords,
-  DurableBackgroundJobs,
-  DurableProjectContext,
-];
+import type { DurableThreads } from "./durable-threads.js";
 
 /** Persist the execution boundary so a resumed conversation cannot change runtime. */
 export const DurableRuntime = defineDoc<{ kind: "host" | "sandbox"; workspaceId?: string }>({
@@ -72,6 +62,31 @@ export class DurableHarness {
   private registry?: Registry;
   /** Per Oppi session: its MCP connections and registry extension. */
   private readonly mcps = new Map<string, DurableMcp>();
+  private threads?: DurableThreads;
+  /** The session tools; they reach Oppi through the host bound with `bindThreads`. */
+  readonly sessionsExtension = createDurableSessions(() => this.threads);
+  /**
+   * Extensions every process installs, in install order. They are also the Harness default
+   * selection, so a conversation whose stored selection is an `{ add }` edit never picks up
+   * another session's MCP extension from the registry.
+   */
+  readonly baseExtensions: Extension[] = [
+    CodingTools,
+    DurableSandboxTools,
+    DurableAsk,
+    DurableGoal,
+    DurableWorkingWords,
+    DurableBackgroundJobs,
+    this.sessionsExtension,
+    DurableProjectContext,
+  ];
+
+  bindThreads(threads: DurableThreads): void {
+    this.threads = threads;
+  }
+  get boundThreads(): DurableThreads | undefined {
+    return this.threads;
+  }
 
   get retrySettings(): HarnessSettings["retry"] {
     return this.runSettings?.retry;
@@ -161,6 +176,19 @@ export class DurableHarness {
     if (env instanceof GondolinExecutionEnv) await env.confirmCancelledCalls();
   }
 
+  /**
+   * Stop (not composer abort) of a session: its background children's reporters would
+   * submit a follow-up and start a new turn on the stopped conversation. Aborts only
+   * those reporters; the children, and background jobs, keep running.
+   */
+  async abortSessionReporters(id: ConversationId): Promise<void> {
+    const { harness } = await this.open();
+    const live = await harness.inspect(BACKGROUND_CONTEXT);
+    for (const { record } of live.tasks)
+      if (record.conversationId === id && record.kind === SESSION_REPORTER_TASK)
+        await harness.abortTask(record.id, BACKGROUND_CONTEXT);
+  }
+
   holdResume(): void {
     this.resumeHeld = true;
   }
@@ -213,9 +241,9 @@ export class DurableHarness {
       }));
     // Run policy is global to the Harness, not the first workspace to open it.
     const settings = SettingsManager.create(homedir(), agentDir, { projectTrusted: false });
-    this.runSettings = harnessSettings(settings);
+    this.runSettings = harnessSettings(settings, this.baseExtensions);
     const registry = createRegistry();
-    for (const extension of BASE_EXTENSIONS) registry.install(extension);
+    for (const extension of this.baseExtensions) registry.install(extension);
     this.registry = registry;
     const directory = join(this.dataDir, "durable");
     mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -386,9 +414,9 @@ export class DurableHarness {
 
 // Pi v1 experimental/durable/harness-setup.ts: read policy at each use,
 // without writing user settings or copying run policy onto conversations.
-function harnessSettings(settings: SettingsManager): HarnessSettings {
+function harnessSettings(settings: SettingsManager, extensions: Extension[]): HarnessSettings {
   return {
-    extensions: BASE_EXTENSIONS,
+    extensions,
     get stream() {
       const provider = settings.getProviderRetrySettings();
       const idle = settings.getHttpIdleTimeoutMs();

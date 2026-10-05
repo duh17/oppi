@@ -1441,6 +1441,51 @@ describe("agent routes", () => {
     }
   });
 
+  it("rejects a durable-thread: idempotency key so a client cannot claim a child's Session slot", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-reserved-key-routes-"));
+    try {
+      const store = new AgentDefinitionStore(dataDir);
+      const agent = store.createAgent({ name: "Reviewer" });
+      const saveSession = vi.fn();
+      const ctx = {
+        storage: {
+          getAgentDefinitionStore: () => store,
+          getWorkspace: vi.fn((workspaceId: string) =>
+            workspaceId === "ws-1" ? { id: "ws-1", name: "Oppi" } : undefined,
+          ),
+          getDataDir: vi.fn(() => dataDir),
+          createSession: vi.fn(),
+          saveSession,
+          listSessions: vi.fn(() => []),
+          findSessionByLaunchIdempotencyKey: vi.fn(),
+          claimSessionLaunchRecovery: vi.fn(),
+        },
+        sessions: { startSession: vi.fn(), sendPrompt: vi.fn() },
+        ensureSessionContextWindow: vi.fn((session: Session) => session),
+      } as unknown as RouteContext;
+      const dispatch = createAgentRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      await dispatch({
+        method: "POST",
+        path: `/agents/${agent.id}/sessions`,
+        url: new URL(`http://localhost/agents/${agent.id}/sessions`),
+        req: makeRequest({
+          prompt: { text: "Review this" },
+          target: { workspaceId: "ws-1" },
+          idempotencyKey: "durable-thread:conv-1",
+        }) as never,
+        res: res as never,
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body).error).toContain("durable-thread:");
+      expect(saveSession).not.toHaveBeenCalled();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("treats Oppi names as ordinary user-saved Agent names", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-reserved-name-routes-"));
     try {

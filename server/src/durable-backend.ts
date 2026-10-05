@@ -308,7 +308,7 @@ export class DurableBackend implements AgentBackend {
       loadResources: () => Promise<DurableProjectResources>;
     },
   ): Promise<DurableBackend> {
-    const { harness, models, session, agentDefinition } = options;
+    const { harness, models, session, agentDefinition, owner } = options;
     const { hostCwd, cwd, mcp, resources } = target;
     const workspace = options.workspace;
     const sandbox = workspace?.runtime === "sandbox";
@@ -337,6 +337,7 @@ export class DurableBackend implements AgentBackend {
               DurableWorkingWords,
               DurableBackgroundJobs,
               DurableGoal,
+              owner.sessionsExtension,
               DurableProjectContext,
               ...(mcp ? [mcp.selection] : []),
             ],
@@ -347,7 +348,13 @@ export class DurableBackend implements AgentBackend {
       const agent = await conversation.agent(BACKGROUND_CONTEXT);
       const policy = session.launch?.tools;
       const selected = new Set(agent.tools.map((tool) => tool.name));
-      const additions = [DurableAsk, DurableWorkingWords, DurableBackgroundJobs, DurableGoal]
+      const additions = [
+        DurableAsk,
+        DurableWorkingWords,
+        DurableBackgroundJobs,
+        DurableGoal,
+        owner.sessionsExtension,
+      ]
         .flatMap((extension) => extension.tools ?? [])
         .filter(
           (tool) =>
@@ -388,6 +395,7 @@ export class DurableBackend implements AgentBackend {
         ...(DurableGoal.tools ?? []),
         ...(sandbox ? (DurableSandboxTools.tools ?? []) : []),
         ...(DurableBackgroundJobs.tools ?? []),
+        ...(owner.sessionsExtension.tools ?? []),
       ].filter(
         (tool) =>
           !policy?.noTools &&
@@ -418,6 +426,7 @@ export class DurableBackend implements AgentBackend {
                   DurableWorkingWords,
                   DurableBackgroundJobs,
                   DurableGoal,
+                  owner.sessionsExtension,
                   DurableProjectContext,
                 ]
               : [
@@ -426,6 +435,7 @@ export class DurableBackend implements AgentBackend {
                   DurableWorkingWords,
                   DurableBackgroundJobs,
                   DurableGoal,
+                  owner.sessionsExtension,
                   DurableProjectContext,
                   ...(mcp ? [mcp.selection] : []),
                 ],
@@ -759,6 +769,7 @@ export class DurableBackend implements AgentBackend {
     if (this.disposed) return { disposal: "graceful" };
     this.transactions.assertPermit(permit, "exclusive");
     await this.owner.abortConversation(this.conversation.id);
+    await this.owner.abortSessionReporters(this.conversation.id);
     await this.detachForRestart();
     await this.owner.unbindSandboxEnv(this.conversation.id);
     await this.owner.closeMcp(this.session.id);
@@ -778,6 +789,7 @@ export class DurableBackend implements AgentBackend {
       // Never report a successful stop until Durable has admitted cancellation.
       // A rejected abort leaves the projection alive and propagates stop_failed.
       await this.owner.abortConversation(this.conversation.id);
+      await this.owner.abortSessionReporters(this.conversation.id);
       await this.detachForRestart();
       await this.owner.unbindSandboxEnv(this.conversation.id);
       await this.owner.closeMcp(this.session.id);

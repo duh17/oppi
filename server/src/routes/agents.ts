@@ -19,6 +19,7 @@ import { iconAssetId } from "../icon-choice.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
 import type { ChatAttachmentRef, Session } from "../types.js";
+import { reservedLaunchKeyError } from "../reserved-launch-keys.js";
 import { normalizeSessionWorktreeId } from "../worktrees.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
@@ -143,6 +144,11 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       );
       if (delegationFieldError) {
         helpers.error(res, 400, delegationFieldError);
+        return true;
+      }
+      const reservedKey = reservedLaunchKeyError(body.idempotencyKey);
+      if (reservedKey) {
+        helpers.error(res, 400, reservedKey);
         return true;
       }
       if (body.autoStop !== undefined && typeof body.autoStop !== "boolean") {

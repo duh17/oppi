@@ -128,6 +128,11 @@ export class SessionRuntimes implements AgentRuntimeTransport {
     return this.oppi.getPromptCacheRuntime(sessionId);
   }
 
+  /** Harness ownership membership of a durable session's thread; undefined for every other session. */
+  getDurableThread(sessionId: string): ReturnType<SessionManager["getDurableThread"]> {
+    return this.oppi.getDurableThread(sessionId);
+  }
+
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {
     return this.runtimeFor(sessionId).getToolFullOutputPath(sessionId, toolCallId);
   }

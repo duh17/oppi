@@ -132,9 +132,22 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       config.experimental?.serverDurable === true ||
       storage.listSessions().some(hasServerDurableBinding)
     ) {
-      this.durableHarness = import("./durable-harness.js").then(
-        ({ DurableHarness }) => new DurableHarness(storage.getDataDir()),
-      );
+      this.durableHarness = Promise.all([
+        import("./durable-harness.js"),
+        import("./durable-threads.js"),
+      ]).then(([{ DurableHarness }, { DurableThreads }]) => {
+        const owner = new DurableHarness(storage.getDataDir());
+        owner.bindThreads(
+          new DurableThreads({
+            owner,
+            storage,
+            startSession: (sessionId, workspace) => this.startSession(sessionId, workspace),
+            isActive: (sessionId) => this.isActive(sessionId),
+            onCreated: (session) => this.emit("session_created", session),
+          }),
+        );
+        return owner;
+      });
     }
     const runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(config));
     this.runtimeManager = runtimeManager;
@@ -930,6 +943,16 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     | { warmer?: SessionPromptCacheWarmer; promptCache?: { short?: number; long?: number } }
     | undefined {
     return this.active.get(this.sessionKey(sessionId))?.sdkBackend.promptCacheRuntime();
+  }
+
+  /**
+   * Membership of a durable session's thread, from the Harness ownership edges. Undefined
+   * for a session that is not bound to a durable conversation.
+   */
+  async getDurableThread(
+    sessionId: string,
+  ): Promise<{ rootSessionId: string; sessionIds: Set<string> } | undefined> {
+    return (await this.durableHarness)?.boundThreads?.threadSessions(sessionId);
   }
 
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {

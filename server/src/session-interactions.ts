@@ -77,14 +77,17 @@ function rootOf(session: Session, byId: ReadonlyMap<string, Session>): Session {
 }
 
 /**
- * Build the launch tree containing `sessionId`, plus every recorded
- * interaction that touches it. A missing parent makes its child the root.
+ * Build the thread containing `sessionId`, plus every recorded interaction that
+ * touches it. The tree follows launch edges, where a missing parent makes its
+ * child the root. A durable session also passes `owned`, the sessions its Harness
+ * ownership edges put in the thread, which join whatever the launch edges say.
  */
 export function buildSessionThread(
   sessions: readonly Session[],
   sessionId: string,
   listInteractions: (sessionIds: readonly string[]) => SessionInteraction[],
   promptCacheFor: (session: Session) => SessionPromptCacheStatus | undefined = () => undefined,
+  owned?: { rootSessionId: string; sessionIds: ReadonlySet<string> },
 ): SessionThreadResponse | undefined {
   const byId = new Map(sessions.map((session) => [session.id, session]));
   const target = byId.get(sessionId);
@@ -99,10 +102,12 @@ export function buildSessionThread(
     else childrenByParent.set(parentId, [session]);
   }
 
-  const root = rootOf(target, byId);
+  const root = rootOf((owned && byId.get(owned.rootSessionId)) || target, byId);
   const members: Session[] = [];
   const memberIds = new Set<string>();
-  const queue = [root];
+  // Owned members join even without a launch edge; launch children (a session the phone
+  // started "in thread") still hang off whichever member launched them.
+  const queue = [root, ...[...(owned?.sessionIds ?? [])].flatMap((id) => byId.get(id) ?? [])];
   for (let index = 0; index < queue.length; index += 1) {
     const session = queue[index];
     if (memberIds.has(session.id)) continue;

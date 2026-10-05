@@ -17,6 +17,7 @@ import { WsMessageHandler } from "../ws-message-handler.js";
 import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktrees.js";
 import { isDeclaredControlSession } from "../control-session.js";
 import { parseClientCommand } from "../session-command-parse.js";
+import { reservedLaunchKeyError } from "../reserved-launch-keys.js";
 import { isThinkingLevel } from "../thinking-levels.js";
 import {
   buildSessionThread,
@@ -203,6 +204,11 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       helpers.error(res, 400, "autoStop must be a boolean");
       return;
     }
+    const reservedKey = reservedLaunchKeyError(body.launchIdempotencyKey, body.idempotencyKey);
+    if (reservedKey) {
+      helpers.error(res, 400, reservedKey);
+      return;
+    }
     if (Array.isArray(body.images) && body.images.length > 0) {
       helpers.error(
         res,
@@ -348,6 +354,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         (typeof body.launchIdempotencyKey !== "string" || !body.launchIdempotencyKey.trim()))
     ) {
       helpers.error(res, 400, "Invalid control session metadata");
+      return;
+    }
+
+    const reservedKey = reservedLaunchKeyError(body.launchIdempotencyKey);
+    if (reservedKey) {
+      helpers.error(res, 400, reservedKey);
       return;
     }
 
@@ -667,12 +679,18 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     };
   }
 
-  function handleGetSessionThread(sessionId: string, res: ServerResponse): void {
+  async function handleGetSessionThread(sessionId: string, res: ServerResponse): Promise<void> {
+    // A durable session's thread is its Harness ownership tree; others keep launch edges.
+    const owned =
+      ctx.storage.getSession(sessionId)?.serverDurable?.conversationId === undefined
+        ? undefined
+        : await ctx.sessionRuntimes.getDurableThread(sessionId);
     const thread = buildSessionThread(
       sessionsWithLiveStatus(ctx),
       sessionId,
       (ids) => ctx.storage.listSessionInteractions(ids),
       promptCacheFor,
+      owned,
     );
     if (!thread) {
       helpers.error(res, 404, "Session not found");
@@ -846,7 +864,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const sessionThreadMatch = path.match(/^\/sessions\/([^/]+)\/thread$/);
     if (sessionThreadMatch && method === "GET") {
-      handleGetSessionThread(sessionThreadMatch[1], res);
+      await handleGetSessionThread(sessionThreadMatch[1], res);
       return true;
     }
 

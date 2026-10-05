@@ -45,6 +45,8 @@ const log = createLogger({ base: { component: "durable_mcp" } });
 /** How long the first prompt waits for servers with direct tools, like Pi's MCP extension. */
 export const DURABLE_MCP_STARTUP_WAIT_MS = 10_000;
 export const DURABLE_TOOL_SEARCH_NAME = "tool_search";
+/** Per-session MCP extension names start with this; a child conversation must not keep its parent's. */
+export const DURABLE_MCP_EXTENSION_PREFIX = "oppi.mcp/";
 
 type ToolPolicy = NonNullable<NonNullable<Session["launch"]>["tools"]>;
 
@@ -167,7 +169,7 @@ export class DurableMcp {
     entries: McpServerEntry[],
     configErrors: string[],
   ) {
-    this.extensionName = `oppi.mcp/${options.sessionId}`;
+    this.extensionName = `${DURABLE_MCP_EXTENSION_PREFIX}${options.sessionId}`;
     this.servers = entries.map((entry) => ({ entry }));
     this.configErrors = configErrors;
     this.credentials = new internals.McpOAuthCredentialStore();

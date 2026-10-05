@@ -111,14 +111,15 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
   const storage = {
     getDataDir: vi.fn().mockReturnValue("/tmp/oppi-routes-sessions-create-tests"),
     getWorkspace: vi.fn().mockReturnValue(ws),
-    createSession: vi.fn().mockImplementation(
-      (name?: string, model?: string, options?: { id?: string }) =>
+    createSession: vi
+      .fn()
+      .mockImplementation((name?: string, model?: string, options?: { id?: string }) =>
         makeSession({
           id: options?.id ?? `sess-${Date.now()}`,
           name: name ?? undefined,
           model: model ?? "test-model",
         }),
-    ),
+      ),
     saveSession: vi.fn(),
     clearRestartResume: vi.fn(),
     getSession: vi.fn(),
@@ -276,6 +277,22 @@ describe("POST /control-sessions", () => {
     const url = new URL("https://localhost/control-sessions");
     return dispatcher({ method: "POST", path: "/control-sessions", url, req, res });
   }
+
+  it("rejects a durable-thread: control-session key so a client cannot claim a child's Session slot", async () => {
+    const mock = createMockContext();
+
+    await dispatchCreate(mock, {
+      domain: "agents",
+      intent: "create",
+      launchIdempotencyKey: "durable-thread:conv-1",
+    });
+
+    expect(mock.responses).toEqual([]);
+    expect(mock.errors).toEqual([
+      { status: 400, message: "Idempotency keys starting with durable-thread: are reserved" },
+    ]);
+    expect(mock.storage.saveSession).not.toHaveBeenCalled();
+  });
 
   it("creates a declared workspace-less control session", async () => {
     const mock = createMockContext();
@@ -690,6 +707,22 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(mock.errors).toEqual([{ status: 400, message: "autoStop must be a boolean" }]);
     expect(mock.storage.createSession).not.toHaveBeenCalled();
   });
+
+  it.each(["launchIdempotencyKey", "idempotencyKey"])(
+    "rejects a durable-thread: %s so a client cannot claim a child's Session slot",
+    async (field) => {
+      const mock = createMockContext();
+
+      await dispatchCreate(mock, { prompt: "Inspect", [field]: "durable-thread:conv-1" });
+
+      expect(mock.responses).toEqual([]);
+      expect(mock.errors).toEqual([
+        { status: 400, message: "Idempotency keys starting with durable-thread: are reserved" },
+      ]);
+      expect(mock.storage.createSession).not.toHaveBeenCalled();
+      expect(mock.storage.saveSession).not.toHaveBeenCalled();
+    },
+  );
 
   it("maps autoStop idempotency mismatches to HTTP 409", async () => {
     const mock = createMockContext();
