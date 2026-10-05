@@ -1,6 +1,6 @@
 # Durable extension UI
 
-Use this convention when porting a Pi extension to the experimental server-durable backend. It requires `experimental.serverDurable`. Classic Pi resource discovery and classic extension factories remain unchanged. This convention does not add slash commands, terminal components, MCP, or client protocol fields.
+Use this convention when porting a Pi extension to the experimental server-durable backend. Enrollment of new sessions requires `experimental.serverDurable`; already-bound conversations keep this convention when the flag is off. Classic Pi resource discovery and classic extension factories remain unchanged. This convention does not add slash commands, terminal components, MCP, or client protocol fields.
 
 ## Publish a request
 
@@ -70,7 +70,7 @@ History projects a valid card as the existing `system` event with `presentation.
 
 The Dockerfile copies the canonical native ports and their pure helpers into `/opt/pi-extensions/`, beside `/opt/server/`, to keep the same relative symlink targets inside the build image. This uses the existing compiler layout without a source-generation step. The runtime uses only the emitted JS.
 
-`npm run dev` uses tsx with `--preserve-symlinks` so native source imports resolve dependencies from `server/node_modules`. Other source-mode commands that import the native ports must use that Node option too. Compiled and packed commands need no option. The entire import graph remains behind the existing lazy durable-backend boundary; flag-off commands load no Durable modules.
+`npm run dev` uses tsx with `--preserve-symlinks` so native source imports resolve dependencies from `server/node_modules`. Other source-mode commands that import the native ports must use that Node option too. Compiled and packed commands need no option. The entire import graph remains behind the existing lazy durable-backend boundary. A flag-off process that does not open SessionManager still imports no Durable modules. SessionManager loads the Harness when experimental.serverDurable is on, or when any stored session is already bound to a conversation, even if the flag is off.
 
 ## Background jobs
 

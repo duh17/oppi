@@ -111,7 +111,7 @@ describe("SessionStartCoordinator status persistence", () => {
     expect(create).toHaveBeenCalledOnce();
     expect(session.serverDurable).toBeUndefined();
     expect(session.warnings).toContain(
-      "Server durable is host-only; using the SDK backend for this sandbox session",
+      "Server durable is off; using the SDK backend for this sandbox session",
     );
   });
   it("persists starting during SDK startup, then ready after registration", async () => {

@@ -15,7 +15,7 @@ This page keeps the rules that always apply. Read only the detail page for the a
 | Page | Covers |
 | --- | --- |
 | [Server blocks and HTTP/WebSocket boundaries](architecture-server/blocks-and-boundaries.md) | Main server blocks; HTTP and WebSocket boundaries |
-| [Session runtime](architecture-server/runtime.md) | Session runtime ownership; Managed SDK runtime; Saved Agents and schedules; Terminal mirror runtime |
+| [Session runtime](architecture-server/runtime.md) | Session runtime ownership; Managed SDK runtime; Server durable; Saved Agents and schedules; Terminal mirror runtime |
 | [Read models and event stream](architecture-server/read-models.md) | Session list and history read models; App event stream |
 | [Tool inspection](architecture-server/tool-inspection.md) | Producer facts; mobile-renderer registry; full tool-output ownership |
 | [Cleanup targets and code map](architecture-server/code-map.md) | Server cleanup targets; Where to look in code |
@@ -70,7 +70,7 @@ graph TD
     Mirror[PiTuiMirrorRuntime<br/>pi-tui-mirror-runtime.ts]
     Flow[session-* coordinators]
     Project[Shared Pi session projection<br/>session-events.ts + session-agent-events.ts<br/>+ session-protocol.ts]
-    Pi[Pi SDK bridge<br/>sdk-backend.ts]
+    Pi[Managed backends<br/>sdk-backend.ts + durable-backend.ts]
   end
 
   subgraph ReadModel[Read models and catalogs]

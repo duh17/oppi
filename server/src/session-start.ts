@@ -86,7 +86,7 @@ export class SessionStartCoordinator {
           if (sandboxRequired) {
             session.warnings = [
               ...(session.warnings ?? []),
-              "Server durable is host-only; using the SDK backend for this sandbox session",
+              "Server durable is off; using the SDK backend for this sandbox session",
             ];
           }
         }
