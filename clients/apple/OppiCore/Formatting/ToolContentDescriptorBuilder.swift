@@ -128,13 +128,11 @@ enum ToolContentDescriptorBuilder {
         let previewOnly = context.previewOnly || (context.fullOutput.isEmpty && context.outputAvailability?.complete == false)
         let totalBytes = context.totalBytes ?? context.outputAvailability?.totalBytes
         if context.outputPresentation?.kind == "terminal" {
-            // Input and output stay separate before execution and through deltas.
-            // Preserve whitespace in terminal output and replace-mode tails.
-            // A live owner is the authoritative resolved ring, including an empty
-            // snapshot. Legacy details may contain a stale/unbounded cumulative copy.
-            let terminalText = context.terminalResolved ? output : (context.details?.objectValue?["expandedText"]?.stringValue.flatMap {
-                $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
-            } ?? output)
+            // The stored preview is the row text. details.expandedText is a stale
+            // cumulative copy and must not hide a preview the phone already has.
+            let expanded = context.details?.objectValue?["expandedText"]?.stringValue
+            let expandedText = expanded?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? expanded : nil
+            let terminalText = !output.isEmpty ? output : (expandedText ?? output)
             let leaf = ToolContentDescriptor.terminal(.init(output: terminalText.isEmpty ? nil : terminalText, language: nil))
             return ToolContentPresentation(
                 inspection: .init(input: input, calls: context.nestedCalls, output: [leaf], raw: output,

@@ -129,7 +129,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     let terminalOutputStreams = TerminalOutputStreamStore()
 
     func toolOutput(for id: String) -> String {
-        terminalOutputStreams.owner(for: id)?.formatted ?? toolOutputStore.fullOutput(for: id)
+        if let formatted = terminalOutputStreams.owner(for: id)?.formatted, !formatted.isEmpty {
+            return formatted
+        }
+        return toolOutputStore.fullOutput(for: id)
     }
 
     /// Shared snapshot translation for secondary consumers. Output documents stay
@@ -1005,7 +1008,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         for event in events {
             if let nested = liveNestedCalls.reduce(event, current: { toolDetailsStore.nestedCalls(for: $0) }) {
                 flushPendingUpserts()
-                routeTerminalBytes(event)
+                recordNestedPresentation(event)
                 if toolDetailsStore.nestedCalls(for: nested.parent) != nested.calls {
                     toolDetailsStore.setNestedCalls(nested.calls, for: nested.parent)
                     didMutate = true
@@ -1044,10 +1047,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 if appendThinkingDelta(delta, contentIndex: contentIndex) {
                     hasPendingThinkingUpsert = true
                 }
-
-            case .toolOutput(let payload) where payload.outputStream != nil:
-                flushPendingUpserts()
-                if processInternal(event) { didMutate = true }
 
             case .toolOutput(let payload):
                 let toolEventId = payload.toolEventId
@@ -1142,30 +1141,21 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             lastAssistantIDThisTurn: lastAssistantIDThisTurn
         )
     }
-    private func routeTerminalBytes(_ event: AgentEvent) {
+    /// Nested calls skip the top-level row. Record presentation only; their
+    /// output belongs to the parent result, not a second store entry.
+    private func recordNestedPresentation(_ event: AgentEvent) {
         switch event {
         case .toolStart(_, let id, _, _, _, _, _, let presentation, _),
-             .toolUpdate(_, let id, _, _, _, _, _, let presentation, _):
-            // Nested calls bypass top-level row creation, but retain the same
-            // metadata-based terminal routing contract as ordinary calls.
+             .toolUpdate(_, let id, _, _, _, _, _, let presentation, _),
+             .toolEnd(_, let id, _, _, _, _, let presentation, _, _, _):
             if let presentation { toolArgsStore.setOutputPresentation(presentation, for: id) }
-        case .toolOutput(let payload):
-            if let chunk = payload.outputStream,
-               resolvedToolOutputPresentation(for: payload.toolEventId)?.kind == "terminal" {
-                terminalOutputStreams.ensureOwner(for: payload.toolEventId).receive(chunk, output: payload.output)
-            }
-        case .toolEnd(_, let id, _, _, _, _, let presentation, _, _, let end):
-            if let presentation { toolArgsStore.setOutputPresentation(presentation, for: id) }
-            if let end, resolvedToolOutputPresentation(for: id)?.kind == "terminal" {
-                terminalOutputStreams.ensureOwner(for: id).finish(end)
-            }
         default: break
         }
     }
 
     private func processInternal(_ event: AgentEvent) -> Bool {
         if let nested = liveNestedCalls.reduce(event, current: { toolDetailsStore.nestedCalls(for: $0) }) {
-            routeTerminalBytes(event)
+            recordNestedPresentation(event)
             guard toolDetailsStore.nestedCalls(for: nested.parent) != nested.calls else { return false }
             toolDetailsStore.setNestedCalls(nested.calls, for: nested.parent)
             return true
@@ -1263,13 +1253,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             )
             return metadataChanged || startChanged
 
-        case .toolOutput(let payload) where payload.outputStream != nil
-            && resolvedToolOutputPresentation(for: payload.toolEventId)?.kind == "terminal":
-            if let details = payload.details { toolDetailsStore.set(details, for: payload.toolEventId) }
-            routeTerminalBytes(event)
-            _ = updateToolCallPreview(id: payload.toolEventId, isError: payload.isError)
-            return true
-
         case .toolOutput(let payload):
             let previousAvailability = toolArgsStore.outputAvailability(for: payload.toolEventId)
             if let availability = payload.outputAvailability { toolArgsStore.setOutputAvailability(availability, for: payload.toolEventId) }
@@ -1296,11 +1279,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return outputDidChange || previewDidChange || toolDetailsStore.details(for: payload.toolEventId) != previousDetails
                 || toolArgsStore.outputAvailability(for: payload.toolEventId) != previousAvailability
 
-        case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability, _, let outputStream):
+        case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability, _, _):
             let factsChanged = (outputPresentation != nil && toolArgsStore.outputPresentation(for: toolEventId) != outputPresentation)
                 || (outputAvailability != nil && toolArgsStore.outputAvailability(for: toolEventId) != outputAvailability)
             if let outputPresentation { toolArgsStore.setOutputPresentation(outputPresentation, for: toolEventId) }
-            if outputStream != nil { routeTerminalBytes(event) }
             if let outputAvailability {
                 if outputAvailability != toolArgsStore.outputAvailability(for: toolEventId), !outputAvailability.complete {
                     toolOutputStore.replace(toolOutputStore.fullOutput(for: toolEventId), for: toolEventId,

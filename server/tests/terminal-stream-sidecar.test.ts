@@ -53,6 +53,7 @@ async function harness() {
     streamedAssistantText: "",
     toolNames: new Map(),
     streamingToolUpdatesSeen: new Map(),
+    shellPreviewLastSent: new Map(),
     turnCache: new TurnDedupeCache(),
     pendingTurnStarts: [],
     sdkBackend: { sessionTree: () => undefined, toolDefinition: () => undefined } as never,
@@ -132,9 +133,7 @@ async function harness() {
       toolName: "bash",
       ...event,
     } as unknown as SessionBackendEvent);
-    return received
-      .slice(before)
-      .filter((m): m is ToolOutput => m.type === "tool_output" && m.outputStream !== undefined);
+    return received.slice(before).filter((m): m is ToolOutput => m.type === "tool_output");
   };
   const range = async (start: number, end: number) => {
     const response = await fetch(url, { headers: { Range: `bytes=${start}-${end}` } });
@@ -145,8 +144,6 @@ async function harness() {
 
 const streamed = (chunks: ToolOutput[]) =>
   Buffer.from(chunks.map((c) => c.output).join(""), "utf8");
-const bytesOf = (chunks: ToolOutput[]) =>
-  chunks.reduce((n, c) => n + (c.outputStream?.bytes ?? 0), 0);
 
 const phase1 = Array.from({ length: 40 }, (_, i) => `row-${i} 🙂\n`).join("");
 const truncatedDetails = (path: string) => ({
@@ -154,8 +151,8 @@ const truncatedDetails = (path: string) => ({
   fullOutputPath: path,
 });
 
-describe("terminal stream sidecar source", () => {
-  it("serves the streamed bytes while Pi's file is named but still shorter than what was sent", async () => {
+describe("terminal preview sidecar source", () => {
+  it("publishes a named Pi file immediately and serves that file, even when it is short", async () => {
     const h = await harness();
     const path = join(h.root, "pi-bash.log");
     h.ingest({ type: "tool_execution_start", args: {} });
@@ -163,49 +160,34 @@ describe("terminal stream sidecar source", () => {
       type: "tool_execution_update",
       partialResult: { content: [{ type: "text", text: phase1 }], details: {} },
     });
-    const sent = bytesOf(first);
-    expect(sent).toBe(Buffer.byteLength(phase1));
+    expect(first.some((message) => "outputStream" in message)).toBe(false);
+    expect(streamed(first).toString("utf8")).toBe(phase1);
 
-    // Pi named the file on the truncating update; its write stream has flushed only a prefix.
     writeFileSync(path, "row-0");
-    const lagging = h.ingest({
+    h.ingest({
       type: "tool_execution_update",
       partialResult: {
         content: [{ type: "text", text: "tail of a truncated view" }],
         details: truncatedDetails(path),
       },
     });
-    expect(lagging).toEqual([]);
-    expect(h.active.toolFullOutputPaths.has("tc")).toBe(false);
-
-    const head = await fetch(h.url, { method: "HEAD" });
-    expect(Number(head.headers.get("content-length"))).toBe(sent);
-    const window = await h.range(0, sent - 1);
-    expect(window.status).toBe(206);
-    expect(window.bytes.equals(streamed(first))).toBe(true);
-
-    // Once the file holds the streamed prefix it becomes the verified log and the sidecar.
-    writeFileSync(path, phase1 + "more\n");
-    const resumed = h.ingest({
-      type: "tool_execution_update",
-      partialResult: { content: [], details: truncatedDetails(path) },
-    });
-    expect(resumed[0]?.outputStream).toEqual({ epoch: 1, offset: sent, bytes: 5 });
     expect(h.active.toolFullOutputPaths.get("tc")).toBe(path);
-    const head2 = await fetch(h.url, { method: "HEAD" });
-    expect(Number(head2.headers.get("content-length"))).toBe(sent + 5);
+    const head = await fetch(h.url, { method: "HEAD" });
+    expect(Number(head.headers.get("content-length"))).toBe(Buffer.byteLength("row-0"));
+    const window = await h.range(0, 4);
+    expect(window.status).toBe(206);
+    expect(window.bytes.toString("utf8")).toBe("row-0");
   });
 
-  it("keeps the streamed bytes servable after tool end when Pi's file never becomes readable", async () => {
+  it("does not invent a byte cursor when the named file is missing", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const h = await harness();
     const missing = join(h.root, "never-written.log");
     h.ingest({ type: "tool_execution_start", args: {} });
-    const first = h.ingest({
+    h.ingest({
       type: "tool_execution_update",
       partialResult: { content: [{ type: "text", text: phase1 }], details: {} },
     });
-    const sent = bytesOf(first);
     h.ingest({
       type: "tool_execution_update",
       partialResult: {
@@ -223,17 +205,11 @@ describe("terminal stream sidecar source", () => {
       },
     });
     const end = h.received.slice(done).find((m) => m.type === "tool_end");
-
-    // Not a finished short log: the producer's length lets the client gap-fill and fail visibly.
-    expect(end).toMatchObject({ outputStream: { epoch: 1, totalBytes: 200_000 } });
-    expect(h.active.toolFullOutputPaths.has("tc")).toBe(false);
-    const window = await h.range(0, sent - 1);
-    expect(window.status).toBe(206);
-    expect(window.bytes.equals(streamed(first))).toBe(true);
-    expect((await h.range(sent, sent + 10)).status).toBe(416);
-    // The failure is surfaced, once, without the private path.
+    expect(end).not.toHaveProperty("outputStream");
+    expect(h.active.toolFullOutputPaths.get("tc")).toBe(missing);
+    expect(h.received.some((message) => "outputStream" in message)).toBe(false);
     const logged = stderr.mock.calls.map(([line]) => String(line)).join("");
-    expect(logged).toContain("terminal_stream.file_read_failed");
+    expect(logged).not.toContain("terminal_stream.file_read_failed");
     expect(logged).not.toContain(missing);
 
     h.ingest({ type: "turn_end", toolCallId: undefined });

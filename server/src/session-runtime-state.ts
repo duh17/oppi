@@ -23,6 +23,8 @@ export interface RuntimeSessionStateScaffold<
   toolNames: Map<string, string>;
   toolArgs: Map<string, Record<string, unknown>>;
   streamingToolUpdatesSeen: Map<string, string>;
+  /** Last tail-preview send time per terminal call. Shared with TranslationContext. */
+  shellPreviewLastSent: Map<string, number>;
   toolFullOutputPaths: Map<string, string>;
   messageQueue: TQueue;
   turnCache: TurnDedupeCache;
@@ -60,6 +62,7 @@ export function createRuntimeSessionStateScaffold<
     toolNames: new Map(),
     toolArgs: new Map(),
     streamingToolUpdatesSeen: new Map(),
+    shellPreviewLastSent: new Map(),
     toolFullOutputPaths: new Map(),
     messageQueue,
     turnCache: new TurnDedupeCache(),

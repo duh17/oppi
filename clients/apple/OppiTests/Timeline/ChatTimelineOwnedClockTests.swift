@@ -8,7 +8,7 @@ import UIKit
 @Suite("Chat timeline UIKit-owned clock")
 @MainActor
 struct ChatTimelineOwnedClockTests {
-    @Test func terminalPaintReconfiguresRowWhenPreviewIsUnchanged() async throws {
+    @Test func terminalTextPaintsWithoutAResyncOwner() async throws {
         let fixture = makeHostedOwnedTimeline(isBusy: true)
         defer { fixture.tearDown() }
         fixture.reducer.expandedItemIDs.insert("terminal")
@@ -20,91 +20,15 @@ struct ChatTimelineOwnedClockTests {
             .toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: "ready\n", isError: false,
                 outputStream: .init(epoch: 1, offset: 0, bytes: 6)))
         ])
-        let owner = try #require(fixture.reducer.terminalOutputStreams.owner(for: "terminal"))
+        #expect(fixture.reducer.terminalOutputStreams.owner(for: "terminal") == nil)
+        #expect(fixture.reducer.toolOutputStore.fullOutput(for: "terminal") == "ready\n")
         #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
             await MainActor.run {
                 fixture.host.view.layoutIfNeeded()
-                func ready(in view: UIView) -> Bool {
-                    if let text = view as? UITextView, text.textStorage.string.contains("ready") { return true }
-                    return view.subviews.contains { ready(in: $0) }
-                }
-                return ready(in: fixture.host.view)
+                return Self.containsTerminalText("ready", in: fixture.host.view)
+                    && !Self.containsTerminalText("Terminal output resync failed", in: fixture.host.view)
             }
         })
-        let before = fixture.reducer.items
-        owner.markReconnecting()
-        // The canonical ChatItem need not change when only recovery state changes.
-        #expect(fixture.reducer.items == before)
-        #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
-            await MainActor.run {
-                fixture.host.view.layoutIfNeeded()
-                func notice(in view: UIView) -> Bool {
-                    if let label = view as? UILabel, !label.isHidden, label.text == "Resyncing terminal output…" { return true }
-                    return view.subviews.contains { notice(in: $0) }
-                }
-                return notice(in: fixture.host.view)
-            }
-        })
-        let prefix = String(repeating: "x extra long\n", count: 1200)
-        fixture.reducer.process(.toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: prefix,
-            isError: false, outputStream: .init(epoch: 1, offset: 6, bytes: prefix.utf8.count))))
-        #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
-            await MainActor.run { Self.containsTerminalText("x extra long\nx extra long", in: fixture.host.view) }
-        })
-        let tail = "last line\n"
-        fixture.reducer.process(.toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: tail,
-            isError: false, outputStream: .init(epoch: 1, offset: 6 + prefix.utf8.count, bytes: tail.utf8.count))))
-        #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
-            await MainActor.run {
-                fixture.host.view.layoutIfNeeded()
-                guard let row = Self.terminalRow(in: fixture.host.view) else { return false }
-                return Self.containsTerminalText(tail, in: row)
-                    && ToolTimelineRowUIHelpers.isNearBottom(row.bashToolRowView.outputScrollView)
-                    && row.bashToolRowView.outputScrollView.contentOffset.y > 0
-            }
-        })
-        let row = try #require(Self.terminalRow(in: fixture.host.view))
-        let scroll = row.bashToolRowView.outputScrollView
-        scroll.draggingOverrideForTesting = true
-        scroll.delegate?.scrollViewWillBeginDragging?(scroll)
-        // The first incremental movement is still inside the near-tail threshold.
-        let draggedY = scroll.contentOffset.y - 8
-        scroll.setContentOffset(CGPoint(x: 0, y: draggedY), animated: false)
-        row.bashToolRowView.scrollViewDidScroll(scroll)
-        #expect(ToolTimelineRowUIHelpers.isNearBottom(scroll))
-        #expect(!row.bashToolRowView.outputShouldAutoFollow)
-        let revisionBeforeDetachedPaint = owner.presentationRevision
-        fixture.reducer.process(.toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: "detached tail\n",
-            isError: false, outputStream: .init(epoch: 1, offset: owner.cursor, bytes: 14))))
-        #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
-            await MainActor.run { owner.presentationRevision != revisionBeforeDetachedPaint && owner.formatted.contains("detached tail") }
-        })
-        fixture.host.view.layoutIfNeeded()
-        // A detached reader's text stays still: the paint is withheld, not laid out.
-        #expect(!Self.containsTerminalText("detached tail", in: row))
-        #expect(abs(scroll.contentOffset.y - draggedY) < 1,
-            "A streamed paint during an incremental tail drag must keep the viewport")
-        scroll.draggingOverrideForTesting = false
-        scroll.deceleratingOverrideForTesting = true
-        scroll.delegate?.scrollViewDidEndDragging?(scroll, willDecelerate: true)
-        scroll.setContentOffset(CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height - 4), animated: false)
-        row.bashToolRowView.scrollViewDidScroll(scroll)
-        #expect(!row.bashToolRowView.outputShouldAutoFollow)
-        scroll.deceleratingOverrideForTesting = false
-        scroll.delegate?.scrollViewDidEndDecelerating?(scroll)
-        #expect(row.bashToolRowView.outputShouldAutoFollow)
-        // Settling at the tail paints the withheld snapshot without waiting for more bytes.
-        #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
-            await MainActor.run {
-                fixture.host.view.layoutIfNeeded()
-                return Self.containsTerminalText("detached tail", in: row)
-            }
-        })
-    }
-
-    private static func terminalRow(in view: UIView) -> ToolTimelineRowContentView? {
-        if let row = view as? ToolTimelineRowContentView { return row }
-        return view.subviews.compactMap { terminalRow(in: $0) }.first
     }
 
     private static func containsTerminalText(_ text: String, in view: UIView) -> Bool {

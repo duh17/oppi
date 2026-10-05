@@ -1,5 +1,4 @@
 import type { ToolOutputSnapshots } from "./tool-output-sidecar.js";
-import type { TerminalStreamChunk, TerminalStreamEnd } from "./terminal-output-stream.js";
 /**
  * Pi event translation and session state helpers.
  *
@@ -38,6 +37,66 @@ import {
 } from "./tool-mutations.js";
 
 const log = createLogger({ base: { component: "session_protocol" } });
+
+/** Accumulated output threshold (bytes) before a terminal call switches to a tail replace. */
+const SHELL_PREVIEW_THRESHOLD = 8 * 1024;
+/** Maximum lines in a live tail preview. */
+const SHELL_PREVIEW_MAX_LINES = 80;
+/** Maximum bytes in a live tail preview. */
+const SHELL_PREVIEW_MAX_BYTES = 16 * 1024;
+/** Minimum interval between tail replaces for the same call. */
+const SHELL_PREVIEW_MIN_INTERVAL_MS = 150;
+
+function utf8ByteCount(text: string): number {
+  return Buffer.byteLength(text, "utf8");
+}
+
+function tailByUtf8Bytes(text: string, maxBytes: number): string {
+  if (utf8ByteCount(text) <= maxBytes) return text;
+  const chars = Array.from(text);
+  const kept: string[] = [];
+  let bytes = 0;
+  for (let index = chars.length - 1; index >= 0; index -= 1) {
+    const char = chars[index];
+    if (char === undefined) continue;
+    const charBytes = utf8ByteCount(char);
+    if (bytes + charBytes > maxBytes) break;
+    kept.push(char);
+    bytes += charBytes;
+  }
+  return kept.reverse().join("");
+}
+
+function countNewlines(text: string): number {
+  let count = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text.charCodeAt(i) === 10) count += 1;
+  }
+  return count;
+}
+
+/** Last N lines, then a UTF-8 tail, cut at a line start when that still leaves text. */
+function extractTailPreview(
+  text: string,
+  maxLines = SHELL_PREVIEW_MAX_LINES,
+  maxBytes = SHELL_PREVIEW_MAX_BYTES,
+): string {
+  if (utf8ByteCount(text) <= maxBytes && countNewlines(text) + 1 <= maxLines) return text;
+  const lines = text.split("\n");
+  let preview = (lines.length <= maxLines ? lines : lines.slice(-maxLines)).join("\n");
+  if (utf8ByteCount(preview) > maxBytes) {
+    preview = tailByUtf8Bytes(preview, maxBytes);
+    const firstNewline = preview.indexOf("\n");
+    if (firstNewline > 0 && firstNewline < preview.length - 1) {
+      preview = preview.slice(firstNewline + 1);
+    }
+  }
+  return preview;
+}
+
+function shellPreviewClock(ctx: TranslationContext): Map<string, number> {
+  return (ctx.shellPreviewLastSent ??= new Map());
+}
 
 // ─── Text Helpers ───
 
@@ -455,6 +514,11 @@ export interface TranslationContext {
   toolArgs?: Map<string, Record<string, unknown>>;
   /** Last serialized streaming tool args emitted per toolCallId this turn. */
   streamingToolUpdatesSeen: Map<string, string>;
+  /**
+   * Last tail-preview send time per terminal call. Persisted on the session so
+   * a rebuilt context still throttles and knows a preview was sent.
+   */
+  shellPreviewLastSent?: Map<string, number>;
 }
 
 /**
@@ -617,7 +681,6 @@ function pushToolOutputMessage(
     totalBytes?: number;
     details?: unknown;
     outputAvailability?: ToolOutputAvailability;
-    outputStream?: TerminalStreamChunk["outputStream"];
   },
 ): void {
   messages.push({
@@ -630,7 +693,6 @@ function pushToolOutputMessage(
     ...(payload.totalBytes !== undefined ? { totalBytes: payload.totalBytes } : {}),
     ...(payload.details !== undefined ? { details: payload.details } : {}),
     ...(payload.outputAvailability ? { outputAvailability: payload.outputAvailability } : {}),
-    ...(payload.outputStream ? { outputStream: payload.outputStream } : {}),
   });
 }
 
@@ -750,13 +812,6 @@ function resolveToolCallId(event: AgentSessionEvent): string | undefined {
   }
 
   return undefined;
-}
-
-function optionalProp<K extends string, V>(
-  key: K,
-  value: V | null | undefined,
-): Partial<Record<K, V>> {
-  return value === null || value === undefined ? {} : ({ [key]: value } as Record<K, V>);
 }
 
 /** Parent codemode call that owns this event's tool call, if any. */
@@ -925,9 +980,6 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
         ctx.toolNames.set(toolCallId, event.toolName);
         ctx.toolArgs?.set(toolCallId, asRecord(event.args) ?? {});
         ctx.streamingToolUpdatesSeen.delete(toolCallId);
-        if (outputPresentation?.kind === "terminal") {
-          ctx.toolOutputSnapshots.terminal.begin(toolCallId, parentToolCallIdOf(event));
-        }
       }
 
       const messages: ServerMessage[] = [];
@@ -1000,40 +1052,10 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
           ? [record.text]
           : [];
       });
-      // Terminal-kind output is an append-only raw byte log (offset-checked stream),
-      // never a replace/tail view. A stream, once begun, stays terminal for the call.
-      const terminalStream =
-        toolCallId !== undefined && (shellTool || ctx.toolOutputSnapshots.terminal.has(key));
-      if (terminalStream) {
-        const streams = ctx.toolOutputSnapshots.terminal;
-        const chunks = streams.update(key, {
-          ...(textParts.length > 0 ? { text: textParts.join("") } : {}),
-          ...optionalProp(
-            "fullOutputPath",
-            extractToolFullOutputPath(event.partialResult?.details),
-          ),
-          ...optionalProp("parentToolCallId", parentToolCallIdOf(event)),
-        });
-        const retained = streams.retainedText(key);
-        if (retained !== null) {
-          // The retained text is exactly the streamed log, so it is servable even when Pi
-          // flags its own view truncated: until the Pi file is verified it is the sidecar.
-          ctx.toolOutputSnapshots.update(key, retained, true);
-        } else {
-          ctx.toolOutputSnapshots.discard(key);
-        }
-        chunks.forEach((chunk, index) => {
-          pushToolOutputMessage(messages, {
-            output: chunk.output,
-            toolCallId,
-            outputStream: chunk.outputStream,
-            ...(index === 0 ? { details: updateDetails } : {}),
-          });
-        });
-        emittedOutput = chunks.length > 0;
-      }
-
-      const outputContents = terminalStream ? [] : contents;
+      // One joined text block so a multi-block terminal snapshot has one preview
+      // and one sidecar baseline, not whichever block updated last.
+      const outputContents =
+        shellTool && textParts.length > 0 ? [{ type: "text", text: textParts.join("") }] : contents;
       for (const block of outputContents) {
         const record = asRecord(block);
         if (!record) {
@@ -1050,17 +1072,48 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
           const lastText = ctx.toolOutputSnapshots.previous(key);
           ctx.toolOutputSnapshots.update(key, fullText, producerAvailability.complete);
 
-          // Append delta behavior, with replace fallback for tools that
-          // publish full non-prefix status snapshots.
-          const update = computeToolOutputUpdate(lastText, fullText);
-          if (update) {
+          const fullTextBytes = utf8ByteCount(fullText);
+          if (shellTool && toolCallId && fullTextBytes > SHELL_PREVIEW_THRESHOLD) {
+            // Large terminal output: bounded tail replace, throttled. The Pi file
+            // remains the full log for an explicit open.
+            const clock = shellPreviewClock(ctx);
+            const now = Date.now();
+            const lastSent = clock.get(key) ?? 0;
+            if (now - lastSent < SHELL_PREVIEW_MIN_INTERVAL_MS) {
+              continue;
+            }
+            clock.set(key, now);
+            const preview = extractTailPreview(fullText);
             pushToolOutputMessage(messages, {
-              output: update.output,
+              output: preview,
               toolCallId,
-              ...(update.mode ? { mode: update.mode } : {}),
+              mode: "replace",
+              truncated: true,
+              totalBytes: producerAvailability.totalBytes ?? fullTextBytes,
+              outputAvailability: {
+                complete: false,
+                totalBytes: producerAvailability.totalBytes ?? fullTextBytes,
+                ...(producerAvailability.complete !== false || producerAvailability.source === "sidecar"
+                  ? { source: "sidecar" as const }
+                  : {}),
+              },
               details: updateDetails,
             });
             emittedOutput = true;
+          } else {
+            const update = computeToolOutputUpdate(lastText, fullText);
+            if (update) {
+              pushToolOutputMessage(messages, {
+                output: update.output,
+                toolCallId,
+                ...(update.mode ? { mode: update.mode } : {}),
+                ...(shellTool && shellPreviewClock(ctx).has(key)
+                  ? { outputAvailability: producerAvailability }
+                  : {}),
+                details: updateDetails,
+              });
+              emittedOutput = true;
+            }
           }
         }
       }
@@ -1112,30 +1165,8 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
         ctx.mobileRenderers.outputPresentation(toolName, event.result?.details)?.kind ===
         "interactive";
       const producerAvailability = ctx.mobileRenderers.outputAvailability(event.result?.details);
-      const terminalStream =
-        toolCallId !== undefined &&
-        !isAskTool &&
-        (shellTool || ctx.toolOutputSnapshots.terminal.has(key));
-      let settled: TerminalStreamEnd | undefined;
+      const wasPreviewed = shellPreviewClock(ctx).has(key);
       let finalText = "";
-      // Pi's trailing result text (status lines, truncation footers) is not stream bytes:
-      // with a Pi file the file is the log; without one the partial text already is.
-      const endTerminalStream = (text?: string): TerminalStreamEnd => {
-        const end = ctx.toolOutputSnapshots.terminal.end(key, {
-          ...(text !== undefined ? { text } : {}),
-          ...optionalProp("fullOutputPath", extractToolFullOutputPath(event.result?.details)),
-          ...optionalProp("parentToolCallId", parentToolCallIdOf(event)),
-          ...optionalProp("producerTotalBytes", producerAvailability.totalBytes),
-        });
-        for (const chunk of end.chunks) {
-          pushToolOutputMessage(messages, {
-            output: chunk.output,
-            toolCallId,
-            outputStream: chunk.outputStream,
-          });
-        }
-        return end;
-      };
 
       // Extract final text/media from result — some tools only include output
       // at end (no partial updates), so emit missing delta here.
@@ -1152,13 +1183,37 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
 
             const type = record.type;
             const isText = type === "text" || type === "output_text";
-            if (!isText || typeof record.text !== "string") return "";
-            return terminalStream ? record.text : stripAnsiEscapes(record.text);
+            return isText && typeof record.text === "string" ? stripAnsiEscapes(record.text) : "";
           })
           .join("");
 
-        if (terminalStream) {
-          settled = endTerminalStream(finalText);
+        const finalTextBytes = utf8ByteCount(finalText);
+        if (
+          shellTool &&
+          toolCallId &&
+          finalTextBytes > SHELL_PREVIEW_THRESHOLD &&
+          producerAvailability.complete === false
+        ) {
+          // Still truncated: keep the bounded tail. The Pi file is the full log.
+          const preview = extractTailPreview(finalText);
+          pushToolOutputMessage(messages, {
+            output: preview,
+            toolCallId,
+            mode: "replace",
+            truncated: true,
+            totalBytes: producerAvailability.totalBytes ?? finalTextBytes,
+            outputAvailability: producerAvailability,
+          });
+        } else if (wasPreviewed) {
+          // A transport preview must not hide a finished result.
+          pushToolOutputMessage(messages, {
+            output: finalText,
+            toolCallId,
+            mode: "replace",
+            truncated: false,
+            totalBytes: finalTextBytes,
+            outputAvailability: producerAvailability,
+          });
         } else {
           const update = computeToolOutputUpdate(lastText, finalText);
           if (update) {
@@ -1177,8 +1232,6 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
         );
       }
 
-      if (terminalStream && !settled) settled = endTerminalStream();
-
       const definition = ctx.getToolDefinition?.(event.toolName);
       const display = resolveToolDisplay(event.toolName, definition, event.result?.details);
       const startDisplay = resolveToolDisplay(event.toolName, definition);
@@ -1196,16 +1249,10 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
           ...(inputPresentation ? { inputPresentation } : {}),
         });
       }
-      // A terminal stream keeps its streamed log as the sidecar source until turn_end
-      // unless the Pi file was verified as that log, in which case the file serves it.
-      if (settled) {
-        const retained = settled.snapshotText;
-        ctx.toolOutputSnapshots.finish(key, retained ?? "", retained !== null, true);
-      } else {
-        ctx.toolOutputSnapshots.finish(key, finalText, false, producerAvailability.complete);
-      }
+      ctx.toolOutputSnapshots.finish(key, finalText, wasPreviewed, producerAvailability.complete);
       ctx.toolNames.delete(key);
       ctx.toolArgs?.delete(key);
+      shellPreviewClock(ctx).delete(key);
 
       // Forward structured details and error status from pi tool results.
       // Extensions emit typed details (e.g. remember: {file, redacted}, recall: {matches, topHeader})
@@ -1247,9 +1294,6 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
         ...(details !== undefined && details !== null ? { details } : {}),
         ...(event.isError ? { isError: true } : {}),
         ...(resultSegments ? { resultSegments } : {}),
-        ...(settled
-          ? { outputStream: { epoch: settled.epoch, totalBytes: settled.totalBytes } }
-          : {}),
       });
 
       return messages;

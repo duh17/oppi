@@ -1715,7 +1715,7 @@ describe("translatePiEvent", () => {
       expect(toolOutput.output).toBe("\x1b[32mSuccess\x1b[0m: done");
     });
 
-    it("keeps terminal-kind VT bytes raw but strips TUI chrome for other tools", () => {
+    it("strips terminal-kind TUI chrome the same way as other tools", () => {
       const ctx = makeCtx();
       ctx.toolNames.set("tc-1", "bash");
 
@@ -1738,11 +1738,13 @@ describe("translatePiEvent", () => {
       );
 
       expect(result).toHaveLength(1);
-      // Terminal kind: raw VT bytes; the client engine owns interpretation.
+      // Terminal kind uses the same stripped text path as other tools.
       expect(result[0]).toMatchObject({
-        output: tuiOutput,
-        outputStream: { epoch: 1, offset: 0, bytes: Buffer.byteLength(tuiOutput) },
+        output:
+          "\x1b[0m\x1b[38;5;59m─\x1b[39m\x1b[38;5;59m─\x1b[39m\n" +
+          "\x1b[38;5;167mError: 404\x1b[39m\n",
       });
+      expect(result[0]).not.toHaveProperty("outputStream");
 
       ctx.toolNames.set("tc-2", "read");
       const other = translatePiEvent(
@@ -1846,9 +1848,9 @@ describe("translatePiEvent", () => {
       expect(result[0]!.type).toBe("tool_end");
     });
 
-    it("retains completed terminal output until turn_end and clears call maps", () => {
+    it("retains a previewed complete terminal result until turn_end and clears call maps", () => {
       const ctx = makeCtx();
-      ctx.toolOutputSnapshots.update("tc-1", "data");
+      ctx.shellPreviewLastSent = new Map([["tc-1", 1]]);
       ctx.toolNames.set("tc-1", "bash");
 
       translatePiEvent(
@@ -1864,6 +1866,7 @@ describe("translatePiEvent", () => {
 
       expect(ctx.toolOutputSnapshots.previous("tc-1")).toBe("completed output");
       expect(ctx.toolNames.has("tc-1")).toBe(false);
+      expect(ctx.shellPreviewLastSent?.has("tc-1")).toBe(false);
 
       translatePiEvent({ type: "turn_end" } as AgentSessionEvent, ctx);
       expect(ctx.toolOutputSnapshots.size).toBe(0);
@@ -2480,7 +2483,6 @@ describe("translatePiEvent", () => {
           type: "tool_output",
           output: "hel",
           toolCallId: "tc-1",
-          outputStream: { epoch: 1, offset: 0, bytes: 3 },
         },
       ]);
       expect(update2).toEqual([
@@ -2488,7 +2490,6 @@ describe("translatePiEvent", () => {
           type: "tool_output",
           output: "lo",
           toolCallId: "tc-1",
-          outputStream: { epoch: 1, offset: 3, bytes: 2 },
         },
       ]);
 
@@ -2510,14 +2511,14 @@ describe("translatePiEvent", () => {
         type: "tool_output",
         output: "\n",
         toolCallId: "tc-1",
-        outputStream: { epoch: 1, offset: 5, bytes: 1 },
       });
+      expect(outputs[0]).not.toHaveProperty("outputStream");
       expect(end.find((m) => m.type === "tool_end")).toMatchObject({
         type: "tool_end",
         tool: "bash",
         toolCallId: "tc-1",
-        outputStream: { epoch: 1, totalBytes: 6 },
       });
+      expect(end.find((m) => m.type === "tool_end")).not.toHaveProperty("outputStream");
       expect(
         [...update1, ...update2, ...outputs]
           .filter(
@@ -2527,12 +2528,41 @@ describe("translatePiEvent", () => {
           .join(""),
       ).toBe("hello\n");
 
-      // The terminal log stays servable until turn_end; call maps are clean.
-      expect(ctx.toolOutputSnapshots.fullOutput("tc-1")).toBe("hello\n");
-      expect(ctx.toolOutputSnapshots.terminal.size).toBe(0);
+      // A small finished call has already sent its text; the snapshot is not retained.
+      expect(ctx.toolOutputSnapshots.fullOutput("tc-1")).toBeNull();
       expect(ctx.toolNames.size).toBe(0);
       translatePiEvent({ type: "turn_end" } as AgentSessionEvent, ctx);
       expect(ctx.toolOutputSnapshots.size).toBe(0);
+    });
+
+    it("throttles large terminal tails and caps the live replace", () => {
+      const ctx = makeCtx();
+      const large = `${"x".repeat(20_000)}\n${"y".repeat(100)}`;
+      const first = translatePiEvent(
+        {
+          type: "tool_execution_update",
+          toolCallId: "tc-1",
+          toolName: "bash",
+          partialResult: { content: [{ type: "text", text: large }] },
+        } as AgentSessionEvent,
+        ctx,
+      );
+      const second = translatePiEvent(
+        {
+          type: "tool_execution_update",
+          toolCallId: "tc-1",
+          toolName: "bash",
+          partialResult: { content: [{ type: "text", text: `${large}more` }] },
+        } as AgentSessionEvent,
+        ctx,
+      );
+      expect(first).toHaveLength(1);
+      expect(first[0]).toMatchObject({ mode: "replace", truncated: true });
+      expect(Buffer.byteLength((first[0] as { output: string }).output)).toBeLessThanOrEqual(
+        16 * 1024,
+      );
+      expect((first[0] as { output: string }).output.endsWith("y".repeat(100))).toBe(true);
+      expect(second).toEqual([]);
     });
 
     it("handles concurrent tool calls with separate toolOutputSnapshots tracking", () => {

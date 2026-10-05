@@ -84,7 +84,6 @@ describe("terminal inspection facts", () => {
           type: "tool_output",
           output: "hello",
           toolCallId: "tc",
-          outputStream: { epoch: 1, offset: 0, bytes: 5 },
         },
       ]);
       expect(update("hello\nworld")).toEqual([
@@ -92,17 +91,19 @@ describe("terminal inspection facts", () => {
           type: "tool_output",
           output: "\nworld",
           toolCallId: "tc",
-          outputStream: { epoch: 1, offset: 5, bytes: 6 },
         },
       ]);
-      // A non-prefix view restarts the byte log explicitly instead of replacing a tail.
+      // Past 8 KiB the live card is a bounded tail replace, not a byte log.
       const large = "x".repeat(9000);
       expect(update(large)).toEqual([
         {
           type: "tool_output",
           output: large,
           toolCallId: "tc",
-          outputStream: { epoch: 2, offset: 0, bytes: 9000 },
+          mode: "replace",
+          truncated: true,
+          totalBytes: 9000,
+          outputAvailability: { complete: false, totalBytes: 9000, source: "sidecar" },
         },
       ]);
       const end = project({
@@ -116,8 +117,8 @@ describe("terminal inspection facts", () => {
         type: "tool_end",
         outputPresentation,
         outputAvailability: availability,
-        outputStream: { epoch: 2, totalBytes: 9000 },
       });
+      expect(end.at(-1)).not.toHaveProperty("outputStream");
       expect(JSON.stringify(end.at(-1))).not.toContain("/private/");
       expect(end.at(-1)?.details).not.toHaveProperty("fullOutputPath");
       expect(details.fullOutputPath).toBe("/private/tool-output.log");

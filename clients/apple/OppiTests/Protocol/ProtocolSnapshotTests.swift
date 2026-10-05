@@ -317,27 +317,6 @@ struct ProtocolSnapshotTests {
         #expect(output == "All 42 tests passed")
         #expect(isError == false)
 
-        // Raw stream bytes and the attach ready point are server-owned fixtures.
-        let streamMsg = try decodeMessage("tool_output_stream")
-        guard case .toolOutput(let streamOutput, _, let callId, let mode, let truncated, let totalBytes, _, _, _, let chunk) = streamMsg else {
-            Issue.record("Expected .toolOutput (stream)")
-            return
-        }
-        #expect(streamOutput == "\u{1B}[32mok\u{1B}[0m ✓\r\n")
-        #expect(callId == "tc-001")
-        #expect(mode == .append)
-        #expect(!truncated)
-        #expect(totalBytes == nil)
-        #expect(chunk == .init(epoch: 1, offset: 4096, bytes: 17))
-
-        let markerMsg = try decodeMessage("tool_output_stream_marker")
-        guard case .toolOutput(let markerOutput, _, _, _, _, _, _, _, _, let marker) = markerMsg else {
-            Issue.record("Expected .toolOutput (attach marker)")
-            return
-        }
-        #expect(markerOutput.isEmpty)
-        #expect(marker == .init(epoch: 1, offset: 4113, bytes: 0))
-
         // tool_end
         let endMsg = try decodeMessage("tool_end")
         guard case .toolEnd(let endTool, _, _, _, _, _, _, _, _, let endStream) = endMsg else {
@@ -345,7 +324,7 @@ struct ProtocolSnapshotTests {
             return
         }
         #expect(endTool == "bash")
-        #expect(endStream == .init(epoch: 1, totalBytes: 32768))
+        #expect(endStream == nil)
 
         // tool_end_with_details
         let detailsMsg = try decodeMessage("tool_end_with_details")

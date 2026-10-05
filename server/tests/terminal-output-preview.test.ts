@@ -19,8 +19,8 @@ afterEach(() => {
 // Above Oppi's 8 KB threshold but below Pi's 50 KB / 2000-line limits.
 const full = Array.from({ length: 300 }, (_, i) => `row-${i} ${"x".repeat(61)} 🙂\n`).join("");
 
-describe("terminal stream sidecar handoff", () => {
-  it("keeps the streamed log servable until turn_end even when Pi flags its view truncated", () => {
+describe("terminal preview source handoff", () => {
+  it("never exposes a Pi-truncated live snapshot as full output", () => {
     const registry = new MobileRendererRegistry();
     const ctx: TranslationContext = {
       sessionId: "s",
@@ -53,8 +53,8 @@ describe("terminal stream sidecar handoff", () => {
       ctx,
     );
     expect(ctx.toolOutputSnapshots.previous("tc")).toBe(full);
-    // These bytes were already streamed; the sidecar must be able to serve them.
-    expect(ctx.toolOutputSnapshots.fullOutput("tc")).toBe(full);
+    // A truncated Pi view is a delta baseline, not the full log. The Pi file is.
+    expect(ctx.toolOutputSnapshots.fullOutput("tc")).toBeNull();
     translatePiEvent(
       {
         type: "tool_execution_end",
@@ -64,7 +64,7 @@ describe("terminal stream sidecar handoff", () => {
       } as AgentSessionEvent,
       ctx,
     );
-    expect(ctx.toolOutputSnapshots.fullOutput("tc")).toBe(full);
+    expect(ctx.toolOutputSnapshots.fullOutput("tc")).toBeNull();
     translatePiEvent({ type: "turn_end" } as AgentSessionEvent, ctx);
     expect(ctx.toolOutputSnapshots.fullOutput("tc")).toBeNull();
   });
@@ -176,18 +176,13 @@ describe("terminal stream sidecar handoff", () => {
         expect(splitCodepoint.status).toBe(206);
         expect(await splitCodepoint.text()).not.toContain("\uFFFD");
         expect(await (await fetch(url)).json()).toEqual({ toolCallId: "tc", output: full });
-        // The sidecar and the live stream share one byte space: what Range returns is
-        // exactly what the stream sent, at the offsets it sent it.
+        // The live card is a bounded tail. The sidecar still serves the full snapshot.
         const chunks = update.filter((message) => message.type === "tool_output");
-        expect(chunks.length).toBeGreaterThan(0);
-        let cursor = 0;
-        for (const chunk of chunks) {
-          expect(chunk.outputStream).toMatchObject({ epoch: 1, offset: cursor });
-          expect(chunk).not.toHaveProperty("mode");
-          cursor += chunk.outputStream?.bytes ?? 0;
-        }
-        expect(cursor).toBe(Buffer.byteLength(full));
-        expect(chunks.map((chunk) => chunk.output).join("")).toBe(full);
+        expect(chunks).toHaveLength(1);
+        expect(chunks[0]).toMatchObject({ mode: "replace", truncated: true });
+        expect(chunks[0]).not.toHaveProperty("outputStream");
+        expect(Buffer.byteLength(chunks[0]?.output ?? "")).toBeLessThanOrEqual(16 * 1024);
+        expect(chunks[0]?.output).not.toBe(full);
         const tail = Buffer.byteLength(full) - 1000;
         const tailRange = await fetch(url, { headers: { Range: `bytes=${tail}-${tail + 99}` } });
         expect(Buffer.from(await tailRange.arrayBuffer()).toString("utf8")).toBe(
@@ -202,11 +197,15 @@ describe("terminal stream sidecar handoff", () => {
           toolCallId: "tc",
           result: { content: [{ type: "text", text: full }], details: {} },
         });
-        // Nothing is resent at the end: the log already holds the whole result.
-        expect(end.filter((message) => message.type === "tool_output")).toEqual([]);
-        expect(end.find((message) => message.type === "tool_end")).toMatchObject({
-          outputStream: { epoch: 1, totalBytes: Buffer.byteLength(full) },
+        // A finished call replaces the tail with the final text. No byte cursor.
+        expect(end.find((message) => message.type === "tool_output")).toMatchObject({
+          output: full,
+          mode: "replace",
+          truncated: false,
         });
+        expect(end.find((message) => message.type === "tool_end")).not.toHaveProperty(
+          "outputStream",
+        );
         const endFact = end.find((message) => message.type === "tool_end")?.outputAvailability;
         expect(endFact).toEqual({ complete: true });
         // Exercise the interval after tool_end and before Pi appends its result.

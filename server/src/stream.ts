@@ -576,13 +576,6 @@ export class BoundSessionStreamMux {
       }
       bootstrapping = false;
 
-      // Explicit ready point for running terminal byte streams. Synchronous with the
-      // queue drain above, so each marker's offset is exactly the next chunk's offset.
-      for (const marker of this.ctx.sessionRuntimes.getTerminalStreamAttachMarkers?.(sessionId) ??
-        []) {
-        sendForSession(marker);
-      }
-
       if (catchUpEvents.length > 0) {
         log.info("ws.bound_session_stream_bootstrap_replayed", {
           connId,

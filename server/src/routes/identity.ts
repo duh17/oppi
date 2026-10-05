@@ -312,7 +312,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         autoResize: config.images?.autoResize ?? false,
       },
       capabilities: {
-        sessionStream: { version: 2 },
+        sessionStream: { version: 1 },
         controlSessions: { version: 1 },
         currentFiles: { version: 1 },
         workspaceFileEditing: {

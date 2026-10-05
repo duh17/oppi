@@ -278,17 +278,17 @@ extension ChatTimelineCollectionHost.Controller {
 
         let details = toolDetailsStore?.details(for: itemID)
         let isExpanded = reducer?.expandedItemIDs.contains(itemID) == true
-        let outputBytes = reducer?.terminalOutputStreams.owner(for: itemID)?.cursor ?? toolOutputStore?.outputByteCount(for: itemID) ?? 0
+        let outputBytes = toolOutputStore?.outputByteCount(for: itemID) ?? 0
         let inspection = ToolContentDescriptorBuilder.inspect(tool: tool, argsSummary: argsSummary,
             outputPreview: outputPreview, isError: isError, isDone: isDone,
             context: .init(args: toolArgsStore?.args(for: itemID), details: details,
-                fullOutput: reducer?.terminalOutputStreams.owner(for: itemID)?.formatted ?? toolOutputStore?.fullOutput(for: itemID) ?? "",
+                fullOutput: toolOutputStore?.fullOutput(for: itemID) ?? "",
                 isLoadingOutput: toolOutputLoader.isLoading(itemID), inputPresentation: toolArgsStore?.inputPresentation(for: itemID),
                 nestedCalls: toolDetailsStore?.nestedCalls(for: itemID),
                 previewOnly: toolOutputStore?.hasCompleteOutput(for: itemID) != true,
                 totalBytes: outputBytes > 0 ? outputBytes : nil, display: toolArgsStore?.display(for: itemID),
                 outputPresentation: toolArgsStore?.outputPresentation(for: itemID), outputAvailability: toolArgsStore?.outputAvailability(for: itemID),
-                terminalResolved: reducer?.terminalOutputStreams.owner(for: itemID) != nil),
+                terminalResolved: false),
             includeOutput: isExpanded)
         let hasCanonicalAudioDetails = inspection.audioOutput
         let hasLifecycleVoicePresentation = audioLifecycleCoordinator.map {
@@ -362,7 +362,7 @@ extension ChatTimelineCollectionHost.Controller {
             isInterrupted: reducer?.isToolInterrupted(itemID) == true,
             context: context
         )
-        chrome.terminalOutputStream = reducer?.terminalOutputStreams.owner(for: itemID)
+        chrome.terminalOutputStream = nil
         return CollapsedToolTimelineRowConfiguration(chrome: chrome)
     }
 
@@ -381,7 +381,7 @@ extension ChatTimelineCollectionHost.Controller {
             args: toolArgsStore?.args(for: itemID),
             details: details,
             expandedItemIDs: reducer?.expandedItemIDs ?? [],
-            fullOutput: reducer?.terminalOutputStreams.owner(for: itemID)?.formatted ?? toolOutputStore?.fullOutput(for: itemID) ?? "",
+            fullOutput: toolOutputStore?.fullOutput(for: itemID) ?? "",
             isLoadingOutput: toolOutputLoader.isLoading(itemID),
             callSegments: card.map { [StyledSegment(text: $0.title, style: .accent),
                 StyledSegment(text: " " + ($0.output?.command ?? ""), style: .dim)] }
@@ -457,8 +457,8 @@ extension ChatTimelineCollectionHost.Controller {
             fallback: configuration.expandedContent
         )
         configuration.resourcePressure = resourcePressure
-        configuration.terminalOutputStream = reducer?.terminalOutputStreams.owner(for: itemID)
-        configuration.terminalOutputStreamStore = reducer?.terminalOutputStreams
+        configuration.terminalOutputStream = nil
+        configuration.terminalOutputStreamStore = nil
         if let intent = configuration.currentFileOpenIntent,
            let onOpenCurrentFile {
             configuration.openCurrentFile = {

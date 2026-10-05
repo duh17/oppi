@@ -235,12 +235,6 @@ export interface AgentRuntimeEventTransport {
   getCatchUp(sessionId: string, sinceSeq: number): SessionCatchUpResponse | null;
   /** Replayable extension UI messages: persistent notifications plus pending dialogs and asks. */
   getPendingUIRequestMessages(sessionId: string): ServerMessage[];
-  /**
-   * Zero-length `tool_output` ready markers, one per running terminal-kind stream: the
-   * cursor a client attaching after catch-up replay must continue from. Optional: the
-   * terminal mirror runtime does not provide it, so its clients resolve on the next chunk.
-   */
-  getTerminalStreamAttachMarkers?(sessionId: string): ServerMessage[];
 }
 
 /** Full runtime adapter contract. */

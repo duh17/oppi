@@ -157,6 +157,8 @@ export interface EventProcessorSessionState extends ExtensionUIState {
   toolArgs?: Map<string, Record<string, unknown>>;
   /** Last serialized streaming tool args emitted per toolCallId this turn. */
   streamingToolUpdatesSeen: Map<string, string>;
+  /** Last tail-preview send time per terminal call. */
+  shellPreviewLastSent: Map<string, number>;
   /** Timestamp (ms) when the current turn started (agent_start). */
   turnStartedAt?: number;
   /** Whether the first text/thinking token has been recorded for the current turn. */
@@ -211,6 +213,7 @@ export class SessionEventProcessor {
       toolNames: active.toolNames,
       toolArgs: active.toolArgs,
       streamingToolUpdatesSeen: active.streamingToolUpdatesSeen,
+      shellPreviewLastSent: active.shellPreviewLastSent,
     };
   }
 

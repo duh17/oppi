@@ -6,20 +6,14 @@ import {
   logRejectedByteRange,
   parseByteRangeHeader,
 } from "./http-range.js";
-import { TerminalOutputStreams } from "./terminal-output-stream.js";
-
 const TOOL_OUTPUT_SIDECAR_TYPE = "text/plain; charset=utf-8";
 
 /** Per-runtime, per-turn uncut output. This owner keeps delta baselines and the
  * tool_end → Pi trace-append handoff together. No disk cache; turn_end/disposal
  * releases it. Pi-truncated snapshots are delta baselines only, never full output.
- *
- * `terminal` owns the append-only byte log of running terminal-kind calls. Its
- * snapshot is the raw (unstripped) text the stream sent, so the sidecar serves the
- * same byte space as the live stream until Pi's temp file takes over. */
+ * The Pi file, once named, is the full log for an explicit open. */
 export class ToolOutputSnapshots {
   private readonly snapshots = new Map<string, { text: string; complete: boolean }>();
-  readonly terminal = new TerminalOutputStreams();
 
   previous(id: string): string {
     return this.snapshots.get(id)?.text ?? "";
@@ -40,7 +34,6 @@ export class ToolOutputSnapshots {
   }
   clear(): void {
     this.snapshots.clear();
-    this.terminal.clear();
   }
   get size(): number {
     return this.snapshots.size;

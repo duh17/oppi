@@ -45,24 +45,6 @@ export interface ToolOutputPresentation {
   settingEffect?: "voiceReplyMode";
 }
 
-/**
- * Position of a terminal-kind `tool_output` chunk in the call's append-only raw byte log.
- * `epoch >= 1` identifies one log; a larger epoch means "discard prior state" and restarts
- * at offset 0. `offset`/`bytes` count raw bytes (never UTF-16 units of `output`); the next
- * chunk of an epoch starts at `offset + bytes`. `bytes: 0` is only the attach ready marker.
- */
-export interface ToolOutputStreamPosition {
-  epoch: number;
-  offset: number;
-  bytes: number;
-}
-
-/** Final length of a terminal-kind call's byte log (final epoch only). */
-export interface ToolEndOutputStream {
-  epoch: number;
-  totalBytes: number;
-}
-
 /** Pi result text completeness; source uses toolCallId, never a private path.
  * The sidecar may become unavailable when the session stops. */
 export interface ToolOutputAvailability {
@@ -547,12 +529,6 @@ export type ServerMessage = // ── Connection ──
         totalBytes?: number;
         /** Optional structured details for in-flight tool presentation updates. */
         details?: unknown;
-        /**
-         * Terminal-kind only: `output` is the UTF-8 decoding of exactly `bytes` raw VT bytes
-         * (unstripped, codepoint-complete) at `offset`. Such chunks never carry `mode`,
-         * `truncated` or `totalBytes`.
-         */
-        outputStream?: ToolOutputStreamPosition;
       }
     | {
         type: "tool_end";
@@ -565,8 +541,6 @@ export type ServerMessage = // ── Connection ──
         details?: unknown;
         isError?: boolean;
         resultSegments?: StyledSegment[];
-        /** Terminal-kind only: final length of the call's raw byte log. */
-        outputStream?: ToolEndOutputStream;
       }
     // ── Message queue ──
     | { type: "queue_state"; queue: MessageQueueState }

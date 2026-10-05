@@ -383,7 +383,7 @@ describe("managed and mirror runtime event parity", () => {
     ] as AgentSessionEvent[]);
   });
 
-  it("streams terminal output bytes and publishes terminal facts in both runtimes", () => {
+  it("publishes terminal facts and a bounded tail for large bash output in both runtimes", () => {
     const output = "terminal output line\n".repeat(600);
     const { managed, mirror } = expectRuntimeParity([
       {
@@ -417,21 +417,22 @@ describe("managed and mirror runtime event parity", () => {
         outputPresentation: { kind: "terminal" },
       });
       const outputs = harness.received.filter((message) => message.type === "tool_output");
-      // The Pi file is unreadable here, so the stream carries only the text it saw and the
-      // end reports the producer's length: the client must gap-fill, not treat it as complete.
-      expect(outputs).toEqual([
-        {
-          type: "tool_output",
-          toolCallId: "terminal-1",
-          output,
-          outputStream: { epoch: 1, offset: 0, bytes: Buffer.byteLength(output) },
-        },
-      ]);
+      // Past 8 KiB the live card is a tail replace. The unreadable Pi file is not a byte log;
+      // the end keeps the tail and the sidecar fact, and does not invent a cursor.
+      expect(outputs.length).toBeGreaterThan(0);
+      for (const message of outputs) {
+        expect(message).not.toHaveProperty("outputStream");
+        if (message.type === "tool_output" && message.mode === "replace") {
+          expect(Buffer.byteLength(message.output)).toBeLessThanOrEqual(16 * 1024);
+        }
+      }
       expect(harness.received.find((message) => message.type === "tool_end")).toMatchObject({
         outputPresentation: { kind: "terminal" },
         outputAvailability: { complete: false, totalBytes: 100_000, source: "sidecar" },
-        outputStream: { epoch: 1, totalBytes: 100_000 },
       });
+      expect(harness.received.find((message) => message.type === "tool_end")).not.toHaveProperty(
+        "outputStream",
+      );
     }
   });
 

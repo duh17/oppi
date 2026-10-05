@@ -904,17 +904,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return active.toolFullOutputPaths.get(normalizedToolCallId) ?? null;
   }
 
-  getTerminalStreamAttachMarkers(sessionId: string): ServerMessage[] {
-    const streams = this.active.get(this.sessionKey(sessionId))?.toolOutputSnapshots.terminal;
-    return (streams?.attachMarkers() ?? []).map((marker) => ({
-      type: "tool_output",
-      output: "",
-      toolCallId: marker.toolCallId,
-      ...(marker.parentToolCallId ? { parentToolCallId: marker.parentToolCallId } : {}),
-      outputStream: { epoch: marker.epoch, offset: marker.offset, bytes: 0 },
-    }));
-  }
-
   getToolPartialOutput(sessionId: string, toolCallId: string): string | null {
     const key = toolCallId.trim();
     return key

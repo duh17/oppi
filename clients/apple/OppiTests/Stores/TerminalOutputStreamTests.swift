@@ -273,7 +273,7 @@ struct TerminalOutputStreamTests {
         #expect(received.map { $0.outputStream?.offset } == [0, output.utf8.count, 2 * output.utf8.count])
     }
 
-    @Test func reducerRoutesToOneOwnerAndHistoryDiscardsIt() async throws {
+    @Test func reducerStoresTerminalTextInsteadOfAByteLogOwner() async throws {
         let reducer = TimelineReducer()
         reducer.process(.toolStart(sessionId: "s", toolEventId: "t", tool: "arbitrary", args: [:],
             outputPresentation: .init(kind: "terminal")))
@@ -283,16 +283,14 @@ struct TerminalOutputStreamTests {
             .toolEnd(sessionId: "s", toolEventId: "t", details: .object(["expandedText": .string("stale cumulative output")]),
                 outputStream: .init(epoch: 1, totalBytes: 8))
         ])
-        let owner = try #require(reducer.terminalOutputStreams.owner(for: "t"))
-        #expect(reducer.toolOutputStore.fullOutput(for: "t").isEmpty)
-        #expect(ANSIParser.strip(reducer.toolOutput(for: "t")) == "new\n")
-        #expect(reducer.terminalOutputStreams.owner(for: "t") === owner)
+        #expect(reducer.terminalOutputStreams.owner(for: "t") == nil)
+        #expect(reducer.toolOutputStore.fullOutput(for: "t") == "old\rnew\n")
+        #expect(reducer.toolOutput(for: "t") == "old\rnew\n")
         let item = try #require(reducer.items.first { $0.id == "t" })
         let inspection = try #require(reducer.toolInspection(for: item))
         guard case .terminal(let terminal) = inspection.output.first else { Issue.record("Expected terminal content"); return }
-        #expect(ANSIParser.strip(terminal.output ?? "") == "new\n")
-        reducer.reset()
-        #expect(reducer.terminalOutputStreams.owner(for: "t") == nil)
+        // Stored text wins over a stale details.expandedText copy.
+        #expect(terminal.output == "old\rnew\n")
     }
 
     @Test func streamMetadataDoesNotOverrideNonterminalPresentation() {
@@ -306,7 +304,7 @@ struct TerminalOutputStreamTests {
         #expect(reducer.toolOutputStore.fullOutput(for: "t") == "ordinary")
     }
 
-    @Test func nestedTerminalCallKeepsItsOwnOwner() throws {
+    @Test func nestedTerminalCallStoresTextWithoutAnOwner() throws {
         let reducer = TimelineReducer()
         reducer.process(.toolStart(sessionId: "s", toolEventId: "parent", tool: "arbitrary", args: [:]))
         reducer.processBatch([
@@ -317,9 +315,7 @@ struct TerminalOutputStreamTests {
             .toolEnd(sessionId: "s", toolEventId: "child", parentToolCallId: "parent",
                 outputStream: .init(epoch: 1, totalBytes: 6))
         ])
-        let child = try #require(reducer.terminalOutputStreams.owner(for: "child"))
-        #expect(child.state == .complete)
-        #expect(ANSIParser.strip(child.formatted) == "child\n")
+        #expect(reducer.terminalOutputStreams.owner(for: "child") == nil)
         #expect(reducer.terminalOutputStreams.owner(for: "parent") == nil)
         #expect(reducer.toolOutputStore.fullOutput(for: "child").isEmpty)
     }
