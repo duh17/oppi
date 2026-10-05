@@ -163,4 +163,43 @@ struct NotebookCellPresentationTests {
         #expect(size.height < 500)
         #expect(view.accessibilityIdentifier == "tool.notebook.cell")
     }
+
+    @Test @MainActor func expandedCellDoesNotScroll() {
+        let view = NotebookCellView()
+        view.apply(NotebookCellPlan(
+            sources: [.init(label: nil, language: "javascript", code: String(repeating: "const line = 1\n", count: 40))],
+            metadata: [],
+            calls: [],
+            omittedCalls: 0,
+            callsIncomplete: false,
+            output: .stdout(String(repeating: "out\n", count: 20)),
+            availabilityNote: nil,
+            running: true,
+            failed: false
+        ))
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 120)
+        view.layoutIfNeeded()
+
+        let scrolls = scrollViews(in: view)
+        #expect(scrolls.allSatisfy { $0 is UITextView })
+        let texts = scrolls.compactMap { $0 as? UITextView }
+        #expect(texts.count >= 2)
+        for text in texts {
+            #expect(text is BaselineSafeTextView)
+            #expect(!text.isScrollEnabled)
+            #expect(
+                text.gestureRecognizerShouldBegin(text.panGestureRecognizer) == false,
+                "Selectable notebook text should pass vertical drags to the timeline"
+            )
+        }
+    }
+
+    private func scrollViews(in view: UIView) -> [UIScrollView] {
+        var found: [UIScrollView] = []
+        if let scroll = view as? UIScrollView { found.append(scroll) }
+        for subview in view.subviews {
+            found.append(contentsOf: scrollViews(in: subview))
+        }
+        return found
+    }
 }

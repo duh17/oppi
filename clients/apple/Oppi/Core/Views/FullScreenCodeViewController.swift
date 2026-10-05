@@ -1515,10 +1515,26 @@ final class FullScreenCodeViewController: UIViewController {
                 readerPreferences: readerPreferences(for: content)
             )
         case .notebook(let plan):
+            // The cell does not scroll. This wrapper is the reader, the same
+            // shape as the LaTeX body: bounce so a short cell still gets
+            // safe-area insets, default inset adjustment, no tail policy.
+            let scrollView = UIScrollView()
+            scrollView.alwaysBounceVertical = true
+            scrollView.showsVerticalScrollIndicator = true
+            scrollView.backgroundColor = UIColor(palette.bg)
+            scrollView.accessibilityIdentifier = "fullscreen-notebook.scroll"
             let cell = NotebookCellView()
             cell.apply(plan)
-            cell.backgroundColor = UIColor(palette.bg)
-            return cell
+            cell.translatesAutoresizingMaskIntoConstraints = false
+            scrollView.addSubview(cell)
+            NSLayoutConstraint.activate([
+                cell.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+                cell.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+                cell.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+                cell.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+                cell.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+            ])
+            return scrollView
         }
     }
 

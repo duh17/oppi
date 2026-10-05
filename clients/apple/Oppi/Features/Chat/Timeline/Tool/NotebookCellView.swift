@@ -7,11 +7,13 @@ import UIKit
 /// The source sits in an inset card. Nested calls and the result attach
 /// underneath, on the bubble, the way a notebook attaches outputs to a cell.
 /// The view does not know tool names; `NotebookCellPlan` already decided.
+///
+/// This view does not scroll. The timeline owns vertical pans. The reader
+/// wraps the cell in its own scroll view.
 @MainActor
-final class NotebookCellView: UIView, UIScrollViewDelegate {
+final class NotebookCellView: UIView {
     var onOpenReader: (() -> Void)?
 
-    private let scrollView = UIScrollView()
     private let contentStack = UIStackView()
     private let card = UIView()
     private let accent = UIView()
@@ -25,8 +27,6 @@ final class NotebookCellView: UIView, UIScrollViewDelegate {
     private var sourceViews: [UITextView] = []
     private var appliedPlan: NotebookCellPlan?
     private var appliedTheme: ThemeID?
-    private var followsTail = true
-    private var contentWidth: NSLayoutConstraint?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -45,23 +45,10 @@ final class NotebookCellView: UIView, UIScrollViewDelegate {
         let sourceChanged = plan.sources != appliedPlan?.sources
             || plan.metadata != appliedPlan?.metadata
             || theme != appliedTheme
-        if plan.sources != appliedPlan?.sources { followsTail = true }
         appliedPlan = plan
         appliedTheme = theme
         paint(plan, theme: theme, sourceChanged: sourceChanged)
         return true
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        if bounds.width > 1 {
-            contentWidth?.constant = bounds.width
-        }
-        guard followsTail else { return }
-        let offset = max(0, scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom)
-        if abs(scrollView.contentOffset.y - offset) > 1 {
-            scrollView.contentOffset.y = offset
-        }
     }
 
     override func systemLayoutSizeFitting(
@@ -70,7 +57,6 @@ final class NotebookCellView: UIView, UIScrollViewDelegate {
         verticalFittingPriority: UILayoutPriority
     ) -> CGSize {
         let width = targetSize.width > 1 ? targetSize.width : max(1, bounds.width)
-        contentWidth?.constant = width
         let fitted = contentStack.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
@@ -79,35 +65,12 @@ final class NotebookCellView: UIView, UIScrollViewDelegate {
         return CGSize(width: width, height: max(48, ceil(fitted.height)))
     }
 
-    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-        followsTail = false
-    }
-
-    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        if !decelerate { followsTail = isNearBottom }
-    }
-
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        followsTail = isNearBottom
-    }
-
-    private var isNearBottom: Bool {
-        let visible = scrollView.contentOffset.y + scrollView.bounds.height
-        return scrollView.contentSize.height - visible < 24
-    }
-
     private func build() {
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.alwaysBounceVertical = false
-        scrollView.showsVerticalScrollIndicator = true
-        scrollView.delegate = self
-        scrollView.backgroundColor = .clear
-        addSubview(scrollView)
-
+        clipsToBounds = true
         contentStack.axis = .vertical
         contentStack.spacing = 8
         contentStack.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.addSubview(contentStack)
+        addSubview(contentStack)
 
         card.layer.cornerRadius = 10
         card.layer.cornerCurve = .continuous
@@ -156,19 +119,16 @@ final class NotebookCellView: UIView, UIScrollViewDelegate {
         contentStack.addArrangedSubview(card)
         contentStack.addArrangedSubview(outputStack)
 
-        let width = contentStack.widthAnchor.constraint(equalToConstant: 320)
-        width.priority = .required
-        contentWidth = width
+        // Bottom stays breakable so a capped timeline row can clip the cell
+        // without compressing the text. Unconstrained, including the reader,
+        // the pin holds and the cell is as tall as its content.
+        let bottom = contentStack.bottomAnchor.constraint(equalTo: bottomAnchor)
+        bottom.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            width,
+            contentStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            contentStack.topAnchor.constraint(equalTo: topAnchor),
+            bottom,
             accent.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             accent.topAnchor.constraint(equalTo: card.topAnchor),
             accent.bottomAnchor.constraint(equalTo: card.bottomAnchor),
@@ -268,7 +228,9 @@ final class NotebookCellView: UIView, UIScrollViewDelegate {
     }
 
     private func sourceTextView() -> UITextView {
-        let view = UITextView()
+        // A plain selectable text view still begins its pan when scrolling is
+        // off and blocks the timeline. BaselineSafeTextView refuses that pan.
+        let view = BaselineSafeTextView()
         view.isEditable = false
         view.isSelectable = true
         view.isScrollEnabled = false

@@ -295,7 +295,7 @@ indirect enum FullScreenCodeContent {
     case graphviz(content: String, filePath: String?)
     /// CSV/TSV table or GeoJSON/TopoJSON map; `DocumentFamily` owns the per-kind behavior.
     case document(DocumentFamily)
-    /// Code-role notebook cell. Same view as the expanded row.
+    /// Code-role notebook cell. The reader wraps the same view.
     case notebook(NotebookCellPlan)
 
     /// Build content from raw text and a file path by detecting the file type.

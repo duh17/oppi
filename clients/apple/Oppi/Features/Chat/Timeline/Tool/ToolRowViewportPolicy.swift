@@ -185,6 +185,7 @@ struct ToolRowViewportPolicy {
         }
     }
 
+    /// The cell does not scroll. The reader wraps it.
     static let notebook = ToolRowViewportPolicy(
         surface: .compactHostedView,
         viewportMode: .text,
