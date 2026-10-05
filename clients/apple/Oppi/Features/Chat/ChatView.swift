@@ -449,9 +449,12 @@ struct ChatView: View {
         messageQueueStore.queue(for: sessionId)
     }
 
-    private var showsMessageQueue: Bool {
+    private var hasQueuedMessages: Bool {
         !messageQueueState.steering.isEmpty || !messageQueueState.followUp.isEmpty
-            || messageQueueError != nil
+    }
+
+    private var showsMessageQueue: Bool {
+        hasQueuedMessages || messageQueueError != nil
     }
 
     private var messageQueueSurfaceConfiguration: MessageQueueSurfaceConfiguration {
@@ -1590,15 +1593,22 @@ struct ChatView: View {
 
     private func stopTurn() {
         Task { @MainActor in
+            let abort: @MainActor () async -> Void = {
+                guard connection.isFocusedSession(sessionId) else { return }
+                actionHandler.stop(
+                    connection: connection, reducer: reducer, sessionStore: sessionStore,
+                    sessionManager: sessionManager, sessionId: sessionId
+                )
+            }
+            // Nothing queued: send a plain Stop. take_queue only exists on newer
+            // servers, so requiring it here would leave Stop dead on an older one.
+            guard hasQueuedMessages else {
+                await abort()
+                return
+            }
             await MessageQueueComposerRestore.stopAfterRestoring(
                 restore: { try await restoreQueuedMessagesToComposer() },
-                abort: {
-                    guard connection.isFocusedSession(sessionId) else { return }
-                    actionHandler.stop(
-                        connection: connection, reducer: reducer, sessionStore: sessionStore,
-                        sessionManager: sessionManager, sessionId: sessionId
-                    )
-                },
+                abort: abort,
                 onError: { error in messageQueueError = error.localizedDescription }
             )
         }
