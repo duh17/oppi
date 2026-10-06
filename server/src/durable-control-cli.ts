@@ -78,13 +78,18 @@ const REPLAY_KEY_FLAG: ReadonlyMap<string, string> = new Map([
   ["session send", "turn-id"],
 ]);
 
-/** `argv` without `--flag [value]`, read the way `parseCliArgs` reads it. */
+/**
+ * `argv` without `--flag [value]`, read the way `parseCliArgs` reads it, and without
+ * `--flag=value`. The CLI does not split on `=`, so that form is an unknown flag it ignores
+ * (`session` commands refuse it); the host key must not be hashed with it or sent beside it.
+ */
 function withoutFlag(argv: readonly string[], flag: string): string[] {
   const separator = argv.indexOf("--");
   const end = separator === -1 ? argv.length : separator;
   const kept: string[] = argv.slice(0, 1);
   for (let i = 1; i < argv.length; i += 1) {
     const arg = argv[i] as string;
+    if (i < end && arg.startsWith(`--${flag}=`)) continue;
     if (i < end && arg === `--${flag}`) {
       const next = argv[i + 1];
       if (i + 1 < end && next !== undefined && !next.startsWith("--")) i += 1;
@@ -109,7 +114,12 @@ export function withReplayKey(argv: readonly string[], key: string): string[] {
   } catch {
     return [...argv];
   }
-  const flag = REPLAY_KEY_FLAG.get(`${parsed.command} ${parsed.positional[0] ?? ""}`);
+  // `session start` is `session create`.
+  const sub =
+    parsed.command === "session" && parsed.positional[0] === "start"
+      ? "create"
+      : parsed.positional[0];
+  const flag = REPLAY_KEY_FLAG.get(`${parsed.command} ${sub ?? ""}`);
   if (flag === undefined) return [...argv];
   const rest = withoutFlag(argv, flag);
   const hash = createHash("sha256").update(JSON.stringify(rest)).digest("hex").slice(0, 12);

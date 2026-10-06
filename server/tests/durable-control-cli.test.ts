@@ -76,6 +76,7 @@ describe("control host replay keys", () => {
   it.each([
     [["agent", "create", "--name", "x"], "--idempotency-key"],
     [["session", "create", "--workspace", "w", "--prompt", "p"], "--idempotency-key"],
+    [["session", "start", "--workspace", "w", "--prompt", "p"], "--idempotency-key"],
     [
       ["schedule", "create", "--workspace", "w", "--prompt", "p", "--every", "1h", "--name", "n"],
       "--idempotency-key",
@@ -97,17 +98,31 @@ describe("control host replay keys", () => {
     await host().run(["agent", "create", "--idempotency-key", "a", "--name", "x"], options());
     await host().run(["agent", "create", "--name", "x", "--idempotency-key"], options());
     await host().run(["session", "send", "s1", "--turn-id", "u1", "--text", "hi"], options());
-    await host().run(["session", "send", "s1", "--text", "hi", "--turn-id=u2"], options());
+    await host().run(["session", "send", "s1", "--text", "hi", "--turn-id", "u2"], options());
     const sent = runner.mock.calls.map(([argv]) => argv);
     expect(keyOf(sent[0]!, "--request-id")).toBe(keyOf(sent[1]!, "--request-id"));
     expect(sent[0]).not.toContain("t1");
     expect(sent[1]).not.toContain("t2");
     expect(keyOf(sent[2]!, "--idempotency-key")).toBe(keyOf(sent[3]!, "--idempotency-key"));
     expect(sent[2]).not.toContain("a");
-    // A value after `--` is a positional, not the flag.
+    expect(keyOf(sent[4]!, "--turn-id")).toBe(keyOf(sent[5]!, "--turn-id"));
     expect(sent[4]).not.toContain("u1");
-    expect(sent[5]).toContain("--turn-id=u2");
+    expect(sent[5]).not.toContain("u2");
   });
+
+  it.each([
+    [["agent", "create", "--name", "x"], "idempotency-key"],
+    [["schedule", "run", "s1"], "request-id"],
+    [["session", "send", "s1", "--text", "hi"], "turn-id"],
+  ])(
+    "drops the --flag=value form of the key of %j: it is neither hashed nor sent",
+    async (argv, flag) => {
+      await host().run(argv, options());
+      await host().run([...argv, `--${flag}=${Math.random()}`], options());
+      const [plain, withEquals] = runner.mock.calls.map(([sent]) => sent);
+      expect(withEquals).toEqual(plain);
+    },
+  );
 
   it("gives another call at the same index another key, and leaves other commands alone", async () => {
     await host().run(["agent", "create", "--name", "A"], options());

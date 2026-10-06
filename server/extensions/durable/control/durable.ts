@@ -339,6 +339,18 @@ class Declined extends Error {
   }
 }
 
+/** The write is not the one the owner was asked about at this point of the script before a restart. */
+class CardChanged extends Error {
+  readonly code = "card_changed";
+
+  constructor() {
+    super(
+      "This write is not the one the owner was asked about at this point of the script before the " +
+        "restart, so it was not sent. Run the script again.",
+    );
+  }
+}
+
 /** The body does not fit on a confirm card, so nothing is asked and nothing is sent. */
 class BodyTooLarge extends Error {
   readonly code = "body_too_large";
@@ -495,7 +507,14 @@ class ControlScript {
   private async confirm(slot: string, write: ControlWrite, context: Context): Promise<void> {
     // Before "Yes to all" too: no write goes out with a body its owner could not see.
     const message = cardMessage(write);
+    // What the owner is asked, kept under the slot before anything is asked. A saved answer
+    // belongs to this request and no other: a rerun (a script that numbers its calls another
+    // way, or builds another argument) that reaches the slot with a different write fails here,
+    // before `requestUI` can hand it the saved Yes, and under "Yes to all" too. First write wins.
+    const shown = JSON.stringify([write.method, write.path, write.body ?? null]);
     const ask = async (): Promise<void> => {
+      if ((await this.api.memo<string>(`oppi-card:${slot}`, shown, context)) !== shown)
+        throw new CardChanged();
       if (this.approveAll) return;
       const id = `oppi-confirm:${this.api.taskId}:${slot}`;
       let answer;

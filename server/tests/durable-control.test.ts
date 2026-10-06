@@ -54,6 +54,7 @@ afterEach(async () => {
 
 const YES = "Yes";
 const YES_ALL = "Yes to all remaining in this script";
+const NO = "No";
 
 type Seen = { method: string; url: string };
 
@@ -67,6 +68,8 @@ async function ownerApi(dataDir: string) {
   const seen: Seen[] = [];
   /** Bodies of `POST /sessions/:id/command`, which is only recorded: the turn dedupe is the server's. */
   const commands: Array<{ clientTurnId?: string; message?: string }> = [];
+  /** Paths whose next request is answered late, to make calls finish in another order. */
+  const delayFirst = new Set<string>();
   const routeContext = {
     storage: {
       getAgentDefinitionStore: () => agents,
@@ -80,6 +83,7 @@ async function ownerApi(dataDir: string) {
     void (async () => {
       const url = new URL(req.url ?? "/", "http://localhost");
       seen.push({ method: req.method ?? "GET", url: req.url ?? "/" });
+      if (delayFirst.delete(url.pathname)) await new Promise((resolve) => setTimeout(resolve, 150));
       const manualRun = /^\/schedules\/([^/]+)\/run$/.exec(url.pathname);
       if (req.method === "POST" && manualRun) {
         let text = "";
@@ -119,7 +123,7 @@ async function ownerApi(dataDir: string) {
   });
   servers.push(server);
   await listenOnLocalApiFixture(server, dataDir);
-  return { agents, schedules, seen, commands };
+  return { agents, schedules, seen, commands, delayFirst };
 }
 
 /** Every Agent row, byte for byte, for "nothing changed" comparisons. */
@@ -717,7 +721,13 @@ describe("oppi_script crash safety", () => {
     return { ...extension, tools: (extension.tools ?? []).map(wrap) };
   }
 
-  async function crashAndResume(f: Fixture, body: string, gap: "before" | "after", call?: string) {
+  async function crashAndResume(
+    f: Fixture,
+    body: string,
+    gap: "before" | "after",
+    call?: string,
+    answers: Array<string | undefined> = [YES, YES, YES],
+  ) {
     f.faux.setResponses([code(body), fauxAssistantMessage("done")]);
     const extension = createDurableControl(() => f.host);
     let reached!: () => void;
@@ -725,7 +735,7 @@ describe("oppi_script crash safety", () => {
     const first = crashing(extension, gap, () => reached(), call);
     let harness = await openHarness(f.dir, f.models, first);
     const conversation = await createConversation(harness, first, f.dir);
-    const responder = owner(conversation, [YES, YES, YES]);
+    const responder = owner(conversation, answers);
     await conversation.submit({ type: "input", content: "go" }, context);
     await hung;
     await responder.stop();
@@ -734,7 +744,7 @@ describe("oppi_script crash safety", () => {
 
     harness = await openHarness(f.dir, f.models, extension);
     const reopened = (await harness.conversation(conversation.id, context))!;
-    const resumed = owner(reopened, [YES, YES, YES]);
+    const resumed = owner(reopened, answers);
     harness.resume();
     await reopened.waitForIdle(context);
     await resumed.stop();
@@ -871,6 +881,53 @@ describe("oppi_script crash safety", () => {
     // One list and three archives ran; the first archive was not run again.
     expect(f.run).toHaveBeenCalledTimes(4);
     expect(f.seen.filter((request) => request.method === "DELETE")).toHaveLength(3);
+  });
+
+  it("(n1a) a saved Yes does not approve another write at its slot: a rerun that builds a different request fails", async () => {
+    const f = await fixture();
+    // The crash lands after the owner said Yes and the Agent was created, before the call memo.
+    const conversation = await crashAndResume(
+      f,
+      `return (await agents.create({ name: "n" + Math.random() })).id;`,
+      "before",
+    );
+    expect(f.agents.listAgentSummaries()).toHaveLength(1);
+    const [result] = await toolResults(conversation);
+    expect(result?.isError).toBe(true);
+    expect(result?.text).toContain("not the one the owner was asked about");
+    // One card, for the first request: the rerun's request was never shown and never sent.
+    expect(conversation.cards).toHaveLength(1);
+    expect(f.seen.filter((request) => request.method === "POST")).toHaveLength(1);
+  });
+
+  it("(n1b) after a reordered rerun, Yes to archive X and No to archive Y cannot archive Y", async () => {
+    const f = await fixture();
+    const x = f.agents.createAgent({ name: "X" }).id;
+    const y = f.agents.createAgent({ name: "Y" }).id;
+    // First run: X's read is slow, so Y's archive is call 2 and X's is call 3. Rerun: the reads
+    // are memoized and finish in source order, so X's archive is call 2 and Y's is call 3. The
+    // owner declined the first card (Y) and approved the second (X); the crash lands after X was
+    // archived and before its memo. The script swallows errors, so it moves on to Y.
+    f.delayFirst.add(`/agents/${x}`);
+    const conversation = await crashAndResume(
+      f,
+      `
+        await Promise.all(["${x}", "${y}"].map(async (id) => {
+          await agents.get({ id });
+          try { await agents.archive({ id }); } catch (e) {}
+        }));
+        return "done";
+      `,
+      "before",
+      "oppi-call:3",
+      [NO, YES],
+    );
+    expect(f.agents.listAgentSummaries().map((agent) => agent.id)).toEqual([y]);
+    expect(f.seen.filter((request) => request.method === "DELETE")).toHaveLength(1);
+    expect(conversation.cards.map((card) => card.title)).toEqual([
+      `Allow DELETE /agents/${y}?`,
+      `Allow DELETE /agents/${x}?`,
+    ]);
   });
 
   it("fails a rerun that is no longer the call it remembers, instead of writing something else", async () => {
