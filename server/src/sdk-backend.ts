@@ -7,7 +7,7 @@
 
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { safeErrorMessage } from "./log-utils.js";
-import { isDeclaredControlSession } from "./control-session.js";
+import { isControlConversation, isDeclaredControlSession } from "./control-session.js";
 import { createLogger } from "./logger.js";
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -360,9 +360,26 @@ function ensureOwnerOnlyRealDirectory(path: string, errorMessage: string): void 
 
 export function resolveSdkSessionCwd(
   workspace?: Workspace,
-  session?: Pick<Session, "workspaceId" | "worktreeId" | "control">,
+  session?: Pick<Session, "workspaceId" | "worktreeId" | "control" | "serverDurable">,
   options: { dataDir?: string } = {},
 ): string {
+  if (session && isControlConversation(session)) {
+    if (!options.dataDir) {
+      throw new Error("The control conversation requires an Oppi data directory");
+    }
+    const conversationDir = join(options.dataDir, "control-conversation");
+    ensureOwnerOnlyRealDirectory(
+      conversationDir,
+      "Control conversation cwd parent must be a real directory",
+    );
+    const conversationCwd = join(conversationDir, "cwd");
+    ensureOwnerOnlyRealDirectory(
+      conversationCwd,
+      "Control conversation cwd must be a real directory",
+    );
+    return conversationCwd;
+  }
+
   if (session && isDeclaredControlSession(session)) {
     if (!options.dataDir) {
       throw new Error("Control sessions require an Oppi data directory");
@@ -401,11 +418,14 @@ export function resolveSdkSessionCwd(
 
 export function resolveSdkSessionDisplayCwd(
   workspace?: Workspace,
-  session?: Pick<Session, "workspaceId" | "worktreeId" | "control">,
+  session?: Pick<Session, "workspaceId" | "worktreeId" | "control" | "serverDurable">,
   options: { dataDir?: string } = {},
 ): string {
   if (session && isDeclaredControlSession(session)) {
     return "Pi Control";
+  }
+  if (session && isControlConversation(session)) {
+    return "Oppi Control";
   }
   if (workspace?.runtime === "sandbox") {
     return resolveSandboxGuestCwd(workspace);

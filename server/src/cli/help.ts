@@ -84,6 +84,10 @@ const HELP_TOPICS: HelpTopic[] = [
       },
       { name: "schedule", summary: "create and run scheduled agent work" },
       { name: "agent", summary: "create, inspect, update, archive, and launch saved Agents" },
+      {
+        name: "control",
+        summary: "open or message the durable control conversation (experimental.serverDurable)",
+      },
       { name: "wait", summary: "poll session state until a condition is true" },
       { name: "token", summary: "rotate the owner bearer token" },
       { name: "update", summary: "check or update the npm-installed server and CLI" },
@@ -358,13 +362,17 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["config", "validate"],
     title: "Validate config",
     summary: "Validate a config file and report errors or warnings.",
-    usage: "oppi config validate [--config-file <path>]",
+    usage: "oppi config validate [--config-file <path>] [--json]",
     flags: [
       {
         name: "--config-file",
         value: "<path>",
         summary: "config file to validate; defaults to current config",
       },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "JSON data: path, valid, errors, warnings. An invalid config is still an ok envelope with valid: false and code: config_invalid; check valid or code, not ok.",
     ],
     examples: [
       { command: "oppi config validate" },
@@ -436,9 +444,12 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["version"],
     title: "Version",
     summary: "Print the installed oppi-server package version.",
-    usage: "oppi version",
+    usage: "oppi version [--json]",
+    flags: [
+      { name: "--json", summary: "write the standard JSON envelope: data.name, data.version" },
+    ],
     notes: ["Aliases: oppi --version, oppi -v."],
-    examples: [{ command: "oppi version" }],
+    examples: [{ command: "oppi version" }, { command: "oppi version --json" }],
   },
   {
     path: ["dictionary"],
@@ -1214,7 +1225,7 @@ const HELP_TOPICS: HelpTopic[] = [
     notes: [
       "One id keeps the single-session JSON envelope. Several ids resolve on the first match unless --all is set.",
       "Wait never streams transitions. It polls quietly and may print a compact still-waiting summary. JSON stays one envelope and includes progress[] when heartbeats fired.",
-      "If --timeout fires first, JSON stays ok with timed_out: true and the last snapshot. That means still working, not a failed wait. Default 4m is just under a 5m prompt-cache TTL so the parent can take a model turn.",
+      'If --timeout fires first, JSON stays ok with timed_out: true, code: "wait_timeout", and the last snapshot. That means still working, not a failed wait. Default 4m is just under a 5m prompt-cache TTL so the parent can take a model turn.',
       "Defaults come from 14-day server telemetry: poll 2s ≈ half of turn TTFT p50 (4.3s); heartbeat 60s ≈ a quarter of turn duration p50 (236s). Override per call. See .internal/reports/session-wait-poll-defaults-2026-08-19.md.",
     ],
     examples: [
@@ -1325,7 +1336,7 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         name: "--turns",
         value: "<spec>",
-        summary: "all, one turn, a range, or comma-separated turns",
+        summary: "all, last, one turn, a range, or comma-separated turns",
       },
       {
         name: "--view",
@@ -1506,7 +1517,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Create saved Agent",
     summary: "Create a saved Agent from first-class flags and optional file or inline JSON.",
     usage:
-      "oppi agent create [--name <name>] [--description <text>] [--icon <text>] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--skills <csv>] [--extensions <csv>] [--allowed-workspaces <csv>] [--required-runtime <host|sandbox>] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--json]",
+      "oppi agent create [--name <name>] [--description <text>] [--icon <text>] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--skills <csv>] [--extensions <csv>] [--allowed-workspaces <csv>] [--required-runtime <host|sandbox>] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--idempotency-key <key>] [--json]",
     flags: [
       {
         name: "--name, -n",
@@ -1588,9 +1599,15 @@ const HELP_TOPICS: HelpTopic[] = [
         name: "--no-builtin-tools, -nbt",
         summary: "writes sessionDefaults.noTools=builtin",
       },
+      {
+        name: "--idempotency-key",
+        value: "<key>",
+        summary: "make retries create at most one Agent; a replay returns the existing Agent",
+      },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
+      "With --idempotency-key, replaying the same create request returns the Agent the key already created and creates nothing. Reusing the key with a different definition fails with code AGENT_IDEMPOTENCY_CONFLICT.",
       "Choose at most one of --definition or --definition-json; --name or definition.name is required. JSON is bulk/round-trip; first-class flags cover native-editor fields.",
       "--model, --thinking, --tools, --exclude-tools, --no-tools, and --no-builtin-tools write sessionDefaults and overlay the same keys from --definition / --definition-json. --thinking wins over a --model :thinking suffix.",
       "Allowed AgentDefinition keys: name, icon, description, instructions, resources, sessionDefaults, launchConstraints.",
@@ -1876,6 +1893,76 @@ const HELP_TOPICS: HelpTopic[] = [
           'oppi session create --agent Reviewer --workspace ws_123 --prompt "Review this" --json',
       },
     ],
+  },
+  {
+    path: ["control"],
+    title: "Control conversation",
+    summary: "Open or message the one durable control conversation of this server.",
+    usage: "oppi control open|send [flags]",
+    description: [
+      "The control conversation is a single durable conversation per data directory, created on first use and kept across server restarts. It is not a workspace session and does not appear in the phone session list. Read it back with 'oppi session' commands using the printed session id.",
+    ],
+    subcommands: [
+      { name: "open", summary: "find or create the conversation and print its ids" },
+      { name: "send <text|@->", summary: "find or create the conversation, then send a prompt" },
+    ],
+    notes: [
+      "Requires experimental.serverDurable; the server refuses with a clear error while it is off.",
+    ],
+    examples: [
+      { command: "oppi control open --json" },
+      { command: 'oppi control send "List my active schedules" --json' },
+    ],
+  },
+  {
+    path: ["control", "open"],
+    title: "Open the control conversation",
+    summary: "Find or create the control conversation and attach it to a runtime.",
+    usage: "oppi control open [--model <id>] [--thinking <level>] [--json]",
+    flags: [
+      {
+        name: "--model",
+        value: "<id>",
+        summary: "model for a newly created conversation; ignored when it already exists",
+      },
+      {
+        name: "--thinking",
+        value: "<level>",
+        summary: "thinking level for a newly created conversation; ignored when it already exists",
+      },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "JSON data: session_id (use with 'oppi session'), conversation_id (the durable conversation, stable across restarts), status.",
+      "Calling open again returns the same session and conversation.",
+    ],
+    examples: [{ command: "oppi control open --json" }],
+  },
+  {
+    path: ["control", "send"],
+    title: "Message the control conversation",
+    summary: "Find or create the control conversation, then send it a prompt.",
+    usage: "oppi control send <text|@-> [--model <id>] [--thinking <level>] [--json]",
+    arguments: [{ name: "<text|@->", summary: "prompt text; @- reads it from stdin" }],
+    flags: [
+      {
+        name: "--model",
+        value: "<id>",
+        summary: "model for a newly created conversation; ignored when it already exists",
+      },
+      {
+        name: "--thinking",
+        value: "<level>",
+        summary: "thinking level for a newly created conversation; ignored when it already exists",
+      },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "JSON data: session_id, conversation_id, turn_id (the id of the turn this call started).",
+      "A prompt sent while a turn is running steers that turn.",
+      "Follow the reply with 'oppi session wait <session_id>' and 'oppi session inspect <session_id> --view response'.",
+    ],
+    examples: [{ command: 'oppi control send "Pause the nightly schedule" --json' }],
   },
 ];
 

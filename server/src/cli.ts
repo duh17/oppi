@@ -1241,6 +1241,10 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
   }
   if (command === "version" || command === "--version" || command === "-v") {
     const info = getPackageInfo();
+    if (flags.json === "true") {
+      writeJsonEnvelope({ ok: true, data: { name: info.name, version: info.version } });
+      return;
+    }
     console.log(`${info.name} ${info.version}`);
     return;
   }
@@ -1280,6 +1284,7 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
     case "workspace":
     case "worktree":
     case "session":
+    case "control":
     case "schedule":
     case "wait":
       await runCli(invocationArgs);

@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import { readFileSync } from "node:fs";
 
 import * as c from "../../ansi.js";
@@ -11,7 +10,9 @@ import {
   printDetails,
   printList,
   printNextCommands,
+  exitCli,
   setCapturedCliExitCode,
+  writeHumanLine,
   writeJsonEnvelope,
 } from "../output.js";
 import { apiStatus, listWorkspacesForCli, resolveWorkspaceForCli } from "../resources.js";
@@ -116,8 +117,8 @@ export async function cmdWorkspace(
       setCapturedCliExitCode(1);
       return;
     }
-    console.log(c.red(`  Error: ${message}`));
-    process.exit(1);
+    writeHumanLine(c.red(`  Error: ${message}`));
+    exitCli(1);
   }
 }
 

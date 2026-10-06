@@ -11,7 +11,7 @@ import {
 } from "./agent-launch-service.js";
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { RuntimeDisconnectedError } from "./agent-runtime-transport.js";
-import { isDeclaredControlSession } from "./control-session.js";
+import { isControlConversation, isDeclaredControlSession } from "./control-session.js";
 import { isPathWithinRoot } from "./git-utils.js";
 import { mintSessionId } from "./id.js";
 import {
@@ -134,7 +134,11 @@ export interface CreateWorkspaceSessionResult {
 export function canResumeAfterServerRestart(session: Session): boolean {
   if (session.ephemeral) return false;
   if (session.runtime === "pi-tui") return false;
-  return session.workspaceId !== undefined || isDeclaredControlSession(session);
+  return (
+    session.workspaceId !== undefined ||
+    isDeclaredControlSession(session) ||
+    isControlConversation(session)
+  );
 }
 
 export class SessionLifecycleError extends Error {
@@ -500,6 +504,30 @@ export class SessionLifecycleService {
   async resumeControlSession(session: Session): Promise<OpenSessionResult> {
     if (session.workspaceId !== undefined || !session.control) {
       throw new SessionLifecycleError("Session is not a control session", 400);
+    }
+    if (this.deps.sessionRuntimes.isSessionConnected(session.id)) {
+      const active = this.deps.sessionRuntimes.getActiveSession(session.id);
+      return {
+        session: active ? this.deps.ensureSessionContextWindow(active) : session,
+        owner: "oppi",
+        startedSession: false,
+        rebound: false,
+      };
+    }
+
+    const started = await this.startManagedSession(session, undefined);
+    return {
+      session: this.deps.ensureSessionContextWindow(started),
+      owner: "oppi",
+      startedSession: true,
+      rebound: false,
+    };
+  }
+
+  /** Attach the control conversation to a runtime. It has no workspace and no `control` metadata. */
+  async resumeControlConversation(session: Session): Promise<OpenSessionResult> {
+    if (session.workspaceId !== undefined || !isControlConversation(session)) {
+      throw new SessionLifecycleError("Session is not the control conversation", 400);
     }
     if (this.deps.sessionRuntimes.isSessionConnected(session.id)) {
       const active = this.deps.sessionRuntimes.getActiveSession(session.id);

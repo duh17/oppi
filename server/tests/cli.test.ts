@@ -2068,7 +2068,9 @@ describe("oppi local API commands", () => {
         expect(invalidInspectTurns.exitCode, turns).toBe(1);
         expect(JSON.parse(invalidInspectTurns.stdout), turns).toMatchObject({
           ok: false,
-          error: { message: "--turns must be all, a number, a range, or a comma-separated list" },
+          error: {
+            message: "--turns must be all, last, a number, a range, or a comma-separated list",
+          },
         });
       }
 

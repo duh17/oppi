@@ -285,6 +285,7 @@ describe("session command dispatch and output boundaries", () => {
       ok: true,
       data: {
         timed_out: true,
+        code: "wait_timeout",
         condition: "idle",
         pending: ["sess-1"],
         sessions: [{ session_id: "sess-1", status: "busy" }],
@@ -667,7 +668,8 @@ describe("session command dispatch and output boundaries", () => {
 
   it("prints the live rebind sentence on resume and keeps it off Session JSON", async () => {
     request.mockImplementation(async (_storage, path) => {
-      if (path.startsWith("/sessions?idPrefix=")) return { sessions: [{ id: "sess-1", workspaceId: "ws-1" }] };
+      if (path.startsWith("/sessions?idPrefix="))
+        return { sessions: [{ id: "sess-1", workspaceId: "ws-1" }] };
       if (path === "/sessions/sess-1") {
         return { session: { id: "sess-1", workspaceId: "ws-1" } };
       }
@@ -706,7 +708,8 @@ describe("session command dispatch and output boundaries", () => {
 
   it("does not print a rebind sentence on a second resume already on Main", async () => {
     request.mockImplementation(async (_storage, path) => {
-      if (path.startsWith("/sessions?idPrefix=")) return { sessions: [{ id: "sess-1", workspaceId: "ws-1" }] };
+      if (path.startsWith("/sessions?idPrefix="))
+        return { sessions: [{ id: "sess-1", workspaceId: "ws-1" }] };
       if (path === "/sessions/sess-1") {
         return { session: { id: "sess-1", workspaceId: "ws-1", worktreeId: "main" } };
       }

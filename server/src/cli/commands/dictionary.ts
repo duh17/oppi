@@ -7,6 +7,7 @@ import {
   captureHumanCliOutput,
   setCapturedCliExitCode,
   writeHumanLine,
+  writeStderrLine,
   writeJsonEnvelope,
 } from "../output.js";
 
@@ -106,7 +107,7 @@ export async function cmdDictionary(
         ok: false,
         error: { message, ...(apiStatus(error) ? { status: apiStatus(error) } : {}) },
       });
-    process.stderr.write(`${c.red(`  Error: ${message}`)}\n`);
+    writeStderrLine(c.red(`  Error: ${message}`));
     captureHumanCliOutput(() => writeHumanLine(c.red(`  Error: ${message}`)));
     setCapturedCliExitCode(1);
   }

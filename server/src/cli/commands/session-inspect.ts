@@ -235,10 +235,11 @@ function parseInspectTurnSelector(spec: string, maxTurn: number): number[] {
   if (!trimmed || trimmed === "all") {
     return Array.from({ length: maxTurn }, (_, index) => index + 1);
   }
+  if (trimmed === "last") return maxTurn > 0 ? [maxTurn] : [];
 
   const selected = new Set<number>();
   const invalid = (): never => {
-    throw new Error("--turns must be all, a number, a range, or a comma-separated list");
+    throw new Error("--turns must be all, last, a number, a range, or a comma-separated list");
   };
   const requireInRange = (turn: number): void => {
     if (!Number.isSafeInteger(turn) || turn < 1 || turn > maxTurn) invalid();

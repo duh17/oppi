@@ -105,6 +105,32 @@ export function setCapturedCliExitCode(exitCode: number): void {
   process.exitCode = exitCode;
 }
 
+/**
+ * Thrown by `exitCli` under `runCli` capture, in place of `process.exit`. The runner turns
+ * it into the captured exit code, so a command can never terminate the host process.
+ */
+export class CliExitSignal extends Error {
+  constructor(readonly exitCode: number) {
+    super(`CLI command exited with code ${exitCode}`);
+    this.name = "CliExitSignal";
+  }
+}
+
+/** Terminate the command: `process.exit` for the real CLI, `CliExitSignal` under capture. */
+export function exitCli(exitCode: number): never {
+  if (cliOutputCapture.getStore()) throw new CliExitSignal(exitCode);
+  process.exit(exitCode);
+}
+
+/**
+ * Diagnostic line for the real CLI's stderr. Under capture it is dropped: commands that
+ * write one also render the same error through `captureHumanCliOutput`.
+ */
+export function writeStderrLine(value: string): void {
+  if (cliOutputCapture.getStore()) return;
+  process.stderr.write(`${value}\n`);
+}
+
 export function writeJsonEnvelope(envelope: CliJsonEnvelope): void {
   const scopedEnvelope =
     sandboxScopedCliJson.getStore() === true && envelope.ok

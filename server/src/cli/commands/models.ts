@@ -1,10 +1,9 @@
-/* eslint-disable no-console */
 import * as c from "../../ansi.js";
 import type { ProviderQuota, ProviderQuotasStatus } from "../../provider-quota.js";
 import { createLocalApiCommandContext } from "../command-support.js";
 import type { LocalApiConnection } from "../local-api-client.js";
 import { formatQuotaPacing, formatQuotaRemaining, isProviderQuotaPacing } from "../quota.js";
-import { setCapturedCliExitCode, writeHumanLine, writeJsonEnvelope } from "../output.js";
+import { exitCli, setCapturedCliExitCode, writeHumanLine, writeJsonEnvelope } from "../output.js";
 import { apiStatus } from "../resources.js";
 
 type ModelListRow = {
@@ -62,8 +61,8 @@ export async function cmdModels(
       setCapturedCliExitCode(1);
       return;
     }
-    console.log(c.red(`  Error: ${message}`));
-    process.exit(1);
+    writeHumanLine(c.red(`  Error: ${message}`));
+    exitCli(1);
   }
 }
 

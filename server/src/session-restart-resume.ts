@@ -21,6 +21,7 @@
  * app reopens on reconnect still gets its continuation.
  */
 
+import { isControlConversation } from "./control-session.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
 import {
@@ -101,7 +102,10 @@ export function queueOrphanedSessionsForRestart(
 
 export interface RestartResumeDeps {
   storage: RestartStorage;
-  lifecycle: Pick<SessionLifecycleService, "resumeControlSession" | "resumeWorkspaceSession">;
+  lifecycle: Pick<
+    SessionLifecycleService,
+    "resumeControlConversation" | "resumeControlSession" | "resumeWorkspaceSession"
+  >;
   sendPrompt: (sessionId: string, text: string) => Promise<void>;
   sendFollowUp: (sessionId: string, text: string) => Promise<void>;
   /** Stop before the next entry; server shutdown sets this. */
@@ -154,7 +158,12 @@ async function resumeOne(
   let resumed: Session;
   try {
     if (session.workspaceId === undefined) {
-      resumed = (await deps.lifecycle.resumeControlSession(session)).session;
+      // The control conversation is durable, not a declared control session.
+      resumed = (
+        isControlConversation(session)
+          ? await deps.lifecycle.resumeControlConversation(session)
+          : await deps.lifecycle.resumeControlSession(session)
+      ).session;
     } else {
       const workspace = deps.storage.getWorkspace(session.workspaceId);
       if (!workspace) return { outcome: "skipped", reason: "workspace deleted" };

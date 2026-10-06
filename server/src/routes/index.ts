@@ -9,6 +9,7 @@ import { createDictationDictionaryRoutes } from "./dictation-dictionary.js";
 import { createSkillRoutes } from "./skills.js";
 import { createWorkspaceRoutes } from "./workspaces.js";
 import { createAgentRoutes } from "./agents.js";
+import { createControlConversationRoutes } from "./control-conversation.js";
 import { createSessionRoutes } from "./sessions.js";
 import { createUploadRoutes } from "./uploads.js";
 import { createIconAssetRoutes } from "./icon-assets.js";
@@ -39,6 +40,7 @@ export class RouteHandler {
       createSkillRoutes(this.ctx, this.helpers),
       createWorkspaceRoutes(this.ctx, this.helpers),
       createAgentRoutes(this.ctx, this.helpers),
+      createControlConversationRoutes(this.ctx, this.helpers),
       createIconAssetRoutes(this.ctx, this.helpers),
       createUploadRoutes(this.ctx, this.helpers),
       createSessionRoutes(this.ctx, this.helpers),

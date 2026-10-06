@@ -1,4 +1,3 @@
-/* eslint-disable no-console, local/structured-log-format */
 import * as c from "../ansi.js";
 import {
   exactModelIdsForDisplay,
@@ -10,6 +9,7 @@ import {
 } from "../model-resolution.js";
 import type { ThinkingLevel } from "../thinking-levels.js";
 import { localApiRequest, type LocalApiConnection } from "./local-api-client.js";
+import { writeHumanLine } from "./output.js";
 
 export type ResolvedCliModelFlag = {
   canonicalId: string;
@@ -71,15 +71,15 @@ export function modelResolutionErrorEnvelope(error: CliModelResolutionError): {
 }
 
 export function printModelResolutionError(error: CliModelResolutionError): void {
-  console.log(c.red(`  Error: ${error.message}`));
+  writeHumanLine(c.red(`  Error: ${error.message}`));
   if (error.availableModels.length > 0) {
-    console.log("");
-    console.log(c.bold("  Available models:"));
-    console.log("");
+    writeHumanLine("");
+    writeHumanLine(c.bold("  Available models:"));
+    writeHumanLine("");
     for (const model of error.availableModels) {
-      console.log(`    ${model}`);
+      writeHumanLine(`    ${model}`);
     }
   } else {
-    console.log(c.dim(`  Available models: ${formatAvailableModels([])}`));
+    writeHumanLine(c.dim(`  Available models: ${formatAvailableModels([])}`));
   }
 }

@@ -513,6 +513,63 @@ describe("agent routes", () => {
     }
   });
 
+  it("creates one Agent per idempotency key and refuses a changed definition", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-idempotency-routes-"));
+    const store = new AgentDefinitionStore(dataDir);
+    try {
+      const dispatch = createAgentRoutes(
+        { storage: { getAgentDefinitionStore: () => store } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+      const post = async (body: Record<string, unknown>) => {
+        const res = makeResponse();
+        await dispatch({
+          method: "POST",
+          path: "/agents",
+          url: new URL("http://localhost/agents"),
+          req: makeRequest(body) as never,
+          res: res as never,
+        });
+        return { status: res.statusCode, body: JSON.parse(res.body) };
+      };
+
+      const first = await post({ name: "Scribe", idempotencyKey: "script-1:call-0" });
+      expect(first.status).toBe(201);
+      // A later edit must not make the replay create a second row or revert the edit.
+      store.updateAgent(first.body.agent.id, { description: "Edited since" });
+      const replay = await post({ name: "Scribe", idempotencyKey: "script-1:call-0" });
+      expect(replay.status).toBe(200);
+      expect(replay.body.agent).toMatchObject({
+        id: first.body.agent.id,
+        version: 2,
+        definition: { description: "Edited since" },
+      });
+      expect(store.listAgentSummaries({ includeArchived: true })).toHaveLength(1);
+      // The key is request metadata, not part of the stored definition.
+      expect(first.body.agent.definition).not.toHaveProperty("idempotencyKey");
+
+      const conflict = await post({ name: "Different", idempotencyKey: "script-1:call-0" });
+      expect(conflict.status).toBe(409);
+      expect(conflict.body).toMatchObject({
+        code: "AGENT_IDEMPOTENCY_CONFLICT",
+        agentId: first.body.agent.id,
+      });
+      expect(store.listAgentSummaries({ includeArchived: true })).toHaveLength(1);
+
+      // Without a key every create is its own Agent, as before.
+      expect((await post({ name: "Plain A" })).status).toBe(201);
+      expect((await post({ name: "Plain B" })).status).toBe(201);
+      expect(store.listAgentSummaries({ includeArchived: true })).toHaveLength(3);
+
+      for (const bad of ["", "  ", 5, "x".repeat(201)]) {
+        expect((await post({ name: "Bad", idempotencyKey: bad })).status).toBe(400);
+      }
+    } finally {
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps PATCH compatibility when expectedVersion is absent", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-compatible-routes-"));
     const store = new AgentDefinitionStore(dataDir);

@@ -147,6 +147,7 @@ export function cmdConfig(
         {
           path: target,
           valid: result.valid,
+          ...(result.valid ? {} : { code: "config_invalid" }),
           errors: result.errors.map((error) => redactCredentialString(error)),
           warnings: result.warnings,
         },

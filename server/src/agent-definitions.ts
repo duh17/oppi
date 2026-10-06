@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -59,6 +60,18 @@ export class AgentVersionConflictError extends Error {
         : `Agent version conflict: expected ${expectedVersion}, current ${currentVersion}`,
     );
     this.name = "AgentVersionConflictError";
+  }
+}
+
+export const AGENT_IDEMPOTENCY_CONFLICT_CODE = "AGENT_IDEMPOTENCY_CONFLICT";
+
+/** A create key that already created an Agent from a different definition. */
+export class AgentIdempotencyConflictError extends Error {
+  readonly code = AGENT_IDEMPOTENCY_CONFLICT_CODE;
+
+  constructor(readonly agentId: string) {
+    super(`Idempotency key already created Agent ${agentId} from a different definition`);
+    this.name = "AgentIdempotencyConflictError";
   }
 }
 
@@ -136,7 +149,44 @@ export class AgentDefinitionStore {
     this.db.close();
   }
 
-  createAgent(input: unknown, now = Date.now()): StoredAgentDefinition {
+  /**
+   * Create once per key. The key row commits with the Agent, so a replay (a retry after a
+   * crash or a lost response) returns the Agent the key already created, as it is now, and
+   * creates nothing. The same key with another definition is a conflict, not a second Agent.
+   */
+  createAgentOnce(
+    input: unknown,
+    idempotencyKey: string,
+    now = Date.now(),
+  ): { agent: StoredAgentDefinition; replayed: boolean } {
+    const definition = validateAgentDefinition(input);
+    const fingerprint = createHash("sha256").update(JSON.stringify(definition)).digest("hex");
+    const existing = this.db
+      .prepare("SELECT agent_id, fingerprint FROM agent_create_requests WHERE idempotency_key = ?")
+      .get(idempotencyKey) as { agent_id: string; fingerprint: string } | undefined;
+    if (existing) {
+      const agent = this.getAgent(existing.agent_id);
+      if (!agent) throw new Error(`Agent ${existing.agent_id} for this idempotency key is missing`);
+      if (existing.fingerprint !== fingerprint) throw new AgentIdempotencyConflictError(agent.id);
+      return { agent, replayed: true };
+    }
+    const agent = this.createAgent(input, now, (id) => {
+      this.db
+        .prepare(
+          `INSERT INTO agent_create_requests (idempotency_key, agent_id, fingerprint)
+           VALUES (?, ?, ?)`,
+        )
+        .run(idempotencyKey, id, fingerprint);
+    });
+    return { agent, replayed: false };
+  }
+
+  createAgent(
+    input: unknown,
+    now = Date.now(),
+    /** Runs inside the creating transaction. */
+    onCreated?: (agentId: string) => void,
+  ): StoredAgentDefinition {
     const definition = validateAgentDefinition(input);
     this.assertIconAssetExists(definition);
     const agent: StoredAgentDefinition = {
@@ -165,6 +215,7 @@ export class AgentDefinitionStore {
           agent.updatedAt,
         );
       this.insertAgentVersion(agent.id, agent.version, agent.definition, now);
+      onCreated?.(agent.id);
     })();
     return agent;
   }
@@ -354,6 +405,11 @@ export class AgentDefinitionStore {
         definition_json TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         PRIMARY KEY (id, version)
+      );
+      CREATE TABLE IF NOT EXISTS agent_create_requests (
+        idempotency_key TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        fingerprint TEXT NOT NULL
       );
       INSERT OR IGNORE INTO agent_definition_versions (id, version, definition_json, created_at)
         SELECT id, version, definition_json, updated_at FROM agent_definitions;

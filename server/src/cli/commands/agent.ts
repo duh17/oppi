@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import { readFileSync } from "node:fs";
 
 import * as c from "../../ansi.js";
@@ -20,6 +19,7 @@ import {
   printDetails,
   printList,
   printNextCommands,
+  exitCli,
   setCapturedCliExitCode,
   writeHumanLine,
   writeJsonEnvelope,
@@ -27,6 +27,7 @@ import {
 import { apiStatus } from "../resources.js";
 
 const AGENT_VERSION_CONFLICT_CODE = "AGENT_VERSION_CONFLICT";
+const AGENT_IDEMPOTENCY_CONFLICT_CODE = "AGENT_IDEMPOTENCY_CONFLICT";
 
 type AgentRow = {
   id?: string;
@@ -104,7 +105,10 @@ export async function cmdAgent(
       if (!definition.name) throw new Error("--name or definition.name is required");
       const result = await call<Record<string, unknown>>("/agents", {
         method: "POST",
-        body: definition,
+        body: {
+          ...definition,
+          ...(flags["idempotency-key"] ? { idempotencyKey: flags["idempotency-key"] } : {}),
+        },
       });
       output(result, () => {
         const agent = result.agent as AgentRow | undefined;
@@ -192,8 +196,8 @@ export async function cmdAgent(
       setCapturedCliExitCode(1);
       return;
     }
-    console.log(c.red(`  Error: ${message}`));
-    process.exit(1);
+    writeHumanLine(c.red(`  Error: ${message}`));
+    exitCli(1);
   }
 }
 
@@ -221,6 +225,8 @@ function parseExpectedAgentVersionFlag(flags: Record<string, string>): number | 
 
 function agentErrorDetails(error: unknown): AgentErrorDetails {
   const record = isRecord(error) ? error : undefined;
+  if (record?.code === AGENT_IDEMPOTENCY_CONFLICT_CODE)
+    return { code: AGENT_IDEMPOTENCY_CONFLICT_CODE };
   if (record?.code !== AGENT_VERSION_CONFLICT_CODE) return {};
   const expectedVersion = positiveVersion(record.expectedVersion);
   const currentVersion = positiveVersion(record.currentVersion);

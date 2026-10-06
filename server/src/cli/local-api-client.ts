@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 
 import { localApiSocketPath } from "../local-api-socket.js";
@@ -11,6 +12,33 @@ export type LocalApiRequestOptions = {
   /** Oppi session issuing this request; the server records cross-session primitives. */
   callerSessionId?: string;
 };
+
+/** One request, as the interceptor sees it. A copy: the interceptor cannot rewrite the request. */
+export type LocalApiInterceptedRequest = Readonly<{
+  /** Upper-case; GET when the command did not set one. */
+  method: string;
+  /** Path and query, as sent. */
+  path: string;
+  body?: Readonly<Record<string, unknown>>;
+  callerSessionId?: string;
+  signal?: AbortSignal;
+}>;
+
+/**
+ * Called before each request in its scope is sent. Resolving lets the request proceed; throwing
+ * denies it, and the error becomes the command's own failure. May await (for an approval).
+ */
+export type LocalApiInterceptor = (request: LocalApiInterceptedRequest) => void | Promise<void>;
+
+const localApiInterceptor = new AsyncLocalStorage<LocalApiInterceptor>();
+
+/**
+ * Run `fn` with `interceptor` seeing every `localApiRequest` it starts, however deep in the CLI
+ * command. Scoped by async context, so concurrent scopes do not see each other's requests.
+ */
+export function withLocalApiInterceptor<T>(interceptor: LocalApiInterceptor, fn: () => T): T {
+  return localApiInterceptor.run(interceptor, fn);
+}
 
 export interface LocalApiError extends Error {
   status?: number;
@@ -31,6 +59,19 @@ export async function localApiRequest<T>(
   options: LocalApiRequestOptions = {},
 ): Promise<T> {
   throwIfAborted(options.signal);
+  const interceptor = localApiInterceptor.getStore();
+  if (interceptor) {
+    await interceptor(
+      Object.freeze({
+        method: (options.method ?? "GET").toUpperCase(),
+        path,
+        ...(options.body ? { body: Object.freeze(structuredClone(options.body)) } : {}),
+        ...(options.callerSessionId ? { callerSessionId: options.callerSessionId } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
+      }),
+    );
+    throwIfAborted(options.signal);
+  }
   const token = storage.getToken();
   if (!token) {
     throw new Error("No owner bearer token configured. Run 'oppi init' or 'oppi pair' first.");

@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import { readFileSync } from "node:fs";
 import * as c from "../../ansi.js";
 import type { Session } from "../../types.js";
@@ -234,6 +233,7 @@ export async function cmdSession(
         output(
           {
             timed_out: true,
+            code: "wait_timeout",
             condition: outcome.condition,
             pending: outcome.pending,
             sessions: outcome.sessions.map((session) => ({
@@ -578,9 +578,11 @@ async function createSession(
       writeJsonEnvelope({ ok: false, error: { message } });
       setCapturedCliExitCode(1);
     } else {
-      console.log(c.red(`  Error: ${message}`));
-      console.log(c.dim("  Usage: oppi session create --workspace <id> --prompt <text> [--json]"));
-      process.exitCode = 1;
+      writeHumanLine(c.red(`  Error: ${message}`));
+      writeHumanLine(
+        c.dim("  Usage: oppi session create --workspace <id> --prompt <text> [--json]"),
+      );
+      setCapturedCliExitCode(1);
     }
     return;
   }
@@ -647,7 +649,7 @@ async function createSession(
   );
 }
 
-function resolvePromptInput(value: string | undefined, flag: "--prompt" | "--text"): string {
+export function resolvePromptInput(value: string | undefined, flag: "--prompt" | "--text"): string {
   if (value === undefined) throw new Error(`${flag} is required`);
   const text = value === "@-" ? readFileSync(0, "utf-8") : value;
   if (!text.trim()) throw new Error(`${flag} must not be empty`);

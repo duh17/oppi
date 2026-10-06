@@ -30,6 +30,8 @@ export async function sendSessionInput(
   commandType: SessionSendKind,
   text: string,
   call: SessionListApiCall,
+  /** Caller-chosen id of the turn; the server keeps it on the turn so a retry is the same turn. */
+  turnId?: string,
 ): Promise<Record<string, unknown>> {
   try {
     return await call<Record<string, unknown>>(`/sessions/${encodeURIComponent(id)}/command`, {
@@ -37,6 +39,7 @@ export async function sendSessionInput(
       body: {
         type: commandType,
         message: text,
+        ...(turnId ? { clientTurnId: turnId, requestId: turnId } : {}),
         ...(commandType === "prompt" ? { streamingBehavior: "steer" } : {}),
       },
     });

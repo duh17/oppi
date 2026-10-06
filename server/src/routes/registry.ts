@@ -1032,6 +1032,14 @@ const rawApiRouteSpecs = [
   },
 
   {
+    method: "POST",
+    path: "/control-conversation",
+    operationId: "openControlConversation",
+    surface: "core",
+    auth: "owner",
+  },
+
+  {
     method: "GET",
     path: "/schedules",
     operationId: "listAgentSchedules",

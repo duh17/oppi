@@ -8,7 +8,9 @@ import {
   type AgentDefinition,
 } from "../agent-launch-service.js";
 import {
+  AGENT_IDEMPOTENCY_CONFLICT_CODE,
   AGENT_VERSION_CONFLICT_CODE,
+  AgentIdempotencyConflictError,
   AgentVersionConflictError,
   agentSummary,
   validateAgentDefinition,
@@ -52,10 +54,23 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     if (method === "POST") {
       try {
         const body = await helpers.parseBody<unknown>(req);
-        const agent = agentStore().createAgent(body);
-        helpers.json(res, { agent: serializeAgent(agent) }, 201);
+        const { definition, idempotencyKey } = splitCreateIdempotencyKey(body);
+        if (idempotencyKey === undefined) {
+          helpers.json(res, { agent: serializeAgent(agentStore().createAgent(definition)) }, 201);
+        } else {
+          const { agent, replayed } = agentStore().createAgentOnce(definition, idempotencyKey);
+          helpers.json(res, { agent: serializeAgent(agent) }, replayed ? 200 : 201);
+        }
       } catch (error) {
-        helpers.error(res, 400, safeErrorMessage(error));
+        if (error instanceof AgentIdempotencyConflictError) {
+          helpers.json(
+            res,
+            { error: error.message, code: AGENT_IDEMPOTENCY_CONFLICT_CODE, agentId: error.agentId },
+            409,
+          );
+        } else {
+          helpers.error(res, 400, safeErrorMessage(error));
+        }
       }
       return true;
     }
@@ -383,6 +398,21 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     }
     return agent;
   }
+}
+
+/** `idempotencyKey` is request metadata, not part of the Agent definition. */
+function splitCreateIdempotencyKey(body: unknown): {
+  definition: unknown;
+  idempotencyKey?: string;
+} {
+  if (!body || typeof body !== "object" || Array.isArray(body) || !("idempotencyKey" in body)) {
+    return { definition: body };
+  }
+  const { idempotencyKey, ...definition } = body as Record<string, unknown>;
+  if (typeof idempotencyKey !== "string" || !idempotencyKey.trim() || idempotencyKey.length > 200) {
+    throw new Error("idempotencyKey must be a non-empty string of at most 200 characters");
+  }
+  return { definition, idempotencyKey: idempotencyKey.trim() };
 }
 
 function parseExpectedAgentVersion(url: URL): number | undefined {

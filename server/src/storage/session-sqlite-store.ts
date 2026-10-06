@@ -1291,7 +1291,10 @@ function normalizeDeclaredSession(session: Session): Session {
     if (id !== undefined && (!Number.isSafeInteger(id) || id <= 0)) {
       throw new Error("Invalid server durable conversation binding");
     }
-    normalized.serverDurable = id === undefined ? {} : { conversationId: id };
+    normalized.serverDurable = {
+      ...(id === undefined ? {} : { conversationId: id }),
+      ...(session.serverDurable.role === "control" ? { role: "control" as const } : {}),
+    };
   }
   if (session.control !== undefined && session.control !== null) {
     normalized.control = { ...session.control };

@@ -3,6 +3,7 @@ import { safeErrorMessage } from "../log-utils.js";
 import { parseCliArgs } from "./args.js";
 import { cmdAgent } from "./commands/agent.js";
 import { cmdConfig } from "./commands/config.js";
+import { cmdControl } from "./commands/control.js";
 import { cmdDictionary } from "./commands/dictionary.js";
 import { cmdSchedule } from "./commands/schedule.js";
 import { cmdSession } from "./commands/session.js";
@@ -17,6 +18,7 @@ import { cmdQuota } from "./quota.js";
 import {
   captureCliOutput,
   captureHumanCliOutput,
+  CliExitSignal,
   setCapturedCliExitCode,
   type CliJsonEnvelope,
   withSandboxScopedCliJson,
@@ -65,6 +67,12 @@ export async function runCli(
         throwIfAborted(options.signal);
       } catch (error: unknown) {
         if (options.signal?.aborted) throw createAbortError(options.signal);
+        // A command asked to exit; the host process stays up. Its own output stands, and a
+        // missing envelope becomes the standard error below.
+        if (error instanceof CliExitSignal) {
+          setCapturedCliExitCode(error.exitCode);
+          return;
+        }
         const message = safeErrorMessage(error);
         writeJsonEnvelope({ ok: false, error: { message } });
         setCapturedCliExitCode(1);
@@ -161,6 +169,20 @@ async function executeUnscopedCliCommand(
               ...(options.sandboxScope ? { sandboxScope: options.sandboxScope } : {}),
               ...(options.signal ? { signal: options.signal } : {}),
               ...(options.onLiveSnapshot ? { onLiveSnapshot: options.onLiveSnapshot } : {}),
+            }
+          : undefined,
+      );
+      return;
+    case "control":
+      await cmdControl(
+        connection,
+        positional[0],
+        positional.slice(1),
+        flags,
+        options.callerSessionId || options.signal
+          ? {
+              ...(options.callerSessionId ? { callerSessionId: options.callerSessionId } : {}),
+              ...(options.signal ? { signal: options.signal } : {}),
             }
           : undefined,
       );

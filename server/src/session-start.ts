@@ -1,6 +1,7 @@
 import type { AgentDefinition } from "./agent-launch-service.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend } from "./sdk-backend.js";
+import { isControlConversation } from "./control-session.js";
 import { isServerDurableSession } from "./session-runtime-capabilities.js";
 import type { DurableHarness } from "./durable-harness.js";
 import type { AgentBackend } from "./agent-backend.js";
@@ -77,9 +78,12 @@ export class SessionStartCoordinator {
         // The flag decides whether durable sessions can be created. A bound
         // conversation always resumes on DurableBackend; a durable request that
         // never bound one goes back to the classic SDK backend while it is off.
+        // The control conversation never falls back: it has no classic form, so a flag-off
+        // start fails on the missing harness instead.
         if (
           session.serverDurable &&
           session.serverDurable.conversationId === undefined &&
+          !isControlConversation(session) &&
           this.deps.config.experimental?.serverDurable !== true
         ) {
           delete session.serverDurable;

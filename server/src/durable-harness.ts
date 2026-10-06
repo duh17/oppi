@@ -24,6 +24,7 @@ import {
   DurableBackgroundJobs,
   DurableJobs,
 } from "../extensions/durable/background-jobs/durable.js";
+import { CONTROL_CONVERSATION_EXTENSIONS } from "./durable-control-conversation.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { DurableGoal } from "../extensions/durable/goal/durable.js";
 import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
@@ -244,6 +245,10 @@ export class DurableHarness {
     this.runSettings = harnessSettings(settings, this.baseExtensions);
     const registry = createRegistry();
     for (const extension of this.baseExtensions) registry.install(extension);
+    // Installed so the control conversation can select them by name. Installing is not
+    // selecting: only `baseExtensions` is the default selection of other conversations.
+    for (const extension of CONTROL_CONVERSATION_EXTENSIONS)
+      if (!this.baseExtensions.includes(extension)) registry.install(extension);
     this.registry = registry;
     const directory = join(this.dataDir, "durable");
     mkdirSync(directory, { recursive: true, mode: 0o700 });

@@ -201,8 +201,9 @@ export interface Session {
    * Durable-engine enrollment, set only when the create request asked for
    * `engine: "durable"`; the binding is saved before first submission. Full
    * `Session` payloads carry it as is; `SessionSummary` projects it as `engine`.
+   * `role: "control"` marks the one workspace-less control conversation per data directory.
    */
-  serverDurable?: { conversationId?: number };
+  serverDurable?: { conversationId?: number; role?: "control" };
 
   // Trace metadata (used for trace recovery/replay)
   // Local pi JSONL paths under ~/.pi/agent/sessions are deleted with the Oppi

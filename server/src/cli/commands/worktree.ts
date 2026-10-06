@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import * as c from "../../ansi.js";
 import type { LocalApiConnection } from "../local-api-client.js";
 import { createLocalApiCommandContext } from "../command-support.js";
@@ -7,7 +6,9 @@ import {
   nonEmptyDetails,
   printDetails,
   printList,
+  exitCli,
   setCapturedCliExitCode,
+  writeHumanLine,
   writeJsonEnvelope,
 } from "../output.js";
 import {
@@ -139,8 +140,8 @@ export async function cmdWorktree(
       setCapturedCliExitCode(1);
       return;
     }
-    console.log(c.red(`  Error: ${message}`));
-    process.exit(1);
+    writeHumanLine(c.red(`  Error: ${message}`));
+    exitCli(1);
   }
 }
 

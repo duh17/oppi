@@ -41,6 +41,12 @@ import {
 } from "./session-stats.js";
 import { durableUnsupportedFeature, type AgentDefinition } from "./agent-launch-service.js";
 import type { AgentBackend } from "./agent-backend.js";
+import { isControlConversation } from "./control-session.js";
+import {
+  CONTROL_CONVERSATION_EXTENSIONS,
+  CONTROL_CONVERSATION_INSTRUCTIONS,
+  controlConversationTools,
+} from "./durable-control-conversation.js";
 import { DurableRuntime, type DurableHarness } from "./durable-harness.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { DurableSandboxTools } from "./durable-sandbox-tools.js";
@@ -262,21 +268,23 @@ export class DurableBackend implements AgentBackend {
       projectTrusted,
       agentDefinition,
     });
-    const mcp = sandbox
-      ? undefined
-      : await owner.replaceMcp(session.id, async () => {
-          const registry = new ModelRegistry(models);
-          return DurableMcp.open({
-            sessionId: session.id,
-            cwd: hostCwd,
-            agentDir,
-            projectTrusted,
-            policy: session.launch?.tools,
-            providerToken: (provider) => registry.getApiKeyForProvider(provider),
-            install: (extension) => owner.installExtension(extension),
-            uninstall: (extension) => owner.uninstallExtension(extension),
+    // The control conversation selects an exact extension list; it gets no MCP tools.
+    const mcp =
+      sandbox || isControlConversation(session)
+        ? undefined
+        : await owner.replaceMcp(session.id, async () => {
+            const registry = new ModelRegistry(models);
+            return DurableMcp.open({
+              sessionId: session.id,
+              cwd: hostCwd,
+              agentDir,
+              projectTrusted,
+              policy: session.launch?.tools,
+              providerToken: (provider) => registry.getApiKeyForProvider(provider),
+              install: (extension) => owner.installExtension(extension),
+              uninstall: (extension) => owner.uninstallExtension(extension),
+            });
           });
-        });
     try {
       return await DurableBackend.bind(options, {
         hostCwd,
@@ -313,6 +321,7 @@ export class DurableBackend implements AgentBackend {
     const workspace = options.workspace;
     const sandbox = workspace?.runtime === "sandbox";
     const id = session.serverDurable?.conversationId;
+    const control = isControlConversation(session);
     let conversation: Conversation;
     if (id !== undefined) {
       const existing = await harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
@@ -328,33 +337,40 @@ export class DurableBackend implements AgentBackend {
       conversation = existing;
       // Bound conversations store exact extension/tool names. Enroll the native
       // UI ports and this attachment's MCP extension too, without overriding
-      // their launch tool policy.
+      // their launch tool policy. The control conversation instead re-asserts its exact
+      // selection, so one created before an extension joined the list picks it up here.
       await conversation.configure(
-        {
-          extensions: {
-            add: [
-              DurableAsk,
-              DurableWorkingWords,
-              DurableBackgroundJobs,
-              DurableGoal,
-              owner.sessionsExtension,
-              DurableProjectContext,
-              ...(mcp ? [mcp.selection] : []),
-            ],
-          },
-        },
+        control
+          ? { extensions: [...CONTROL_CONVERSATION_EXTENSIONS], tools: controlConversationTools() }
+          : {
+              extensions: {
+                add: [
+                  DurableAsk,
+                  DurableWorkingWords,
+                  DurableBackgroundJobs,
+                  DurableGoal,
+                  owner.sessionsExtension,
+                  DurableProjectContext,
+                  ...(mcp ? [mcp.selection] : []),
+                ],
+              },
+            },
         BACKGROUND_CONTEXT,
       );
       const agent = await conversation.agent(BACKGROUND_CONTEXT);
       const policy = session.launch?.tools;
       const selected = new Set(agent.tools.map((tool) => tool.name));
-      const additions = [
-        DurableAsk,
-        DurableWorkingWords,
-        DurableBackgroundJobs,
-        DurableGoal,
-        owner.sessionsExtension,
-      ]
+      const additions = (
+        control
+          ? []
+          : [
+              DurableAsk,
+              DurableWorkingWords,
+              DurableBackgroundJobs,
+              DurableGoal,
+              owner.sessionsExtension,
+            ]
+      )
         .flatMap((extension) => extension.tools ?? [])
         .filter(
           (tool) =>
@@ -389,14 +405,18 @@ export class DurableBackend implements AgentBackend {
       if (!model)
         throw new Error(`Server durable model is unavailable: ${session.model ?? "default"}`);
       const policy = session.launch?.tools;
-      const tools = [
-        ...(CodingTools.tools ?? []),
-        ...(DurableAsk.tools ?? []),
-        ...(DurableGoal.tools ?? []),
-        ...(sandbox ? (DurableSandboxTools.tools ?? []) : []),
-        ...(DurableBackgroundJobs.tools ?? []),
-        ...(owner.sessionsExtension.tools ?? []),
-      ].filter(
+      const tools = (
+        control
+          ? controlConversationTools()
+          : [
+              ...(CodingTools.tools ?? []),
+              ...(DurableAsk.tools ?? []),
+              ...(DurableGoal.tools ?? []),
+              ...(sandbox ? (DurableSandboxTools.tools ?? []) : []),
+              ...(DurableBackgroundJobs.tools ?? []),
+              ...(owner.sessionsExtension.tools ?? []),
+            ]
+      ).filter(
         (tool) =>
           !policy?.noTools &&
           (!policy?.allowed || policy.allowed.includes(tool.name)) &&
@@ -418,27 +438,29 @@ export class DurableBackend implements AgentBackend {
             if (sandbox) runtime.workspaceId = workspace.id;
           },
           agent: {
-            extensions: sandbox
-              ? [
-                  CodingTools,
-                  DurableSandboxTools,
-                  DurableAsk,
-                  DurableWorkingWords,
-                  DurableBackgroundJobs,
-                  DurableGoal,
-                  owner.sessionsExtension,
-                  DurableProjectContext,
-                ]
-              : [
-                  CodingTools,
-                  DurableAsk,
-                  DurableWorkingWords,
-                  DurableBackgroundJobs,
-                  DurableGoal,
-                  owner.sessionsExtension,
-                  DurableProjectContext,
-                  ...(mcp ? [mcp.selection] : []),
-                ],
+            extensions: control
+              ? [...CONTROL_CONVERSATION_EXTENSIONS]
+              : sandbox
+                ? [
+                    CodingTools,
+                    DurableSandboxTools,
+                    DurableAsk,
+                    DurableWorkingWords,
+                    DurableBackgroundJobs,
+                    DurableGoal,
+                    owner.sessionsExtension,
+                    DurableProjectContext,
+                  ]
+                : [
+                    CodingTools,
+                    DurableAsk,
+                    DurableWorkingWords,
+                    DurableBackgroundJobs,
+                    DurableGoal,
+                    owner.sessionsExtension,
+                    DurableProjectContext,
+                    ...(mcp ? [mcp.selection] : []),
+                  ],
             model: { provider: model.provider, modelId: model.id },
             thinkingLevel:
               session.thinkingLevel !== undefined && isThinkingLevel(session.thinkingLevel)
@@ -448,20 +470,23 @@ export class DurableBackend implements AgentBackend {
             tools: [...tools, ...(mcp?.initialTools ?? [])],
             // Pi's experimental prompt loader is not published in 1.0.0. Do not
             // reach into private dist paths or load classic extension factories.
-            instructions: [
-              instructions?.mode === "replace"
-                ? instructions.text
-                : "You are an expert coding assistant. Use the available tools to inspect and change files. Be concise.",
-              `Working directory: ${cwd}`,
-              append,
-            ]
-              .filter(Boolean)
-              .join("\n\n"),
+            instructions: control
+              ? CONTROL_CONVERSATION_INSTRUCTIONS
+              : [
+                  instructions?.mode === "replace"
+                    ? instructions.text
+                    : "You are an expert coding assistant. Use the available tools to inspect and change files. Be concise.",
+                  `Working directory: ${cwd}`,
+                  append,
+                ]
+                  .filter(Boolean)
+                  .join("\n\n"),
           },
         },
         BACKGROUND_CONTEXT,
       );
-      session.serverDurable = { conversationId: conversation.id };
+      // Keep the rest of the enrollment (the control role) when binding.
+      session.serverDurable = { ...session.serverDurable, conversationId: conversation.id };
       // Bind before any submit can be accepted. A crash before this save leaves
       // only an empty unbound conversation, never a duplicated user turn.
       options.persistBinding();

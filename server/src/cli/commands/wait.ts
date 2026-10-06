@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import * as c from "../../ansi.js";
 import {
   createAbortError,
@@ -10,8 +9,10 @@ import {
   cliExitCodeFromUnknown,
   cliJsonErrorFromUnknown,
   codeValue,
+  exitCli,
   printDetails,
   setCapturedCliExitCode,
+  writeHumanLine,
   writeJsonEnvelope,
 } from "../output.js";
 import { apiStatus } from "../resources.js";
@@ -77,8 +78,11 @@ export async function cmdWait(
       }
 
       if (Date.now() >= deadline) {
-        throw new Error(
-          `Timed out waiting for session ${resolvedSessionId} to become ${expectedStatus}`,
+        throw Object.assign(
+          new Error(
+            `Timed out waiting for session ${resolvedSessionId} to become ${expectedStatus}`,
+          ),
+          { code: "wait_timeout" },
         );
       }
       await sleepWithSignal(Math.min(pollMs, Math.max(0, deadline - Date.now())), signal);
@@ -95,8 +99,8 @@ export async function cmdWait(
       setCapturedCliExitCode(cliExitCodeFromUnknown(error));
       return;
     }
-    console.log(c.red(`  Error: ${message}`));
-    process.exit(cliExitCodeFromUnknown(error));
+    writeHumanLine(c.red(`  Error: ${message}`));
+    exitCli(cliExitCodeFromUnknown(error));
   }
 }
 

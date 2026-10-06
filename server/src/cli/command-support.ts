@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import * as c from "../ansi.js";
 import {
   localApiRequest,
@@ -14,7 +13,9 @@ import {
   captureHumanCliOutput,
   cliExitCodeFromUnknown,
   cliJsonErrorFromUnknown,
+  exitCli,
   setCapturedCliExitCode,
+  writeHumanLine,
   writeJsonEnvelope,
 } from "./output.js";
 import { apiStatus } from "./resources.js";
@@ -66,7 +67,7 @@ export function handleModelResolvingCliError(err: unknown, jsonOutput: boolean):
   if (isCliModelResolutionError(err)) {
     printModelResolutionError(err);
   } else {
-    console.log(c.red(`  Error: ${message}`));
+    writeHumanLine(c.red(`  Error: ${message}`));
   }
-  process.exit(cliExitCodeFromUnknown(err));
+  exitCli(cliExitCodeFromUnknown(err));
 }
