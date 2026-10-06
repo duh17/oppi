@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   hygiene:
-    name: Secrets and file size
+    name: Secrets, size, and private paths
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -72,4 +72,55 @@ jobs:
               sys.exit(1)
 
           print(f"Checked {len(changed)} changed files; none exceed {limit} bytes.")
+          PY
+
+      - name: Guard against tracked private paths
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          import sys
+
+          # gitignore does not apply to tracked files. git add -f is the leak.
+          denied_prefixes = (
+              ".internal/",
+              ".pi/",
+              ".reviews/",
+              ".imagen/",
+              ".claude/",
+          )
+          denied_exact = {
+              "auth.json",
+              "config.json",
+              "events.jsonl",
+              "clients/apple/.env.testflight.local",
+              "clients/apple/Local.xcconfig",
+          }
+          denied_suffixes = (".p8", ".pem", ".p12", ".mobileprovision")
+
+          tracked = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
+          offenders = []
+          for path in tracked:
+              if (
+                  path.startswith(denied_prefixes)
+                  or path in denied_exact
+                  or path.endswith(denied_suffixes)
+              ):
+                  offenders.append(path)
+
+          ignored = subprocess.check_output(
+              ["git", "ls-files", "-c", "-i", "--exclude-standard"],
+              text=True,
+          ).splitlines()
+          for path in ignored:
+              if path not in offenders:
+                  offenders.append(f"{path} (tracked but gitignored)")
+
+          if offenders:
+              print("Tracked files match private or ignored paths:")
+              for path in offenders:
+                  print(f"- {path}")
+              print("Remove them with git rm --cached. Do not git add -f ignored files.")
+              sys.exit(1)
+
+          print(f"Checked {len(tracked)} tracked files; none are private or ignored.")
           PY

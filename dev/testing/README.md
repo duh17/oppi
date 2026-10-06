@@ -26,7 +26,7 @@ Never pipe `sim-pool.sh` output through `grep`, `tail`, or `head`; read its summ
 
 The local hook reads the refs Git pushes, classifies changed paths, and runs platform checks concurrently. Server changes run static checks plus Vitest's affected tests; server configuration and protocol changes run the full non-coverage suite. Apple changes compile affected test bundles with the repository simulator pool. Each lane requires its relevant worktree paths to match the pushed commit. Successful lanes are cached by commit, pushed range, lane mode, path set, and toolchain so retries do not repeat completed work.
 
-Full server and Apple unit coverage run on the local workstation. Pre-push keeps compile, static-analysis, architecture, and affected-test failures on the push path. Use `cd server && npm run test:gate:ci-coverage` and `clients/apple/scripts/check-coverage.sh` for threshold-enforced coverage, or `oppi-workflow.sh release-all` for a release cut. `.github/workflows/hygiene.yml` still runs secret and file-size checks for every push and pull request.
+Full server and Apple unit coverage run on the local workstation. Pre-push keeps compile, static-analysis, architecture, and affected-test failures on the push path. Use `cd server && npm run test:gate:ci-coverage` and `clients/apple/scripts/check-coverage.sh` for threshold-enforced coverage, or `oppi-workflow.sh release-all` for a release cut. `.github/workflows/hygiene.yml` still runs secret, file-size, and tracked-private-path checks for every push and pull request. `.gitignore` does not protect a path after `git add -f`; the private-path check rejects that.
 
 ## Detail map
 

@@ -63,6 +63,8 @@ clients/apple/scripts/*
 !clients/apple/scripts/sim-slim.test.ts
 !clients/apple/scripts/sim-pool-slim-labels.txt
 !clients/apple/scripts/release-mac.sh
+!clients/apple/scripts/bundle-mac-server-node.ts
+!clients/apple/scripts/bundle-mac-server-node.test.ts
 !clients/apple/scripts/periphery-scan.ts
 !clients/apple/scripts/analyze-visual-recording.ts
 !clients/apple/scripts/analyze-visual-recording.test.ts
@@ -73,7 +75,7 @@ clients/apple/scripts/*
 server/scripts/manual/*
 !server/scripts/manual/telemetry-import-sqlite.mjs
 
-# Local/private workspace data
+# Local/private workspace data. Tracked copies are rejected by hygiene.yml.
 .github/*
 !.github/workflows/
 .github/workflows/*
