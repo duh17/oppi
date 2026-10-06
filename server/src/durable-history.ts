@@ -218,20 +218,19 @@ export async function readDurableTracePage(
       // aborted assistants need forward evidence: stop as soon as each task has
       // a newer assistant, or after exhausting the range through the captured tip.
       const pending = new Set(
-        records
-          .filter(
-            (entry) =>
-              entry.model?.[0]?.role === "assistant" &&
-              entry.model[0].stopReason === "aborted" &&
-              entry.byTaskId &&
-              ![...records, ...newerRecords].some(
-                (later) =>
-                  later.id > entry.id &&
-                  later.byTaskId === entry.byTaskId &&
-                  later.model?.[0]?.role === "assistant",
-              ),
+        records.flatMap((entry) =>
+          entry.model?.[0]?.role === "assistant" &&
+          entry.model[0].stopReason === "aborted" &&
+          entry.byTaskId &&
+          ![...records, ...newerRecords].some(
+            (later) =>
+              later.id > entry.id &&
+              later.byTaskId === entry.byTaskId &&
+              later.model?.[0]?.role === "assistant",
           )
-          .map((entry) => entry.byTaskId!),
+            ? [entry.byTaskId]
+            : [],
+        ),
       );
       const windowTip = records[0]?.id;
       while (

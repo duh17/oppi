@@ -112,7 +112,15 @@ export function nextIdleFlushDelay(
 	};
 }
 
-export function createResultBuffer() {
+export interface ResultBuffer {
+	enqueue(result: PendingJobResult): boolean;
+	pendingCount(): number;
+	pendingIds(): string[];
+	take(budget?: number): { batch: JobResultBatch; undo: () => void } | undefined;
+	clear(): void;
+}
+
+export function createResultBuffer(): ResultBuffer {
 	const pending: PendingJobResult[] = [];
 	const handedOff = new Set<string>();
 

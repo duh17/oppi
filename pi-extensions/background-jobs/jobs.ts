@@ -287,8 +287,8 @@ export function createJobManager(options: {
 	let closed = false;
 	let outputTimer: ReturnType<typeof setTimeout> | undefined;
 
-	const notify = () => options.onChange?.();
-	const scheduleOutputRefresh = () => {
+	const notify = (): void => options.onChange?.();
+	const scheduleOutputRefresh = (): void => {
 		if (outputTimer) return;
 		outputTimer = setTimeout(() => {
 			outputTimer = undefined;
@@ -297,14 +297,14 @@ export function createJobManager(options: {
 		outputTimer.unref?.();
 	};
 
-	const deliver = (job: RunningJob) => {
+	const deliver = (job: RunningJob): void => {
 		if (!job.pendingDelivery || job.delivered || job.suppressDelivery || job.holdDelivery || closed) return;
 		job.delivered = true;
 		options.onDeliver(job.pendingDelivery);
 		notify();
 	};
 
-	const settle = (job: RunningJob, outcome: Outcome) => {
+	const settle = (job: RunningJob, outcome: Outcome): void => {
 		if (job.settled) return;
 		job.settled = true;
 		job.status = outcome.status;
@@ -534,7 +534,7 @@ interface Outcome {
 	timeoutSeconds?: number;
 }
 
-function appendOutput(job: RunningJob, text: string, maxStoredChars: number) {
+function appendOutput(job: RunningJob, text: string, maxStoredChars: number): void {
 	if (!text) return;
 	job.output += text;
 	if (job.output.length > maxStoredChars) {
@@ -681,7 +681,7 @@ export function waitForForeground(ms: number, signal?: AbortSignal): Promise<voi
 			signal?.removeEventListener("abort", onAbort);
 			resolve();
 		}, ms);
-		const onAbort = () => {
+		const onAbort = (): void => {
 			clearTimeout(timer);
 			reject(new Error("aborted"));
 		};
@@ -767,7 +767,7 @@ function runDirect(
 	command: string,
 ): Promise<PolicyResult> {
 	const controller = new AbortController();
-	const onAbort = () => controller.abort();
+	const onAbort = (): void => controller.abort();
 	input.signal?.addEventListener("abort", onAbort);
 	let output = "";
 	let truncated = false;

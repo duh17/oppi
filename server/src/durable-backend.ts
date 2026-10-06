@@ -861,7 +861,7 @@ export class DurableBackend implements AgentBackend {
     const items = (this.currentInbox()?.items ?? []).filter(
       (item) => !this.projection.inputCards.submissions.has(item.id),
     );
-    const text = (content: string | readonly { type: string; text?: string }[]) =>
+    const text = (content: string | readonly { type: string; text?: string }[]): string =>
       typeof content === "string"
         ? content
         : content.map((block) => (block.type === "text" ? (block.text ?? "") : "")).join("");

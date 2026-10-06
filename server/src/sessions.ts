@@ -815,7 +815,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
             !queued.has(session.id) ||
             (session.workspaceId && !this.storage.getWorkspace(session.workspaceId)),
         )
-        .map((session) => session.serverDurable!.conversationId! as ConversationId),
+        .map((session) => session.serverDurable.conversationId as ConversationId),
     );
     // Ordinary Stop leaves promoted jobs alive in the current process. At
     // startup an explicitly stopped session must resume no work, including
@@ -843,19 +843,19 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
           (session.workspaceId && !this.storage.getWorkspace(session.workspaceId)),
       );
       const unmarked = stopped.filter(
-        (session) => !marked.has(session.serverDurable!.conversationId! as ConversationId),
+        (session) => !marked.has(session.serverDurable.conversationId as ConversationId),
       );
       const attachedStops = stopped.filter((session) => this.isActive(session.id));
       if (!unmarked.length && !attachedStops.length) break;
       if (unmarked.length)
         await durableHarness.abortConversations(
           new Set(
-            unmarked.map((session) => session.serverDurable!.conversationId! as ConversationId),
+            unmarked.map((session) => session.serverDurable.conversationId as ConversationId),
           ),
           { background: true },
         );
       for (const session of unmarked)
-        marked.add(session.serverDurable!.conversationId! as ConversationId);
+        marked.add(session.serverDurable.conversationId as ConversationId);
       for (const session of attachedStops) await this.stopSession(session.id);
     }
     for (const session of bound) this.storage.clearRestartResume(session.id);

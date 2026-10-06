@@ -14,6 +14,7 @@ import {
   type Extension,
   type TaskId,
   type ToolExecutionApi,
+  type ToolExecutionResult,
 } from "@earendil-works/pi-durable";
 
 /**
@@ -162,12 +163,22 @@ const GUIDANCE =
   "next step, followUp waits for its current answer), session_wait waits for sessions to go idle, " +
   "and session_abort stops a child you spawned. Child sessions cannot spawn sessions.";
 
-function reply(text: string, details: Record<string, string | number | boolean>, isError = false) {
+type ReplyDetails = Record<string, string | number | boolean>;
+
+function reply(
+  text: string,
+  details: ReplyDetails,
+  isError = false,
+): ToolExecutionResult<ReplyDetails> {
   return { content: [{ type: "text" as const, text }], details, ...(isError ? { isError } : {}) };
 }
 
 /** `api.commit` read of a conversation's owner; undefined for an ownerless conversation. */
-async function ownerOf(api: ToolExecutionApi, id: ConversationId, context: Context) {
+async function ownerOf(
+  api: ToolExecutionApi,
+  id: ConversationId,
+  context: Context,
+): Promise<ConversationId | undefined> {
   return api.commit(async (tx) => (await tx.conversation(id))?.owner?.conversationId, context);
 }
 
@@ -224,7 +235,7 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
         ...(args.model ? { model: args.model } : {}),
         ...(args.thinking ? { thinking: args.thinking } : {}),
       });
-      const name = args.name?.trim() || task.split("\n")[0]!.slice(0, 80);
+      const name = args.name?.trim() || (task.split("\n", 1)[0] ?? task).slice(0, 80);
       const choices = {
         ...(agent.model ? { model: agent.model } : {}),
         ...(agent.thinkingLevel ? { thinkingLevel: agent.thinkingLevel } : {}),
@@ -251,7 +262,8 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
         await api.details({ conversationId: spawned.conversationId, sessionId }, context);
         // The reporter is created after the Session is bound, so the child never runs unattached.
         await api.commit(async (tx) => {
-          const entry = (await tx.doc(Spawns, api.conversationId)).spawns[String(api.taskId)]!;
+          const entry = (await tx.doc(Spawns, api.conversationId)).spawns[String(api.taskId)];
+          if (!entry) throw new Error("Background session spawn record disappeared");
           if (entry.reporter !== undefined) return;
           entry.reporter = await tx.createTask(
             Reporter,

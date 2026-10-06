@@ -578,15 +578,15 @@ export class SessionMessageQueueCoordinator {
     if (!active) throw new Error(`Session not active: ${key}`);
     return active.sdkBackend.withRuntimeLifecycleTransaction("queue withdrawal", async (permit) => {
       if (this.deps.getActiveSession(key) !== active) throw new Error(`Session not active: ${key}`);
-      if (active.sdkBackend.withdrawNativeQueue) {
+      if (active.sdkBackend.withdrawNativeQueue && active.sdkBackend.nativeMessageQueue) {
         const withdrawn = await active.sdkBackend.withdrawNativeQueue(itemId, permit);
-        const current = await active.sdkBackend.nativeMessageQueue!();
+        const current = await active.sdkBackend.nativeMessageQueue();
         this.deps.broadcast(key, queueStateMessage(current));
         return itemId === undefined ? withdrawn : current;
       }
       this.assertQueueReconciled(active, this.ensureQueueStore(active));
       const queue = this.syncFromSdk(active);
-      const selected = (items: QueueStoreItem[]) =>
+      const selected = (items: QueueStoreItem[]): QueueStoreItem[] =>
         items.filter((item) => itemId === undefined || item.id === itemId);
       const withdrawn: MessageQueueState = {
         version: queue.version,
@@ -597,7 +597,7 @@ export class SessionMessageQueueCoordinator {
       // transaction excludes Oppi admissions, while native Pi remains the
       // authority for anything consumed during replay of the remaining items.
       const version = nextQueueVersion(queue.version);
-      const remaining = (items: QueueStoreItem[]) =>
+      const remaining = (items: QueueStoreItem[]): QueueStoreItem[] =>
         items.filter((item) => itemId !== undefined && item.id !== itemId);
       const steering = remaining(queue.steering);
       const followUp = remaining(queue.followUp);

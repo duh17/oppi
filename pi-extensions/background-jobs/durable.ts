@@ -13,7 +13,9 @@ import {
   type DocumentObserver,
   type DocumentReader,
   type TaskId,
+  type TaskOutcome,
   type ToolExecutionApi,
+  type ToolExecutionResult,
   type Tx,
 } from "@earendil-works/pi-durable";
 import { DurableUI, DurableInputCards } from "../durable-ui.js";
@@ -63,6 +65,12 @@ export const DurableJobs = defineDoc<{ seq: number; jobs: Job[] }>({
   fork: "initial",
   initial: () => ({ seq: 0, jobs: [] }),
 });
+
+function jobById(jobs: readonly Job[], jobId: string): Job {
+  const job = jobs.find((item) => item.id === jobId);
+  if (!job) throw new Error(`No background job ${jobId}.`);
+  return job;
+}
 
 async function publish(tx: Tx, id: ConversationId): Promise<void> {
   const jobs = (await tx.doc(DurableJobs, id)).jobs;
@@ -124,17 +132,17 @@ async function waitForJob(
 ): Promise<Job> {
   const watch = await api.watchDoc(DurableJobs, id, context);
   if (!watch) throw new Error("Background jobs document disappeared");
-  let cleanup = () => {};
+  let cleanup = (): void => {};
   try {
     return await new Promise<Job>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
-      const abort = () =>
+      const abort = (): void =>
         reject(context.abortSignal?.reason ?? new Error("Job wait aborted"));
       cleanup = () => {
         if (timer) clearTimeout(timer);
         context.abortSignal?.removeEventListener("abort", abort);
       };
-      const take = (value: typeof watch.value, expired = false) => {
+      const take = (value: typeof watch.value, expired = false): void => {
         const job = value?.jobs.find((item) => item.id === jobId);
         if (!job) reject(new Error(`No background job ${jobId}.`));
         else if (expired || predicate(job)) resolve(job);
@@ -215,11 +223,13 @@ const JobRunner = defineTask<
   initial: () => ({ phase: "run" }),
   phases: {
     async run(task, runtime, context) {
-      const job = (await runtime.snapshot(
+      const snapshot = await runtime.snapshot(
         DurableJobs,
         runtime.conversationId,
         context,
-      ))!.jobs.find((item) => item.id === task.input.jobId)!;
+      );
+      if (!snapshot) throw new Error("Background jobs document disappeared");
+      const job = jobById(snapshot.jobs, task.input.jobId);
       // Claim before any external side effect. Re-entering this phase after a
       // crash OR a clean close reports interruption, never retries the shell.
       const claim = randomUUID();
@@ -310,9 +320,10 @@ const JobRunner = defineTask<
         }
       }
       await runtime.commit(async (tx) => {
-        const current = (
-          await tx.doc(DurableJobs, runtime.conversationId)
-        ).jobs.find((item) => item.id === job.id)!;
+        const current = jobById(
+          (await tx.doc(DurableJobs, runtime.conversationId)).jobs,
+          job.id,
+        );
         Object.assign(current, { status, output, truncated, exitCode });
         if (
           current.decision === "waiting" &&
@@ -333,9 +344,10 @@ const JobRunner = defineTask<
       );
       const retireStoppedForeground = async (): Promise<void> => {
         await runtime.commit(async (tx) => {
-          const current = (
-            await tx.doc(DurableJobs, runtime.conversationId)
-          ).jobs.find((item) => item.id === task.input.jobId)!;
+          const current = jobById(
+            (await tx.doc(DurableJobs, runtime.conversationId)).jobs,
+            task.input.jobId,
+          );
           if (current.decision === "waiting") current.decision = "foreground";
         }, context);
       };
@@ -355,16 +367,19 @@ const JobRunner = defineTask<
       } finally {
         await live?.stop();
       }
-      const settle = async (tx: Tx) => {
-        const current = (
-          await tx.doc(DurableJobs, runtime.conversationId)
-        ).jobs.find((item) => item.id === job.id)!;
+      const settle = async (
+        tx: Tx,
+      ): Promise<{ status: "terminal"; outcome: TaskOutcome<null> }> => {
+        const current = jobById(
+          (await tx.doc(DurableJobs, runtime.conversationId)).jobs,
+          job.id,
+        );
         current.delivered = true;
         current.output = "";
         await publish(tx, runtime.conversationId);
         return {
-          status: "terminal" as const,
-          outcome: { status: "completed" as const, result: null },
+          status: "terminal",
+          outcome: { status: "completed", result: null },
         };
       };
       if (job.decision === "background") {
@@ -425,9 +440,10 @@ const JobRunner = defineTask<
   },
   async abort(task, runtime, context) {
     await runtime.commit(async (tx) => {
-      const job = (await tx.doc(DurableJobs, runtime.conversationId)).jobs.find(
-        (item) => item.id === task.input.jobId,
-      )!;
+      const job = jobById(
+        (await tx.doc(DurableJobs, runtime.conversationId)).jobs,
+        task.input.jobId,
+      );
       job.status = "cancelled";
       job.delivered = true;
       job.output = "";
@@ -456,7 +472,8 @@ async function start(
   foregroundPolicy?: "only" | "fallback",
 ): Promise<Job> {
   validateTimeout(timeout);
-  if (!api.env) throw new Error("No execution environment for background job");
+  const env = api.env;
+  if (!env) throw new Error("No execution environment for background job");
   return api.commit(async (tx) => {
     const state = await tx.doc(DurableJobs, api.conversationId);
     const existing = state.jobs.find((job) => job.starter === api.taskId);
@@ -486,7 +503,7 @@ async function start(
       taskId,
       starter: api.taskId,
       command,
-      cwd: api.env!.cwd,
+      cwd: env.cwd,
       status: "running",
       startedAt,
       deadline: startedAt + waitMs,
@@ -505,7 +522,7 @@ async function start(
     return job;
   }, context);
 }
-function notice(job: Job) {
+function notice(job: Job): ToolExecutionResult {
   return {
     content: [
       {
@@ -614,9 +631,10 @@ const bash = defineTool({
       job.foregroundOnly ? undefined : job.deadline,
     );
     const selected = await api.commit(async (tx) => {
-      const current = (await tx.doc(DurableJobs, api.conversationId)).jobs.find(
-        (item) => item.id === job.id,
-      )!;
+      const current = jobById(
+        (await tx.doc(DurableJobs, api.conversationId)).jobs,
+        job.id,
+      );
       // Decide against committed completion, not a stale watcher frame at the deadline.
       current.decision =
         current.status === "running" ? "background" : "foreground";

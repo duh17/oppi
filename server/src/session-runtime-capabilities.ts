@@ -14,9 +14,9 @@ export function isServerDurableSession(
 }
 
 /** Bound to a durable conversation: needs the Harness whether or not new sessions still enroll. */
-export function hasServerDurableBinding(
-  session: Pick<Session, "runtime" | "serverDurable">,
-): boolean {
+export function hasServerDurableBinding<T extends Pick<Session, "runtime" | "serverDurable">>(
+  session: T,
+): session is T & { serverDurable: { conversationId: number } } {
   return isServerDurableSession(session) && session.serverDurable?.conversationId !== undefined;
 }
 

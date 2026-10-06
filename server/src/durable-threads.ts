@@ -71,7 +71,10 @@ export class DurableThreads implements DurableSessionsHost {
     await this.deps.startSession(sessionId, workspace);
   }
 
-  async resolveAgent(options: { model?: string; thinking?: string }) {
+  async resolveAgent(options: {
+    model?: string;
+    thinking?: string;
+  }): ReturnType<DurableSessionsHost["resolveAgent"]> {
     if (options.thinking !== undefined && !isThinkingLevel(options.thinking))
       throw new Error(`Unknown thinking level: ${options.thinking}`);
     const thinkingLevel = options.thinking as ThinkingLevel | undefined;
@@ -153,7 +156,8 @@ export class DurableThreads implements DurableSessionsHost {
       runtime.kind = parentRuntime.kind;
       if (parentRuntime.workspaceId !== undefined) runtime.workspaceId = parentRuntime.workspaceId;
       const agent = await tx.doc(AgentDoc, conversationId);
-      const own = (extension: string) => !extension.startsWith(DURABLE_MCP_EXTENSION_PREFIX);
+      const own = (extension: string): boolean =>
+        !extension.startsWith(DURABLE_MCP_EXTENSION_PREFIX);
       if (Array.isArray(agent.extensions)) agent.extensions = agent.extensions.filter(own);
       else if (agent.extensions?.add) agent.extensions.add = agent.extensions.add.filter(own);
     }, BACKGROUND_CONTEXT);
@@ -242,27 +246,28 @@ export class DurableThreads implements DurableSessionsHost {
  * Walk owner edges up to the root, then down through `ownerConversationId`, in one read.
  * `chain` is the path from `id` up to the root, nearest first.
  */
-function readThread(harness: Harness, id: ConversationId) {
+function readThread(
+  harness: Harness,
+  id: ConversationId,
+): Promise<{ chain: ConversationId[]; members: ConversationId[] }> {
   return harness.commit(async (tx) => {
     const chain: ConversationId[] = [id];
     const seen = new Set<ConversationId>(chain);
+    let root = id;
     for (;;) {
-      const parent = (await tx.conversation(chain.at(-1)!))?.owner?.conversationId;
+      const parent = (await tx.conversation(root))?.owner?.conversationId;
       if (parent === undefined || seen.has(parent)) break;
       seen.add(parent);
       chain.push(parent);
+      root = parent;
     }
-    const root = chain.at(-1)!;
     const members: ConversationId[] = [root];
     const known = new Set<ConversationId>(members);
-    for (let index = 0; index < members.length; index += 1) {
+    // Array iteration also visits children pushed during the walk.
+    for (const member of members) {
       let cursor;
       do {
-        const page = await tx.scanConversations(
-          { ownerConversationId: members[index]! },
-          100,
-          cursor,
-        );
+        const page = await tx.scanConversations({ ownerConversationId: member }, 100, cursor);
         for (const child of page.items)
           if (!known.has(child.id)) {
             known.add(child.id);

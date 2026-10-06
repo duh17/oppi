@@ -45,6 +45,18 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 
 describe("session targeting uses Pi-native Session.id", () => {
   describe("HTTP lookup", () => {
+    // Own data dir: workspace-less control sessions fall back to scanning every
+    // child of the data dir, and the shared OS tmpdir can hold 100k+ entries.
+    let dataDir: string;
+
+    beforeEach(() => {
+      dataDir = mkdtempSync(join(tmpdir(), "oppi-session-id-http-"));
+    });
+
+    afterEach(() => {
+      rmSync(dataDir, { recursive: true, force: true });
+    });
+
     it("GET /sessions/:id, workspace inspect, and resume resolve Session.id only", async () => {
       const session = makeSession();
       const getSession = vi.fn((id: string) => (id === session.id ? session : undefined));
@@ -53,7 +65,7 @@ describe("session targeting uses Pi-native Session.id", () => {
         storage: {
           getSession,
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
-          getDataDir: vi.fn(() => tmpdir()),
+          getDataDir: vi.fn(() => dataDir),
         },
         sessions: { mobileRenderer: new MobileRendererRegistry(), startSession },
         sessionRuntimes: {
@@ -119,7 +131,7 @@ describe("session targeting uses Pi-native Session.id", () => {
         sessions: { mobileRenderer: new MobileRendererRegistry() },
         storage: {
           getSession,
-          getDataDir: vi.fn(() => tmpdir()),
+          getDataDir: vi.fn(() => dataDir),
         },
         sessionRuntimes: {
           refreshSessionState: vi.fn(async () => undefined),
