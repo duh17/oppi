@@ -20,7 +20,8 @@ Without it, the Oppi target fails with a missing `Vendor/TailscaleKit/TailscaleK
 ### Build the terminal engine
 
 The iOS app statically links a pinned libghostty-vt build, without SIMD C++
-libraries or Kitty graphics decoding. The framework is untracked. A cache miss
+libraries. Kitty graphics is compiled in; PNG decode is an embedder callback,
+and file image loads are not enabled. The framework is untracked. A cache miss
 needs exactly Zig 0.16.0 and Xcode with the iOS device and simulator SDKs:
 
 ```bash

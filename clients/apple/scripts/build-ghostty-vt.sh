@@ -5,9 +5,11 @@
 set -euo pipefail
 
 COMMIT="33da6848d63b3bba2b4f31ab1531d618f2795192"
-# This passive-log build does not decode terminal images. Disable SIMD's
-# bundled C++ libraries too; preserve all state/formatter/input/snapshot APIs.
-BUILD_ID="$COMMIT-zig0.16.0-small-nosimd-noimages-v1"
+# SIMD stays off so the static lib does not bundle those C++ libraries.
+# Kitty graphics is compiled in. PNG decode is an embedder callback, and
+# file, temporary-file, and shared-memory loads stay off unless a terminal
+# sets those options. Direct and zlib payloads do not need a PNG decoder.
+BUILD_ID="$COMMIT-zig0.16.0-small-nosimd-kitty-v1"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENDOR="$ROOT/Vendor/GhosttyVt"
 CACHE="${OPPI_GHOSTTY_VT_CACHE:-$HOME/Library/Caches/oppi-ghostty-vt}/$BUILD_ID"
@@ -50,7 +52,7 @@ fi
 git -C "$WORK/source" fetch -q --depth 1 origin "$COMMIT"
 git -C "$WORK/source" checkout -q --detach "$COMMIT"
 (cd "$WORK/source" && zig build -Demit-lib-vt=true -Demit-xcframework=true \
-    -Doptimize=ReleaseSmall -Dsimd=false -Dvt-features=-kitty-graphics \
+    -Doptimize=ReleaseSmall -Dsimd=false \
     --prefix "$WORK/output")
 mkdir -p "$WORK/product"
 cp -R "$WORK/output/lib/ghostty-vt.xcframework" "$WORK/product/"
