@@ -36,7 +36,10 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-/** Oracle: current search fields after mobile TraceEvent construction + filter. */
+/** Mobile text renders inline media as data URIs; search never indexes them. */
+const INLINE_MEDIA = /\n?data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,[a-z0-9+/=_-]*/gi;
+
+/** Oracle: search fields after mobile TraceEvent construction + filter, minus inline media. */
 function searchableFieldsFromMobileTrace(jsonlPath: string): {
   userMessages: string;
   assistantMessages: string;
@@ -52,12 +55,13 @@ function searchableFieldsFromMobileTrace(jsonlPath: string): {
   let assistantLen = 0;
 
   for (const event of events) {
-    if (event.type === "user" && event.text && userLen < USER_MESSAGE_CAP) {
-      userParts.push(event.text);
-      userLen += event.text.length;
-    } else if (event.type === "assistant" && event.text && assistantLen < ASSISTANT_MESSAGE_CAP) {
-      assistantParts.push(event.text);
-      assistantLen += event.text.length;
+    const text = event.text?.replace(INLINE_MEDIA, "");
+    if (event.type === "user" && text && userLen < USER_MESSAGE_CAP) {
+      userParts.push(text);
+      userLen += text.length;
+    } else if (event.type === "assistant" && text && assistantLen < ASSISTANT_MESSAGE_CAP) {
+      assistantParts.push(text);
+      assistantLen += text.length;
     } else if (event.type === "toolCall" && event.tool) {
       toolNameSet.add(event.tool);
     }
@@ -282,13 +286,14 @@ function writeSearchFixture(jsonlPath: string): {
       "inactivebranchtoken",
       "customcardtoken",
       "R0lGODlhAQABAIAAAP",
+      "iVBORw0KGgoAAAANS",
+      "base64",
     ],
     retainedTokens: [
       "keptcompacttoken",
       "keptassistantcompacttoken",
       "postcompacttoken",
       "postassistantcompacttoken",
-      "data:image/png;base64,iVBORw0KGgoAAAANS",
     ],
   };
 }
@@ -322,7 +327,6 @@ describe("search transcript extraction fields", () => {
       expect(oracle.toolNames.split(" ").sort()).toEqual(["bash", "read", "unknown"]);
       expect(oracle.userMessages).toContain("broken \uFFFD... ok 😀");
       expect(oracle.userMessages).not.toContain("\uD83D...");
-      expect(oracle.userMessages).toContain("data:image/png;base64,iVBORw0KGgoAAAANS");
       expect(oracle.assistantMessages).not.toContain("secretthinkingtoken");
       expect(oracle.assistantMessages).not.toContain("secretkepttoolresulttoken");
 
@@ -417,6 +421,49 @@ describe("search transcript extraction fields", () => {
     } finally {
       index.close();
     }
+  });
+
+  it("keeps inline media out of the field caps so later text stays searchable", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-extract-media-cap-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    const screenshot = "A".repeat(USER_MESSAGE_CAP);
+    writeJsonlEntries(jsonlPath, [
+      {
+        type: "message",
+        id: "u1",
+        parentId: null,
+        timestamp: "2026-01-01T00:00:01Z",
+        message: {
+          role: "user",
+          content: [
+            { type: "text", text: "see screenshot" },
+            { type: "image", mimeType: "image/png", data: screenshot },
+          ],
+        },
+      },
+      {
+        type: "message",
+        id: "a1",
+        parentId: "u1",
+        timestamp: "2026-01-01T00:00:02Z",
+        message: {
+          role: "assistant",
+          content: `pasted data:image/jpeg;base64,${screenshot} inline`,
+        },
+      },
+      {
+        type: "message",
+        id: "u2",
+        parentId: "a1",
+        timestamp: "2026-01-01T00:00:03Z",
+        message: { role: "user", content: "afterscreenshottoken follow-up" },
+      },
+    ]);
+
+    const extracted = extractSearchTranscriptFromFile(jsonlPath);
+    expect(extracted?.userMessages).toBe("see screenshot\nafterscreenshottoken follow-up");
+    expect(extracted?.assistantMessages).toMatch(/^pasted\s+inline$/);
   });
 
   it("returns null for a missing session file", () => {

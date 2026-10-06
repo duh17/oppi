@@ -560,6 +560,41 @@ describe("SearchIndex indexes transcript content only", () => {
     }
   });
 
+  it("re-extracts v5 rows that indexed inline media, once", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-schema-v6-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    writeJsonl(jsonlPath, "media migrate token", "assistant reply");
+    const session = makeSession({ id: "sess-media", piSessionFile: jsonlPath });
+    const sessions = new Map([[session.id, session]]);
+
+    const firstIndex = new SearchIndex(dataDir, (id) => sessions.get(id));
+    firstIndex.sync([session]);
+    firstIndex.close();
+
+    // A v5 row: screenshot base64 indexed in place of the text it displaced.
+    const db = openDatabase(join(dataDir, "session-search.db"));
+    try {
+      db.prepare("UPDATE session_fts SET user_messages = ? WHERE session_id = ?").run(
+        "see\ndata:image/png;base64,legacymediatoken",
+        session.id,
+      );
+      db.prepare("UPDATE fts_schema SET value = '5' WHERE key = 'version'").run();
+    } finally {
+      db.close();
+    }
+
+    const migrated = new SearchIndex(dataDir, (id) => sessions.get(id));
+    try {
+      expect(migrated.sync([session])).toMatchObject({ reindexed: 1, transcriptsRead: 1 });
+      expect(migrated.search("legacymediatoken", "ws-1", 10)).toEqual([]);
+      expect(migrated.search("media migrate token", "ws-1", 10)).toHaveLength(1);
+      expect(migrated.sync([session])).toMatchObject({ skipped: 1, transcriptsRead: 0 });
+    } finally {
+      migrated.close();
+    }
+  });
+
   it("rebuilds an interrupted schema upgrade and repopulates idempotently", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "search-index-schema-rebuild-"));
     cleanupPaths.add(dataDir);
@@ -663,7 +698,7 @@ describe("SearchIndex indexes transcript content only", () => {
       const meta = after
         .prepare("SELECT workspace_id, title FROM fts_meta WHERE session_id = ?")
         .get(session.id) as { workspace_id: string; title: string };
-      expect(version.value).toBe("5");
+      expect(version.value).toBe("6");
       expect(columns).toEqual(
         expect.arrayContaining([
           "workspace_id",

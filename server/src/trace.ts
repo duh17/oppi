@@ -1101,6 +1101,18 @@ export function parseJsonl(content: string, options: TraceReadOptions = {}): Tra
 const SEARCH_USER_MESSAGE_CAP = 50_000;
 const SEARCH_ASSISTANT_MESSAGE_CAP = 100_000;
 
+/**
+ * Inline base64 media (`data:<mime>;base64,...`), with the newline that joined
+ * it to neighboring text. Base64 is never useful search text: it fills the FTS
+ * vocabulary with one-off tokens and spends the field caps before real text.
+ */
+const INLINE_MEDIA_DATA_URI_RE = /\n?data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,[a-z0-9+/=_-]*/gi;
+
+/** Remove inline base64 media from text bound for the search index. */
+function stripInlineMediaDataUris(text: string): string {
+  return text.replace(INLINE_MEDIA_DATA_URI_RE, "");
+}
+
 export interface SearchTranscriptContent {
   userMessages: string;
   assistantMessages: string;
@@ -1131,7 +1143,9 @@ export function extractSearchTranscriptFromEntries(
     if (!msg) continue;
 
     if (msg.role === "user") {
-      const text = extractText(msg.content);
+      const text = stripInlineMediaDataUris(
+        extractText(msg.content, { includeMediaDataURIs: false }),
+      );
       if (text && userLen < userCap) {
         const normalized = replaceUnpairedSurrogates(text);
         userParts.push(normalized);
@@ -1147,7 +1161,7 @@ export function extractSearchTranscriptFromEntries(
       for (const projected of projectAssistantContentRuns(msg)) {
         if (projected.kind === "text") {
           if (projected.text && assistantLen < assistantCap) {
-            const normalized = replaceUnpairedSurrogates(projected.text);
+            const normalized = replaceUnpairedSurrogates(stripInlineMediaDataUris(projected.text));
             if (normalized) {
               assistantParts.push(normalized);
               assistantLen += normalized.length;
@@ -1167,9 +1181,11 @@ export function extractSearchTranscriptFromEntries(
     }
 
     if (typeof content === "string" && content && assistantLen < assistantCap) {
-      const normalized = replaceUnpairedSurrogates(content);
-      assistantParts.push(normalized);
-      assistantLen += normalized.length;
+      const normalized = replaceUnpairedSurrogates(stripInlineMediaDataUris(content));
+      if (normalized) {
+        assistantParts.push(normalized);
+        assistantLen += normalized.length;
+      }
     }
   }
 

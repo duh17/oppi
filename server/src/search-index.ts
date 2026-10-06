@@ -80,6 +80,8 @@ export interface SearchIndexBackgroundSyncResult extends SearchIndexSyncResult {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_BACKGROUND_SYNC_BUDGET_MS = 8;
+/** FTS5 merge pages per step. 200 pages took up to 44 ms on an 11k-session index; 32 stays near the budget. */
+const FTS_MERGE_PAGES_PER_STEP = 32;
 const DEFAULT_BACKGROUND_SYNC_BATCH_SIZE = Number.MAX_SAFE_INTEGER;
 
 function yieldToEventLoop(): Promise<void> {
@@ -256,6 +258,7 @@ export class SearchIndex {
   private stmtSearch!: SqliteStatement;
   private stmtRecent!: SqliteStatement;
   private stmtDelete!: SqliteStatement;
+  private stmtSetFtsRowid!: SqliteStatement;
   private stmtDeleteMeta!: SqliteStatement;
   private stmtGetMeta!: SqliteStatement;
   private stmtGetIndexedIdentity!: SqliteStatement;
@@ -286,6 +289,7 @@ export class SearchIndex {
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.ensureSchema();
     this.prepareStatements();
+    this.migrateToV6();
   }
 
   // -------------------------------------------------------------------------
@@ -334,6 +338,77 @@ export class SearchIndex {
     this.db.prepare("INSERT OR REPLACE INTO fts_schema VALUES ('version', ?)").run("5");
   }
 
+  private schemaVersion(): string | undefined {
+    const row = this.db.prepare("SELECT value FROM fts_schema WHERE key = 'version'").get() as
+      | { value: string }
+      | undefined;
+    return row?.value;
+  }
+
+  /** v5 shape → v6 shape: fts_meta.fts_rowid; migrateToV6 backfills it. */
+  private addFtsRowidColumn(): void {
+    if (!this.ftsMetaColumnNames().has("fts_rowid")) {
+      this.db.exec("ALTER TABLE fts_meta ADD COLUMN fts_rowid INTEGER");
+    }
+  }
+
+  /**
+   * v5 → v6, after statements exist:
+   * - Backfill fts_meta.fts_rowid in one FTS scan and drop FTS rows without
+   *   metadata. FTS5 cannot index session_id, so every lookup by it scanned the
+   *   whole content table (~30 ms per reindex at 11k sessions).
+   * - Inline base64 media is no longer indexed. Rows that hold it go back
+   *   through extraction rather than being stripped in place: the media spent
+   *   the field caps, so the text it displaced only returns from the source.
+   *   Clearing the file fingerprint and durable marker makes the next
+   *   (cooperative, background) sync re-extract them once.
+   */
+  private migrateToV6(): void {
+    if (this.schemaVersion() !== "5") return;
+    const started = performance.now();
+    const ftsRows = this.db.prepare("SELECT rowid, session_id FROM session_fts").all() as Array<{
+      rowid: number;
+      session_id: string;
+    }>;
+    const metaIds = new Set(
+      (this.stmtGetIndexedIds.all() as Array<{ session_id: string }>).map((row) => row.session_id),
+    );
+    const setRowid = this.db.prepare("UPDATE fts_meta SET fts_rowid = ? WHERE session_id = ?");
+    const deleteByRowid = this.db.prepare("DELETE FROM session_fts WHERE rowid = ?");
+    let orphans = 0;
+    this.db.transaction(() => {
+      for (const row of ftsRows) {
+        if (metaIds.has(row.session_id)) {
+          setRowid.run(row.rowid, row.session_id);
+        } else {
+          deleteByRowid.run(row.rowid);
+          orphans++;
+        }
+      }
+    })();
+
+    // Index lookup, not a content scan. Prose that says "base64" also matches;
+    // re-extracting those few rows is harmless.
+    const rows = this.db
+      .prepare(
+        "SELECT session_id FROM session_fts WHERE session_fts MATCH '{user_messages assistant_messages}: base64'",
+      )
+      .all() as Array<{ session_id: string }>;
+    const invalidate = this.db.prepare(
+      "UPDATE fts_meta SET jsonl_mtime_ms = -1, durable_marker = NULL WHERE session_id = ?",
+    );
+    this.db.transaction(() => {
+      for (const row of rows) invalidate.run(row.session_id);
+      this.db.prepare("INSERT OR REPLACE INTO fts_schema VALUES ('version', ?)").run("6");
+    })();
+    log.info("search_index.migrated_v6", {
+      rows: ftsRows.length,
+      orphans,
+      inlineMediaRows: rows.length,
+      elapsedMs: Math.round(performance.now() - started),
+    });
+  }
+
   private ensureSchema(): void {
     // Check schema version
     const hasSchemaTable = this.db
@@ -341,24 +416,25 @@ export class SearchIndex {
       .get();
 
     if (hasSchemaTable) {
-      const row = this.db.prepare("SELECT value FROM fts_schema WHERE key = 'version'").get() as
-        | { value: string }
-        | undefined;
-      if (row?.value === "5") {
-        if (this.ftsMetaColumnNames().has("durable_marker")) return;
-        this.migrateDurableMarkerColumn();
+      // v3–v5 upgrade in place to the v6 shape; migrateToV6 finishes the data.
+      const version = this.schemaVersion();
+      if (version === "6") return;
+      if (version === "5") {
+        if (!this.ftsMetaColumnNames().has("durable_marker")) this.migrateDurableMarkerColumn();
+        this.addFtsRowidColumn();
         return;
       }
-      if (row?.value === "4" || row?.value === "3") {
+      if (version === "4" || version === "3") {
         const columns = this.ftsMetaColumnNames();
-        if (row.value === "3" || !columns.has("workspace_id") || !columns.has("title")) {
+        if (version === "3" || !columns.has("workspace_id") || !columns.has("title")) {
           this.migrateFtsMetaIdentityColumns();
         }
         this.migrateDurableMarkerColumn();
+        this.addFtsRowidColumn();
         return;
       }
 
-      // Unknown/older versions — drop and recreate at v5.
+      // Unknown/older versions — drop and recreate at v6.
       this.db.exec("DROP TABLE IF EXISTS session_fts");
       this.db.exec("DROP TABLE IF EXISTS fts_meta");
       this.db.exec("DROP TABLE IF EXISTS fts_schema");
@@ -383,7 +459,8 @@ export class SearchIndex {
         indexed_at INTEGER,
         workspace_id TEXT,
         title TEXT,
-        durable_marker TEXT
+        durable_marker TEXT,
+        fts_rowid INTEGER
       );
 
       CREATE TABLE IF NOT EXISTS fts_schema (
@@ -391,15 +468,24 @@ export class SearchIndex {
         value TEXT
       );
 
-      INSERT OR REPLACE INTO fts_schema VALUES ('version', '5');
+      INSERT OR REPLACE INTO fts_schema VALUES ('version', '6');
     `);
   }
 
   private prepareStatements(): void {
-    // Upsert into FTS: delete old row then insert new
-    // FTS5 doesn't support UPDATE, so we delete + insert
-    this.stmtDelete = this.db.prepare("DELETE FROM session_fts WHERE session_id = ?");
+    // FTS rows are addressed through fts_meta.fts_rowid: session_id is UNINDEXED,
+    // so `WHERE session_id = ?` on session_fts scans every row.
+    // Upsert into FTS: delete old row then insert new (FTS5 has no UPDATE).
+    // The session_id check keeps a stale pointer from touching another session's row.
+    this.stmtDelete = this.db.prepare(
+      "DELETE FROM session_fts WHERE rowid = (SELECT fts_rowid FROM fts_meta WHERE session_id = ?1) AND session_id = ?1",
+    );
     this.stmtDeleteMeta = this.db.prepare("DELETE FROM fts_meta WHERE session_id = ?");
+    // Runs right after stmtUpsert, so last_insert_rowid() is the new FTS row.
+    this.stmtSetFtsRowid = this.db.prepare(`
+      INSERT INTO fts_meta (session_id, fts_rowid) VALUES (?, last_insert_rowid())
+      ON CONFLICT(session_id) DO UPDATE SET fts_rowid = excluded.fts_rowid
+    `);
 
     this.stmtUpsert = this.db.prepare(`
       INSERT INTO session_fts (
@@ -413,8 +499,9 @@ export class SearchIndex {
       VALUES (?, ?, ?, ?, ?, ?)
     `);
 
+    // Upsert, not REPLACE: REPLACE would drop the fts_rowid set by upsertRow.
     this.stmtUpsertMeta = this.db.prepare(`
-      INSERT OR REPLACE INTO fts_meta (
+      INSERT INTO fts_meta (
         session_id,
         jsonl_path,
         jsonl_mtime_ms,
@@ -425,6 +512,14 @@ export class SearchIndex {
         durable_marker
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET
+        jsonl_path = excluded.jsonl_path,
+        jsonl_mtime_ms = excluded.jsonl_mtime_ms,
+        jsonl_size = excluded.jsonl_size,
+        indexed_at = excluded.indexed_at,
+        workspace_id = excluded.workspace_id,
+        title = excluded.title,
+        durable_marker = excluded.durable_marker
     `);
 
     this.stmtGetMeta = this.db.prepare(
@@ -434,11 +529,11 @@ export class SearchIndex {
     // Skip checks only need identity fields. Avoid pulling transcript blobs on
     // the unchanged-session path that dominates restart warming.
     this.stmtGetIndexedIdentity = this.db.prepare(
-      "SELECT workspace_id, title FROM session_fts WHERE session_id = ?",
+      "SELECT workspace_id, title FROM session_fts WHERE rowid = (SELECT fts_rowid FROM fts_meta WHERE session_id = ?1) AND session_id = ?1",
     );
 
     this.stmtGetIndexedRow = this.db.prepare(
-      "SELECT workspace_id, title, user_messages, assistant_messages, tool_names FROM session_fts WHERE session_id = ?",
+      "SELECT workspace_id, title, user_messages, assistant_messages, tool_names FROM session_fts WHERE rowid = (SELECT fts_rowid FROM fts_meta WHERE session_id = ?1) AND session_id = ?1",
     );
     this.stmtGetIndexedIds = this.db.prepare("SELECT session_id FROM fts_meta");
 
@@ -628,6 +723,7 @@ export class SearchIndex {
   ): void {
     this.stmtDelete.run(sessionId);
     this.stmtUpsert.run(sessionId, workspaceId, title, userMessages, assistantMessages, toolNames);
+    this.stmtSetFtsRowid.run(sessionId);
   }
 
   /** Remove a session from the index. */
@@ -865,11 +961,37 @@ export class SearchIndex {
     return meta.workspace_id === workspaceId && meta.title === title;
   }
 
+  /**
+   * Sessions whose FTS row is the one fts_meta points at. FTS rows nothing points
+   * at (an interrupted pair) are deleted here, because rowid-keyed upserts would
+   * otherwise leave them behind as duplicates. One FTS scan reads only session_id.
+   */
   private loadFtsSessionIds(): Set<string> {
-    const rows = this.db.prepare("SELECT session_id FROM session_fts").all() as Array<{
+    const pointers = new Map(
+      (
+        this.db
+          .prepare("SELECT session_id, fts_rowid FROM fts_meta WHERE fts_rowid IS NOT NULL")
+          .all() as Array<{ session_id: string; fts_rowid: number }>
+      ).map((row) => [row.session_id, row.fts_rowid]),
+    );
+    const rows = this.db.prepare("SELECT rowid, session_id FROM session_fts").all() as Array<{
+      rowid: number;
       session_id: string;
     }>;
-    return new Set(rows.map((row) => row.session_id));
+    const indexed = new Set<string>();
+    const stray: number[] = [];
+    for (const row of rows) {
+      if (pointers.get(row.session_id) === row.rowid) indexed.add(row.session_id);
+      else stray.push(row.rowid);
+    }
+    if (stray.length > 0) {
+      const deleteByRowid = this.db.prepare("DELETE FROM session_fts WHERE rowid = ?");
+      this.db.transaction(() => {
+        for (const rowid of stray) deleteByRowid.run(rowid);
+      })();
+      log.warn("search_index.stray_rows_removed", { count: stray.length });
+    }
+    return indexed;
   }
 
   /** Read-only skip for unchanged sessions. Null means the caller must write. */
@@ -1290,6 +1412,31 @@ export class SearchIndex {
       mergeSyncResults(result, batchResult.result);
 
       if (orphanIndex < orphanIds.length) {
+        await yieldBetweenBatches();
+      }
+    }
+
+    if (result.added + result.reindexed + result.removed > 0) {
+      // Replaced FTS rows leave their old postings in segments until a merge.
+      // After a bulk reindex that is most of the index (v6 migration measured
+      // 103 MB to 37 MB), so merge in small steps between event-loop turns.
+      const mergeStep = this.db.prepare(
+        "INSERT INTO session_fts(session_fts, rank) VALUES('merge', ?)",
+      );
+      // changes() stays 1 for the merge command; the segment writes it does show
+      // up in total_changes(), which stops moving once there is nothing to merge.
+      const totalChanges = this.db.prepare("SELECT total_changes() AS n");
+      const readTotalChanges = (): number => (totalChanges.get() as { n: number }).n;
+      for (;;) {
+        if (this.closed) {
+          return this.completeBackgroundSync(startedAt, result, sessionsChecked, maxBatchMs, true);
+        }
+        const stepStartedAt = performance.now();
+        const before = readTotalChanges();
+        mergeStep.run(FTS_MERGE_PAGES_PER_STEP);
+        const merged = readTotalChanges() - before >= 2;
+        maxBatchMs = Math.max(maxBatchMs, performance.now() - stepStartedAt);
+        if (!merged) break;
         await yieldBetweenBatches();
       }
     }
