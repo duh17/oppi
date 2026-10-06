@@ -1,3 +1,4 @@
+import CoreText
 import GhosttyVt
 import SwiftUI
 import UIKit
@@ -483,12 +484,25 @@ struct SSHTerminalRepaintQueue {
 final class SSHTerminalGridPainter {
     let cellSize: CGSize
     private let font: UIFont
+    /// The family's own bold face: bundled code fonts have no bold trait to derive.
+    private let boldFont: UIFont
     private var faces = [Int: (font: UIFont, kern: CGFloat)]()
 
-    init(font: UIFont) {
+    init(font: UIFont, boldFont: UIFont) {
         self.font = font
+        self.boldFont = boldFont
         cellSize = CGSize(width: ceil(("M" as NSString).size(withAttributes: [.font: font]).width),
                           height: ceil(font.lineHeight))
+    }
+
+    /// The Code Font family at the Code Text Size, with Nerd Font symbols as a
+    /// fallback once they are installed. A 12pt base is 13pt at 100%, the
+    /// terminal's size before it followed Code Text Size.
+    static func codeFont() -> SSHTerminalGridPainter {
+        let family = FontPreferences.codeFont
+        let size = FontPreferences.codePointSize(baseSize: 12)
+        return SSHTerminalGridPainter(font: family.font(size: size, weight: .regular),
+                                      boldFont: family.font(size: size, weight: .bold))
     }
 
     func paint(_ frame: SSHTerminalFrame, rows: Range<Int>, cursorColor: UIColor, in context: CGContext) {
@@ -526,17 +540,62 @@ final class SSHTerminalGridPainter {
         if style.strikethrough { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
         context.saveGState()
         context.clip(to: area)
-        (run.text as NSString).draw(at: area.origin, withAttributes: attributes)
+        if let text = withSymbols(run, face: face, attributes: attributes) {
+            text.draw(at: area.origin)
+        } else {
+            (run.text as NSString).draw(at: area.origin, withAttributes: attributes)
+        }
         context.restoreGState()
+    }
+
+    /// Nerd Font icons the face lacks, drawn with the symbols font and kerned to
+    /// one cell. nil when the run has none (the common case) or the symbols
+    /// are not installed. Explicit, because SF Mono ignores cascade lists.
+    private func withSymbols(_ run: SSHTerminalPaintRun, face: (font: UIFont, kern: CGFloat),
+                             attributes: [NSAttributedString.Key: Any]) -> NSAttributedString? {
+        guard run.text.unicodeScalars.contains(where: NerdFontSymbols.isPrivateUse),
+              let symbols = symbolsFace() else { return nil }
+        let text = NSMutableAttributedString(string: run.text, attributes: attributes)
+        var location = 0
+        for character in run.text {
+            let length = character.utf16.count
+            if character.unicodeScalars.contains(where: NerdFontSymbols.isPrivateUse),
+               !Self.covers(face.font, character) {
+                let range = NSRange(location: location, length: length)
+                text.addAttribute(.font, value: symbols.font, range: range)
+                if run.fixedPitch { text.addAttribute(.kern, value: symbols.kern, range: range) }
+            }
+            location += length
+        }
+        return text
+    }
+
+    private func symbolsFace() -> (font: UIFont, kern: CGFloat)? {
+        if let face = faces[Self.symbolsKey] { return face }
+        guard let symbols = NerdFontSymbols.font(size: font.pointSize) else { return nil }
+        let advance = ("\u{E0B0}" as NSString).size(withAttributes: [.font: symbols]).width
+        let face = (symbols, cellSize.width - advance)
+        faces[Self.symbolsKey] = face
+        return face
+    }
+
+    private static let symbolsKey = 4
+
+    private static func covers(_ font: UIFont, _ character: Character) -> Bool {
+        let units = Array(character.utf16)
+        var glyphs = [CGGlyph](repeating: 0, count: units.count)
+        return CTFontGetGlyphsForCharacters(font as CTFont, units, &glyphs, units.count)
     }
 
     private func face(bold: Bool, italic: Bool) -> (font: UIFont, kern: CGFloat) {
         let key = (bold ? 1 : 0) | (italic ? 2 : 0)
         if let face = faces[key] { return face }
-        var traits: UIFontDescriptor.SymbolicTraits = []
-        if bold { traits.insert(.traitBold) }
-        if italic { traits.insert(.traitItalic) }
-        let styled = font.fontDescriptor.withSymbolicTraits(traits).map { UIFont(descriptor: $0, size: font.pointSize) } ?? font
+        let weighted = bold ? boldFont : font
+        // A family without an italic face stays upright.
+        let styled = italic
+            ? weighted.fontDescriptor.withSymbolicTraits(.traitItalic)
+                .map { NerdFontSymbols.withFallback(UIFont(descriptor: $0, size: weighted.pointSize)) } ?? weighted
+            : weighted
         let advance = ("M" as NSString).size(withAttributes: [.font: styled]).width
         let face = (styled, cellSize.width - advance)
         faces[key] = face
@@ -661,7 +720,9 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     var focusComposer: () -> Void = {}
     var useChatBar: () -> Void = {}
     var paintedChangeCount = -1
-    private let painter = SSHTerminalGridPainter(font: .monospacedSystemFont(ofSize: 13, weight: .regular))
+    /// Rebuilt when Code Font, Code Text Size, or the Nerd Font symbols change;
+    /// a new cell size resizes the remote terminal on the next layout.
+    private var painter = SSHTerminalGridPainter.codeFont()
     private var cellSize: CGSize { painter.cellSize }
     /// The frame `draw(_:)` paints from. Each tick replaces it and invalidates
     /// only the rows that differ from it.
@@ -716,9 +777,20 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(scrollHistory(_:))))
         bar = makeAccessoryBar()
         applyTheme(ThemeRuntimeState.currentThemeID())
+        NotificationCenter.default.addObserver(self, selector: #selector(fontPreferencesChanged),
+                                               name: FontPreferences.didChangeNotification, object: nil)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// Posted on the main thread after a Code Font or Code Text Size change and
+    /// when Nerd Font symbols finish installing.
+    @objc private func fontPreferencesChanged() {
+        painter = SSHTerminalGridPainter.codeFont()
+        needsFullPaint = true
+        needsPaint = true
+        setNeedsLayout()
+    }
     override var canBecomeFirstResponder: Bool { true }
     var hasText: Bool { true }
     var autocorrectionType: UITextAutocorrectionType { get { .no } set {} }

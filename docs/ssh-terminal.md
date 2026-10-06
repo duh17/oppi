@@ -20,6 +20,12 @@ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 
 After you save a host, **Terminal** appears directly below **MCP Servers** in the workspace sidebar. Tap it to open the same list. Tap a row to connect and open the shell. The password sheet and host-key prompt appear on the list or the form, whichever you tapped Connect from. A row shows `user@host`, the port when it is not 22, and the Run on Connect command, or **Login shell**. Two rows can use the same machine with different Run on Connect commands. Swipe **Delete Host** removes that saved host and its password only. An existing single host moves into the list without a Face ID prompt; its password stays in this phone’s Keychain until the next connect. **Edit Host** in the live terminal opens the form for the connected host. Turning the experiment off hides both entry points and does not create a key. **Tailscale → Check a machine** remains available independently.
 
+## Font and icons
+
+The terminal uses **Settings → Text → Code Font** and **Code Text Size**, like code blocks and tool output. At 100% it is 13 pt. Changing either redraws an open terminal and resizes the remote shell to the new cell size.
+
+Prompt icons from starship, powerlevel10k, oh-my-posh, and similar (Powerline separators, git, folder, and language icons) come from the Nerd Fonts Symbols font, which works with every code font. It is not part of the app download: the App Store delivers it in the background after install or update, and **Settings → Text → Nerd Font Icons** shows its status, with **Retry** if it failed. Until it arrives, those characters show as missing glyphs.
+
 ## Run on Connect
 
 **Run on Connect** runs one command in the terminal instead of a login shell. This is the same exec-with-TTY request as `ssh -t host 'command'` or OpenSSH `RemoteCommand` with `RequestTTY yes`. Enter `herdr` to attach your Herdr session, or `tmux new -A -s main` for tmux. The connection ends when the command exits and the status names the command; **Reconnect** runs it again. The command must be on the `PATH` that non-interactive SSH commands see. Leave it empty for a normal login shell.

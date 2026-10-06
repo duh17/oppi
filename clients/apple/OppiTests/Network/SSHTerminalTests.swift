@@ -805,7 +805,8 @@ struct SSHTerminalTests {
         let engine = try SSHTerminalEngine(geometry: .init(columns: 10, rows: 3)) { _ in }
         engine.receive(Data("\u{1b}[41maaaaaaaaaa\r\nbbbbbbbbbb\r\ncccccccccc".utf8))
         let frame = engine.frame()
-        let painter = SSHTerminalGridPainter(font: .monospacedSystemFont(ofSize: 13, weight: .regular))
+        let painter = SSHTerminalGridPainter(font: .monospacedSystemFont(ofSize: 13, weight: .regular),
+                                             boldFont: .monospacedSystemFont(ofSize: 13, weight: .bold))
         let cell = painter.cellSize
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1

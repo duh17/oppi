@@ -1,0 +1,19 @@
+{
+	"assetPackID": "NerdFontSymbols",
+	"downloadPolicy": {
+		"prefetch": {
+			"installationEventTypes": [
+				"firstInstallation",
+				"subsequentUpdate"
+			]
+		}
+	},
+	"fileSelectors": [
+		{
+			"directory": "NerdFontSymbols"
+		}
+	],
+	"platforms": [
+		"iOS"
+	]
+}

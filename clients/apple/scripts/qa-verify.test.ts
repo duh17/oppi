@@ -494,6 +494,7 @@ describe("qa-verify source bytes", () => {
       "clients/apple/OppiActivityExtension",
       "clients/apple/OppiControlWidget",
       "clients/apple/OppiShareExtension",
+      "clients/apple/OppiAssetDownloader",
       "server/extensions",
       "server/e2e",
     ].map((tree) => {

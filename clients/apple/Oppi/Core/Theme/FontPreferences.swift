@@ -159,11 +159,12 @@ extension FontPreferenceStore.CodeFontFamily {
     }
 
     /// Create a UIFont for the given size and weight. Falls back to system mono if the font can't be loaded.
+    /// Nerd Font icon glyphs come from `NerdFontSymbols` once its asset pack is local.
     func font(size: CGFloat, weight: UIFont.Weight) -> UIFont {
         if let psName = postScriptName(weight: weight),
            let font = UIFont(name: psName, size: size) {
-            return font
+            return NerdFontSymbols.withFallback(font)
         }
-        return UIFont.monospacedSystemFont(ofSize: size, weight: weight)
+        return NerdFontSymbols.withFallback(UIFont.monospacedSystemFont(ofSize: size, weight: weight))
     }
 }

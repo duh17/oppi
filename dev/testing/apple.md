@@ -17,6 +17,17 @@ cd clients/apple
 
 Without it, the Oppi target fails with a missing `Vendor/TailscaleKit/TailscaleKit.xcframework`.
 
+### Nerd Font asset pack
+
+Nerd Font icons ship as the Apple-hosted Background Assets pack `NerdFontSymbols` (prefetch policy), not in the app binary. `OppiAssetDownloader` (ExtensionKit, `StoreDownloaderExtension`) lets the system download it; `NerdFontSymbols.swift` registers the font and adds it as every code font's cascade fallback. Build the pack from the pinned, SHA-256-checked Symbols Nerd Font Mono:
+
+```bash
+cd clients/apple
+./scripts/build-nerd-font-asset-pack.sh   # -> build/asset-packs/NerdFontSymbols.aar
+```
+
+Upload the `.aar` to App Store Connect (Transporter, `altool`, or the App Store Connect API) and submit it with the next TestFlight or App Store build; packs are versioned and reviewed separately from builds. Apple hosting serves only TestFlight and App Store installs. Xcode and simulator builds report the pack unavailable unless a `xcrun ba-serve` mock server and a Background Assets URL override are set up (see Apple's "Testing asset packs locally").
+
 ### Build the terminal engine
 
 The iOS app statically links a pinned libghostty-vt build, without SIMD C++

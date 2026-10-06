@@ -28,6 +28,17 @@ All bundled fonts are licensed under the SIL Open Font License, Version 1.1.
 - Version: 1.101
 - Reserved Font Name: "Monaspace"
 
+## Symbols Nerd Font Mono
+- Copyright Ryan L McIntyre and Nerd Fonts contributors (https://github.com/ryanoasis/nerd-fonts)
+- Version: v3.5.1
+- Not bundled: delivered as the App Store asset pack `NerdFontSymbols`, which
+  includes the full Nerd Fonts LICENSE.
+- Nerd Fonts project files: MIT. Icon sets keep their own licenses: Powerline,
+  Seti-UI, Devicons, Octicons, Font Awesome Extension, IEC Power Symbols (MIT);
+  Font Awesome and Codicons (CC BY 4.0); Material Design Icons (Apache 2.0);
+  Pomicons and Weather Icons (SIL OFL 1.1); Font Logos (no license stated
+  upstream; logos remain their owners' trademarks).
+
 ---
 
 ## SIL Open Font License, Version 1.1
