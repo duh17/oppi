@@ -25,6 +25,10 @@ import { safeErrorMessage } from "./log-utils.js";
  * - `--config-file`, and `config set`, which edits the config file directly with no request to gate
  * - `control`: its `send` would prompt the control conversation from inside its own turn
  * - `status`: it shells out synchronously (`execFileSync`), which would stall the server's event loop
+ * - `--idempotency-key=…`, `--request-id=…`, `--turn-id=…`: the CLI does not split on `=`, so that
+ *   form is an unknown flag it ignores (`session` commands refuse it). The host cannot tell it from
+ *   a script's own replay key without guessing where the verb is, so it is refused outright; the
+ *   space-separated form is the one the host replaces with its own key.
  * (`version` never reaches `runCli`: the CLI entry point handles it, so a script gets the runner's
  * "Unknown command" envelope.)
  */
@@ -35,6 +39,8 @@ const HOST_INPUT_FLAGS = new Set([
   "phrases",
   "config-file",
 ]);
+
+const REPLAY_KEY_EQUALS_FORMS = ["--idempotency-key=", "--request-id=", "--turn-id="];
 
 const DENIED_COMMANDS: ReadonlyMap<string, string> = new Map([
   [
@@ -51,6 +57,12 @@ export function refuseControlArgv(argv: readonly string[]): string | undefined {
   const denied = DENIED_COMMANDS.get(argv[0] ?? "");
   if (denied !== undefined) return denied;
   if (argv.includes("@-")) return "Reading stdin (@-) is not available to the control agent.";
+  const separator = argv.indexOf("--");
+  const equalsForm = argv
+    .slice(0, separator === -1 ? argv.length : separator)
+    .find((arg) => REPLAY_KEY_EQUALS_FORMS.some((prefix) => arg.startsWith(prefix)));
+  if (equalsForm !== undefined)
+    return `${equalsForm.slice(0, equalsForm.indexOf("="))}=value is not available to the control agent. Pass the value as a separate word (--flag value), or leave the key out: the host sets it.`;
   let parsed;
   try {
     parsed = parseCliArgs([...argv]);
@@ -79,9 +91,8 @@ const REPLAY_KEY_FLAG: ReadonlyMap<string, string> = new Map([
 ]);
 
 /**
- * `argv` without `--flag [value]`, read the way `parseCliArgs` reads it, and without
- * `--flag=value`. The CLI does not split on `=`, so that form is an unknown flag it ignores
- * (`session` commands refuse it); the host key must not be hashed with it or sent beside it.
+ * `argv` without `--flag [value]`, read the way `parseCliArgs` reads it. The `--flag=value`
+ * form never gets here: `refuseControlArgv` refuses it.
  */
 function withoutFlag(argv: readonly string[], flag: string): string[] {
   const separator = argv.indexOf("--");
@@ -89,7 +100,6 @@ function withoutFlag(argv: readonly string[], flag: string): string[] {
   const kept: string[] = argv.slice(0, 1);
   for (let i = 1; i < argv.length; i += 1) {
     const arg = argv[i] as string;
-    if (i < end && arg.startsWith(`--${flag}=`)) continue;
     if (i < end && arg === `--${flag}`) {
       const next = argv[i + 1];
       if (i + 1 < end && next !== undefined && !next.startsWith("--")) i += 1;

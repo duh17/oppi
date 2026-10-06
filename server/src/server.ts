@@ -50,7 +50,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { SkillRegistry } from "./skills.js";
-import { isDeclaredControlSession } from "./control-session.js";
+import { isControlConversation, isDeclaredControlSession } from "./control-session.js";
 import { ServerResourceService } from "./server-resource-service.js";
 import { SessionLifecycleService } from "./session-lifecycle-service.js";
 import {
@@ -1717,7 +1717,8 @@ export class Server {
       const inScope =
         route.sessionStreamMatch.scope === "workspace"
           ? session?.workspaceId === route.sessionStreamMatch.workspaceId
-          : session !== undefined && isDeclaredControlSession(session);
+          : session !== undefined &&
+            (isDeclaredControlSession(session) || isControlConversation(session));
       if (!session || !inScope) {
         ws.close(1008, "Session not found");
         return;

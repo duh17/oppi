@@ -42,6 +42,13 @@ describe("control host argv denylist", () => {
     ["status, which blocks the event loop", ["status"]],
     ["config set", ["config", "set", "port", "1"]],
     ["a config file", ["config", "validate", "--config-file", "/tmp/x.json"]],
+    ["an --idempotency-key=value key", ["agent", "create", "--name", "x", "--idempotency-key=k"]],
+    ["a --request-id=value key", ["schedule", "run", "s1", "--request-id=r"]],
+    ["a --turn-id=value key", ["session", "send", "s1", "--text", "hi", "--turn-id=t"]],
+    [
+      "an = key where it used to shift the verb",
+      ["--idempotency-key=x", "agent", "create", "--name", "x"],
+    ],
   ])("refuses %s before runCli", async (_name, argv) => {
     const call = options();
     const result = await host().run(argv, call);
@@ -110,20 +117,6 @@ describe("control host replay keys", () => {
     expect(sent[5]).not.toContain("u2");
   });
 
-  it.each([
-    [["agent", "create", "--name", "x"], "idempotency-key"],
-    [["schedule", "run", "s1"], "request-id"],
-    [["session", "send", "s1", "--text", "hi"], "turn-id"],
-  ])(
-    "drops the --flag=value form of the key of %j: it is neither hashed nor sent",
-    async (argv, flag) => {
-      await host().run(argv, options());
-      await host().run([...argv, `--${flag}=${Math.random()}`], options());
-      const [plain, withEquals] = runner.mock.calls.map(([sent]) => sent);
-      expect(withEquals).toEqual(plain);
-    },
-  );
-
   it("gives another call at the same index another key, and leaves other commands alone", async () => {
     await host().run(["agent", "create", "--name", "A"], options());
     await host().run(["agent", "create", "--name", "B"], options());
@@ -137,6 +130,15 @@ describe("control host replay keys", () => {
     await host().run(["session", "send", "--text", "hi", "--", "--turn-id"], options());
     const sent = runner.mock.calls[0]![0];
     expect(sent.slice(sent.indexOf("--") + 1)).toEqual(["--turn-id"]);
+  });
+
+  it("does not refuse the = form of a key when it is a positional after `--`", async () => {
+    const result = await host().run(
+      ["session", "send", "--text", "hi", "--", "--turn-id=literal"],
+      options(),
+    );
+    expect(result.envelope).not.toMatchObject({ error: { code: "refused" } });
+    expect(runner.mock.calls[0]![0].slice(-2)).toEqual(["--", "--turn-id=literal"]);
   });
 });
 

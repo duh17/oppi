@@ -26,7 +26,7 @@ import {
 } from "./dictation-types.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
-import { isDeclaredControlSession } from "./control-session.js";
+import { isControlConversation, isDeclaredControlSession } from "./control-session.js";
 import { parseClientCommand, type ClientCommandParseErrorCode } from "./session-command-parse.js";
 import {
   CLOCK_SKEW_MS,
@@ -268,7 +268,8 @@ export class BoundSessionStreamMux {
     const session = this.ctx.storage.getSession(sessionId);
     const inScope = workspaceId
       ? session?.workspaceId === workspaceId
-      : session !== undefined && isDeclaredControlSession(session);
+      : session !== undefined &&
+        (isDeclaredControlSession(session) || isControlConversation(session));
     if (!session || !inScope) {
       ws.close(1008, "Session not found");
       return;

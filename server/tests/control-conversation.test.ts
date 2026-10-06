@@ -1,9 +1,12 @@
-import { lstatSync, mkdtempSync, symlinkSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { lstatSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { WebSocket } from "ws";
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -20,14 +23,19 @@ import {
   isControlConversation,
   isDeclaredControlSession,
 } from "../src/control-session.js";
+import { createCliConfigStorage } from "../src/cli/connection-config.js";
 import { controlConversationTools } from "../src/durable-control-conversation.js";
 import type { DurableHarness } from "../src/durable-harness.js";
 import { reservedLaunchKeyError } from "../src/reserved-launch-keys.js";
+import { createAgentRoutes } from "../src/routes/agents.js";
 import { createControlConversationRoutes } from "../src/routes/control-conversation.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createSessionRoutes } from "../src/routes/sessions.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { resolveSdkSessionCwd } from "../src/sdk-backend.js";
+import { SessionRuntimes } from "../src/runtime-router.js";
+import { BoundSessionStreamMux, type StreamContext } from "../src/stream.js";
+import { WsMessageHandler } from "../src/ws-message-handler.js";
 import { SessionListService } from "../src/session-list-service.js";
 import { canResumeAfterServerRestart } from "../src/session-lifecycle-service.js";
 import {
@@ -37,7 +45,8 @@ import {
 } from "../src/session-restart-resume.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
-import type { Session } from "../src/types.js";
+import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
+import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -483,6 +492,154 @@ describe("control conversation lifecycle on the durable harness", () => {
       opened.body.session.serverDurable?.conversationId,
     );
     expect(first.manager.isActive(sessionId)).toBe(true);
+  });
+
+  describe("owner answers over /control-sessions/<id>/stream", () => {
+    const servers: HttpServer[] = [];
+    afterEach(async () => {
+      await Promise.all(
+        servers.splice(0).map((server) => new Promise((resolve) => server.close(resolve))),
+      );
+    });
+
+    class StreamSocket extends EventEmitter {
+      readyState: number = WebSocket.OPEN;
+      sent: ServerMessage[] = [];
+      closeCode?: number;
+      send(data: string): void {
+        this.sent.push(JSON.parse(data) as ServerMessage);
+      }
+      ping(): void {}
+      terminate(): void {
+        this.readyState = WebSocket.CLOSED;
+      }
+      close(code = 1000): void {
+        this.readyState = WebSocket.CLOSED;
+        this.closeCode = code;
+        this.emit("close", code, Buffer.from(""));
+      }
+      receive(message: ClientMessage): void {
+        this.emit("message", Buffer.from(JSON.stringify(message)), false);
+      }
+      async next(predicate: (message: ServerMessage) => boolean): Promise<ServerMessage> {
+        const deadline = Date.now() + 15_000;
+        for (;;) {
+          const found = this.sent.find(predicate);
+          if (found) return found;
+          if (Date.now() > deadline) throw new Error("timed out waiting for a server message");
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+    }
+
+    /** The server's wiring of stream, runtime router and message handler around a real SessionManager. */
+    function streamOf(storage: Storage, manager: SessionManager) {
+      const runtimes = new SessionRuntimes(storage, manager, {} as never);
+      const handler = new WsMessageHandler({
+        sessions: runtimes,
+        ensureSessionContextWindow: (session) => session,
+        getModelCatalog: () => [],
+      });
+      return new BoundSessionStreamMux({
+        storage,
+        sessions: manager,
+        sessionRuntimes: runtimes,
+        ensureSessionContextWindow: (session) => session,
+        resolveWorkspaceForSession: (session) =>
+          session.workspaceId ? storage.getWorkspace(session.workspaceId) : undefined,
+        handleClientMessage: (session, message, send, meta) =>
+          handler.handleClientMessage(session, message, send, meta),
+        trackConnection: () => {},
+        untrackConnection: () => {},
+      } as unknown as StreamContext);
+    }
+
+    it.each([
+      ["Yes", 1],
+      ["No", 0],
+    ])(
+      "answering %j on the owner stream decides the pending write (%i Agent rows)",
+      async (answer, rows) => {
+        const { dir, storage, faux } = await setup();
+        createCliConfigStorage(dir).ensurePaired();
+        const dispatchAgents = createAgentRoutes(
+          { storage } as unknown as RouteContext,
+          createRouteHelpers(),
+        );
+        const api = createHttpServer((req, res) => {
+          void (async () => {
+            const url = new URL(req.url ?? "/", "http://localhost");
+            const handled = await dispatchAgents({
+              method: req.method ?? "GET",
+              path: url.pathname,
+              url,
+              req,
+              res,
+            } as never);
+            if (!handled) {
+              res.writeHead(404, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: "not found" }));
+            }
+          })();
+        });
+        servers.push(api);
+        await listenOnLocalApiFixture(api, dir);
+
+        faux.setResponses([
+          fauxAssistantMessage(
+            [
+              fauxToolCall("oppi_script", {
+                code: 'return await oppi(["agent","create","--name","Via stream"]);',
+              }),
+            ],
+            { stopReason: "toolUse" },
+          ),
+          fauxAssistantMessage("settled"),
+        ]);
+        const booted = await boot(storage);
+        const opened = await booted.open({ model: "faux/faux-1" });
+        const sessionId = opened.body.session.id;
+        // The same row the phone never lists: no workspace, no control metadata.
+        expect(storage.getSession(sessionId)).toMatchObject({ serverDurable: { role: "control" } });
+        expect(storage.getSession(sessionId)?.workspaceId).toBeUndefined();
+        expect(storage.getSession(sessionId)?.control).toBeUndefined();
+        const store = storage.getAgentDefinitionStore();
+        const before = store.listAgents().length;
+
+        const mux = streamOf(storage, booted.manager);
+        const ws = new StreamSocket();
+        await mux.handleControlWebSocket(sessionId, ws as unknown as WebSocket);
+        expect(ws.closeCode).toBeUndefined();
+        expect(ws.sent.some((m) => m.type === "connected")).toBe(true);
+
+        await booted.manager.sendPrompt(sessionId, "make an agent");
+        const card = (await ws.next(
+          (m) => m.type === "extension_ui_request" && m.method === "select",
+        )) as Extract<ServerMessage, { type: "extension_ui_request" }>;
+        expect(JSON.stringify(card)).toContain("POST /agents");
+        expect(store.listAgents()).toHaveLength(before);
+
+        ws.receive({ type: "extension_ui_response", id: card.id, value: answer });
+        await ws.next((m) => m.type === "agent_end");
+        expect(store.listAgents()).toHaveLength(before + rows);
+        expect(ws.sent.filter((m) => m.type === "error")).toEqual([]);
+        rmSync(dir, { recursive: true, force: true });
+      },
+    );
+
+    it("still refuses a workspace-less durable session that is neither declared control nor the control conversation", async () => {
+      const { storage } = await setup();
+      const booted = await boot(storage);
+      const stray = storage.createSession("Stray");
+      stray.serverDurable = { conversationId: 99 };
+      storage.saveSession(stray);
+      const ws = new StreamSocket();
+      await streamOf(storage, booted.manager).handleControlWebSocket(
+        stray.id,
+        ws as unknown as WebSocket,
+      );
+      expect(ws.closeCode).toBe(1008);
+    });
   });
 
   it("answers 409 while experimental.serverDurable is off", async () => {
