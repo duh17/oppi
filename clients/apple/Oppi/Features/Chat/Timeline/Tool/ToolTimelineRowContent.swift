@@ -1707,8 +1707,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             hasher.combine(attachmentId)
             hasher.combine(mimeType)
             hasher.combine(durationSeconds)
+            let signature = hasher.finalize()
             return ExpandedRenderOutput(
-                renderSignature: hasher.finalize(),
+                renderSignature: signature,
                 renderedText: trimmedText,
                 shouldAutoFollow: false,
                 viewportPolicy: viewportPolicy,
@@ -1717,7 +1718,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 lineBreakMode: .byWordWrapping,
                 horizontalScroll: false,
                 deferredHighlight: nil,
-                invalidateLayout: true,
+                invalidateLayout: signature != expandedRenderSignature,
                 installAction: .audioMessage(
                     text: trimmedText,
                     attachmentId: attachmentId,
@@ -1771,8 +1772,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             var hasher = Hasher()
             hasher.combine(plan)
             hasher.combine(ThemeRuntimeState.currentThemeID())
+            let signature = hasher.finalize()
             return ExpandedRenderOutput(
-                renderSignature: hasher.finalize(),
+                renderSignature: signature,
                 renderedText: plan.sources.map(\.code).joined(separator: "\n"),
                 shouldAutoFollow: false,
                 viewportPolicy: viewportPolicy,
@@ -1781,7 +1783,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 lineBreakMode: .byWordWrapping,
                 horizontalScroll: false,
                 deferredHighlight: nil,
-                invalidateLayout: true,
+                // A repeated apply of the same cell must not remeasure the
+                // timeline. The first expansion still invalidates.
+                invalidateLayout: signature != expandedRenderSignature,
                 installAction: .notebook(plan)
             )
 
@@ -1790,8 +1794,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             hasher.combine(family.text)
             hasher.combine(family.filePath ?? "")
             hasher.combine(ThemeRuntimeState.currentThemeID())
+            let signature = hasher.finalize()
             return ExpandedRenderOutput(
-                renderSignature: hasher.finalize(),
+                renderSignature: signature,
                 renderedText: family.text,
                 shouldAutoFollow: false,
                 viewportPolicy: viewportPolicy,
@@ -1800,7 +1805,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 lineBreakMode: .byWordWrapping,
                 horizontalScroll: false,
                 deferredHighlight: nil,
-                invalidateLayout: true,
+                invalidateLayout: signature != expandedRenderSignature,
                 installAction: .document(family)
             )
         }
@@ -1860,7 +1865,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 scheduleHostedRemeasure()
             }
         case .notebook(let plan):
-            if hostedSurface.installNotebook(plan) {
+            if hostedSurface.installNotebook(plan, pressure: currentConfiguration.resourcePressure) {
                 scheduleHostedRemeasure()
             }
         }

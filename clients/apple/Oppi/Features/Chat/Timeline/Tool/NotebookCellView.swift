@@ -40,6 +40,11 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         static let calls = 6
         static let outputLines = 10
         static let outputCharacters = 1_600
+        /// Formatted documents are larger than stdout, but the row still
+        /// clips at 620 pt. Parsing the whole document on the tap, then
+        /// throwing the layout away, is the multi-second expansion.
+        static let richLines = 40
+        static let richCharacters = 6_000
     }
 
     private let mode: Mode
@@ -53,6 +58,18 @@ final class NotebookCellView: UIView, UITextViewDelegate {
     private let fadeMask = CAGradientLayer()
     private var appliedPlan: NotebookCellPlan?
     private var appliedTheme: ThemeID?
+    private var appliedPressure = StreamingRenderPolicy.ResourcePressure.nominal
+    private var highlightTask: Task<Void, Never>?
+    private var highlightGeneration = 0
+    private var nextHighlightToken = 0
+    private var fittedHeightByWidth: [Int: CGFloat] = [:]
+    private var fittedWidthBucket: Int?
+
+    #if DEBUG
+    nonisolated(unsafe) static var deferredHighlightDelayForTesting: Duration?
+    private(set) var debugDeferredHighlightCountForTesting = 0
+    var debugHighlightPendingForTesting: Bool { highlightTask != nil }
+    #endif
 
     init(mode: Mode = .inline) {
         self.mode = mode
@@ -63,6 +80,10 @@ final class NotebookCellView: UIView, UITextViewDelegate {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    deinit {
+        highlightTask?.cancel()
+    }
 
     private var isReader: Bool {
         if case .reader = mode { return true }
@@ -76,9 +97,12 @@ final class NotebookCellView: UIView, UITextViewDelegate {
 
     /// Returns whether the painted plan changed and the row should remeasure.
     @discardableResult
-    func apply(_ plan: NotebookCellPlan) -> Bool {
+    func apply(
+        _ plan: NotebookCellPlan,
+        pressure: StreamingRenderPolicy.ResourcePressure = .nominal
+    ) -> Bool {
         let theme = ThemeRuntimeState.currentThemeID()
-        guard plan != appliedPlan || theme != appliedTheme else { return false }
+        guard plan != appliedPlan || theme != appliedTheme || pressure != appliedPressure else { return false }
         let sourceChanged = plan.sources != appliedPlan?.sources
             || plan.inputIsCode != appliedPlan?.inputIsCode
             || plan.metadata != appliedPlan?.metadata
@@ -86,7 +110,19 @@ final class NotebookCellView: UIView, UITextViewDelegate {
             || theme != appliedTheme
         appliedPlan = plan
         appliedTheme = theme
+        appliedPressure = pressure
+        fittedHeightByWidth.removeAll()
+        let startNs = ChatTimelinePerf.timestampNs()
         paint(plan, theme: theme, sourceChanged: sourceChanged)
+        let outputBytes: Int = switch plan.output {
+        case .none: 0
+        case .stdout(let text), .rich(let text): text.utf8.count
+        }
+        ChatTimelinePerf.recordRenderStrategy(
+            mode: "notebook.paint",
+            durationMs: ChatTimelinePerf.elapsedMs(since: startNs),
+            inputBytes: plan.sources.reduce(0) { $0 + $1.code.utf8.count } + outputBytes
+        )
         return true
     }
 
@@ -96,17 +132,57 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         verticalFittingPriority: UILayoutPriority
     ) -> CGSize {
         let width = targetSize.width > 1 ? targetSize.width : max(1, bounds.width)
+        let bucket = Int(width.rounded())
+        // Expansion measures this cell from the row, the host, and the
+        // collection. TextKit does not need to run on every one of those.
+        // A rich body sizes from its own bounds and reports a 320 pt height
+        // until laid out, so that first pass must not stick.
+        let deferCache = hasUnsizedRichOutput
+        if !deferCache, let cached = fittedHeightByWidth[bucket] {
+            return CGSize(width: width, height: cached)
+        }
         let fitted = contentStack.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         )
-        return CGSize(width: width, height: max(48, ceil(fitted.height)))
+        let height = max(48, ceil(fitted.height))
+        if !deferCache {
+            fittedHeightByWidth[bucket] = height
+        }
+        return CGSize(width: width, height: height)
+    }
+
+    /// Rich output uses `intrinsicContentSize` at 320 pt while its bounds
+    /// width is still 0. Caching that pass freezes the wrong row height.
+    private var hasUnsizedRichOutput: Bool {
+        guard case .rich = appliedPlan?.output else { return false }
+        return markdownViews(in: self).contains { $0.bounds.width < 1 }
+    }
+
+    private func markdownViews(in root: UIView) -> [AssistantMarkdownContentView] {
+        var found: [AssistantMarkdownContentView] = (root as? AssistantMarkdownContentView).map { [$0] } ?? []
+        for subview in root.subviews {
+            found.append(contentsOf: markdownViews(in: subview))
+        }
+        return found
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         updateFade()
+        let bucket = Int(bounds.width.rounded())
+        if bounds.width > 1, fittedWidthBucket != bucket {
+            fittedWidthBucket = bucket
+            fittedHeightByWidth.removeAll()
+        }
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard previousTraitCollection?.preferredContentSizeCategory
+            != traitCollection.preferredContentSizeCategory else { return }
+        fittedHeightByWidth.removeAll()
     }
 
     // MARK: - Build
@@ -191,6 +267,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         card.isHidden = plan.sources.isEmpty && plan.metadata.isEmpty
 
         if sourceChanged || cardStack.arrangedSubviews.isEmpty {
+            cancelDeferredHighlight()
             rebuildSource(plan, palette: palette, theme: theme)
         }
         rebuildAttachments(plan, palette: palette, theme: theme)
@@ -202,6 +279,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
             cardStack.removeArrangedSubview($0)
             $0.removeFromSuperview()
         }
+        var deferredHighlights: [NotebookDeferredHighlight] = []
         for source in plan.sources {
             if let label = source.label {
                 cardStack.addArrangedSubview(sectionCaption(label, color: palette.comment))
@@ -214,7 +292,11 @@ final class NotebookCellView: UIView, UITextViewDelegate {
                 : Trimmed(String(code), lines: InlineLimit.codeLines, characters: InlineLimit.codeCharacters)
             let view = textView()
             view.accessibilityIdentifier = "tool.notebook.code"
-            paintCode(shown.text, language: source.syntaxLanguage, into: view, palette: palette, theme: theme)
+            if let deferred = paintCode(
+                shown.text, language: source.syntaxLanguage, into: view, palette: palette, theme: theme
+            ) {
+                deferredHighlights.append(deferred)
+            }
             cardStack.addArrangedSubview(view)
             if shown.hiddenLines > 0 {
                 cardStack.addArrangedSubview(moreLabel(lines: shown.hiddenLines, palette: palette))
@@ -229,30 +311,162 @@ final class NotebookCellView: UIView, UITextViewDelegate {
             cardStack.setCustomSpacing(10, after: cardStack.arrangedSubviews.last ?? meta)
             cardStack.addArrangedSubview(meta)
         }
+        scheduleDeferredHighlights(deferredHighlights)
     }
 
+    /// Paints plain text immediately. Returns a highlight to run after the
+    /// tap when the code row's own policy would not color this on the main
+    /// thread. A long shell argument, the usual notebook source, is one line
+    /// well past that threshold.
     private func paintCode(
         _ code: String,
         language: SyntaxLanguage,
         into view: UITextView,
         palette: ThemePalette,
         theme: ThemeID
-    ) {
+    ) -> NotebookDeferredHighlight? {
         let font = ToolFont.regular
-        if shouldHighlight(code) {
-            let highlighted = NSMutableAttributedString(
-                attributedString: SyntaxHighlighter.highlight(code, language: language, themeID: theme)
-            )
-            highlighted.addAttribute(
-                .font, value: font, range: NSRange(location: 0, length: highlighted.length)
-            )
-            view.attributedText = highlighted
-        } else {
+        view.font = font
+        view.textColor = UIColor(palette.fg)
+        view.tag = 0
+        guard shouldHighlight(code) else {
             view.attributedText = nil
-            view.font = font
-            view.textColor = UIColor(palette.fg)
             view.text = code
+            return nil
         }
+        let profile = StreamingRenderPolicy.ContentProfile.from(text: code)
+        let tier = StreamingRenderPolicy.tier(
+            isStreaming: false,
+            contentKind: .code(language: .known),
+            byteCount: profile.byteCount,
+            lineCount: profile.lineCount,
+            maxLineByteCount: profile.maxLineByteCount,
+            pressure: appliedPressure,
+            consumer: .explicit
+        )
+        if tier == .full {
+            view.attributedText = highlighted(code, language: language, theme: theme, font: font)
+            return nil
+        }
+        view.attributedText = nil
+        view.text = code
+        guard tier == .deferred else { return nil }
+        let signature = Self.highlightSignature(code: code, language: language, theme: theme)
+        if let cached = ToolRowRenderCache.get(signature: signature) {
+            view.attributedText = cached
+            return nil
+        }
+        nextHighlightToken += 1
+        view.tag = nextHighlightToken
+        return NotebookDeferredHighlight(
+            token: nextHighlightToken, code: code, language: language, theme: theme, signature: signature
+        )
+    }
+
+    private func highlighted(
+        _ code: String,
+        language: SyntaxLanguage,
+        theme: ThemeID,
+        font: UIFont
+    ) -> NSAttributedString {
+        let highlighted = NSMutableAttributedString(
+            attributedString: SyntaxHighlighter.highlight(code, language: language, themeID: theme)
+        )
+        highlighted.addAttribute(
+            .font, value: font, range: NSRange(location: 0, length: highlighted.length)
+        )
+        return highlighted
+    }
+
+    private func scheduleDeferredHighlights(_ snippets: [NotebookDeferredHighlight]) {
+        cancelDeferredHighlight()
+        guard !snippets.isEmpty else { return }
+        highlightGeneration += 1
+        let generation = highlightGeneration
+        let expectedTokens = Set(snippets.map(\.token))
+        highlightTask = Task.detached(priority: .utility) { [weak self] in
+            #if DEBUG
+            if let delay = NotebookCellView.deferredHighlightDelayForTesting {
+                try? await Task.sleep(for: delay)
+            }
+            #endif
+            guard !Task.isCancelled else { return }
+            let start = ContinuousClock.now
+            let painted = snippets.map { snippet in
+                NotebookDeferredHighlightResult(
+                    token: snippet.token,
+                    colored: SyntaxHighlighter.highlight(
+                        snippet.code, language: snippet.language, themeID: snippet.theme
+                    ),
+                    signature: snippet.signature
+                )
+            }
+            let durationMs = Int((ContinuousClock.now - start) / .milliseconds(1))
+            let inputBytes = snippets.reduce(0) { $0 + $1.code.utf8.count }
+            await MainActor.run { [weak self] in
+                guard let self, self.highlightGeneration == generation else { return }
+                let font = ToolFont.regular
+                for result in painted {
+                    let withFont = NSMutableAttributedString(attributedString: result.colored)
+                    withFont.addAttribute(
+                        .font, value: font, range: NSRange(location: 0, length: withFont.length)
+                    )
+                    ToolRowRenderCache.set(signature: result.signature, attributed: withFont)
+                    self.installDeferredHighlight(withFont, token: result.token, expectedTokens: expectedTokens)
+                }
+                ChatTimelinePerf.recordRenderStrategy(
+                    mode: "notebook.deferred.highlight",
+                    durationMs: durationMs,
+                    inputBytes: inputBytes,
+                    language: snippets.first?.language.displayName
+                )
+                #if DEBUG
+                self.debugDeferredHighlightCountForTesting += 1
+                #endif
+                if self.highlightGeneration == generation {
+                    self.highlightTask = nil
+                }
+            }
+        }
+    }
+
+    private func installDeferredHighlight(
+        _ colored: NSAttributedString,
+        token: Int,
+        expectedTokens: Set<Int>
+    ) {
+        guard expectedTokens.contains(token) else { return }
+        for case let view as UITextView in textViews(in: cardStack) where view.tag == token {
+            view.attributedText = colored
+        }
+    }
+
+    private func cancelDeferredHighlight() {
+        // Bump so an in-flight task cannot install onto the next paint.
+        highlightGeneration += 1
+        highlightTask?.cancel()
+        highlightTask = nil
+    }
+
+    private func textViews(in root: UIView) -> [UITextView] {
+        var found: [UITextView] = (root as? UITextView).map { [$0] } ?? []
+        for subview in root.subviews {
+            found.append(contentsOf: textViews(in: subview))
+        }
+        return found
+    }
+
+    nonisolated private static func highlightSignature(
+        code: String,
+        language: SyntaxLanguage,
+        theme: ThemeID
+    ) -> Int {
+        var hasher = Hasher()
+        hasher.combine("notebook")
+        hasher.combine(code)
+        hasher.combine(language)
+        hasher.combine(theme)
+        return hasher.finalize()
     }
 
     private func shouldHighlight(_ code: String) -> Bool {
@@ -314,10 +528,17 @@ final class NotebookCellView: UIView, UITextViewDelegate {
             view.text = shown.text
             body = view
         case .rich(let markdown):
+            // The reader keeps the formatted document. Inline, a long JSON
+            // result was parsed and laid out in full, then the 620 pt cap
+            // threw that layout away. The row already fades a clipped cell;
+            // a caption after this body would sit past that cap.
+            let shown = isReader
+                ? Trimmed(text: markdown, hiddenLines: 0)
+                : Trimmed(markdown, lines: InlineLimit.richLines, characters: InlineLimit.richCharacters)
             let view = AssistantMarkdownContentView()
             view.accessibilityIdentifier = "tool.notebook.output"
             view.apply(configuration: .make(
-                content: markdown,
+                content: shown.text,
                 isStreaming: plan.running,
                 themeID: theme,
                 textSelectionEnabled: isReader,
@@ -426,7 +647,9 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         view.textContainer.lineBreakMode = .byCharWrapping
         view.textContainer.widthTracksTextView = true
         view.font = ToolFont.regular
-        view.setContentCompressionResistancePriority(.required, for: .vertical)
+        // Match the cell cap (749 beats nothing at 750). Required resistance
+        // fought the row's required viewport height on every expansion measure.
+        view.setContentCompressionResistancePriority(.defaultHigh, for: .vertical)
         view.setContentHuggingPriority(.required, for: .vertical)
         return view
     }
@@ -556,4 +779,21 @@ private struct Trimmed {
         }
         self.init(text: cut ? kept + "…" : kept, hiddenLines: all.count - keptLines)
     }
+}
+
+/// Highlight work that must not run on the expansion tap. Token identifies
+/// the text view; a later paint uses a new token so a finished task cannot
+/// color a recycled cell.
+private struct NotebookDeferredHighlight: Sendable {
+    var token: Int
+    var code: String
+    var language: SyntaxLanguage
+    var theme: ThemeID
+    var signature: Int
+}
+
+private struct NotebookDeferredHighlightResult: @unchecked Sendable {
+    var token: Int
+    var colored: NSAttributedString
+    var signature: Int
 }

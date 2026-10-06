@@ -553,6 +553,180 @@ struct NotebookCellPresentationTests {
         }
     }
 
+    @Test @MainActor func longArgumentDefersHighlightOffTheExpansionTap() {
+        NotebookCellView.deferredHighlightDelayForTesting = .milliseconds(400)
+        defer { NotebookCellView.deferredHighlightDelayForTesting = nil }
+
+        let command = "cd ~/workspace/oppi && " + String(repeating: "echo ready && ", count: 30)
+        let plan = NotebookCellPlan(
+            sources: [.init(label: nil, language: "yaml", code: "command: " + command)],
+            inputIsCode: false,
+            metadata: [],
+            calls: [],
+            omittedCalls: 0,
+            callsIncomplete: false,
+            output: .stdout("Backgrounded as job bash-32"),
+            availabilityNote: nil,
+            running: false,
+            failed: false
+        )
+        let view = NotebookCellView()
+        #expect(view.apply(plan))
+        #expect(view.debugHighlightPendingForTesting)
+        let code = scrollViews(in: view).compactMap { $0 as? UITextView }
+            .first { $0.accessibilityIdentifier == "tool.notebook.code" }
+        #expect(code?.text.contains("echo ready") == true)
+        #expect(view.debugDeferredHighlightCountForTesting == 0)
+
+        let short = NotebookCellView()
+        short.apply(NotebookCellPlan(
+            sources: [.init(label: nil, language: "javascript", code: "await lookup()")],
+            inputIsCode: true,
+            metadata: [],
+            calls: [],
+            omittedCalls: 0,
+            callsIncomplete: false,
+            output: .none,
+            availabilityNote: nil,
+            running: false,
+            failed: false
+        ))
+        #expect(!short.debugHighlightPendingForTesting)
+    }
+
+    @Test @MainActor func inlineRichOutputStaysAPreviewAndTheReaderKeepsTheDocument() {
+        let tail = "TAIL_MARKER_SHOULD_NOT_PAINT"
+        let body = (1...80).map { "paragraph \($0) of the formatted result" }.joined(separator: "\n")
+            + "\n" + tail
+        let plan = NotebookCellPlan(
+            sources: [.init(label: nil, language: "yaml", code: "action: list")],
+            inputIsCode: false,
+            metadata: [],
+            calls: [],
+            omittedCalls: 0,
+            callsIncomplete: false,
+            output: .rich(body),
+            availabilityNote: nil,
+            running: false,
+            failed: false
+        )
+        let inline = NotebookCellView()
+        inline.apply(plan)
+        #expect(!paintedText(in: inline).contains(tail))
+        #expect(firstView(of: AssistantMarkdownContentView.self, in: inline) != nil)
+        // The row fades a clipped cell. A caption after the body would sit past the cap.
+        #expect(!labels(in: inline).contains { $0.contains("more lines") })
+
+        let reader = NotebookCellView(mode: .reader(.init()))
+        reader.apply(plan)
+        #expect(paintedText(in: reader).contains(tail))
+    }
+
+    @Test @MainActor func seriousPressureLeavesAShortSourcePlain() {
+        let plan = NotebookCellPlan(
+            sources: [.init(label: nil, language: "javascript", code: "await lookup()")],
+            inputIsCode: true,
+            metadata: [],
+            calls: [],
+            omittedCalls: 0,
+            callsIncomplete: false,
+            output: .none,
+            availabilityNote: nil,
+            running: false,
+            failed: false
+        )
+        let view = NotebookCellView()
+        view.apply(plan, pressure: .serious)
+        #expect(!view.debugHighlightPendingForTesting)
+        let code = scrollViews(in: view).compactMap { $0 as? UITextView }.first
+        let colors = foregroundColors(in: code?.attributedText)
+        #expect(colors.count <= 1)
+    }
+
+    @Test @MainActor func richHeightIsNotFrozenFromTheUnsizedPass() {
+        let paragraph = String(repeating: "word ", count: 80)
+        let plan = NotebookCellPlan(
+            sources: [.init(label: nil, language: "yaml", code: "action: list")],
+            inputIsCode: false,
+            metadata: [],
+            calls: [],
+            omittedCalls: 0,
+            callsIncomplete: false,
+            output: .rich(paragraph),
+            availabilityNote: nil,
+            running: false,
+            failed: false
+        )
+        let view = NotebookCellView()
+        view.apply(plan)
+        let unsized = view.systemLayoutSizeFitting(
+            CGSize(width: 360, height: 0),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        view.frame = CGRect(x: 0, y: 0, width: 200, height: unsized.height)
+        view.layoutIfNeeded()
+        let narrow = view.systemLayoutSizeFitting(
+            CGSize(width: 200, height: 0),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        #expect(narrow.height != unsized.height)
+    }
+
+    @Test @MainActor func repeatedNotebookApplyDoesNotInvalidateTheTimeline() {
+        var invalidations = 0
+        ToolTimelineRowPresentationHelpers.enclosingLayoutInvalidationHookForTesting = {
+            invalidations += 1
+        }
+        defer { ToolTimelineRowPresentationHelpers.enclosingLayoutInvalidationHookForTesting = nil }
+
+        let config = expanded(
+            tool: "background_job",
+            args: ["command": .string("echo ready")],
+            output: "Backgrounded as job bash-32"
+        )
+        let row = ToolTimelineRowContentView(configuration: config)
+        _ = row.systemLayoutSizeFitting(
+            CGSize(width: 360, height: 0),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        let afterInstall = invalidations
+        #expect(afterInstall > 0)
+        row.configuration = config
+        #expect(invalidations == afterInstall)
+    }
+
+    private func foregroundColors(in text: NSAttributedString?) -> Set<UIColor> {
+        guard let text, text.length > 0 else { return [] }
+        var colors: Set<UIColor> = []
+        text.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: text.length)) { value, _, _ in
+            if let color = value as? UIColor { colors.insert(color) }
+        }
+        return colors
+    }
+
+    private func paintedText(in view: UIView) -> String {
+        var parts: [String] = []
+        if let label = view as? UILabel, let text = label.text { parts.append(text) }
+        if let textView = view as? UITextView {
+            parts.append(textView.text ?? textView.attributedText?.string ?? "")
+        }
+        for subview in view.subviews {
+            parts.append(paintedText(in: subview))
+        }
+        return parts.joined(separator: "\n")
+    }
+
+    private func firstView<T: UIView>(of type: T.Type, in view: UIView) -> T? {
+        if let match = view as? T { return match }
+        for subview in view.subviews {
+            if let match = firstView(of: type, in: subview) { return match }
+        }
+        return nil
+    }
+
     private func scrollViews(in view: UIView) -> [UIScrollView] {
         var found: [UIScrollView] = []
         if let scroll = view as? UIScrollView { found.append(scroll) }

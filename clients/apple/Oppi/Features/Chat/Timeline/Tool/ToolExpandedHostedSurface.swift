@@ -168,7 +168,10 @@ final class ToolExpandedHostedSurface {
     /// Notebook cell. Reuses the mounted view so output deltas do not
     /// rebuild it. Returns true when the row should remeasure.
     @discardableResult
-    func installNotebook(_ plan: NotebookCellPlan) -> Bool {
+    func installNotebook(
+        _ plan: NotebookCellPlan,
+        pressure: StreamingRenderPolicy.ResourcePressure = .nominal
+    ) -> Bool {
         let cell: NotebookCellView
         let mounted: Bool
         if let existing = contentView as? NotebookCellView {
@@ -180,7 +183,7 @@ final class ToolExpandedHostedSurface {
             mountContentView(cell)
             mounted = true
         }
-        return cell.apply(plan) || mounted
+        return cell.apply(plan, pressure: pressure) || mounted
     }
 
     /// CSV/TSV table or GeoJSON/TopoJSON map. The family builds the view and says
