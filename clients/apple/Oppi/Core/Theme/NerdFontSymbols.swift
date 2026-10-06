@@ -97,6 +97,8 @@ final class NerdFontSymbols {
         try await Self.register(url)
         Self.fallback.withLock { $0 = UIFontDescriptor(fontAttributes: [.name: Self.postScriptName]) }
         status = .installed
+        // scripts/test-nerd-font-asset-pack.sh waits for this line.
+        logger.notice("Nerd Font symbols installed")
         // Same path as a Code Font change: rebuild AppFont, then tell live
         // surfaces (the SSH terminal) to rebuild theirs.
         AppFont.rebuild()

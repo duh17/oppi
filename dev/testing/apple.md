@@ -26,7 +26,17 @@ cd clients/apple
 ./scripts/build-nerd-font-asset-pack.sh   # -> build/asset-packs/NerdFontSymbols.aar
 ```
 
-Upload the `.aar` to App Store Connect (Transporter, `altool`, or the App Store Connect API) and submit it with the next TestFlight or App Store build; packs are versioned and reviewed separately from builds. Apple hosting serves only TestFlight and App Store installs. Xcode and simulator builds report the pack unavailable unless a `xcrun ba-serve` mock server and a Background Assets URL override are set up (see Apple's "Testing asset packs locally").
+Before uploading, prove the pack downloads and installs:
+
+```bash
+./scripts/test-nerd-font-asset-pack.sh
+```
+
+It serves the `.aar` with Apple's mock server (`xcrun ba-serve`) over a throwaway CA, points a throwaway simulator at it with the Background Assets URL override, launches the Debug app, and waits for `Nerd Font symbols installed` in the app log. It removes the simulator, temporary keychain, and server on exit.
+
+On a physical device, use the same mock server: trust its CA with a configuration profile, then set **Settings → Developer → Background Assets Testing → Development Overrides → URL Override** to `https://<mac-host>:<port>`, per Apple's "Testing asset packs locally". **Settings → Text → Nerd Font Icons** then shows Installed.
+
+Upload the `.aar` to App Store Connect (Transporter, `altool`, or the App Store Connect API) and submit it with the next TestFlight or App Store build; packs are versioned and reviewed separately from builds. Without a URL override, Xcode and simulator builds show the pack as unavailable: Apple hosting serves only TestFlight and App Store installs.
 
 ### Build the terminal engine
 
