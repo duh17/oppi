@@ -81,6 +81,20 @@ struct WhatsNewView: View {
     /// Build 53 · Changes since Build 52
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
+            id: "mcp-servers",
+            icon: "puzzlepiece.extension",
+            iconColor: .themePurple,
+            title: String(localized: "MCP servers"),
+            description: String(localized: "Sessions load your Pi MCP servers. From iPhone, see each server's status, tools, and errors; turn servers on or off, change exposure, add or remove them, and sign in, for all workspaces or one.")
+        ),
+        WhatsNewFeature(
+            id: "codemode",
+            icon: "curlybraces",
+            iconColor: .themeCyan,
+            title: String(localized: "Codemode"),
+            description: String(localized: "The agent can write one script that calls several tools and MCP servers. Each run shows as a notebook cell with its code, calls, and output; double-tap opens it full screen. Keep codemode on in every session from Pi → Tools.")
+        ),
+        WhatsNewFeature(
             id: "tailscale",
             icon: "point.3.connected.trianglepath.dotted",
             iconColor: .themeBlue,
@@ -93,20 +107,6 @@ struct WhatsNewView: View {
             iconColor: .themeGreen,
             title: String(localized: "Simpler message queue"),
             description: String(localized: "Remove one queued message, or move the whole queue back into the composer; Stop does that first. Editing in place and reordering are gone. Needs server 0.51.0.")
-        ),
-        WhatsNewFeature(
-            id: "tool-calls",
-            icon: "doc.text.magnifyingglass",
-            iconColor: .themeCyan,
-            title: String(localized: "Clearer tool calls"),
-            description: String(localized: "Code tool calls, including codemode, open as notebook cells. Other tools open as an Input, Calls, and Output document.")
-        ),
-        WhatsNewFeature(
-            id: "mcp-servers",
-            icon: "puzzlepiece.extension",
-            iconColor: .themePurple,
-            title: String(localized: "MCP servers on iPhone"),
-            description: String(localized: "See each server's status, tools, and errors. Turn servers on or off, add or remove them, and sign in, for all workspaces or one.")
         ),
         WhatsNewFeature(
             id: "siri",
@@ -127,7 +127,7 @@ struct WhatsNewView: View {
             icon: "testtube.2",
             iconColor: .themeComment,
             title: String(localized: "Opt-in experiments"),
-            description: String(localized: "Session Threads, SSH Terminal, and Durable Sessions are under Settings → Experiments. Durable Sessions also needs the server's durable setting turned on.")
+            description: String(localized: "Session Threads and SSH Terminal are under Settings → Experiments. Durable Sessions there is a temporary playground: it needs the server's durable setting, lacks some features, and may change or go away.")
         ),
     ]
 
