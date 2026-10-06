@@ -118,10 +118,7 @@ const TABLE: readonly Entry[] = [
     name: "agents.list",
     cmd: ["agent", "list"],
     input: noArgs,
-    output: obj(
-      { agents: list(obj({ id: str, name: str, version: num }, ["id", "name", "version"])) },
-      ["agents"],
-    ),
+    output: obj({ agents: list(obj({ id: str, name: str }, ["id", "name"])) }, ["agents"]),
   },
   {
     name: "agents.get",
@@ -170,7 +167,19 @@ const TABLE: readonly Entry[] = [
   {
     name: "schedules.create",
     cmd: ["schedule", "create"],
-    input: obj({ prompt: str, workspace: str, at: str, every: str, cron: str }, ["prompt"]),
+    input: obj(
+      {
+        name: str,
+        prompt: str,
+        workspace: str,
+        agent: str,
+        at: str,
+        every: str,
+        cron: str,
+        tz: str,
+      },
+      ["name", "prompt"],
+    ),
     output: scheduleRow,
     pick: "schedule",
   },

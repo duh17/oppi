@@ -191,7 +191,7 @@ export async function cmdSchedule(
       const idempotencyKey = flags["idempotency-key"];
       // The default name carries the time, so a retry of a keyed create would be a different request.
       if (idempotencyKey && !flags.name)
-        throw new Error("--name is required with --idempotency-key");
+        throw new Error("--name is required with --idempotency-key: pass a name for the schedule");
       const name = flags.name || `Schedule ${new Date().toISOString()}`;
       const trigger = scheduleTriggerFromFlags(flags);
       if (flags.session && savedAgentReference(flags.agent)) {

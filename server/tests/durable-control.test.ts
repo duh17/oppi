@@ -27,6 +27,7 @@ import { createCliConfigStorage } from "../src/cli/connection-config.js";
 import { DurableControlCli } from "../src/durable-control-cli.js";
 import { createAgentRoutes } from "../src/routes/agents.js";
 import { createRouteHelpers } from "../src/routes/http.js";
+import { createScheduleRoutes } from "../src/routes/schedules.js";
 import type { RouteContext } from "../src/routes/types.js";
 import {
   CONTROL_DECLARATIONS,
@@ -66,10 +67,15 @@ async function ownerApi(dataDir: string) {
   const seen: Seen[] = [];
   /** Bodies of `POST /sessions/:id/command`, which is only recorded: the turn dedupe is the server's. */
   const commands: Array<{ clientTurnId?: string; message?: string }> = [];
-  const dispatchAgents = createAgentRoutes(
-    { storage: { getAgentDefinitionStore: () => agents } } as unknown as RouteContext,
-    createRouteHelpers(),
-  );
+  const routeContext = {
+    storage: {
+      getAgentDefinitionStore: () => agents,
+      getAgentScheduleStore: () => schedules,
+      getWorkspace: (id: string) => (id === "ws" ? { id, name: "ws" } : undefined),
+    },
+  } as unknown as RouteContext;
+  const dispatchAgents = createAgentRoutes(routeContext, createRouteHelpers());
+  const dispatchSchedules = createScheduleRoutes(routeContext, createRouteHelpers());
   const server = createHttpServer((req, res) => {
     void (async () => {
       const url = new URL(req.url ?? "/", "http://localhost");
@@ -98,13 +104,13 @@ async function ownerApi(dataDir: string) {
         res.end(JSON.stringify({ messages: [] }));
         return;
       }
-      const handled = await dispatchAgents({
-        method: req.method ?? "GET",
-        path: url.pathname,
-        url,
-        req,
-        res,
-      } as never);
+      if (req.method === "GET" && url.pathname === "/workspaces/ws") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ workspace: { id: "ws", name: "ws" } }));
+        return;
+      }
+      const routed = { method: req.method ?? "GET", path: url.pathname, url, req, res } as never;
+      const handled = (await dispatchSchedules(routed)) || (await dispatchAgents(routed));
       if (!handled) {
         res.writeHead(404, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "not found" }));
@@ -407,9 +413,10 @@ describe("oppi.control tools", () => {
       [string, boolean, string]
     >;
     expect(results.map(([family]) => family)).toEqual(families.map((family) => family.join(" ")));
-    // Every family answered with an envelope the script could read. These two ignore an
-    // unknown flag and succeed; every other family refuses it with an error.
-    const lenient = new Set(["agent list", "config validate"]);
+    // Every family answered with an envelope the script could read. These ignore an
+    // unknown flag and succeed (`schedule list` now reaches a real route);
+    // every other family refuses it with an error.
+    const lenient = new Set(["agent list", "schedule list", "config validate"]);
     expect(results.every(([, ok]) => typeof ok === "boolean")).toBe(true);
     expect(results.filter(([family, ok]) => ok && !lenient.has(family))).toEqual([]);
     expect(results.filter(([, ok, message]) => !ok && message !== "string")).toEqual([]);
@@ -592,7 +599,9 @@ describe("oppi.control tools", () => {
   });
 
   it("stops a script that outgrows the VM's memory limit without hurting the server", async () => {
-    const f = await start([query(`const hoard = []; for (;;) hoard.push(new Array(1e6).fill(0));`)]);
+    const f = await start([
+      query(`const hoard = []; for (;;) hoard.push(new Array(1e6).fill(0));`),
+    ]);
     const pid = process.pid;
     await send(f.conversation);
     await f.responder.stop();
@@ -807,6 +816,31 @@ describe("oppi_script crash safety", () => {
     const turns = new Set(f.commands.map((command) => command.clientTurnId));
     expect(turns.size).toBe(1);
     expect([...turns][0]).toMatch(/^[^:]+:0:[0-9a-f]{12}$/);
+  });
+
+  it("(h) the schedules.create wrapper binds a saved Agent, and a replay before the memo makes no second schedule", async () => {
+    const f = await fixture();
+    const scout = f.agents.createAgent({ name: "scout" });
+    const conversation = await crashAndResume(
+      f,
+      `return await schedules.create({
+        name: "Daily scout", prompt: "Look around", workspace: "ws", agent: "scout",
+        cron: "0 9 * * *", tz: "America/Los_Angeles",
+      });`,
+      "before",
+    );
+    const created = f.schedules.listSchedules();
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({
+      name: "Daily scout",
+      trigger: { type: "cron", expression: "0 9 * * *", timeZone: "America/Los_Angeles" },
+      action: { type: "new_session", workspaceId: "ws", agentId: scout.id, prompt: "Look around" },
+    });
+    const [result] = await toolResults(conversation);
+    expect(result?.isError).toBe(false);
+    expect(JSON.parse(result!.text.split("\n").at(-1)!)).toMatchObject({ id: created[0]!.id });
+    // The retry reached the API with the same key and was answered with the schedule it made.
+    expect(f.seen.filter((request) => request.method === "POST")).toHaveLength(2);
   });
 
   it("resumes a list-then-archive loop over the original set, one confirm per write", async () => {

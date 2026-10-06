@@ -148,7 +148,7 @@ describe("schedule create idempotency flag", () => {
     expect(exitCode).toBe(1);
     expect(JSON.parse(stdout)).toMatchObject({
       ok: false,
-      error: { message: "--name is required with --idempotency-key" },
+      error: { message: expect.stringContaining("pass a name") },
     });
     expect(request).not.toHaveBeenCalledWith(storage, "/schedules", expect.anything());
   });
