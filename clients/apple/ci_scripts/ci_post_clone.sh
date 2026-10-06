@@ -44,12 +44,15 @@ ensure_zig() {
 
 go_is_new_enough() {
   command -v go >/dev/null 2>&1 || return 1
-  local version major minor
+  local version major minor patch
   version="$(go env GOVERSION 2>/dev/null || true)"
-  [[ "$version" =~ ^go([0-9]+)\.([0-9]+) ]] || return 1
+  [[ "$version" =~ ^go([0-9]+)\.([0-9]+)(\.([0-9]+))? ]] || return 1
   major="${BASH_REMATCH[1]}"
   minor="${BASH_REMATCH[2]}"
-  [[ "$major" -gt 1 || "$minor" -ge 25 ]]
+  patch="${BASH_REMATCH[4]:-0}"
+  # libtailscale's go.mod requires go >= 1.25.5, and the vendor script sets
+  # GOTOOLCHAIN=local, so an older toolchain cannot upgrade itself.
+  [[ "$major" -gt 1 || "$minor" -gt 25 || ( "$minor" -eq 25 && "$patch" -ge 5 ) ]]
 }
 
 ensure_go() {
@@ -58,9 +61,9 @@ ensure_go() {
   fi
   local arch tarball url
   arch="$(host_arch)"
-  tarball="go1.25.4.darwin-${arch}.tar.gz"
+  tarball="go1.27.1.darwin-${arch}.tar.gz"
   url="https://go.dev/dl/${tarball}"
-  echo "Installing Go 1.25.4"
+  echo "Installing Go 1.27.1"
   curl -fsSL "$url" -o "$TOOL_ROOT/$tarball"
   rm -rf "$TOOL_ROOT/go"
   tar -xzf "$TOOL_ROOT/$tarball" -C "$TOOL_ROOT"
