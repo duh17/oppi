@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -6,6 +7,18 @@ import type { ThinkingLevel } from "./agent-launch-service.js";
 import { generateId } from "./id.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 import { isThinkingLevel } from "./thinking-levels.js";
+
+export const SCHEDULE_IDEMPOTENCY_CONFLICT_CODE = "SCHEDULE_IDEMPOTENCY_CONFLICT";
+
+/** A create key that already created a Schedule from a different definition. */
+export class ScheduleIdempotencyConflictError extends Error {
+  readonly code = SCHEDULE_IDEMPOTENCY_CONFLICT_CODE;
+
+  constructor(readonly scheduleId: string) {
+    super(`Idempotency key already created Schedule ${scheduleId} from a different definition`);
+    this.name = "ScheduleIdempotencyConflictError";
+  }
+}
 
 export type AgentScheduleStatus = "active" | "paused" | "archived";
 export type AgentScheduleRunStatus = "pending" | "claimed" | "running" | "completed" | "failed";
@@ -212,7 +225,50 @@ export class AgentScheduleStore {
     this.db.close();
   }
 
-  createSchedule(input: unknown, now = Date.now()): AgentSchedule {
+  /**
+   * Create once per key, like `AgentDefinitionStore.createAgentOnce`: the key row commits with the
+   * Schedule, a replay returns the Schedule the key already created (as it is now) and creates
+   * nothing, and the same key with another definition is a conflict.
+   */
+  createScheduleOnce(
+    input: unknown,
+    idempotencyKey: string,
+    now = Date.now(),
+  ): { schedule: AgentSchedule; replayed: boolean } {
+    const request = validateCreateAgentScheduleRequest(input);
+    const fingerprint = createHash("sha256").update(JSON.stringify(request)).digest("hex");
+    const existing = this.db
+      .prepare(
+        "SELECT schedule_id, fingerprint FROM agent_schedule_create_requests WHERE idempotency_key = ?",
+      )
+      .get(idempotencyKey) as { schedule_id: string; fingerprint: string } | undefined;
+    if (existing) {
+      const schedule = this.getSchedule(existing.schedule_id);
+      if (!schedule)
+        throw new Error(`Schedule ${existing.schedule_id} for this idempotency key is missing`);
+      if (existing.fingerprint !== fingerprint)
+        throw new ScheduleIdempotencyConflictError(schedule.id);
+      return { schedule, replayed: true };
+    }
+    return {
+      schedule: this.createSchedule(input, now, (id) => {
+        this.db
+          .prepare(
+            `INSERT INTO agent_schedule_create_requests (idempotency_key, schedule_id, fingerprint)
+             VALUES (?, ?, ?)`,
+          )
+          .run(idempotencyKey, id, fingerprint);
+      }),
+      replayed: false,
+    };
+  }
+
+  createSchedule(
+    input: unknown,
+    now = Date.now(),
+    /** Runs inside the creating transaction. */
+    onCreated?: (scheduleId: string) => void,
+  ): AgentSchedule {
     const request = validateCreateAgentScheduleRequest(input);
     const schedule: AgentSchedule = {
       id: generateId(8),
@@ -223,20 +279,23 @@ export class AgentScheduleStore {
       createdAt: now,
       updatedAt: now,
     };
-    this.db
-      .prepare(
-        `INSERT INTO agent_schedules (id, name, status, trigger_json, action_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        schedule.id,
-        schedule.name,
-        schedule.status,
-        JSON.stringify(schedule.trigger),
-        JSON.stringify(schedule.action),
-        schedule.createdAt,
-        schedule.updatedAt,
-      );
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO agent_schedules (id, name, status, trigger_json, action_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          schedule.id,
+          schedule.name,
+          schedule.status,
+          JSON.stringify(schedule.trigger),
+          JSON.stringify(schedule.action),
+          schedule.createdAt,
+          schedule.updatedAt,
+        );
+      onCreated?.(schedule.id);
+    })();
     return schedule;
   }
 
@@ -572,6 +631,12 @@ export class AgentScheduleStore {
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         archived_at INTEGER
+      );
+
+      CREATE TABLE IF NOT EXISTS agent_schedule_create_requests (
+        idempotency_key TEXT PRIMARY KEY,
+        schedule_id TEXT NOT NULL,
+        fingerprint TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS agent_schedule_runs (

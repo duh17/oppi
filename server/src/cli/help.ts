@@ -899,6 +899,12 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "saved Agent id/name for new-session schedules",
       },
       { name: "--worktree", value: "<id>", summary: "workspace worktree id" },
+      {
+        name: "--idempotency-key",
+        value: "<key>",
+        summary:
+          "replaying the same create with this key returns the schedule it created; needs --name",
+      },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
@@ -1149,7 +1155,7 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["session", "send"],
     title: "Send to session",
     summary: "Prompt an idle session, steer a busy session, or queue a follow-up.",
-    usage: "oppi session send <id> --text <text> [--steer | --follow-up] [--json]",
+    usage: "oppi session send <id> --text <text> [--steer | --follow-up] [--turn-id <id>] [--json]",
     arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [
       { name: "--text", value: "<text>", summary: "message text to send", required: true },
@@ -1157,6 +1163,11 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         name: "--follow-up",
         summary: "require a busy session and wait until current work finishes",
+      },
+      {
+        name: "--turn-id",
+        value: "<id>",
+        summary: "caller-chosen turn id; resending the same text with it is the same turn",
       },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],

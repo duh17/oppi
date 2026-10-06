@@ -177,7 +177,14 @@ async function executeCliCommand(args: readonly string[], options: CliRunOptions
       await cmdSchedule(connection, positional[0], positional.slice(1), flags);
       return;
     case "wait":
-      await cmdWait(connection, positional[0], positional.slice(1), flags, options.signal);
+      await cmdWait(
+        connection,
+        positional[0],
+        positional.slice(1),
+        flags,
+        options.signal,
+        options.callerSessionId,
+      );
       return;
     case "config":
       cmdConfig(createCliConfigStorage(dataDir), positional[0], positional.slice(1), flags);

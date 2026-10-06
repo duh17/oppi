@@ -2,6 +2,8 @@ import type { ServerResponse } from "node:http";
 
 import { createAgentScheduleDispatchHooks } from "../agent-schedule-dispatch.js";
 import {
+  SCHEDULE_IDEMPOTENCY_CONFLICT_CODE,
+  ScheduleIdempotencyConflictError,
   mergeScheduleActionPatch,
   validateAgentScheduleUpdate,
   validateCreateAgentScheduleRequest,
@@ -40,13 +42,41 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     if (method === "POST") {
       try {
         const schedules = getSchedules();
-        const body = validateCreateAgentScheduleRequest(await helpers.parseBody<unknown>(req));
+        const { definition, idempotencyKey } = splitCreateIdempotencyKey(
+          await helpers.parseBody<unknown>(req),
+        );
+        const body = validateCreateAgentScheduleRequest(definition);
         const normalizedBody = normalizeScheduleRequestTargets(body);
         const now = Date.now();
-        const schedule = schedules.createSchedule(normalizedBody, now);
-        helpers.json(res, { schedule: schedules.getScheduleSummary(schedule.id) }, 201);
+        if (idempotencyKey === undefined) {
+          const schedule = schedules.createSchedule(normalizedBody, now);
+          helpers.json(res, { schedule: schedules.getScheduleSummary(schedule.id) }, 201);
+        } else {
+          const { schedule, replayed } = schedules.createScheduleOnce(
+            normalizedBody,
+            idempotencyKey,
+            now,
+          );
+          helpers.json(
+            res,
+            { schedule: schedules.getScheduleSummary(schedule.id) },
+            replayed ? 200 : 201,
+          );
+        }
       } catch (error) {
-        helpers.error(res, 400, safeErrorMessage(error));
+        if (error instanceof ScheduleIdempotencyConflictError) {
+          helpers.json(
+            res,
+            {
+              error: error.message,
+              code: SCHEDULE_IDEMPOTENCY_CONFLICT_CODE,
+              scheduleId: error.scheduleId,
+            },
+            409,
+          );
+        } else {
+          helpers.error(res, 400, safeErrorMessage(error));
+        }
       }
       return true;
     }
@@ -342,4 +372,19 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       schedules.listRunSummaries(scheduleId).find((candidate) => candidate.id === run.id) ?? run
     );
   }
+}
+
+/** `idempotencyKey` is request metadata, not part of the Schedule definition. */
+function splitCreateIdempotencyKey(body: unknown): {
+  definition: unknown;
+  idempotencyKey?: string;
+} {
+  if (!body || typeof body !== "object" || Array.isArray(body) || !("idempotencyKey" in body)) {
+    return { definition: body };
+  }
+  const { idempotencyKey, ...definition } = body as Record<string, unknown>;
+  if (typeof idempotencyKey !== "string" || !idempotencyKey.trim() || idempotencyKey.length > 200) {
+    throw new Error("idempotencyKey must be a non-empty string of at most 200 characters");
+  }
+  return { definition, idempotencyKey: idempotencyKey.trim() };
 }

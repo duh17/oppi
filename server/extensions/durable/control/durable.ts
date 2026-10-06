@@ -39,9 +39,10 @@ export interface DurableControlHost {
   /**
    * Run one `oppi` CLI invocation in this process and resolve its JSON envelope; never rejects
    * for a failing command. `onWrite` is awaited before each non-GET request is sent and decides
-   * it by resolving or throwing; without `onWrite` every non-GET is refused. `key` is
-   * deterministic per call, so a retry of the same call is the same write: the host derives
-   * idempotency keys from it. `wrote` is true once a write was approved.
+   * it by resolving or throwing (a thrown `code` becomes the envelope's error code); without
+   * `onWrite` every non-GET is refused. `key` is deterministic per call, so a retry of the same
+   * call is the same write: the host derives the one replay key a write carries from it, and
+   * replaces any key the script passed. `wrote` is true once a write was approved.
    */
   run(
     argv: readonly string[],
@@ -309,8 +310,16 @@ export const CONTROL_SECTION = `${ROLE}\n${CONTROL_DECLARATIONS}\n${GUIDANCE.map
 const YES = "Yes";
 const YES_ALL = "Yes to all remaining in this script";
 const NO = "No";
-/** Longest request body shown whole on a confirm card. */
+/** Longest request body a confirm card shows. A longer one is refused: the owner approves only what they can read. */
 const CARD_BODY_LIMIT = 6000;
+/**
+ * How long one script may run. The sandbox's own default is 5 minutes, which would cancel a
+ * confirm card the owner has not answered yet and cut `sessions.wait` short, so the deadline is a
+ * day: long enough for a person on a phone, and a bound for a script that never settles.
+ */
+const SANDBOX_TIMEOUT_MS = 24 * 60 * 60_000;
+/** The script VM runs inside the server process; a runaway script fails inside it, not the server. */
+const SANDBOX_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
 
 /** What a finished oppi_script call keeps, so a rerun after a crash returns it instead of running it again. */
 type Saved = { argv: string[]; envelope: ControlJson; all: boolean };
@@ -318,6 +327,18 @@ type Saved = { argv: string[]; envelope: ControlJson; all: boolean };
 class Declined extends Error {
   constructor() {
     super("The owner declined this write.");
+  }
+}
+
+/** The body does not fit on a confirm card, so nothing is asked and nothing is sent. */
+class BodyTooLarge extends Error {
+  readonly code = "body_too_large";
+
+  constructor(length: number) {
+    super(
+      `The request body is ${length} characters; a confirm card shows at most ${CARD_BODY_LIMIT}, ` +
+        "and nothing was sent. Send less in one write.",
+    );
   }
 }
 
@@ -357,12 +378,8 @@ function cardMessage(write: ControlWrite): string {
   const lines = [`${write.method} ${write.path}`];
   if (write.body !== undefined) {
     const text = JSON.stringify(write.body, null, 2);
-    lines.push(
-      "Request body:",
-      text.length > CARD_BODY_LIMIT
-        ? `${text.slice(0, CARD_BODY_LIMIT)}\n… ${text.length - CARD_BODY_LIMIT} more characters`
-        : text,
-    );
+    if (text.length > CARD_BODY_LIMIT) throw new BodyTooLarge(text.length);
+    lines.push("Request body:", text);
   }
   if (write.method === "PATCH") {
     if (write.current === undefined)
@@ -380,8 +397,11 @@ function cardMessage(write: ControlWrite): string {
 }
 
 /**
- * One tool call's script. Indices are taken synchronously when the script calls, so they are the
- * script's own call order however the calls overlap; a rerun after a crash numbers them the same.
+ * One tool call's script. Indices are taken synchronously when the script calls, so calls the
+ * script starts together are numbered in source order. A call made from the continuation of
+ * another call is numbered in completion order, which a rerun may not repeat: the memo checks the
+ * argv, and the host adds a hash of it to the replay key, so a different call at an old index
+ * neither replays another call's result nor takes its write's key.
  */
 class ControlScript {
   private calls = 0;
@@ -456,13 +476,16 @@ class ControlScript {
     if (!this.writable) return result.envelope;
     // Every call of oppi_script is kept, reads included, so a rerun follows the data the first
     // run saw: a list-then-archive loop resumed after its first archive still archives the
-    // original set. First write wins: a crash between a store write and here reruns the call with
-    // the same key, and the host's idempotency keys make that the same write.
+    // original set. First write wins. A crash between a store write and here reruns the call with
+    // the same replay key; for the commands that have one (see `withReplayKey`) the server then
+    // answers with the write it already holds. The other writes run again.
     const kept: Saved = { argv, envelope: result.envelope, all: this.approveAll };
     return (await this.api.memo<Saved>(name, kept, context)).envelope;
   }
 
-  private confirm(slot: string, write: ControlWrite, context: Context): Promise<void> {
+  private async confirm(slot: string, write: ControlWrite, context: Context): Promise<void> {
+    // Before "Yes to all" too: no write goes out with a body its owner could not see.
+    const message = cardMessage(write);
     const ask = async (): Promise<void> => {
       if (this.approveAll) return;
       const id = `oppi-confirm:${this.api.taskId}:${slot}`;
@@ -474,7 +497,7 @@ class ControlScript {
             id,
             method: "select",
             title: `Allow ${write.method} ${write.path.split("?")[0]}?`,
-            message: cardMessage(write),
+            message,
             options: [YES, YES_ALL, NO],
             extensionScopeId: "oppi:control",
             extensionDisplayName: "Oppi control",
@@ -493,7 +516,7 @@ class ControlScript {
     };
     const next = this.approvals.then(ask, ask);
     this.approvals = next.catch(() => undefined);
-    return next;
+    await next;
   }
 
   private dropCard(id: string): Promise<void> {
@@ -520,13 +543,18 @@ function scriptTool(
     }),
     // A rerun after a crash replays the script from the top. oppi_query only reads. In
     // oppi_script every finished call is memoized by index, so the rerun is handed the same
-    // results and does not repeat a write (see ControlScript.call).
+    // results; a write that landed just before its memo is re-sent with the same replay key
+    // (see ControlScript.call).
     replay: "safe",
     async execute(input, api, context) {
       const bound = host();
       if (!bound) throw new Error("Oppi control is not available: the Oppi host is not bound");
       const script = new ControlScript(api, context, bound, writable);
-      const sandbox = new CodemodeSandbox({ globals: script.globals() });
+      const sandbox = new CodemodeSandbox({
+        globals: script.globals(),
+        timeoutMs: SANDBOX_TIMEOUT_MS,
+        memoryLimitBytes: SANDBOX_MEMORY_LIMIT_BYTES,
+      });
       try {
         const result = await sandbox.execute(input.code, {
           ...(context.abortSignal ? { signal: context.abortSignal } : {}),

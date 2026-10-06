@@ -32,6 +32,7 @@ import {
   CONTROL_DECLARATIONS,
   CONTROL_SECTION,
   createDurableControl,
+  type ControlJson,
   type DurableControlHost,
 } from "../extensions/durable/control/durable.js";
 import { DurableUI, type UIRequest } from "../extensions/durable/durable-ui.js";
@@ -63,6 +64,8 @@ async function ownerApi(dataDir: string) {
   const agents = new AgentDefinitionStore(dataDir);
   const schedules = new AgentScheduleStore(dataDir);
   const seen: Seen[] = [];
+  /** Bodies of `POST /sessions/:id/command`, which is only recorded: the turn dedupe is the server's. */
+  const commands: Array<{ clientTurnId?: string; message?: string }> = [];
   const dispatchAgents = createAgentRoutes(
     { storage: { getAgentDefinitionStore: () => agents } } as unknown as RouteContext,
     createRouteHelpers(),
@@ -81,6 +84,20 @@ async function ownerApi(dataDir: string) {
         res.end(JSON.stringify({ run: { id: run.id, status: run.status } }));
         return;
       }
+      const sessionLookup = req.method === "GET" && url.pathname === "/sessions";
+      if (sessionLookup) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ sessions: [{ id: url.searchParams.get("idPrefix") }] }));
+        return;
+      }
+      if (req.method === "POST" && /^\/sessions\/[^/]+\/command$/.test(url.pathname)) {
+        let text = "";
+        for await (const chunk of req) text += String(chunk);
+        commands.push(JSON.parse(text) as { clientTurnId?: string; message?: string });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ messages: [] }));
+        return;
+      }
       const handled = await dispatchAgents({
         method: req.method ?? "GET",
         path: url.pathname,
@@ -96,7 +113,7 @@ async function ownerApi(dataDir: string) {
   });
   servers.push(server);
   await listenOnLocalApiFixture(server, dataDir);
-  return { agents, schedules, seen };
+  return { agents, schedules, seen, commands };
 }
 
 /** Every Agent row, byte for byte, for "nothing changed" comparisons. */
@@ -349,7 +366,6 @@ describe("oppi.control tools", () => {
 
   it("(h) a bad flag in every command family returns an error envelope to the script and the server stays up", async () => {
     const families = [
-      ["status"],
       ["quota"],
       ["models"],
       ["agent", "list"],
@@ -361,7 +377,6 @@ describe("oppi.control tools", () => {
       ["session", "list"],
       ["session", "get", "x"],
       ["session", "wait", "x"],
-      ["control", "open"],
       ["schedule", "list"],
       ["schedule", "run", "x"],
       ["wait", "x"],
@@ -392,9 +407,9 @@ describe("oppi.control tools", () => {
       [string, boolean, string]
     >;
     expect(results.map(([family]) => family)).toEqual(families.map((family) => family.join(" ")));
-    // Every family answered with an envelope the script could read. These three ignore an
+    // Every family answered with an envelope the script could read. These two ignore an
     // unknown flag and succeed; every other family refuses it with an error.
-    const lenient = new Set(["status", "agent list", "config validate"]);
+    const lenient = new Set(["agent list", "config validate"]);
     expect(results.every(([, ok]) => typeof ok === "boolean")).toBe(true);
     expect(results.filter(([family, ok]) => ok && !lenient.has(family))).toEqual([]);
     expect(results.filter(([, ok, message]) => !ok && message !== "string")).toEqual([]);
@@ -513,6 +528,124 @@ describe("oppi.control tools", () => {
     const [result] = await toolResults(f.conversation);
     expect(result?.text).not.toContain("Unknown flag");
     expect(f.seen).toEqual([{ method: "GET", url: "/agents/-Xu5kdkM" }]);
+  });
+
+  it("refuses a body too large for the confirm card, with or without Yes to all, and sends nothing", async () => {
+    const f = await start(
+      [
+        code(`
+          const out = [];
+          for (const attempt of [
+            () => agents.create({ name: "Big", instructions: "x".repeat(7000) }),
+            () => agents.create({ name: "Small" }),
+            () => agents.create({ name: "Big again", instructions: "y".repeat(7000) }),
+          ]) {
+            try { await attempt(); out.push("applied"); } catch (e) { out.push(e.message); }
+          }
+          return out;
+        `),
+      ],
+      [YES_ALL],
+    );
+    await send(f.conversation);
+    await f.responder.stop();
+
+    const [result] = await toolResults(f.conversation);
+    const out = JSON.parse(result!.text.split("\n").at(-1)!) as string[];
+    expect(out[0]).toMatch(/at most 6000.*nothing was sent.*\[body_too_large\]/);
+    expect(out[1]).toBe("applied");
+    // Yes to all, given for the small write, does not carry an unreadable body past the card.
+    expect(out[2]).toContain("[body_too_large]");
+    expect(f.agents.listAgentSummaries().map((agent) => agent.name)).toEqual(["Small"]);
+    expect(f.seen.filter((request) => request.method === "POST")).toHaveLength(1);
+    expect(f.responder.cards).toHaveLength(1);
+  });
+
+  it("does not cancel a confirm card the owner has not answered within the sandbox's old 5 minutes", async () => {
+    // The sandbox arms its deadline with setTimeout. Shrink the 5 minute default to 300 ms so
+    // waiting through it takes under a second; any other timer is untouched.
+    const realSetTimeout = globalThis.setTimeout;
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+      handler: () => void,
+      delay?: number,
+      ...rest: unknown[]
+    ) =>
+      realSetTimeout(
+        handler,
+        delay === 300_000 ? 300 : delay,
+        ...rest,
+      )) as unknown as typeof setTimeout);
+    const f = await start([code(`return (await agents.create({ name: "Late" })).version;`)]);
+    const settled = (await f.conversation.submit({ type: "input", content: "go" }, context)).wait(
+      context,
+    );
+    await new Promise((resolve) => realSetTimeout(resolve, 900));
+    expect(f.agents.listAgentSummaries()).toEqual([]);
+    const answer = owner(f.conversation, [YES]);
+    expect((await settled).status).toBe("done");
+    await answer.stop();
+    await f.responder.stop();
+
+    const [result] = await toolResults(f.conversation);
+    expect(result?.isError).toBe(false);
+    expect(f.agents.listAgentSummaries().map((agent) => agent.name)).toEqual(["Late"]);
+  });
+
+  it("stops a script that outgrows the VM's memory limit without hurting the server", async () => {
+    const f = await start([query(`const hoard = []; for (;;) hoard.push(new Array(1e6).fill(0));`)]);
+    const pid = process.pid;
+    await send(f.conversation);
+    await f.responder.stop();
+    const [result] = await toolResults(f.conversation);
+    expect(result?.isError).toBe(true);
+    expect(result?.text).toMatch(/out of memory/i);
+    expect(process.pid).toBe(pid);
+  });
+
+  it("sends nothing when the script is stopped as the owner's answer arrives", async () => {
+    const f = await fixture();
+    const stop = new AbortController();
+    const outcome = await f.host
+      .run(["agent", "create", "--name", "Too late"], {
+        conversationId: 1 as ConversationId,
+        key: "9:0",
+        signal: stop.signal,
+        onWrite: async () => stop.abort(),
+      })
+      .then(
+        () => "settled",
+        () => "aborted",
+      );
+    expect(outcome).toBe("aborted");
+    expect(f.seen.filter((request) => request.method !== "GET")).toEqual([]);
+    expect(f.agents.listAgentSummaries()).toEqual([]);
+  });
+
+  it("keeps a write of one call from taking the key of another call at the same index", async () => {
+    // After a reordered rerun, call 0 is a different write than before. It must not be answered
+    // with the first write's result, nor conflict with it: it is its own write.
+    const f = await fixture();
+    const run = (name: string) =>
+      f.host.run(["agent", "create", "--name", name], {
+        conversationId: 1 as ConversationId,
+        key: "9:0",
+        signal: new AbortController().signal,
+        onWrite: async () => {},
+      });
+    const first = await run("First");
+    const other = await run("Second");
+    const replay = await run("First");
+    expect(first.envelope.ok).toBe(true);
+    expect(other.envelope.ok).toBe(true);
+    expect(
+      f.agents
+        .listAgentSummaries()
+        .map((agent) => agent.name)
+        .sort(),
+    ).toEqual(["First", "Second"]);
+    // The same write again, with the same call key, is the first write.
+    const id = (envelope: ControlJson) => (envelope.data as { agent: { id: string } }).agent.id;
+    expect(id(replay.envelope)).toBe(id(first.envelope));
   });
 
   it("serializes overlapping writes in call order and keeps concurrent reads isolated", async () => {
@@ -646,6 +779,35 @@ describe("oppi_script crash safety", () => {
       );
     },
   );
+
+  it("(e2) a key the script chose does not make the rerun a different write", async () => {
+    const f = await fixture();
+    const conversation = await crashAndResume(
+      f,
+      `return await oppi(["agent", "create", "--name", "Once", "--idempotency-key", "t" + Math.random()]);`,
+      "before",
+    );
+    expect(f.agents.listAgentSummaries().map((agent) => agent.name)).toEqual(["Once"]);
+    const [result] = await toolResults(conversation);
+    expect(result?.isError).toBe(false);
+    expect(JSON.parse(result!.text.split("\n").at(-1)!)).toMatchObject({ ok: true });
+    // Two POSTs reached the API, the second answered from the key the first stored.
+    expect(f.seen.filter((request) => request.method === "POST")).toHaveLength(2);
+  });
+
+  it("(g) a retried `session send` before the memo carries the same turn id, whatever the script passed", async () => {
+    const f = await fixture();
+    const session = "11111111-1111-4111-8111-111111111111";
+    await crashAndResume(
+      f,
+      `return await oppi(["session", "send", "${session}", "--text", "hello", "--turn-id", "t" + Math.random()]);`,
+      "before",
+    );
+    expect(f.commands).toHaveLength(2);
+    const turns = new Set(f.commands.map((command) => command.clientTurnId));
+    expect(turns.size).toBe(1);
+    expect([...turns][0]).toMatch(/^[^:]+:0:[0-9a-f]{12}$/);
+  });
 
   it("resumes a list-then-archive loop over the original set, one confirm per write", async () => {
     const f = await fixture();

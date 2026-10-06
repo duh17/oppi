@@ -16,7 +16,10 @@ import {
   writeJsonEnvelope,
 } from "../output.js";
 import { apiStatus } from "../resources.js";
-import { assertNotSelfTargetingSession } from "../../session-caller-identity.js";
+import {
+  assertNotSelfTargetingSession,
+  callerSessionIdFromEnvironment,
+} from "../../session-caller-identity.js";
 import { resolveSessionIdTargets } from "../session-id-target.js";
 
 type WaitSession = {
@@ -31,6 +34,7 @@ export async function cmdWait(
   positional: string[],
   flags: Record<string, string>,
   signal?: AbortSignal,
+  callerSessionId = callerSessionIdFromEnvironment(),
 ): Promise<void> {
   const jsonOutput = flags.json === "true";
 
@@ -41,7 +45,7 @@ export async function cmdWait(
 
     const sessionId = positional[0];
     if (!sessionId) throw new Error("session id is required");
-    assertNotSelfTargetingSession([sessionId]);
+    assertNotSelfTargetingSession([sessionId], callerSessionId);
 
     const expectedStatus = flags.status?.trim() || "stopped";
     const timeoutMs = parseDurationMs(flags.timeout ?? "10m");
@@ -54,7 +58,7 @@ export async function cmdWait(
       localApiRequest(storage, path, signal ? { ...options, signal } : options),
     );
     if (!resolvedSessionId) throw new Error("session id is required");
-    assertNotSelfTargetingSession([resolvedSessionId]);
+    assertNotSelfTargetingSession([resolvedSessionId], callerSessionId);
 
     for (;;) {
       throwIfAborted(signal);

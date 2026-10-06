@@ -452,6 +452,10 @@ describe("CLI app-state API boundary", () => {
           ["session", "send", "sess-1", "--text", "later", "--follow-up", "--json"],
           dataDir,
         );
+        await runCliResult(
+          ["session", "send", "sess-1", "--text", "again", "--turn-id", "turn-7", "--json"],
+          dataDir,
+        );
         await runCliResult(["session", "abort", "sess-1", "--json"], dataDir);
 
         const commandBodies = requests
@@ -461,6 +465,13 @@ describe("CLI app-state API boundary", () => {
           { type: "prompt", message: "default", streamingBehavior: "steer" },
           { type: "steer", message: "hi" },
           { type: "follow_up", message: "later" },
+          {
+            type: "prompt",
+            message: "again",
+            clientTurnId: "turn-7",
+            requestId: "turn-7",
+            streamingBehavior: "steer",
+          },
           { type: "abort" },
         ]);
       },

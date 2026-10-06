@@ -170,7 +170,7 @@ export async function cmdSession(
         callerSessionId,
       );
       const commandType = resolveSendStreamingKind(flags) ?? "prompt";
-      const result = await sendSessionInput(id, commandType, text, call);
+      const result = await sendSessionInput(id, commandType, text, call, flags["turn-id"]);
       assertNoCommandError(result, commandType === "prompt");
       output({ session_id: id, command: commandType }, () =>
         printSessionNotice(`${commandType} sent → ${id}`),
@@ -671,7 +671,7 @@ const SESSION_FLAGS: Record<string, readonly string[]> = {
     "workspace",
     "worktree",
   ],
-  send: ["follow-up", "json", "steer", "text"],
+  send: ["follow-up", "json", "steer", "text", "turn-id"],
   abort: ["json"],
   wait: ["all", "for", "interval", "json", "poll", "summary-every", "timeout"],
   read: ["json", "tail"],

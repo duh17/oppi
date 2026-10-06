@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { runCliMain } from "../src/cli.js";
 import { cmdAgent } from "../src/cli/commands/agent.js";
 import { cmdControl } from "../src/cli/commands/control.js";
+import { cmdSchedule } from "../src/cli/commands/schedule.js";
 import { inspectSession } from "../src/cli/commands/session-inspect.js";
 import { cmdWait } from "../src/cli/commands/wait.js";
 import { localApiRequest, type LocalApiConnection } from "../src/cli/local-api-client.js";
@@ -118,6 +119,38 @@ describe("agent create idempotency flag", () => {
       ok: false,
       error: { status: 409, code: "AGENT_IDEMPOTENCY_CONFLICT" },
     });
+  });
+});
+
+describe("schedule create idempotency flag", () => {
+  const flags = { workspace: "w1", prompt: "go", every: "1h", tz: "UTC", json: "true" };
+  const answer = async (_storage: unknown, path: string) =>
+    String(path).startsWith("/workspaces")
+      ? { workspaces: [{ id: "w1", name: "w1" }], workspace: { id: "w1", name: "w1" } }
+      : { schedule: { id: "sch1" } };
+
+  it("sends the key with the schedule", async () => {
+    request.mockImplementation(answer as never);
+    await captureCliOutput(() =>
+      cmdSchedule(storage, "create", [], { ...flags, name: "Nightly", "idempotency-key": "k-1" }),
+    );
+    expect(request).toHaveBeenLastCalledWith(storage, "/schedules", {
+      method: "POST",
+      body: expect.objectContaining({ name: "Nightly", idempotencyKey: "k-1" }),
+    });
+  });
+
+  it("needs a name, whose default would change between a call and its retry", async () => {
+    request.mockImplementation(answer as never);
+    const { stdout, exitCode } = await captureCliOutput(() =>
+      cmdSchedule(storage, "create", [], { ...flags, "idempotency-key": "k-1" }),
+    );
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: false,
+      error: { message: "--name is required with --idempotency-key" },
+    });
+    expect(request).not.toHaveBeenCalledWith(storage, "/schedules", expect.anything());
   });
 });
 

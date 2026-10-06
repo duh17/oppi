@@ -188,6 +188,10 @@ export async function cmdSchedule(
     if (mode === "create") {
       const prompt = flags.prompt;
       if (!prompt?.trim()) throw new Error("--prompt is required");
+      const idempotencyKey = flags["idempotency-key"];
+      // The default name carries the time, so a retry of a keyed create would be a different request.
+      if (idempotencyKey && !flags.name)
+        throw new Error("--name is required with --idempotency-key");
       const name = flags.name || `Schedule ${new Date().toISOString()}`;
       const trigger = scheduleTriggerFromFlags(flags);
       if (flags.session && savedAgentReference(flags.agent)) {
@@ -200,7 +204,7 @@ export async function cmdSchedule(
             prompt,
           )
         : await newSessionAction(storage, flags, prompt);
-      const body = { name, trigger, action };
+      const body = { name, trigger, action, ...(idempotencyKey ? { idempotencyKey } : {}) };
       const result = await call<Record<string, unknown>>("/schedules", { method: "POST", body });
       output(result, () => {
         const schedule = result.schedule as { id?: string } | undefined;

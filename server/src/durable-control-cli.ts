@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { JsonValue } from "@earendil-works/chord";
 import type {
@@ -18,10 +19,12 @@ import { safeErrorMessage } from "./log-utils.js";
 /**
  * The only argv this host refuses before `runCli`. Argv classification is NOT the safety
  * boundary (the confirm gate on every non-GET request is); these are the ways a command reaches
- * the host without an HTTP request or the envelope:
+ * the host without an HTTP request or the envelope, or that would hurt the server it runs in:
  * - flags that read a file of this host (`--definition PATH`, `--instructions-file`, dictionary
  *   `--file`) or stdin (`@-`, `--phrases`): the server's own files and stdin are not the owner's
  * - `--config-file`, and `config set`, which edits the config file directly with no request to gate
+ * - `control`: its `send` would prompt the control conversation from inside its own turn
+ * - `status`: it shells out synchronously (`execFileSync`), which would stall the server's event loop
  * (`version` never reaches `runCli`: the CLI entry point handles it, so a script gets the runner's
  * "Unknown command" envelope.)
  */
@@ -33,7 +36,20 @@ const HOST_INPUT_FLAGS = new Set([
   "config-file",
 ]);
 
+const DENIED_COMMANDS: ReadonlyMap<string, string> = new Map([
+  [
+    "control",
+    "control is not available to the control agent: it would send the control conversation a message from inside its own turn.",
+  ],
+  [
+    "status",
+    "status runs blocking system commands on the server's event loop and is not available to the control agent.",
+  ],
+]);
+
 export function refuseControlArgv(argv: readonly string[]): string | undefined {
+  const denied = DENIED_COMMANDS.get(argv[0] ?? "");
+  if (denied !== undefined) return denied;
   if (argv.includes("@-")) return "Reading stdin (@-) is not available to the control agent.";
   let parsed;
   try {
@@ -51,29 +67,56 @@ export function refuseControlArgv(argv: readonly string[]): string | undefined {
 }
 
 /**
- * Add `--flag key` unless the script passed the flag: the retry-safe form of the commands whose
- * write would otherwise be repeated by a retry. `agent create` and `session create` keep one
- * entity per key; `schedule run` triggers one run per request id.
+ * The flag that makes a write replay-safe, per command: the server keeps one entity (or one run,
+ * or one turn) per value. Every other write has no such key.
  */
-export function withIdempotencyKey(argv: readonly string[], key: string): string[] {
+const REPLAY_KEY_FLAG: ReadonlyMap<string, string> = new Map([
+  ["agent create", "idempotency-key"],
+  ["session create", "idempotency-key"],
+  ["schedule create", "idempotency-key"],
+  ["schedule run", "request-id"],
+  ["session send", "turn-id"],
+]);
+
+/** `argv` without `--flag [value]`, read the way `parseCliArgs` reads it. */
+function withoutFlag(argv: readonly string[], flag: string): string[] {
+  const separator = argv.indexOf("--");
+  const end = separator === -1 ? argv.length : separator;
+  const kept: string[] = argv.slice(0, 1);
+  for (let i = 1; i < argv.length; i += 1) {
+    const arg = argv[i] as string;
+    if (i < end && arg === `--${flag}`) {
+      const next = argv[i + 1];
+      if (i + 1 < end && next !== undefined && !next.startsWith("--")) i += 1;
+      continue;
+    }
+    kept.push(arg);
+  }
+  return kept;
+}
+
+/**
+ * Make the write of a keyed command replay-safe: `--flag <call key>:<hash of the rest of argv>`
+ * is the ONLY key it carries, and a key the script passed is dropped. The call key (task id and
+ * call index) is the same when a crashed script reruns; the hash makes it a different key when
+ * the call at that index is not the same call, so a rerun whose calls came out in another order
+ * never hands one write another write's key. Other commands are returned unchanged.
+ */
+export function withReplayKey(argv: readonly string[], key: string): string[] {
   let parsed;
   try {
     parsed = parseCliArgs([...argv]);
   } catch {
     return [...argv];
   }
-  const verb = `${parsed.command} ${parsed.positional[0] ?? ""}`;
-  const flag =
-    verb === "schedule run"
-      ? "request-id"
-      : verb === "agent create" || verb === "session create"
-        ? "idempotency-key"
-        : undefined;
-  if (flag === undefined || Object.hasOwn(parsed.flags, flag)) return [...argv];
+  const flag = REPLAY_KEY_FLAG.get(`${parsed.command} ${parsed.positional[0] ?? ""}`);
+  if (flag === undefined) return [...argv];
+  const rest = withoutFlag(argv, flag);
+  const hash = createHash("sha256").update(JSON.stringify(rest)).digest("hex").slice(0, 12);
   // Before a `--`, so the pair stays flags.
-  const separator = argv.indexOf("--");
-  const at = separator === -1 ? argv.length : separator;
-  return [...argv.slice(0, at), `--${flag}`, key, ...argv.slice(at)];
+  const separator = rest.indexOf("--");
+  const at = separator === -1 ? rest.length : separator;
+  return [...rest.slice(0, at), `--${flag}`, `${key}:${hash}`, ...rest.slice(at)];
 }
 
 function failure(code: string, message: string): ControlJson {
@@ -110,17 +153,20 @@ export class DurableControlCli implements DurableControlHost {
       }
       try {
         await options.onWrite(await this.describe(request, callerSessionId, options.signal));
+        // The answer can land as the script is stopped; a stopped script sends nothing.
+        options.signal.throwIfAborted();
       } catch (error) {
         if (options.signal.aborted) throw error;
         const message = safeErrorMessage(error);
-        outcome.blocked = failure("declined", message);
+        const code = (error as { code?: unknown } | null)?.code;
+        outcome.blocked = failure(typeof code === "string" ? code : "declined", message);
         throw new Error(message, { cause: error });
       }
       outcome.wrote = true;
     };
 
     const result = await withLocalApiInterceptor(interceptor, () =>
-      runCli(withIdempotencyKey(argv, options.key), {
+      runCli(withReplayKey(argv, options.key), {
         dataDir: this.deps.dataDir,
         forceJson: true,
         captureHuman: true,

@@ -144,6 +144,45 @@ describe("schedule routes", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
+  it("creates once per idempotency key: a replay returns the schedule, another body is a conflict", async () => {
+    const dispatch = createScheduleRoutes(ctx, helpers);
+    const create = (body: Record<string, unknown>) =>
+      dispatch({
+        method: "POST",
+        path: "/schedules",
+        url: new URL("https://localhost/schedules"),
+        req: requestBody(body),
+        res: {} as ServerResponse,
+      });
+    const definition = {
+      name: "Nightly",
+      trigger: { type: "every", intervalMs: 3_600_000, timeZone: "UTC" },
+      action: { type: "new_session", workspaceId: workspace.id, prompt: "go" },
+    };
+
+    await create({ ...definition, idempotencyKey: "call-1" });
+    await create({ ...definition, idempotencyKey: "call-1" });
+    await create({ ...definition, name: "Other", idempotencyKey: "call-1" });
+    await create({ ...definition, name: "Other", idempotencyKey: "call-2" });
+
+    expect(errors).toEqual([]);
+    const [first, replay, conflict, second] = responses;
+    expect(first?.status).toBe(201);
+    expect(replay?.status).toBe(200);
+    expect(replay?.data).toEqual(first?.data);
+    expect(conflict).toMatchObject({
+      status: 409,
+      data: { code: "SCHEDULE_IDEMPOTENCY_CONFLICT" },
+    });
+    expect(second?.status).toBe(201);
+    expect(
+      store
+        .listScheduleSummaries()
+        .map((schedule) => schedule.name)
+        .sort(),
+    ).toEqual(["Nightly", "Other"]);
+  });
+
   it("runs a new-session schedule through AgentLaunchService idempotently", async () => {
     const schedule = store.createSchedule({
       name: "Morning check",
