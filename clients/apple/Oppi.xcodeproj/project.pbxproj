@@ -9317,6 +9317,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = dev.chenda.Oppi;
 				PRODUCT_NAME = Oppi;
 				SDKROOT = iphoneos;
+				SWIFT_OPTIMIZATION_LEVEL = "-Osize";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
