@@ -91,18 +91,17 @@ enum ToolCallDocumentBuilder {
         return blocks.joined(separator: "\n\n")
     }
 
-    /// Result body for a notebook cell. The availability sentence stays out of
-    /// the body so the cell can caption it instead of rendering it as prose.
-    static func outputFragment(
-        output: String,
-        details: JSONValue?,
-        previewOnly: Bool,
-        totalBytes: Int?
-    ) -> (note: String?, body: String) {
-        let note = previewOnly && !output.isEmpty
-            ? "Output preview only" + (totalBytes.map { " (\(output.utf8.count) of \($0) bytes)" } ?? "") + ". Full output may be unavailable for a stopped session."
-            : nil
-        return (note, outputBody(output, details: details))
+    /// Availability caption for a notebook cell, kept out of the body so the
+    /// cell can caption it instead of rendering it as prose.
+    static func previewNote(output: String, previewOnly: Bool, totalBytes: Int?) -> String? {
+        guard previewOnly && !output.isEmpty else { return nil }
+        return "Output preview only" + (totalBytes.map { " (\(output.utf8.count) of \($0) bytes)" } ?? "")
+            + ". Full output may be unavailable for a stopped session."
+    }
+
+    /// Formatted result body for a notebook cell.
+    static func formattedOutput(_ output: String, details: JSONValue?) -> String {
+        outputBody(output, details: details)
     }
 
     private static func outputBody(_ output: String, details: JSONValue?) -> String {

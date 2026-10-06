@@ -766,12 +766,13 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: itemID, item: item)))
-        guard case .markdown(let document, _) = config.expandedContent else {
-            Issue.record("Expected generic inspection document")
+        guard case .notebook(let cell) = config.expandedContent else {
+            Issue.record("Expected generic tool cell")
             return
         }
         #expect(config.rawMarkdownText?.contains("EXT-a27df231") == true)
-        #expect(document.contains("Control tower Live Activity"))
+        guard case .rich(let formatted) = cell.output else { Issue.record("A JSON result is formatted"); return }
+        #expect(formatted.contains("Control tower Live Activity"))
         #expect(config.rawMarkdownText?.contains("in_progress") == true)
         #expect(config.trailing == nil)
     }
@@ -802,11 +803,12 @@ struct ToolPresentationConfigTests {
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: itemID, item: item)))
         #expect(config.trailing == nil)
-        guard case .markdown(let document, _) = config.expandedContent else {
-            Issue.record("Expected generic inspection document")
+        guard case .notebook(let cell) = config.expandedContent else {
+            Issue.record("Expected generic tool cell")
             return
         }
-        #expect(document.contains("EXT-463187a1"))
+        #expect(cell.output == .stdout("Updated EXT-463187a1 body with 2 lines"))
+        #expect(cell.sources.first?.code.contains("body: |\n  Investigate smooth scroll follow\n  Add regression tests") == true)
         #expect(config.rawMarkdownText?.contains("Investigate smooth scroll follow") == true)
         #expect(config.copyOutputText?.contains("EXT-463187a1") == true)
     }
@@ -839,11 +841,12 @@ struct ToolPresentationConfigTests {
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: itemID, item: item)))
         #expect(config.trailing == nil)
-        guard case .markdown(let document, _) = config.expandedContent else {
-            Issue.record("Expected generic inspection document")
+        guard case .notebook(let cell) = config.expandedContent else {
+            Issue.record("Expected generic tool cell")
             return
         }
-        #expect(document.contains("status: closed"))
+        #expect(cell.output == .stdout("Updated EXT-463187a1 (status: closed)"))
+        #expect(cell.sources.first?.code.contains("status: closed") == true)
         #expect(config.rawMarkdownText?.contains("Refine auto-follow scrolling") == true)
         #expect(config.copyOutputText?.contains("status: closed") == true)
     }
@@ -1071,12 +1074,13 @@ struct ToolPresentationConfigTests {
             outputPreview: "tail", outputByteCount: 0, isError: false, isDone: true)
         let config = try #require(timelineToolRowConfiguration(from:
             harness.coordinator.toolRowConfiguration(itemID: id, item: item)))
-        guard case .markdown(let text, _) = config.expandedContent else {
-            Issue.record("Expected generic preview document"); return
+        guard case .notebook(let cell) = config.expandedContent else {
+            Issue.record("Expected generic preview cell"); return
         }
-        #expect(text.contains(hasDeclaredTotal
+        let note = cell.availabilityNote ?? ""
+        #expect(note.hasPrefix(hasDeclaredTotal
             ? "Output preview only (4 of 200000 bytes)" : "Output preview only."))
-        #expect(!text.contains("of 0 bytes"))
+        #expect(!note.contains("of 0 bytes"))
     }
 
     @Test func expandedBashToolConfigurationPrefersUnwrappedOutput() throws {

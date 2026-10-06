@@ -1,9 +1,11 @@
 import Foundation
 
-/// UI-free notebook cell for a code-role tool input.
+/// UI-free notebook cell for an expanded generic tool call.
 ///
-/// Selected from the code role, never from a tool name. iOS paints this;
-/// the markdown document remains the descriptor leaf for raw text, copy, and Mac.
+/// Code-role fields fill the cell's source; any other tool shows its
+/// arguments there instead. Selected from input roles and inspection facts,
+/// never from a tool name. iOS paints this; the markdown document remains the
+/// descriptor leaf for raw text, copy, and Mac.
 struct NotebookCellPlan: Equatable, Hashable, Sendable {
     struct Source: Equatable, Hashable, Sendable {
         var label: String?
@@ -36,6 +38,8 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
     }
 
     var sources: [Source]
+    /// False when the source is the call's arguments rather than code.
+    var inputIsCode: Bool
     var metadata: [String]
     var calls: [Call]
     var omittedCalls: Int
@@ -45,6 +49,16 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
     var running: Bool
     var failed: Bool
 
+    /// Copy and live-reader text: the source, or the output when the call
+    /// had no arguments.
+    var readerText: String {
+        if !sources.isEmpty { return sources.map(\.code).joined(separator: "\n\n") }
+        switch output {
+        case .none: return ""
+        case .stdout(let text), .rich(let text): return text
+        }
+    }
+
     var hasOutputWell: Bool {
         if case .none = output, calls.isEmpty, omittedCalls == 0, !callsIncomplete, availabilityNote == nil, !running {
             return false
@@ -52,8 +66,9 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
         return true
     }
 
-    /// Nil unless at least one code-role field has text. Callers still reject
-    /// terminal, file, media, and interactive inspections.
+    /// Nil when there is nothing to show: no arguments, calls, or output.
+    /// Callers still reject terminal, file, media, and
+    /// interactive inspections.
     static func make(
         input: [ToolInspection.Field],
         calls: NestedToolCalls?,
@@ -65,37 +80,69 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
         previewOnly: Bool,
         totalBytes: Int?
     ) -> NotebookCellPlan? {
-        let sources = input.compactMap { field -> Source? in
+        let codeSources = input.compactMap { field -> Source? in
             guard field.role == "code" else { return nil }
             let code = codeText(field.value)
             guard !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             return Source(label: field.name, language: field.language, code: code)
         }
-        guard !sources.isEmpty else { return nil }
+        let inputIsCode = !codeSources.isEmpty
+        let sources = inputIsCode ? codeSources : argumentSource(input).map { [$0] } ?? []
         let labeled = sources.count > 1
         // The status preamble repeats the row's status and duration.
         let body = outputPresentation?.hidingStatusHeader(in: output) ?? output
-        let fragment = ToolCallDocumentBuilder.outputFragment(
-            output: body, details: details, previewOnly: previewOnly, totalBytes: totalBytes
-        )
         let recorded = calls?.calls ?? []
         let shown = recorded.prefix(256)
-        return NotebookCellPlan(
+        let plan = NotebookCellPlan(
             sources: sources.map {
                 Source(label: labeled ? $0.label : nil, language: $0.language, code: $0.code)
             },
-            metadata: metadata(input),
+            inputIsCode: inputIsCode,
+            metadata: inputIsCode ? metadata(input) : [],
             calls: shown.map(call),
             omittedCalls: max(0, recorded.count - shown.count),
             callsIncomplete: calls?.complete == false,
             output: cellOutput(
-                printed: body, details: details, document: fragment.body,
+                printed: body, details: details,
                 detailsAreRedundant: !isDone || !recorded.isEmpty
             ),
-            availabilityNote: fragment.note,
+            availabilityNote: ToolCallDocumentBuilder.previewNote(
+                output: body, previewOnly: previewOnly, totalBytes: totalBytes
+            ),
             running: !isDone,
             failed: isError
         )
+        // Nothing to paint yet: the row keeps its waiting placeholder.
+        let empty = plan.sources.isEmpty && plan.calls.isEmpty && plan.omittedCalls == 0
+            && plan.output == .none && plan.availabilityNote == nil
+        return empty ? nil : plan
+    }
+
+    /// A call's arguments as YAML-style source, one `name: value` per field.
+    /// Multi-line text and structured values continue on indented lines.
+    private static func argumentSource(_ input: [ToolInspection.Field]) -> Source? {
+        let lines = input.compactMap { field -> String? in
+            guard field.value != .null, field.value != .string("") else { return nil }
+            let value = OrderedJSON.from(field.value)
+            let text = value.scalar ?? value.json(pretty: true)
+            guard text.contains("\n") else {
+                // Quote a one-line string YAML would misread, such as `fix #123`.
+                let shown = field.value.stringValue != nil && yamlNeedsQuotes(text)
+                    ? OrderedJSON.string(text).json() : text
+                return field.name + ": " + shown
+            }
+            let indented = text.split(separator: "\n", omittingEmptySubsequences: false)
+                .map { "  " + $0 }.joined(separator: "\n")
+            return field.name + (value.scalar == nil ? ":\n" : ": |\n") + indented
+        }
+        guard !lines.isEmpty else { return nil }
+        return Source(label: nil, language: "yaml", code: lines.joined(separator: "\n"))
+    }
+
+    private static func yamlNeedsQuotes(_ text: String) -> Bool {
+        guard let first = text.first else { return true }
+        return text.contains(" #") || text.contains(": ") || text != text.trimmingCharacters(in: .whitespaces)
+            || "#-?:,[]{}&*!|>'\"%@`".contains(first)
     }
 
     /// First meaningful code line. Directive comments such as `// @options:`
@@ -190,40 +237,51 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
     }
 
     /// Printed text stays printed, the way a notebook shows stdout. Only a
-    /// result that is entirely one JSON value, or producer `expandedText`,
+    /// result that is entirely one JSON object, array, or string, or producer `expandedText`,
     /// takes the rendered document (tables, lists).
     ///
     /// With no printed text the document falls back to raw `details`. While
     /// the script runs, or when nested calls are already listed, those details
     /// are progress records that repeat the CALLS section, so the cell shows
     /// no output instead.
+    ///
+    /// The document is formatted only on those paths: printed output, the
+    /// common case on every streaming delta, never pays for JSON/patch/Markdown
+    /// detection.
     private static func cellOutput(
         printed: String,
         details: JSONValue?,
-        document: String,
         detailsAreRedundant: Bool
     ) -> Output {
+        func document() -> String { ToolCallDocumentBuilder.formattedOutput(printed, details: details) }
         let text = printed.trimmingCharacters(in: .whitespacesAndNewlines)
         let expanded = details?.objectValue?["expandedText"]?.stringValue?
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         if text.isEmpty, !expanded, detailsAreRedundant { return .none }
-        if text.isEmpty || expanded || OrderedJSON.parse(text) != nil {
-            return classify(document)
+        // A bare number, boolean, or null prints as is. Objects and arrays
+        // format, and a JSON string is decoded so it does not show quoted.
+        // Only text that opens like a JSON object, array, or string is parsed,
+        // so ordinary printed output skips the parse on every streaming delta.
+        let structured: Bool = switch text.first.flatMap({ "{[\"".contains($0) ? OrderedJSON.parse(text) : nil }) {
+        case .object?, .array?, .string?: true
+        case .number?, .bool?, .null?, nil: false
+        }
+        if text.isEmpty || expanded || structured {
+            return classify(document())
         }
         return .stdout(ANSIParser.strip(text))
     }
 
+    /// The formatted document is always Markdown (JSON forms render as nested
+    /// lists and tables). Only a document that is exactly one plain-text fence
+    /// reads as printed text; a code or diff fence keeps its highlighting.
     private static func classify(_ body: String) -> Output {
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .none }
         if let inner = unwrapSingleFence(trimmed) {
             return .stdout(inner)
         }
-        if trimmed.contains("```") || trimmed.contains("\n| ") || trimmed.hasPrefix("| ")
-            || trimmed.contains("\n# ") || trimmed.hasPrefix("#") {
-            return .rich(trimmed)
-        }
-        return .stdout(trimmed.replacingOccurrences(of: "  \n", with: "\n"))
+        return .rich(trimmed)
     }
 
     /// A document that is exactly one fence. The cell shows the inside as stdout.
@@ -235,6 +293,8 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
         guard text.hasSuffix("\n" + marker), !text.dropFirst(markerCount).hasPrefix(marker) else { return nil }
         let rest = text.dropFirst(markerCount)
         guard let newline = rest.firstIndex(of: "\n") else { return nil }
+        let info = rest[..<newline].trimmingCharacters(in: .whitespaces)
+        guard info.isEmpty || info == "text" else { return nil }
         let inner = rest[rest.index(after: newline)...].dropLast(marker.count + 1)
         guard !inner.contains("\n" + marker) else { return nil }
         return String(inner)

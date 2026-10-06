@@ -14,6 +14,7 @@ struct NotebookCellPresentationTests {
         output: String,
         hints: ToolInputPresentation? = nil,
         calls: NestedToolCalls? = nil,
+        details: JSONValue? = nil,
         display: ToolDisplay? = nil,
         isError: Bool = false,
         isDone: Bool = true,
@@ -23,6 +24,7 @@ struct NotebookCellPresentationTests {
     ) -> ToolTimelineRowConfiguration {
         var context = ToolPresentationBuilder.Context(
             args: args,
+            details: details,
             expandedItemIDs: ["cell"],
             fullOutput: output,
             isLoadingOutput: false
@@ -157,10 +159,13 @@ struct NotebookCellPresentationTests {
             args: ["code": .string("return 1")],
             output: "1"
         )
-        guard case .markdown = named.expandedContent else {
-            Issue.record("A code argument without a code-role fact stays a document")
+        guard case .notebook(let arguments) = named.expandedContent else {
+            Issue.record("A generic tool paints a notebook cell")
             return
         }
+        #expect(!arguments.inputIsCode, "Without a code-role fact the cell shows arguments, not code")
+        #expect(arguments.sources.first?.code == "code: return 1")
+        #expect(arguments.metadata.isEmpty)
         let fact = expanded(
             tool: "custom_script",
             args: ["source": .string("print(1)")],
@@ -172,6 +177,105 @@ struct NotebookCellPresentationTests {
             return
         }
         #expect(plan.sources.first?.languageName == "Python")
+    }
+
+    @Test func argumentCellFormatsAWholeJSONResultAndPrintsText() throws {
+        // A todo-style list: the formatted document opens with a bold key and
+        // nests a table under a list item. It must render, not print as Markdown source.
+        let json = expanded(
+            tool: "todo",
+            args: ["action": .string("list"), "note": .string("line one\nline two")],
+            output: #"{"assigned":[],"open":[{"id":"TODO-1","title":"Ship build"}]}"#
+        )
+        guard case .notebook(let cell) = json.expandedContent else {
+            Issue.record("A generic tool paints a notebook cell")
+            return
+        }
+        #expect(cell.sources.first?.code == "action: list\nnote: |\n  line one\n  line two")
+        #expect(cell.sources.first?.syntaxLanguage == .yaml)
+        guard case .rich(let formatted) = cell.output else {
+            Issue.record("A whole-JSON result renders as a formatted document")
+            return
+        }
+        #expect(formatted.contains("Ship build"))
+
+        let printed = expanded(tool: "web_search", args: ["query": .string("pi")], output: "# Results\n\n- one")
+        guard case .notebook(let plain) = printed.expandedContent else {
+            Issue.record("A generic tool paints a notebook cell")
+            return
+        }
+        #expect(plain.output == .stdout("# Results\n\n- one"), "Printed text stays as printed, like a terminal")
+    }
+
+    @Test @MainActor func cellWithoutArgumentsStillOpensTheReader() throws {
+        // The row's own gate, not just the reader factory: a no-argument call
+        // with only a result, or only nested calls, must answer double-tap.
+        let resultOnly = expanded(tool: "get_status", args: [:], output: #"{"ok":true}"#)
+        let callsOnly = expanded(
+            tool: "parent", args: [:], output: "",
+            calls: NestedToolCalls(calls: [.init(id: "1", name: "child", status: "ok")], complete: true)
+        )
+        for config in [resultOnly, callsOnly] {
+            guard case .notebook(let cell) = config.expandedContent else {
+                Issue.record("A generic call paints a notebook cell")
+                continue
+            }
+            #expect(cell.sources.isEmpty)
+            let policy = try #require(ToolRowPlanBuilder.build(configuration: config).interactionPolicy)
+            #expect(policy.supportsFullScreenPreview)
+            let reader = try #require(ToolTimelineRowFullScreenSupport.fullScreenContent(
+                configuration: config, outputCopyText: config.copyOutputText,
+                interactionPolicy: policy, terminalStream: nil, sourceStream: nil
+            ))
+            guard case .notebook(let opened) = reader else {
+                Issue.record("The reader shows the same cell")
+                continue
+            }
+            #expect(opened == cell)
+        }
+    }
+
+    @Test func producerCodeAndDiffKeepTheirHighlightedFence() {
+        let code = expanded(
+            tool: "codegen", args: ["name": .string("App")], output: "func app() {}",
+            details: .object([
+                "expandedText": .string("func app() {}"),
+                "presentationFormat": .string("code"),
+                "language": .string("swift"),
+            ])
+        )
+        guard case .notebook(let cell) = code.expandedContent else {
+            Issue.record("A generic call paints a notebook cell")
+            return
+        }
+        #expect(cell.output == .rich("```swift\nfunc app() {}\n```"))
+
+        let plain = expanded(
+            tool: "echo", args: [:], output: "raw",
+            details: .object(["expandedText": .string("hello"), "presentationFormat": .string("terminal")])
+        )
+        guard case .notebook(let printed) = plain.expandedContent else {
+            Issue.record("A generic call paints a notebook cell")
+            return
+        }
+        #expect(printed.output == .stdout("hello"), "A plain-text fence reads as printed output")
+    }
+
+    @Test func argumentValuesYAMLWouldMisreadAreQuoted() throws {
+        let config = expanded(
+            tool: "gh",
+            args: ["title": .string("fix #123"), "ref": .string("main"), "note": .string("- bullet"), "count": .number(3)],
+            output: "ok"
+        )
+        guard case .notebook(let cell) = config.expandedContent else {
+            Issue.record("A generic call paints a notebook cell")
+            return
+        }
+        let source = try #require(cell.sources.first?.code)
+        #expect(source.contains(#"title: "fix #123""#))
+        #expect(source.contains(#"note: "- bullet""#))
+        #expect(source.contains("ref: main"))
+        #expect(source.contains("count: 3"))
     }
 
     @Test func collapsedTitleIsTheFirstCodeLineWhenSegmentsAreAbsent() {
@@ -247,6 +351,7 @@ struct NotebookCellPresentationTests {
     @Test @MainActor func cellFitsItsSource() {
         let plan = NotebookCellPlan(
             sources: [.init(label: nil, language: "javascript", code: "await lookup()")],
+            inputIsCode: true,
             metadata: [],
             calls: [],
             omittedCalls: 0,
@@ -305,6 +410,7 @@ struct NotebookCellPresentationTests {
     @Test @MainActor func inlineCellLeavesDoubleTapToTheRowAndTheReaderSelects() {
         let plan = NotebookCellPlan(
             sources: [.init(label: nil, language: "javascript", code: "await lookup()")],
+            inputIsCode: true,
             metadata: [],
             calls: [],
             omittedCalls: 0,
@@ -332,6 +438,7 @@ struct NotebookCellPresentationTests {
         let calls = (1...9).map { _ in NotebookCellPlan.Call(name: "bash", status: "ok", duration: nil, arguments: "ls", error: nil) }
         let plan = NotebookCellPlan(
             sources: [.init(label: nil, language: "javascript", code: code)],
+            inputIsCode: true,
             metadata: [],
             calls: calls,
             omittedCalls: 0,
@@ -361,6 +468,7 @@ struct NotebookCellPresentationTests {
     @Test @MainActor func cellNeitherStretchesNorSqueezesItsRows() throws {
         let plan = NotebookCellPlan(
             sources: [.init(label: nil, language: "javascript", code: (1...20).map { "const a\($0) = 1" }.joined(separator: "\n"))],
+            inputIsCode: true,
             metadata: [],
             calls: [
                 .init(name: "bash", status: "ok", duration: "39 ms", arguments: "git tag --list", error: nil),
@@ -418,6 +526,7 @@ struct NotebookCellPresentationTests {
         let view = NotebookCellView()
         view.apply(NotebookCellPlan(
             sources: [.init(label: nil, language: "javascript", code: String(repeating: "const line = 1\n", count: 40))],
+            inputIsCode: true,
             metadata: [],
             calls: [],
             omittedCalls: 0,
@@ -451,5 +560,17 @@ struct NotebookCellPresentationTests {
             found.append(contentsOf: scrollViews(in: subview))
         }
         return found
+    }
+}
+
+extension NotebookCellPlan {
+    /// Everything the cell paints as text: source, output, and its caption.
+    var paintedText: String {
+        let output: String
+        switch self.output {
+        case .none: output = ""
+        case .stdout(let text), .rich(let text): output = text
+        }
+        return (sources.map(\.code) + [output, availabilityNote ?? ""]).joined(separator: "\n")
     }
 }

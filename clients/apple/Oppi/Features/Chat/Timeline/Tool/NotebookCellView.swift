@@ -1,10 +1,10 @@
 import SwiftUI
 import UIKit
 
-/// Expanded code-role tool call, painted as a notebook cell rather than a
+/// Expanded generic tool call, painted as a notebook cell rather than a
 /// markdown note with fenced blocks.
 ///
-/// The source sits in an inset card. Nested calls and the result hang off a
+/// The source (code, or the call's arguments) sits in an inset card. Nested calls and the result hang off a
 /// rail underneath, the way a notebook attaches outputs to its cell. The row
 /// header already shows status, glyph, duration, call count, and language, so
 /// the cell repeats none of them. The view does not know tool names;
@@ -80,6 +80,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         let theme = ThemeRuntimeState.currentThemeID()
         guard plan != appliedPlan || theme != appliedTheme else { return false }
         let sourceChanged = plan.sources != appliedPlan?.sources
+            || plan.inputIsCode != appliedPlan?.inputIsCode
             || plan.metadata != appliedPlan?.metadata
             || plan.failed != appliedPlan?.failed
             || theme != appliedTheme
@@ -185,7 +186,9 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         card.layer.borderColor = UIColor(palette.mdCodeBlockBorder).cgColor
         accent.backgroundColor = UIColor(plan.failed ? palette.red : palette.blue)
         rail.backgroundColor = UIColor((plan.failed ? palette.red : palette.comment).opacity(0.3))
-        accessibilityLabel = plan.running ? "Code cell, running" : (plan.failed ? "Code cell, failed" : "Code cell")
+        let kind = plan.inputIsCode ? "Code cell" : "Tool call"
+        accessibilityLabel = plan.running ? "\(kind), running" : (plan.failed ? "\(kind), failed" : kind)
+        card.isHidden = plan.sources.isEmpty && plan.metadata.isEmpty
 
         if sourceChanged || cardStack.arrangedSubviews.isEmpty {
             rebuildSource(plan, palette: palette, theme: theme)

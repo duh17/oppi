@@ -82,7 +82,9 @@ struct TerminalInspectionTests {
         let config = ToolPresentationBuilder.build(itemID: "tc", tool: tool, argsSummary: "", outputPreview: "hi", isError: false, isDone: true, context: context)
         #expect(config.glyph == nil)
         #expect(config.segmentAttributedTitle?.string == "$ echo hi")
-        guard case .markdown = config.expandedContent else { Issue.record("Expected generic document, not command panel"); return }
+        guard case .notebook(let cell) = config.expandedContent else { Issue.record("Expected generic cell, not command panel"); return }
+        #expect(cell.sources.first?.code == "command: echo hi")
+        #expect(cell.output == .stdout("hi"))
     }
 
     @Test("structured result override clears terminal glyph and panel but retains dollar summary text")
@@ -103,8 +105,8 @@ struct TerminalInspectionTests {
         let config = ToolPresentationBuilder.build(itemID: "tc", tool: "bash", argsSummary: "", outputPreview: "", isError: false, isDone: true, context: context)
         #expect(config.glyph == nil)
         #expect(config.segmentAttributedTitle?.string == "$ Producer summary")
-        guard case .markdown(let document, _) = config.expandedContent else { Issue.record("Expected generic document, not command panel"); return }
-        #expect(document.contains("Structured result"))
+        guard case .notebook(let cell) = config.expandedContent else { Issue.record("Expected generic cell, not command panel"); return }
+        #expect(cell.output == .rich("Structured result"))
     }
 
     @Test("arbitrary tool paints the same command panel, segments and terminal as bash")

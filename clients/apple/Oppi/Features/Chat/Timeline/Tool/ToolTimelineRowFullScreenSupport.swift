@@ -162,7 +162,8 @@ enum ToolTimelineRowFullScreenSupport {
             )
 
         case .notebook(let plan):
-            guard !plan.sources.isEmpty else { return nil }
+            // A call without arguments still opens for its calls and output.
+            guard !plan.sources.isEmpty || plan.hasOutputWell else { return nil }
             return .notebook(plan)
 
         case .readMedia, .audioMessage, .status:
@@ -243,9 +244,9 @@ enum ToolTimelineRowFullScreenSupport {
             )
 
         case .notebook(let plan):
-            guard !plan.sources.isEmpty else { return nil }
+            guard !plan.sources.isEmpty || plan.hasOutputWell else { return nil }
             return SourceTraceStream.Snapshot(
-                text: plan.sources.map(\.code).joined(separator: "\n\n"),
+                text: plan.readerText,
                 filePath: nil,
                 isDone: configuration.isDone,
                 finalContent: .notebook(plan)

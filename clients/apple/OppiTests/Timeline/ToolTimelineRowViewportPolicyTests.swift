@@ -148,6 +148,7 @@ struct ToolTimelineRowViewportPolicyTests {
                 name: "notebook cell",
                 content: .notebook(NotebookCellPlan(
                     sources: [.init(label: nil, language: "javascript", code: "await lookup()")],
+                    inputIsCode: true,
                     metadata: [],
                     calls: [],
                     omittedCalls: 0,

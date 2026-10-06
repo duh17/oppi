@@ -351,8 +351,8 @@ enum ToolPresentationBuilder {
         case diff(lines: [DiffLine], path: String?)
         /// Code viewer with line numbers, syntax highlighting, horizontal scroll
         case code(text: String, language: SyntaxLanguage?, startLine: Int?, filePath: String?)
-        /// Code-role input painted as a notebook cell. The markdown document
-        /// remains the descriptor leaf for raw text and copy.
+        /// Generic tool call painted as a notebook cell (code or arguments, calls,
+        /// output). The markdown document remains the descriptor leaf for raw text and copy.
         case notebook(NotebookCellPlan)
         /// Rendered markdown (read .md)
         case markdown(text: String, filePath: String? = nil)

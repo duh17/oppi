@@ -697,7 +697,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .document(let family):
             textAndFirstLine = (family.text, 1)
         case .notebook(let plan):
-            textAndFirstLine = (plan.sources.map(\.code).joined(separator: "\n\n"), 1)
+            textAndFirstLine = (plan.readerText, 1)
         case .diff(let document):
             textAndFirstLine = (document.reconstructedNewSideText, 1)
         case .liveSource(let snapshot, _):
@@ -2090,7 +2090,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .document(let family):
             return family.text
         case .notebook(let plan):
-            return plan.sources.map(\.code).joined(separator: "\n\n")
+            return plan.readerText
         }
     }
 
@@ -2228,7 +2228,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .liveSource(let snapshot, _):
             return .plainText(snapshot.text, fileName: snapshot.filePath)
         case .notebook(let plan):
-            return .plainText(plan.sources.map(\.code).joined(separator: "\n\n"))
+            return .plainText(plan.readerText)
         }
     }
 

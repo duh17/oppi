@@ -59,8 +59,10 @@ struct ToolCallDocumentTests {
         context.previewOnly = true
         let config = ToolPresentationBuilder.build(itemID: "t", tool: "generic_probe", argsSummary: "", outputPreview: "",
             isError: false, isDone: false, context: context)
-        guard case .markdown(let rendered, _) = config.expandedContent else { Issue.record("Running document"); return }
-        #expect(rendered == document.text)
+        guard case .notebook(let cell) = config.expandedContent else { Issue.record("Running cell"); return }
+        #expect(cell.running)
+        #expect(cell.output == .none)
+        #expect(cell.availabilityNote == nil)
         #expect(!config.isDone)
     }
 
@@ -210,38 +212,38 @@ struct ToolCallDocumentTests {
         #expect(empty.text.contains("| Field | Value |"))
     }
 
-    @Test @MainActor func fullScreenUsesSameDocumentAndRawToggle() throws {
+    @Test @MainActor func fullScreenOpensTheSameArgumentCellAndCopyStaysRaw() throws {
         let context = ToolPresentationBuilder.Context(args: ["source": "text(1)", "unused": .null],
             expandedItemIDs: ["t"], fullOutput: "{\"z\":1}", isLoadingOutput: false)
-        // A code-role field paints the notebook cell. This test keeps the
-        // generic document's Raw toggle, so the field stays unlabeled.
         let config = ToolPresentationBuilder.build(itemID: "t", tool: "arbitrary", argsSummary: "",
             outputPreview: "", isError: false, isDone: true, context: context)
+        guard case .notebook(let inline) = config.expandedContent else { Issue.record("Argument cell"); return }
+        #expect(!inline.inputIsCode)
+        #expect(inline.sources.map(\.code) == ["source: text(1)"], "Null arguments are omitted")
+        guard case .rich(let formatted) = inline.output else { Issue.record("A JSON result is formatted"); return }
+        #expect(formatted.contains("| z | 1 |"))
         let content = try #require(ToolTimelineRowFullScreenSupport.staticFullScreenContent(
             configuration: config, outputCopyText: nil, terminalStream: nil))
-        guard case .markdown(let document, _, _, let raw, _) = content,
-              case .markdown(let inline, _) = config.expandedContent else { Issue.record("Markdown reader"); return }
-        #expect(document == inline)
-        #expect(raw == config.rawMarkdownText)
-        let controller = FullScreenCodeViewController(content: content)
-        controller.loadViewIfNeeded()
-        controller.toggleSourceForTesting()
-        guard case .plainText(let rawBody, _) = controller.presentationBodyContentForTesting else { Issue.record("Raw body"); return }
-        #expect(rawBody == raw)
-        #expect(controller.presentationCopyTextForTesting == rawBody)
-        guard case .plainText(let sharedRaw, _) = controller.shareableContentForTesting else { Issue.record("Raw share"); return }
-        #expect(sharedRaw == rawBody)
-        #expect(rawBody.contains("\"unused\": null"))
-        #expect(rawBody.hasSuffix("{\"z\":1}"))
-        controller.toggleSourceForTesting()
-        guard case .markdown(let rendered, _, _, _, _) = controller.presentationBodyContentForTesting else { Issue.record("Rendered body"); return }
-        #expect(rendered == inline)
-        #expect(controller.presentationCopyTextForTesting == inline)
-        guard case .markdown(let sharedRendered, _) = controller.shareableContentForTesting else { Issue.record("Rendered share"); return }
-        #expect(sharedRendered == inline)
+        guard case .notebook(let reader) = content else { Issue.record("Notebook reader"); return }
+        #expect(reader == inline)
         #expect(config.copyOutputText == "{\"z\":1}")
     }
 
+    @Test @MainActor func previewOnlyArgumentCellCaptionsTheTruncation() throws {
+        let output = String(repeating: "match\n", count: 30000) + "LAST MATCH\n"
+        let first = String(decoding: output.utf8.prefix(128 * 1024), as: UTF8.self)
+        var context = ToolPresentationBuilder.Context(args: ["pattern": "match"], expandedItemIDs: ["t"], fullOutput: first, isLoadingOutput: false)
+        context.previewOnly = true; context.totalBytes = output.utf8.count
+        let config = ToolPresentationBuilder.build(itemID: "t", tool: "grep", argsSummary: "", outputPreview: "", isError: false, isDone: true, context: context)
+        guard case .notebook(let cell) = config.expandedContent else { Issue.record("Argument cell"); return }
+        #expect(cell.availabilityNote?.hasPrefix("Output preview only (\(first.utf8.count) of \(output.utf8.count) bytes)") == true)
+        guard case .stdout(let printed) = cell.output else { Issue.record("Printed output stays plain"); return }
+        #expect(!printed.contains("LAST MATCH"))
+        #expect(!printed.contains("Output preview only"), "The note is a caption, not output")
+    }
+
+    /// The generic document's Raw reader still pages a sidecar. iOS opens
+    /// generic calls as notebook cells, so this drives the document reader directly.
     @Test(arguments: [false, true]) @MainActor func rawReaderLoadsAllSidecarWindowsAndKeepsPreviewWhenUnavailable(_ embeddedBoundary: Bool) async throws {
         let output = String(repeating: "match\n", count: 30000) + "LAST MATCH\n"
         let split = 128 * 1024
@@ -253,24 +255,23 @@ struct ToolCallDocumentTests {
             #expect(offset == split)
             return .init(text: rest, endByteOffset: output.utf8.count, totalBytes: output.utf8.count)
         })
-        var context = ToolPresentationBuilder.Context(args: ["pattern": "match"], expandedItemIDs: ["t"], fullOutput: first, isLoadingOutput: false)
-        context.previewOnly = true; context.totalBytes = output.utf8.count
         let tool = embeddedBoundary ? "tool\n\nOutput\n\nidentity" : "grep"
-        if embeddedBoundary { context.display = .init(title: "search") }
-        var config = ToolPresentationBuilder.build(itemID: "t", tool: tool, argsSummary: "", outputPreview: "", isError: false, isDone: true, context: context)
-        guard case .markdown(let rendered, _) = config.expandedContent else { Issue.record("Rendered preview"); return }
-        #expect(rendered.contains("Output preview only (\(first.utf8.count) of \(output.utf8.count) bytes)"))
-        config.toolOutputSidecarSource = source
-        func controller(_ config: ToolTimelineRowConfiguration) throws -> FullScreenCodeViewController {
-            let content = try #require(ToolTimelineRowFullScreenSupport.staticFullScreenContent(configuration: config, outputCopyText: nil, terminalStream: nil))
-            let vc = FullScreenCodeViewController(content: content)
+        let document = try #require(ToolCallDocumentBuilder.build(args: ["pattern": "match"], inputPresentation: nil, nestedCalls: nil,
+            output: first, rawOutput: first, details: nil, isDone: true, previewOnly: true, totalBytes: output.utf8.count,
+            toolName: embeddedBoundary ? tool : nil))
+        #expect(document.text.contains("Output preview only (\(first.utf8.count) of \(output.utf8.count) bytes)"))
+        func controller(_ source: ToolOutputSidecarWindowSource) -> FullScreenCodeViewController {
+            var bound = source
+            bound.rawDocumentPrefix = document.rawOutputPrefix
+            let vc = FullScreenCodeViewController(content: .markdown(content: document.text, filePath: nil,
+                rawText: document.rawText, sidecarSource: bound))
             vc.loadViewIfNeeded(); vc.toggleSourceForTesting()
             return vc
         }
-        let active = try controller(config)
-        #expect(active.presentationCopyTextForTesting == config.rawMarkdownText)
+        let active = controller(source)
+        #expect(active.presentationCopyTextForTesting == document.rawText)
         guard case .plainText(let initialShare, _) = active.shareableContentForTesting else { Issue.record("Preview Raw share"); return }
-        #expect(initialShare == config.rawMarkdownText)
+        #expect(initialShare == document.rawText)
         let deadline = ContinuousClock.now + .seconds(3)
         var raw = ""
         repeat {
@@ -279,13 +280,12 @@ struct ToolCallDocumentTests {
         } while !raw.hasSuffix("LAST MATCH\n") && ContinuousClock.now < deadline
         let identity = embeddedBoundary ? "Tool\n\n" + tool + "\n\n" : ""
         let expectedPrefix = identity + "Input\n\n{\n  \"pattern\": \"match\"\n}\n\nOutput\n\n"
-        #expect(config.rawMarkdownOutputPrefix == expectedPrefix)
+        #expect(document.rawOutputPrefix == expectedPrefix)
         #expect(raw == expectedPrefix + output)
         #expect(active.presentationCopyTextForTesting == raw)
         guard case .plainText(let completeShare, _) = active.shareableContentForTesting else { Issue.record("Complete Raw share"); return }
         #expect(completeShare == raw)
-        config.toolOutputSidecarSource = .init(loadFirst: { nil }, loadNext: { _ in nil })
-        let stopped = try controller(config)
+        let stopped = controller(.init(loadFirst: { nil }, loadNext: { _ in nil }))
         await Task.yield()
         guard case .plainText(let preview, _) = stopped.presentationBodyContentForTesting else { Issue.record("Raw preview"); return }
         #expect(preview.contains("Output preview only"))

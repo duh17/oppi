@@ -269,7 +269,7 @@ struct ToolPresentationBuilderTests {
     func voiceSpeakErrorsUseDocumentPresentation() {
         let errorMessage = "voice_speak text has no speakable content after removing URLs/addresses"
 
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "voice-error", tool: "voice_speak",
             argsSummary: "text: https://example.com/private-link",
             outputPreview: errorMessage,
@@ -867,10 +867,12 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .markdown(let text, _) = streamed.expandedContent else {
-            Issue.record("Expected streamed snapshot as markdown, got \(String(describing: streamed.expandedContent))")
+        guard case .notebook(let cell) = streamed.expandedContent else {
+            Issue.record("Expected streamed snapshot in the cell, got \(String(describing: streamed.expandedContent))")
             return
         }
+        #expect(cell.running)
+        let text = cell.paintedText
         #expect(text.contains("Waiting for either"))
         #expect(text.contains("oppi://session/5c6965d2-591a-4f6c-9676-f7fa400cf370"))
         #expect(text.contains("status=busy  tools=3"))
@@ -1052,7 +1054,7 @@ struct ToolPresentationBuilderTests {
 
         #expect(modeName(readMarkdown.expandedContent) == "markdown")
         #expect(modeName(writeMarkdown.expandedContent) == "markdown")
-        #expect(modeName(extensionMarkdown.expandedContent) == "markdown")
+        #expect(modeName(extensionMarkdown.expandedContent) == "notebook")
 
         let readCode = ToolPresentationBuilder.build(
             itemID: "read-code", tool: "read",
@@ -1098,7 +1100,7 @@ struct ToolPresentationBuilderTests {
 
         #expect(modeName(readCode.expandedContent) == "code")
         #expect(modeName(writeCode.expandedContent) == "code")
-        #expect(modeName(extensionCode.expandedContent) == "markdown")
+        #expect(modeName(extensionCode.expandedContent) == "notebook")
 
         let editDiff = ToolPresentationBuilder.build(
             itemID: "edit-diff", tool: "edit",
@@ -1132,7 +1134,7 @@ struct ToolPresentationBuilderTests {
         )
 
         #expect(modeName(editDiff.expandedContent) == "diff")
-        #expect(modeName(extensionDiff.expandedContent) == "markdown")
+        #expect(modeName(extensionDiff.expandedContent) == "notebook")
     }
 
     @Test("edit diff uses pi patch absolute line numbers")
@@ -1486,7 +1488,7 @@ struct ToolPresentationBuilderTests {
         - item two
         """
 
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "t1", tool: "extensions.notes",
             argsSummary: "",
             outputPreview: markdown,
@@ -1518,7 +1520,7 @@ struct ToolPresentationBuilderTests {
         - ios/Oppi/Features/Chat
         """
 
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "t-streaming-md", tool: "todo",
             argsSummary: "create \"Expand plot extension\"",
             outputPreview: markdown,
@@ -1547,7 +1549,7 @@ struct ToolPresentationBuilderTests {
         - ios/Oppi/Features/Chat
         """
 
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "t-done-md", tool: "todo",
             argsSummary: "create \"Expand plot extension\"",
             outputPreview: markdown,
@@ -1569,7 +1571,7 @@ struct ToolPresentationBuilderTests {
     @Test("extension expanded honors code presentation hints")
     func extensionExpandedCodeHint() {
         let code = "func extensionMode() -> String {\n    \"ok\"\n}"
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "ext-code", tool: "extensions.codegen",
             argsSummary: "",
             outputPreview: code,
@@ -1605,7 +1607,7 @@ struct ToolPresentationBuilderTests {
         +let value = 2
         """
 
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "ext-diff", tool: "extensions.patch",
             argsSummary: "",
             outputPreview: diffText,
@@ -1642,7 +1644,7 @@ struct ToolPresentationBuilderTests {
         +new-b
         """
 
-        let hinted = ToolPresentationBuilder.build(
+        let hinted = genericDocument(
             itemID: "ext-multi-hint", tool: "extensions.patch",
             argsSummary: "",
             outputPreview: diffText,
@@ -1653,7 +1655,7 @@ struct ToolPresentationBuilderTests {
                 fullOutput: diffText
             )
         )
-        let auto = ToolPresentationBuilder.build(
+        let auto = genericDocument(
             itemID: "ext-multi-auto", tool: "extensions.patch",
             argsSummary: "",
             outputPreview: diffText,
@@ -1689,7 +1691,7 @@ struct ToolPresentationBuilderTests {
         Binary files a/photo.png and b/photo.png differ
         """
 
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "ext-text-binary", tool: "extensions.patch",
             argsSummary: "",
             outputPreview: diffText,
@@ -1718,7 +1720,7 @@ struct ToolPresentationBuilderTests {
         +new line
         """
 
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "ext-headerless", tool: "extensions.patch",
             argsSummary: "",
             outputPreview: diffText,
@@ -1738,7 +1740,7 @@ struct ToolPresentationBuilderTests {
 
     @Test("extension expanded mode routing uses visual/json/markdown/text deterministically")
     func extensionExpandedModeRoutingMatrix() {
-        let jsonHint = ToolPresentationBuilder.build(
+        let jsonHint = genericDocument(
             itemID: "ext-json-hint", tool: "extensions.lookup",
             argsSummary: "",
             outputPreview: "",
@@ -1756,7 +1758,7 @@ struct ToolPresentationBuilderTests {
         }
         #expect(hintedJSONText.contains("| b | 2 |\n| a | 1 |"))
 
-        let autoJSON = ToolPresentationBuilder.build(
+        let autoJSON = genericDocument(
             itemID: "ext-json-auto", tool: "extensions.lookup",
             argsSummary: "",
             outputPreview: "",
@@ -1776,7 +1778,7 @@ struct ToolPresentationBuilderTests {
             return rows.contains { $0.map { plainText(from: $0) }.contains("EXT-1") }
         })
 
-        let markdownHint = ToolPresentationBuilder.build(
+        let markdownHint = genericDocument(
             itemID: "ext-md-hint", tool: "extensions.notes",
             argsSummary: "",
             outputPreview: "",
@@ -1799,7 +1801,7 @@ struct ToolPresentationBuilderTests {
     @Test("extension oversized output uses bounded document previews and complete raw copy")
     func extensionStructuredBudgetHandling() {
         let oversizedJSON = "{\"payload\":\"" + String(repeating: "x", count: 70_000) + "\"}"
-        let jsonFallback = ToolPresentationBuilder.build(
+        let jsonFallback = genericDocument(
             itemID: "ext-json-over-budget", tool: "extensions.lookup",
             argsSummary: "",
             outputPreview: "",
@@ -1820,7 +1822,7 @@ struct ToolPresentationBuilderTests {
         #expect(jsonFallback.copyOutputText == oversizedJSON)
 
         let oversizedMarkdown = String(repeating: "- row\n", count: 20_000)
-        let markdown = ToolPresentationBuilder.build(
+        let markdown = genericDocument(
             itemID: "ext-md-over-budget", tool: "extensions.notes",
             argsSummary: "",
             outputPreview: "",
@@ -1853,7 +1855,7 @@ struct ToolPresentationBuilderTests {
         Saved to journal: 2026-02-28-mac-studio.md
         """
 
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "t-remember", tool: "remember",
             argsSummary: "tags: [6 items], text: Oppi timeline epic status sync",
             outputPreview: "",
@@ -1877,7 +1879,7 @@ struct ToolPresentationBuilderTests {
         Saved to journal: 2026-02-28-mac-studio.md
         """
 
-        let namespaced = ToolPresentationBuilder.build(
+        let namespaced = genericDocument(
             itemID: "t-remember-ns", tool: "extensions.remember",
             argsSummary: "tags: [2], text: first line",
             outputPreview: "",
@@ -1905,7 +1907,7 @@ struct ToolPresentationBuilderTests {
         Saved to journal: 2026-02-28-mac-studio.md
         """
 
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "t-remember-quoted-ansi", tool: "remember",
             argsSummary: "text: Compacted summary and details",
             outputPreview: "",
@@ -1971,7 +1973,7 @@ struct ToolPresentationBuilderTests {
 
     @Test("extension expanded uses details.expandedText when present")
     func extensionExpandedTextFromDetails() {
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "t-expanded", tool: "remember",
             argsSummary: "text: Important discovery",
             outputPreview: "",
@@ -1998,7 +2000,7 @@ struct ToolPresentationBuilderTests {
 
     @Test("extension expandedText takes precedence over the live-only tui snapshot")
     func extensionExpandedTextFromTuiRenderSnapshot() {
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "t-tui-expanded", tool: "todo",
             argsSummary: "action: get",
             outputPreview: "raw todo output",
@@ -2030,7 +2032,7 @@ struct ToolPresentationBuilderTests {
     @Test("extension terminal output strips ANSI and preserves layout in a fence")
     func extensionTerminalExpandedText() {
         let formatted = "\u{001B}[1mAgent\u{001B}[0m\n  Name  Reviewer"
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "t-terminal-expanded", tool: "oppi",
             argsSummary: "agent get agent-1",
             outputPreview: "{\"ok\":true}",
@@ -2057,7 +2059,7 @@ struct ToolPresentationBuilderTests {
     @Test("terminal presentation stays plain text even when output resembles markdown")
     func extensionTerminalFormatSkipsContentHeuristics() {
         let formatted = "\u{001B}[1m$\u{001B}[0m oppi session get sess-1\n\n## Result\n- **Status:** ready\n--- a/file\n+++ b/file"
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "t-terminal-heuristics", tool: "oppi",
             argsSummary: "session get sess-1",
             outputPreview: "{\"ok\":true}",
@@ -2081,7 +2083,7 @@ struct ToolPresentationBuilderTests {
 
     @Test("extension expanded falls back to raw output when no expandedText")
     func extensionExpandedTextFallback() {
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "t-no-expanded", tool: "extensions.custom",
             argsSummary: "",
             outputPreview: "",
@@ -2102,7 +2104,7 @@ struct ToolPresentationBuilderTests {
     @Test("extension expanded with expandedText and code format renders code")
     func extensionExpandedTextCodeFormat() {
         let code = "func hello() { print(\"world\") }"
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "t-code-expanded", tool: "extensions.codegen",
             argsSummary: "",
             outputPreview: "",
@@ -2127,7 +2129,7 @@ struct ToolPresentationBuilderTests {
 
     @Test("extension expanded with empty expandedText uses raw output")
     func extensionExpandedTextEmpty() {
-        let config = ToolPresentationBuilder.build(
+        let config = genericDocument(
             itemID: "t-empty-expanded", tool: "extensions.custom",
             argsSummary: "",
             outputPreview: "",
@@ -2175,11 +2177,12 @@ struct ToolPresentationBuilderTests {
             context: emptyContext(expanded: ["t1"], fullOutput: "full tool output")
         )
 
-        guard case .markdown(let text, _) = config.expandedContent else {
-            Issue.record("Expected Markdown text fence")
+        guard case .notebook(let cell) = config.expandedContent else {
+            Issue.record("Expected generic tool cell")
             return
         }
-        #expect(text == "```text\nfull tool output\n```")
+        #expect(cell.sources.isEmpty)
+        #expect(cell.output == .stdout("full tool output"))
     }
 
     // MARK: - Title Truncation
@@ -2585,6 +2588,39 @@ struct ToolPresentationBuilderTests {
 
         #expect(config.collapsedImageBase64 == nil)
     }
+}
+
+/// The generic Input/Calls/Output document behind Raw, copy, and Mac. iOS
+/// paints generic calls as notebook cells, so document-format tests swap the
+/// cell for the descriptor's document and keep every other row fact.
+private func genericDocument(
+    itemID: String,
+    tool: String,
+    argsSummary: String,
+    outputPreview: String,
+    isError: Bool,
+    isDone: Bool,
+    context: ToolPresentationBuilder.Context
+) -> ToolTimelineRowConfiguration {
+    var config = ToolPresentationBuilder.build(
+        itemID: itemID, tool: tool, argsSummary: argsSummary, outputPreview: outputPreview,
+        isError: isError, isDone: isDone, context: context
+    )
+    guard case .notebook = config.expandedContent else { return config }
+    let presentation = ToolContentDescriptorBuilder.build(
+        tool: tool, argsSummary: argsSummary, outputPreview: outputPreview, isError: isError, isDone: isDone,
+        context: .init(
+            args: context.args, details: context.details, fullOutput: context.fullOutput,
+            isLoadingOutput: context.isLoadingOutput, inputPresentation: context.inputPresentation,
+            nestedCalls: context.nestedCalls, previewOnly: context.previewOnly, totalBytes: context.totalBytes,
+            display: context.display, outputPresentation: context.outputPresentation,
+            outputAvailability: context.outputAvailability
+        )
+    )
+    if case .markdown(let document) = presentation.content {
+        config.expandedContent = .markdown(text: document.text, filePath: document.filePath)
+    }
+    return config
 }
 
 private func modeName(_ content: ToolPresentationBuilder.ToolExpandedContent?) -> String {

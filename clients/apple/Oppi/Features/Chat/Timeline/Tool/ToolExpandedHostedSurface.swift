@@ -165,7 +165,7 @@ final class ToolExpandedHostedSurface {
         return true
     }
 
-    /// Code-role notebook cell. Reuses the mounted view so output deltas do not
+    /// Notebook cell. Reuses the mounted view so output deltas do not
     /// rebuild it. Returns true when the row should remeasure.
     @discardableResult
     func installNotebook(_ plan: NotebookCellPlan) -> Bool {
