@@ -8,7 +8,7 @@ import UIKit
 @Suite("Chat timeline UIKit-owned clock")
 @MainActor
 struct ChatTimelineOwnedClockTests {
-    @Test func terminalTextPaintsWithoutAResyncOwner() async throws {
+    @Test func terminalTextPaintsFromTheStore() async throws {
         let fixture = makeHostedOwnedTimeline(isBusy: true)
         defer { fixture.tearDown() }
         fixture.reducer.expandedItemIDs.insert("terminal")
@@ -20,7 +20,6 @@ struct ChatTimelineOwnedClockTests {
             .toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: "ready\n", isError: false,
                 outputStream: .init(epoch: 1, offset: 0, bytes: 6)))
         ])
-        #expect(fixture.reducer.terminalOutputStreams.owner(for: "terminal") == nil)
         #expect(fixture.reducer.toolOutputStore.fullOutput(for: "terminal") == "ready\n")
         #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
             await MainActor.run {

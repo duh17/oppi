@@ -121,11 +121,5 @@ extension ChatSessionManager {
             preconditionFailure("ChatSessionManager was not constructed with the iOS runtime adapter")
         }
         adapter.bind(connection: connection, sessionStore: sessionStore)
-        reducer.terminalOutputStreams.fetchRange = { [weak connection, weak self] id, range in
-            guard let connection, let self,
-                  let api = await connection.apiClient,
-                  let scope = await self.resolveRouteScope() else { throw APIError.invalidResponse }
-            return try await api.getTerminalOutputRange(scope: scope, sessionId: self.sessionId, toolCallId: id, range: range)
-        }
     }
 }

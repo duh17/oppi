@@ -1930,8 +1930,8 @@ actor APIClient: ClientLogUploading {
         }
     }
 
-    /// Raw byte Range for the terminal stream owner's gap recovery. Do not
-    /// decode/re-encode these bytes: invalid UTF-8 still occupies wire offsets.
+    /// Sidecar raw Range. Do not decode/re-encode these bytes: invalid UTF-8
+    /// still occupies wire offsets.
     func getTerminalOutputRange(
         scope: SessionRouteScope, sessionId: String, toolCallId: String, range: Range<Int>
     ) async throws -> TerminalOutputRange {

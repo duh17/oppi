@@ -362,7 +362,6 @@ extension ChatTimelineCollectionHost.Controller {
             isInterrupted: reducer?.isToolInterrupted(itemID) == true,
             context: context
         )
-        chrome.terminalOutputStream = nil
         return CollapsedToolTimelineRowConfiguration(chrome: chrome)
     }
 
@@ -457,8 +456,6 @@ extension ChatTimelineCollectionHost.Controller {
             fallback: configuration.expandedContent
         )
         configuration.resourcePressure = resourcePressure
-        configuration.terminalOutputStream = nil
-        configuration.terminalOutputStreamStore = nil
         if let intent = configuration.currentFileOpenIntent,
            let onOpenCurrentFile {
             configuration.openCurrentFile = {
@@ -477,13 +474,12 @@ extension ChatTimelineCollectionHost.Controller {
             }
         }
         if let access = toolOutputAccess,
-           context.outputAvailability?.hasSidecar == true || configuration.terminalOutputStream != nil {
+           context.outputAvailability?.hasSidecar == true {
             configuration.toolOutputSidecarSource = access.sidecarSource(toolCallId: itemID)
             configuration.fetchCompleteToolOutput = access.completeOutputFetch(
-                availability: configuration.terminalOutputStream != nil
-                    ? .init(complete: false, source: "sidecar") : context.outputAvailability,
+                availability: context.outputAvailability,
                 toolCallId: itemID,
-                store: configuration.terminalOutputStream != nil ? nil : toolOutputStore
+                store: toolOutputStore
             )
         }
         return configuration

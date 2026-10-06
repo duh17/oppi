@@ -1,5 +1,14 @@
 import Foundation
 
+/// The sidecar transport returns raw bytes and the actual HTTP byte range.
+/// UTF-8 clamping may advance the start for a tail request, never for a gap.
+struct TerminalOutputRange: Sendable {
+    let data: Data
+    let start: Int
+    let end: Int // exclusive
+    var totalBytes: Int? = nil // Content-Range total, used by full-history paging
+}
+
 /// One UTF-8 window of a full tool-output sidecar.
 ///
 /// `endByteOffset` is exclusive and already closed on a codepoint boundary.

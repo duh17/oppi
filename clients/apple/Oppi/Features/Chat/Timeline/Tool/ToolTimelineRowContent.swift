@@ -67,12 +67,6 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var currentFileOpenIntent: ToolCurrentFileOpenIntent? = nil
     var openCurrentFile: (() -> Void)? = nil
     var openFullScreen: ((ChatReaderPayload) -> Void)? = nil
-    var terminalOutputStream: TerminalOutputStream? = nil
-    var terminalOutputStreamStore: TerminalOutputStreamStore? = nil
-    @MainActor var terminalNotice: String? {
-        guard let owner = terminalOutputStream else { return nil }
-        return owner.state.notice ?? (owner.omittedBytes > 0 ? "Earlier output omitted (\(owner.omittedBytes) bytes)" : nil)
-    }
     var toolOutputSidecarSource: ToolOutputSidecarWindowSource? = nil
     /// Copy/share fetches the complete sidecar. Expand must not use this path.
     var fetchCompleteToolOutput: (() async throws -> String?)? = nil
@@ -178,9 +172,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let elapsedLabel = UILabel()
     private let bodyStack = UIStackView()
     private let previewLabel = UILabel()
-    private let terminalNoticeLabel = UILabel()
-    private var noticeOwner: TerminalOutputStream?
-    private var noticeObserverID: UUID?
     let bashToolRowView = BashToolRowView()
     let expandedContainer = UIView()
     let expandedScrollView = HorizontalPanPassthroughScrollView()
@@ -294,10 +285,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     deinit {
-        if let noticeObserverID {
-            let owner = noticeOwner
-            Task { @MainActor in owner?.removeObserver(noticeObserverID) }
-        }
         elapsedTimer?.invalidate()
         imagePreviewDecodeTask?.cancel()
         expandedCodeDeferredHighlightTask?.cancel()
@@ -1024,10 +1011,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         markdownSurface.mount(in: expandedSurfaceHostView)
         hostedSurface.mount(in: expandedSurfaceHostView)
         compactHostedSurfaceHostView.isHidden = true
-        terminalNoticeLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        terminalNoticeLabel.numberOfLines = 0
-        terminalNoticeLabel.accessibilityIdentifier = "terminal-output-status"
-        bodyStack.addArrangedSubview(terminalNoticeLabel)
         bodyStack.addArrangedSubview(previewLabel)
         bodyStack.addArrangedSubview(imagePreviewContainer)
         bodyStack.addArrangedSubview(bashToolRowView)
@@ -1129,14 +1112,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedContainer: expandedContainer
         )
         bashToolRowView.applyTheme(palette)
-        terminalNoticeLabel.textColor = UIColor(palette.comment)
-        if noticeOwner !== configuration.terminalOutputStream {
-            if let noticeObserverID { noticeOwner?.removeObserver(noticeObserverID) }
-            noticeOwner = configuration.terminalOutputStream
-            noticeObserverID = noticeOwner?.addObserver { [weak self] in self?.updateTerminalNotice() }
-        }
-        updateTerminalNotice()
-        fullScreenTerminalStream.owner = configuration.terminalOutputStream
         fullScreenTerminalStream.completionSidecarSource = configuration.toolOutputSidecarSource
 
         let terminalStreamOutput: String
@@ -1195,8 +1170,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     isError: configuration.isError,
                     isStreaming: !configuration.isDone,
                     sessionId: perfSessionId,
-                    resourcePressure: configuration.resourcePressure,
-                    terminalResolved: configuration.terminalOutputStream != nil
+                    resourcePressure: configuration.resourcePressure
                 )
                 let result = bashToolRowView.apply(
                     input: input,
@@ -1281,21 +1255,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     // MARK: - apply() decomposition
-
-    private func updateTerminalNotice() {
-        let notice = currentConfiguration.terminalNotice
-        let visibilityChanged = terminalNoticeLabel.isHidden != (notice == nil)
-        terminalNoticeLabel.text = notice
-        terminalNoticeLabel.isHidden = notice == nil
-        if notice != nil {
-            bodyStack.isHidden = false
-            bodyStackCollapsedHeightConstraint?.isActive = false
-        }
-        if visibilityChanged {
-            setNeedsLayout()
-            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
-        }
-    }
 
     /// Apply header elements: title, tool icon, language badge, trailing labels, preview.
     /// Returns whether the preview label is visible.
@@ -1564,7 +1523,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         let showImagePreview = !imagePreviewContainer.isHidden
         let showBody = showPreview || showImagePreview || showExpanded || showCommand || showOutput
-            || inspectionSupplementView?.isHidden == false || !terminalNoticeLabel.isHidden
+            || inspectionSupplementView?.isHidden == false
         bodyStackCollapsedHeightConstraint?.isActive = !showBody
         bodyStack.isHidden = !showBody
         updateViewportHeightsIfNeeded()
@@ -2187,10 +2146,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             } catch {
                 // Keep the already-held preview rather than failing copy.
             }
-        }
-        if let owner = configuration.terminalOutputStream {
-            await owner.waitForRecovery()
-            return ANSIParser.strip(owner.formatted)
         }
         guard let preview = configuration.copyOutputText else { return nil }
         return await resolveTerminalCopy(preview, content: configuration.expandedContent)

@@ -112,7 +112,7 @@ final class TerminalLogEngine {
     }
 
     /// Byte feed retains parser state across UTF-8 and escape-sequence splits.
-    /// The live owner calls this on MainActor; no source history is retained.
+    /// No source history is retained.
     func feed(_ bytes: Data) throws {
         try bytes.withUnsafeBytes { buffer in
             let base = buffer.bindMemory(to: UInt8.self)

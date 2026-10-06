@@ -133,13 +133,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     /// Separate store for full tool output.
     let toolOutputStore = ToolOutputStore()
-    let terminalOutputStreams = TerminalOutputStreamStore()
 
     func toolOutput(for id: String) -> String {
-        if let formatted = terminalOutputStreams.owner(for: id)?.formatted, !formatted.isEmpty {
-            return formatted
-        }
-        return toolOutputStore.fullOutput(for: id)
+        toolOutputStore.fullOutput(for: id)
     }
 
     /// Shared snapshot translation for secondary consumers. Output documents stay
@@ -152,8 +148,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 fullOutput: toolOutput(for: id), inputPresentation: toolArgsStore.inputPresentation(for: id),
                 nestedCalls: toolDetailsStore.nestedCalls(for: id), previewOnly: toolOutputStore.hasPreviewOnlyOutput(for: id),
                 display: toolArgsStore.display(for: id), outputPresentation: toolArgsStore.outputPresentation(for: id),
-                outputAvailability: toolArgsStore.outputAvailability(for: id),
-                terminalResolved: terminalOutputStreams.owner(for: id) != nil), includeOutput: includeOutput,
+                outputAvailability: toolArgsStore.outputAvailability(for: id)), includeOutput: includeOutput,
             includeFileContent: includeOutput)
     }
 
@@ -341,11 +336,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     init(environment: TimelineReducerEnvironment = .none) {
         self.environment = environment
-        terminalOutputStreams.onChange = { [weak self] id in
-            guard let self else { return }
-            _ = self.updateToolCallPreview(id: id, isError: false)
-            self.bumpRenderVersion()
-        }
     }
 
     // MARK: - Reset
@@ -367,7 +357,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         currentCompactionItemID = nil
         liveEventReplayBuffer = nil
         itemsMutationSeq = 0
-        terminalOutputStreams.clearAll()
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
         toolSegmentStore.clearAll()
@@ -561,7 +550,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         items.removeAll(keepingCapacity: false)
         itemIndex.clear()
         clearTurnBuffers()
-        terminalOutputStreams.clearAll()
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
         toolSegmentStore.clearAll()
@@ -2611,7 +2599,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
 
         let fullOutput = toolOutput(for: id)
-        let outputByteCount = terminalOutputStreams.owner(for: id)?.cursor ?? toolOutputStore.outputByteCount(for: id)
+        let outputByteCount = toolOutputStore.outputByteCount(for: id)
         guard let updated = TimelineTurnAssembler.makeUpdatedToolCallPreview(
             existing: items[idx],
             output: fullOutput,

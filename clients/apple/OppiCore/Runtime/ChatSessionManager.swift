@@ -340,7 +340,6 @@ final class ChatSessionManager {
 
         log.debug("State transition for \(self.sessionId, privacy: .public): \(oldState.logDescription, privacy: .public) -> \(newState.logDescription, privacy: .public)")
         entryState = newState
-        if case .disconnected = newState { reducer.terminalOutputStreams.markReconnecting() }
         switch newState {
         case .streaming:
             resumeStreamingWaiters(with: .success(()))

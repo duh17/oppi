@@ -34,7 +34,7 @@ struct APIClientToolOutputTests {
     }
 
     @Test(arguments: [SessionRouteScope.workspace("ws-1"), .control])
-    func terminalRecoveryRequestsExactRawByteRange(_ scope: SessionRouteScope) async throws {
+    func sidecarRawRangeRequestsExactBytes(_ scope: SessionRouteScope) async throws {
         let client = makeClient()
         defer { cleanup() }
         let bytes = Data([0xFF, 0xC3, 0x28, 0x1B])
@@ -89,14 +89,15 @@ struct APIClientToolOutputTests {
                 headerFields: ["Content-Type": "application/json"])!)
         }
         let access = SessionToolOutputAccess(apiClient: client, scope: .control, sessionId: "s1")
-        let owner = TerminalOutputStream { _ in throw APIError.invalidResponse }
-        owner.finish(.init(epoch: 1, totalBytes: 0))
-        let stream = TerminalTraceStream(output: "held preview\n", command: nil, isDone: true)
-        stream.owner = owner
-        stream.completionSidecarSource = access.sidecarSource(toolCallId: "tc-1")
-        let body = NativeFullScreenTerminalBody(content: "held preview\n", command: nil, stream: stream,
+        let body = NativeFullScreenTerminalBody(
+            content: "held preview\n",
+            command: nil,
+            stream: nil,
             palette: ThemeRuntimeState.currentThemeID().palette,
-            reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil)
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            sidecarSource: access.sidecarSource(toolCallId: "tc-1")
+        )
         let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         body.frame = host.bounds
         host.addSubview(body)

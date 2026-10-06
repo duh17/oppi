@@ -101,11 +101,9 @@ final class ThinkingTraceStream {
 
 @MainActor
 final class TerminalTraceStream {
-    // The live reader observes this call owner directly, so cell reuse cannot
-    // redirect it to a different tool's snapshot stream.
-    var owner: TerminalOutputStream?
-    var ownerStore: TerminalOutputStreamStore?
-    var ownerToolCallId: String?
+    /// Finished-call sidecar. A reader opened after completion loads this when
+    /// the content did not already pass a sidecar source. The snapshot is the
+    /// JSON text preview.
     var completionSidecarSource: ToolOutputSidecarWindowSource?
 
     struct Snapshot: Equatable {
@@ -121,10 +119,7 @@ final class TerminalTraceStream {
         snapshotStorage = Snapshot(output: output, command: command, isDone: isDone)
     }
 
-    var snapshot: Snapshot {
-        if let owner { return Snapshot(output: owner.formatted, command: snapshotStorage.command, isDone: owner.state == .complete) }
-        return snapshotStorage
-    }
+    var snapshot: Snapshot { snapshotStorage }
 
     func update(output: String, command: String?, isDone: Bool) {
         let next = Snapshot(output: output, command: command, isDone: isDone)

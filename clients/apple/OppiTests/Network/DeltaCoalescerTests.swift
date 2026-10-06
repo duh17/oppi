@@ -760,6 +760,28 @@ struct DeltaCoalescerTests {
         coalescer.flushNow()
     }
 
+    @Test func outputStreamChunksStayAtomicAcrossTheReplaceBarrier() {
+        let coalescer = DeltaCoalescer()
+        var received: [ToolOutputEventPayload] = []
+        coalescer.onFlush = { events in
+            received += events.compactMap { if case .toolOutput(let payload) = $0 { payload } else { nil } }
+        }
+        let output = String(repeating: "x", count: DeltaCoalescer.maxBufferedBytesForTesting + 1)
+        func chunk(_ offset: Int, _ bytes: Int) -> ToolOutputStreamChunk {
+            .init(epoch: 1, offset: offset, bytes: bytes)
+        }
+        for (offset, mode) in [(0, ToolOutputMode.append), (output.utf8.count, .replace)] {
+            coalescer.receive(.toolOutput(.init(sessionId: "s", toolEventId: "t", output: output, isError: false,
+                mode: mode, outputStream: chunk(offset, output.utf8.count))))
+        }
+        coalescer.receive(.toolOutput(.init(sessionId: "s", toolEventId: "t", output: "", isError: false,
+            outputStream: chunk(2 * output.utf8.count, 0))))
+        coalescer.flushNow()
+        #expect(received.count == 3)
+        #expect(received.map(\.output) == [output, output, ""])
+        #expect(received.map { $0.outputStream?.offset } == [0, output.utf8.count, 2 * output.utf8.count])
+    }
+
     // MARK: - Telemetry
 
     @Test func telemetrySinkReceivesFlushWindowWhenDrainHasSignal() async {

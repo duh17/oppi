@@ -11,17 +11,6 @@ enum ToolTimelineRowFullScreenSupport {
             return nil
         }
 
-        // Reader identity belongs to the tool call, not the reusable cell.
-        let terminalStream = configuration.terminalOutputStream.map { owner in
-            let stream = TerminalTraceStream(output: owner.formatted, command: configuration.copyCommandText,
-                isDone: owner.state == .complete)
-            stream.owner = owner
-            stream.ownerStore = configuration.terminalOutputStreamStore
-            stream.ownerToolCallId = configuration.itemID
-            stream.completionSidecarSource = configuration.toolOutputSidecarSource
-            return stream
-        } ?? terminalStream
-
         guard interactionPolicy?.supportsFullScreenPreview ?? true else { return nil }
 
         if !configuration.isDone {
