@@ -42,7 +42,6 @@ import {
   type SessionTraceEvent,
 } from "./session-inspect.js";
 import { attributeManagedSessionMessage } from "../managed-session-message.js";
-import type { SandboxOppiScope } from "../../sandbox-oppi-policy.js";
 import {
   assertNoCommandError,
   printSessionNotice,
@@ -60,6 +59,12 @@ import {
 
 type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
 type SessionCliOutput = (data: Record<string, unknown>, human: () => void) => void;
+
+/** The one sandbox workspace a sandbox-scoped Oppi CLI call may target. */
+export type SandboxOppiScope = Readonly<{
+  workspaceId: string;
+  workspaceName?: string;
+}>;
 
 export interface SessionCliCallerContext {
   /** Immutable for one in-process command; shell callers continue using the environment fallback. */

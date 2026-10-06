@@ -42,11 +42,7 @@ import {
 import { durableUnsupportedFeature, type AgentDefinition } from "./agent-launch-service.js";
 import type { AgentBackend } from "./agent-backend.js";
 import { isControlConversation } from "./control-session.js";
-import {
-  CONTROL_CONVERSATION_EXTENSIONS,
-  CONTROL_CONVERSATION_INSTRUCTIONS,
-  controlConversationTools,
-} from "./durable-control-conversation.js";
+import { controlConversationTools } from "./durable-control-conversation.js";
 import { DurableRuntime, type DurableHarness } from "./durable-harness.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { DurableSandboxTools } from "./durable-sandbox-tools.js";
@@ -341,7 +337,10 @@ export class DurableBackend implements AgentBackend {
       // selection, so one created before an extension joined the list picks it up here.
       await conversation.configure(
         control
-          ? { extensions: [...CONTROL_CONVERSATION_EXTENSIONS], tools: controlConversationTools() }
+          ? {
+              extensions: [...owner.controlExtensions],
+              tools: controlConversationTools(owner.controlExtensions),
+            }
           : {
               extensions: {
                 add: [
@@ -407,7 +406,7 @@ export class DurableBackend implements AgentBackend {
       const policy = session.launch?.tools;
       const tools = (
         control
-          ? controlConversationTools()
+          ? controlConversationTools(owner.controlExtensions)
           : [
               ...(CodingTools.tools ?? []),
               ...(DurableAsk.tools ?? []),
@@ -439,7 +438,7 @@ export class DurableBackend implements AgentBackend {
           },
           agent: {
             extensions: control
-              ? [...CONTROL_CONVERSATION_EXTENSIONS]
+              ? [...owner.controlExtensions]
               : sandbox
                 ? [
                     CodingTools,
@@ -470,17 +469,20 @@ export class DurableBackend implements AgentBackend {
             tools: [...tools, ...(mcp?.initialTools ?? [])],
             // Pi's experimental prompt loader is not published in 1.0.0. Do not
             // reach into private dist paths or load classic extension factories.
-            instructions: control
-              ? CONTROL_CONVERSATION_INSTRUCTIONS
-              : [
-                  instructions?.mode === "replace"
-                    ? instructions.text
-                    : "You are an expert coding assistant. Use the available tools to inspect and change files. Be concise.",
-                  `Working directory: ${cwd}`,
-                  append,
-                ]
-                  .filter(Boolean)
-                  .join("\n\n"),
+            // The control conversation's instructions are its `oppi-control` prompt section.
+            ...(control
+              ? {}
+              : {
+                  instructions: [
+                    instructions?.mode === "replace"
+                      ? instructions.text
+                      : "You are an expert coding assistant. Use the available tools to inspect and change files. Be concise.",
+                    `Working directory: ${cwd}`,
+                    append,
+                  ]
+                    .filter(Boolean)
+                    .join("\n\n"),
+                }),
           },
         },
         BACKGROUND_CONTEXT,

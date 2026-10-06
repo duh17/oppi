@@ -6,7 +6,7 @@ import { cmdConfig } from "./commands/config.js";
 import { cmdControl } from "./commands/control.js";
 import { cmdDictionary } from "./commands/dictionary.js";
 import { cmdSchedule } from "./commands/schedule.js";
-import { cmdSession } from "./commands/session.js";
+import { cmdSession, type SandboxOppiScope } from "./commands/session.js";
 import { cmdWait } from "./commands/wait.js";
 import { createAbortError, throwIfAborted } from "./local-api-client.js";
 import { cmdWorkspace } from "./commands/workspace.js";
@@ -26,7 +26,6 @@ import {
   writeJsonEnvelope,
 } from "./output.js";
 import { cmdStatus } from "./status.js";
-import type { SandboxOppiScope } from "../sandbox-oppi-policy.js";
 
 export type CliRunOptions = Readonly<{
   dataDir?: string;

@@ -135,7 +135,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       this.durableHarness = Promise.all([
         import("./durable-harness.js"),
         import("./durable-threads.js"),
-      ]).then(([{ DurableHarness }, { DurableThreads }]) => {
+        import("./durable-control-cli.js"),
+      ]).then(([{ DurableHarness }, { DurableThreads }, { DurableControlCli }]) => {
         const owner = new DurableHarness(storage.getDataDir());
         owner.bindThreads(
           new DurableThreads({
@@ -144,6 +145,15 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
             startSession: (sessionId, workspace) => this.startSession(sessionId, workspace),
             isActive: (sessionId) => this.isActive(sessionId),
             onCreated: (session) => this.emit("session_created", session),
+          }),
+        );
+        owner.bindControl(
+          new DurableControlCli({
+            dataDir: storage.getDataDir(),
+            sessionIdOf: (conversationId) =>
+              storage
+                .listSessions()
+                .find((session) => session.serverDurable?.conversationId === conversationId)?.id,
           }),
         );
         return owner;

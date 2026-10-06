@@ -24,7 +24,7 @@ import {
   DurableBackgroundJobs,
   DurableJobs,
 } from "../extensions/durable/background-jobs/durable.js";
-import { CONTROL_CONVERSATION_EXTENSIONS } from "./durable-control-conversation.js";
+import { controlConversationExtensions } from "./durable-control-conversation.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { DurableGoal } from "../extensions/durable/goal/durable.js";
 import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
@@ -33,6 +33,10 @@ import {
   SESSION_REPORTER_TASK,
   createDurableSessions,
 } from "../extensions/durable/sessions/durable.js";
+import {
+  createDurableControl,
+  type DurableControlHost,
+} from "../extensions/durable/control/durable.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 import type { DurableMcp } from "./durable-mcp.js";
 import type { DurableThreads } from "./durable-threads.js";
@@ -64,8 +68,15 @@ export class DurableHarness {
   /** Per Oppi session: its MCP connections and registry extension. */
   private readonly mcps = new Map<string, DurableMcp>();
   private threads?: DurableThreads;
+  private control?: DurableControlHost;
   /** The session tools; they reach Oppi through the host bound with `bindThreads`. */
   readonly sessionsExtension = createDurableSessions(() => this.threads);
+  /** The control conversation's tools; they reach Oppi through the host bound with `bindControl`. */
+  readonly controlExtension = createDurableControl(() => this.control);
+  /** The control conversation's exact selection. Never part of `baseExtensions`. */
+  readonly controlExtensions: readonly Extension[] = controlConversationExtensions(
+    this.controlExtension,
+  );
   /**
    * Extensions every process installs, in install order. They are also the Harness default
    * selection, so a conversation whose stored selection is an `{ add }` edit never picks up
@@ -84,6 +95,9 @@ export class DurableHarness {
 
   bindThreads(threads: DurableThreads): void {
     this.threads = threads;
+  }
+  bindControl(control: DurableControlHost): void {
+    this.control = control;
   }
   get boundThreads(): DurableThreads | undefined {
     return this.threads;
@@ -247,7 +261,7 @@ export class DurableHarness {
     for (const extension of this.baseExtensions) registry.install(extension);
     // Installed so the control conversation can select them by name. Installing is not
     // selecting: only `baseExtensions` is the default selection of other conversations.
-    for (const extension of CONTROL_CONVERSATION_EXTENSIONS)
+    for (const extension of this.controlExtensions)
       if (!this.baseExtensions.includes(extension)) registry.install(extension);
     this.registry = registry;
     const directory = join(this.dataDir, "durable");

@@ -147,7 +147,7 @@ enum ControlSessionStarterPrompt {
         return """
         Help the user \(intent == .create ? "create" : "revise") an Oppi \(subject).\(target)\(workspace)\(selectedHostFile)
 
-        \(domain == .skills ? "Act as Oppi. " : "Act as Oppi. First inspect the current server state using only approved `oppi` commands. ")\(workflow)\(domain == .skills ? " Summarize the exact proposed changes before editing." : " Summarize the exact proposed changes, then immediately invoke the appropriate `oppi` command so its existing native confirmation is the sole approval gate. Do not ask the user to type approve before invoking the command.")\(definitionRequirement)
+        \(domain == .skills ? "Act as Oppi. " : "Act as Oppi. First inspect the current server state using only approved `oppi` commands. ")\(workflow)\(domain == .skills ? " Summarize the exact proposed changes before editing." : " Summarize the exact proposed changes and wait for the user's explicit approval before invoking the appropriate `oppi` command.")\(definitionRequirement)
 
         \(domain == .skills ? "Do not use `write`, `bash`, or temporary files for this task. Do not edit paths other than the selected launch file or the absolute paths carried by staged review comments." : "Do not use filesystem tools or temporary files for this task.")\(requestBlock)
         """

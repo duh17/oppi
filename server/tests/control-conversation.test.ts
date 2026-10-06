@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { fauxProvider } from "@earendil-works/pi-ai/providers/faux";
+import {
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+} from "@earendil-works/pi-ai/providers/faux";
 import { AgentDoc, type ConversationId } from "@earendil-works/pi-durable";
 
 import {
@@ -16,10 +20,7 @@ import {
   isControlConversation,
   isDeclaredControlSession,
 } from "../src/control-session.js";
-import {
-  CONTROL_CONVERSATION_EXTENSIONS,
-  controlConversationTools,
-} from "../src/durable-control-conversation.js";
+import { controlConversationTools } from "../src/durable-control-conversation.js";
 import type { DurableHarness } from "../src/durable-harness.js";
 import { reservedLaunchKeyError } from "../src/reserved-launch-keys.js";
 import { createControlConversationRoutes } from "../src/routes/control-conversation.js";
@@ -343,7 +344,7 @@ describe("control conversation lifecycle on the durable harness", () => {
     );
     const storage = new Storage(dir);
     storage.updateConfig({ experimental: { serverDurable: true } });
-    return { dir, storage };
+    return { dir, storage, faux };
   }
 
   async function boot(storage: Storage) {
@@ -401,8 +402,11 @@ describe("control conversation lifecycle on the durable harness", () => {
       .durableHarness;
     const { harness } = await (await owner).open();
     const agent = await harness.snapshot(AgentDoc, conversationId as ConversationId, context);
-    expect(agent?.extensions).toEqual(CONTROL_CONVERSATION_EXTENSIONS.map((e) => e.name));
-    expect(agent?.tools).toEqual(controlConversationTools().map((tool) => tool.name));
+    expect(agent?.extensions).toEqual(["ask", "working-words", "oppi.control"]);
+    expect(agent?.extensions).toEqual((await owner).controlExtensions.map((e) => e.name));
+    expect(agent?.tools).toEqual(
+      controlConversationTools((await owner).controlExtensions).map((tool) => tool.name),
+    );
     expect(agent?.cwd).toBe(join(storage.getDataDir(), "control-conversation", "cwd"));
     expect((await owner).baseExtensions.map((e) => e.name)).not.toContain("oppi.control");
 
@@ -430,6 +434,38 @@ describe("control conversation lifecycle on the durable harness", () => {
     expect(reopened.body.session.id).toBe(sessionId);
     expect(reopened.body.session.serverDurable?.conversationId).toBe(conversationId);
     expect(storage.listSessions().filter(isControlConversation)).toHaveLength(1);
+  });
+
+  it("runs oppi_query on the host the server binds, with the section as its instructions", async () => {
+    const { storage, faux } = await setup();
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("oppi_query", { code: "return 6 * 7;" })], {
+        stopReason: "toolUse",
+      }),
+      fauxAssistantMessage("forty-two"),
+    ]);
+    const booted = await boot(storage);
+    const opened = await booted.open({ model: "faux/faux-1" });
+    const owner = await (booted.manager as unknown as { durableHarness: Promise<DurableHarness> })
+      .durableHarness;
+    const { harness } = await owner.open();
+    const conversation = (await harness.conversation(
+      opened.body.session.serverDurable!.conversationId as ConversationId,
+      context,
+    ))!;
+    const settled = await (
+      await conversation.submit({ type: "input", content: "what is 6 * 7?" }, context)
+    ).wait(context);
+    expect(settled.status).toBe("done");
+    const page = await conversation.entries({}, 50, undefined, context);
+    const result = page.items
+      .flatMap((entry) => entry.model ?? [])
+      .find((message) => message.role === "toolResult");
+    expect(result).toMatchObject({ toolName: "oppi_query", isError: false });
+    expect(JSON.stringify(result?.content)).toContain("42");
+    const agent = await conversation.agent(context);
+    expect(agent.instructions).toBeUndefined();
+    expect(agent.sections.map((section) => section.key)).toContain("oppi-control");
   });
 
   it("re-attaches a stopped control conversation to the same conversation on demand", async () => {

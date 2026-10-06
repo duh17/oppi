@@ -2,5 +2,9 @@
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "project": ["src/**/*.ts"],
   "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": ["@earendil-works/pi-tui", "@earendil-works/pi-server"]
+  "ignoreDependencies": [
+    "@earendil-works/pi-tui",
+    "@earendil-works/pi-server",
+    "@earendil-works/pi-codemode"
+  ]
 }
