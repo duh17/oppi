@@ -13,11 +13,11 @@
       "release": true,
       "target": "Oppi",
       "marketingVersion": "1.1.2",
-      "build": 53,
+      "build": 54,
       "whatsNewFromBuild": 52
     }
   },
   "candidateTTLHours": 336,
-  "whatToTestPath": ".internal/release-notes/testflight-build-53-what-to-test.md",
-  "changelogPath": ".internal/release-notes/testflight-build-53-changelog.md"
+  "whatToTestPath": ".internal/release-notes/testflight-build-54-what-to-test.md",
+  "changelogPath": ".internal/release-notes/testflight-build-54-changelog.md"
 }

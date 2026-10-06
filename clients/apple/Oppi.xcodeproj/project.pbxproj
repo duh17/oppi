@@ -9103,7 +9103,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = OppiActivityExtension/OppiActivityExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = OppiActivityExtension/Info.plist;
@@ -9129,7 +9129,7 @@
 				CODE_SIGN_ENTITLEMENTS = Oppi/Resources/Oppi.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -9205,7 +9205,7 @@
 				CODE_SIGN_ENTITLEMENTS = Oppi/Resources/Oppi.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -9233,7 +9233,7 @@
 				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = OppiControlWidget/OppiControlWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				INFOPLIST_FILE = OppiControlWidget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -9271,7 +9271,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = OppiShareExtension/OppiShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				INFOPLIST_FILE = OppiShareExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -9291,7 +9291,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = OppiShareExtension/OppiShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				INFOPLIST_FILE = OppiShareExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -9401,7 +9401,7 @@
 				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = OppiControlWidget/OppiControlWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				INFOPLIST_FILE = OppiControlWidget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -9477,7 +9477,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = OppiActivityExtension/OppiActivityExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = OppiActivityExtension/Info.plist;

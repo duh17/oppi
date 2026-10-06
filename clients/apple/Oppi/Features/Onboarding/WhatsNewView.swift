@@ -78,7 +78,7 @@ struct WhatsNewView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
-    /// Build 53 · Changes since Build 52
+    /// Build 54 · Changes since Build 52
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
             id: "mcp-servers",
