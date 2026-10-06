@@ -8,7 +8,7 @@ From `clients/apple/`:
 
 ### Build TailscaleKit
 
-The iOS app embeds the official TailscaleKit framework, which is built locally and not tracked. Run once per checkout, and again after the pinned libtailscale commit changes. It needs Go (cgo) and Xcode, and keeps Go caches under `clients/apple/.build/tailscalekit`. A second checkout reuses `~/Library/Caches/oppi-tailscalekit/<commit>/` without Go or Xcode:
+The iOS app embeds the official TailscaleKit framework, which is built locally and not tracked. Run once per checkout, and again after the pinned libtailscale commit or the omitted-feature list (`BUILD_ID`) changes. It needs Go (cgo) and Xcode, and keeps Go caches under `clients/apple/.build/tailscalekit`. A second checkout reuses `~/Library/Caches/oppi-tailscalekit/<build-id>/` without Go or Xcode:
 
 ```bash
 cd clients/apple

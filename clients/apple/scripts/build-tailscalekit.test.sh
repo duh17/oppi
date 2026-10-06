@@ -15,15 +15,18 @@ mkdir -p "$apple/scripts"
 cp "$SOURCE_SCRIPT" "$apple/scripts/build-tailscalekit.sh"
 chmod +x "$apple/scripts/build-tailscalekit.sh"
 
-commit="$(awk -F= '/^LIBTAILSCALE_COMMIT=/{gsub(/"/, "", $2); print $2; exit}' "$apple/scripts/build-tailscalekit.sh")"
-[[ -n "$commit" ]] || { echo "error: could not read LIBTAILSCALE_COMMIT" >&2; exit 1; }
+build_id="$(
+  eval "$(grep -E '^(LIBTAILSCALE_COMMIT|BUILD_ID)=' "$apple/scripts/build-tailscalekit.sh")"
+  echo "${BUILD_ID:-}"
+)"
+[[ -n "$build_id" ]] || { echo "error: could not read BUILD_ID" >&2; exit 1; }
 
 cache_root="$tmp/cache"
-cache_dir="$cache_root/$commit"
+cache_dir="$cache_root/$build_id"
 mkdir -p "$cache_dir/TailscaleKit.xcframework"
 echo "cached-framework" >"$cache_dir/TailscaleKit.xcframework/marker"
 echo "cached-license" >"$cache_dir/LICENSE"
-echo "$commit" >"$cache_dir/COMMIT"
+echo "$build_id" >"$cache_dir/BUILD_ID"
 
 invoked="$tmp/invoked"
 mkdir -p "$tmp/bin"
@@ -43,7 +46,7 @@ export OPPI_TAILSCALEKIT_CACHE="$cache_root"
 
 vendor="$apple/Vendor/TailscaleKit"
 [[ -d "$vendor/TailscaleKit.xcframework" ]] || { echo "error: vendor xcframework missing" >&2; exit 1; }
-[[ "$(cat "$vendor/COMMIT")" == "$commit" ]] || { echo "error: vendor COMMIT mismatch" >&2; exit 1; }
+[[ "$(cat "$vendor/BUILD_ID")" == "$build_id" ]] || { echo "error: vendor BUILD_ID mismatch" >&2; exit 1; }
 [[ "$(cat "$vendor/LICENSE")" == "cached-license" ]] || { echo "error: vendor LICENSE not copied" >&2; exit 1; }
 [[ "$(cat "$vendor/TailscaleKit.xcframework/marker")" == "cached-framework" ]] || {
   echo "error: vendor xcframework not copied from cache" >&2
@@ -55,4 +58,4 @@ if [[ -f "$invoked" ]]; then
   exit 1
 fi
 
-echo "ok: cache hit copied $commit without go/make"
+echo "ok: cache hit copied $build_id without go/make"
