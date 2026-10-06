@@ -312,7 +312,7 @@ const NO = "No";
 /** Longest request body shown whole on a confirm card. */
 const CARD_BODY_LIMIT = 6000;
 
-/** What a confirmed call keeps, so a rerun after a crash returns it instead of writing again. */
+/** What a finished oppi_script call keeps, so a rerun after a crash returns it instead of running it again. */
 type Saved = { argv: string[]; envelope: ControlJson; all: boolean };
 
 class Declined extends Error {
@@ -424,7 +424,7 @@ class ControlScript {
   private async call(argv: string[], signal: AbortSignal): Promise<ControlJson> {
     const index = this.calls++;
     const name = `oppi-call:${index}`;
-    const saved = await this.api.memo<Saved>(name, this.context);
+    const saved = this.writable ? await this.api.memo<Saved>(name, this.context) : undefined;
     if (saved) {
       if (JSON.stringify(saved.argv) !== JSON.stringify(argv))
         throw new Error(
@@ -451,10 +451,13 @@ class ControlScript {
         ? { onWrite: (write: ControlWrite) => this.confirm(`${index}.${asked++}`, write, context) }
         : {}),
     });
-    if (!result.wrote) return result.envelope;
-    this.writes++;
-    // First write wins: a crash between the store write and here reruns the call with the same
-    // key, and the host's idempotency keys make that the same write.
+    if (result.wrote) this.writes++;
+    // oppi_query keeps nothing: it only reads, and a rerun may read fresh data.
+    if (!this.writable) return result.envelope;
+    // Every call of oppi_script is kept, reads included, so a rerun follows the data the first
+    // run saw: a list-then-archive loop resumed after its first archive still archives the
+    // original set. First write wins: a crash between a store write and here reruns the call with
+    // the same key, and the host's idempotency keys make that the same write.
     const kept: Saved = { argv, envelope: result.envelope, all: this.approveAll };
     return (await this.api.memo<Saved>(name, kept, context)).envelope;
   }
@@ -515,8 +518,9 @@ function scriptTool(
     parameters: Type.Object({
       code: Type.String({ description: "Body of an async function; return and await work." }),
     }),
-    // A rerun after a crash replays the script from the top: confirmed writes are memoized per
-    // call, so they are returned, not repeated (see ControlScript.call).
+    // A rerun after a crash replays the script from the top. oppi_query only reads. In
+    // oppi_script every finished call is memoized by index, so the rerun is handed the same
+    // results and does not repeat a write (see ControlScript.call).
     replay: "safe",
     async execute(input, api, context) {
       const bound = host();

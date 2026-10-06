@@ -546,13 +546,18 @@ describe("oppi.control tools", () => {
  * one over the same storage resumes the interrupted call.
  */
 describe("oppi_script crash safety", () => {
-  function crashing(extension: Extension, gap: "before" | "after", reached: () => void): Extension {
+  function crashing(
+    extension: Extension,
+    gap: "before" | "after",
+    reached: () => void,
+    call = "oppi-call:0",
+  ): Extension {
     const wrap = (native: ToolRegistration): ToolRegistration => ({
       ...native,
       async execute(args, api, ctx) {
         const memo = new Proxy(api.memo, {
           async apply(target, receiver, values) {
-            if (String(values[0]).startsWith("oppi-call:") && values.length === 3) {
+            if (values[0] === call && values.length === 3) {
               if (gap === "after") await Reflect.apply(target, receiver, values);
               reached();
               return new Promise((_resolve, reject) => {
@@ -570,12 +575,12 @@ describe("oppi_script crash safety", () => {
     return { ...extension, tools: (extension.tools ?? []).map(wrap) };
   }
 
-  async function crashAndResume(f: Fixture, body: string, gap: "before" | "after") {
+  async function crashAndResume(f: Fixture, body: string, gap: "before" | "after", call?: string) {
     f.faux.setResponses([code(body), fauxAssistantMessage("done")]);
     const extension = createDurableControl(() => f.host);
     let reached!: () => void;
     const hung = new Promise<void>((resolve) => (reached = resolve));
-    const first = crashing(extension, gap, () => reached());
+    const first = crashing(extension, gap, () => reached(), call);
     let harness = await openHarness(f.dir, f.models, first);
     const conversation = await createConversation(harness, first, f.dir);
     const responder = owner(conversation, [YES, YES, YES]);
@@ -591,7 +596,7 @@ describe("oppi_script crash safety", () => {
     harness.resume();
     await reopened.waitForIdle(context);
     await resumed.stop();
-    return reopened;
+    return Object.assign(reopened, { cards: [...responder.cards, ...resumed.cards] });
   }
 
   it.each(["before", "after"] as const)(
@@ -641,6 +646,36 @@ describe("oppi_script crash safety", () => {
       );
     },
   );
+
+  it("resumes a list-then-archive loop over the original set, one confirm per write", async () => {
+    const f = await fixture();
+    const doomed = ["tmp-1", "tmp-2", "tmp-3"].map((name) => f.agents.createAgent({ name }).id);
+    const kept = f.agents.createAgent({ name: "keep" }).id;
+    // Call 0 is the list; the crash lands right after the first archive (call 1) is memoized.
+    const conversation = await crashAndResume(
+      f,
+      `
+        const { agents: all } = await agents.list({});
+        const ids = all.filter((agent) => agent.name.startsWith("tmp-")).map((agent) => agent.id);
+        for (const id of ids) await agents.archive({ id });
+        return ids;
+      `,
+      "after",
+      "oppi-call:1",
+    );
+    const active = f.agents.listAgentSummaries().map((agent) => agent.id);
+    expect(active).toEqual([kept]);
+    // The resumed list would only have shown two; the script still archived all three, .
+    const [result] = await toolResults(conversation);
+    expect(result?.isError).toBe(false);
+    expect((JSON.parse(result!.text.split("\n").at(-1)!) as string[]).sort()).toEqual(
+      [...doomed].sort(),
+    );
+    expect(conversation.cards).toHaveLength(3);
+    // One list and three archives ran; the first archive was not run again.
+    expect(f.run).toHaveBeenCalledTimes(4);
+    expect(f.seen.filter((request) => request.method === "DELETE")).toHaveLength(3);
+  });
 
   it("fails a rerun that is no longer the call it remembers, instead of writing something else", async () => {
     const f = await fixture();

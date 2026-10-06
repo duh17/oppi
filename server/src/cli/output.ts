@@ -62,14 +62,6 @@ type CliOutputCapture = {
 };
 
 const cliOutputCapture = new AsyncLocalStorage<CliOutputCapture>();
-const sandboxScopedCliJson = new AsyncLocalStorage<true>();
-
-const ALWAYS_STRIP_KEYS = new Set(["hostMount", "piSessionFile", "piSessionFiles"]);
-const CWD_LIKE_KEYS = new Set(["cwd", "displayCwd", "path"]);
-
-export function withSandboxScopedCliJson<T>(fn: () => T): T {
-  return sandboxScopedCliJson.run(true, fn);
-}
 
 export async function captureCliOutput<T>(
   fn: () => Promise<T>,
@@ -132,11 +124,7 @@ export function writeStderrLine(value: string): void {
 }
 
 export function writeJsonEnvelope(envelope: CliJsonEnvelope): void {
-  const scopedEnvelope =
-    sandboxScopedCliJson.getStore() === true && envelope.ok
-      ? { ok: true as const, data: shapeSandboxScopedCliData(envelope.data) }
-      : envelope;
-  const safeEnvelope = redactCredentialValue(scopedEnvelope) as CliJsonEnvelope;
+  const safeEnvelope = redactCredentialValue(envelope) as CliJsonEnvelope;
   const output = JSON.stringify(safeEnvelope, null, 2) + "\n";
   const capture = cliOutputCapture.getStore();
   if (capture) {
@@ -284,42 +272,4 @@ function scalarText(value: unknown): string {
 
 function visibleLength(value: string): number {
   return [...value].length;
-}
-
-function shapeSandboxScopedCliData(data: Record<string, unknown>): Record<string, unknown> {
-  return shapeSandboxScopedCliValue(data) as Record<string, unknown>;
-}
-
-function shapeSandboxScopedCliValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(shapeSandboxScopedCliValue);
-  if (!isPlainObject(value)) return value;
-  const shaped: Record<string, unknown> = {};
-  for (const [key, nested] of Object.entries(value)) {
-    if (shouldStripSandboxCliEntry(key, nested)) continue;
-    shaped[key] = shapeSandboxScopedCliValue(nested);
-  }
-  return shaped;
-}
-
-function shouldStripSandboxCliEntry(key: string, value: unknown): boolean {
-  if (ALWAYS_STRIP_KEYS.has(key)) return true;
-  if (!CWD_LIKE_KEYS.has(key)) return false;
-  if (isHostHomeDirectoryPath(value)) return true;
-  return Array.isArray(value) && value.some((item) => isHostHomeDirectoryPath(item));
-}
-
-function isHostHomeDirectoryPath(value: unknown): boolean {
-  if (typeof value !== "string") return false;
-  const trimmed = value.trim();
-  if (!trimmed) return false;
-  return (
-    trimmed === "~" ||
-    trimmed.startsWith("~/") ||
-    trimmed.startsWith("/Users/") ||
-    trimmed.startsWith("/home/")
-  );
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

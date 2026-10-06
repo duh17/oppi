@@ -6,7 +6,7 @@ import { cmdConfig } from "./commands/config.js";
 import { cmdControl } from "./commands/control.js";
 import { cmdDictionary } from "./commands/dictionary.js";
 import { cmdSchedule } from "./commands/schedule.js";
-import { cmdSession, type SandboxOppiScope } from "./commands/session.js";
+import { cmdSession } from "./commands/session.js";
 import { cmdWait } from "./commands/wait.js";
 import { createAbortError, throwIfAborted } from "./local-api-client.js";
 import { cmdWorkspace } from "./commands/workspace.js";
@@ -21,7 +21,6 @@ import {
   CliExitSignal,
   setCapturedCliExitCode,
   type CliJsonEnvelope,
-  withSandboxScopedCliJson,
   writeHumanLine,
   writeJsonEnvelope,
 } from "./output.js";
@@ -31,7 +30,6 @@ export type CliRunOptions = Readonly<{
   dataDir?: string;
   cwd?: string;
   callerSessionId?: string;
-  sandboxScope?: SandboxOppiScope;
   captureHuman?: boolean;
   forceJson?: boolean;
   signal?: AbortSignal;
@@ -105,16 +103,6 @@ export async function runCli(
 }
 
 async function executeCliCommand(args: readonly string[], options: CliRunOptions): Promise<void> {
-  if (options.sandboxScope) {
-    return withSandboxScopedCliJson(() => executeUnscopedCliCommand(args, options));
-  }
-  return executeUnscopedCliCommand(args, options);
-}
-
-async function executeUnscopedCliCommand(
-  args: readonly string[],
-  options: CliRunOptions,
-): Promise<void> {
   const { command, flags, positional } = parseCliArgs([...args]);
   if (isNestedHelpRequest(command, positional, flags)) {
     const topic = resolveHelpTopic(helpPathFor(command, positional));
@@ -162,10 +150,9 @@ async function executeUnscopedCliCommand(
         positional.slice(1),
         flags,
         options.cwd ?? process.cwd(),
-        options.callerSessionId || options.signal || options.sandboxScope || options.onLiveSnapshot
+        options.callerSessionId || options.signal || options.onLiveSnapshot
           ? {
               ...(options.callerSessionId ? { callerSessionId: options.callerSessionId } : {}),
-              ...(options.sandboxScope ? { sandboxScope: options.sandboxScope } : {}),
               ...(options.signal ? { signal: options.signal } : {}),
               ...(options.onLiveSnapshot ? { onLiveSnapshot: options.onLiveSnapshot } : {}),
             }

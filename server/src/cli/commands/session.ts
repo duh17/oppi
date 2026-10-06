@@ -60,17 +60,9 @@ import {
 type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
 type SessionCliOutput = (data: Record<string, unknown>, human: () => void) => void;
 
-/** The one sandbox workspace a sandbox-scoped Oppi CLI call may target. */
-export type SandboxOppiScope = Readonly<{
-  workspaceId: string;
-  workspaceName?: string;
-}>;
-
 export interface SessionCliCallerContext {
   /** Immutable for one in-process command; shell callers continue using the environment fallback. */
   callerSessionId?: string;
-  /** Present only for sandbox-scoped Oppi CLI calls. */
-  sandboxScope?: SandboxOppiScope;
   /** Cancels long-running in-process session commands such as wait polling. */
   signal?: AbortSignal;
   /** UI-only wait snapshots. Not printed on the human CLI. */
@@ -112,9 +104,6 @@ export async function cmdSession(
     }
     const resolvedTargets = await resolveSessionIdTargets(rawTargets, call);
     assertNotSelfTargetingSession(resolvedTargets, callerSessionId);
-    if (callerContext.sandboxScope) {
-      await assertSandboxScopeTargets(call, callerContext.sandboxScope, resolvedTargets);
-    }
 
     if (mode === "list") {
       const result = await listSessions(storage, flags, call);
@@ -733,25 +722,6 @@ function assertSessionFlags(mode: string, flags: Record<string, string>): void {
   const unsupported = Object.keys(flags).filter((flag) => !allowedSet.has(flag));
   if (unsupported.length > 0) {
     throw new Error(`Unsupported flag for 'session ${mode}': --${unsupported.sort().join(", --")}`);
-  }
-}
-
-async function assertSandboxScopeTargets(
-  call: SessionListApiCall,
-  scope: SandboxOppiScope,
-  targetSessionIds: readonly string[],
-): Promise<void> {
-  for (const targetId of targetSessionIds) {
-    const targetResult = await call<{ session?: { workspaceId?: string } }>(
-      `/sessions/${encodeURIComponent(targetId)}`,
-    );
-    const targetWorkspaceId = targetResult.session?.workspaceId?.trim();
-    if (!targetWorkspaceId) {
-      throw new Error("Sandbox Oppi could not verify the target stays in this workspace");
-    }
-    if (targetWorkspaceId !== scope.workspaceId) {
-      throw new Error("Sandbox Oppi can only target sessions in this sandbox workspace");
-    }
   }
 }
 

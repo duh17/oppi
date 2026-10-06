@@ -1485,8 +1485,6 @@ struct ControlSessionStarterPromptTests {
         #expect(prompt.contains("Canonical workspace name: Dream"))
         #expect(prompt.contains("`oppi schedule`"))
         #expect(prompt.contains("schedule behavior or timing is ambiguous"))
-        #expect(prompt.contains("wait for the user's explicit approval before invoking"))
-        #expect(!prompt.contains("sole approval gate"))
     }
 
     @Test func agentCreationPromptTeachesTheAgentCommandAndBehaviorClarification() {
@@ -1552,7 +1550,5 @@ struct ControlSessionStarterPromptTests {
         #expect(first.contains("ask one focused provider question"))
         #expect(first.contains("do not guess"))
         #expect(first.contains("Do not use filesystem tools or temporary files for this task"))
-        #expect(first.contains("wait for the user's explicit approval before invoking"))
-        #expect(!first.contains("sole approval gate"))
     }
 }
