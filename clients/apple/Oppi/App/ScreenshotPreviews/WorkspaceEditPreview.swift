@@ -5,6 +5,10 @@ import SwiftUI
 
 struct WorkspaceEditPreview: View {
     @State private var connection = Self.makePreviewConnection()
+    /// Edit Workspace links open views that read the live app environment.
+    /// The screenshot root does not install it, so this preview has to.
+    @State private var coordinator = ConnectionCoordinator(serverStore: ServerStore())
+    @State private var navigation = AppNavigation()
 
     private static let mockSkills: [SkillInfo] = [
         SkillInfo(name: "agents-md", description: "Manage global and project AGENTS.md files for coding agents.", path: "/skills/agents-md"),
@@ -43,7 +47,11 @@ struct WorkspaceEditPreview: View {
                 previewAvailableExtensions: Self.mockExtensions
             )
         }
+        .environment(coordinator)
+        .environment(coordinator.serverStore)
+        .environment(navigation)
         .environment(connection)
+        .environment(connection.sessionStore)
         .environment(connection.workspaceStore)
         .environment(\.apiClient, connection.apiClient)
         .accessibilityIdentifier("screenshot.ready")

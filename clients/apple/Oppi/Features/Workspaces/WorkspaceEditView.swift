@@ -368,6 +368,8 @@ struct WorkspaceEditView: View {
                 .selectionDisabled()
             }
 
+            mcpServersSection
+
             Section {
                 if isLoadingSkills && skills.isEmpty {
                     Text("Loading skills…")
@@ -399,8 +401,6 @@ struct WorkspaceEditView: View {
             }
 
             extensionsSection
-
-            mcpServersSection
 
             if runtime == .sandbox {
                 Section {
