@@ -469,8 +469,6 @@ struct OppiApp: App {
                 switch ScreenshotPreviewConfig.screen {
                 case "usage":
                     UsageChromePreview()
-                case "server-settings":
-                    ServerSettingsChromePreview()
                 default:
                     ScreenshotPreviewView()
                 }

@@ -187,7 +187,7 @@ For OAuth, open the sign-in page in Safari. After approval, Safari might fail to
 
 ## Updating the server
 
-A global npm install can be updated from iPhone **Server** settings or with `oppi update`. See [Server settings](usage.md#server-settings). Git checkouts still use `git pull && npm install && npm run build`.
+A global npm install can be updated from iPhone **Server Settings** (About This Server) or with `oppi update`. See [Server settings](usage.md#server-settings). Git checkouts still use `git pull && npm install && npm run build`.
 
 ## What not to put in config
 

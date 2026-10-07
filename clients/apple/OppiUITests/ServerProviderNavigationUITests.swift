@@ -29,7 +29,7 @@ final class ServerProviderNavigationUITests: XCTestCase {
             "Row must keep title, status, and disclosure inside the 320pt fixture"
         )
         XCTAssertTrue(
-            row.images["chevron.right"].exists,
+            row.images["chevron.forward"].exists,
             "Disclosure chevron must stay on the row at 320pt"
         )
 
@@ -38,7 +38,7 @@ final class ServerProviderNavigationUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Connection"].exists)
         connection.tap()
         XCTAssertTrue(
-            app.navigationBars["Server"].waitForExistence(timeout: 2),
+            app.navigationBars["Server Settings"].waitForExistence(timeout: 2),
             "Status Connection must stay passive"
         )
         XCTAssertFalse(app.navigationBars["Model Providers"].exists)
@@ -67,7 +67,7 @@ final class ServerProviderNavigationUITests: XCTestCase {
         back.tap()
 
         XCTAssertTrue(
-            app.navigationBars["Server"].waitForExistence(timeout: 5),
+            app.navigationBars["Server Settings"].waitForExistence(timeout: 5),
             "Back must return to Server Settings"
         )
         XCTAssertTrue(app.buttons["server.modelProviders.open"].waitForExistence(timeout: 5))

@@ -78,7 +78,7 @@ npm install -g oppi-server@latest
 npm uninstall -g oppi-server
 ```
 
-On iPhone, **Server** settings can update a globally installed `oppi-server` with one tap and reconnect after the process restarts. Other install kinds show the host command to copy. See [Using Oppi](docs/usage.md#server-settings).
+On iPhone, **Server Settings** can update a globally installed `oppi-server` with one tap and reconnect after the process restarts. Other install kinds show the host command to copy. See [Using Oppi](docs/usage.md#server-settings).
 
 With the default HTTP/TLS transport, the phone must reach the server over LAN, Tailscale, or a public hostname. For remote HTTP pairing, include the host in the invite:
 

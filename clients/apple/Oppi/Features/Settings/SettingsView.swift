@@ -10,6 +10,8 @@ struct SettingsView: View {
     @Environment(ServerStore.self) private var serverStore
     @Environment(ConnectionCoordinator.self) private var coordinator
 
+    @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var sshTerminalEnabled = false
+
     @State private var summary = Summary.current()
     @State private var cacheSizeText: String?
     @State private var showAddServer = false
@@ -58,10 +60,16 @@ struct SettingsView: View {
                     SettingsVoicePage()
                 }
                 .accessibilityIdentifier("settings.row.voice")
-                SettingsIndexRow("Network", systemImage: "network", value: tailscaleSummary) {
-                    SettingsNetworkPage()
+                SettingsIndexRow("Tailscale", systemImage: "network", value: tailscaleSummary) {
+                    TailnetSettingsView()
                 }
-                .accessibilityIdentifier("settings.row.network")
+                .accessibilityIdentifier("settings.tailscale")
+                if sshTerminalEnabled {
+                    SettingsIndexRow("SSH Hosts", systemImage: "terminal") {
+                        SSHTerminalHostListView()
+                    }
+                    .accessibilityIdentifier("settings.sshTerminal")
+                }
                 SettingsIndexRow("Privacy & Security", systemImage: "hand.raised") {
                     SettingsPrivacyPage()
                 }
@@ -91,27 +99,19 @@ struct SettingsView: View {
         Section("Servers") {
             ForEach(serverStore.servers) { server in
                 let state = HostSwitcherBadgeState.make(for: server, coordinator: coordinator)
-                Button {
+                SettingsIndexActionRow {
                     openServerSettings(server)
                 } label: {
                     HStack(spacing: 12) {
                         RuntimeBadge(icon: server.resolvedBadgeIcon, tint: state.tintColor)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(server.name)
-                                .foregroundStyle(.themeFg)
                             Text(state.title)
                                 .font(.footnote)
                                 .foregroundStyle(.themeComment)
                         }
-                        Spacer(minLength: 8)
-                        Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.themeComment)
-                            .accessibilityHidden(true)
                     }
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
                 .accessibilityLabel(server.name)
                 .accessibilityValue(state.title)
                 .accessibilityIdentifier("settings.server.\(server.id)")

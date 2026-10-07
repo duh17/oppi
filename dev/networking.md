@@ -47,7 +47,7 @@ Public-domain invites omit the origin leaf pin. Apple clients use system CA on t
 
 ## Embedded Tailscale node (iOS)
 
-iOS can join the tailnet itself through the official userspace TailscaleKit (`github.com/tailscale/libtailscale`, `swift/`), with no Network Extension, VPN entitlement, or auth key. `TailnetNodeController` runs the node after the user connects from Settings → Network → Tailscale. Login and run state come from the IPN bus (`BrowseToURL`, `State`); the machine list comes from LocalAPI status (`TailscaleNode.statusJSON()`), not from `NWPathMonitor`. Node state lives in Application Support/Tailscale, excluded from backup.
+iOS can join the tailnet itself through the official userspace TailscaleKit (`github.com/tailscale/libtailscale`, `swift/`), with no Network Extension, VPN entitlement, or auth key. `TailnetNodeController` runs the node after the user connects from Settings → Tailscale. Login and run state come from the IPN bus (`BrowseToURL`, `State`); the machine list comes from LocalAPI status (`TailscaleNode.statusJSON()`), not from `NWPathMonitor`. Node state lives in Application Support/Tailscale, excluded from backup.
 
 While the node is Running, `TailnetTransportRoute` adds the node's loopback SOCKS5 proxy (user `tsnet`, per-node credential) to every Oppi HTTPS/WSS URLSession, scoped by `matchDomains` to `ts.net` and `beta.tailscale.net`. `Running` can land before `publishRoute` finishes; same-user pairing waits for the current-generation proxy before it builds a bootstrap URLSession. LAN IPs and public hosts stay direct; failover keeps a system Tailscale VPN usable if the loopback listener is gone. TLS and leaf pinning are unchanged end to end. Transports read the route only when they build a session. A route change rebuilds paired `*.ts.net` servers only when they are not on LAN or already configured for the published SOCKS generation (`ConnectionCoordinator.handleTailnetRouteChange`). The share extension runs in its own process without the node.
 
@@ -57,7 +57,7 @@ iOS can reclaim the loopback listener from a suspended app. A bus watch that fai
 
 ### Machine list status
 
-Settings → Network → Tailscale → Online Machines (`TailnetSettingsView`) shows one state per online peer, derived by `TailnetPeerStatus.derive`:
+Settings → Tailscale → Online Machines (`TailnetSettingsView`) shows one state per online peer, derived by `TailnetPeerStatus.derive`:
 
 - **Paired**: the peer's MagicDNS name (case-insensitive, no root dot) equals a paired server host. The row opens that server; no probe runs.
 - **Ready to pair**: an unauthenticated `GET /health` over the node's SOCKS route returned a direct HTTP 200 with Oppi's `{ok: true, protocol: 2}` body on a `TailnetSameUserPairing.probeURLs` port (7749, then 443). Readiness probes refuse redirects and reject other services' 200 responses. The Pair button uses the same port order; its existing reachability check is unchanged.
@@ -69,7 +69,7 @@ Probes start under `.task(id:)` when the screen appears with the node running an
 
 ### Machine setup check over SSH
 
-Settings → Network → Tailscale → Check a machine for Oppi (`SSHPreflightView`) signs in to ordinary sshd (macOS Remote Login, or Linux `sshd`, not Tailscale SSH) to report what Oppi's installer needs, without a terminal and without installing anything. The machine picker reuses the LocalAPI online peers that can host Oppi, plus a manual hostname or tailnet IP.
+Settings → Tailscale → Check a machine for Oppi (`SSHPreflightView`) signs in to ordinary sshd (macOS Remote Login, or Linux `sshd`, not Tailscale SSH) to report what Oppi's installer needs, without a terminal and without installing anything. The machine picker reuses the LocalAPI online peers that can host Oppi, plus a manual hostname or tailnet IP.
 
 - Transport: a `*.ts.net` name uses `TailnetNodeController.dialTCP` only while Oppi's embedded node is running. If that node is stopped, Check and Pair fail with “Tailscale is not connected” and do not call `getaddrinfo`. Every other host uses `SSHDirectTCP.dial` on the current network. `tailscale_dial` has no deadline, so `BlockingSocketDial` bounds it (15 s) and closes a socket that arrives after timeout or cancellation.
 - SSH: `SSHPreflightClient` (swift-nio-ssh). Host key first: an unknown key stops the connection before the password is offered and shows its `SHA256:` fingerprint; the user trusts it and the check reconnects. A changed key fails with both fingerprints and can be forgotten explicitly. `SSHKnownHosts` stores trusted keys in the app-private, this-device-only Keychain (`SSHKeychain`), keyed by lowercased host and port; nothing else is saved.

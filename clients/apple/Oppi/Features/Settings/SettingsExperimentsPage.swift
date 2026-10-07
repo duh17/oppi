@@ -36,7 +36,7 @@ struct SettingsExperimentsPage: View {
                 Toggle("SSH Terminal", isOn: $sshTerminalEnabled)
                     .accessibilityIdentifier("settings.experiments.sshTerminal")
             } footer: {
-                Text("Adds SSH Hosts to Network settings.")
+                Text("Adds SSH Hosts to Settings.")
             }
 
             Section {

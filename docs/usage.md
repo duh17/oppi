@@ -96,7 +96,7 @@ Create and edit sheets can open a **Pi Control** session (ordinary Pi with globa
 
 ## SSH Terminal experiment
 
-Turn on **Settings → Experiments → SSH Terminal** to save SSH hosts on this device, with password or per-device key sign-in. **Settings → Network → SSH Hosts**, and **Terminal** below **MCP Servers**, open that list. Saved passwords and trusted host keys stay in this device’s Keychain; saved-password reads and Secure Enclave signing require user presence. See [SSH Terminal](ssh-terminal.md) for setup, host trust, reconnect behavior, and supported algorithms.
+Turn on **Settings → Experiments → SSH Terminal** to save SSH hosts on this device, with password or per-device key sign-in. **Settings → SSH Hosts**, and **Terminal** below **MCP Servers**, open that list. Saved passwords and trusted host keys stay in this device’s Keychain; saved-password reads and Secure Enclave signing require user presence. See [SSH Terminal](ssh-terminal.md) for setup, host trust, reconnect behavior, and supported algorithms.
 
 ## Durable Sessions experiment
 
@@ -108,19 +108,21 @@ From the CLI, `oppi session create --workspace <id> --prompt <text> --engine dur
 
 ## Models and quota
 
-Pick models from the in-app picker. Remaining provider quota and pace live on **Server** detail → **Model Providers**. The CLI also has `oppi quota` and `oppi models`. See [Provider quotas](provider-quotas.md).
+Pick models from the in-app picker. Remaining provider quota and pace live on **Server Settings** → **Model Providers**. The CLI also has `oppi quota` and `oppi models`. See [Provider quotas](provider-quotas.md).
 
 ## Server settings
 
-**Server** (host switcher → Server Settings) shows the paired server version.
+**Server Settings** (host switcher → Server Settings, or Settings → your server) opens with the server's name and connection status, then a list: **Model Providers**, **Workspaces**, **Dictionary**, **Paired Devices**, **About This Server**, and **Badge Icon**. **Mobile Output Guide** and **Remove Server** follow on the same screen. Add another server from Settings.
 
-When a newer `oppi-server` is on npm and this host is a global npm install, the screen shows **Update available** and an **Update** button. Confirming names the version and warns that running sessions will be interrupted. Oppi installs that exact version, restarts the server, and reconnects. Interrupted sessions resume after the restart; see [Running sessions across a restart](server-configuration.md#running-sessions-across-a-restart).
+**About This Server** shows connection, uptime, Pi SDK and Pi TUI versions, and the server version. Its row reads **Update Available** when a newer `oppi-server` is on npm.
+
+When a newer `oppi-server` is on npm and this host is a global npm install, About This Server shows **Update available** and an **Update** button. Confirming names the version and warns that running sessions will be interrupted. Oppi installs that exact version, restarts the server, and reconnects. Interrupted sessions resume after the restart; see [Running sessions across a restart](server-configuration.md#running-sessions-across-a-restart).
 
 Git checkouts, Docker images, and other non-npm installs show a copyable `npm install -g oppi-server@…` command instead of a button. `oppi update` on the host uses the same install check.
 
-If this app build needs a newer server than the one you are connected to, All Sessions shows a single notice that opens Server. That notice goes away after you update and reconnect.
+If this app build needs a newer server than the one you are connected to, All Sessions shows a single notice that opens Server Settings. That notice goes away after you update and reconnect.
 
-**Server** detail also lists **Paired Devices**. Your device is marked **This device** and has no Revoke button. Other devices show when they were last used; **Revoke** asks for confirmation, then signs that device out immediately. See [Onboarding](onboarding.md#paired-devices).
+**Paired Devices** lists the devices paired with this server. Your device is marked **This device** and has no Revoke button. Other devices show when they were last used; **Revoke** asks for confirmation, then signs that device out immediately. See [Onboarding](onboarding.md#paired-devices).
 
 ## What stays Pi
 

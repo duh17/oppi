@@ -541,7 +541,7 @@ enum HostSwitcherDestination: Hashable {
         case .inbox: "All Sessions"
         case .usage: "Usage"
         case .modelProviders: "Model Providers"
-        case .serverSettings: "Server"
+        case .serverSettings: "Server Settings"
         }
     }
 

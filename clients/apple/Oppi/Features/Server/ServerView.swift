@@ -84,9 +84,6 @@ struct ServerView: View {
             }
         }
         .readVerticalBarActivity($verticalBarActive)
-        .navigationDestination(for: PairedServer.self) { server in
-            ServerDetailView(server: server)
-        }
         .navigationDestination(for: ServerDetailsNavTarget.self) { target in
             ServerDetailsScopedDestinationView(target: target)
         }

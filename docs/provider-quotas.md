@@ -6,11 +6,11 @@ Remaining percent and reset time come from the provider. The Oppi server derives
 
 ## Where to look
 
-- Apple: **Server** detail → **Model Providers**
+- Apple: **Server Settings** → **Model Providers**
 - CLI: `oppi quota` and `oppi models`
 - API: `GET /server/provider-quotas`
 
-Windows are shortest period first. Compact UI, including the model picker, shows the shortest window. Server detail shows every window.
+Windows are shortest period first. Compact UI, including the model picker, shows the shortest window. Server Settings → Model Providers shows every window.
 
 ## Remaining vs pace
 
@@ -95,7 +95,7 @@ The two OpenAI providers keep separate credentials, and Oppi never sends one pro
 | `openai` | Sign in with ChatGPT (OAuth) | Unknown. Connected, no windows, and a note pointing to [ChatGPT usage settings](https://chatgpt.com/settings/usage) |
 | `openai` | OpenAI API key | Not authenticated for quota: no windows and no note. API keys bill per token and have no subscription window |
 
-No supported quota API was identified for Sign in with ChatGPT, and OpenAI's docs say to send that token only to `https://api.openai.com/v1`, not to ChatGPT `backend-api` endpoints. By default Oppi therefore makes no request for the `openai` provider and never reuses the Codex endpoint or token. The CLI prints the note in red and Server → Model Providers in gray; both mean "unknown", not "failed".
+No supported quota API was identified for Sign in with ChatGPT, and OpenAI's docs say to send that token only to `https://api.openai.com/v1`, not to ChatGPT `backend-api` endpoints. By default Oppi therefore makes no request for the `openai` provider and never reuses the Codex endpoint or token. The CLI prints the note in red and Server Settings → Model Providers in gray; both mean "unknown", not "failed".
 
 ### Opt in: plan-wide usage via the legacy Codex connection
 

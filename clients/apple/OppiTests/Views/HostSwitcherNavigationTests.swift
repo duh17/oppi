@@ -17,9 +17,9 @@ struct HostSwitcherDestinationTests {
         ])
     }
 
-    @Test func titlesAreUsageServerAndModelProviders() {
+    @Test func titlesAreUsageServerSettingsAndModelProviders() {
         #expect(HostSwitcherDestination.usage.title == "Usage")
-        #expect(HostSwitcherDestination.serverSettings.title == "Server")
+        #expect(HostSwitcherDestination.serverSettings.title == "Server Settings")
         #expect(HostSwitcherDestination.modelProviders.title == "Model Providers")
         #expect(HostSwitcherDestination.inbox.title == "All Sessions")
     }

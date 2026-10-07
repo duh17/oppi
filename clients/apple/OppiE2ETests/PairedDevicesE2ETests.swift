@@ -36,8 +36,13 @@ final class PairedDevicesE2ETests: E2ETestCase {
         )
 
         openServerSettings()
-        let list = app.collectionViews["server.details.list"]
-        XCTAssertTrue(list.waitForExistence(timeout: 10), "Server settings list did not appear")
+        XCTAssertTrue(
+            app.collectionViews["server.details.list"].waitForExistence(timeout: 10),
+            "Server settings list did not appear"
+        )
+        tap(app.buttons["server.row.pairedDevices"], named: "Paired Devices row", timeout: 10)
+        let list = app.collectionViews["server.pairedDevices.list"]
+        XCTAssertTrue(list.waitForExistence(timeout: 10), "Paired Devices page did not appear")
 
         let revoke = app.buttons["server.pairedDevices.revoke.\(throwawayId)"]
         scrollUntilVisible(revoke, in: list)
@@ -107,7 +112,7 @@ final class PairedDevicesE2ETests: E2ETestCase {
             .firstMatch
         tap(switcher, named: "server switcher", timeout: 10)
         tap(app.buttons["hostSwitcher.serverSettings"], named: "Server Settings", timeout: 5)
-        XCTAssertTrue(app.navigationBars["Server"].waitForExistence(timeout: 10), "Server settings did not open")
+        XCTAssertTrue(app.navigationBars["Server Settings"].waitForExistence(timeout: 10), "Server settings did not open")
     }
 
     private func scrollUntilVisible(_ element: XCUIElement, in list: XCUIElement) {

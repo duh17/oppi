@@ -59,8 +59,8 @@ enum ServerUpdatePresentation {
     }
 
     static let minimumVersionNoticeTitle = "This server is older than this app"
-    static let minimumVersionNoticeMessage = "Open Server to update it, then reconnect."
-    static let minimumVersionNoticeAction = "Open Server"
+    static let minimumVersionNoticeMessage = "Open Server Settings to update it, then reconnect."
+    static let minimumVersionNoticeAction = "Open Server Settings"
 
     static let fallbackManualCommand = "npm install -g oppi-server@latest"
 }

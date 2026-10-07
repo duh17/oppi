@@ -134,14 +134,6 @@ struct ProviderConfigurationPresentation: Equatable {
     }
 }
 
-struct ModelProvidersView: View {
-    let server: PairedServer
-
-    var body: some View {
-        ServerDetailView(server: server, presentation: .modelProviders)
-    }
-}
-
 struct ServerDetailsScopedDestinationView: View {
     @Environment(ServerStore.self) private var serverStore
     @Environment(ConnectionCoordinator.self) private var coordinator
@@ -158,7 +150,7 @@ struct ServerDetailsScopedDestinationView: View {
 
     var body: some View {
         if let server {
-            ServerDetailView(server: server)
+            ServerSettingsRootView(server: server)
                 .id(server.id)
         } else {
             unavailableServerView
@@ -194,8 +186,8 @@ struct ModelProvidersScopedDestinationView: View {
         if let server {
             // Keyed by the navigation target, not the visible host: a host-pill
             // switch must not destroy the view and drop a live provider sign-in.
-            // ServerDetailView resets host-local state when the host changes.
-            ModelProvidersView(server: server)
+            // ModelProvidersManagementView resets host-local state when the host changes.
+            ModelProvidersManagementView(server: server)
                 .id(target.serverId)
         } else {
             ContentUnavailableView(

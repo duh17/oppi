@@ -24,7 +24,7 @@ extension View {
 /// symbol, a Title Case title, and an optional secondary current-value summary.
 struct SettingsIndexRow<Destination: View>: View {
     private let title: String
-    private let icon: Image
+    private let systemImage: String
     private let value: String?
     private let destination: Destination
 
@@ -35,7 +35,7 @@ struct SettingsIndexRow<Destination: View>: View {
         @ViewBuilder destination: () -> Destination
     ) {
         self.title = title
-        self.icon = Image(systemName: systemImage)
+        self.systemImage = systemImage
         self.value = value
         self.destination = destination()
     }
@@ -50,13 +50,75 @@ struct SettingsIndexRow<Destination: View>: View {
                         .foregroundStyle(.themeComment)
                 }
             } label: {
-                Label {
-                    Text(title)
-                } icon: {
-                    icon
-                        .foregroundStyle(.themeBlue)
-                }
+                SettingsRowLabel(title, systemImage: systemImage)
             }
         }
+    }
+}
+
+/// Title and theme-colored symbol shared by every level-1 row.
+struct SettingsRowLabel: View {
+    private let title: String
+    private let systemImage: String
+
+    init(_ title: String, systemImage: String) {
+        self.title = title
+        self.systemImage = systemImage
+    }
+
+    var body: some View {
+        Label {
+            Text(title)
+        } icon: {
+            Image(systemName: systemImage)
+                .foregroundStyle(.themeBlue)
+        }
+    }
+}
+
+/// A level-1 row whose push must go through app-owned navigation (a tracked
+/// route) instead of a `NavigationLink`. It is a plain `Button` laid out like
+/// `SettingsIndexRow`: same label and value placement, with the system
+/// chevron drawn in the value column.
+///
+/// Callers set the accessibility label, value, and identifier.
+struct SettingsIndexActionRow<Label: View>: View {
+    private let value: String?
+    private let valueStyle: ThemeShapeStyle
+    private let action: () -> Void
+    private let label: Label
+
+    init(
+        value: String? = nil,
+        valueStyle: ThemeShapeStyle = .themeComment,
+        action: @escaping () -> Void,
+        @ViewBuilder label: () -> Label
+    ) {
+        self.value = value
+        self.valueStyle = valueStyle
+        self.action = action
+        self.label = label()
+    }
+
+    var body: some View {
+        Button(action: action) {
+            LabeledContent {
+                HStack(spacing: 8) {
+                    if let value {
+                        Text(value)
+                            .foregroundStyle(valueStyle)
+                            .lineLimit(1)
+                    }
+                    Image(systemName: "chevron.forward")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                }
+            } label: {
+                label
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

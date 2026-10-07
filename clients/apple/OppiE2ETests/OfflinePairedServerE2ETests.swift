@@ -95,7 +95,7 @@ final class OfflinePairedServerE2ETests: E2ETestCase {
 
         tap(second, named: "server picker for settings")
         tap(app.buttons["hostSwitcher.serverSettings"], named: "Server Settings")
-        XCTAssertTrue(app.navigationBars["Server"].waitForExistence(timeout: 10), "Offline Server Settings did not open")
+        XCTAssertTrue(app.navigationBars["Server Settings"].waitForExistence(timeout: 10), "Offline Server Settings did not open")
         let list = app.collectionViews["server.details.list"]
         XCTAssertTrue(list.waitForExistence(timeout: 10))
         let remove = app.buttons["Remove Server"]
@@ -106,7 +106,7 @@ final class OfflinePairedServerE2ETests: E2ETestCase {
         // need not expose the SwiftUI cancellation role as a visible button.
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.95)).tap()
         XCTAssertFalse(app.staticTexts["Remove Offline E2E?"].exists, "Cancellation did not dismiss confirmation")
-        XCTAssertTrue(app.navigationBars["Server"].exists, "Cancellation unexpectedly left settings")
+        XCTAssertTrue(app.navigationBars["Server Settings"].exists, "Cancellation unexpectedly left settings")
         XCTAssertTrue(remove.exists, "Cancellation removed the pairing")
         tap(remove, named: "Remove Server again")
         XCTAssertTrue(app.staticTexts["Remove Offline E2E?"].waitForExistence(timeout: 5))

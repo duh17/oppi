@@ -1,38 +1,6 @@
 import SwiftUI
-import UIKit
 
-/// Detail view for a paired oppi server.
-///
-/// Shows server metadata, stats, security info, and management actions.
-/// Data is fetched on-demand from `GET /server/info`.
-enum ServerDetailPresentation {
-    case details
-    case modelProviders
-}
-
-enum ServerDetailMobileOutputGuideState: Equatable {
-    case loading
-    case available(enabled: Bool, revision: Int, error: String?)
-    case failed(String)
-
-    static func resolve(
-        configuration: MobileOutputGuideConfiguration?,
-        isLoading: Bool,
-        error: String?
-    ) -> Self {
-        if let configuration {
-            return .available(
-                enabled: configuration.enabled,
-                revision: configuration.revision,
-                error: error
-            )
-        }
-        if isLoading { return .loading }
-        return .failed(error ?? "Mobile Output Guide setting is unavailable")
-    }
-}
-
-/// Opens Model Providers for the same visible host `ServerDetailView` shows.
+/// Opens Model Providers for the same visible host Server Settings shows.
 ///
 /// Active host wins (`ServerSelection.resolveVisible`); frozen id is fallback.
 @MainActor
@@ -61,41 +29,6 @@ enum ServerDetailModelProvidersNavigation {
             servers: servers
         )
         navigation.openModelProviders(ModelProvidersNavTarget(serverId: visible.id))
-    }
-}
-
-/// Settings drill-in for this server's model providers.
-///
-/// Keeps setup/status words and color, and uses a standard disclosure
-/// indicator on the whole row so it does not read as a passive Status value.
-struct ServerModelProvidersNavigationRow: View {
-    let summary: String
-    let summaryStyle: ThemeShapeStyle
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack {
-                Text(HostSwitcherDestination.modelProviders.menuTitle)
-                    .foregroundStyle(.themeFg)
-                    .layoutPriority(1)
-                Spacer(minLength: 8)
-                Text(summary)
-                    .font(.caption)
-                    .foregroundStyle(summaryStyle)
-                    .lineLimit(1)
-                    .layoutPriority(0)
-                Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.themeComment)
-                    .accessibilityHidden(true)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("server.modelProviders.open")
-        .accessibilityLabel(HostSwitcherDestination.modelProviders.menuTitle)
-        .accessibilityValue(summary)
     }
 }
 
@@ -312,25 +245,17 @@ final class ProviderAuthFlowAttempt {
     }
 }
 
-struct ServerDetailView: View {
+/// Model Providers for a paired server: connected and available providers,
+/// sign-in flows, and API keys. Server Settings opens it through `AppNavigation`
+/// so the host switcher tracks the route.
+struct ModelProvidersManagementView: View {
     let server: PairedServer
-    var presentation: ServerDetailPresentation = .details
 
     @Environment(ConnectionCoordinator.self) private var coordinator
-    @Environment(AppNavigation.self) private var navigation
     @Environment(ServerStore.self) private var serverStore
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
-    @State private var info: ServerInfo?
     @State private var verticalBarActive = false
-    @State private var isLoading = true
-    @State private var error: String?
-    @State private var showRemoveConfirmation = false
-    @State private var mobileOutputGuide: MobileOutputGuideConfiguration?
-    @State private var isLoadingMobileOutputGuide = false
-    @State private var isSavingMobileOutputGuide = false
-    @State private var mobileOutputGuideError: String?
 
     @State private var providerStatuses: [ProviderAuthProviderStatus] = []
     @State private var providerSetupState: ProviderSetupState = .unknown
@@ -346,18 +271,6 @@ struct ServerDetailView: View {
 
     @State private var apiKeyEditorProvider: ProviderAuthProviderStatus?
     @State private var apiKeyDraft = ""
-    @State private var showAddServer = false
-    @State private var showUpdateConfirmation = false
-    @State private var updateInFlight = false
-    @State private var updateDidNotReturn = false
-    @State private var copiedManualCommand = false
-    @State private var updatePollTask: Task<Void, Never>?
-    @State private var pairedDevices: [AuthDevice]?
-    @State private var isLoadingPairedDevices = false
-    @State private var pairedDevicesError: String?
-    @State private var isRevokingDevice = false
-    @State private var showRevokeConfirmation = false
-    @State private var devicePendingRevoke: PairedDeviceRoster.Row?
 
     private var pairedServer: PairedServer {
         ServerDetailModelProvidersNavigation.visibleServer(
@@ -367,70 +280,38 @@ struct ServerDetailView: View {
         )
     }
 
-    private var hostSwitcherDestination: HostSwitcherDestination {
-        presentation == .modelProviders ? .modelProviders : .serverSettings
-    }
-
     var body: some View {
         List {
-            if presentation == .modelProviders {
-                providerManagementSections
-            } else {
-                serverSettingsSections
-            }
+            providerManagementSections
         }
         .iPadReadableContent(maxWidth: IPadReadableContentWidth.detail)
         .themedListSurface()
-        .accessibilityIdentifier(
-            presentation == .modelProviders ? "server.modelProviders.list" : "server.details.list"
-        )
-        .navigationTitle(
-            presentation == .modelProviders
-                ? HostSwitcherDestination.modelProviders.title
-                : HostSwitcherDestination.serverSettings.title
-        )
+        .accessibilityIdentifier("server.modelProviders.list")
+        .navigationTitle(HostSwitcherDestination.modelProviders.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             verticalRailToolbarItem(joinsVerticalRail: verticalBarActive) {
                 HostSwitcherMenu(
                     current: pairedServer,
-                    destination: hostSwitcherDestination
+                    destination: .modelProviders
                 )
             }
         }
         .readVerticalBarActivity($verticalBarActive)
         .refreshable {
-            if presentation == .modelProviders {
-                await loadProviderConfiguration()
-            } else {
-                await load()
-            }
+            await loadProviderConfiguration()
         }
         .task(id: pairedServer.id) {
-            if presentation == .modelProviders {
-                // Host-local state resets on a host switch. A live `flowAttempt`
-                // stays: it is bound to its own server's client and keeps polling.
-                providerStatuses = []
-                providerSetupState = .unknown
-                providerQuotas = nil
-                providerError = nil
-                apiKeyEditorProvider = nil
-                apiKeyDraft = ""
-                signInChoiceProvider = nil
-                await loadProviderConfiguration()
-            } else {
-                info = nil
-                error = nil
-                isLoading = true
-                mobileOutputGuide = nil
-                mobileOutputGuideError = nil
-                pairedDevices = nil
-                pairedDevicesError = nil
-                await load()
-            }
-        }
-        .sheet(isPresented: $showAddServer) {
-            OnboardingView(mode: .addServer)
+            // Host-local state resets on a host switch. A live `flowAttempt`
+            // stays: it is bound to its own server's client and keeps polling.
+            providerStatuses = []
+            providerSetupState = .unknown
+            providerQuotas = nil
+            providerError = nil
+            apiKeyEditorProvider = nil
+            apiKeyDraft = ""
+            signInChoiceProvider = nil
+            await loadProviderConfiguration()
         }
         .onAppear {
             resumeFlowPollingIfLive()
@@ -447,32 +328,6 @@ struct ServerDetailView: View {
         }
         .onDisappear {
             flowAttempt?.stopPolling()
-            updatePollTask?.cancel()
-            updatePollTask = nil
-        }
-        .confirmationDialog(
-            removeDialogTitle,
-            isPresented: $showRemoveConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button(removeDialogButtonTitle, role: .destructive) {
-                removeServer()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(removeDialogMessage)
-        }
-        .confirmationDialog(
-            updateConfirmationTitle,
-            isPresented: $showUpdateConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Update") {
-                Task { await startServerUpdate() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(ServerUpdatePresentation.confirmationMessage)
         }
         .confirmationDialog(
             signInChoiceTitle,
@@ -493,22 +348,6 @@ struct ServerDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text("Choose where the sign-in page opens. On server opens a browser on the server's own desktop.")
-        }
-        .confirmationDialog(
-            revokeDeviceTitle,
-            isPresented: $showRevokeConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Revoke", role: .destructive) {
-                if let row = devicePendingRevoke {
-                    Task { await revokeDevice(row) }
-                }
-            }
-            Button("Cancel", role: .cancel) {
-                devicePendingRevoke = nil
-            }
-        } message: {
-            Text("\(devicePendingRevoke?.title ?? "That device") will lose access immediately. Pair it again to restore access.")
         }
         .sheet(isPresented: $isFlowSheetPresented, onDismiss: handleFlowSheetDismissed) {
             providerFlowSheet
@@ -589,447 +428,11 @@ struct ServerDetailView: View {
         ProviderConfigurationPresentation(state: providerSetupState)
     }
 
-    private var providerConfigurationSummary: String {
-        providerPresentation.summary(connectedCount: connectedProviders.count)
-    }
-
-    private var providerConfigurationSummaryStyle: ThemeShapeStyle {
-        providerSetupState == .needsConfiguration ? .themeOrange : .themeComment
-    }
-
-    @ViewBuilder
-    private var serverSettingsSections: some View {
-        Section {
-            if isLoading {
-                HStack {
-                    Spacer()
-                    ProgressView()
-                    Spacer()
-                }
-            } else if let error, info == nil {
-                Label(error, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.themeOrange)
-                    .font(.footnote)
-            }
-
-            LabeledContent("Connection", value: connectionStatusTitle)
-            if let info {
-                LabeledContent("Uptime", value: info.uptimeLabel)
-                LabeledContent("Pi SDK", value: info.piVersion)
-                if let piCliVersion = info.piCliVersion, !piCliVersion.isEmpty {
-                    LabeledContent("Pi TUI", value: piCliVersion)
-                }
-                LabeledContent("Server", value: info.version)
-            }
-        } header: {
-            Text("Status")
-        } footer: {
-            Text("Pi SDK is the embedded Pi coding-agent package that runs Oppi sessions. Pi TUI is the installed pi CLI on this host.")
-        }
-
-        if info != nil {
-            serverUpdateSection
-        }
-        pairedDevicesSection
-
-        Section {
-            ServerModelProvidersNavigationRow(
-                summary: providerConfigurationSummary,
-                summaryStyle: providerConfigurationSummaryStyle
-            ) {
-                ServerDetailModelProvidersNavigation.open(
-                    navigation: navigation,
-                    activeServerId: coordinator.activeServerId,
-                    frozenServer: server,
-                    servers: serverStore.servers
-                )
-            }
-        }
-
-        Section {
-            NavigationLink {
-                WorkspaceListView(server: pairedServer)
-            } label: {
-                Label("Manage Workspaces", systemImage: "square.grid.2x2")
-            }
-            .accessibilityIdentifier("server.manageWorkspaces")
-        } header: {
-            Text("Workspaces")
-        }
-
-        Section {
-            NavigationLink {
-                DictationDictionaryView(workspaceId: nil)
-            } label: {
-                Label("Dictation Dictionary", systemImage: "text.book.closed")
-            }
-            .accessibilityIdentifier("server.dictationDictionary")
-        } header: {
-            Text("Dictation")
-        } footer: {
-            Text("Edit All Workspaces jargon for this paired server. Workspace-specific phrases are in workspace settings.")
-        }
-
-        Section {
-            mobileOutputGuideRow
-        } footer: {
-            Text("Appends Oppi's link and rich-content rendering guide to new and explicitly reloaded managed Pi sessions, including Pi Control. Terminal-owned Mirror sessions are unchanged.")
-        }
-
-        Section {
-            HStack {
-                Text("Preview")
-                Spacer()
-                RuntimeBadge(
-                    compact: false,
-                    icon: pairedServer.resolvedBadgeIcon,
-                    tint: badgePreviewConnectionState.tintColor
-                )
-            }
-
-            BadgeIconGrid(selection: badgeIconSelection, tint: .themeBlue)
-        } header: {
-            Text("Badge")
-        } footer: {
-            Text("Badge color reflects connection status: green connected, blue connecting, red disconnected.")
-        }
-
-        Section {
-            Button {
-                showAddServer = true
-            } label: {
-                Label("Add Server", systemImage: "plus")
-            }
-            .accessibilityIdentifier("server.addServer")
-
-            Button(role: .destructive) {
-                showRemoveConfirmation = true
-            } label: {
-                Label("Remove Server", systemImage: "trash")
-            }
-        } footer: {
-            Text("This only removes pairing from this iPhone. It does not delete the server or its data.")
-        }
-    }
-
-    private var updateConfirmationTitle: String {
-        let version = info?.update?.latestVersion ?? info?.update?.targetVersion ?? "the latest version"
-        return ServerUpdatePresentation.confirmationTitle(version: version)
-    }
-
-    @ViewBuilder
-    private var serverUpdateSection: some View {
-        let update = info?.update
-        let belowMinimum = ServerReleaseVersion.isBelowMinimum(info?.version)
-        if belowMinimum || update?.available == true || update?.isInstalling == true
-            || update?.isRestarting == true || update?.isRestartNeeded == true
-            || update?.isFailed == true || updateInFlight || updateDidNotReturn
-            || (update != nil && update?.isAppUpdatable == false) {
-        Section {
-            if updateDidNotReturn {
-                Label("Server did not come back. Nothing was rolled back — check the host.",
-                      systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.themeOrange)
-                    .accessibilityIdentifier("server.update.didNotReturn")
-            } else if let update {
-                if update.isInstalling || update.isRestarting || updateInFlight {
-                    HStack {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(
-                            ServerUpdatePresentation.progressLabel(
-                                status: update.status,
-                                restartMode: update.restartMode
-                            )
-                        )
-                    }
-                    .accessibilityIdentifier("server.update.progress")
-                } else if update.isRestartNeeded {
-                    Label("Installed. Restart this Oppi server on the host to use the new version.",
-                          systemImage: "arrow.clockwise")
-                        .accessibilityIdentifier("server.update.restartNeeded")
-                } else if update.isFailed, let message = update.error, !message.isEmpty {
-                    Label(message, systemImage: "exclamationmark.triangle")
-                        .font(.footnote)
-                        .foregroundStyle(.themeOrange)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                        .accessibilityIdentifier("server.update.error")
-                }
-
-                if update.available, update.isAppUpdatable, !update.isInstalling,
-                   !update.isRestarting, !update.isRestartNeeded, !updateDidNotReturn {
-                    if let latest = update.latestVersion {
-                        Text(ServerUpdatePresentation.availableTitle(latestVersion: latest))
-                            .accessibilityIdentifier("server.update.available")
-                    }
-                    Button("Update") {
-                        showUpdateConfirmation = true
-                    }
-                    .disabled(updateInFlight)
-                    .accessibilityIdentifier("server.update.button")
-                } else if !update.isAppUpdatable {
-                    Text(update.manualCommand)
-                        .font(.footnote.monospaced())
-                        .textSelection(.enabled)
-                        .accessibilityIdentifier("server.update.manualCommand")
-                    Button(copiedManualCommand ? "Copied" : "Copy Command") {
-                        UIPasteboard.general.string = update.manualCommand
-                        copiedManualCommand = true
-                    }
-                    .accessibilityIdentifier("server.update.manualCopy")
-                }
-            } else if belowMinimum {
-                Text(ServerUpdatePresentation.minimumVersionNoticeTitle)
-                    .accessibilityIdentifier("server.update.available")
-                Text(ServerUpdatePresentation.fallbackManualCommand)
-                    .font(.footnote.monospaced())
-                    .textSelection(.enabled)
-                    .accessibilityIdentifier("server.update.manualCommand")
-                Button(copiedManualCommand ? "Copied" : "Copy Command") {
-                    UIPasteboard.general.string = ServerUpdatePresentation.fallbackManualCommand
-                    copiedManualCommand = true
-                }
-                .accessibilityIdentifier("server.update.manualCopy")
-            }
-        } header: {
-            Text("Update")
-        } footer: {
-            if update?.isAppUpdatable == true {
-                Text("Updating installs a new oppi-server from npm and restarts this host. Running sessions are interrupted.")
-            } else {
-                Text("This install cannot be updated from the app. Run the command on the host, then restart the server.")
-            }
-        }
-        }
-    }
-
-    private var currentDeviceId: String? {
-        pairedServer.deviceCredential?.deviceId
-    }
-
-    private var pairedDevicesState: ServerDetailPairedDevicesState {
-        ServerDetailPairedDevicesState.resolve(
-            devices: pairedDevices,
-            currentDeviceId: currentDeviceId,
-            isLoading: isLoadingPairedDevices,
-            error: pairedDevicesError
-        )
-    }
-
-    private var revokeDeviceTitle: String {
-        if let title = devicePendingRevoke?.title, !title.isEmpty {
-            return "Revoke \(title)?"
-        }
-        return "Revoke this device?"
-    }
-
-    @ViewBuilder
-    private var pairedDevicesSection: some View {
-        Section {
-            switch pairedDevicesState {
-            case .loading:
-                HStack {
-                    Spacer()
-                    ProgressView()
-                    Spacer()
-                }
-                .accessibilityIdentifier("server.pairedDevices.loading")
-            case .loaded(let rows, let error):
-                if rows.isEmpty {
-                    Text("No paired devices")
-                        .foregroundStyle(.themeComment)
-                } else {
-                    ForEach(rows) { row in
-                        pairedDeviceRow(row)
-                    }
-                }
-                if let error {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .font(.footnote)
-                        .foregroundStyle(.themeOrange)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("server.pairedDevices.error")
-                }
-            case .failed(let message):
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(message, systemImage: "exclamationmark.triangle")
-                        .font(.footnote)
-                        .foregroundStyle(.themeOrange)
-                    Button("Retry") {
-                        Task { await loadPairedDevices() }
-                    }
-                }
-                .accessibilityIdentifier("server.pairedDevices.error")
-            }
-        } header: {
-            Text("Paired Devices")
-        } footer: {
-            Text("Every paired device can see this list. Revoking disconnects that device immediately.")
-        }
-    }
-
-    @ViewBuilder
-    private func pairedDeviceRow(_ row: PairedDeviceRoster.Row) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(row.title)
-                    .foregroundStyle(.themeFg)
-                Text(pairedDeviceCaption(row))
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-            }
-            // Group only the text: a container-level identifier or label would also
-            // overwrite the Revoke button's.
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier(
-                row.isThisDevice ? "server.pairedDevices.thisDevice" : "server.pairedDevices.row.\(row.id)"
-            )
-            Spacer(minLength: 8)
-            if row.canRevoke {
-                Button("Revoke", role: .destructive) {
-                    devicePendingRevoke = row
-                    showRevokeConfirmation = true
-                }
-                .buttonStyle(.borderless)
-                .font(.footnote)
-                .disabled(isRevokingDevice)
-                .accessibilityLabel("Revoke \(row.title)")
-                .accessibilityIdentifier("server.pairedDevices.revoke.\(row.id)")
-            }
-        }
-    }
-
-    private func pairedDeviceCaption(_ row: PairedDeviceRoster.Row) -> String {
-        if row.isThisDevice {
-            return "This device"
-        }
-        guard let lastUsedAt = row.lastUsedAt else {
-            return "Never used"
-        }
-        let date = Date(timeIntervalSince1970: TimeInterval(lastUsedAt) / 1_000)
-        let relative = pairedDeviceRelativeFormatter.localizedString(for: date, relativeTo: Date())
-        return "Last used \(relative)"
-    }
-
-    private var pairedDeviceRelativeFormatter: RelativeDateTimeFormatter {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter
-    }
-
-    private var connectionStatusTitle: String {
-        let state = HostSwitcherBadgeState.make(for: pairedServer, coordinator: coordinator)
-        return ServerConnectionLanePresentation.title(
-            server: pairedServer,
-            connection: coordinator.connection(for: pairedServer.id),
-            state: state,
-            isPreparing: coordinator.preparingServerIds.contains(pairedServer.id)
-        )
-    }
-
-    @ViewBuilder
-    private var mobileOutputGuideRow: some View {
-        switch ServerDetailMobileOutputGuideState.resolve(
-            configuration: mobileOutputGuide,
-            isLoading: isLoadingMobileOutputGuide,
-            error: mobileOutputGuideError
-        ) {
-        case .loading:
-            HStack {
-                Text("Mobile Output Guide")
-                Spacer()
-                ProgressView()
-                    .controlSize(.small)
-            }
-            .accessibilityIdentifier("server.mobileOutputGuide.loading")
-        case .available(let enabled, _, let error):
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle(
-                    "Mobile Output Guide",
-                    isOn: Binding(
-                        get: { enabled },
-                        set: { newValue in
-                            Task { await setMobileOutputGuide(newValue) }
-                        }
-                    )
-                )
-                .disabled(isSavingMobileOutputGuide)
-                .accessibilityIdentifier("server.mobileOutputGuide.enabled")
-                if let error {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .font(.footnote)
-                        .foregroundStyle(.themeOrange)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("server.mobileOutputGuide.error")
-                }
-            }
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Mobile Output Guide")
-                    Spacer()
-                    Text("Unavailable")
-                        .foregroundStyle(.themeOrange)
-                }
-                Label(message, systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
-                    .foregroundStyle(.themeOrange)
-                Button("Retry") {
-                    Task {
-                        guard let api = await prepareAPIClient() else { return }
-                        await loadMobileOutputGuide(api: api)
-                    }
-                }
-            }
-            .accessibilityIdentifier("server.mobileOutputGuide.error")
-        }
-    }
-
     private func providerQuota(for provider: ProviderAuthProviderStatus) -> ProviderQuota? {
         guard let quota = providerQuotas?.quota(forProviderId: provider.id),
               quota.hasAnyUsageWindow || quota.error != nil || quota.planLabel != nil
         else { return nil }
         return quota
-    }
-
-    private var badgeIconSelection: Binding<ServerBadgeIcon> {
-        Binding(
-            get: { pairedServer.resolvedBadgeIcon },
-            set: { serverStore.setBadgeIcon(id: pairedServer.id, to: $0) }
-        )
-    }
-
-    private var badgePreviewConnectionState: ServerBadgeConnectionState {
-        if info != nil || !providerStatuses.isEmpty || providerQuotas != nil {
-            return .connected
-        }
-        if isLoading || isLoadingProviders {
-            return .connecting
-        }
-        return .disconnected
-    }
-
-    private var removingLastServer: Bool {
-        serverStore.servers.count == 1 && serverStore.servers.first?.id == pairedServer.id
-    }
-
-    private var removeDialogTitle: String {
-        if removingLastServer {
-            return "Remove only paired server?"
-        }
-        return "Remove \(pairedServer.name)?"
-    }
-
-    private var removeDialogButtonTitle: String {
-        removingLastServer ? "Remove Last Server" : "Remove Server"
-    }
-
-    private var removeDialogMessage: String {
-        if removingLastServer {
-            return "This is the only paired server on this device. Removing it will disconnect Oppi and return you to onboarding. You'll need to pair again before using the app."
-        }
-        return "This removes the server from this iPhone only. It does not delete anything on the server, and you can pair it again later."
     }
 
     private var connectedProviders: [ProviderAuthProviderStatus] {
@@ -1388,182 +791,6 @@ struct ServerDetailView: View {
         }
     }
 
-    private func removeServer() {
-        Task { @MainActor in
-            await coordinator.removeServer(id: pairedServer.id)
-
-            if serverStore.servers.isEmpty {
-                navigation.showOnboarding = true
-                return
-            }
-
-            dismiss()
-        }
-    }
-
-    private func startServerUpdate() async {
-        guard let version = info?.update?.latestVersion, !version.isEmpty else { return }
-        guard let api = await prepareAPIClient() else {
-            error = "Unable to prepare server transport"
-            return
-        }
-        let previousVersion = info?.version
-        updateInFlight = true
-        updateDidNotReturn = false
-        do {
-            let started = try await api.startServerUpdate(version: version)
-            if var current = info {
-                current.update = started
-                info = current
-            }
-            await pollUpdateUntilSettled(api: api, previousVersion: previousVersion)
-        } catch {
-            self.error = error.localizedDescription
-            updateInFlight = false
-        }
-    }
-
-    private func pollUpdateUntilSettled(api: APIClient, previousVersion: String?) async {
-        updatePollTask?.cancel()
-        let task = Task { @MainActor in
-            // The server allows npm install -g up to 5 minutes, so an answering
-            // `installing` host is still working. "Did not come back" means it
-            // stopped answering, or sat in `restarting`, for the restart grace.
-            let hardDeadline = Date().addingTimeInterval(7 * 60)
-            let restartGrace: TimeInterval = 120
-            var notSettlingSince: Date?
-            while !Task.isCancelled, Date() < hardDeadline {
-                if let notSettlingSince, Date().timeIntervalSince(notSettlingSince) > restartGrace {
-                    break
-                }
-                try? await Task.sleep(for: .seconds(1))
-                if Task.isCancelled { break }
-                do {
-                    var next = try await api.serverInfo()
-                    let reported = next.update
-                    // A same-version replacement server (failed exec) omits `update`
-                    // until its install lookup resolves; keep the in-flight snapshot
-                    // instead of blanking it. A new version means the update landed.
-                    if next.update == nil, next.version == previousVersion {
-                        next.update = info?.update
-                    }
-                    info = next
-                    error = nil
-                    if reported?.isInstalling == true {
-                        notSettlingSince = nil
-                    } else if notSettlingSince == nil {
-                        notSettlingSince = Date()
-                    }
-                    if next.update?.isFailed == true {
-                        updateInFlight = false
-                        return
-                    }
-                    if let previousVersion, next.version != previousVersion {
-                        coordinator.connection(for: pairedServer.id)?.noteServerVersionAfterUpdate(next.version)
-                        updateInFlight = false
-                        return
-                    }
-                    if next.update?.isRestartNeeded == true {
-                        updateInFlight = false
-                        return
-                    }
-                    // The host answered idle on the same version: it is serving
-                    // normally, so show its real state rather than "did not come back".
-                    if reported?.isIdle == true {
-                        updateInFlight = false
-                        return
-                    }
-                } catch {
-                    // Connection drop during restart is expected.
-                    if notSettlingSince == nil { notSettlingSince = Date() }
-                }
-            }
-            if !Task.isCancelled {
-                updateDidNotReturn = true
-            }
-            updateInFlight = false
-        }
-        updatePollTask = task
-        await task.value
-    }
-
-    private func load() async {
-        guard let api = await prepareAPIClient() else {
-            error = "Unable to prepare server transport"
-            pairedDevicesError = "Unable to prepare server transport"
-            isLoading = false
-            return
-        }
-
-        do {
-            let previousVersion = info?.version
-            let next = try await api.serverInfo()
-            info = next
-            error = nil
-            // The host answered, so a stale "did not come back" no longer applies;
-            // its real update status is shown instead.
-            if updateDidNotReturn {
-                updateDidNotReturn = false
-                if let previousVersion, next.version != previousVersion {
-                    coordinator.connection(for: pairedServer.id)?.noteServerVersionAfterUpdate(next.version)
-                }
-            }
-        } catch {
-            self.error = error.localizedDescription
-        }
-
-        async let providers: () = loadProviderConfiguration(api: api)
-        async let guide: () = loadMobileOutputGuide(api: api)
-        async let devices: () = loadPairedDevices(api: api)
-        _ = await (providers, guide, devices)
-        isLoading = false
-    }
-
-    private func loadPairedDevices(api: APIClient? = nil) async {
-        isLoadingPairedDevices = true
-        defer { isLoadingPairedDevices = false }
-
-        let client: APIClient
-        if let api {
-            client = api
-        } else if let prepared = await prepareAPIClient() {
-            client = prepared
-        } else {
-            pairedDevicesError = "Unable to prepare server transport"
-            return
-        }
-
-        do {
-            pairedDevices = try await client.listAuthDevices()
-            pairedDevicesError = nil
-        } catch {
-            pairedDevicesError = error.localizedDescription
-        }
-    }
-
-    private func revokeDevice(_ row: PairedDeviceRoster.Row) async {
-        guard row.canRevoke else { return }
-        isRevokingDevice = true
-        defer {
-            isRevokingDevice = false
-            devicePendingRevoke = nil
-        }
-        guard let api = await prepareAPIClient() else {
-            pairedDevicesError = "Unable to prepare server transport"
-            return
-        }
-        do {
-            try await api.revokeAuthDevice(id: row.id)
-            pairedDevices = (pairedDevices ?? []).filter { $0.id != row.id }
-            pairedDevicesError = nil
-            await loadPairedDevices(api: api)
-        } catch {
-            // Another device may have revoked it first; refresh so no stale row stays.
-            await loadPairedDevices(api: api)
-            pairedDevicesError = error.localizedDescription
-        }
-    }
-
     private func prepareAPIClient() async -> APIClient? {
         await coordinator.apiClientReady(for: pairedServer.id)
     }
@@ -1600,36 +827,6 @@ struct ServerDetailView: View {
         }
 
         providerQuotas = await quotas
-    }
-
-    private func loadMobileOutputGuide(api: APIClient) async {
-        isLoadingMobileOutputGuide = mobileOutputGuide == nil
-        defer { isLoadingMobileOutputGuide = false }
-        do {
-            mobileOutputGuide = try await api.getMobileOutputGuideConfiguration()
-            mobileOutputGuideError = nil
-        } catch {
-            mobileOutputGuideError = error.localizedDescription
-        }
-    }
-
-    private func setMobileOutputGuide(_ enabled: Bool) async {
-        guard let current = mobileOutputGuide,
-              let api = await prepareAPIClient() else { return }
-        isSavingMobileOutputGuide = true
-        defer { isSavingMobileOutputGuide = false }
-        do {
-            mobileOutputGuide = try await api.setMobileOutputGuideConfiguration(
-                enabled: enabled,
-                baseRevision: current.revision
-            )
-            mobileOutputGuideError = nil
-        } catch let APIError.codedServer(status, _, code)
-            where status == 409 && code == "revision_conflict" {
-            await loadMobileOutputGuide(api: api)
-        } catch {
-            mobileOutputGuideError = error.localizedDescription
-        }
     }
 
     private func loadProviderQuotas(api: APIClient) async -> ProviderQuotasInfo? {
@@ -1770,7 +967,7 @@ struct ServerDetailView: View {
     }
 
     private func reloadProviders(ifServerId serverId: String) {
-        guard presentation == .modelProviders, serverId == pairedServer.id else { return }
+        guard serverId == pairedServer.id else { return }
         Task { await loadProviderConfiguration() }
     }
 
@@ -2209,77 +1406,6 @@ struct ServerProviderNavigationRegressionPreview: View {
             preconditionFailure("ServerProviderNavigationRegressionPreview requires a server fingerprint")
         }
         return server
-    }
-}
-
-struct ServerSettingsChromePreview: View {
-    private let themeID: ThemeID
-
-    init() {
-        themeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "dark"
-            ? .dark
-            : .light
-        ThemeRuntimeState.setThemeID(themeID)
-    }
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    LabeledContent("Connection", value: "Connected via paired HTTPS")
-                    LabeledContent("Uptime", value: "2d 4h")
-                    LabeledContent("Pi SDK", value: "0.85.1")
-                    LabeledContent("Pi TUI", value: "0.85.1")
-                    LabeledContent("Server", value: "oppi")
-                } header: {
-                    Text("Status")
-                } footer: {
-                    Text("Pi SDK is the embedded Pi coding-agent package that runs Oppi sessions. Pi TUI is the installed pi CLI on this host.")
-                }
-
-                Section {
-                    ServerModelProvidersNavigationRow(
-                        summary: "Needs setup",
-                        summaryStyle: .themeOrange,
-                        action: {}
-                    )
-                }
-
-                Section {
-                    Toggle("Mobile Output Guide", isOn: .constant(true))
-                        .accessibilityIdentifier("server.mobileOutputGuide.enabled")
-                } footer: {
-                    Text("Appends Oppi's link and rich-content rendering guide to new and explicitly reloaded managed Pi sessions, including Pi Control. Terminal-owned Mirror sessions are unchanged.")
-                }
-
-                Section("Badge") {
-                    Text("Preview")
-                }
-
-                Section {
-                    Label("Add Server", systemImage: "plus")
-                        .accessibilityIdentifier("server.addServer")
-                    Label("Remove Server", systemImage: "trash")
-                }
-            }
-            .navigationTitle(HostSwitcherDestination.serverSettings.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    ServerSwitcherPill(
-                        server: HostSwitcherPreviewData.server,
-                        connectionState: .connected
-                    )
-                    .accessibilityLabel("Current server: \(HostSwitcherPreviewData.server.name)")
-                }
-            }
-        }
-        .preferredColorScheme(themeID == .light ? .light : .dark)
-        .environment(\.theme, themeID.appTheme)
-        .environment(\.themeID, themeID)
-        .accessibilityIdentifier(
-            ProcessInfo.processInfo.environment["SCREENSHOT_READY_ID"] ?? "screenshot.ready"
-        )
     }
 }
 #endif

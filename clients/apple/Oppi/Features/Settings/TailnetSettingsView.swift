@@ -188,7 +188,7 @@ struct TailnetSettingsView: View {
         case .paired:
             if let server = serverStore.servers.first(where: { peer.hasHost($0.host) }) {
                 NavigationLink {
-                    ServerDetailView(server: server)
+                    ServerSettingsRootView(server: server)
                 } label: {
                     HStack {
                         peerTitle(peer)
