@@ -45,7 +45,7 @@ struct BuiltInToolFactsTests {
         let row = makeRow(tool: "write", args: ["path": "New.swift", "content": "let value = 1"], output: "Wrote 13 bytes")
         guard case .code(let text, _, _, _) = row.expandedContent else { Issue.record("Expected requested code"); return }
         #expect(text == "let value = 1")
-        #expect(row.trailing == "Requested")
+        #expect(row.trailing == nil)
         #expect(row.glyph == "pencil")
         #expect(row.currentFileOpenIntent?.path == "New.swift")
     }

@@ -50,7 +50,7 @@ struct ToolFileInspectionTests {
             let row = ToolPresentationBuilder.build(itemID: "row", tool: tool, argsSummary: "wrong", outputPreview: "written", isError: false, isDone: done, context: context)
             #expect(row.title == "server-selected title")
             #expect(row.toolNamePrefix == "file-mutation")
-            #expect(row.trailing == "Requested")
+            #expect(row.trailing == nil)
             #expect(row.currentFileOpenIntent?.path == (done ? "docs/out.md" : nil))
         }
     }

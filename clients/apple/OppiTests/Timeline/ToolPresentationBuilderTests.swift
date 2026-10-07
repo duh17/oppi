@@ -781,7 +781,7 @@ struct ToolPresentationBuilderTests {
 
         #expect(config.title == "src/new-file.ts")
         #expect(config.toolNamePrefix == "file-mutation")
-        #expect(config.trailing == "Requested")
+        #expect(config.trailing == nil)
     }
 
     @Test("write collapsed shows language badge")

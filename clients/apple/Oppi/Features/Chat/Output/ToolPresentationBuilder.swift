@@ -296,7 +296,11 @@ enum ToolPresentationBuilder {
             result.languageBadge = file.fileType == .markdown || file.fileType == .image
                 ? file.fileType?.displayLabel : file.fileType?.syntaxLanguage?.displayName
             if !isError {
-                result.editTrailingFallback = file.provenance == .requested ? "Requested" : nil
+                // A write's requested bytes are what it wrote, so only an args-derived
+                // edit diff (no result patch) is worth labeling.
+                if file.operation == .edits, file.provenance == .requested {
+                    result.editTrailingFallback = "Requested"
+                }
                 if file.operation == .edits, let stats = file.stats {
                     result.editAdded = stats.added
                     result.editRemoved = stats.removed

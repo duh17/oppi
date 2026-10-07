@@ -999,7 +999,7 @@ struct ToolPresentationConfigTests {
 
         #expect(bashConfig.trailing == nil)
         #expect(readConfig.trailing == nil)
-        #expect(writeConfig.trailing == "Requested", "Provenance is not a byte-count badge")
+        #expect(writeConfig.trailing == nil, "Write rows carry no byte-count or provenance badge")
     }
 
     @Test func collapsedExtensionToolConfigurationOmitsPreviewForSingleLineConsistency() throws {
