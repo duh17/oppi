@@ -224,6 +224,9 @@ struct WorkspaceSettingsRootView: View {
     // MARK: - Actions
 
     private func deleteWorkspace() async {
+        guard await AppLockService.shared.authorizeProtectedAction(
+            reason: String(localized: "Delete \(current.name)")
+        ) else { return }
         guard let deleted = await model.deleteWorkspace() else { return }
         dismiss()
         navigation.leaveDeletedWorkspace(serverId: deleted.serverId, workspaceId: deleted.workspaceId)

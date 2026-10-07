@@ -49,17 +49,23 @@ enum AttentionNotificationPolicy: Sendable {
         "ask-\(sessionId)"
     }
 
-    static func askPayload(for ask: AskRequest) -> AttentionNotificationPayload {
-        let questionCount = ask.questions.count
-        let firstQuestion = ask.questions.first?.question.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallbackBody = questionCount == 1
+    /// Body that names no question text.
+    static func redactedAskBody(questionCount: Int) -> String {
+        questionCount == 1
             ? String(localized: "Open Oppi to answer a question.")
             : String(localized: "Open Oppi to answer questions.")
+    }
+
+    /// - Parameter revealsQuestionText: false while iOS App Lock is on, so the
+    ///   banner, Lock Screen, and Notification Center never show the question.
+    static func askPayload(for ask: AskRequest, revealsQuestionText: Bool = true) -> AttentionNotificationPayload {
+        let questionCount = ask.questions.count
+        let firstQuestion = ask.questions.first?.question.trimmingCharacters(in: .whitespacesAndNewlines)
         let body: String
-        if let firstQuestion, !firstQuestion.isEmpty {
+        if revealsQuestionText, let firstQuestion, !firstQuestion.isEmpty {
             body = firstQuestion
         } else {
-            body = fallbackBody
+            body = redactedAskBody(questionCount: questionCount)
         }
 
         return AttentionNotificationPayload(

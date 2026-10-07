@@ -264,6 +264,9 @@ struct ServerSettingsRootView: View {
 
     private func removeServer() {
         Task { @MainActor in
+            guard await AppLockService.shared.authorizeProtectedAction(
+                reason: String(localized: "Remove \(pairedServer.name) from this device")
+            ) else { return }
             await coordinator.removeServer(id: pairedServer.id)
 
             if serverStore.servers.isEmpty {

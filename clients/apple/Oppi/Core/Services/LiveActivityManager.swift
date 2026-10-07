@@ -115,7 +115,13 @@ final class LiveActivityManager {
     /// a glance at the final state without the activity overstaying its welcome.
     private let lockScreenDismissDelaySeconds: TimeInterval = 4
 
-    init() {}
+    /// True while App Lock is on: the Lock Screen and Dynamic Island show
+    /// phase and counts only, never session names, tools, or activity text.
+    private let hidesSessionText: @MainActor () -> Bool
+
+    init(hidesSessionText: @escaping @MainActor () -> Bool = { AppLockService.shared.isEnabled }) {
+        self.hidesSessionText = hidesSessionText
+    }
 
     // MARK: - Public API
 
@@ -186,7 +192,7 @@ final class LiveActivityManager {
             }
 
             if entry.lastActivity == nil {
-                entry.lastActivity = defaultLastActivity(for: entry.phaseHint)
+                entry.lastActivity = Self.defaultLastActivity(for: entry.phaseHint)
             }
 
             nextById[session.id] = entry
@@ -365,6 +371,15 @@ final class LiveActivityManager {
     ///
     /// Handles app lifecycle gaps where ActivityKit keeps a live activity
     /// but this singleton lost its in-memory `activeActivity` reference.
+    /// App Lock turned on: end every activity at once (including leftovers this
+    /// process has no snapshots for), then start fresh with redacted state if
+    /// sessions are still active.
+    func endAllForAppLock() {
+        endAllActivitiesImmediately()
+        currentState = Self.emptyState
+        refreshLifecycle()
+    }
+
     func recoverIfNeeded() {
         refreshLifecycle()
     }
@@ -413,13 +428,23 @@ final class LiveActivityManager {
     }
 
     private func endActivitiesIfPreferenceDisabled() {
+        let ended = endAllActivitiesImmediately()
+        guard ended > 0 else { return }
+        logger.error(
+            "Live Activities disabled by preference; ended \(ended, privacy: .public) activity(ies)"
+        )
+    }
+
+    /// Ends every active or stale activity with the empty state, dismissed at once.
+    @discardableResult
+    private func endAllActivitiesImmediately() -> Int {
         cleanupTimers()
         activeActivity = nil
 
         let activitiesToEnd = Activity<PiSessionAttributes>.activities.filter {
             $0.activityState == .active || $0.activityState == .stale
         }
-        guard !activitiesToEnd.isEmpty else { return }
+        guard !activitiesToEnd.isEmpty else { return 0 }
 
         let finalState = Self.emptyState
         for activity in activitiesToEnd {
@@ -431,10 +456,7 @@ final class LiveActivityManager {
                 )
             }
         }
-
-        logger.error(
-            "Live Activities disabled by preference; ended \(activitiesToEnd.count, privacy: .public) activity(ies)"
-        )
+        return activitiesToEnd.count
     }
 
     private func refreshLifecycle() {
@@ -686,10 +708,13 @@ final class LiveActivityManager {
         nonisolated(unsafe) let detachedActivity = activity
         let alertConfiguration: AlertConfiguration? = nil
 
-        Task {
+        Task { [hidesSessionText] in
+            // App Lock may have turned on since this update was queued; never
+            // let a stale state with session text land after the redaction.
+            let deliveredState = Self.stateForDelivery(state, hidesSessionText: hidesSessionText())
             await detachedActivity.update(
                 ActivityContent(
-                    state: state,
+                    state: deliveredState,
                     staleDate: deliveredSnapshot.staleDate,
                     relevanceScore: deliveredSnapshot.relevanceScore
                 ),
@@ -737,7 +762,7 @@ final class LiveActivityManager {
         }
 
         if let primary {
-            return PiSessionAttributes.ContentState(
+            let state = PiSessionAttributes.ContentState(
                 primaryPhase: primary.phase,
                 primarySessionId: primary.id,
                 primarySessionName: primary.name,
@@ -752,9 +777,23 @@ final class LiveActivityManager {
                 primaryRemovedLines: primary.changeStats?.removedLines,
                 sessionStartDate: primary.phase == .working ? primary.startDate : nil
             )
+            return Self.stateForDelivery(state, hidesSessionText: hidesSessionText())
         }
 
         return Self.emptyState
+    }
+
+    /// App Lock: phase and counts only; no session name, tool, or activity text.
+    static func stateForDelivery(
+        _ state: PiSessionAttributes.ContentState,
+        hidesSessionText: Bool
+    ) -> PiSessionAttributes.ContentState {
+        guard hidesSessionText else { return state }
+        var redacted = state
+        redacted.primarySessionName = emptyState.primarySessionName
+        redacted.primaryTool = nil
+        redacted.primaryLastActivity = defaultLastActivity(for: state.primaryPhase)
+        return redacted
     }
 
     private func phase(for session: SessionSnapshot) -> SessionPhase {
@@ -828,7 +867,7 @@ final class LiveActivityManager {
         "Session \(String(sessionId.prefix(8)))"
     }
 
-    private func defaultLastActivity(for phase: SessionPhase) -> String {
+    private static func defaultLastActivity(for phase: SessionPhase) -> String {
         switch phase {
         case .working: return String(localized: "Working")
         case .awaitingReply: return String(localized: "Your turn")

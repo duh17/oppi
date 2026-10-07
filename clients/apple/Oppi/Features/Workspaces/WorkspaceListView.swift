@@ -115,6 +115,9 @@ struct WorkspaceListView: View {
 
     private func deleteWorkspace(_ workspace: Workspace) async {
         guard !isDeleting else { return }
+        guard await AppLockService.shared.authorizeProtectedAction(
+            reason: String(localized: "Delete \(workspace.name)")
+        ) else { return }
         guard let conn = coordinator.connection(for: server.id) else { return }
         guard let api = conn.apiClient else {
             error = "Server is offline"

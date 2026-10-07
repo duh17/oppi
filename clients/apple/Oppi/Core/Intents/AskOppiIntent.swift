@@ -9,8 +9,13 @@ struct AskOppiIntent: AppIntent {
     // periphery:ignore
     static let description: IntentDescription = "Send a message to start a new agent session without opening the app." // periphery:ignore
 
-    static let openAppWhenRun = false
     static var authenticationPolicy: IntentAuthenticationPolicy { .requiresLocalDeviceAuthentication }
+    /// Runs without opening Oppi, unless App Lock needs Oppi forward to unlock.
+    static var supportedModes: IntentModes { [.background, .foreground(.dynamic)] }
+#if compiler(>=6.4)
+    @available(iOS 27.0, *)
+    static var allowedExecutionTargets: IntentExecutionTargets { .main }
+#endif
 
     @Parameter(title: "Message", inputConnectionBehavior: .connectToPreviousIntentResult)
     var message: String
@@ -26,6 +31,13 @@ struct AskOppiIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
+        // A locked Oppi comes forward and unlocks before anything connects.
+        guard await AppLockIntentGate.unlockIfNeeded(
+            continueInForeground: { try await continueInForeground(alwaysConfirm: false) }
+        ) else {
+            return .result(dialog: IntentDialog(stringLiteral: AppLockIntentGate.lockedDialog))
+        }
+
         guard let server = loadPairedServer() else {
             return .result(dialog: "No paired server found. Open Oppi to pair first.")
         }

@@ -156,6 +156,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     private var playbackSuppressedForCapture: Bool {
         Self.hasCaptureInterruption
     }
+    /// App Lock: no new playback, resume, or autoplay once a lock is due, even
+    /// before the app foregrounds and shows its cover. Spoken replies are
+    /// session content.
+    private let appLockBlocksPlayback: @MainActor () -> Bool
     private struct PendingStreamBuffer {
         let token: UUID
         let buffer: AVAudioPCMBuffer
@@ -171,8 +175,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     private var progressTimer: Timer?
     private var mediaTimeObserver: Any?
 
-    override init() {
+    init(appLockBlocksPlayback: @escaping @MainActor () -> Bool = { AppLockService.shared.requiresUnlock() }) {
+        self.appLockBlocksPlayback = appLockBlocksPlayback
         super.init()
+        AppLockPlayback.register(self)
     }
 
     var nowPlayingPresentation: NowPlayingPresentation? {
@@ -377,7 +383,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     }
 
     func resume() {
-        guard playingItemID != nil, isPaused else { return }
+        guard playingItemID != nil, isPaused, !appLockBlocksPlayback() else { return }
         // A paused item does not reclaim playback when dictation releases its
         // session. Category/options survive deactivation, so explicit resume
         // must restore them before either a retained player or PCM graph runs.
@@ -461,6 +467,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     func shouldAutoplayAudioMessage(itemID: String, playbackBehavior: AudioPlaybackBehavior?, sessionId: String? = nil) -> Bool {
         !playbackSuppressedForCapture
+            && !appLockBlocksPlayback()
             && AppPreferences.Voice.shouldAutoplay(playbackBehavior: playbackBehavior, sessionId: sessionId)
             && !autoPlayedVoiceReplyItemIDs.contains(itemID)
     }
@@ -488,7 +495,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
 
         if Self.shouldSuppressAudioStreamDuringCapture(
-            captureActive: playbackSuppressedForCapture,
+            captureActive: playbackSuppressedForCapture || appLockBlocksPlayback(),
             incomingStreamID: stream.id,
             activeStreamID: streamID
         ) {
@@ -556,7 +563,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     }
 
     private func play(data: Data, itemID: String, mode: String, startedAtMs: Int64) throws {
-        guard !playbackSuppressedForCapture else { return }
+        guard !playbackSuppressedForCapture, !appLockBlocksPlayback() else { return }
         claimGlobalPlaybackOwnership()
         stopMediaPlaybackSession()
         stopAudioStream(clearState: false)
@@ -573,7 +580,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     }
 
     private func play(fileURL: URL, itemID: String, mode: String, startedAtMs: Int64) throws {
-        guard !playbackSuppressedForCapture else { return }
+        guard !playbackSuppressedForCapture, !appLockBlocksPlayback() else { return }
         claimGlobalPlaybackOwnership()
         stopMediaPlaybackSession()
         stopAudioStream(clearState: false)
@@ -596,7 +603,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         timedTextLoader: (() async -> TimedText.LoadResult)?,
         startedAtMs: Int64
     ) throws {
-        guard !playbackSuppressedForCapture else { return }
+        guard !playbackSuppressedForCapture, !appLockBlocksPlayback() else { return }
         claimGlobalPlaybackOwnership()
         stopMediaPlaybackSession()
         stopAudioStream(clearState: false)
@@ -731,6 +738,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             logger.error("Ignoring invalid audio stream format: \(sampleRate)Hz \(channels)ch")
             return
         }
+        guard !appLockBlocksPlayback() else { return }
 
         stop()
         claimGlobalPlaybackOwnership()

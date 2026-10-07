@@ -67,7 +67,11 @@ struct ServerPairedDevicesPage: View {
             Button("Revoke", role: .destructive) {
                 if let row = devicePendingRevoke {
                     Task {
-                        await model.revokeDevice(row)
+                        if await AppLockService.shared.authorizeProtectedAction(
+                            reason: String(localized: "Revoke \(row.title)")
+                        ) {
+                            await model.revokeDevice(row)
+                        }
                         devicePendingRevoke = nil
                     }
                 }

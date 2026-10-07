@@ -566,10 +566,6 @@ struct QuickSessionOverlayLayoutTests {
 @MainActor
 struct AskOppiIntentTests {
 
-    @Test func openAppWhenRunIsFalse() {
-        #expect(AskOppiIntent.openAppWhenRun == false)
-    }
-
     @Test func requiresLocalDeviceAuthentication() {
         #expect(AskOppiIntent.authenticationPolicy == .requiresLocalDeviceAuthentication)
     }

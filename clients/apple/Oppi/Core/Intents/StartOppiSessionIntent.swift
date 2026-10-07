@@ -36,6 +36,13 @@ struct StartOppiSessionIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
+        // A locked Oppi comes forward and unlocks before anything connects.
+        guard await AppLockIntentGate.unlockIfNeeded(
+            continueInForeground: { try await continueInForeground(alwaysConfirm: false) }
+        ) else {
+            return .result(dialog: IntentDialog(stringLiteral: AppLockIntentGate.lockedDialog))
+        }
+
         let rawPrompt = try await resolvedPrompt()
         guard let rawPrompt else {
             return .result(dialog: IntentDialog(stringLiteral: StartOppiSessionDialog.missingPrompt))

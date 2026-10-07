@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // Force-capture process start timestamp before any SwiftUI views load.
         // Static lets are lazy — this ensures it runs at app delegate init, not first view appear.
         ChatSessionTelemetry.warmProcessStartTime()
+        // Before any scene connects: a cold launch with App Lock on must show
+        // the lock cover before content.
+        AppLockCoverController.shared.start()
         if ReleaseFeatures.localAttentionNotificationsEnabled {
             AttentionNotificationService.shared.configureForLaunch()
         }

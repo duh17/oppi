@@ -46,7 +46,13 @@ final class ShareQuickSessionComposerViewController: UIViewController, UITextVie
         view.backgroundColor = .systemBackground
         preferredContentSize = CGSize(width: 420, height: 430)
         buildForm()
-        loadWorkspaces()
+        // App Lock: this process cannot see whether Oppi is unlocked, so while
+        // App Lock is on every share asks first, before any server request.
+        if AppLockSettings.shareRequiresAuthentication() {
+            authenticateThenLoadWorkspaces()
+        } else {
+            loadWorkspaces()
+        }
     }
 
     private func buildForm() {
@@ -178,8 +184,39 @@ final class ShareQuickSessionComposerViewController: UIViewController, UITextVie
         return scroll
     }
 
+    @objc private func authenticateThenLoadWorkspaces() {
+        loadTask?.cancel()
+        retryButton.isHidden = true
+        statusLabel.textColor = .secondaryLabel
+        statusLabel.text = "Oppi is locked."
+        workspaceButton.isEnabled = false
+        workspaceButton.configuration?.title = "Locked"
+        loadTask = Task { [weak self] in
+            let outcome = await DeviceOwnerAuthentication.authenticate(
+                reason: String(localized: "Unlock Oppi to share")
+            )
+            guard !Task.isCancelled, let self else { return }
+            // `.unavailable`: no device passcode, so App Lock does not apply.
+            guard outcome == .success || outcome == .unavailable else {
+                self.statusLabel.text = "Oppi is locked. Nothing was loaded or sent."
+                self.setRetryAction(#selector(self.authenticateThenLoadWorkspaces))
+                self.retryButton.isHidden = false
+                UIAccessibility.post(notification: .announcement, argument: self.statusLabel.text)
+                return
+            }
+            self.loadWorkspaces()
+        }
+    }
+
+    /// Retry repeats whichever step failed: authentication or the workspace load.
+    private func setRetryAction(_ action: Selector) {
+        retryButton.removeTarget(self, action: nil, for: .touchUpInside)
+        retryButton.addTarget(self, action: action, for: .touchUpInside)
+    }
+
     private func loadWorkspaces() {
         loadTask?.cancel()
+        setRetryAction(#selector(retryWorkspaceLoad))
         let servers = ShareQuickSessionCredentialStore.loadServers()
         retryButton.isHidden = true
         selectedWorkspace = nil

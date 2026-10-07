@@ -50,6 +50,8 @@
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
 	</dict>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Oppi uses Face ID to confirm sharing to a session when App Lock is on.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Oppi needs local network access to start a shared Quick Session on your paired server.</string>
 </dict>

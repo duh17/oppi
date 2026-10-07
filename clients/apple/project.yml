@@ -171,7 +171,7 @@ targets:
           - "_oppi._tcp"
         NSMicrophoneUsageDescription: "Oppi uses the microphone to transcribe your voice into text prompts."
         NSSpeechRecognitionUsageDescription: "Oppi uses on-device speech recognition to convert your voice into text."
-        NSFaceIDUsageDescription: "Oppi uses Face ID to confirm server trust and to approve high-risk agent actions like sudo, force push, and recursive deletes."
+        NSFaceIDUsageDescription: "Oppi uses Face ID to unlock the app when App Lock is on, to confirm new or changed servers, and to approve protected actions like removing a server or setting an API key."
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UIAppFonts:
@@ -458,6 +458,8 @@ targets:
         type: group
       - path: Shared/ShareQuickSession/Sender
         type: group
+      - path: Shared/AppLock
+        type: group
       - path: OppiCore/Client/DeviceKey.swift
         type: file
       - path: OppiCore/Client/DeviceAuthSession.swift
@@ -484,6 +486,7 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSLocalNetworkUsageDescription: "Oppi needs local network access to start a shared Quick Session on your paired server."
+        NSFaceIDUsageDescription: "Oppi uses Face ID to confirm sharing to a session when App Lock is on."
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         NSExtension:

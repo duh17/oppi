@@ -129,6 +129,8 @@ func inlineComposerShouldFastPathToMaxHeight(
 struct PastableTextView: UIViewRepresentable {
     @Environment(\.theme) private var theme
     @Environment(\.themeID) private var themeID
+    /// Observed so a lock change re-runs `updateUIView`.
+    @State private var appLock = AppLockService.shared
     @Binding var text: String
     let placeholder: String
     let font: UIFont
@@ -211,6 +213,7 @@ struct PastableTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: PastableUITextView, context: Context) {
+        textView.hideFromAccessibility(whileLocked: appLock.isLocked)
         let textChanged = textView.text != text
         textView.applyStyledText(
             text,
@@ -532,6 +535,8 @@ struct PastableTextView: UIViewRepresentable {
 struct FullSizeTextView: UIViewRepresentable {
     @Environment(\.theme) private var theme
     @Environment(\.themeID) private var themeID
+    /// Observed so a lock change re-runs `updateUIView`.
+    @State private var appLock = AppLockService.shared
     @Binding var text: String
     @Binding var keyboardLanguage: String?
     let font: UIFont
@@ -597,6 +602,7 @@ struct FullSizeTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: PastableUITextView, context: Context) {
+        textView.hideFromAccessibility(whileLocked: appLock.isLocked)
         textView.applyStyledText(
             text,
             font: font,
@@ -714,6 +720,15 @@ struct FullSizeTextView: UIViewRepresentable {
 // MARK: - Custom UITextView
 
 /// UITextView subclass that intercepts paste to extract images.
+extension PastableUITextView {
+    /// App Lock: SwiftUI's `.accessibilityHidden` on the root does not reach
+    /// this UIKit view, so the composer hides itself while Oppi is locked.
+    func hideFromAccessibility(whileLocked locked: Bool) {
+        accessibilityElementsHidden = locked
+        isAccessibilityElement = !locked
+    }
+}
+
 class PastableUITextView: UITextView {
     var onPasteImages: (([UIImage]) -> Void)?
     var onCommandEnter: (() -> Void)?

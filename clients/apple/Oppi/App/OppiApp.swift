@@ -439,6 +439,15 @@ struct OppiApp: App {
 
     var body: some Scene {
         WindowGroup {
+            Group {
+                windowContent
+            }
+            .modifier(AppLockAccessibilityHidden())
+        }
+    }
+
+    @ViewBuilder
+    private var windowContent: some View {
 #if DEBUG
             if HTMLDOMAnnotationHarnessConfig.isEnabled {
                 HTMLDOMAnnotationHarnessView()
@@ -479,7 +488,6 @@ struct OppiApp: App {
 #else
             appRootView
 #endif
-        }
     }
 
     private var appRootView: some View {
@@ -539,18 +547,22 @@ struct OppiApp: App {
             }
             .onReceive(NotificationCenter.default.publisher(for: .inviteDeepLinkTapped)) { notification in
                 guard let url = notification.object as? URL else { return }
-                Task { @MainActor in await handleIncomingURL(url) }
+                AppLockService.shared.performWhenUnlocked {
+                    Task { @MainActor in await handleIncomingURL(url) }
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .inAppDeepLinkTapped)) { notification in
                 guard let url = notification.object as? URL else { return }
                 let sourceServerID = notification.userInfo?[
                     Notification.Name.inAppDeepLinkSourceServerIDKey
                 ] as? String
-                Task { @MainActor in
-                    await handleInAppURL(InAppDeepLinkIntent(
-                        url: url,
-                        sourceServerID: sourceServerID
-                    ))
+                AppLockService.shared.performWhenUnlocked {
+                    Task { @MainActor in
+                        await handleInAppURL(InAppDeepLinkIntent(
+                            url: url,
+                            sourceServerID: sourceServerID
+                        ))
+                    }
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .webLinkTapped)) { notification in
@@ -604,7 +616,13 @@ struct OppiApp: App {
                     Text("[[\(choice.reference.target)]] matches more than one resource.")
                 }
             }
-            .onOpenURL { url in Task { @MainActor in await handleIncomingURL(url) } }
+            // App Lock: oppi:// links (pairing, sessions, workspaces) wait for
+            // unlock so nothing pairs or navigates behind the cover.
+            .onOpenURL { url in
+                AppLockService.shared.performWhenUnlocked {
+                    Task { @MainActor in await handleIncomingURL(url) }
+                }
+            }
             .onChange(of: intentSessionOpenTrigger.requestID) { _, _ in
                 Task { @MainActor in
                     await consumeIntentSessionOpenIfNeeded()
@@ -1887,12 +1905,14 @@ struct OppiApp: App {
         // The service may deliver a tap latched before this handler was wired.
         notificationService.onNavigateToSession = { sessionId in
             guard !sessionId.isEmpty else { return }
-            Task { @MainActor in
-                await navigateToSessionFromDeepLink(
-                    sessionId,
-                    source: .externalURL,
-                    parkingAllowed: true
-                )
+            AppLockService.shared.performWhenUnlocked {
+                Task { @MainActor in
+                    await navigateToSessionFromDeepLink(
+                        sessionId,
+                        source: .externalURL,
+                        parkingAllowed: true
+                    )
+                }
             }
         }
     }

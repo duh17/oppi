@@ -53,7 +53,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Oppi uses the camera to scan pairing QR codes and take photos for agent conversations.</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Oppi uses Face ID to confirm server trust and to approve high-risk agent actions like sudo, force push, and recursive deletes.</string>
+	<string>Oppi uses Face ID to unlock the app when App Lock is on, to confirm new or changed servers, and to approve protected actions like removing a server or setting an API key.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Oppi needs local network access to connect to your paired self-hosted server.</string>
 	<key>NSMicrophoneUsageDescription</key>

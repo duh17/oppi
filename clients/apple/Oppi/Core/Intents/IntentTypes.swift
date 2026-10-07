@@ -6,6 +6,13 @@ private let workspaceEntityLogger = Logger(
     category: "WorkspaceEntityQuery"
 )
 
+/// Shortcuts and Siri list servers and workspaces through these queries
+/// without showing Oppi; while Oppi is locked they list nothing and contact
+/// no server.
+private func intentQueriesAreLocked() async -> Bool {
+    await MainActor.run { AppLockService.shared.requiresUnlock() }
+}
+
 // MARK: - Thinking Level
 
 /// AppEnum for thinking level selection in Shortcuts.
@@ -49,15 +56,16 @@ struct PairedServerEntity: AppEntity {
 
 struct PairedServerEntityQuery: EntityQuery {
     func entities(for identifiers: [String]) async throws -> [PairedServerEntity] {
-        let all = suggested()
+        let all = await suggested()
         return all.filter { identifiers.contains($0.id) }
     }
 
     func suggestedEntities() async throws -> [PairedServerEntity] {
-        suggested()
+        await suggested()
     }
 
-    private func suggested() -> [PairedServerEntity] {
+    private func suggested() async -> [PairedServerEntity] {
+        guard await !intentQueriesAreLocked() else { return [] }
         let servers = KeychainService.loadServers().map {
             PairedServerEntity(id: $0.id, name: $0.name)
         }
@@ -142,6 +150,7 @@ struct WorkspaceEntityQuery: EntityQuery, EntityStringQuery {
     }
 
     private func fetchWorkspaces() async -> [WorkspaceEntity] {
+        guard await !intentQueriesAreLocked() else { return [] }
         let snapshots = await IntentPairedWorkspaceCatalog.loadReachable()
         let pairedCount = KeychainService.loadServers().count
         let showSubtitle = pairedCount > 1

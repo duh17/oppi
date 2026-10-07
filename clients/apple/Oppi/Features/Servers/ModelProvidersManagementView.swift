@@ -905,6 +905,12 @@ struct ModelProvidersManagementView: View {
 
         providerActionInFlightId = provider.id
         Task {
+            guard await AppLockService.shared.authorizeProtectedAction(
+                reason: String(localized: "Save the \(provider.name) API key")
+            ) else {
+                providerActionInFlightId = nil
+                return
+            }
             do {
                 try await api.setProviderAPIKey(providerId: provider.id, key: key)
                 providerError = nil
@@ -926,6 +932,12 @@ struct ModelProvidersManagementView: View {
 
         providerActionInFlightId = provider.id
         Task {
+            guard await AppLockService.shared.authorizeProtectedAction(
+                reason: String(localized: "Remove the \(provider.name) credential")
+            ) else {
+                providerActionInFlightId = nil
+                return
+            }
             do {
                 try await api.removeProviderCredential(providerId: provider.id)
                 providerError = nil
@@ -950,6 +962,12 @@ struct ModelProvidersManagementView: View {
 
         providerActionInFlightId = provider.id
         Task {
+            guard await AppLockService.shared.authorizeProtectedAction(
+                reason: String(localized: "Sign in to \(provider.name)")
+            ) else {
+                providerActionInFlightId = nil
+                return
+            }
             do {
                 let flow = try await api.startProviderAuthFlow(
                     providerId: provider.id,

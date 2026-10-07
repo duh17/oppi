@@ -41,6 +41,9 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
     // Test seams
     var _applicationStateForTesting: UIApplication.State?
     var _skipSchedulingForTesting = false
+    /// Replaces authorization and `UNUserNotificationCenter.add`.
+    var _deliverForTesting: ((UNNotificationRequest) -> Void)?
+    var _appLockEnabledForTesting: Bool?
 
     private var didConfigureForLaunch = false
 
@@ -90,22 +93,26 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             return
         }
 
-        let payload = AttentionNotificationPolicy.askPayload(for: ask)
-        let content = UNMutableNotificationContent()
-        content.title = payload.title
-        content.subtitle = payload.subtitle
-        content.body = payload.body
-        content.categoryIdentifier = payload.categoryIdentifier
-        content.userInfo = payload.userInfo
-        content.threadIdentifier = payload.threadIdentifier
-        content.targetContentIdentifier = payload.targetContentIdentifier
-        content.sound = .default
-        content.interruptionLevel = .timeSensitive
-
-        schedule(
-            identifier: payload.identifier,
-            content: content
-        )
+        // The body is decided when the request is added, not now: App Lock may
+        // turn on while authorization is pending, after it removed delivered
+        // asks.
+        schedule(identifier: AttentionNotificationPolicy.askRequestIdentifier(sessionId: ask.sessionId)) { [self] in
+            let payload = AttentionNotificationPolicy.askPayload(
+                for: ask,
+                revealsQuestionText: !(_appLockEnabledForTesting ?? AppLockService.shared.isEnabled)
+            )
+            let content = UNMutableNotificationContent()
+            content.title = payload.title
+            content.subtitle = payload.subtitle
+            content.body = payload.body
+            content.categoryIdentifier = payload.categoryIdentifier
+            content.userInfo = payload.userInfo
+            content.threadIdentifier = payload.threadIdentifier
+            content.targetContentIdentifier = payload.targetContentIdentifier
+            content.sound = .default
+            content.interruptionLevel = .timeSensitive
+            return content
+        }
     }
 
     nonisolated static func shouldNotify(
@@ -131,6 +138,25 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         )
     }
 
+    /// App Lock turned on: remove delivered and pending ask notifications,
+    /// which may show question text from before.
+    func removeAskNotifications() {
+        guard !_skipSchedulingForTesting else { return }
+        let center = UNUserNotificationCenter.current()
+        Task { @MainActor in
+            let delivered = await center.deliveredNotifications().map(\.request)
+            let pending = await center.pendingNotificationRequests()
+            center.removeDeliveredNotifications(withIdentifiers: Self.askIdentifiers(in: delivered))
+            center.removePendingNotificationRequests(withIdentifiers: Self.askIdentifiers(in: pending))
+        }
+    }
+
+    nonisolated static func askIdentifiers(in requests: [UNNotificationRequest]) -> [String] {
+        requests
+            .filter { $0.content.categoryIdentifier == askCategoryId }
+            .map(\.identifier)
+    }
+
     /// Cancel ask notification when the ask is answered or superseded.
     func cancelAskNotification(sessionId: String) {
         let identifier = AttentionNotificationPolicy.askRequestIdentifier(sessionId: sessionId)
@@ -140,25 +166,30 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             .removeDeliveredNotifications(withIdentifiers: [identifier])
     }
 
-    private func schedule(identifier: String, content: UNNotificationContent) {
-        // Fire immediately (0.1s minimum for time-interval triggers)
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
-        let request = UNNotificationRequest(
-            identifier: identifier,
-            content: content,
-            trigger: trigger
-        )
-
+    private func schedule(identifier: String, content: @escaping @MainActor () -> UNNotificationContent) {
         guard !_skipSchedulingForTesting else {
             return
         }
 
+        // Fire immediately (0.1s minimum for time-interval triggers)
+        func request() -> UNNotificationRequest {
+            UNNotificationRequest(
+                identifier: identifier,
+                content: content(),
+                trigger: UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+            )
+        }
+
         Task { @MainActor in
+            if let deliver = _deliverForTesting {
+                deliver(request())
+                return
+            }
             guard await ensureAuthorizationForNotification() else {
                 return
             }
             do {
-                try await UNUserNotificationCenter.current().add(request)
+                try await UNUserNotificationCenter.current().add(request())
             } catch {
                 notificationLogger.error("Failed to schedule attention notification: \(error.localizedDescription, privacy: .public)")
             }

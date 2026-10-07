@@ -51,7 +51,15 @@ final class QuickSessionTrigger {
         }
     }
 
+    /// While Oppi is locked the sheet waits for unlock, so it never opens
+    /// behind the lock cover.
     func requestPresentation(initialPayload: QuickSessionInitialPayload?) {
+        AppLockService.shared.performWhenUnlocked { [self] in
+            present(initialPayload: initialPayload)
+        }
+    }
+
+    private func present(initialPayload: QuickSessionInitialPayload?) {
         guard !isPresented else {
             logger.debug("Quick session sheet already presented, ignoring duplicate request")
             return
