@@ -477,8 +477,8 @@ export type ServerMessage = // ── Connection ──
         message: string;
       }
     // ── Streaming ──
-    | { type: "text_delta"; delta: string; contentIndex?: number }
-    | { type: "thinking_delta"; delta: string; contentIndex?: number }
+    | { type: "text_delta"; delta: string; contentIndex?: number; replace?: true }
+    | { type: "thinking_delta"; delta: string; contentIndex?: number; replace?: true }
     | {
         type: "audio_stream";
         kind: "audio-stream";

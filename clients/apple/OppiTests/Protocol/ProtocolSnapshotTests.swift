@@ -143,7 +143,7 @@ struct ProtocolSnapshotTests {
         ])
 
         let textDelta = try decodeMessage("text_delta")
-        guard case .textDelta(_, let deltaContentIndex) = textDelta else {
+        guard case .textDelta(_, let deltaContentIndex, _) = textDelta else {
             Issue.record("Expected indexed text_delta snapshot")
             return
         }

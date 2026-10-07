@@ -40,10 +40,7 @@ function isRecordedInputFailure(reason: string): boolean {
  * `errorMessage`, so a `stopReason: "error"` entry is not already the failure row.
  * Skip the card only when that same text is already visible, which would be a second row.
  */
-function assistantFailureAlreadyVisible(
-  entries: readonly EntryRecord[],
-  text: string,
-): boolean {
+function assistantFailureAlreadyVisible(entries: readonly EntryRecord[], text: string): boolean {
   const needle = text.trim();
   if (!needle) return false;
   for (const entry of entries) {

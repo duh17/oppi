@@ -51,8 +51,8 @@ enum AgentEvent: Sendable {
     /// Open tools are interrupted here, not on `agentEnd`.
     case agentSettled(sessionId: String)
 
-    case textDelta(sessionId: String, delta: String, contentIndex: Int? = nil)
-    case thinkingDelta(sessionId: String, delta: String, contentIndex: Int? = nil)
+    case textDelta(sessionId: String, delta: String, contentIndex: Int? = nil, replace: Bool = false)
+    case thinkingDelta(sessionId: String, delta: String, contentIndex: Int? = nil, replace: Bool = false)
     case messageEnd(
         sessionId: String,
         content: String,

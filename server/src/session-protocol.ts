@@ -888,13 +888,22 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
     case "message_update": {
       const evt = event.assistantMessageEvent;
       if (evt?.type === "text_delta" && typeof evt.delta === "string") {
-        ctx.streamedAssistantText += evt.delta;
+        const replace = (evt as { replace?: boolean }).replace === true;
         const contentIndex = contentIndexFrom(evt.contentIndex);
+        // Classic deltas have no replace flag. A durable rewrite carries the
+        // current partial; older clients still append that delta.
+        if (replace) {
+          if (contentIndex === undefined || contentIndex === 0)
+            ctx.streamedAssistantText = evt.delta;
+        } else {
+          ctx.streamedAssistantText += evt.delta;
+        }
         return [
           {
             type: "text_delta",
             delta: evt.delta,
             ...(contentIndex !== undefined ? { contentIndex } : {}),
+            ...(replace ? { replace: true as const } : {}),
           },
         ];
       }
@@ -903,12 +912,14 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
         return EMPTY_MESSAGES;
       }
       if (evt?.type === "thinking_delta") {
+        const replace = (evt as { replace?: boolean }).replace === true;
         const contentIndex = contentIndexFrom(evt.contentIndex) ?? ctx.currentThinkingContentIndex;
         return [
           {
             type: "thinking_delta",
             delta: evt.delta,
             ...(contentIndex !== undefined ? { contentIndex } : {}),
+            ...(replace ? { replace: true as const } : {}),
           },
         ];
       }

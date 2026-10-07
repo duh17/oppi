@@ -152,7 +152,7 @@ function adaptMessageUpdate(
     const assistantEvents =
       change.type === "message"
         ? expandMessageReplace(prev, state.partial)
-        : [toAssistantMessageEvent(change, state.partial)];
+        : projectChange(prev, state.partial, change);
     for (const assistantMessageEvent of assistantEvents) {
       if (!assistantMessageEvent) continue;
       out.push(
@@ -289,18 +289,30 @@ function expandMessageReplace(
       if (old?.type !== "text") {
         events.push({ type: "text_start", contentIndex, partial: next });
       }
-      const delta = suffixDelta(oldText, block.text);
-      if (delta !== undefined) {
-        events.push({ type: "text_delta", contentIndex, delta, partial: next });
+      const projected = contentDelta(oldText, block.text);
+      if (projected) {
+        events.push({
+          type: "text_delta",
+          contentIndex,
+          delta: projected.delta,
+          partial: next,
+          ...(projected.replace ? { replace: true } : {}),
+        } as AssistantMessageEvent);
       }
     } else if (block.type === "thinking") {
       const oldText = old?.type === "thinking" ? old.thinking : "";
       if (old?.type !== "thinking") {
         events.push({ type: "thinking_start", contentIndex, partial: next });
       }
-      const delta = suffixDelta(oldText, block.thinking);
-      if (delta !== undefined) {
-        events.push({ type: "thinking_delta", contentIndex, delta, partial: next });
+      const projected = contentDelta(oldText, block.thinking);
+      if (projected) {
+        events.push({
+          type: "thinking_delta",
+          contentIndex,
+          delta: projected.delta,
+          partial: next,
+          ...(projected.replace ? { replace: true } : {}),
+        } as AssistantMessageEvent);
       }
     } else if (block.type === "toolCall") {
       if (old?.type !== "toolCall") {
@@ -312,10 +324,54 @@ function expandMessageReplace(
   return events;
 }
 
-function suffixDelta(previous: string, next: string): string | undefined {
+/** Prefix growth stays a suffix delta. A rewrite carries the whole current partial and `replace`. */
+function contentDelta(
+  previous: string,
+  next: string,
+): { delta: string; replace?: true } | undefined {
   if (next === previous) return undefined;
-  if (next.startsWith(previous)) return next.slice(previous.length);
-  return next;
+  if (next.startsWith(previous)) {
+    const delta = next.slice(previous.length);
+    return delta ? { delta } : undefined;
+  }
+  return { delta: next, replace: true };
+}
+
+/** A completed text or thinking block is the current partial, not an ignored text_end. */
+function projectChange(
+  prev: AssistantMessage | undefined,
+  next: AssistantMessage,
+  change: MessageChange,
+): AssistantMessageEvent[] {
+  if (change.type !== "block") {
+    const event = toAssistantMessageEvent(change, next);
+    return event ? [event] : [];
+  }
+  const block = change.block;
+  const old = prev?.content[change.contentIndex];
+  if (block.type === "text" || block.type === "thinking") {
+    const oldText =
+      block.type === "text"
+        ? old?.type === "text"
+          ? old.text
+          : ""
+        : old?.type === "thinking"
+          ? old.thinking
+          : "";
+    const projected = contentDelta(oldText, block.type === "text" ? block.text : block.thinking);
+    if (!projected) return [];
+    return [
+      {
+        type: block.type === "text" ? "text_delta" : "thinking_delta",
+        contentIndex: change.contentIndex,
+        delta: projected.delta,
+        partial: next,
+        ...(projected.replace ? { replace: true } : {}),
+      } as AssistantMessageEvent,
+    ];
+  }
+  const event = toAssistantMessageEvent(change, next);
+  return event ? [event] : [];
 }
 
 function toAssistantMessageEvent(
@@ -352,22 +408,7 @@ function toAssistantMessageEvent(
       };
     case "block": {
       const block = change.block;
-      if (block.type === "text") {
-        return {
-          type: "text_end",
-          contentIndex: change.contentIndex,
-          content: block.text,
-          partial,
-        };
-      }
-      if (block.type === "thinking") {
-        return {
-          type: "thinking_end",
-          contentIndex: change.contentIndex,
-          content: block.thinking,
-          partial,
-        };
-      }
+      // Text and thinking completion is projected in projectChange. text_end is not a ServerMessage.
       if (block.type === "toolCall") {
         return {
           type: "toolcall_end",

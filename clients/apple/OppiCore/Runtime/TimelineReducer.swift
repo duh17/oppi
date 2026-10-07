@@ -1016,7 +1016,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 continue
             }
             switch event {
-            case .textDelta(_, let delta, let contentIndex):
+            case .textDelta(_, let delta, let contentIndex, let replace):
                 // Text is a structural boundary. Pi streams content blocks in
                 // order, so the thinking block before it has ended even though
                 // message_end may still be far away.
@@ -1030,10 +1030,17 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     finalizeAssistantMessage()
                     didMutate = true
                 }
-                pendingAssistantDeltas.append(delta)
-                hasPendingAssistantUpsert = true
+                if replace {
+                    flushPendingUpserts()
+                    assistantBuffer = delta
+                    upsertAssistantMessage()
+                    didMutate = true
+                } else {
+                    pendingAssistantDeltas.append(delta)
+                    hasPendingAssistantUpsert = true
+                }
 
-            case .thinkingDelta(_, let delta, let contentIndex):
+            case .thinkingDelta(_, let delta, let contentIndex, let replace):
                 // Thinking is a structural boundary. Finalize text that arrived
                 // before it so later text starts a distinct adjacent run.
                 if hasPendingAssistantUpsert || currentAssistantID != nil {
@@ -1044,7 +1051,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 // Keep only preview-size text in memory for live rendering.
                 // Once overflowed, continue collecting full text in ToolOutputStore
                 // for post-turn expansion, but skip no-op rerenders.
-                if appendThinkingDelta(delta, contentIndex: contentIndex) {
+                if appendThinkingDelta(delta, contentIndex: contentIndex, replace: replace) {
                     hasPendingThinkingUpsert = true
                 }
 
@@ -1191,20 +1198,24 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             closeAllOrphanedTools()
             return renderMutationCheckpoint() != before
 
-        case .textDelta(_, let delta, let contentIndex):
+        case .textDelta(_, let delta, let contentIndex, let replace):
             finalizeThinking()
             let crossedBoundary = prepareAssistantBlock(contentIndex: contentIndex)
             if crossedBoundary {
                 finalizeAssistantMessage()
             }
-            assistantBuffer += delta
+            if replace {
+                assistantBuffer = delta
+            } else {
+                assistantBuffer += delta
+            }
             upsertAssistantMessage()
             return true
 
-        case .thinkingDelta(_, let delta, let contentIndex):
+        case .thinkingDelta(_, let delta, let contentIndex, let replace):
             let before = renderMutationCheckpoint()
             finalizeAssistantMessage()
-            if appendThinkingDelta(delta, contentIndex: contentIndex) {
+            if appendThinkingDelta(delta, contentIndex: contentIndex, replace: replace) {
                 upsertThinking()
                 return true
             }
@@ -2355,14 +2366,20 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// container manages viewport height and full-screen takes over for full
     /// reading.
     @discardableResult
-    private func appendThinkingDelta(_ delta: String, contentIndex: Int? = nil) -> Bool {
-        guard !delta.isEmpty else { return false }
+    private func appendThinkingDelta(_ delta: String, contentIndex: Int? = nil, replace: Bool = false) -> Bool {
+        if !replace {
+            guard !delta.isEmpty else { return false }
+        }
         prepareThinkingBlock(contentIndex: contentIndex)
 
         let previousPreview = thinkingPreviewText()
         let previousHasMore = thinkingBuffer.utf8.count > ChatItem.maxPreviewLength
 
-        thinkingBuffer += delta
+        if replace {
+            thinkingBuffer = delta
+        } else {
+            thinkingBuffer += delta
+        }
 
         let newPreview = thinkingPreviewText()
         let newHasMore = thinkingBuffer.utf8.count > ChatItem.maxPreviewLength

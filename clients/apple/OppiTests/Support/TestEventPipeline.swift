@@ -73,16 +73,17 @@ final class TestEventPipeline {
             conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
             coalescer.receive(.agentSettled(sessionId: sessionId))
             conn.silenceWatchdog.stop()
-        case .textDelta(let delta, let contentIndex):
+        case .textDelta(let delta, let contentIndex, let replace):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(.textDelta(
                 sessionId: sessionId,
                 delta: delta,
-                contentIndex: contentIndex
+                contentIndex: contentIndex,
+                replace: replace
             ))
-        case .thinkingDelta(let delta, let contentIndex):
+        case .thinkingDelta(let delta, let contentIndex, let replace):
             conn.silenceWatchdog.recordEvent()
-            coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: delta, contentIndex: contentIndex))
+            coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: delta, contentIndex: contentIndex, replace: replace))
         case .toolStart(let tool, let args, let toolCallId, let callSegments, let inputPresentation, let display, let outputPresentation, let parent):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(toolCallCorrelator.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation, parentToolCallId: parent))

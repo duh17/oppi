@@ -186,24 +186,41 @@ struct ServerMessageTests {
         let indexed = try ServerMessage.decode(
             from: #"{"type":"text_delta","delta":"Hello ","contentIndex":2}"#
         )
-        guard case .textDelta(let delta, let contentIndex) = indexed else {
+        guard case .textDelta(let delta, let contentIndex, let replace) = indexed else {
             Issue.record("Expected .textDelta")
             return
         }
         #expect(delta == "Hello ")
         #expect(contentIndex == 2)
+        #expect(replace == false)
 
         let olderPeer = try ServerMessage.decode(from: #"{"type":"text_delta","delta":"Hello "}"#)
-        guard case .textDelta(_, let oldContentIndex) = olderPeer else {
+        guard case .textDelta(_, let oldContentIndex, let olderReplace) = olderPeer else {
             Issue.record("Expected older .textDelta")
             return
         }
         #expect(oldContentIndex == nil)
+        #expect(olderReplace == false)
+    }
+
+    @Test func textDeltaReplaceStillCarriesTheCurrentPartial() throws {
+        // Older apps ignore unknown keys and append `delta`. The rewrite still
+        // sends that delta, so they are no worse than today. New apps set the bubble.
+        let rewritten = try ServerMessage.decode(
+            from: #"{"type":"text_delta","delta":"Hi","contentIndex":0,"replace":true}"#
+        )
+        guard case .textDelta(let delta, let contentIndex, let replace) = rewritten else {
+            Issue.record("Expected replacement text_delta")
+            return
+        }
+        #expect(delta == "Hi")
+        #expect(contentIndex == 0)
+        #expect(replace == true)
     }
 
     @Test func decodesThinkingDelta() throws {
         let msg = try ServerMessage.decode(from: #"{"type":"thinking_delta","delta":"Let me think...","contentIndex":2}"#)
-        guard case .thinkingDelta(let delta, let contentIndex) = msg else {
+        guard case .thinkingDelta(let delta, let contentIndex, _) = msg else {
             Issue.record("Expected .thinkingDelta")
             return
         }

@@ -22,6 +22,26 @@ struct TimelineReducerBasicTests {
         #expect(text == "Hello world!")
     }
 
+    @Test func nonPrefixReplacementShowsTheCurrentPartial() {
+        let reducer = TimelineReducer()
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "Hello world", contentIndex: 0))
+        reducer.process(.textDelta(sessionId: "s1", delta: "Hi", contentIndex: 0, replace: true))
+        reducer.process(.thinkingDelta(sessionId: "s1", delta: "Plan the whole answer", contentIndex: 0))
+        reducer.process(.thinkingDelta(sessionId: "s1", delta: "Shorter", contentIndex: 0, replace: true))
+
+        let thinking = reducer.items.compactMap { item -> String? in
+            guard case .thinking(_, let preview, _, _) = item else { return nil }
+            return preview
+        }
+        let assistant = reducer.items.compactMap { item -> String? in
+            guard case .assistantMessage(_, let text, _) = item else { return nil }
+            return text
+        }
+        #expect(thinking == ["Shorter"])
+        #expect(assistant == ["Hi"])
+    }
+
     @Test func thinkingThenText() {
         let reducer = TimelineReducer()
 
