@@ -584,6 +584,7 @@ struct HostSwitcherMenu: View {
 
     let current: PairedServer
     let destination: HostSwitcherDestination
+    var fitsVerticalRail = false
     var onSwitch: ((PairedServer) -> Void)?
 
     private var servers: [PairedServer] {
@@ -641,7 +642,8 @@ struct HostSwitcherMenu: View {
         } label: {
             ServerSwitcherPill(
                 server: current,
-                connectionState: badgeState(for: current)
+                connectionState: badgeState(for: current),
+                fitsVerticalRail: fitsVerticalRail
             )
         }
         .accessibilityLabel("Current server: \(current.name)")
@@ -705,39 +707,209 @@ enum HostSwitcherBadgeState {
 struct ServerSwitcherPill: View {
     let server: PairedServer
     let connectionState: ServerBadgeConnectionState
+    /// The side rail button already supplies one circle. This pose keeps only
+    /// the status-colored icon. The menu's accessibility value still speaks
+    /// the state word. A normal top bar keeps the wide capsule.
+    var fitsVerticalRail = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            RuntimeBadge(
-                compact: true,
-                icon: server.resolvedBadgeIcon,
-                tint: connectionState.tintColor
-            )
+        if fitsVerticalRail {
+            verticalRailLabel
+        } else {
+            horizontalLabel
+                .foregroundStyle(.themeFg)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(.themeComment.opacity(0.14), in: Capsule())
+        }
+    }
 
+    private var horizontalLabel: some View {
+        HStack(spacing: 6) {
+            statusBadge
             Text(server.name)
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
-
             if connectionState != .connected {
-                if connectionState == .connecting || connectionState == .recovering {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .tint(connectionState.tintColor)
-                }
+                statusIndicator
                 Text(connectionState.title)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(connectionState.tintColor)
                     .lineLimit(1)
             }
-
             Image(systemName: "chevron.down")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.themeComment)
         }
-        .foregroundStyle(.themeFg)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .background(.themeComment.opacity(0.14), in: Capsule())
+    }
+
+    /// The rail button already draws one circle. A badge or pill inside it
+    /// stacks more rings, so this pose is only the status-colored icon.
+    private var verticalRailLabel: some View {
+        Image(systemName: server.resolvedBadgeIcon.symbolName)
+            .font(.body.weight(.semibold))
+            .foregroundStyle(connectionState.tintColor)
+            .accessibilityHidden(true)
+    }
+
+    private var statusBadge: some View {
+        RuntimeBadge(
+            compact: true,
+            icon: server.resolvedBadgeIcon,
+            tint: connectionState.tintColor
+        )
+    }
+
+    @ViewBuilder
+    private var statusIndicator: some View {
+        if connectionState == .connecting || connectionState == .recovering {
+            ProgressView()
+                .controlSize(.mini)
+                .tint(connectionState.tintColor)
+        }
+    }
+}
+
+/// Keeps a leading control in the top-left corner when a side rail exists.
+@ToolbarContentBuilder
+func topLeadingToolbarItem<Content: View>(
+    @ViewBuilder content: @escaping () -> Content
+) -> some ToolbarContent {
+    #if canImport(SwiftUI, _version: 8.0.85)
+    if #available(iOS 27.1, *) {
+        ToolbarItem(placement: .topBarLeading, content: content)
+            .axisBehavior(.horizontalOnly)
+    } else {
+        ToolbarItem(placement: .topBarLeading, content: content)
+    }
+    #else
+    ToolbarItem(placement: .topBarLeading, content: content)
+    #endif
+}
+
+/// Moves a control onto the side rail when that rail exists. A pinned item
+/// sits with the status cluster, under the wifi mark on Duo. A bottom-anchored
+/// item starts from the rail's lower end; spacers cannot push a rail item down.
+@ToolbarContentBuilder
+func verticalRailToolbarItem<Content: View>(
+    joinsVerticalRail: Bool,
+    pinnedUnderStatus: Bool = false,
+    anchorsToRailBottom: Bool = false,
+    @ViewBuilder content: @escaping () -> Content
+) -> some ToolbarContent {
+    #if canImport(SwiftUI, _version: 8.0.85)
+    if #available(iOS 27.1, *), joinsVerticalRail {
+        ToolbarItem(
+            placement: anchorsToRailBottom
+                ? .bottomBar
+                : pinnedUnderStatus ? .topBarPinnedTrailing : .topBarTrailing,
+            content: content
+        )
+        .axisBehavior(.verticalPreferred)
+    } else {
+        ToolbarItem(placement: .topBarTrailing, content: content)
+    }
+    #else
+    ToolbarItem(placement: .topBarTrailing, content: content)
+    #endif
+}
+
+extension View {
+    func readVerticalBarActivity(_ isActive: Binding<Bool>) -> some View {
+        background {
+            VerticalBarActivityReader(isActive: isActive)
+        }
+        .onAppear {
+            isActive.wrappedValue = VerticalBarActivityScan.isActive()
+        }
+    }
+}
+
+enum VerticalBarActivityScan {
+    /// The side rail is a scene trait. A background probe does not inherit it.
+    @MainActor
+    static func isActive() -> Bool {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .contains { SystemVerticalBar.traitIsActive($0.traitCollection) }
+    }
+}
+
+private struct VerticalBarActivityReader: UIViewControllerRepresentable {
+    var isActive: Binding<Bool>
+
+    func makeUIViewController(context: Context) -> VerticalBarActivityProbe {
+        let probe = VerticalBarActivityProbe()
+        probe.onChange = { isActive.wrappedValue = $0 }
+        return probe
+    }
+
+    func updateUIViewController(_ probe: VerticalBarActivityProbe, context: Context) {
+        probe.onChange = { isActive.wrappedValue = $0 }
+        probe.reportIfChanged()
+    }
+}
+
+private final class VerticalBarActivityProbe: UIViewController {
+    var onChange: ((Bool) -> Void)?
+    private var lastReported: Bool?
+    private weak var observedNavigationController: UINavigationController?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+    }
+
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+        observeNavigationBar()
+        reportIfChanged()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        observeNavigationBar()
+        reportIfChanged()
+    }
+
+    func reportIfChanged() {
+        let active = VerticalBarActivityScan.isActive()
+        guard active != lastReported else { return }
+        lastReported = active
+        onChange?(active)
+    }
+
+    /// The bar edge lives on the navigation controller. A background probe
+    /// does not inherit it, so read the controller that owns the bar.
+    private func observeNavigationBar() {
+        guard let navigationController = enclosingNavigationController(),
+              navigationController !== observedNavigationController else { return }
+        observedNavigationController = navigationController
+        #if canImport(SwiftUI, _version: 8.0.85)
+        if #available(iOS 27.1, *) {
+            navigationController.registerForTraitChanges(
+                UITraitCollection.systemTraitsAffectingVerticalBarEdge
+            ) { [weak self] (_: UINavigationController, _) in
+                self?.reportIfChanged()
+            }
+        }
+        #endif
+    }
+
+    private func enclosingNavigationController() -> UINavigationController? {
+        var responder: UIResponder? = view
+        while let current = responder {
+            if let navigationController = current as? UINavigationController {
+                return navigationController
+            }
+            if let controller = current as? UIViewController,
+               let navigationController = controller.navigationController {
+                return navigationController
+            }
+            responder = current.next
+        }
+        return nil
     }
 }
 

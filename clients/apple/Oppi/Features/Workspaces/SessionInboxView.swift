@@ -289,6 +289,7 @@ struct SessionInboxView: View {
     @FocusState private var isSearchFieldFocused: Bool
     @State private var presentsNowPlayingPlayer = false
     @State private var composeBarColumnWidth: CGFloat = 0
+    @State private var verticalBarActive = false
 
     init(scope: SessionInboxScope = .all, onOpenSidebar: (() -> Void)? = nil) {
         self.scope = scope
@@ -592,6 +593,7 @@ struct SessionInboxView: View {
             resetLocalHostState()
         }
         .toolbar { toolbarContent }
+        .readVerticalBarActivity($verticalBarActive)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { composeBarColumnWidth = $0 }
         .refreshable {
             async let refresh: () = refreshVisibleServer()
@@ -755,7 +757,7 @@ struct SessionInboxView: View {
             inboxTitle
         }
 
-        ToolbarItem(placement: .topBarLeading) {
+        topLeadingToolbarItem {
             if let onOpenSidebar {
                 Button {
                     onOpenSidebar()
@@ -768,10 +770,17 @@ struct SessionInboxView: View {
             }
         }
 
-        ToolbarItem(placement: .topBarTrailing) {
-            // Switching hosts would leave the per-server Durable scope.
-            if scope == .all, let selectedServer {
-                serverSwitcher(selectedServer)
+        // Pinned trailing sits with the status cluster, under the wifi mark,
+        // once the capsule has a vertical layout. A normal top bar keeps it trailing.
+        if scope == .all, let selectedServer {
+            if verticalBarActive {
+                verticalRailToolbarItem(joinsVerticalRail: true, pinnedUnderStatus: true) {
+                    serverSwitcher(selectedServer, fitsVerticalRail: true)
+                }
+            } else {
+                ToolbarItem(placement: .topBarTrailing) {
+                    serverSwitcher(selectedServer)
+                }
             }
         }
 
@@ -798,15 +807,22 @@ struct SessionInboxView: View {
             ToolbarSpacer(.flexible, placement: .bottomBar)
         }
 
-        ToolbarItem(placement: .bottomBar) {
-            inboxFolderButton
+        if verticalBarActive {
+            verticalRailToolbarItem(joinsVerticalRail: true, anchorsToRailBottom: true) {
+                inboxFolderButton
+            }
+        } else {
+            ToolbarItem(placement: .bottomBar) {
+                inboxFolderButton
+            }
         }
     }
 
-    private func serverSwitcher(_ current: PairedServer) -> some View {
+    private func serverSwitcher(_ current: PairedServer, fitsVerticalRail: Bool = false) -> some View {
         HostSwitcherMenu(
             current: current,
             destination: .inbox,
+            fitsVerticalRail: fitsVerticalRail,
             onSwitch: { _ in
                 switchVisibleServer()
             }
@@ -1261,6 +1277,9 @@ struct SessionInboxView: View {
             ),
             hasActivePlayback: sessionListHasActivePlayback,
             columnWidth: composeBarColumnWidth,
+            trailingReserve: verticalBarActive
+                ? SessionInboxComposeChrome.messageCapsuleSoloReserve
+                : SessionInboxComposeChrome.messageCapsuleFolderReserve,
             onIncognito: nil,
             onStart: {
                 startQuickSession(dictate: false)

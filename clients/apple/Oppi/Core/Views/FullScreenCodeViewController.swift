@@ -50,16 +50,6 @@ final class FullScreenCodeViewController: UIViewController {
         let mutableMarkdownViewportIntent: FullScreenMarkdownViewportIntent?
     }
 
-    private struct NavigationPresentation: Equatable {
-        let sourceToggleTitle: String?
-        let readerFamily: FullScreenReaderContentFamily?
-
-        init(_ presentation: Presentation) {
-            sourceToggleTitle = presentation.sourceToggleTitle
-            readerFamily = presentation.readerFamily
-        }
-    }
-
     private final class LiveSourceObserverCleanup: @unchecked Sendable {
         private let cancelImpl: @MainActor @Sendable () -> Void
 
@@ -91,6 +81,9 @@ final class FullScreenCodeViewController: UIViewController {
     private var floatingViewingOptionsButton: UIButton?
     private weak var viewingOptionsController: FullScreenViewingOptionsController?
     private weak var contentHostController: UIViewController?
+    private var viewingOptionsBarItem: UIBarButtonItem?
+    private var annotateBarItem: UIBarButtonItem?
+    private var stashBarItem: UIBarButtonItem?
     private var backSwipeDismissHandler: HorizontalBackSwipeGestureInstaller?
     private var installedBodyView: UIView?
     private var liveSourceBodyView: NativeFullScreenSourceBody?
@@ -99,7 +92,6 @@ final class FullScreenCodeViewController: UIViewController {
     private var liveSourceObserverCleanup: LiveSourceObserverCleanup?
     private var liveSourceCurrentSnapshot: SourceTraceStream.Snapshot?
     private var liveSourceMarkdownViewportIntent: FullScreenMarkdownViewportIntent?
-    private var lastNavigationPresentation: NavigationPresentation?
     private var appliedThemeID: ThemeID?
     private var annotateButton: UIButton?
     private var pickButton: UIButton?
@@ -313,7 +305,6 @@ final class FullScreenCodeViewController: UIViewController {
         guard presentation != navigationActionPresentation else { return }
         navigationActions = actions
         navigationActionPresentation = presentation
-        lastNavigationPresentation = nil
         guard isViewLoaded, let viewController = contentHostController else { return }
         configureNavigation(on: viewController, palette: bodyThemeID.palette)
     }
@@ -363,7 +354,6 @@ final class FullScreenCodeViewController: UIViewController {
 
         // Force navigation items to be rebuilt because their tint colors are
         // also captured UIKit values rather than dynamic SwiftUI styles.
-        lastNavigationPresentation = nil
         configureNavigation(on: viewController, palette: palette)
     }
 
@@ -462,7 +452,11 @@ final class FullScreenCodeViewController: UIViewController {
 
     private func makeContentController() -> UIViewController {
         let palette = bodyThemeID.palette
-        let vc = UIViewController()
+        let vc = FullScreenContentHostController()
+        vc.onVerticalBarEdgeChange = { [weak self] in
+            guard let self, let host = self.contentHostController else { return }
+            self.installRightBarItems(on: host, palette: self.bodyThemeID.palette)
+        }
         vc.view.backgroundColor = UIColor(palette.bgDark)
 
         let dismissMode: FullScreenViewerNavigationChrome.DismissMode?
@@ -711,23 +705,24 @@ final class FullScreenCodeViewController: UIViewController {
 
     private func configureNavigation(on viewController: UIViewController, palette: ThemePalette) {
         let presentation = makePresentation()
-        let navigationPresentation = NavigationPresentation(presentation)
-        if navigationPresentation == lastNavigationPresentation {
-            configureFloatingViewingOptionsButton(
-                on: viewController,
-                presentation: presentation,
-                palette: palette
-            )
-            configureFloatingAnnotateButton(on: viewController, palette: palette)
-            configureFloatingStashButton(on: viewController, palette: palette)
-            updateAnnotateAvailability()
-            return
-        }
-
-        lastNavigationPresentation = navigationPresentation
         // No titleView — immersive mode shows only floating glass pills.
         // See FullScreenViewerChrome.
+        configureFloatingViewingOptionsButton(
+            on: viewController,
+            presentation: presentation,
+            palette: palette
+        )
+        configureFloatingAnnotateButton(on: viewController, palette: palette)
+        configureFloatingStashButton(on: viewController, palette: palette)
+        updateAnnotateAvailability()
+        installRightBarItems(on: viewController, palette: palette)
+    }
 
+    /// Sole writer of the content host's right bar items. Persistent viewer
+    /// controls join the side rail when the system says the bar is vertical.
+    private func installRightBarItems(on viewController: UIViewController, palette: ThemePalette) {
+        let presentation = makePresentation()
+        let sideRail = SystemVerticalBar.isActive(viewController)
         var rightItems = navigationActions.map(makeNavigationActionButton)
 
         let copy = UIBarButtonItem(
@@ -754,20 +749,84 @@ final class FullScreenCodeViewController: UIViewController {
                 target: self,
                 action: #selector(toggleSource)
             )
+            if sideRail {
+                toggle.image = UIImage(systemName: Self.sourceToggleSymbol(for: toggleTitle))
+            }
             toggle.accessibilityIdentifier = "fullscreen-code.source-toggle"
             toggle.tintColor = UIColor(palette.blue)
             rightItems.append(toggle)
         }
 
+        viewingOptionsBarItem = nil
+        annotateBarItem = nil
+        stashBarItem = nil
+        if sideRail {
+            if floatingViewingOptionsButton != nil {
+                let item = railItem(
+                    symbol: FullScreenViewingOptionsSymbols.readerModeIconName,
+                    title: String(localized: "Viewing Options"),
+                    action: #selector(showViewingOptions)
+                )
+                viewingOptionsBarItem = item
+                rightItems.append(item)
+            }
+            if annotateButton != nil {
+                let item = railItem(
+                    symbol: PaperMarkupCanvasSession.AnnotateAction.systemImage,
+                    title: PaperMarkupCanvasSession.AnnotateAction.title,
+                    action: #selector(annotateRenderedViewTapped)
+                )
+                item.isEnabled = annotateButton?.isEnabled ?? false
+                annotateBarItem = item
+                rightItems.append(item)
+            }
+            if stashButton != nil {
+                let item = railItem(
+                    symbol: FullScreenReviewCommentStashControl.systemImage,
+                    title: FullScreenReviewCommentStashControl.accessibilityLabel,
+                    action: #selector(stashButtonTapped)
+                )
+                let count = reviewCommentStash?.stagedCount ?? 0
+                if count > 0 {
+                    item.badge = .count(count)
+                }
+                item.accessibilityValue = stashButton?.accessibilityValue
+                stashBarItem = item
+                rightItems.append(item)
+            }
+        }
+
+        floatingViewingOptionsButton?.isHidden = sideRail
+        annotateButton?.isHidden = sideRail
+        stashButton?.isHidden = sideRail
+        stashBadgeLabel?.isHidden = sideRail
         viewController.navigationItem.rightBarButtonItems = rightItems
-        configureFloatingViewingOptionsButton(
-            on: viewController,
-            presentation: presentation,
-            palette: palette
+    }
+
+    private func railItem(symbol: String, title: String, action: Selector) -> UIBarButtonItem {
+        let item = UIBarButtonItem(
+            image: UIImage(systemName: symbol),
+            style: .plain,
+            target: self,
+            action: action
         )
-        configureFloatingAnnotateButton(on: viewController, palette: palette)
-        configureFloatingStashButton(on: viewController, palette: palette)
-        updateAnnotateAvailability()
+        item.title = title
+        item.accessibilityLabel = title
+        if #available(iOS 27.0, *) {
+            item.visibilityPriority = .high
+        }
+        return item
+    }
+
+    /// The title is the mode the control switches to. The symbol matches that mode.
+    private static func sourceToggleSymbol(for title: String) -> String {
+        if title == String(localized: "Source") || title == String(localized: "Raw") {
+            return "curlybraces"
+        }
+        if title == String(localized: "Table") {
+            return "tablecells"
+        }
+        return "text.page"
     }
 
     private func makeNavigationActionButton(_ action: FullScreenViewerNavigationAction) -> UIBarButtonItem {
@@ -965,8 +1024,9 @@ final class FullScreenCodeViewController: UIViewController {
         (installedBodyView as? NativeFullScreenRenderedDocumentBody)?.mermaidPicker != nil
     }
     private var pickControlsBottomPadding: CGFloat {
-        FullScreenReviewCommentStashControl.bottomPadding(
-            leadingAccessoryCount: trailingFloatingAccessoryCount + (floatingViewingOptionsButton == nil ? 0 : 1)
+        let viewingOptionsVisible = floatingViewingOptionsButton?.isHidden == false
+        return FullScreenReviewCommentStashControl.bottomPadding(
+            leadingAccessoryCount: trailingFloatingAccessoryCount + (viewingOptionsVisible ? 1 : 0)
         )
     }
 
@@ -1006,8 +1066,9 @@ final class FullScreenCodeViewController: UIViewController {
             .elementPicker.selectedTargetRect(in: host)
             ?? (installedBodyView as? NativeFullScreenRenderedDocumentBody)?
                 .mermaidPicker?.selectedTargetRect(in: host)
-        let controls = [pickButton, annotateButton, stashButton, stashBadgeLabel].compactMap { control in
-            control.map { $0.convert($0.bounds, to: host) }
+        let controls = [pickButton, annotateButton, stashButton, stashBadgeLabel].compactMap { control -> CGRect? in
+            guard let control, !control.isHidden else { return nil }
+            return control.convert(control.bounds, to: host)
         }
         guard let target,
               let origin = FullScreenPickCommentPlacement.origin(
@@ -1059,6 +1120,7 @@ final class FullScreenCodeViewController: UIViewController {
     private func handleReviewCommentStashChange() {
         if isViewLoaded, let host = contentHostController {
             configureFloatingStashButton(on: host, palette: bodyThemeID.palette)
+            installRightBarItems(on: host, palette: bodyThemeID.palette)
             refreshPresentedStashSheet()
         }
         trackReviewCommentStashChanges()
@@ -1952,7 +2014,7 @@ final class FullScreenCodeViewController: UIViewController {
         let presentation = makePresentation()
         guard let family = presentation.readerFamily,
               let preferences = presentation.readerPreferences,
-              let sourceButton = floatingViewingOptionsButton else { return }
+              floatingViewingOptionsButton != nil || viewingOptionsBarItem != nil else { return }
 
         if let existing = viewingOptionsController {
             existing.dismiss(animated: true)
@@ -1983,7 +2045,11 @@ final class FullScreenCodeViewController: UIViewController {
         }
         viewingOptionsController = options
 
-        if traitCollection.horizontalSizeClass == .regular {
+        if let barItem = viewingOptionsBarItem {
+            options.modalPresentationStyle = .popover
+            options.popoverPresentationController?.barButtonItem = barItem
+        } else if traitCollection.horizontalSizeClass == .regular,
+                  let sourceButton = floatingViewingOptionsButton {
             options.modalPresentationStyle = .popover
             options.popoverPresentationController?.sourceView = sourceButton
             options.popoverPresentationController?.sourceRect = sourceButton.bounds
@@ -2163,7 +2229,9 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     private func updateAnnotateAvailability() {
-        annotateButton?.isEnabled = isRenderedContentReady && !isSnapshotting
+        let enabled = isRenderedContentReady && !isSnapshotting
+        annotateButton?.isEnabled = enabled
+        annotateBarItem?.isEnabled = enabled
         updatePickControls()
     }
 
@@ -2288,6 +2356,29 @@ final class FullScreenCodeViewController: UIViewController {
         let presentation = makePresentation()
         installBodyView(makeBodyView(for: presentation.bodyContent, themeID: themeID), on: viewController)
         configureNavigation(on: viewController, palette: palette)
+    }
+}
+
+/// Content host so a vertical-bar trait change rebuilds the one bar-item list.
+private final class FullScreenContentHostController: UIViewController {
+    var onVerticalBarEdgeChange: (() -> Void)?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        #if canImport(SwiftUI, _version: 8.0.85)
+        if #available(iOS 27.1, *) {
+            registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (host: FullScreenContentHostController, _) in
+                host.onVerticalBarEdgeChange?()
+            }
+        }
+        #endif
+    }
+
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+        // The bar edge is unset until this host is in the window. Trait
+        // registration does not replay the value already present.
+        onVerticalBarEdgeChange?()
     }
 }
 

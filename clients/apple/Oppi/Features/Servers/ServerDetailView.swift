@@ -323,6 +323,7 @@ struct ServerDetailView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var info: ServerInfo?
+    @State private var verticalBarActive = false
     @State private var isLoading = true
     @State private var error: String?
     @State private var showRemoveConfirmation = false
@@ -390,10 +391,14 @@ struct ServerDetailView: View {
         )
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                HostSwitcherMenu(current: pairedServer, destination: hostSwitcherDestination)
+            verticalRailToolbarItem(joinsVerticalRail: verticalBarActive) {
+                HostSwitcherMenu(
+                    current: pairedServer,
+                    destination: hostSwitcherDestination
+                )
             }
         }
+        .readVerticalBarActivity($verticalBarActive)
         .refreshable {
             if presentation == .modelProviders {
                 await loadProviderConfiguration()

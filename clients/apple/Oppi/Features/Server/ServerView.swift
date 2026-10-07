@@ -12,6 +12,7 @@ struct ServerView: View {
     @Environment(AppNavigation.self) private var navigation
 
     @State private var stats: ServerStats?
+    @State private var verticalBarActive = false
     @State private var serverInfo: ServerInfo?
     @State private var selectedRange: Int = 7
     @State private var isLoading = true
@@ -74,11 +75,15 @@ struct ServerView: View {
         .navigationTitle(HostSwitcherDestination.usage.title)
         .toolbar {
             if let selectedServer {
-                ToolbarItem(placement: .topBarTrailing) {
-                    HostSwitcherMenu(current: selectedServer, destination: .usage)
+                verticalRailToolbarItem(joinsVerticalRail: verticalBarActive) {
+                    HostSwitcherMenu(
+                        current: selectedServer,
+                        destination: .usage
+                    )
                 }
             }
         }
+        .readVerticalBarActivity($verticalBarActive)
         .navigationDestination(for: PairedServer.self) { server in
             ServerDetailView(server: server)
         }

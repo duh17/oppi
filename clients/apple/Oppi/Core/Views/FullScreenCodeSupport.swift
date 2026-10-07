@@ -27,6 +27,9 @@ import UIKit
 /// 1. Do NOT set a custom `UINavigationBarAppearance` on the content VC.
 /// 2. Pin the body view's top to `view.topAnchor` (not `safeAreaLayoutGuide`).
 /// 3. Do NOT set a `titleView` — only left/right bar button items.
+/// 4. When `verticalBarEdge` is set, persistent viewer controls join that
+///    system bar. A normal top bar keeps the floating corner buttons. Do not
+///    add a second inset; the body already uses the safe area.
 ///
 /// Scroll views inside body views use `contentInsetAdjustmentBehavior = .automatic`
 /// (the default) so content starts below the bar but scrolls behind it.
@@ -41,6 +44,27 @@ import UIKit
 enum FullScreenViewerChrome {
     // Marker enum — the convention is documented above.
     // Grep for `FullScreenViewerChrome` to find all adopters.
+}
+
+/// Whether the system is presenting bars on the side.
+///
+/// `verticalBarEdge` exists only in the iOS 27.1 SDK. A build from Xcode 27.0
+/// never sees a vertical bar, so this stays false and the iPhone chrome is
+/// unchanged.
+enum SystemVerticalBar {
+    static func traitIsActive(_ traits: UITraitCollection) -> Bool {
+        #if canImport(SwiftUI, _version: 8.0.85)
+        if #available(iOS 27.1, *) {
+            return traits.verticalBarEdge != .unspecified
+        }
+        #endif
+        return false
+    }
+
+    static func isActive(_ viewController: UIViewController) -> Bool {
+        guard viewController.navigationController?.isNavigationBarHidden != true else { return false }
+        return traitIsActive(viewController.traitCollection)
+    }
 }
 
 enum FullScreenPickCommentPlacement {
