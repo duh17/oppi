@@ -313,7 +313,8 @@ final class LiveActivityManager {
              .compactionEnd,
              .retryStart,
              .retryEnd,
-             .commandResult:
+             .commandResult,
+             .customCard:
             didChange = false
         }
 
