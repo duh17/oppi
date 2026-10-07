@@ -4,9 +4,12 @@ import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
  * cleanup, prompt/steer/follow_up commands, extension UI protocol, and
  * turn dedupe. Complements stop-lifecycle.test.ts (stop/abort flows).
  */
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import type { IncomingMessage } from "node:http";
+import { join, sep } from "node:path";
 import { tmpdir } from "node:os";
+import { PassThrough } from "node:stream";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   EXTENSION_UI_STATUS_TEXT_MAX_CHARS,
@@ -28,6 +31,12 @@ import type { Storage } from "../src/storage.js";
 import type { ServerConfig, ServerMessage, Session, Workspace } from "../src/types.js";
 import { WsMessageHandler } from "../src/ws-message-handler.js";
 import { makeSdkBackendStub } from "./sdk-backend.helpers.js";
+import {
+  createUploadRecord,
+  resolveUploadStoreConfig,
+  uploadRecordToAttachmentRef,
+  writeUploadContent,
+} from "../src/uploads/local-upload-store.js";
 
 const TEST_CONFIG: ServerConfig = {
   port: 7749,
@@ -54,17 +63,38 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
+async function stageSessionUpload(dataDir: string, sessionId: string, body: Buffer) {
+  const config = resolveUploadStoreConfig({ ...TEST_CONFIG, dataDir });
+  const record = await createUploadRecord({
+    config,
+    sessionId,
+    name: "notes.txt",
+    mimeType: "text/plain",
+    sizeBytes: body.length,
+    purpose: "chat_attachment",
+  });
+  const req = new PassThrough();
+  req.end(body);
+  return writeUploadContent({
+    config,
+    sessionId,
+    uploadId: record.id,
+    req: req as unknown as IncomingMessage,
+  });
+}
+
 function makeManagerHarness(
   sessionOverrides: Partial<Session> = {},
-  options: { workspace?: Workspace } = {},
+  options: { workspace?: Workspace; dataDir?: string } = {},
 ) {
   let sessionRef: Session | null = null;
+  const config = options.dataDir ? { ...TEST_CONFIG, dataDir: options.dataDir } : TEST_CONFIG;
   const storage = {
-    getConfig: () => TEST_CONFIG,
+    getConfig: () => config,
     listSessions: () => [],
     saveSession: vi.fn(),
     addSessionMessage: vi.fn(),
-    getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
+    getDataDir: vi.fn(() => config.dataDir),
     getWorkspace: vi.fn(() => options.workspace ?? null),
     getSession: vi.fn((id: string) => (sessionRef && sessionRef.id === id ? sessionRef : null)),
     clearRestartResume: vi.fn(),
@@ -1336,6 +1366,75 @@ describe("SessionManager prompt", () => {
         images: [{ type: "image", data: imageBytes.toString("base64"), mimeType: "image/png" }],
       }),
     );
+  });
+
+  it("materializes a control-conversation attachment under its cwd and sends the prompt", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "oppi-control-attach-"));
+    const sessionId = "cc-attach";
+    const body = Buffer.from("control notes", "utf8");
+    try {
+      const upload = await stageSessionUpload(dataDir, sessionId, body);
+      const { manager, sdkBackend } = makeManagerHarness(
+        {
+          id: sessionId,
+          workspaceId: undefined,
+          status: "ready",
+          serverDurable: { role: "control" },
+        },
+        { dataDir },
+      );
+
+      await manager.sendPrompt(sessionId, "look at this", {
+        clientTurnId: "turn-attach",
+        attachments: [uploadRecordToAttachmentRef(upload)],
+      });
+
+      const cwd = join(dataDir, "control-conversation", "cwd");
+      const relativePath = ".pi/attachments/cc-attach/turn-attach/notes.txt";
+      const copied = join(cwd, relativePath);
+      const rootReal = await realpath(cwd);
+      const fileReal = await realpath(copied);
+      expect(fileReal.startsWith(`${rootReal}${sep}`)).toBe(true);
+      expect(await readFile(copied)).toEqual(body);
+      expect(sdkBackend.prompt).toHaveBeenCalledTimes(1);
+      expect(sdkBackend.prompt).toHaveBeenCalledWith(
+        expect.stringContaining(`notes.txt: ${relativePath}`),
+        expect.any(Object),
+      );
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an attachment prompt when the session has neither a workspace nor a control role", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "oppi-plain-attach-"));
+    const sessionId = "plain-attach";
+    const body = Buffer.from("not admitted", "utf8");
+    try {
+      const upload = await stageSessionUpload(dataDir, sessionId, body);
+      const { manager, sdkBackend } = makeManagerHarness(
+        {
+          id: sessionId,
+          workspaceId: undefined,
+          control: undefined,
+          status: "ready",
+        },
+        { dataDir },
+      );
+
+      await expect(
+        manager.sendPrompt(sessionId, "look at this", {
+          clientTurnId: "turn-attach",
+          attachments: [uploadRecordToAttachmentRef(upload)],
+        }),
+      ).rejects.toThrow("Attachments require a workspace-backed session");
+
+      expect(sdkBackend.prompt).not.toHaveBeenCalled();
+      expect(existsSync(join(dataDir, "control-conversation"))).toBe(false);
+      expect(existsSync(join(dataDir, "control-sessions"))).toBe(false);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("forwards busy prompt streamingBehavior to SDK", async () => {

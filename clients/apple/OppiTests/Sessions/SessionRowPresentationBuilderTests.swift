@@ -158,18 +158,29 @@ struct SessionRowPresentationBuilderTests {
         #expect(!durable.isControlConversation)
         #expect(SessionInboxSessionRouting.routeScope(for: durable) == .workspace("ws-1"))
 
-        let unknownRole = try JSONDecoder().decode(
-            Session.self,
-            from: Data(#"{"id":"u1","status":"ready","createdAt":1000,"lastActivity":2000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"workspaceId":"ws-1","serverDurable":{"role":42}}"#.utf8)
-        )
-        #expect(unknownRole.engine == .durable)
-        #expect(unknownRole.serverDurableRole == nil)
-        #expect(SessionInboxSessionRouting.routeScope(for: unknownRole) == .workspace("ws-1"))
-
         let roundTrip = try JSONDecoder().decode(Session.self, from: JSONEncoder().encode(session))
         #expect(roundTrip == session)
         #expect(roundTrip.serverDurableRole == "control")
         #expect(roundTrip.engine == .durable)
+    }
+
+    @Test func controlConversationRoleThrowsWhenPresentAndNonString() throws {
+        let absentRole = Data(#"{"id":"d1","status":"ready","createdAt":1000,"lastActivity":2000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"workspaceId":"ws-1","serverDurable":{"conversationId":3}}"#.utf8)
+        let session = try JSONDecoder().decode(Session.self, from: absentRole)
+        let summary = try JSONDecoder().decode(SessionSummary.self, from: absentRole)
+        #expect(session.serverDurableRole == nil)
+        #expect(session.engine == .durable)
+        #expect(!session.isControlConversation)
+        #expect(summary.serverDurableRole == nil)
+        #expect(summary.engine == .durable)
+
+        let malformed = Data(#"{"id":"u1","status":"ready","createdAt":1000,"lastActivity":2000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"workspaceId":"ws-1","serverDurable":{"conversationId":7,"role":42}}"#.utf8)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(Session.self, from: malformed)
+        }
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(SessionSummary.self, from: malformed)
+        }
     }
 
     @MainActor

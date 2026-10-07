@@ -468,7 +468,7 @@ private struct DecodedSessionWireFields {
         ephemeral = try container.decodeIfPresent(Bool.self, forKey: .ephemeral)
         warnings = try container.decodeIfPresent([String].self, forKey: .warnings)
         let serverDurable = try container.decodeIfPresent(ServerDurableWire.self, forKey: .serverDurable)
-        // A non-string role must not fail the session; it is not the control conversation.
+        // A present non-string role fails the session. An absent role is not the control conversation.
         serverDurableRole = serverDurable?.role
         // Summaries name the engine; full sessions carry the `serverDurable` enrollment.
         // An unknown future engine is not durable, so it reads as classic.
@@ -491,11 +491,8 @@ private struct ServerDurableWire: Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        if let raw = try? container.decodeIfPresent(String.self, forKey: .role) {
-            role = raw
-        } else {
-            role = nil
-        }
+        // Absent role stays nil. A present non-string role is malformed.
+        role = try container.decodeIfPresent(String.self, forKey: .role)
     }
 
     func encode(to encoder: Encoder) throws {
