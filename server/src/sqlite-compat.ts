@@ -31,11 +31,11 @@ const BUSY_TIMEOUT_MS = 5000;
 /**
  * Open a SQLite database file using the best available built-in driver.
  */
-export function openDatabase(path: string): SqliteDatabase {
+export function openDatabase(path: string, options?: { readonly?: boolean }): SqliteDatabase {
   if (isBun) {
-    return openBunDatabase(path);
+    return openBunDatabase(path, options?.readonly ? { readonly: true } : undefined);
   }
-  return openNodeSqliteDatabase(path);
+  return openNodeSqliteDatabase(path, options?.readonly ? { readOnly: true } : undefined);
 }
 
 // ---------------------------------------------------------------------------

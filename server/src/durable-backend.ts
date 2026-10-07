@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AttachedReplicatedState } from "@earendil-works/chord";
@@ -76,6 +77,12 @@ import {
   DURABLE_QUEUE_REQUEST_ID_PREFIX,
   DURABLE_RESERVED_REQUEST_ID_PREFIXES,
 } from "./durable-request-ids.js";
+import {
+  DURABLE_FAILURE_ENTRY_KIND,
+  reconcileFailureCards,
+  recordInputFailure,
+  recordTaskFailure,
+} from "./durable-failure-cards.js";
 import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
 import {
   DurableWorkingWords,
@@ -95,9 +102,12 @@ import {
   ProjectContextDoc,
   DurableProjectContext,
 } from "../extensions/durable/project-context/durable.js";
+import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { managedProjectTrustContext, resolveManagedProjectTrust } from "./project-trust.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
+
+const log = createLogger({ base: { component: "durable-backend" } });
 
 export class DurableNotSupportedError extends Error {
   readonly code = "server_durable_not_supported";
@@ -235,6 +245,7 @@ export class DurableBackend implements AgentBackend {
     private readonly mcp: DurableMcp | undefined,
     private resources: DurableProjectResources,
     private readonly loadResources: () => Promise<DurableProjectResources>,
+    private readonly dataDir: string,
   ) {
     this.registry = new ModelRegistry(models);
     this.projection = new DurableEventProjection(harness, () => owner.retrySettings ?? {});
@@ -513,6 +524,7 @@ export class DurableBackend implements AgentBackend {
         mcp,
         resources,
         target.loadResources,
+        options.dataDir,
       );
       backend.ui = await DurableUIProjection.create(harness, conversation, options.onEvent);
       await backend.projection.refreshInputCards([
@@ -527,7 +539,7 @@ export class DurableBackend implements AgentBackend {
   }
 
   /** Start only after Oppi has registered its projection listener. */
-  startEvents(): void {
+  async startEvents(): Promise<void> {
     if (this.eventsStarted) return;
     this.eventsStarted = true;
     this.ui.start();
@@ -562,7 +574,11 @@ export class DurableBackend implements AgentBackend {
               message: `${card.title}${card.status ? ` · ${card.status}` : ""}${card.body ? ` — ${card.body}` : ""}`,
             });
         }
-        if (event.type === "entry_appended" && !event.entry.model?.length) {
+        if (
+          event.type === "entry_appended" &&
+          !event.entry.model?.length &&
+          event.entry.kind !== DURABLE_FAILURE_ENTRY_KIND
+        ) {
           const data = event.entry.data;
           const card = sanitizeTranscriptCard(
             data && typeof data === "object" && !Array.isArray(data) ? data.card : undefined,
@@ -616,10 +632,38 @@ export class DurableBackend implements AgentBackend {
         }
         if (event.type === "inbox_update")
           this.onEvent({ type: "queue_update", ...this.queuedMessages() });
-        if (event.type === "task_failed" && event.kind !== "pi.compaction")
+        if (event.type === "task_failed" && event.kind !== "pi.compaction") {
+          // A generation fault also settles its inputs, which record the card.
+          if (event.kind !== "pi.generation") {
+            try {
+              await recordTaskFailure(this.conversation, {
+                id: event.taskId,
+                kind: event.kind,
+                message: event.message,
+              });
+            } catch (error) {
+              log.warn("durable_failure.task_card_failed", {
+                taskId: event.taskId,
+                error: safeErrorMessage(error),
+              });
+            }
+          }
           this.onEvent({ type: "prompt_error", error: event.message });
+        }
       }
     });
+    // After the listener is attached. A commit, not Conversation.submit, so a
+    // held startup scheduler stays held. A crash between settlement and the
+    // card write is filled here; a card that already landed is a no-op.
+    if (this.disposed) return;
+    try {
+      await reconcileFailureCards(
+        this.conversation,
+        join(this.dataDir, "durable", "harness.sqlite"),
+      );
+    } catch (error) {
+      log.warn("durable_failure.reconcile_failed", { error: safeErrorMessage(error) });
+    }
   }
 
   private get agent(): AgentState {
@@ -749,13 +793,24 @@ export class DurableBackend implements AgentBackend {
     // wait behind a stream, and a duplicate can find its settled submission.
     void submission
       .wait(BACKGROUND_CONTEXT)
-      .then((settled) => {
-        if (!this.disposed && settled.status === "unanswered" && settled.reason !== "aborted") {
+      .then(async (settled) => {
+        if (this.disposed || settled.status !== "unanswered" || settled.reason === "aborted")
+          return;
+        if (settled.type === "input" && settled.reason !== "withdrawn") {
+          try {
+            await recordInputFailure(this.conversation, settled);
+          } catch (error) {
+            log.warn("durable_failure.input_card_failed", {
+              submissionId: settled.id,
+              error: safeErrorMessage(error),
+            });
+          }
+        }
+        if (!this.disposed)
           this.onEvent({
             type: "prompt_error",
             error: `Server durable input unanswered: ${settled.reason}`,
           });
-        }
       })
       .catch((error: unknown) => {
         if (!this.disposed)

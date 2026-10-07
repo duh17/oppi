@@ -964,6 +964,109 @@ describe("server durable managed runtime", () => {
     },
   );
 
+  it("keeps a model_error failure card in trace, page, and outline after restart, once, and out of model context", async () => {
+    const errorText = "provider exploded before an answer";
+    const f = await fixture(
+      [fauxAssistantMessage("", { stopReason: "error", errorMessage: errorText })],
+      { settings: { retry: { enabled: false } } },
+    );
+    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    const ended = observed.next(
+      (message) => message.type === "agent_end" || message.type === "error",
+    );
+    await f.manager.sendPrompt(f.session.id, "fail this turn");
+    await ended;
+
+    const isFailureCard = (event: TraceEvent): boolean =>
+      event.presentation?.accent === "error" &&
+      (event.presentation.body?.includes(errorText) === true ||
+        event.text?.includes(errorText) === true);
+
+    async function failureCards(manager: SessionManager): Promise<TraceEvent[]> {
+      const trace = await manager.getServerDurableTrace(f.session.id, "full");
+      expect(trace).not.toBeNull();
+      return trace!.filter(isFailureCard);
+    }
+
+    const deadline = Date.now() + 8_000;
+    let cards: TraceEvent[] = [];
+    while (Date.now() < deadline) {
+      cards = await failureCards(f.manager);
+      if (cards.length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(cards).toHaveLength(1);
+    const full = (await f.manager.getServerDurableTrace(f.session.id, "full"))!;
+    const userIndex = full.findIndex(
+      (event) => event.type === "user" && event.text === "fail this turn",
+    );
+    const cardIndex = full.findIndex(isFailureCard);
+    expect(userIndex).toBeGreaterThanOrEqual(0);
+    expect(cardIndex).toBeGreaterThan(userIndex);
+
+    const pages: TraceEvent[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await f.manager.getServerDurableTracePage(f.session.id, {
+        targetEvents: 2,
+        cursor,
+      });
+      expect(page).not.toBeNull();
+      expect(page!.page.staleCursor).toBe(false);
+      pages.unshift(...page!.trace);
+      cursor = page!.page.olderCursor ?? undefined;
+    } while (cursor);
+    expect(pages.filter(isFailureCard)).toHaveLength(1);
+
+    const outline = await f.manager.getServerDurableTraceOutline(f.session.id);
+    expect(outline).not.toBeNull();
+    const outlineCards = outline!.outline.entries.filter(
+      (entry) => entry.kind === "custom" && entry.summary === "Run failed",
+    );
+    expect(outlineCards).toHaveLength(1);
+    const userOutline = outline!.outline.entries.findIndex(
+      (entry) => entry.kind === "user" && entry.summary.includes("fail this turn"),
+    );
+    const cardOutline = outline!.outline.entries.findIndex(
+      (entry) => entry.id === outlineCards[0]!.id,
+    );
+    expect(cardOutline).toBeGreaterThan(userOutline);
+
+    const { harness } = await opening.mock.results[0]!.value;
+    const conversation = (await harness.conversation(
+      f.storage.getSession(f.session.id)!.serverDurable!.conversationId! as ConversationId,
+      context,
+    ))!;
+    const model = await conversation.context(context);
+    expect(JSON.stringify(model.messages)).not.toContain(errorText);
+    expect(JSON.stringify(model.messages)).not.toContain("Run failed");
+    const listed = (await f.manager.runCommand(f.session.id, { type: "get_messages" })) as Array<{
+      role: string;
+      content?: unknown;
+    }>;
+    expect(JSON.stringify(listed)).not.toContain("Run failed");
+
+    observed.unsubscribe();
+    await f.manager.close();
+    managers.splice(managers.indexOf(f.manager), 1);
+    const restarted = new SessionManager(new Storage(f.dir));
+    managers.push(restarted);
+    await restarted.resumeDurableSessions();
+    expect(await failureCards(restarted)).toHaveLength(1);
+    const restartedOutline = await restarted.getServerDurableTraceOutline(f.session.id);
+    expect(
+      restartedOutline!.outline.entries.filter(
+        (entry) => entry.kind === "custom" && entry.summary === "Run failed",
+      ),
+    ).toHaveLength(1);
+    const restartedPage = await restarted.getServerDurableTracePage(f.session.id, {
+      targetEvents: 20,
+    });
+    expect(restartedPage!.trace.filter(isFailureCard)).toHaveLength(1);
+  }, 20_000);
+
   it("projects manual summary and start-time context tokens and resets cache state", async () => {
     const flush = vi.spyOn(
       SessionMessageQueueCoordinator.prototype,

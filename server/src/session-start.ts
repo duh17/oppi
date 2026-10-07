@@ -164,7 +164,7 @@ export class SessionStartCoordinator {
         this.deps.resetIdleTimer(key);
 
         if (DurableBackend && sdkBackend instanceof DurableBackend && durableHarness) {
-          sdkBackend.startEvents();
+          await sdkBackend.startEvents();
           // Snapshot replay can restore a live turn. Persist it before serving
           // reads: event projection normally saves on a debounce, which would
           // otherwise expose the earlier ready row during crash recovery.
