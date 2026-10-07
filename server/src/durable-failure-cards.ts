@@ -85,13 +85,14 @@ function failureBody(reason: string, detail: JsonValue | undefined): string {
   return typeof detail === "string" && detail.trim() ? detail : reason;
 }
 
-async function writeFailureCard(
+type FailureCard = { title: string; body: string; status?: string; at: number };
+
+async function appendFailureCard(
   tx: Tx,
   conversationId: ConversationId,
   requestId: string,
-  card: { title: string; body: string; status?: string; at: number },
+  card: FailureCard,
 ): Promise<void> {
-  if (await tx.submissionByRequest(conversationId, requestId)) return;
   const entry = await tx.appendEntry(conversationId, {
     kind: DURABLE_FAILURE_ENTRY_KIND,
     data: {
@@ -111,6 +112,16 @@ async function writeFailureCard(
     status: "done",
     entry: entry.id,
   });
+}
+
+async function writeFailureCard(
+  tx: Tx,
+  conversationId: ConversationId,
+  requestId: string,
+  card: FailureCard,
+): Promise<void> {
+  if (await tx.submissionByRequest(conversationId, requestId)) return;
+  await appendFailureCard(tx, conversationId, requestId, card);
 }
 
 /**
@@ -296,13 +307,22 @@ async function reconcileTaskCards(conversation: Conversation, storage: Storage):
   if (!watermarkMoved && cardTasks.length === 0) return;
 
   await conversation.commit(async (tx) => {
+    // Resolve every request id before the first append. A table read after a
+    // table write is rejected, so the second card would roll this commit back
+    // and the watermark would never advance.
+    const missing: Array<{ requestId: string; body: string; at: number }> = [];
     for (const task of cardTasks) {
       const body = taskFailureBody(task);
       if (!body) continue;
-      await writeFailureCard(tx, conversation.id, failureTaskRequestId(task.id), {
+      const requestId = failureTaskRequestId(task.id);
+      if (await tx.submissionByRequest(conversation.id, requestId)) continue;
+      missing.push({ requestId, body, at: Date.now() });
+    }
+    for (const card of missing) {
+      await appendFailureCard(tx, conversation.id, card.requestId, {
         title: "Task failed",
-        body,
-        at: Date.now(),
+        body: card.body,
+        at: card.at,
       });
     }
     const doc = await tx.doc(FailureCardsDoc, conversation.id);

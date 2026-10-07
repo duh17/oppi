@@ -26,6 +26,8 @@ import {
   InboxDoc,
   LiveDoc,
   watchEvents,
+  defineExtension,
+  defineTask,
   type AgentEvent,
   type ConversationId,
   type EntryId,
@@ -43,7 +45,11 @@ import { DurableBackend, DurableNotSupportedError } from "../src/durable-backend
 import { Storage } from "../src/storage.js";
 import { SessionManager } from "../src/sessions.js";
 import { DurableHarness, DurableRuntime } from "../src/durable-harness.js";
-import { DURABLE_FAILURE_ENTRY_KIND, recordInputFailure } from "../src/durable-failure-cards.js";
+import {
+  DURABLE_FAILURE_ENTRY_KIND,
+  FailureCardsDoc,
+  recordInputFailure,
+} from "../src/durable-failure-cards.js";
 import { SessionTraceService } from "../src/session-trace-service.js";
 import { readDurableTrace } from "../src/durable-history.js";
 import { SessionAgentEventCoordinator } from "../src/session-agent-events.js";
@@ -1237,6 +1243,105 @@ describe("server durable managed runtime", () => {
     expect(
       (await f.manager.getServerDurableTrace(f.session.id, "full"))!.filter(isCard),
     ).toHaveLength(1);
+  }, 20_000);
+
+  it("reconciles two historical faulted tasks on attach, once, and advances the watermark", async () => {
+    const faults = ["first historical task fault", "second historical task fault"];
+    const Fault = defineTask<{ label: string }, { phase: "run" }, null>({
+      name: "oppi.test-historical-fault",
+      version: 1,
+      initial: () => ({ phase: "run" }),
+      phases: {
+        run: async (task) => {
+          throw new Error(task.input.label);
+        },
+      },
+      abort: (_task, runtime, callContext) =>
+        runtime.commit(
+          () => ({ status: "terminal", outcome: { status: "aborted" } }),
+          callContext,
+        ),
+    });
+    const f = await fixture([]);
+    const durable = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
+      .durableHarness;
+    const { harness } = await durable.open();
+    durable.installExtension(
+      defineExtension({ name: "oppi.test-historical-fault", tasks: [Fault] }),
+    );
+    const conversation = await harness.createConversation(
+      {
+        ownership: { kind: "ownerless" },
+        agent: { model: { provider: "faux", modelId: "faux-1" }, cwd: f.dir },
+      },
+      context,
+    );
+    const taskIds = [];
+    for (const label of faults) {
+      taskIds.push(
+        await conversation.commit(
+          (tx) =>
+            tx.createTask(Fault, { label }, { ownership: { kind: "conversation" } }),
+          context,
+        ),
+      );
+    }
+    for (const id of taskIds) {
+      expect(await harness.waitForTask(id, context)).toMatchObject({
+        state: { status: "terminal", outcome: { status: "faulted" } },
+      });
+    }
+    expect(
+      (await conversation.entries({}, 20, undefined, context)).items.some(
+        (entry) => entry.kind === DURABLE_FAILURE_ENTRY_KIND,
+      ),
+    ).toBe(false);
+
+    const storage = durable.storage;
+    const taskScans: Array<{ query: unknown; cursor: unknown }> = [];
+    const scanTasks = storage.scanTasks.bind(storage);
+    storage.scanTasks = (async (query, limit, cursor, callContext) => {
+      taskScans.push({ query, cursor });
+      return scanTasks(query, limit, cursor, callContext);
+    }) as typeof storage.scanTasks;
+    const reconcileScans = () =>
+      taskScans.filter(
+        (scan) =>
+          scan.query !== null &&
+          typeof scan.query === "object" &&
+          !Array.isArray(scan.query) &&
+          Object.keys(scan.query).length === 1 &&
+          "conversationId" in scan.query &&
+          (scan.query as { conversationId: ConversationId }).conversationId === conversation.id,
+      );
+
+    f.session.serverDurable = { conversationId: conversation.id };
+    f.storage.saveSession(f.session);
+    await f.manager.startSession(f.session.id, f.workspace);
+
+    const isCard = (body: string) => (event: TraceEvent) =>
+      event.presentation?.title === "Task failed" &&
+      event.presentation.accent === "error" &&
+      event.presentation.body === body;
+    const trace = (await f.manager.getServerDurableTrace(f.session.id, "full"))!;
+    for (const body of faults) expect(trace.filter(isCard(body))).toHaveLength(1);
+    expect(reconcileScans().some((scan) => scan.cursor === undefined)).toBe(true);
+    const examined = Math.max(...taskIds.map(Number));
+    const mark = await harness.snapshot(FailureCardsDoc, conversation.id, context);
+    expect(mark!.taskId).toBeGreaterThanOrEqual(examined);
+    for (const id of taskIds) expect(mark!.open).not.toContain(Number(id));
+
+    taskScans.length = 0;
+    await f.manager.stopSession(f.session.id);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const resumed = reconcileScans();
+    expect(resumed).toEqual([
+      { query: { conversationId: conversation.id }, cursor: { after: mark!.taskId } },
+    ]);
+    expect((resumed[0]!.cursor as { after: number }).after).toBeGreaterThan(0);
+    const retrace = (await f.manager.getServerDurableTrace(f.session.id, "full"))!;
+    for (const body of faults) expect(retrace.filter(isCard(body))).toHaveLength(1);
+    expect(await harness.snapshot(FailureCardsDoc, conversation.id, context)).toEqual(mark);
   }, 20_000);
 
   it("projects manual summary and start-time context tokens and resets cache state", async () => {
