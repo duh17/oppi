@@ -150,6 +150,26 @@ struct TimelineCacheTests {
         #expect(loadedGlobal == nil)
     }
 
+    @Test func removeServerDeletesOnlyThatServersCache() async throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "root")
+        defer { try? fileManager.removeItem(at: base) }
+
+        let cache = TimelineCache(rootURL: root)
+        for serverId in ["sha256:studio", "sha256:mini"] {
+            await cache.saveTrace("session-1", serverId: serverId, events: [makeTraceEvent(id: serverId)])
+            await cache.saveSessionList([makeTestSession(id: serverId, workspaceId: "w")], serverId: serverId)
+        }
+
+        await cache.removeServer("sha256:studio")
+
+        #expect(await cache.loadTrace("session-1", serverId: "sha256:studio") == nil)
+        #expect(await cache.loadSessionList(serverId: "sha256:studio") == nil)
+        #expect(await cache.loadTrace("session-1", serverId: "sha256:mini")?.events.map(\.id) == ["sha256:mini"])
+        #expect(await cache.loadSessionList(serverId: "sha256:mini")?.map(\.id) == ["sha256:mini"])
+    }
+
     @Test func resourceCatalogNamespacingPreservesIndependentServerSnapshots() async throws {
         let fileManager = FileManager.default
         let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")

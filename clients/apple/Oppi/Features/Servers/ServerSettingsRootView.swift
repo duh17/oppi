@@ -257,9 +257,9 @@ struct ServerSettingsRootView: View {
 
     private var removeDialogMessage: String {
         if removingLastServer {
-            return "This is the only paired server on this device. Removing it will disconnect Oppi and return you to onboarding. You'll need to pair again before using the app."
+            return "This is the only paired server on this device. Removing it deletes its cached sessions and files from this iPhone and returns you to onboarding. You'll need to pair again before using the app."
         }
-        return "This removes the server from this iPhone only. It does not delete anything on the server, and you can pair it again later."
+        return "This removes the server and its cached sessions and files from this iPhone. It does not delete anything on the server, and you can pair it again later."
     }
 
     private func removeServer() {

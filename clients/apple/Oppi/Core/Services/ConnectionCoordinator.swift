@@ -1033,6 +1033,8 @@ final class ConnectionCoordinator {
         // If re-paired during shutdown, this removal no longer owns the row.
         guard serverLifetimes[id] == removedLifetime,
               serverStore.server(for: id) == nil else { return }
+        let knownWorkspaceIds = Set(removedConnection?.workspaceStore.workspacesByServer[id]?.map(\.id) ?? [])
+        await Self.purgeLocalData(serverId: id, knownWorkspaceIds: knownWorkspaceIds)
         // If we removed the active server, switch to the first remaining
         if id == activeServerId {
             activeServerId = nil
@@ -1041,6 +1043,22 @@ final class ConnectionCoordinator {
                 await prepareSelectedServerShell(for: firstServer)
             }
         }
+    }
+
+    /// Delete this phone's cached copies of a removed server's data: traces,
+    /// session lists, workspaces, skills, file-browser listings, and the HTTP
+    /// response cache. User-authored drafts stay; their stores never delete
+    /// unsaved work.
+    private static func purgeLocalData(serverId: String, knownWorkspaceIds: Set<String>) async {
+        var workspaceIds = knownWorkspaceIds
+        if let cached = await TimelineCache.shared.loadWorkspaces(serverId: serverId) {
+            workspaceIds.formUnion(cached.map(\.id))
+        }
+        await TimelineCache.shared.removeServer(serverId)
+        await FileBrowserCache.shared.removeWorkspaces(workspaceIds)
+        // URLCache cannot remove by host. It holds only disposable copies
+        // (and request headers with bearer tokens), so clear all of it.
+        URLCache.shared.removeAllCachedResponses()
     }
 
     // MARK: - Multi-Server Refresh

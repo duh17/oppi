@@ -181,6 +181,14 @@ actor TimelineCache {
         logger.debug("Cache removed: trace for \(sessionId) on \(serverId, privacy: .public)")
     }
 
+    /// Delete everything cached for one server (traces, session list,
+    /// workspaces, skills, resource catalog). Other servers are untouched.
+    func removeServer(_ serverId: String) {
+        try? fileManager.removeItem(at: traceServerDir(serverId))
+        try? fileManager.removeItem(at: root.appending(path: "servers/\(serverId)", directoryHint: .isDirectory))
+        logger.info("Cache removed: server \(serverId.prefix(16), privacy: .public)")
+    }
+
     // MARK: - Session List
 
     /// Legacy single-server session-list cache.

@@ -42,6 +42,13 @@ actor FileBrowserCache {
         logger.debug("Invalidated workspace file caches for \(workspaceId)")
     }
 
+    /// Delete all cached listings and indexes for these workspaces.
+    func removeWorkspaces(_ workspaceIds: Set<String>) {
+        for workspaceId in workspaceIds {
+            try? FileManager.default.removeItem(at: workspaceDir(workspaceId))
+        }
+    }
+
     // MARK: - File Index
 
     /// Cached file index paths, or nil if not cached.
