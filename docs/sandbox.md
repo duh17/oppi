@@ -64,7 +64,7 @@ Sandbox workspaces separate host and guest environments. Configure network acces
 | Workspace path   | `/workspace/<workspace-slug>` inside the VM                                                                                                                                                                                                                                     | Workspace name determines the slug                                            |
 | Host filesystem  | Only the selected workspace backing directory is mounted                                                                                                                                                                                                                        | Pick a project path, or leave blank for `~/sandbox/<slug>`                    |
 | Secret files     | Common secret paths are hidden from the workspace mount, including prefix-closed directories such as `.ssh`, `.aws`, `.config/gcloud`, `.pi`, and `.kube`, plus `.env*`, `.npmrc`, `.git-credentials`, `.docker/config.json`, `.pgpass`, `*.pem`, `*.key`, `*.p12`, and `*.pfx` | Keep secrets outside the mounted project when possible                        |
-| Network egress   | Gondolin default: omitted `allowedHosts` allows all HTTP/TLS egress                                                                                                                                                                                                             | Edit **Allowed Hosts** in the workspace editor; use an empty list to deny all |
+| Network egress   | Gondolin default: omitted `allowedHosts` allows all HTTP/TLS egress                                                                                                                                                                                                             | Edit **Allowed Hosts** in Workspace Settings; use an empty list to deny all |
 | Host environment | Per-command host env is ignored except non-secret Pi session metadata (`PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`, `PI_SESSION_ID`); `sandboxConfig.env` injects non-secret guest config such as `PATH` and `LANG`                                                         | Configure explicit non-secret sandbox env on the workspace                    |
 | Provider secrets | Not injected into the VM                                                                                                                                                                                                                                                        | Future secret bridging must be explicit and host-scoped; do not use env       |
 | Tools            | VM-backed `read`, `bash`, `edit`, `write`, `ls`, `find`, `grep`. Host `rg`/`fd` are not registered. Without an Agent/launch allowlist, `workspace.tools` supplies a fallback intersected with this set. An Agent/launch allowlist replaces that fallback and may keep selected host-side extension tools. | Set `workspace.tools` for the fallback VM allowlist; use an Agent/launch allowlist to select host extension tools |
@@ -74,7 +74,7 @@ Existing sandbox workspaces keep their saved network settings. Omitted `allowedH
 
 ## Configure network access
 
-Open **Edit Workspace → Sandbox → Allowed Hosts**.
+Open **Workspace Settings → Network Access** and edit **Allowed Hosts**, then tap **Save**.
 
 - Omitted `allowedHosts`: follow Gondolin's default and allow all HTTP/TLS egress.
 - Empty field in the editor: store `allowedHosts: []` and deny all network egress.
@@ -128,7 +128,7 @@ Host-side extensions are different from VM tools. Installed Pi package tools, in
 
 ## MCP servers in a sandbox
 
-A sandbox loads only the global MCP servers (`~/.pi/agent/mcp.json`) you tick under **Edit Workspace → MCP Servers**, saved in the workspace's `sandboxConfig.mcpServers`. The choice lives in Oppi's workspace config, outside the VM, so the agent cannot add servers. The workspace's own `.pi/mcp.json` is never read in a sandbox, and servers that other extensions register with `pi.registerMcpServer` are refused.
+A sandbox loads only the global MCP servers (`~/.pi/agent/mcp.json`) turn on under **Workspace Settings → MCP Servers**, saved in the workspace's `sandboxConfig.mcpServers`. The choice lives in Oppi's workspace config, outside the VM, so the agent cannot add servers. The workspace's own `.pi/mcp.json` is never read in a sandbox, and servers that other extensions register with `pi.registerMcpServer` are refused.
 
 | Server | Where it runs | Allowed when |
 | --- | --- | --- |
@@ -159,7 +159,7 @@ Pi normally loads global and project context files:
 Sandbox workspaces do not expose the global host agent files to the model. Oppi uses a sandbox-specific base prompt and then allows:
 
 - workspace-local `AGENTS.md` / `CLAUDE.md`, rewritten to sandbox paths
-- the Oppi workspace prompt from the workspace editor
+- the Oppi workspace prompt from Workspace Settings → Instructions
 - selected skills, mounted read-only under `/workspace/<slug>/.pi/skills/<name>/`
 
 Put public project instructions in `AGENTS.md`. Put workspace-specific operating instructions in the Oppi workspace prompt. Do not rely on global host agent files for sandbox behavior.

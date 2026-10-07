@@ -1354,7 +1354,6 @@ struct SessionInboxView: View {
 
 private struct WorkspaceConfigurationScopedDestinationView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
-    @Environment(AppNavigation.self) private var navigation
     let target: WorkspaceNavTarget
 
     @State private var scopedConnection: ServerConnection?
@@ -1366,10 +1365,8 @@ private struct WorkspaceConfigurationScopedDestinationView: View {
     var body: some View {
         Group {
             if let connection = resolvedConnection {
-                WorkspaceEditView(workspace: target.workspace) {
-                    dismissConfiguration()
-                }
-                .withServerScopedEnvironment(connection)
+                WorkspaceSettingsRootView(workspace: target.workspace)
+                    .withServerScopedEnvironment(connection)
             } else {
                 ProgressView("Connecting…")
             }
@@ -1378,11 +1375,6 @@ private struct WorkspaceConfigurationScopedDestinationView: View {
             guard await coordinator.switchToServerReady(target.serverId) else { return }
             scopedConnection = coordinator.connection(for: target.serverId)
         }
-    }
-
-    private func dismissConfiguration() {
-        guard navigation.workspacePath.count > 0 else { return }
-        navigation.workspacePath.removeLast()
     }
 }
 

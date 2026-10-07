@@ -176,33 +176,6 @@ struct WorkspaceDetailSortTests {
     }
 }
 
-@Suite("Workspace Edit Save Completion")
-struct WorkspaceEditSaveCompletionTests {
-    @Test func callbackOwnsCompletionWhenProvided() {
-        var callbackCount = 0
-        var dismissCount = 0
-
-        WorkspaceEditSaveCompletionPolicy.complete(
-            onSaved: { callbackCount += 1 },
-            dismiss: { dismissCount += 1 }
-        )
-
-        #expect(callbackCount == 1)
-        #expect(dismissCount == 0)
-    }
-
-    @Test func environmentDismissesWhenNoCallbackIsProvided() {
-        var dismissCount = 0
-
-        WorkspaceEditSaveCompletionPolicy.complete(
-            onSaved: nil,
-            dismiss: { dismissCount += 1 }
-        )
-
-        #expect(dismissCount == 1)
-    }
-}
-
 @Suite("Workspace Delete Confirmation")
 struct WorkspaceDeleteConfirmationTests {
     @Test func confirmationCopyRemovesRecordKeepsFilesAndWarnsSessions() {
@@ -238,80 +211,6 @@ struct WorkspaceDeleteConfirmationTests {
         #expect(didDelete)
         #expect(pendingWorkspace == nil)
         #expect(pendingWasClearedBeforeDelete)
-    }
-}
-
-@Suite("Workspace Edit Delete Completion")
-struct WorkspaceEditDeleteCompletionTests {
-    @Test func callbackOwnsCompletionWhenProvided() {
-        var callbackCount = 0
-        var dismissCount = 0
-
-        WorkspaceEditDeleteCompletionPolicy.complete(
-            onDeleted: { callbackCount += 1 },
-            dismiss: { dismissCount += 1 }
-        )
-
-        #expect(callbackCount == 1)
-        #expect(dismissCount == 0)
-    }
-
-    @Test func environmentDismissesWhenNoCallbackIsProvided() {
-        var dismissCount = 0
-
-        WorkspaceEditDeleteCompletionPolicy.complete(
-            onDeleted: nil,
-            dismiss: { dismissCount += 1 }
-        )
-
-        #expect(dismissCount == 1)
-    }
-}
-
-@Suite("Workspace Pi Resource Scope")
-struct WorkspacePiResourceScopePolicyTests {
-    @Test func mountlessSandboxUsesWorkspaceIdentity() {
-        let scope = WorkspacePiResourceScopePolicy.resolve(
-            runtime: .sandbox,
-            persistedHostMount: nil,
-            draftHostMount: "",
-            workspaceId: "sandbox-workspace"
-        )
-
-        #expect(scope == WorkspacePiResourceScope(workspaceId: "sandbox-workspace", cwd: nil))
-    }
-
-    @Test func unchangedHostWorkspaceUsesWorkspaceIdentity() {
-        let scope = WorkspacePiResourceScopePolicy.resolve(
-            runtime: .host,
-            persistedHostMount: " ~/workspace/project ",
-            draftHostMount: "~/workspace/project",
-            workspaceId: "host-workspace"
-        )
-
-        #expect(scope == WorkspacePiResourceScope(workspaceId: "host-workspace", cwd: nil))
-    }
-
-    @Test func clearedHostFolderFallsBackToWorkspaceIdentity() {
-        let scope = WorkspacePiResourceScopePolicy.resolve(
-            runtime: .host,
-            persistedHostMount: "~/workspace/old",
-            draftHostMount: "  ",
-            workspaceId: "host-workspace"
-        )
-
-        #expect(scope == WorkspacePiResourceScope(workspaceId: "host-workspace", cwd: nil))
-    }
-
-    @Test func draftHostFolderUsesExplicitProjectCwd() {
-        let scope = WorkspacePiResourceScopePolicy.resolve(
-            runtime: .host,
-            persistedHostMount: "~/workspace/old",
-            draftHostMount: " ~/workspace/new ",
-            workspaceId: "host-workspace"
-        )
-
-        #expect(scope == WorkspacePiResourceScope(workspaceId: nil, cwd: "~/workspace/new"))
     }
 }
 

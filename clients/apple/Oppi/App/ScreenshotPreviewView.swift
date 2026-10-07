@@ -11,7 +11,7 @@ enum ScreenshotPreviewConfig {
     }
 
     static var screen: String {
-        ProcessInfo.processInfo.environment["SCREENSHOT_SCREEN"] ?? "workspace-edit"
+        ProcessInfo.processInfo.environment["SCREENSHOT_SCREEN"] ?? "workspace-settings"
     }
 }
 
@@ -21,8 +21,8 @@ enum ScreenshotPreviewConfig {
 struct ScreenshotPreviewView: View {
     var body: some View {
         switch ScreenshotPreviewConfig.screen {
-        case "workspace-edit":
-            WorkspaceEditPreview()
+        case "workspace-settings":
+            WorkspaceSettingsScreenshotPreview()
         case "onboarding":
             OnboardingScreenshotPreview()
         case "tailscale-connection":

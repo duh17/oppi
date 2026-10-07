@@ -186,18 +186,16 @@ private struct WorkspaceSplitWorkspaceConfigurationDestinationView: View {
     var body: some View {
         Group {
             if let connection = resolvedConnection {
-                WorkspaceEditView(workspace: target.workspace) {
-                    navigation.completeWorkspaceConfiguration(target)
-                }
-                .withServerScopedEnvironment(connection)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") {
-                            navigation.completeWorkspaceConfiguration(target)
+                WorkspaceSettingsRootView(workspace: target.workspace)
+                    .withServerScopedEnvironment(connection)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") {
+                                navigation.completeWorkspaceConfiguration(target)
+                            }
+                            .accessibilityIdentifier("workspace.edit.done")
                         }
-                        .accessibilityIdentifier("workspace.edit.done")
                     }
-                }
             } else {
                 ProgressView("Connecting…")
             }

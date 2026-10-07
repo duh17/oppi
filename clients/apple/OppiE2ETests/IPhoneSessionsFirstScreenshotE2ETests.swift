@@ -672,32 +672,28 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertTrue(app.staticTexts["All Sessions"].waitForExistence(timeout: 5), "Edge swipe did not return to All Sessions")
     }
 
-    func testSavingWorkspaceSettingsReturnsToScopedSessions() throws {
+    func testLeavingWorkspaceSettingsReturnsToScopedSessions() throws {
         XCUIDevice.shared.orientation = .portrait
         openAnchorWorkspace()
         XCTAssertTrue(
             app.buttons["workspace.edit.open"].waitForExistence(timeout: 10),
-            "Workspace-scoped session list did not appear before editing"
+            "Workspace-scoped session list did not appear before opening settings"
         )
 
         tap(app.buttons["workspace.edit.open"], named: "workspace edit button")
-        let saveButton = app.buttons["workspace.edit.save"]
-        XCTAssertTrue(saveButton.waitForExistence(timeout: 10), "Workspace save button did not appear")
         XCTAssertTrue(
-            XCTWaiter.wait(
-                for: [XCTNSPredicateExpectation(
-                    predicate: NSPredicate(format: "isEnabled == true"),
-                    object: saveButton
-                )],
-                timeout: 10
-            ) == .completed,
-            "Workspace save button did not become enabled"
+            app.descendants(matching: .any)["workspace.edit.list"].waitForExistence(timeout: 10),
+            "Workspace Settings did not appear"
         )
-        tap(saveButton, named: "workspace save button")
+        XCTAssertTrue(
+            app.buttons["workspace.edit.details"].waitForExistence(timeout: 5),
+            "Workspace Settings summary row did not appear"
+        )
 
+        swipeBack()
         XCTAssertTrue(
             app.buttons["workspace.edit.open"].waitForExistence(timeout: 15),
-            "Save did not return to the workspace-scoped session list"
+            "Leaving Workspace Settings did not return to the workspace-scoped session list"
         )
         XCTAssertTrue(
             app.buttons["workspace.quickSession.start"].waitForExistence(timeout: 5),

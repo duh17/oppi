@@ -59,6 +59,33 @@ enum WorkspaceCatalogLoadFailure: Equatable, Sendable {
     }
 }
 
+/// Applies a fetched workspace catalog over what the store already holds.
+///
+/// A catalog GET can start before a local write or delete and land after it.
+/// The catalog decides which workspaces exist, but a stored row whose
+/// `updatedAt` is the same or newer wins over the fetched copy, and a workspace
+/// deleted here stays gone unless the catalog row is newer than the deleted one.
+/// Without this, a late refresh restores an old sandbox config that the next
+/// whole-config write would send back to the server.
+enum WorkspaceCatalogMerge {
+    static func apply(
+        incoming: [Workspace],
+        stored: [Workspace],
+        deleted: [String: Date]
+    ) -> [Workspace] {
+        let storedById = Dictionary(stored.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return incoming.compactMap { fetched in
+            if let deletedAt = deleted[fetched.id], fetched.updatedAt <= deletedAt {
+                return nil
+            }
+            if let local = storedById[fetched.id], local.updatedAt >= fetched.updatedAt {
+                return local
+            }
+            return fetched
+        }
+    }
+}
+
 enum WorkspaceCatalogLoadOutcome: Equatable, Sendable {
     case success(workspaceCount: Int, skillCount: Int)
     case failure(WorkspaceCatalogLoadFailure)
@@ -108,6 +135,11 @@ final class WorkspaceStore {
     /// This stays as the authoritative server snapshot so local attention/error
     /// overlays can be recomputed without permanently mutating the base counts.
     private var storedWorkspaceSummariesByServer: [String: [String: WorkspaceListSummary]] = [:]
+
+    /// Workspaces deleted on this device, keyed by server ID then workspace ID,
+    /// with the deleted row's `updatedAt`. A catalog fetched before the delete
+    /// must not bring them back.
+    private var deletedWorkspacesByServer: [String: [String: Date]] = [:]
 
     /// Per-server sync freshness tracking.
     var serverFreshness: [String: ServerSyncState] = [:]
@@ -307,6 +339,9 @@ final class WorkspaceStore {
 
     /// Remove a workspace by ID from a specific server.
     func remove(id: String, serverId: String) {
+        if let deleted = workspacesByServer[serverId]?.first(where: { $0.id == id }) {
+            deletedWorkspacesByServer[serverId, default: [:]][id] = deleted.updatedAt
+        }
         workspacesByServer[serverId]?.removeAll { $0.id == id }
         workspaceSummariesByServer[serverId]?.removeValue(forKey: id)
         storedWorkspaceSummariesByServer[serverId]?.removeValue(forKey: id)
@@ -319,6 +354,7 @@ final class WorkspaceStore {
         skillsByServer.removeValue(forKey: serverId)
         workspaceSummariesByServer.removeValue(forKey: serverId)
         storedWorkspaceSummariesByServer.removeValue(forKey: serverId)
+        deletedWorkspacesByServer.removeValue(forKey: serverId)
         serverFreshness.removeValue(forKey: serverId)
         serverSyncGeneration.removeValue(forKey: serverId)
         serverLoaded.removeValue(forKey: serverId)
@@ -427,8 +463,23 @@ final class WorkspaceStore {
                 return .superseded
             }
 
-            let ws = catalog.workspaces
+            let deleted = deletedWorkspacesByServer[serverId] ?? [:]
+            let ws = WorkspaceCatalogMerge.apply(
+                incoming: catalog.workspaces,
+                stored: workspacesByServer[serverId] ?? [],
+                deleted: deleted
+            )
             workspacesByServer[serverId] = ws
+            // A marker is done once the server stops listing that workspace or
+            // lists a newer row for it.
+            let fetchedUpdatedAt = Dictionary(
+                catalog.workspaces.map { ($0.id, $0.updatedAt) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            deletedWorkspacesByServer[serverId] = deleted.filter { id, deletedAt in
+                guard let updatedAt = fetchedUpdatedAt[id] else { return false }
+                return updatedAt <= deletedAt
+            }
             skillsByServer[serverId] = sk
             if let responseSummaries = catalog.summaries {
                 let mergedResponseSummaries = responseSummaries.map { response in

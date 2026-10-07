@@ -58,7 +58,9 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         )
 
         openWorkspaceEditForm()
-        try saveLabScreenshot(name: "ipad-workspace-edit-form")
+        try saveLabScreenshot(name: "ipad-workspace-settings")
+        openWorkspaceDetailsForm()
+        try saveLabScreenshot(name: "ipad-workspace-details-form")
 
         dismissWorkspaceEditForm()
 
@@ -116,6 +118,7 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         )
 
         openWorkspaceEditForm()
+        openWorkspaceDetailsForm()
         let iconButton = app.buttons["workspace.edit.icon"]
         let iconBeforeCancel = iconButton.value as? String
         tap(iconButton, named: "workspace icon picker")
@@ -157,11 +160,18 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         XCTAssertEqual(iconButton.value as? String, "Code")
         tap(app.buttons["workspace.edit.save"], named: "workspace save button")
 
+        // Save returns to Workspace Settings; Done returns to the workspace.
+        XCTAssertTrue(
+            app.descendants(matching: .any)["workspace.edit.list"].waitForExistence(timeout: 15),
+            "Workspace Settings did not return after save"
+        )
+        dismissWorkspaceEditForm()
         XCTAssertTrue(
             app.buttons["workspace.edit.open"].waitForExistence(timeout: 15),
-            "Workspace detail did not return after save"
+            "Workspace detail did not return after leaving Workspace Settings"
         )
         openWorkspaceEditForm()
+        openWorkspaceDetailsForm()
         XCTAssertEqual(
             app.buttons["workspace.edit.icon"].value as? String,
             "Code",
@@ -243,13 +253,21 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         tap(editButton, named: "workspace edit button")
 
         XCTAssertTrue(
-            app.textFields["workspace.edit.name"].waitForExistence(timeout: 15)
-                || app.navigationBars["Edit Workspace"].waitForExistence(timeout: 2),
-            "Workspace edit form did not appear"
+            app.descendants(matching: .any)["workspace.edit.list"].waitForExistence(timeout: 15)
+                || app.navigationBars["Workspace Settings"].waitForExistence(timeout: 2),
+            "Workspace Settings did not appear"
         )
         XCTAssertTrue(
             app.buttons["workspace.edit.done"].waitForExistence(timeout: 5),
-            "Workspace edit form should expose the split-detail Done action"
+            "Workspace Settings should expose the split-detail Done action"
+        )
+    }
+
+    private func openWorkspaceDetailsForm() {
+        tap(app.buttons["workspace.edit.details"], named: "workspace details row", timeout: 10)
+        XCTAssertTrue(
+            app.textFields["workspace.edit.name"].waitForExistence(timeout: 10),
+            "Workspace Details page did not appear"
         )
     }
 

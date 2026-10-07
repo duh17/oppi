@@ -136,7 +136,7 @@ struct WorkspaceListView: View {
     }
 }
 
-/// Defers WorkspaceEditView construction until the target transport and
+/// Defers WorkspaceSettingsRootView construction until the target transport and
 /// server-scoped environment are ready. This prevents its initial `.task` and
 /// `.onAppear` work from capturing the previously active server.
 struct WorkspaceEditScopedDestinationView: View {
@@ -149,7 +149,7 @@ struct WorkspaceEditScopedDestinationView: View {
     var body: some View {
         Group {
             if let scopedConnection {
-                WorkspaceEditView(workspace: workspace)
+                WorkspaceSettingsRootView(workspace: workspace)
                     .withServerScopedEnvironment(scopedConnection)
             } else {
                 ProgressView("Connecting…")

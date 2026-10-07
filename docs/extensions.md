@@ -1,6 +1,6 @@
 # Oppi extension behavior
 
-This page explains Oppi runtime behavior for pi extensions: what Oppi loads, how the workspace editor toggles Pi resources, what standalone pi sees, and how mobile displays terminal-oriented extension UI.
+This page explains Oppi runtime behavior for pi extensions: what Oppi loads, how Workspace Settings toggles Pi resources, what standalone pi sees, and how mobile displays terminal-oriented extension UI.
 
 Use it when you install an extension for Oppi, adjust Pi resource settings from a workspace, or adapt a Pi extension so its prompts and tool output work well in the Apple app.
 
@@ -170,7 +170,7 @@ pi -e <package-or-path>
 Oppi keeps Pi's extension system and adds these rules:
 
 1. **Cwd-scoped Pi resource resolution** for host sessions. User settings, project settings, installed packages, and auto-discovered extension directories remain the source of truth.
-2. **Pi resource toggles** from the workspace editor. The editor writes Pi resource settings (`+` / `-` entries) for skills and extensions; it does not write a workspace-level extension allowlist.
+2. **Pi resource toggles** from Workspace Settings → Skills and Extensions. Each toggle applies at once and writes Pi resource settings (`+` / `-` entries) for skills and extensions; it does not write a workspace-level extension allowlist.
 3. **A server-scoped Mobile Output Guide**, appended to managed sessions when enabled under Server Detail.
 4. **Mobile UI compatibility** for most standard extension input, confirm, ask, and approval UI calls.
 5. **Stored attachment helpers** for tool-generated files through documented Oppi context helpers such as `ctx.attachments.addFile()`.
@@ -348,7 +348,7 @@ Oppi loads Pi-resolved extensions without injecting an extra Ask tool. Install o
 
 Current Oppi workspaces do not store `extensions`. Extension enablement comes from Pi resource settings for the session cwd.
 
-The workspace editor can toggle skills and extensions by writing Pi settings:
+Workspace Settings can toggle skills and extensions by writing Pi settings:
 
 - `+path` enables a resource that is otherwise filtered out.
 - `-path` disables a resource that Pi would otherwise load.
@@ -359,7 +359,7 @@ This is Pi resource filtering, not a workspace-owned allowlist or denylist. A ho
 
 ## Extension picker behavior
 
-`GET /extensions` is the data source for the Oppi workspace editor. It is not a general-purpose pi reference API.
+`GET /extensions` is the data source for Workspace Settings → Extensions. It is not a general-purpose pi reference API.
 
 The picker response:
 

@@ -116,6 +116,7 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
     private func updateCurrentWorkspaceName(to updatedName: String) {
         let editButton = app.buttons["workspace.edit.open"]
         tap(editButton, named: "workspace edit button")
+        tap(app.buttons["workspace.edit.details"], named: "workspace details row", timeout: 10)
 
         let nameField = app.textFields["workspace.edit.name"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "Workspace edit name field not shown")
@@ -131,9 +132,15 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         XCTAssertTrue(saveButton.isEnabled, "Workspace save button stayed disabled")
         tap(saveButton, named: "workspace save button")
 
+        // Save returns to Workspace Settings; back returns to the workspace.
+        XCTAssertTrue(
+            app.descendants(matching: .any)["workspace.edit.list"].waitForExistence(timeout: 15),
+            "Workspace Settings did not return after save"
+        )
+        tap(app.navigationBars.buttons["BackButton"], named: "navigation back button", timeout: 5)
         XCTAssertTrue(
             app.buttons["workspace.edit.open"].waitForExistence(timeout: 15),
-            "Workspace detail did not return after save"
+            "Workspace detail did not return after leaving Workspace Settings"
         )
         XCTAssertTrue(
             app.navigationBars[updatedName].waitForExistence(timeout: 10) || app.staticTexts[updatedName].waitForExistence(timeout: 2),

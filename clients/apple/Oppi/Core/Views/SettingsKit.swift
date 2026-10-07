@@ -1,7 +1,7 @@
 import SwiftUI
 
-// Shared vocabulary for settings-like pages: App Settings today, Server and
-// Workspace settings next. Holds no store or connection references so it can
+// Shared vocabulary for settings-like pages: App, Server, and Workspace
+// Settings. Holds no store or connection references so it can
 // live in Core/Views; pages pass explicit values.
 
 extension View {

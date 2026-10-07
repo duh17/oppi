@@ -110,6 +110,12 @@ From the CLI, `oppi session create --workspace <id> --prompt <text> --engine dur
 
 Pick models from the in-app picker. Remaining provider quota and pace live on **Server Settings** → **Model Providers**. The CLI also has `oppi quota` and `oppi models`. See [Provider quotas](provider-quotas.md).
 
+## Workspace settings
+
+**Workspace Settings** (a workspace's slider button, or Server Settings → Workspaces) opens with the workspace's icon, name, and folder; tap it for **Details**: name, description, icon, and **Workspace Folder**. A new folder is checked on the server first, and Oppi offers to create one missing directory. Details has its own **Save**; going back discards edits.
+
+Below it: **Instructions** (its own editor with **Save**), **Skills** and **Extensions** (each row shows how many are enabled, such as "5 of 8"), **MCP Servers**, and **Dictionary**. A sandbox workspace also has **Network Access** for Allowed Hosts, with its own **Save**; its **MCP Servers** page turns on the global servers that sandbox may load. **Project Trust** is read-only. Every toggle (Skills, Extensions, sandbox MCP servers, **Show Changes in Chat**) applies as soon as you flip it, and flips back with the error if the server refuses it. **Delete Workspace** is last and asks first.
+
 ## Server settings
 
 **Server Settings** (host switcher → Server Settings, or Settings → your server) opens with the server's name and connection status, then a list: **Model Providers**, **Workspaces**, **Dictionary**, **Paired Devices**, **About This Server**, and **Badge Icon**. **Mobile Output Guide** and **Remove Server** follow on the same screen. Add another server from Settings.
