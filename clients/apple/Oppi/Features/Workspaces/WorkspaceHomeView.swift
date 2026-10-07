@@ -707,9 +707,9 @@ enum HostSwitcherBadgeState {
 struct ServerSwitcherPill: View {
     let server: PairedServer
     let connectionState: ServerBadgeConnectionState
-    /// The side rail button already supplies one circle. This pose keeps only
-    /// the status-colored icon. The menu's accessibility value still speaks
-    /// the state word. A normal top bar keeps the wide capsule.
+    /// The toolbar button already draws the capsule, and the side rail button
+    /// already draws the circle. A fill inside either one stacks a second pill.
+    /// The menu's accessibility value still speaks the state word.
     var fitsVerticalRail = false
 
     var body: some View {
@@ -718,9 +718,6 @@ struct ServerSwitcherPill: View {
         } else {
             horizontalLabel
                 .foregroundStyle(.themeFg)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 6)
-                .background(.themeComment.opacity(0.14), in: Capsule())
         }
     }
 

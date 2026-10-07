@@ -373,6 +373,13 @@ struct ServerView: View {
 
 #if DEBUG
 struct UsageChromePreview: View {
+    private let themeID: ThemeID
+
+    init() {
+        themeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light" ? .light : .dark
+        ThemeRuntimeState.setThemeID(themeID)
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
@@ -389,14 +396,21 @@ struct UsageChromePreview: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    ServerSwitcherPill(
-                        server: HostSwitcherPreviewData.server,
-                        connectionState: .connected
-                    )
+                    Menu {
+                        Button(HostSwitcherPreviewData.server.name, systemImage: "checkmark.circle.fill") {}
+                    } label: {
+                        ServerSwitcherPill(
+                            server: HostSwitcherPreviewData.server,
+                            connectionState: .connected
+                        )
+                    }
                     .accessibilityLabel("Current server: \(HostSwitcherPreviewData.server.name)")
                 }
             }
         }
+        .environment(\.theme, themeID.appTheme)
+        .environment(\.themeID, themeID)
+        .preferredColorScheme(themeID == .light ? .light : .dark)
         .accessibilityIdentifier(
             ProcessInfo.processInfo.environment["SCREENSHOT_READY_ID"] ?? "screenshot.ready"
         )
