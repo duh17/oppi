@@ -467,21 +467,14 @@ struct PiAgentDetailView: View {
             }
 
             Section {
-                Button {
+                // A button, not a `NavigationLink`: leaving the picker saves through `isShowingPiTools`.
+                SettingsIndexActionRow(
+                    value: AgentManagementPresentation.piToolsSummary(defaultTools: defaultTools)
+                ) {
                     isShowingPiTools = true
                 } label: {
-                    HStack(alignment: .center, spacing: 12) {
-                        LabeledContent(
-                            "Tools",
-                            value: AgentManagementPresentation.piToolsSummary(defaultTools: defaultTools)
-                        )
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.themeComment)
-                    }
-                    .contentShape(Rectangle())
+                    Text("Tools")
                 }
-                .buttonStyle(.plain)
                 .accessibilityIdentifier("agents.pi.tools")
             } footer: {
                 Text("Chooses Pi's built-in tools and optional tools such as codemode. Extension tools stay enabled.")

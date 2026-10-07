@@ -69,7 +69,7 @@ Probes start under `.task(id:)` when the screen appears with the node running an
 
 ### Machine setup check over SSH
 
-Settings → Tailscale → Check a machine for Oppi (`SSHPreflightView`) signs in to ordinary sshd (macOS Remote Login, or Linux `sshd`, not Tailscale SSH) to report what Oppi's installer needs, without a terminal and without installing anything. The machine picker reuses the LocalAPI online peers that can host Oppi, plus a manual hostname or tailnet IP.
+Settings → Tailscale → Check a Machine for Oppi (`SSHPreflightView`) signs in to ordinary sshd (macOS Remote Login, or Linux `sshd`, not Tailscale SSH) to report what Oppi's installer needs, without a terminal and without installing anything. The machine picker reuses the LocalAPI online peers that can host Oppi, plus a manual hostname or tailnet IP.
 
 - Transport: a `*.ts.net` name uses `TailnetNodeController.dialTCP` only while Oppi's embedded node is running. If that node is stopped, Check and Pair fail with “Tailscale is not connected” and do not call `getaddrinfo`. Every other host uses `SSHDirectTCP.dial` on the current network. `tailscale_dial` has no deadline, so `BlockingSocketDial` bounds it (15 s) and closes a socket that arrives after timeout or cancellation.
 - SSH: `SSHPreflightClient` (swift-nio-ssh). Host key first: an unknown key stops the connection before the password is offered and shows its `SHA256:` fingerprint; the user trusts it and the check reconnects. A changed key fails with both fingerprints and can be forgotten explicitly. `SSHKnownHosts` stores trusted keys in the app-private, this-device-only Keychain (`SSHKeychain`), keyed by lowercased host and port; nothing else is saved.

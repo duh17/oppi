@@ -31,6 +31,8 @@ struct ScreenshotPreviewView: View {
             // Real Settings/setup surfaces, not a mocked SSH connection. This
             // makes enrollment/refusal QA reachable without pairing a server.
             SettingsScreenshotPreview()
+        case "settings-sweep":
+            SettingsSweepScreenshotPreview()
         case "ssh-terminal":
             SSHTerminalScreenshotPreview()
         case "durable-sessions-settings":

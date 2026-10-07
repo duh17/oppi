@@ -51,7 +51,6 @@ struct ServerExtensionsView: View {
                         searchText = ""
                         await refresh(serverId: server.id)
                     }
-                    .listRowBackground(theme.bg.primary)
                 }
             }
 
@@ -64,7 +63,6 @@ struct ServerExtensionsView: View {
                     .font(.subheadline)
                     .foregroundStyle(.themeOrange)
                     .accessibilityIdentifier("extensions.cachedWarning")
-                    .listRowBackground(theme.bg.primary)
                 }
             }
 
@@ -101,7 +99,6 @@ struct ServerExtensionsView: View {
                     Section(section.kind.rawValue) {
                         ForEach(section.extensions) { resource in
                             extensionRow(resource)
-                                .listRowBackground(theme.bg.primary)
                         }
                     }
                 }
@@ -118,10 +115,7 @@ struct ServerExtensionsView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
-        .themedListSurface()
-        .navigationTitle("Extensions")
-        .navigationBarTitleDisplayMode(.inline)
+        .settingsPage("Extensions")
         .searchable(text: $searchText, prompt: "Search extensions")
         .refreshable {
             if let activeServerId { await refresh(serverId: activeServerId) }
@@ -192,11 +186,9 @@ struct ServerExtensionsView: View {
                     extensionState(resource.state)
                 }
 
-                Image(systemName: "chevron.forward")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themeComment)
+                // Opens through `AppNavigation` so the route stays tracked.
+                SettingsDisclosureChevron()
                     .padding(.top, 4)
-                    .accessibilityHidden(true)
             }
             .frame(minHeight: 44)
             .contentShape(Rectangle())

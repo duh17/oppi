@@ -21,30 +21,29 @@ struct ShareSessionRedactionSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            List {
                 Section {
-                    HStack {
-                        Label("Secrets", systemImage: "lock.fill")
-                        Spacer()
-                        Text("Always on")
-                            .font(.footnote.weight(.semibold))
+                    LabeledContent {
+                        Text("Always On")
                             .foregroundStyle(.themeGreen)
+                    } label: {
+                        Label("Secrets", systemImage: "lock.fill")
                     }
 
-                    Toggle("Email addresses", isOn: binding(\.emails))
-                    Toggle("Phone numbers", isOn: binding(\.phones))
-                    Toggle("User paths", isOn: binding(\.userPaths))
-                    Toggle("IP addresses", isOn: binding(\.ipAddresses))
-                    Toggle("JWT tokens", isOn: binding(\.jwtAndBearer))
-                    Toggle("Names (heuristic)", isOn: binding(\.namesHeuristic))
+                    Toggle("Email Addresses", isOn: binding(\.emails))
+                    Toggle("Phone Numbers", isOn: binding(\.phones))
+                    Toggle("User Paths", isOn: binding(\.userPaths))
+                    Toggle("IP Addresses", isOn: binding(\.ipAddresses))
+                    Toggle("JWT Tokens", isOn: binding(\.jwtAndBearer))
+                    Toggle("Names (Heuristic)", isOn: binding(\.namesHeuristic))
                     Toggle("Skills", isOn: binding(\.skills))
                 } header: {
-                    Text("Redaction settings")
+                    Text("Redaction Settings")
                 } footer: {
                     Text("These settings are remembered for future shares.")
                 }
 
-                Section("Redaction preview") {
+                Section("Redaction Preview") {
                     if isAnalyzing {
                         HStack(spacing: 10) {
                             ProgressView()
@@ -101,8 +100,7 @@ struct ShareSessionRedactionSheet: View {
                     .disabled(isAnalyzing || isSharing)
                 }
             }
-            .navigationTitle("Share Session")
-            .navigationBarTitleDisplayMode(.inline)
+            .settingsPage("Share Session")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

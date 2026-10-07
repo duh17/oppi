@@ -188,39 +188,18 @@ struct ServerSkillDetailView: View {
 
                 if let detail {
                     Section("Contents") {
-                        Button {
+                        SettingsIndexActionRow(value: "\(detail.files.count)") {
                             navigation.openServerSkillBrowser(ServerSkillBrowserNavTarget(
                                 serverId: target.serverId,
                                 resourceId: target.resourceId
                             ))
                         } label: {
-                            HStack(spacing: 12) {
-                                Label("Browse Files", systemImage: "folder")
-                                    .foregroundStyle(.themeFg)
-                                Spacer(minLength: 8)
-                                Text("\(detail.files.count)")
-                                    .font(.subheadline.monospacedDigit())
-                                    .foregroundStyle(.themeComment)
-                                Image(systemName: "chevron.right")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.themeComment)
-                            }
-                            .frame(minHeight: 44)
-                            .contentShape(Rectangle())
+                            SettingsRowLabel("Browse Files", systemImage: "folder")
                         }
-                        .buttonStyle(.plain)
                         .accessibilityLabel("Browse \(summary.name) files")
                         .accessibilityValue(fileCountLabel(detail.files.count))
                         .accessibilityIdentifier("skills.files.open")
-                        .listRowBackground(theme.bg.primary)
                     }
-                }
-
-                Section {
-                    Text("New sessions use this setting. Reload an active session to apply it now.")
-                        .font(.footnote)
-                        .foregroundStyle(.themeComment)
-                        .listRowBackground(theme.bg.primary)
                 }
             } else if isLoading {
                 Section {
@@ -246,10 +225,7 @@ struct ServerSkillDetailView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
-        .themedListSurface()
-        .navigationTitle(summary?.name ?? "Skill")
-        .navigationBarTitleDisplayMode(.inline)
+        .settingsPage(summary?.name ?? "Skill")
         .task(id: target) { startLoad() }
         .onDisappear { loader.cancel() }
     }
@@ -267,14 +243,13 @@ struct ServerSkillDetailView: View {
                 }
             }
             .padding(.vertical, 4)
-            .listRowBackground(theme.bg.primary)
         }
     }
 
     private func globalEnableSection(_ summary: ServerSkillSummary) -> some View {
-        Section("Server Default") {
+        Section {
             HStack(alignment: .center, spacing: 10) {
-                Toggle("Global Enable", isOn: Binding(
+                Toggle("Enabled", isOn: Binding(
                     get: { summary.state == .enabled },
                     set: { enabled in
                         mutationVerb = enabled ? "enable" : "disable"
@@ -290,7 +265,6 @@ struct ServerSkillDetailView: View {
                         .accessibilityLabel("Saving")
                 }
             }
-            .listRowBackground(theme.bg.primary)
 
             if let error = store.mutationError(for: mutationKey, serverId: target.serverId) {
                 Label(
@@ -299,8 +273,11 @@ struct ServerSkillDetailView: View {
                 )
                 .font(.footnote)
                 .foregroundStyle(.themeOrange)
-                .listRowBackground(theme.bg.primary)
             }
+        } header: {
+            Text("Server Default")
+        } footer: {
+            Text("New sessions use this setting. Reload an active session to apply it now.")
         }
     }
 
@@ -308,14 +285,10 @@ struct ServerSkillDetailView: View {
         Section("Source") {
             if let packageName = summary.packageName {
                 LabeledContent("Package", value: packageName)
-                    .listRowBackground(theme.bg.primary)
             }
             LabeledContent("Provenance", value: summary.provenance.label)
-                .listRowBackground(theme.bg.primary)
             LabeledContent("Scope", value: "Server default")
-                .listRowBackground(theme.bg.primary)
             LabeledContent("Files", value: summary.editable ? "Editable in session" : "Read-only")
-                .listRowBackground(theme.bg.primary)
         }
     }
 
@@ -326,24 +299,20 @@ struct ServerSkillDetailView: View {
                 hasError ? "Error" : "Loaded",
                 systemImage: hasError ? "exclamationmark.triangle.fill" : "checkmark.circle"
             )
-            .listRowBackground(theme.bg.primary)
 
             if let error = summary.loadError ?? loadError {
                 Text(error)
                     .font(.footnote)
                     .foregroundStyle(.themeOrange)
-                    .listRowBackground(theme.bg.primary)
             }
 
             ForEach(summary.warnings, id: \.self) { warning in
                 Label(warning, systemImage: "exclamationmark.circle")
                     .font(.footnote)
-                    .listRowBackground(theme.bg.primary)
             }
 
             if hasError || loadError != nil {
                 Button("Retry") { startLoad() }
-                    .listRowBackground(theme.bg.primary)
             }
         }
     }

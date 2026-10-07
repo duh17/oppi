@@ -76,6 +76,18 @@ struct SettingsRowLabel: View {
     }
 }
 
+/// The system-style disclosure chevron for a row whose push goes through
+/// app-owned navigation. A `NavigationLink` draws its own; use this only when a
+/// `Button` must stand in for one.
+struct SettingsDisclosureChevron: View {
+    var body: some View {
+        Image(systemName: "chevron.forward")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.tertiary)
+            .accessibilityHidden(true)
+    }
+}
+
 /// A level-1 row whose push must go through app-owned navigation (a tracked
 /// route) instead of a `NavigationLink`. It is a plain `Button` laid out like
 /// `SettingsIndexRow`: same label and value placement, with the system
@@ -109,10 +121,7 @@ struct SettingsIndexActionRow<Label: View>: View {
                             .foregroundStyle(valueStyle)
                             .lineLimit(1)
                     }
-                    Image(systemName: "chevron.forward")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                        .accessibilityHidden(true)
+                    SettingsDisclosureChevron()
                 }
             } label: {
                 label

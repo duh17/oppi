@@ -2954,6 +2954,12 @@ final class ServerConnection {
         workspaceStore.setActiveServer(id)
     }
 
+    // periphery:ignore - used by the screenshot harness
+    /// Install a fixture-backed client so API-driven pages render without a server.
+    func setPreviewAPIClient(_ client: APIClient) {
+        apiClient = client
+    }
+
     // periphery:ignore - used by VoiceInputManagerTests via @testable import
     /// Override server dictation availability for testing.
     func setServerDictationAvailableForTesting(_ available: Bool) {

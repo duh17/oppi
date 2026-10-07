@@ -147,10 +147,7 @@ struct WorkspaceCreateView: View {
                     configureView
                 }
             }
-            .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
-            .themedListSurface()
-            .navigationTitle(navigationTitle)
-            .navigationBarTitleDisplayMode(.inline)
+            .settingsPage(navigationTitle)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(cancelButtonTitle) { dismiss() }
@@ -218,10 +215,9 @@ struct WorkspaceCreateView: View {
 
             Section {
                 Toggle("Sandbox", isOn: $sandboxMode)
+            } footer: {
                 if sandboxMode {
                     Text("Isolated micro-VM. Pick a project to mount.")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
                 }
             }
 
@@ -251,23 +247,21 @@ struct WorkspaceCreateView: View {
                 Section {
                     Label(directoriesError, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.themeOrange)
+                } footer: {
                     if isGuidedFirstWorkspace {
                         Text("You can still enter an existing folder path or use the server home folder.")
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
                     }
                 }
             } else if directories.isEmpty {
                 Section {
                     Text("No projects found in default locations.")
                         .foregroundStyle(.themeComment)
-                    Text("Checked: ~/workspace, ~/projects, ~/src, ~/code, ~/Developer")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-                    if isGuidedFirstWorkspace {
-                        Text("That’s okay. Enter an existing folder path or use the server home folder.")
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
+                } footer: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Checked: ~/workspace, ~/projects, ~/src, ~/code, ~/Developer")
+                        if isGuidedFirstWorkspace {
+                            Text("That’s okay. Enter an existing folder path or use the server home folder.")
+                        }
                     }
                 }
             } else {
@@ -283,7 +277,6 @@ struct WorkspaceCreateView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
     }
 
     @MainActor
@@ -318,7 +311,7 @@ struct WorkspaceCreateView: View {
     // MARK: - Step 2: Configure
 
     private var configureView: some View {
-        Form {
+        List {
             if isGuidedFirstWorkspace {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
@@ -350,47 +343,51 @@ struct WorkspaceCreateView: View {
             // Sandbox toggle — first thing in the form
             Section {
                 Toggle("Sandbox", isOn: $sandboxMode)
+            } footer: {
                 if sandboxMode {
                     Text("Runs in an isolated micro-VM. Secrets and network are controlled by the host.")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
                 }
             }
 
-            // Workspace name + folder
-            Section("Workspace Folder") {
-                TextField("Name", text: $name)
-                    .autocorrectionDisabled()
-                    .accessibilityIdentifier("workspace.create.name")
+            Section {
+                LabeledContent("Name") {
+                    TextField("Name", text: $name, prompt: Text("Required"))
+                        .multilineTextAlignment(.trailing)
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("workspace.create.name")
+                }
+            }
 
+            // Folder path and its validation
+            Section {
                 if isHostMountFromProjectPicker {
-                    HStack {
-                        Text(hostMount)
-                            .font(.system(.body, design: .monospaced))
-                            .foregroundStyle(.themeComment)
-                        Spacer()
-                        Button("Change") {
-                            withAnimation(ThemeMotion.standard(reduceMotion: reduceMotion)) { step = .pickProject }
+                    LabeledContent("Folder") {
+                        HStack {
+                            Text(hostMount)
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundStyle(.themeComment)
+                            Button("Change") {
+                                withAnimation(ThemeMotion.standard(reduceMotion: reduceMotion)) { step = .pickProject }
+                            }
+                            .font(.caption)
                         }
-                        .font(.caption)
                     }
                 } else {
-                    TextField("~/workspace/project (must exist)", text: $hostMount)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .font(.system(.body, design: .monospaced))
-                        .accessibilityIdentifier("workspace.create.hostMount")
-
-                    Text(
-                        sandboxMode
-                            ? "Leave empty to let Oppi create a sandbox folder. Network follows Gondolin’s default; edit the workspace later to restrict or deny hosts. For a custom folder, use Create this folder when the folder is missing."
-                            : "Leave empty to use the server home folder. If the folder doesn’t exist, use Create this folder below; Oppi asks before creating one directory."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
+                    LabeledContent("Folder") {
+                        TextField("Folder", text: $hostMount, prompt: Text("~/workspace/project (must exist)"))
+                            .multilineTextAlignment(.trailing)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .font(.system(.body, design: .monospaced))
+                            .accessibilityIdentifier("workspace.create.hostMount")
+                    }
                 }
 
-                hostMountValidationView
+                // The `if` must sit in the section builder: an empty child view
+                // still renders as a blank List row.
+                if let hostMountValidation {
+                    hostMountValidation
+                }
 
                 if !isHostMountFromProjectPicker && !hostMountCompletions.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
@@ -415,11 +412,20 @@ struct WorkspaceCreateView: View {
                     }
                     .padding(.vertical, 2)
                 }
-
-                if sandboxMode && hostMount.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Text("A new directory will be created at ~/sandbox/\(name.lowercased().replacingOccurrences(of: " ", with: "-"))/")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
+            } header: {
+                Text("Workspace Folder")
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    if !isHostMountFromProjectPicker {
+                        Text(
+                            sandboxMode
+                                ? "Leave empty to let Oppi create a sandbox folder. Network follows Gondolin’s default; edit the workspace later to restrict or deny hosts. For a custom folder, use Create This Folder when the folder is missing."
+                                : "Leave empty to use the server home folder. If the folder doesn’t exist, use Create This Folder; Oppi asks before creating one directory."
+                        )
+                    }
+                    if sandboxMode && hostMount.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Text("A new directory will be created at ~/sandbox/\(name.lowercased().replacingOccurrences(of: " ", with: "-"))/")
+                    }
                 }
             }
 
@@ -427,17 +433,14 @@ struct WorkspaceCreateView: View {
                 Button {
                     isShowingIconPicker = true
                 } label: {
-                    HStack(spacing: 12) {
+                    // The picker opens as a sheet, so the row carries no disclosure chevron.
+                    HStack {
                         Text("Icon")
                             .foregroundStyle(.themeFg)
                         Spacer(minLength: 12)
                         WorkspaceIcon(icon: icon, size: 22)
                             .frame(width: 32, height: 32)
-                        Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.themeComment)
                     }
-                    .frame(minHeight: 44)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -464,12 +467,9 @@ struct WorkspaceCreateView: View {
 
             // Options
             Section {
-                Toggle("Show workspace changes in chat", isOn: $gitStatusEnabled)
+                Toggle("Show Changes in Chat", isOn: $gitStatusEnabled)
+            } footer: {
                 Text("Shows branch, changed files, and line stats above the chat.")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-            } header: {
-                Text("Workspace Changes")
             }
 
             if showAdvanced {
@@ -478,7 +478,7 @@ struct WorkspaceCreateView: View {
                 }
             } else {
                 Section {
-                    Button("Show advanced options") {
+                    Button("Show Advanced Options") {
                         withAnimation(ThemeMotion.standard(reduceMotion: reduceMotion)) { showAdvanced = true }
                     }
                     .font(.subheadline)
@@ -515,73 +515,20 @@ struct WorkspaceCreateView: View {
         }
     }
 
-    @ViewBuilder
-    private var hostMountValidationView: some View {
-        if !trimmedHostMount.isEmpty {
-            if isCheckingHostMount {
-                Label("Checking folder…", systemImage: "clock")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-            } else if let hostMountStatus, hostMountStatus.path == trimmedHostMount,
-                      hostMountStatus.issue == "missing" {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Folder doesn’t exist", systemImage: "folder.badge.plus")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-
-                    if hostPathPendingCreation == trimmedHostMount {
-                        Text("Create this one folder on \(server.name)? The parent folder must already exist.")
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-
-                        if isCreatingHostDirectory {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                Text("Creating folder…")
-                                    .font(.caption)
-                                    .foregroundStyle(.themeComment)
-                            }
-                        } else {
-                            HStack(spacing: 8) {
-                                Button {
-                                    Task { await createHostDirectoryFromPendingPath() }
-                                } label: {
-                                    Label("Create Folder", systemImage: "plus")
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .accessibilityIdentifier("workspace.create.confirmCreateFolder")
-
-                                Button("Cancel") {
-                                    hostPathPendingCreation = nil
-                                }
-                                .buttonStyle(.bordered)
-                                .accessibilityIdentifier("workspace.create.cancelCreateFolder")
-                            }
-                            .controlSize(.small)
-                        }
-                    } else {
-                        Button {
-                            hostPathPendingCreation = trimmedHostMount
-                        } label: {
-                            Label("Create this folder", systemImage: "plus")
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .accessibilityIdentifier("workspace.create.createMissingFolder")
-                        .disabled(isCreatingHostDirectory)
-                    }
-                }
-            } else if let hostMountValidationMessage {
-                Label(hostMountValidationMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.themeRed)
-            } else if let hostMountStatus, hostMountStatus.path == trimmedHostMount,
-                      hostMountStatus.isValidWorkspaceDirectory {
-                Label("Folder exists", systemImage: "checkmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.themeGreen)
-            }
-        }
+    /// Nil when there is nothing to show, so the folder section has no blank row.
+    private var hostMountValidation: WorkspaceFolderValidationView? {
+        let validation = WorkspaceFolderValidationView(
+            folder: trimmedHostMount,
+            status: hostMountStatus,
+            validationMessage: hostMountValidationMessage,
+            isChecking: isCheckingHostMount,
+            isCreating: isCreatingHostDirectory,
+            pendingCreation: $hostPathPendingCreation,
+            serverName: server.name,
+            identifierPrefix: "workspace.create",
+            confirmCreate: { Task { await createHostDirectoryFromPendingPath() } }
+        )
+        return validation.hasContent ? validation : nil
     }
 
     // MARK: - Selection Actions
@@ -678,8 +625,13 @@ struct WorkspaceCreateView: View {
 
         isCheckingHostMount = true
         hostMountValidationMessage = nil
-        try? await Task.sleep(nanoseconds: 250_000_000)
-        guard current == trimmedHostMount else { return }
+        // Debounce typing; a newer keystroke cancels this task.
+        do {
+            try await Task.sleep(nanoseconds: 250_000_000)
+        } catch {
+            return
+        }
+        guard !Task.isCancelled, current == trimmedHostMount else { return }
 
         do {
             let status = try await api.getHostPathStatus(path: current)
@@ -693,7 +645,7 @@ struct WorkspaceCreateView: View {
                 : status.userMessage
             hostMountCompletions = completions.filter { $0.path != current }
         } catch {
-            guard current == trimmedHostMount else { return }
+            guard !Task.isCancelled, current == trimmedHostMount else { return }
             hostMountStatus = nil
             hostMountValidationMessage = "Could not check path: \(error.localizedDescription)"
             hostMountCompletions = []

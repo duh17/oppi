@@ -12,7 +12,7 @@ struct WorkspaceSettingsScreenshotPreview: View {
     private let workspace: Workspace
     private let model: WorkspaceSettingsModel
     @State private var navigation = AppNavigation()
-    private let themeStore = ThemeStore()
+    private let themeStore: ThemeStore
 
     private static let serverId = "preview-server"
 
@@ -57,6 +57,8 @@ struct WorkspaceSettingsScreenshotPreview: View {
 
     init() {
         let environment = ProcessInfo.processInfo.environment
+        ScreenshotVolatileDefaults.applyDarkTheme(environment["SCREENSHOT_COLOR_SCHEME"] == "dark")
+        themeStore = ThemeStore()
         let isSandbox = environment["SCREENSHOT_WORKSPACE_RUNTIME"] == "sandbox"
         let serverId = Self.serverId
 
@@ -113,11 +115,6 @@ struct WorkspaceSettingsScreenshotPreview: View {
         )
         model.attach(connection: connection, workspace: workspace)
         self.model = model
-
-        if environment["SCREENSHOT_COLOR_SCHEME"] == "dark" {
-            themeStore.mode = .manual
-            themeStore.manualThemeID = .dark
-        }
     }
 
     var body: some View {

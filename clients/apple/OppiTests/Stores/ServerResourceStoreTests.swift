@@ -450,7 +450,7 @@ struct ServerResourceStoreTests {
         let pendingPresentation = ServerExtensionListPresentation(extensions: [pending], query: "@scope/cached-extension")
         #expect(pendingPresentation.visibleExtensions == [pending])
         #expect(ServerExtensionListPresentation(extensions: [pending], query: privatePath).visibleExtensions.isEmpty)
-        #expect(ServerExtensionListPresentation.accessibilityLabel(for: pending) == "extension-package, @scope/cached-extension, Pi user settings, On")
+        #expect(ServerExtensionListPresentation.accessibilityLabel(for: pending) == "extension-package, @scope/cached-extension, Pi user settings, Enabled")
         #expect(!ServerExtensionListPresentation.accessibilityLabel(for: pending).contains(privatePath))
         #expect(resolvedServerExtensionDetailSummary(catalogSummary: pending, freshDetail: nil)?.packageName == "@scope/cached-extension")
 

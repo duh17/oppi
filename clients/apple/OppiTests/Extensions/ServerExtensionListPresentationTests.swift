@@ -36,7 +36,7 @@ struct ServerExtensionListPresentationTests {
         #expect(ServerExtensionListPresentation(extensions: rows, query: "pull requests").visibleExtensions.map(\.id) == ["review"])
         #expect(ServerExtensionListPresentation(extensions: rows, query: "npm:@scope").visibleExtensions.map(\.id) == ["package"])
         #expect(ServerExtensionListPresentation(extensions: rows, query: "package").visibleExtensions.map(\.id) == ["package"])
-        #expect(ServerExtensionListPresentation(extensions: rows, query: "off").visibleExtensions.map(\.id) == ["package"])
+        #expect(ServerExtensionListPresentation(extensions: rows, query: "disabled").visibleExtensions.map(\.id) == ["package"])
     }
 
     @Test func packageNameIsSearchableAndAppearsBeforeProvenanceInAccessibility() throws {
@@ -45,7 +45,7 @@ struct ServerExtensionListPresentationTests {
         """.utf8))
 
         #expect(ServerExtensionListPresentation(extensions: [resource], query: "@scope/review-tools").visibleExtensions.map(\.id) == ["review-tools"])
-        #expect(ServerExtensionListPresentation.accessibilityLabel(for: resource) == "Review tools, @scope/review-tools, Configured package source, On")
+        #expect(ServerExtensionListPresentation.accessibilityLabel(for: resource) == "Review tools, @scope/review-tools, Configured package source, Enabled")
     }
 
     @Test func noPiExtensionsAndFilteredNoResultsRemainDistinct() {

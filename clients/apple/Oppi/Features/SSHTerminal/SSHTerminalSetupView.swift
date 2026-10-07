@@ -79,12 +79,15 @@ struct SSHTerminalSetupView: View {
                             Button("Device passcode changed — create a new key") {
                                 loadIdentityIfSelected(createReplacement: true)
                             }.disabled(session.connecting)
-                            Text("Replace the old entry in ~/.ssh/authorized_keys with the new public key before connecting.")
-                                .font(.footnote).foregroundStyle(.themeComment)
                         }
                     }
                 } header: { Text("This Device’s SSH Identity") } footer: {
-                    Text("Append this public key to ~/.ssh/authorized_keys. Signing requires Face ID or your device passcode. The simulator uses a software key. Oppi never installs the key for you.")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Append this public key to ~/.ssh/authorized_keys. Signing requires Face ID or your device passcode. The simulator uses a software key. Oppi never installs the key for you.")
+                        if identityNeedsReplacement {
+                            Text("Replace the old entry in ~/.ssh/authorized_keys with the new public key before connecting.")
+                        }
+                    }
                 }
             }
 
@@ -116,7 +119,7 @@ struct SSHTerminalSetupView: View {
                 }
             }
         }
-        .navigationTitle("SSH Terminal").navigationBarTitleDisplayMode(.inline)
+        .settingsPage("SSH Terminal")
         .task {
             guard experimentEnabled else { return }
             // Opening the form never dials. Connect is an explicit tap.

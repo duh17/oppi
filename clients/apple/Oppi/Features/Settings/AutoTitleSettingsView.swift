@@ -55,19 +55,16 @@ struct AutoTitleSettingsView: View {
             } header: {
                 Text("Title Generation")
             } footer: {
-                Text(footerText)
-            }
-
-            if let errorMessage {
-                Section {
-                    Text(errorMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.themeRed)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(footerText)
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .foregroundStyle(.themeRed)
+                    }
                 }
             }
         }
-        .themedListSurface()
-        .navigationTitle("Auto-Name")
+        .settingsPage("Auto-Name")
         .onChange(of: provider) { _, newValue in
             AppPreferences.Session.setAutoTitleProvider(newValue)
             guard hasLoadedInitialState else { return }

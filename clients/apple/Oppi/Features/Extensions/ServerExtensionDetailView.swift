@@ -140,12 +140,11 @@ struct ServerExtensionDetailView: View {
                         }
                     }
                     .padding(.vertical, 4)
-                    .listRowBackground(theme.bg.primary)
                 }
 
-                Section("Server Default") {
+                Section {
                     HStack(spacing: 10) {
-                        Toggle("Global Enable", isOn: Binding(
+                        Toggle("Enabled", isOn: Binding(
                             get: { summary.state == .on },
                             set: { enabled in
                                 mutationVerb = enabled ? "enable" : "disable"
@@ -166,7 +165,6 @@ struct ServerExtensionDetailView: View {
                                 .accessibilityLabel("Saving")
                         }
                     }
-                    .listRowBackground(theme.bg.primary)
 
                     if let error = store.mutationError(for: mutationKey, serverId: target.serverId) {
                         Label(
@@ -175,21 +173,20 @@ struct ServerExtensionDetailView: View {
                         )
                         .font(.footnote)
                         .foregroundStyle(.themeOrange)
-                        .listRowBackground(theme.bg.primary)
                     }
+                } header: {
+                    Text("Server Default")
+                } footer: {
+                    Text("New sessions use this setting. Reload an active session to apply it now.")
                 }
 
                 Section("Source") {
                     if let packageName = summary.packageName {
                         LabeledContent("Package", value: packageName)
-                            .listRowBackground(theme.bg.primary)
                     }
                     LabeledContent("Provenance", value: summary.provenance.label)
-                        .listRowBackground(theme.bg.primary)
                     LabeledContent("Kind", value: ServerExtensionListPresentation.kindLabel(for: summary.kind))
-                        .listRowBackground(theme.bg.primary)
                     LabeledContent("Scope", value: "Server default")
-                        .listRowBackground(theme.bg.primary)
                 }
 
                 Section("Status") {
@@ -199,24 +196,20 @@ struct ServerExtensionDetailView: View {
                             ? "exclamationmark.triangle.fill"
                             : (summary.state == .on ? "checkmark.circle" : "minus.circle")
                     )
-                    .listRowBackground(theme.bg.primary)
 
                     if let error = summary.loadError ?? loadError {
                         Text(error)
                             .font(.footnote)
                             .foregroundStyle(.themeOrange)
-                            .listRowBackground(theme.bg.primary)
                     }
 
                     ForEach(summary.warnings, id: \.self) { warning in
                         Label(warning, systemImage: "exclamationmark.circle")
                             .font(.footnote)
-                            .listRowBackground(theme.bg.primary)
                     }
 
                     if summary.state == .error || loadError != nil {
                         Button("Retry") { startLoad() }
-                            .listRowBackground(theme.bg.primary)
                     }
                 }
 
@@ -239,12 +232,6 @@ struct ServerExtensionDetailView: View {
                     contributionSection("Contributed Commands", values: commands)
                 }
 
-                Section {
-                    Text("New sessions use this setting. Reload an active session to apply it now.")
-                        .font(.footnote)
-                        .foregroundStyle(.themeComment)
-                        .listRowBackground(theme.bg.primary)
-                }
             } else if isLoading {
                 Section {
                     HStack {
@@ -269,10 +256,7 @@ struct ServerExtensionDetailView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
-        .themedListSurface()
-        .navigationTitle(summary?.name ?? "Extension")
-        .navigationBarTitleDisplayMode(.inline)
+        .settingsPage(summary?.name ?? "Extension")
         .task(id: target) { startLoad() }
         .onDisappear { loader.cancel() }
     }
@@ -282,7 +266,6 @@ struct ServerExtensionDetailView: View {
             ForEach(values, id: \.self) { value in
                 Text(value)
                     .textSelection(.enabled)
-                    .listRowBackground(theme.bg.primary)
             }
         }
     }

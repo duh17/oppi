@@ -43,7 +43,9 @@ struct QuickCommentsSettingsView: View {
                 } label: {
                     Label("Add Quick Comment", systemImage: "plus")
                 }
+            }
 
+            Section {
                 Button(role: .destructive) {
                     showResetConfirmation = true
                 } label: {
@@ -51,9 +53,7 @@ struct QuickCommentsSettingsView: View {
                 }
             }
         }
-        .themedListSurface()
-        .navigationTitle("Quick Comments")
-        .navigationBarTitleDisplayMode(.inline)
+        .settingsPage("Quick Comments")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 EditButton()
@@ -98,31 +98,26 @@ struct QuickCommentsSettingsView: View {
             isAdding = false
             editingTemplate = template
         } label: {
-            HStack(spacing: 10) {
+            // The editor opens as a sheet, so the row carries no disclosure chevron.
+            HStack(spacing: 12) {
                 Image(systemName: template.systemImage)
-                    .font(.appAction)
                     .foregroundStyle(.themeBlue)
                     .frame(width: 24, alignment: .center)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(template.title)
-                        .font(.subheadline.weight(.medium))
                         .foregroundStyle(.themeFg)
 
                     Text(template.quickCommentText)
-                        .font(.caption2)
+                        .font(.caption)
                         .foregroundStyle(.themeComment)
                         .lineLimit(1)
                 }
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .font(.appChip)
-                    .foregroundStyle(.themeComment.opacity(0.5))
             }
-            .padding(.vertical, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 }
 
@@ -162,25 +157,23 @@ struct QuickCommentEditorView: View {
     }
 
     var body: some View {
-        Form {
+        List {
             Section("Basics") {
                 TextField("Title", text: $title)
                     .textInputAutocapitalization(.words)
 
-                HStack {
-                    Text("Icon")
-                    Spacer()
+                LabeledContent("Icon") {
                     SFSymbolPicker(selection: $systemImage)
                 }
             }
 
-            Section("Inserted Text") {
+            Section {
                 TextField("Comment text (e.g. \"Fix this.\")", text: $promptPrefix)
                     .textInputAutocapitalization(.sentences)
-
+            } header: {
+                Text("Inserted Text")
+            } footer: {
                 Text("Inserted into the comment composer when you tap the quick comment.")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
             }
 
             Section {
@@ -189,9 +182,7 @@ struct QuickCommentEditorView: View {
                 Text("Preview")
             }
         }
-        .themedListSurface()
-        .navigationTitle(isNew ? "New Quick Comment" : "Edit Quick Comment")
-        .navigationBarTitleDisplayMode(.inline)
+        .settingsPage(isNew ? "New Quick Comment" : "Edit Quick Comment")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel", action: onCancel)

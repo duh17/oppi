@@ -34,11 +34,11 @@ struct McpServersView: View {
                 }
             }
             if let attempt = signIn.attempt, signIn.hasActive {
-                Section("Sign-in on \(attempt.serverName)") {
+                Section("Sign-In on \(attempt.serverName)") {
                     Text(attempt.providerName)
-                    Button("Continue Sign-in") { signIn.resume() }
+                    Button("Continue Sign-In") { signIn.resume() }
                         .accessibilityIdentifier("mcp.auth.continue")
-                    Button("Cancel Sign-in", role: .destructive) { Task { await signIn.cancel() } }
+                    Button("Cancel Sign-In", role: .destructive) { Task { await signIn.cancel() } }
                         .disabled(attempt.isCancelling)
                         .accessibilityIdentifier("mcp.auth.cancel")
                     if let error = attempt.actionError { Text(error).foregroundStyle(.themeRed) }
@@ -94,14 +94,11 @@ struct McpServersView: View {
                 ContentUnavailableView("MCP Servers Unavailable", systemImage: "server.rack", description: Text("Connect to a paired server to manage MCP."))
             }
             Section {
+            } footer: {
                 Text("Refresh probes Pi's configured servers, not running sessions. Configuration changes apply to new sessions or /reload.")
-                    .font(.footnote).foregroundStyle(.themeComment)
             }
         }
-        .listStyle(.insetGrouped)
-        .themedListSurface()
-        .navigationTitle("MCP Servers")
-        .navigationBarTitleDisplayMode(.inline)
+        .settingsPage("MCP Servers")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("Add MCP Server", systemImage: "plus") {
@@ -134,7 +131,7 @@ struct McpServersView: View {
     private func serverRow(_ entry: McpServerSummary) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(entry.name).font(.headline)
-            Text("\(entry.transport == "http" ? "URL" : "Command") · \(entry.tools.count) tools · \(entry.exposure.rawValue)")
+            Text("\(entry.transport == "http" ? "URL" : "Command") · \(entry.tools.count) tools · \(entry.exposure.title)")
                 .font(.subheadline).foregroundStyle(.themeComment)
             Label(entry.stateLabel, systemImage: entry.state == "connected" ? "checkmark.circle" : "circle")
                 .font(.caption).foregroundStyle(statusStyle(entry.state))

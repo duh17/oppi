@@ -164,7 +164,7 @@ final class ProviderAuthFlowAttempt {
         pollTask = nil
     }
 
-    /// The sheet closed without Cancel Login. Never cancels the server flow.
+    /// The sheet closed without Cancel Sign-In. Never cancels the server flow.
     /// Returns whether to keep the attempt reachable: true while it is still live.
     func sheetDismissed() -> Bool {
         guard isSettled else { return true }
@@ -268,6 +268,7 @@ struct ModelProvidersManagementView: View {
     @State private var flowAttempt: ProviderAuthFlowAttempt?
     @State private var isFlowSheetPresented = false
     @State private var signInChoiceProvider: ProviderAuthProviderStatus?
+    @State private var signOutProvider: ProviderAuthProviderStatus?
 
     @State private var apiKeyEditorProvider: ProviderAuthProviderStatus?
     @State private var apiKeyDraft = ""
@@ -348,6 +349,22 @@ struct ModelProvidersManagementView: View {
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text("Choose where the sign-in page opens. On server opens a browser on the server's own desktop.")
+        }
+        .confirmationDialog(
+            signOutProvider.map { "Sign out of \($0.name)?" } ?? "Sign Out",
+            isPresented: Binding(
+                get: { signOutProvider != nil },
+                set: { if !$0 { signOutProvider = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: signOutProvider
+        ) { provider in
+            Button("Sign Out", role: .destructive) {
+                disconnectProvider(provider)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { provider in
+            Text("This removes the server's saved key or sign-in for \(provider.name). You will need to sign in again to use it.")
         }
         .sheet(isPresented: $isFlowSheetPresented, onDismiss: handleFlowSheetDismissed) {
             providerFlowSheet
@@ -503,7 +520,7 @@ struct ModelProvidersManagementView: View {
     ) -> some View {
         if provider.oauth != nil, provider.supportsApiKey {
             Menu {
-                Button(provider.authenticated ? "Reauthenticate" : "Sign In") {
+                Button(provider.authenticated ? "Sign In Again" : "Sign In") {
                     startProviderOAuthAction(provider: provider)
                 }
                 .disabled(hasLiveSignIn)
@@ -523,7 +540,7 @@ struct ModelProvidersManagementView: View {
             .font(.subheadline)
             .disabled(providerActionInFlightId != nil)
         } else if provider.oauth != nil {
-            Button(provider.authenticated ? "Reauthenticate" : "Sign In") {
+            Button(provider.authenticated ? "Sign In Again" : "Sign In") {
                 startProviderOAuthAction(provider: provider)
             }
             .buttonStyle(.bordered)
@@ -576,7 +593,7 @@ struct ModelProvidersManagementView: View {
     private func providerManageMenu(_ provider: ProviderAuthProviderStatus) -> some View {
         Menu {
             if provider.oauth != nil {
-                Button("Reauthenticate") {
+                Button("Sign In Again") {
                     startProviderOAuthAction(provider: provider)
                 }
                 .disabled(hasLiveSignIn)
@@ -590,8 +607,10 @@ struct ModelProvidersManagementView: View {
                 }
             }
 
-            Button("Disconnect", role: .destructive) {
-                disconnectProvider(provider)
+            Button("Sign Out", role: .destructive) {
+                DispatchQueue.main.async {
+                    signOutProvider = provider
+                }
             }
         } label: {
             Image(systemName: "ellipsis.circle")
@@ -734,7 +753,7 @@ struct ModelProvidersManagementView: View {
                                         Text("Cancelling…")
                                     }
                                 } else {
-                                    Text("Cancel Login")
+                                    Text("Cancel Sign-In")
                                 }
                             }
                             .disabled(attempt.isCancelling)

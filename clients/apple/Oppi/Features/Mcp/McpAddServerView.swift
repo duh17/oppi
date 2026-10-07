@@ -22,19 +22,18 @@ struct McpAddServerView: View {
     @State private var saving = false
     @State private var error: String?
 
+    private static let secretReferenceFooter =
+        "Use ${NAME} references instead of literal secrets. For example: API_KEY=${TOOLS_KEY}, or Authorization=Bearer ${TOKEN}. Values are resolved on the host; literal values are redacted when read back."
+
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Configuration") {
+            List {
+                Section {
                     LabeledContent("Host", value: serverName)
                     TextField("Server name", text: $name)
                         .accessibilityIdentifier("mcp.add.name")
                     LabeledContent("Scope", value: scope.title)
                         .accessibilityIdentifier("mcp.add.scope")
-                    if let trust = scope.projectTrust {
-                        Text("Saved to this workspace\u{2019}s .pi/mcp.json. Project trust: \(trust.title.lowercased()).")
-                            .font(.footnote).foregroundStyle(.themeComment)
-                    }
                     Picker("Transport", selection: $mode) {
                         Text("URL").tag("url")
                         Text("Command").tag("command")
@@ -42,19 +41,29 @@ struct McpAddServerView: View {
                         .accessibilityIdentifier("mcp.add.transport")
                     Picker("Exposure", selection: $exposure) {
                         ForEach(McpExposure.allCases, id: \.self) { option in
-                            VStack(alignment: .leading) {
-                                Text(option.rawValue)
-                                Text(option.explanation).font(.caption).foregroundStyle(.themeComment)
-                            }.tag(option)
+                            Text(option.title).tag(option)
                         }
-                    }.pickerStyle(.navigationLink)
+                    }.pickerStyle(.menu)
+                } header: {
+                    Text("Configuration")
+                } footer: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(exposure.explanation)
+                        if let trust = scope.projectTrust {
+                            Text("Saved to this workspace\u{2019}s .pi/mcp.json. Project trust: \(trust.title.lowercased()).")
+                        }
+                    }
                 }
                 if mode == "url" {
-                    Section("Streamable HTTP") {
+                    Section {
                         TextField("https://example.com/mcp", text: $url).keyboardType(.URL)
                             .accessibilityIdentifier("mcp.add.url")
                         TextField("Headers: one KEY=VALUE per line", text: $pairs, axis: .vertical)
                             .lineLimit(3...8)
+                    } header: {
+                        Text("Streamable HTTP")
+                    } footer: {
+                        Text(Self.secretReferenceFooter)
                     }
                     Section("Optional OAuth Client") {
                         TextField("Client ID", text: $clientId)
@@ -63,7 +72,7 @@ struct McpAddServerView: View {
                             .keyboardType(.numberPad)
                     }
                 } else {
-                    Section("Standard Input / Output") {
+                    Section {
                         TextField("Executable (not a shell command)", text: $command)
                             .accessibilityIdentifier("mcp.add.command")
                         TextField("Arguments: one per line (no secrets)", text: $arguments, axis: .vertical)
@@ -71,14 +80,14 @@ struct McpAddServerView: View {
                         TextField("Working directory (optional)", text: $cwd)
                         TextField("Environment: one KEY=VALUE per line", text: $pairs, axis: .vertical)
                             .lineLimit(3...8)
-                    }
-                }
-                Section {
-                    Text("Use ${NAME} references instead of literal secrets. For example: API_KEY=${TOOLS_KEY}, or Authorization=Bearer ${TOKEN}. Values are resolved on the host; literal values are redacted when read back.")
-                        .font(.footnote).foregroundStyle(.themeComment)
-                    if mode == "command" {
-                        Text("Adding a command authorizes Pi to run it on the host when the scope is trusted and the server is enabled.")
-                            .font(.footnote).foregroundStyle(.themeOrange)
+                    } header: {
+                        Text("Standard Input / Output")
+                    } footer: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(Self.secretReferenceFooter)
+                            Text("Adding a command authorizes Pi to run it on the host when the scope is trusted and the server is enabled.")
+                                .foregroundStyle(.themeOrange)
+                        }
                     }
                 }
                 if let error { Section { Text(error).foregroundStyle(.themeRed) } }
@@ -86,10 +95,7 @@ struct McpAddServerView: View {
             }
             .textInputAutocapitalization(.never).autocorrectionDisabled()
             .disabled(saving)
-            .themedListSurface()
-            .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
-            .navigationTitle("Add MCP Server")
-            .navigationBarTitleDisplayMode(.inline)
+            .settingsPage("Add MCP Server")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(saving) }
                 ToolbarItem(placement: .confirmationAction) {

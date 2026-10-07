@@ -7,15 +7,38 @@ import SwiftUI
 /// navigation. `SCREENSHOT_SSH_HOSTS=1` turns the SSH Terminal experiment on;
 /// `server*` pages use a fixture `ServerSettingsModel`, with an update on offer
 /// when `SCREENSHOT_SERVER_UPDATE=1`.
+/// Preview-only defaults in the argument domain: the preview reads them like
+/// real preferences, and nothing is written to the app's persistent defaults,
+/// which a simulator keeps across launches and test runs.
+enum ScreenshotVolatileDefaults {
+    static func apply(_ values: [String: Any]) {
+        let defaults = UserDefaults.standard
+        var arguments = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
+        arguments.merge(values) { _, new in new }
+        defaults.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
+    }
+
+    /// Call before `ThemeStore()`: its setters would persist the theme.
+    static func applyDarkTheme(_ enabled: Bool) {
+        guard enabled else { return }
+        apply([
+            "\(AppIdentifiers.subsystem).theme.mode": ThemeMode.manual.rawValue,
+            ThemeID.storageKey: ThemeID.dark.rawValue,
+        ])
+    }
+}
+
 struct SettingsScreenshotPreview: View {
     private let coordinator: ConnectionCoordinator
     private let server: PairedServer
     private let serverModel: ServerSettingsModel
     @State private var navigation = AppNavigation()
-    private let themeStore = ThemeStore()
+    private let themeStore: ThemeStore
 
     init() {
         let environment = ProcessInfo.processInfo.environment
+        ScreenshotVolatileDefaults.applyDarkTheme(environment["SCREENSHOT_COLOR_SCHEME"] == "dark")
+        themeStore = ThemeStore()
         var server = HostSwitcherPreviewData.server
         server.deviceCredential = DeviceCredential(
             deviceId: "dev-this",
@@ -29,17 +52,12 @@ struct SettingsScreenshotPreview: View {
             currentDeviceId: "dev-this",
             updateAvailable: environment["SCREENSHOT_SERVER_UPDATE"] == "1"
         )
-        UserDefaults.standard.set(
-            environment["SCREENSHOT_SSH_HOSTS"] == "1",
-            forKey: AppPreferences.Experiments.sshTerminalKey
-        )
+        if environment["SCREENSHOT_SSH_HOSTS"] == "1" {
+            ScreenshotVolatileDefaults.apply([AppPreferences.Experiments.sshTerminalKey: true])
+        }
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         coordinator.serverStore.replaceServersForPreview([server])
         self.coordinator = coordinator
-        if ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "dark" {
-            themeStore.mode = .manual
-            themeStore.manualThemeID = .dark
-        }
     }
 
     var body: some View {

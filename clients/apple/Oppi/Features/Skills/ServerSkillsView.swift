@@ -58,7 +58,6 @@ struct ServerSkillsView: View {
                         searchText = ""
                         await refresh(serverId: server.id)
                     }
-                    .listRowBackground(theme.bg.primary)
                 }
             }
 
@@ -71,7 +70,6 @@ struct ServerSkillsView: View {
                     .font(.subheadline)
                     .foregroundStyle(.themeOrange)
                     .accessibilityIdentifier("skills.cachedWarning")
-                    .listRowBackground(theme.bg.primary)
                 }
             }
 
@@ -118,16 +116,12 @@ struct ServerSkillsView: View {
                     Section(section.kind.rawValue) {
                         ForEach(section.skills) { skill in
                             skillRow(skill)
-                                .listRowBackground(theme.bg.primary)
                         }
                     }
                 }
             }
         }
-        .listStyle(.insetGrouped)
-        .themedListSurface()
-        .navigationTitle("Skills")
-        .navigationBarTitleDisplayMode(.inline)
+        .settingsPage("Skills")
         .searchable(text: $searchText, prompt: "Search skills")
         .refreshable {
             if let activeServerId {
@@ -201,11 +195,9 @@ struct ServerSkillsView: View {
                     resourceState(skill.state)
                 }
 
-                Image(systemName: "chevron.forward")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themeComment)
+                // Opens through `AppNavigation` so the route stays tracked.
+                SettingsDisclosureChevron()
                     .padding(.top, 4)
-                    .accessibilityHidden(true)
             }
             .frame(minHeight: 44)
             .contentShape(Rectangle())

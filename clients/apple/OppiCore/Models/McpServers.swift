@@ -6,6 +6,16 @@ enum McpExposure: String, Codable, CaseIterable, Sendable {
     case direct
     case hidden
 
+    /// Readable name for rows and pickers; `rawValue` is the `mcp.json` value.
+    var title: String {
+        switch self {
+        case .codemode: "Code Mode"
+        case .deferred: "Deferred"
+        case .direct: "Direct"
+        case .hidden: "Hidden"
+        }
+    }
+
     var explanation: String {
         switch self {
         case .codemode: "Scripts find and call tools; the model doesn't see them."

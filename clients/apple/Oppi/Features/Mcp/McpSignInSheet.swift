@@ -21,13 +21,11 @@ struct McpSignInSheet: View {
                 if !attempt.isSettled, owner.callbackAccepted || attempt.isSubmitting {
                     Section { ProgressView("Finishing sign-in on the host…") }
                 } else if !attempt.isSettled, let auth = attempt.flow.auth {
-                    Section("Sign In") {
+                    Section {
                         if let url = ProviderAuthFlowPresentation.signInURL(auth.url) {
-                            Link("Open Sign-in Page in Safari", destination: url)
+                            Link("Open Sign-In Page in Safari", destination: url)
                                 .accessibilityIdentifier("mcp.auth.open")
                         }
-                        Text("After approval, Safari may fail to load 127.0.0.1. Copy its full callback URL and paste it below. You can also complete sign-in using a browser on the host.")
-                            .font(.footnote).foregroundStyle(.themeComment)
                         TextField("Paste full callback URL", text: $attempt.input)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                             .keyboardType(.URL).submitLabel(.go)
@@ -37,6 +35,10 @@ struct McpSignInSheet: View {
                         Button("Submit Callback", action: submit)
                             .disabled(!owner.canSubmitCallback)
                             .accessibilityIdentifier("mcp.auth.submit")
+                    } header: {
+                        Text("Sign In")
+                    } footer: {
+                        Text("After approval, Safari may fail to load 127.0.0.1. Copy its full callback URL and paste it below. You can also complete sign-in using a browser on the host.")
                     }
                 } else if !attempt.isSettled { ProgressView("Preparing sign-in…") }
                 if let error = attempt.flow.error { Text(error).foregroundStyle(.themeRed) }
@@ -46,15 +48,12 @@ struct McpSignInSheet: View {
                 Section {
                     if attempt.isSettled { Button("Done") { owner.showingSheet = false } }
                     else {
-                        Button("Cancel Sign-in", role: .destructive) { Task { await owner.cancel() } }
+                        Button("Cancel Sign-In", role: .destructive) { Task { await owner.cancel() } }
                             .disabled(attempt.isCancelling)
                     }
                 }
             }
-            .themedListSurface()
-            .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
-            .navigationTitle("Sign In")
-            .navigationBarTitleDisplayMode(.inline)
+            .settingsPage("Sign In")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { owner.showingSheet = false } }
                 ToolbarItemGroup(placement: .keyboard) {

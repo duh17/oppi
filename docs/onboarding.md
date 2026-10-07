@@ -51,7 +51,7 @@ With `self-signed` or `manual` TLS, pair through a LAN host or the server's Tail
 
 Before pairing, the app probes HTTPS health and then sends exactly one pair request. If a connection error occurs after pairing starts, pairing might have succeeded; request a fresh invite instead of retrying the old one.
 
-You can also pair by signing in over SSH from **Tailscale → Check a machine**. That works for a Mac (Remote Login) or a Linux machine (`sshd`). Oppi runs `oppi pair --json` only after `oppi status` says HTTPS and `https://127.0.0.1:<port>/health` answers on that machine. A stopped server does not mint an invite. A `*.ts.net` name uses Oppi's Tailscale connection and is not dialed on the system network while that connection is off. Any other host, including a public name, uses the current network. An unknown or changed SSH host key sends no password. This does not install or start the server.
+You can also pair by signing in over SSH from **Tailscale → Check a Machine for Oppi**. That works for a Mac (Remote Login) or a Linux machine (`sshd`). Oppi runs `oppi pair --json` only after `oppi status` says HTTPS and `https://127.0.0.1:<port>/health` answers on that machine. A stopped server does not mint an invite. A `*.ts.net` name uses Oppi's Tailscale connection and is not dialed on the system network while that connection is off. Any other host, including a public name, uses the current network. An unknown or changed SSH host key sends no password. This does not install or start the server.
 
 ## Pair another device
 

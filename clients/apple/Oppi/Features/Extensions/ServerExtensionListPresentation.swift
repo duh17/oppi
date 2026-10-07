@@ -53,8 +53,8 @@ struct ServerExtensionListPresentation: Sendable, Equatable {
 
     static func stateLabel(for state: ServerExtensionState) -> String {
         switch state {
-        case .on: "On"
-        case .off: "Off"
+        case .on: "Enabled"
+        case .off: "Disabled"
         case .error, .unknown: "Error"
         }
     }

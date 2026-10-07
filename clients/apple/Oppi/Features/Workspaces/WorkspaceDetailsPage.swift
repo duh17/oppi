@@ -6,6 +6,7 @@ struct WorkspaceDetailsPage: View {
     let model: WorkspaceSettingsModel
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(ServerStore.self) private var serverStore
 
     @State private var draft: WorkspaceDetailsDraft
     @State private var hostMountStatus: HostPathStatus?
@@ -83,11 +84,15 @@ struct WorkspaceDetailsPage: View {
                     .font(.system(.body, design: .monospaced))
                     .accessibilityIdentifier("workspace.edit.hostMount")
 
-                hostMountValidationView
+                // The `if` must sit in the section builder: an empty child view
+                // still renders as a blank List row.
+                if let hostMountValidation {
+                    hostMountValidation
+                }
             } header: {
                 Text("Workspace Folder")
             } footer: {
-                Text("Leave empty to use the server home folder. If the folder doesn\u{2019}t exist, use Create this folder below; Oppi asks before creating one directory.")
+                Text("Leave empty to use the server home folder. If the folder doesn\u{2019}t exist, use Create This Folder; Oppi asks before creating one directory.")
             }
 
             if let error {
@@ -121,73 +126,24 @@ struct WorkspaceDetailsPage: View {
 
     // MARK: - Folder validation
 
-    @ViewBuilder
-    private var hostMountValidationView: some View {
-        if !trimmedHostMount.isEmpty {
-            if isCheckingHostMount {
-                Label("Checking folder\u{2026}", systemImage: "clock")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-            } else if let hostMountStatus, hostMountStatus.path == trimmedHostMount,
-                      hostMountStatus.issue == "missing" {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Folder doesn\u{2019}t exist", systemImage: "folder.badge.plus")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
+    private var serverName: String {
+        model.scope.flatMap { serverStore.server(for: $0.serverId)?.name } ?? "the server"
+    }
 
-                    if hostPathPendingCreation == trimmedHostMount {
-                        Text("Create this one folder on the server? The parent folder must already exist.")
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-
-                        if isCreatingHostDirectory {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                Text("Creating folder\u{2026}")
-                                    .font(.caption)
-                                    .foregroundStyle(.themeComment)
-                            }
-                        } else {
-                            HStack(spacing: 8) {
-                                Button {
-                                    Task { await createHostDirectoryFromPendingPath() }
-                                } label: {
-                                    Label("Create Folder", systemImage: "plus")
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .accessibilityIdentifier("workspace.edit.confirmCreateFolder")
-
-                                Button("Cancel") {
-                                    hostPathPendingCreation = nil
-                                }
-                                .buttonStyle(.bordered)
-                                .accessibilityIdentifier("workspace.edit.cancelCreateFolder")
-                            }
-                            .controlSize(.small)
-                        }
-                    } else {
-                        Button {
-                            hostPathPendingCreation = trimmedHostMount
-                        } label: {
-                            Label("Create this folder", systemImage: "plus")
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .accessibilityIdentifier("workspace.edit.createMissingFolder")
-                        .disabled(isCreatingHostDirectory)
-                    }
-                }
-            } else if let hostMountValidationMessage {
-                Label(hostMountValidationMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.themeRed)
-            } else if let hostMountStatus, hostMountStatus.path == trimmedHostMount,
-                      hostMountStatus.isValidWorkspaceDirectory {
-                Label("Folder exists", systemImage: "checkmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.themeGreen)
-            }
-        }
+    /// Nil when there is nothing to show, so the folder section has no blank row.
+    private var hostMountValidation: WorkspaceFolderValidationView? {
+        let validation = WorkspaceFolderValidationView(
+            folder: trimmedHostMount,
+            status: hostMountStatus,
+            validationMessage: hostMountValidationMessage,
+            isChecking: isCheckingHostMount,
+            isCreating: isCreatingHostDirectory,
+            pendingCreation: $hostPathPendingCreation,
+            serverName: serverName,
+            identifierPrefix: "workspace.edit",
+            confirmCreate: { Task { await createHostDirectoryFromPendingPath() } }
+        )
+        return validation.hasContent ? validation : nil
     }
 
     @MainActor

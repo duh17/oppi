@@ -189,8 +189,11 @@ struct SSHTerminalProfileStore {
         if let data = defaults.data(forKey: Self.catalogKey) {
             guard let catalog = try? JSONDecoder().decode(SSHTerminalCatalog.self, from: data) else { return [] }
             // A crash between the catalog write and the legacy-key removal must
-            // not migrate again, and must not touch the Keychain.
-            if defaults.object(forKey: Self.storageKey) != nil {
+            // not migrate again, and must not touch the Keychain. A catalog that
+            // only exists in the argument domain (screenshot launches) is not
+            // saved, so it must not finish the migration and drop the legacy host.
+            let catalogIsUnsaved = defaults.volatileDomain(forName: UserDefaults.argumentDomain)[Self.catalogKey] != nil
+            if !catalogIsUnsaved, defaults.object(forKey: Self.storageKey) != nil {
                 defaults.removeObject(forKey: Self.storageKey)
             }
             return catalog.profiles

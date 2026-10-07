@@ -20,6 +20,7 @@ struct TailnetSettingsView: View {
     /// Latest Oppi probe per peer id; a missing entry means none has started.
     @State private var probes: [String: TailnetPeerProbe] = [:]
     @State private var probeRefresh = 0
+    @State private var confirmingDisconnect = false
 
     /// Re-runs the probes when the node starts or stops, the probed machines
     /// change, or a refresh was requested. There is no polling timer.
@@ -58,19 +59,30 @@ struct TailnetSettingsView: View {
             } header: {
                 Label("Tailscale", image: "tailscale")
             } footer: {
-                Text(
-                    "Oppi joins your tailnet as its own device without the Tailscale VPN. "
-                        + "While it is connected, paired *.ts.net servers connect through it."
-                )
+                connectionFooter
             }
 
             if tailnet.state == .running {
                 peersSection
                 setupCheckSection
             }
+
+            if tailnet.state != .off {
+                disconnectSection
+            }
         }
-        .navigationTitle("Tailscale")
-        .navigationBarTitleDisplayMode(.inline)
+        .settingsPage("Tailscale")
+        .confirmationDialog(
+            "Disconnect from Tailscale?",
+            isPresented: $confirmingDisconnect,
+            titleVisibility: .visible
+        ) {
+            Button("Disconnect", role: .destructive) {
+                Task { await tailnet.disconnect() }
+            }
+        } message: {
+            Text("Paired *.ts.net servers stop connecting until you connect again.")
+        }
         .onAppear { tailnet.startIfEnabled() }
         .task(id: probeTrigger) {
             #if DEBUG
@@ -100,7 +112,6 @@ struct TailnetSettingsView: View {
                 Text("Starting…")
                     .foregroundStyle(.themeComment)
             }
-            disconnectButton
         case .needsLogin(let url):
             if let url {
                 Button {
@@ -117,30 +128,39 @@ struct TailnetSettingsView: View {
                         .foregroundStyle(.themeComment)
                 }
             }
-            disconnectButton
-        case .needsMachineAuth:
-            Text("A tailnet admin must approve \(TailnetNodeController.hostName) in the Tailscale admin console.")
-                .font(.footnote)
-                .foregroundStyle(.themeComment)
-            disconnectButton
-        case .running:
-            disconnectButton
-        case .failed(let message):
-            Text(message)
-                .font(.footnote)
-                .foregroundStyle(.themeRed)
+        case .needsMachineAuth, .running:
+            EmptyView()
+        case .failed:
             Button("Try Again") {
                 Task { await tailnet.restart() }
             }
-            disconnectButton
         }
     }
 
-    private var disconnectButton: some View {
-        Button("Disconnect", role: .destructive) {
-            Task { await tailnet.disconnect() }
+    /// What Tailscale is, or why it is not connected yet.
+    @ViewBuilder
+    private var connectionFooter: some View {
+        switch tailnet.state {
+        case .needsMachineAuth:
+            Text("A tailnet admin must approve \(TailnetNodeController.hostName) in the Tailscale admin console.")
+        case .failed(let message):
+            Text(message)
+                .foregroundStyle(.themeRed)
+        default:
+            Text(
+                "Oppi joins your tailnet as its own device without the Tailscale VPN. "
+                    + "While it is connected, paired *.ts.net servers connect through it."
+            )
         }
-        .accessibilityIdentifier("tailnet.disconnect")
+    }
+
+    private var disconnectSection: some View {
+        Section {
+            Button("Disconnect", role: .destructive) {
+                confirmingDisconnect = true
+            }
+            .accessibilityIdentifier("tailnet.disconnect")
+        }
     }
 
     private var peersSection: some View {
@@ -317,7 +337,7 @@ struct TailnetSettingsView: View {
 
     private var setupCheckSection: some View {
         Section {
-            NavigationLink("Check a machine for Oppi") {
+            SettingsIndexRow("Check a Machine for Oppi", systemImage: "stethoscope") {
                 SSHPreflightView(onPaired: onPaired)
             }
             .accessibilityIdentifier("tailnet.checkMachine")

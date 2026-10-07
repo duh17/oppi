@@ -119,7 +119,7 @@ private struct ResourceCatalogPreview: View {
             catalogRow(
                 id: "serverResources.extensions.workflow",
                 title: "Workflow", subtitle: "Coordinates local automation.",
-                provenance: "~/.pi/agent/extensions", state: "On", isError: false
+                provenance: "~/.pi/agent/extensions", state: "Enabled", isError: false
             )
         }
     }

@@ -28,14 +28,13 @@ struct SSHTerminalHostListView: View {
     @State private var session = SSHTerminalConnectSession()
     @State private var metadataIsCorrupt = false
     @State private var pendingDelete: SSHTerminalProfile?
+    @State private var confirmingLegacyPasswordDelete = false
 
     var body: some View {
         List {
             if metadataIsCorrupt {
                 Section {
                     Text(SSHTerminalProfileStoreError.corruptMetadata.localizedDescription)
-                    Button("Delete Saved Password", role: .destructive) { deleteLegacyPassword() }
-                        .accessibilityIdentifier("sshTerminal.deleteLegacyPassword")
                 }
             }
             if session.connecting || session.failure != nil || session.hostFailure != nil {
@@ -57,19 +56,26 @@ struct SSHTerminalHostListView: View {
             if profiles.isEmpty && !metadataIsCorrupt {
                 Section {
                     Text("No saved hosts.")
-                    Button("Add") { editor = .add }
+                        .foregroundStyle(.themeComment)
+                    Button("Add Host") { editor = .add }
                         .accessibilityIdentifier("sshTerminal.host.add")
                 }
+            } else if !profiles.isEmpty {
+                Section {
+                    ForEach(profiles) { profile in
+                        hostRow(profile)
+                    }
+                }
             }
-            Section {
-                ForEach(profiles) { profile in
-                    hostRow(profile)
+            if metadataIsCorrupt {
+                Section {
+                    Button("Delete Saved Password", role: .destructive) { confirmingLegacyPasswordDelete = true }
+                        .accessibilityIdentifier("sshTerminal.deleteLegacyPassword")
                 }
             }
         }
         .accessibilityIdentifier("sshTerminal.hostList")
-        .navigationTitle("SSH Terminal")
-        .navigationBarTitleDisplayMode(.inline)
+        .settingsPage("SSH Terminal")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Add") { editor = .add }
@@ -90,6 +96,15 @@ struct SSHTerminalHostListView: View {
             guard !visible, let id = editAfterTerminal else { return }
             editAfterTerminal = nil
             editor = .edit(id)
+        }
+        .confirmationDialog(
+            "Delete the saved password?",
+            isPresented: $confirmingLegacyPasswordDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Saved Password", role: .destructive) { deleteLegacyPassword() }
+        } message: {
+            Text("The saved host data cannot be read. This removes the old saved password and the unreadable host data.")
         }
         .confirmationDialog(
             "Delete this host and its saved password?",

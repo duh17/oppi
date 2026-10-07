@@ -35,10 +35,6 @@ struct DictationDictionaryView: View {
                 entries(title: "All Workspaces", phrases: globalDraft, scope: .global)
                 if workspaceId != nil {
                     entries(title: "This Workspace", phrases: workspaceDraft, scope: .workspace)
-                    Section {
-                        Button("Forget This Workspace", role: .destructive) { confirmingForget = true }
-                            .disabled(isSaving)
-                    }
                 }
                 Section {
                     Button {
@@ -69,7 +65,7 @@ struct DictationDictionaryView: View {
                 }
                 if let provider = global?.provider, let serverId {
                     Section {
-                        Toggle("Send selected phrases to Server dictation", isOn: $sendToServer)
+                        Toggle("Send Selected Phrases to Server Dictation", isOn: $sendToServer)
                             .onChange(of: sendToServer) { _, enabled in
                                 DictationDictionaryConsent.setEnabled(enabled, serverId: serverId, provider: provider)
                             }
@@ -80,11 +76,15 @@ struct DictationDictionaryView: View {
                         ))
                     }
                 }
+                if workspaceId != nil {
+                    Section {
+                        Button("Forget This Workspace", role: .destructive) { confirmingForget = true }
+                            .disabled(isSaving)
+                    }
+                }
             }
         }
-        .themedListSurface()
-        .navigationTitle("Dictionary")
-        .navigationBarTitleDisplayMode(.inline)
+        .settingsPage("Dictionary")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Save") { Task { await save() } }
@@ -93,10 +93,16 @@ struct DictationDictionaryView: View {
             }
         }
         .task(id: "\(serverId ?? ""):\(workspaceId ?? "")") { await load() }
-        .confirmationDialog("Forget this workspace's phrases?", isPresented: $confirmingForget) {
+        .confirmationDialog(
+            "Forget this workspace's phrases?",
+            isPresented: $confirmingForget,
+            titleVisibility: .visible
+        ) {
             Button("Forget This Workspace", role: .destructive) {
                 Task { await forgetWorkspace() }
             }
+        } message: {
+            Text("This deletes this workspace's phrases on the server. Phrases for All Workspaces stay.")
         }
     }
 

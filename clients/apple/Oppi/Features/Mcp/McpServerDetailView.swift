@@ -39,7 +39,7 @@ struct McpServerDetailView: View {
 
     var body: some View {
         List {
-            Section("\(scope.title) · \(serverName)") {
+            Section {
                 LabeledContent("Status", value: entry.stateLabel)
                 LabeledContent("Transport", value: entry.transport == "http" ? "URL" : "Command")
                 if let url = entry.config.url { Text(url).textSelection(.enabled) }
@@ -47,7 +47,10 @@ struct McpServerDetailView: View {
                     Text(([command] + (entry.config.args ?? [])).joined(separator: " "))
                         .font(.system(.body, design: .monospaced)).textSelection(.enabled)
                 }
-                if let cwd = entry.config.cwd { LabeledContent("Working directory", value: cwd) }
+                if let cwd = entry.config.cwd { LabeledContent("Working Directory", value: cwd) }
+            } header: {
+                Text("\(scope.title) · \(serverName)")
+            } footer: {
                 if let trustNote { Text(trustNote).foregroundStyle(.themeOrange) }
             }
             Section {
@@ -60,21 +63,18 @@ struct McpServerDetailView: View {
                     perform { try await client.patchMcpServer(scopeId: scope.id, name: entry.name, patch: McpPatchServerRequest(exposure: value)) }
                 })) {
                     ForEach(McpExposure.allCases, id: \.self) { option in
-                        VStack(alignment: .leading) {
-                            Text(option.rawValue)
-                            Text(option.explanation).font(.caption).foregroundStyle(.themeComment)
-                        }.tag(option)
+                        Text(option.title).tag(option)
                     }
-                }.pickerStyle(.navigationLink)
+                }.pickerStyle(.menu)
                 .disabled(busy || signIn.hasActive)
                 .accessibilityIdentifier("mcp.exposure")
             } footer: {
-                Text("Saved in this scope's mcp.json. New sessions or /reload pick up configuration changes.")
+                Text("\(entry.exposure.explanation) Saved in this scope's mcp.json. New sessions or /reload pick up configuration changes.")
             }
             if entry.supportsOAuth {
                 Section("OAuth") {
                     if let attempt, !attempt.isSettled {
-                        Button("Continue Sign-in") { signIn.resume() }
+                        Button("Continue Sign-In") { signIn.resume() }
                     } else {
                         Button(entry.state == "needs-auth" ? "Sign In" : "Sign In Again") { startLogin() }
                             .disabled(busy || needsRememberedTrust || signIn.hasActive)
@@ -87,14 +87,18 @@ struct McpServerDetailView: View {
             if let config = entry.config.headers, !config.isEmpty { referencesSection("Headers", values: config) }
             if let config = entry.config.env, !config.isEmpty { referencesSection("Environment", values: config) }
             if let failure = entry.error { Section("Connection Error") { Text(failure).foregroundStyle(.themeRed).textSelection(.enabled) } }
-            ForEach(scope.errors, id: \.self) { Text($0).foregroundStyle(.themeRed) }
+            if !scope.errors.isEmpty {
+                Section {
+                    ForEach(scope.errors, id: \.self) { Text($0).foregroundStyle(.themeRed) }
+                }
+            }
             Section("Tools (\(entry.tools.count))") {
                 if entry.tools.isEmpty { Text("No tools available").foregroundStyle(.themeComment) }
                 ForEach(entry.tools, id: \.self) { tool in
                     VStack(alignment: .leading) {
                         Text(tool).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                         if let exposure = entry.toolExposure?[tool] {
-                            Text(exposure.rawValue).font(.caption).foregroundStyle(.themeComment)
+                            Text(exposure.title).font(.caption).foregroundStyle(.themeComment)
                         }
                     }
                 }
@@ -107,9 +111,7 @@ struct McpServerDetailView: View {
                     .accessibilityIdentifier("mcp.remove")
             }
         }
-        .themedListSurface()
-        .navigationTitle(entry.name)
-        .navigationBarTitleDisplayMode(.inline)
+        .settingsPage(entry.name)
         .refreshable { await refresh() }
         .confirmationDialog("Remove \(entry.name) from \(scope.title)?", isPresented: $confirmingRemove, titleVisibility: .visible) {
             Button("Remove Server", role: .destructive) {

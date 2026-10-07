@@ -9,6 +9,7 @@ struct ThemeImportView: View {
     @State private var isLoading = true
     @State private var error: String?
     @State private var importingName: String?
+    @State private var removingTheme: RemoteThemeSummary?
 
     var body: some View {
         Group {
@@ -31,46 +32,62 @@ struct ThemeImportView: View {
                 themeList
             }
         }
-        .themedListSurface()
-        .navigationTitle("Import Theme")
-        .navigationBarTitleDisplayMode(.inline)
+        .settingsPage("Import Theme")
         .task { await loadThemes() }
     }
 
     private var themeList: some View {
         List {
             ForEach(remoteThemes) { summary in
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(summary.name)
-                            .font(.body.weight(.medium))
-                        Text(summary.colorScheme)
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-                    }
-
-                    Spacer()
-
-                    if importingName == summary.filename {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else if CustomThemeStore.load(name: summary.name) != nil {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.themeGreen)
-                    }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture {
+                Button {
                     Task { await importTheme(summary) }
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(summary.name)
+                                .foregroundStyle(.themeFg)
+                            Text(summary.colorScheme)
+                                .font(.caption)
+                                .foregroundStyle(.themeComment)
+                        }
+
+                        Spacer()
+
+                        if importingName == summary.filename {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else if CustomThemeStore.load(name: summary.name) != nil {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.themeGreen)
+                        }
+                    }
+                    .contentShape(Rectangle())
                 }
-                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                .buttonStyle(.plain)
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     if CustomThemeStore.load(name: summary.name) != nil {
                         Button("Delete", role: .destructive) {
-                            themeStore.removeImportedTheme(named: summary.name)
+                            removingTheme = summary
                         }
                     }
                 }
             }
+        }
+        .confirmationDialog(
+            removingTheme.map { "Delete \($0.name) from this device?" } ?? "Delete Theme",
+            isPresented: Binding(
+                get: { removingTheme != nil },
+                set: { if !$0 { removingTheme = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: removingTheme
+        ) { summary in
+            Button("Delete Theme", role: .destructive) {
+                themeStore.removeImportedTheme(named: summary.name)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("The imported copy is removed. You can import it again from the server.")
         }
     }
 

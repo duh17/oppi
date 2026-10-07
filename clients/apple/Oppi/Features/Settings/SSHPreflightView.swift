@@ -41,15 +41,30 @@ struct SSHPreflightView: View {
         _selection = State(initialValue: initialPeer?.dialHost ?? "")
     }
 
+    #if DEBUG
+    /// Screenshot harness: renders a settled result without dialing SSH.
+    init(previewReport: SSHPreflightReport, host: String) {
+        self.init()
+        _selection = State(initialValue: host)
+        _phase = State(initialValue: .finished(previewReport, host: host))
+    }
+
+    /// Screenshot harness: renders a settled failure without dialing SSH.
+    init(previewFailure: SSHPreflightFailure, host: String) {
+        self.init()
+        _selection = State(initialValue: host)
+        _phase = State(initialValue: .failed(previewFailure, host: host))
+    }
+    #endif
+
     var body: some View {
         List {
             machineSection
             signInSection
             actionSection
-            resultSection
+            resultSections
         }
-        .navigationTitle("Check a machine")
-        .navigationBarTitleDisplayMode(.inline)
+        .settingsPage("Check a Machine")
         .onAppear {
             tailnet.startIfEnabled()
             selectDefaultMachine()
@@ -78,6 +93,7 @@ struct SSHPreflightView: View {
                 }
                 Text("Other…").tag(Self.manualSelection)
             }
+            .pickerStyle(.menu)
             .accessibilityIdentifier("sshPreflight.machine")
 
             if selection == Self.manualSelection {
@@ -139,7 +155,7 @@ struct SSHPreflightView: View {
     }
 
     @ViewBuilder
-    private var resultSection: some View {
+    private var resultSections: some View {
         switch phase {
         case .idle, .checking:
             EmptyView()
@@ -151,6 +167,18 @@ struct SSHPreflightView: View {
                 hostKeyRows(failure, host: host)
             } header: {
                 Text(host)
+            } footer: {
+                if case .unknownHostKey(let key) = failure {
+                    Text("On the machine, `ssh-keygen -lf /etc/ssh/ssh_host_\(Self.keyFileStem(key))_key.pub` prints the same value.")
+                }
+            }
+            if case .hostKeyMismatch = failure {
+                Section {
+                    Button("Forget Trusted Key", role: .destructive) {
+                        forgetHost = host
+                    }
+                    .accessibilityIdentifier("sshPreflight.forgetKey")
+                }
             }
         case .finished(let report, let host):
             Section {
@@ -164,22 +192,26 @@ struct SSHPreflightView: View {
             } header: {
                 Text(host)
             } footer: {
-                VStack(alignment: .leading, spacing: 8) {
+                if !report.canPairOverSSH {
                     Text(Self.resultFooter(report))
-                    if report.canPairOverSSH {
-                        if pairing {
-                            HStack {
-                                ProgressView().controlSize(.small)
-                                Text("Pairing…").foregroundStyle(.themeComment)
-                            }
-                        } else {
-                            Button("Pair") { pair(host: host) }
-                                .accessibilityIdentifier("sshPreflight.pair")
+                }
+            }
+            if report.canPairOverSSH {
+                Section {
+                    if pairing {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("Pairing…").foregroundStyle(.themeComment)
                         }
+                    } else {
+                        Button("Pair") { pair(host: host) }
+                            .accessibilityIdentifier("sshPreflight.pair")
+                    }
+                } footer: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(Self.resultFooter(report))
                         if let pairMessage {
                             Text(pairMessage)
-                                .font(.footnote)
-                                .foregroundStyle(.themeComment)
                         }
                     }
                 }
@@ -192,18 +224,11 @@ struct SSHPreflightView: View {
         switch failure {
         case .unknownHostKey(let key):
             fingerprintRow("Fingerprint", key)
-            Text("On the machine, `ssh-keygen -lf /etc/ssh/ssh_host_\(Self.keyFileStem(key))_key.pub` prints the same value.")
-                .font(.footnote)
-                .foregroundStyle(.themeComment)
             Button("Trust Key and Check") { check(trusting: key, host: host) }
                 .accessibilityIdentifier("sshPreflight.trustKey")
         case .hostKeyMismatch(let saved, let presented):
             fingerprintRow("Trusted", saved)
             fingerprintRow("Presented", presented)
-            Button("Forget Trusted Key", role: .destructive) {
-                forgetHost = host
-            }
-            .accessibilityIdentifier("sshPreflight.forgetKey")
         default:
             EmptyView()
         }
