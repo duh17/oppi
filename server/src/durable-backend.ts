@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AttachedReplicatedState } from "@earendil-works/chord";
@@ -655,15 +654,9 @@ export class DurableBackend implements AgentBackend {
     // After the listener is attached. A commit, not Conversation.submit, so a
     // held startup scheduler stays held. A crash between settlement and the
     // card write is filled here; a card that already landed is a no-op.
+    // A failed scan fails the attach. Swallowing it would leave the miss hidden.
     if (this.disposed) return;
-    try {
-      await reconcileFailureCards(
-        this.conversation,
-        join(this.dataDir, "durable", "harness.sqlite"),
-      );
-    } catch (error) {
-      log.warn("durable_failure.reconcile_failed", { error: safeErrorMessage(error) });
-    }
+    await reconcileFailureCards(this.conversation, this.owner.storage);
   }
 
   private get agent(): AgentState {

@@ -13,8 +13,10 @@ import {
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
 import { Type } from "typebox";
+import { createModels } from "@earendil-works/pi-ai/models";
 import {
   Harness,
+  MemoryStorage,
   createRegistry,
   ToolTask,
   AssistantEntry,
@@ -27,6 +29,7 @@ import {
   type AgentEvent,
   type ConversationId,
   type EntryId,
+  type Storage as DurableStorage,
   type ToolRegistration,
   defineTool,
 } from "@earendil-works/pi-durable";
@@ -40,6 +43,7 @@ import { DurableBackend, DurableNotSupportedError } from "../src/durable-backend
 import { Storage } from "../src/storage.js";
 import { SessionManager } from "../src/sessions.js";
 import { DurableHarness, DurableRuntime } from "../src/durable-harness.js";
+import { DURABLE_FAILURE_ENTRY_KIND, recordInputFailure } from "../src/durable-failure-cards.js";
 import { SessionTraceService } from "../src/session-trace-service.js";
 import { readDurableTrace } from "../src/durable-history.js";
 import { SessionAgentEventCoordinator } from "../src/session-agent-events.js";
@@ -76,6 +80,7 @@ import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 const managers: SessionManager[] = [];
 const harnesses: Harness[] = [];
+const harnessStorage = new WeakMap<Harness, DurableStorage>();
 // Durable sessions discover Skills and AGENTS files under the agent dir: never the developer's.
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 beforeEach(() => {
@@ -181,8 +186,9 @@ async function openHarness(
   registry.install(DurableWorkingWords);
   registry.install(DurableBackgroundJobs);
   if (tool) registry.install({ name: "restart-proof", tools: [tool] });
+  const storage = await openNodeSqliteStorage(join(dir, "restart.sqlite"));
   const harness = await Harness.open(
-    await openNodeSqliteStorage(join(dir, "restart.sqlite")),
+    storage,
     {
       models,
       registry,
@@ -191,6 +197,7 @@ async function openHarness(
     },
     context,
   );
+  harnessStorage.set(harness, storage);
   harnesses.push(harness);
   return harness;
 }
@@ -203,8 +210,29 @@ function createDurableSession(storage: Storage, name: string): Session {
   return session;
 }
 
+/** Prototype `open` mocks skip `openInner`, so retain the harness storage on the instance `open` is called on. */
+function mockDurableOpen(harness: Harness, models: ModelRuntime) {
+  let current = harness;
+  const spy = vi.spyOn(DurableHarness.prototype, "open").mockImplementation(async function (
+    this: DurableHarness,
+  ) {
+    const storage = harnessStorage.get(current);
+    if (!storage) throw new Error("test harness has no retained storage");
+    this.bindStorage(storage);
+    return { harness: current, models };
+  });
+  return Object.assign(spy, {
+    use(next: Harness) {
+      current = next;
+    },
+  });
+}
+
 async function backend(harness: Harness, models: ModelRuntime, session: Session, dataDir: string) {
   const owner = new DurableHarness(dataDir);
+  const storage = harnessStorage.get(harness);
+  if (!storage) throw new Error("test harness has no retained storage");
+  owner.bindStorage(storage);
   vi.spyOn(owner, "open").mockResolvedValue({ harness, models });
   await owner.releaseResume();
   const result = await DurableBackend.create({
@@ -304,7 +332,7 @@ async function crashedQueuedTools(f: Awaited<ReturnType<typeof fixture>>) {
   harnesses.splice(harnesses.indexOf(harness), 1);
   recovering = true;
   harness = await openHarness(f.dir, f.models, tool);
-  vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+  mockDurableOpen(harness, f.models);
   vi.spyOn(f.storage, "listSessions").mockImplementation(() =>
     sessions.map((session) => f.storage.getSession(session.id)!),
   );
@@ -569,6 +597,9 @@ describe("server durable managed runtime", () => {
       );
       f.session.serverDurable = { conversationId: conversation.id };
       const owner = new DurableHarness(f.dir);
+      const retained = harnessStorage.get(harness);
+      if (!retained) throw new Error("test harness has no retained storage");
+      owner.bindStorage(retained);
       vi.spyOn(owner, "open").mockResolvedValue({ harness, models: f.models });
       await owner.releaseResume();
       let shown!: UIResponse;
@@ -716,7 +747,7 @@ describe("server durable managed runtime", () => {
         fauxAssistantMessage("GENERIC_UI_DONE"),
       ]);
       const harness = await openHarness(f.dir, f.models, probe);
-      vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+      mockDurableOpen(harness, f.models);
       await f.manager.startSession(f.session.id, f.workspace);
       const conversation = (await harness.conversation(
         f.storage.getSession(f.session.id)!.serverDurable!.conversationId!,
@@ -881,7 +912,7 @@ describe("server durable managed runtime", () => {
       fauxAssistantMessage("AFTER_TIMEOUT"),
     ]);
     const harness = await openHarness(f.dir, f.models, probe);
-    vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+    mockDurableOpen(harness, f.models);
     await f.manager.startSession(f.session.id, f.workspace);
     const conversation = (await harness.conversation(
       f.storage.getSession(f.session.id)!.serverDurable!.conversationId!,
@@ -1065,6 +1096,147 @@ describe("server durable managed runtime", () => {
       targetEvents: 20,
     });
     expect(restartedPage!.trace.filter(isFailureCard)).toHaveLength(1);
+  }, 20_000);
+
+  it("writes the failure card before a prompt sent immediately after the failure", async () => {
+    const models = createModels();
+    const faux = fauxProvider();
+    faux.setResponses([
+      fauxAssistantMessage("", {
+        stopReason: "error",
+        errorMessage: "provider exploded before an answer",
+      }),
+      fauxAssistantMessage("Later answer"),
+    ]);
+    models.setProvider(faux.provider);
+    const harness = await Harness.open(
+      new MemoryStorage(),
+      {
+        models,
+        registry: createRegistry(),
+        settings: { compaction: { enabled: false }, retry: { enabled: false } },
+      },
+      context,
+    );
+    harnesses.push(harness);
+    const conversation = await harness.createConversation(
+      {
+        ownership: { kind: "ownerless" },
+        agent: { model: { provider: "faux", modelId: "faux-1" } },
+      },
+      context,
+    );
+    const failed = await conversation.submit(
+      { type: "input", content: "fail this turn", requestId: "fail-then-prompt" },
+      context,
+    );
+    const settled = await failed.wait(context);
+    expect(settled).toMatchObject({ type: "input", status: "unanswered", reason: "model_error" });
+    await conversation.waitForIdle(context);
+
+    // No await between these two: the card commit must already be on the session
+    // line before the prompt's admission can queue.
+    const card = recordInputFailure(conversation, settled);
+    const next = conversation.submit(
+      { type: "input", content: "next question", requestId: "next-question" },
+      context,
+    );
+    await card;
+    await next;
+
+    const entries = (await conversation.entries({}, 20, undefined, context)).items;
+    const failure = entries.find((entry) => entry.kind === DURABLE_FAILURE_ENTRY_KIND);
+    const user = entries.find(
+      (entry) =>
+        entry.model?.[0]?.role === "user" &&
+        JSON.stringify(entry.model[0].content).includes("next question"),
+    );
+    expect(failure?.id).toBeDefined();
+    expect(user?.id).toBeDefined();
+    expect(failure!.id).toBeLessThan(user!.id);
+  });
+
+  it("reconciles a crash-before-card failure through the retained harness storage", async () => {
+    const errorText = "died before the failure card";
+    const f = await fixture(
+      [fauxAssistantMessage("", { stopReason: "error", errorMessage: errorText })],
+      { settings: { retry: { enabled: false } } },
+    );
+    const durable = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
+      .durableHarness;
+    const { harness } = await durable.open();
+    const storage = durable.storage;
+    const submissionScans: unknown[] = [];
+    const taskScans: Array<{ query: unknown; cursor: unknown }> = [];
+    const scanSubmissions = storage.scanSubmissions.bind(storage);
+    const scanTasks = storage.scanTasks.bind(storage);
+    storage.scanSubmissions = (async (query, limit, cursor, callContext) => {
+      submissionScans.push(query);
+      return scanSubmissions(query, limit, cursor, callContext);
+    }) as typeof storage.scanSubmissions;
+    storage.scanTasks = (async (query, limit, cursor, callContext) => {
+      taskScans.push({ query, cursor });
+      return scanTasks(query, limit, cursor, callContext);
+    }) as typeof storage.scanTasks;
+
+    const conversation = await harness.createConversation(
+      {
+        ownership: { kind: "ownerless" },
+        agent: { model: { provider: "faux", modelId: "faux-1" }, cwd: f.dir },
+      },
+      context,
+    );
+    const failed = await conversation.submit(
+      { type: "input", content: "fail before attach", requestId: "crash-before-card" },
+      context,
+    );
+    expect(await failed.wait(context)).toMatchObject({
+      status: "unanswered",
+      reason: "model_error",
+    });
+    await conversation.waitForIdle(context);
+    expect(
+      (await conversation.entries({}, 20, undefined, context)).items.some(
+        (entry) => entry.kind === DURABLE_FAILURE_ENTRY_KIND,
+      ),
+    ).toBe(false);
+
+    f.session.serverDurable = { conversationId: conversation.id };
+    f.storage.saveSession(f.session);
+    await f.manager.startSession(f.session.id, f.workspace);
+
+    const isCard = (event: TraceEvent) =>
+      event.presentation?.accent === "error" &&
+      event.presentation.body?.includes(errorText) === true;
+    expect(submissionScans).toContainEqual({
+      conversationId: conversation.id,
+      status: "unanswered",
+    });
+    const reconcileScans = () =>
+      taskScans.filter(
+        (scan) =>
+          scan.query !== null &&
+          typeof scan.query === "object" &&
+          !Array.isArray(scan.query) &&
+          Object.keys(scan.query).length === 1 &&
+          "conversationId" in scan.query,
+      );
+    expect(reconcileScans().some((scan) => scan.cursor === undefined)).toBe(true);
+    expect(
+      (await f.manager.getServerDurableTrace(f.session.id, "full"))!.filter(isCard),
+    ).toHaveLength(1);
+
+    taskScans.length = 0;
+    await f.manager.stopSession(f.session.id);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const resumed = reconcileScans();
+    expect(resumed).toEqual([
+      { query: { conversationId: conversation.id }, cursor: { after: expect.any(Number) } },
+    ]);
+    expect((resumed[0]!.cursor as { after: number }).after).toBeGreaterThan(0);
+    expect(
+      (await f.manager.getServerDurableTrace(f.session.id, "full"))!.filter(isCard),
+    ).toHaveLength(1);
   }, 20_000);
 
   it("projects manual summary and start-time context tokens and resets cache state", async () => {
@@ -1512,9 +1684,7 @@ describe("server durable managed runtime", () => {
       const job = (await harness.snapshot(DurableJobs, id, context))!.jobs[0]!;
       f.session.status = "ready";
       f.storage.saveSession(f.session);
-      const opening = vi
-        .spyOn(DurableHarness.prototype, "open")
-        .mockResolvedValue({ harness, models: f.models });
+      const opening = mockDurableOpen(harness, f.models);
       if (stopped) {
         await f.manager.startSession(f.session.id, f.workspace);
         await f.manager.stopSession(f.session.id);
@@ -1528,7 +1698,7 @@ describe("server durable managed runtime", () => {
       await harness.close(context);
       harnesses.splice(harnesses.indexOf(harness), 1);
       harness = await openHarness(f.dir, f.models);
-      opening.mockResolvedValue({ harness, models: f.models });
+      opening.use(harness);
       expect((await harness.inspect(context)).scheduling).toBe("paused");
       const storage = new Storage(f.dir);
       queueOrphanedSessionsForRestart(storage);
@@ -1575,7 +1745,7 @@ describe("server durable managed runtime", () => {
       await harness.close(context);
       harnesses.splice(harnesses.indexOf(harness), 1);
       harness = await openHarness(f.dir, f.models);
-      opening.mockResolvedValue({ harness, models: f.models });
+      opening.use(harness);
       const again = new SessionManager(new Storage(f.dir));
       managers.push(again);
       await again.resumeDurableSessions();
@@ -1925,7 +2095,7 @@ describe("server durable managed runtime", () => {
         { slow: true },
       );
       const harness = await openHarness(f.dir, f.models);
-      vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+      mockDurableOpen(harness, f.models);
       const creating = vi.spyOn(harness, "createConversation");
       await f.manager.startSession(f.session.id, f.workspace);
       const conversation = await creating.mock.results[0]!.value;
@@ -2536,7 +2706,7 @@ describe("server durable managed runtime", () => {
   it("lists exactly the trace user rows as fork points, including media-only messages", async () => {
     const f = await fixture([]);
     const harness = await openHarness(f.dir, f.models);
-    vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+    mockDurableOpen(harness, f.models);
     await f.manager.startSession(f.session.id, f.workspace);
     const conversationId = f.storage.getSession(f.session.id)!.serverDurable!
       .conversationId as ConversationId;
@@ -2606,7 +2776,7 @@ describe("server durable managed runtime", () => {
       { slow: true },
     );
     const harness = await openHarness(f.dir, f.models);
-    vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+    mockDurableOpen(harness, f.models);
     await f.manager.startSession(f.session.id, f.workspace);
     const projection = observe(f.manager, f.session.id);
     await f.manager.sendPrompt(f.session.id, "start");
@@ -2632,7 +2802,7 @@ describe("server durable managed runtime", () => {
       { slow: true },
     );
     const harness = await openHarness(f.dir, f.models);
-    vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+    mockDurableOpen(harness, f.models);
     const creating = vi.spyOn(harness, "createConversation");
     await f.manager.startSession(f.session.id, f.workspace);
     const conversation = await creating.mock.results[0]!.value;
@@ -3068,7 +3238,7 @@ describe("server durable managed runtime", () => {
         await allRecovered;
       return conversation(id, callContext);
     });
-    vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+    mockDurableOpen(harness, f.models);
     queueOrphanedSessionsForRestart(f.storage);
     await f.manager.resumeDurableSessions();
     await Promise.all(taskIds.map((id) => harness.waitForTask(id, context)));
@@ -3089,7 +3259,7 @@ describe("server durable managed runtime", () => {
       session.status = "busy";
       f.storage.saveSession(session);
     }
-    vi.spyOn(DurableHarness.prototype, "open").mockResolvedValue({ harness, models: f.models });
+    mockDurableOpen(harness, f.models);
     queueOrphanedSessionsForRestart(f.storage);
     const ordered = f.storage
       .listSessions()

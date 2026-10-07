@@ -106,14 +106,16 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
       SettingsManager.inMemory({ compaction: { enabled: false } }),
     );
   }
+  let openedStorage: Awaited<ReturnType<typeof openNodeSqliteStorage>> | undefined;
   const open = async (executionEnv: NodeExecutionEnv | GondolinExecutionEnv = env) => {
     const registry = createRegistry();
     registry.install(CodingTools);
     registry.install(DurableBackgroundJobs);
+    openedStorage = await openNodeSqliteStorage(
+      join(dir, serverOwner ? "durable/harness.sqlite" : "jobs.sqlite"),
+    );
     const harness = await Harness.open(
-      await openNodeSqliteStorage(
-        join(dir, serverOwner ? "durable/harness.sqlite" : "jobs.sqlite"),
-      ),
+      openedStorage,
       { models, registry, env: () => executionEnv, settings: { compaction: { enabled: false } } },
       context,
     );
@@ -122,6 +124,8 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
   };
   const harness = serverOwner ? (await owner.open()).harness : await open();
   harnesses.add(harness);
+  const durableStorage = serverOwner ? owner.storage : openedStorage;
+  if (!durableStorage) throw new Error("background-job fixture has no retained storage");
   const root = await harness.root(context, {
     agent: { model: { provider: "faux", modelId: "faux-1" }, cwd: dir },
   });
@@ -134,6 +138,7 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
     env,
     open,
     owner,
+    durableStorage,
     entered,
     finish,
     counts: () => ({ executions, cancellations }),
@@ -278,6 +283,7 @@ describe("native Durable background jobs", () => {
     const session = storage.createSession("Background display", "faux/faux-1");
     session.serverDurable = { conversationId: f.root.id };
     const owner = new DurableHarness(f.dir);
+    owner.bindStorage(f.durableStorage);
     vi.spyOn(owner, "open").mockResolvedValue({ harness: f.harness, models: f.models });
     await owner.releaseResume();
     const events: SessionBackendEvent[] = [];
@@ -296,7 +302,7 @@ describe("native Durable background jobs", () => {
             shown.resolve();
         },
       });
-      backend.startEvents();
+      await backend.startEvents();
       return backend;
     };
     const backend = await attach();
@@ -349,6 +355,7 @@ describe("native Durable background jobs", () => {
       const session = storage.createSession("Report queue", "faux/faux-1");
       session.serverDurable = { conversationId: f.root.id };
       const owner = new DurableHarness(f.dir);
+      owner.bindStorage(f.durableStorage);
       vi.spyOn(owner, "open").mockResolvedValue({ harness: f.harness, models: f.models });
       await owner.releaseResume();
       let onQueue = () => {};
@@ -363,7 +370,7 @@ describe("native Durable background jobs", () => {
           if (event.type === "queue_update") onQueue();
         },
       });
-      backend.startEvents();
+      await backend.startEvents();
       try {
         await prompt(f.root);
         await f.entered.promise;

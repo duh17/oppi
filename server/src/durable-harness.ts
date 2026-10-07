@@ -10,6 +10,7 @@ import {
   type ConversationId,
   type EntryId,
   type Registry,
+  type Storage,
   type Tx,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
@@ -54,6 +55,8 @@ export const DurableRuntime = defineDoc<{ kind: "host" | "sandbox"; workspaceId?
 export class DurableHarness {
   private opening?: Promise<{ harness: Harness; models: ModelRuntime }>;
   private closed = false;
+  /** Storage passed to `Harness.open`. Crash recovery reads it; it does not open the file again. */
+  private harnessStorage?: Storage;
   /** Server catalog runtime. Carries global `registerProvider` overlays such as Anthropic OMP. */
   private boundModels?: ModelRuntime;
   private discoveredModelsRequired = false;
@@ -218,6 +221,23 @@ export class DurableHarness {
 
   constructor(private readonly dataDir: string) {}
 
+  /** Storage `open()` retained. Absent until the Harness storage exists. */
+  get storage(): Storage {
+    if (!this.harnessStorage) throw new Error("Server durable Harness is not open");
+    return this.harnessStorage;
+  }
+
+  /**
+   * Retain the storage `Harness.open` is using. `openInner` does this. A test that
+   * injects a harness retains that same storage, or attach cannot reconcile.
+   */
+  bindStorage(storage: Storage): void {
+    if (this.harnessStorage && this.harnessStorage !== storage) {
+      throw new Error("Server durable storage is already open");
+    }
+    this.harnessStorage = storage;
+  }
+
   /** Production open must not invent a runtime that skipped extension provider discovery. */
   requireDiscoveredModels(): void {
     if (this.opening) {
@@ -268,8 +288,10 @@ export class DurableHarness {
     // off. The native SQLite adapter belongs to this lazy execution boundary.
     const { openNodeSqliteStorage } =
       await import("@earendil-works/pi-durable/storage/sqlite/node");
+    const storage = await openNodeSqliteStorage(join(directory, "harness.sqlite"));
+    this.bindStorage(storage);
     const harness = await Harness.open(
-      await openNodeSqliteStorage(join(directory, "harness.sqlite")),
+      storage,
       {
         models,
         registry,
