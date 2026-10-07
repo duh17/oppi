@@ -100,7 +100,8 @@ struct SSHTerminalView: View {
             // bar's keyboard button and Type in Terminal both stay in direct
             // typing until Use Chat Bar or a foreground change.
             if inputMode == .chat && !rawKeyboard {
-                SSHTerminalComposer(channel: channel, focusRequest: composerFocusRequest, keyActions: keymap.actions) {
+                SSHTerminalComposer(channel: channel, focusRequest: composerFocusRequest,
+                                    profile: keymap.profile, userFile: keymap.userFile) {
                     showTerminalKeyboard()
                 }
             }

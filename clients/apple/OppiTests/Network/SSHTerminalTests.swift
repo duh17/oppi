@@ -260,6 +260,60 @@ struct SSHTerminalTests {
         #expect(SSHTerminalKeymap.fixed.map(\.label).prefix(3) == ["Esc", "Ctrl", "Alt"])
     }
 
+    @Test func composerPagesKeepExitChordsOffTheFirstPage() throws {
+        func pages(_ program: String, file: String? = nil) throws -> [SSHTerminalKeymap.ComposerPage] {
+            let profile = try #require(SSHTerminalKeymap.profile(for: program))
+            return SSHTerminalKeymap.composerPages(for: profile, userFile: file)
+        }
+        let pi = try pages("pi")
+        #expect(pi.map(\.title) == ["Agent", "Move", "Exit"])
+        #expect(pi[0].items.map(\.label) == ["Thinking", "Cycle", "Model", "Tools"])
+        #expect(pi[0].items.map(\.hint) == ["\u{21E7}Tab", "\u{21E7}Tab", "^L", "^O"])
+        #expect(pi[1].items.map(\.label) == ["←", "↓", "↑", "→"])
+        #expect(pi[1].items.allSatisfy { $0.kind == .arrow })
+        #expect(pi[2].items.map(\.label) == ["Esc", "Tab", "^C", "^D"])
+        #expect(pi[2].items.allSatisfy { $0.kind == .send && $0.strokes.count == 1 })
+        #expect(pi[0].items.contains { $0.label == "^C" || $0.label == "Esc" } == false)
+        #expect(pi[1].items.contains { $0.label == "^C" } == false)
+
+        let interrupt = try #require(pi[2].items.first { $0.id == "ctrl-c" }?.strokes.first)
+        #expect(interrupt.key == GHOSTTY_KEY_C)
+        #expect(interrupt.modifiers == GhosttyMods(GHOSTTY_MODS_CTRL))
+        #expect(pi[2].items.first { $0.id == "ctrl-c" }?.accessibilityLabel == "Control C")
+
+        // A program interrupt bound to Ctrl+C stays off the agent page.
+        let rebound = try pages("pi", file: #"{"app.interrupt":"ctrl+c"}"#)
+        #expect(rebound[0].items.contains { $0.label == "Stop" || $0.hint == "^C" } == false)
+        #expect(rebound[2].items.map(\.id) == ["escape", "tab", "ctrl-c", "ctrl-d"])
+
+        // A safe label must not hide an exit chord. Those slots are omitted, not retargeted.
+        let modelInterrupt = try pages("pi", file: #"{"app.model.select":"ctrl+c"}"#)
+        #expect(modelInterrupt[0].items.contains { $0.id == "model" || $0.hint == "^C" } == false)
+        let thinkingEof = try pages("pi", file: #"{"app.thinking.cycle":"ctrl+d"}"#)
+        #expect(thinkingEof[0].items.contains { $0.id == "thinking" || $0.hint == "^D" } == false)
+        let cycleInterrupt = """
+        {"bindings":[{"context":"Chat","bindings":{"shift+tab":null,"ctrl+c":"chat:cycleMode"}}]}
+        """
+        let claudeCycle = try pages("claude", file: cycleInterrupt)
+        #expect(claudeCycle[0].items.contains { $0.id == "cycle" || $0.hint == "^C" } == false)
+
+        let claude = try pages("claude")
+        #expect(claude[0].items.map(\.label).prefix(3) == ["Thinking", "Cycle", "Model"])
+        #expect(claude[0].items.first { $0.id == "cycle" }?.hint == "\u{21E7}Tab")
+        #expect(claude[0].items.first { $0.id == "model" }?.hint == "\u{2325}P")
+        #expect(claude[0].items.map(\.label).contains("Transcript"))
+
+        let unknown = SSHTerminalKeymap.composerPages(for: nil, userFile: nil)
+        #expect(unknown[0].items.map(\.label) == ["Thinking", "Cycle", "Model"])
+        #expect(unknown[2].items.map(\.label) == ["Esc", "Tab", "^C", "^D"])
+
+        // Esc or Tab must omit the slot. It must not become Ctrl+L under the Model label.
+        let modelEsc = try pages("pi", file: #"{"app.model.select":"escape"}"#)
+        #expect(modelEsc[0].items.contains { $0.id == "model" || $0.hint == "^L" } == false)
+        let modelTab = try pages("pi", file: #"{"app.model.select":"tab"}"#)
+        #expect(modelTab[0].items.contains { $0.id == "model" || $0.hint == "^L" } == false)
+    }
+
     @Test func arrowHoldDragSelectsDominantAxisAndBoundedSpeed() {
         let held = GHOSTTY_KEY_ARROW_UP
         let idle = SSHTerminalArrowRepeat.plan(heldKey: held, translation: .zero)
@@ -299,7 +353,7 @@ struct SSHTerminalTests {
                 channel.opened(fixture)
                 channel.event(.writabilityChanged(false))
                 let mounted = try MountedTerminalTestView(SSHTerminalComposer(
-                    channel: channel, focusRequest: 0, keyActions: [], showRawKeyboard: {}
+                    channel: channel, focusRequest: 0, profile: nil, userFile: nil, showRawKeyboard: {}
                 ))
                 defer { mounted.dismiss(); channel.close(reason: "done") }
                 let textView = try #require(mounted.find { $0 is PastableUITextView } as? PastableUITextView)

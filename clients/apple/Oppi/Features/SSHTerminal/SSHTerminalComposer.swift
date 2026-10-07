@@ -4,17 +4,19 @@ import UniformTypeIdentifiers
 /// Oppi's chat composer, pointed at a terminal. Text (typed or dictated) is
 /// edited locally and sent as one paste followed by Enter, so agent TUIs get a
 /// whole prompt instead of a keystroke stream. Photos and files are saved on
-/// the host first and the prompt carries their paths. The key strip sends raw
-/// keys immediately for approvals, aborts and menus.
+/// the host first and the prompt carries their paths. The key row is three
+/// pages: agent controls, arrows, then exit chords. Exit is not first.
 struct SSHTerminalComposer: View {
     let channel: SSHTerminalChannel
     let focusRequest: Int
-    /// The foreground program's own actions, after the fixed keys.
-    let keyActions: [SSHTerminalKeyAction]
+    /// The foreground program and its keybinding file. Nil means the default slots.
+    let profile: SSHTerminalKeymap.Profile?
+    let userFile: String?
     let showRawKeyboard: () -> Void
     @Environment(ServerConnection.self) private var connection: ServerConnection?
 
     @State private var text = ""
+    @State private var keyPage = 0
     @State private var textBeforeRecording: String?
     @State private var pendingAttachments: [PendingAttachment] = []
     @State private var pendingRepoPointers: [PendingFileReference] = []
@@ -71,32 +73,31 @@ struct SSHTerminalComposer: View {
     }
 
     /// Shown while the composer is focused, so the idle terminal stays compact.
+    /// The open page is the agent controls. The pager is the only way onto exit.
     private var keyStrip: some View {
-        HStack(spacing: 2) {
+        let pages = SSHTerminalKeymap.composerPages(for: profile, userFile: userFile)
+        let index = min(max(keyPage, 0), pages.count - 1)
+        return keyPageRow(pages: pages, index: index)
+    }
+
+    private func keyPageRow(pages: [SSHTerminalKeymap.ComposerPage], index: Int) -> some View {
+        let page = pages[index]
+        let next = pages[(index + 1) % pages.count]
+        return HStack(spacing: 2) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
-                    ForEach(SSHTerminalKeymap.fixed) { fixed in
-                        if let modifier = fixed.modifier {
-                            key(fixed.label, id: fixed.id) { channel.modifierLatch.toggle(modifier) }
-                                .foregroundStyle(channel.modifierLatch.isArmed(modifier) ? .themeBlue : .themeFg)
-                                .accessibilityValue(channel.modifierLatch.isArmed(modifier) ? "On" : "Off")
-                        } else if let stroke = fixed.stroke {
-                            if SSHTerminalArrowRepeat.isArrow(stroke.key) {
-                                SSHTerminalArrowControl(label: fixed.label, key: stroke.key,
-                                                        id: "sshTerminal.composer.\(fixed.id)") { arrow in
-                                    channel.key(arrow)
-                                }
-                                .frame(width: 40, height: ComposerInputMetrics.controlDiameter)
-                            } else {
-                                key(fixed.label, id: fixed.id) {
-                                    channel.key(stroke.key, text: stroke.text, modifiers: stroke.modifiers)
-                                }
+                    ForEach(page.items) { item in
+                        if item.kind == .arrow, let stroke = item.strokes.first {
+                            SSHTerminalArrowControl(label: item.label, key: stroke.key,
+                                                    id: "sshTerminal.composer.\(item.id)") { arrow in
+                                channel.key(arrow)
                             }
+                            .frame(width: 40, height: ComposerInputMetrics.controlDiameter)
+                        } else {
+                            key(item.label, id: item.id) { channel.keys(item.strokes) }
+                                .accessibilityLabel(item.accessibilityLabel)
+                                .accessibilityHint("Sends \(item.hint)")
                         }
-                    }
-                    ForEach(keyActions) { action in
-                        key(action.title, id: action.id) { channel.keys(action.strokes) }
-                            .accessibilityHint("Sends \(action.keyLabel)")
                     }
                 }
             }
@@ -104,6 +105,16 @@ struct SSHTerminalComposer: View {
             // the full key target even when the focused composer is compressed.
             .frame(height: ComposerInputMetrics.controlDiameter)
             .scrollDismissesKeyboard(.never)
+            Button {
+                keyPage = (index + 1) % pages.count
+            } label: {
+                Text("\(index + 1)/\(pages.count)")
+                    .fixedSize()
+                    .frame(minWidth: 44, minHeight: ComposerInputMetrics.controlDiameter)
+            }
+            .accessibilityLabel("Key page \(index + 1) of \(pages.count), \(page.title)")
+            .accessibilityHint("Shows \(next.title)")
+            .accessibilityIdentifier("sshTerminal.composer.page")
             Button(action: showRawKeyboard) {
                 Image(systemName: "keyboard")
                     .frame(minWidth: 40, minHeight: ComposerInputMetrics.controlDiameter)
