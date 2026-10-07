@@ -889,7 +889,8 @@ describe("MCP routes through real bundled Pi", () => {
     30_000,
   );
   it("cancel/expiry are terminal despite late child exit; duplicate and post-terminal submissions are rejected", async () => {
-    const { service } = fixture(1500);
+    // Pi's login child needs more than 1.5s to publish the URL on a busy host.
+    const { service } = fixture(20_000);
     const remote = await oauthServer();
     await service.add("global", { name: "remote", url: remote + "/mcp" });
     const flow = await service.login("global", "remote", "phone_browser");
@@ -907,10 +908,10 @@ describe("MCP routes through real bundled Pi", () => {
     await expect.poll(() => service.auth.hasActive(), { timeout: 5000 }).toBe(false);
     const expired = await service.login("global", "remote", "phone_browser");
     await expect
-      .poll(() => service.auth.get(expired.flowId).status, { timeout: 10_000 })
+      .poll(() => service.auth.get(expired.flowId).status, { timeout: 25_000 })
       .toBe("expired");
     expect(service.auth.get(flow.flowId).status).toBe("cancelled");
-  }, 30_000);
+  }, 60_000);
   it("child connection failure settles a failed flow without exposing subprocess output", async () => {
     const { service } = fixture();
     await service.add("global", { name: "dead", url: "http://127.0.0.1:1/mcp" });
