@@ -58,7 +58,7 @@ extension ServerConnection {
         case .agentSettled:
             silenceWatchdog.stop()
 
-        case .textDelta, .thinkingDelta, .toolStart, .toolOutput, .toolEnd:
+        case .textDelta, .thinkingDelta, .toolStart, .toolOutput, .toolEnd, .customCard:
             silenceWatchdog.recordEvent()
 
         case .error(_, _, _):

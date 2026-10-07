@@ -234,6 +234,17 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     id: "worktree-rebind:test-session-1",
     message: "Resuming on Main checkout. The worktree is gone.",
   },
+  custom_card: {
+    type: "custom_card",
+    id: "entry-custom-1",
+    text: "Build finished\n\nAll checks passed.",
+    presentation: {
+      kind: "custom",
+      title: "Build finished",
+      body: "All checks passed.",
+      accent: "info",
+    },
+  },
 
   // Streaming
   text_delta: { type: "text_delta", delta: "Hello, ", contentIndex: 0 },
@@ -737,6 +748,7 @@ const SERVER_MESSAGE_ORDER = [
   "message_end",
   "cache_miss",
   "notice",
+  "custom_card",
   "text_delta",
   "thinking_delta",
   "audio_stream",

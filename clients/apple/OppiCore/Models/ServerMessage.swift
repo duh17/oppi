@@ -87,6 +87,7 @@ enum ServerMessage: Sendable, Equatable {
     )
     case cacheMiss(id: String, message: String)
     case notice(id: String, message: String)
+    case customCard(id: String, text: String, presentation: TraceEventPresentation)
     case textDelta(delta: String, contentIndex: Int? = nil, replace: Bool = false)
     case thinkingDelta(delta: String, contentIndex: Int? = nil, replace: Bool = false)
     case audioStream(AudioStreamMessage)
@@ -294,7 +295,7 @@ extension ServerMessage: Decodable {
         // session_ended / stop lifecycle
         case reason, source
         // message_end / cache_miss / notice / text_delta / thinking_delta / audio_stream
-        case role, content, assistantContent, entryId, delta, contentIndex, replace, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior
+        case role, content, assistantContent, entryId, delta, contentIndex, replace, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior, presentation
         // tool_start / tool_update / tool_end
         case tool, args, toolCallId, parentToolCallId, details, callSegments, resultSegments, inputPresentation, nestedCalls, display, outputPresentation, outputAvailability
         // tool_output
@@ -402,6 +403,13 @@ extension ServerMessage: Decodable {
             self = .notice(
                 id: try c.decode(String.self, forKey: .id),
                 message: try c.decode(String.self, forKey: .message)
+            )
+
+        case "custom_card":
+            self = .customCard(
+                id: try c.decode(String.self, forKey: .id),
+                text: try c.decode(String.self, forKey: .text),
+                presentation: try c.decode(TraceEventPresentation.self, forKey: .presentation)
             )
 
         case "text_delta":
@@ -787,6 +795,7 @@ extension ServerMessage {
         case .messageEnd: "messageEnd"
         case .cacheMiss: "cacheMiss"
         case .notice: "notice"
+        case .customCard: "customCard"
         case .textDelta: "textDelta"
         case .thinkingDelta: "thinkingDelta"
         case .audioStream: "audioStream"

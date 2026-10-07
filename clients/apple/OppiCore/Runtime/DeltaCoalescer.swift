@@ -200,6 +200,7 @@ final class DeltaCoalescer {
              .messageEnd,
              .cacheMiss,
              .notice,
+             .customCard,
              .sessionEnded,
              .error,
              .compactionStart,
@@ -607,6 +608,9 @@ final class DeltaCoalescer {
         case .cacheMiss(_, let id, let message),
              .notice(_, let id, let message):
             return id.utf8.count + message.utf8.count
+
+        case .customCard(_, let id, let text, _):
+            return id.utf8.count + text.utf8.count
 
         case .toolStart(_, _, let tool, let args, let callSegments, let inputPresentation, let display, let outputPresentation, _),
              .toolUpdate(_, _, let tool, let args, let callSegments, let inputPresentation, let display, let outputPresentation, _):

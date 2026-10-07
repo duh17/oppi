@@ -96,6 +96,10 @@ final class TestEventPipeline {
         case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability, let parent, let outputStream):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments, nestedCalls: nestedCalls, outputPresentation: outputPresentation, outputAvailability: outputAvailability, parentToolCallId: parent, outputStream: outputStream))
+        case .customCard:
+            for event in ServerMessageEffects.timelineEvents(for: message, sessionId: sessionId) {
+                coalescer.receive(event)
+            }
         case .messageEnd(let role, let content, let assistantContent, let entryId):
             if role == "assistant" {
                 coalescer.receive(.messageEnd(

@@ -56,6 +56,8 @@ enum ServerMessageEffects {
             return [.cacheMiss(sessionId: sessionId, id: id, message: message)]
         case .notice(let id, let message):
             return [.notice(sessionId: sessionId, id: id, message: message)]
+        case .customCard(let id, let text, let presentation):
+            return [.customCard(sessionId: sessionId, id: id, text: text, presentation: presentation)]
         case .error(let message, _, _):
             return [.error(sessionId: sessionId, message: message)]
         case .sessionEnded(let reason):

@@ -47,6 +47,7 @@ extension AppEventMessage: Decodable {
         "text_delta",
         "thinking_delta",
         "message_end",
+        "custom_card",
         "tool_start",
         "tool_update",
         "tool_output",

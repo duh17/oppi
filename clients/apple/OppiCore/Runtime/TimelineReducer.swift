@@ -1249,6 +1249,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         case .notice(_, let id, let message):
             return upsertLiveWarningRow(.notice(id: id, message: message), id: id)
 
+        case .customCard(_, let id, let text, let presentation):
+            return upsertCustomCard(id: id, message: text, presentation: presentation)
+
         case .toolStart(_, let toolEventId, let tool, let args, let callSegments, let inputPresentation, let display, let outputPresentation, _):
             let metadataChanged = (inputPresentation != nil && toolArgsStore.inputPresentation(for: toolEventId) != inputPresentation)
                 || (display != nil && toolArgsStore.display(for: toolEventId) != display)
@@ -1708,6 +1711,21 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     private static func traceUserEventCarriesImages(_ text: String) -> Bool {
         text.contains("data:image/")
             || !UserMessageTextProjection.attachmentPaths(from: text).isEmpty
+    }
+
+    /// Live custom card. Same id as the history row, so a later trace load replaces it.
+    @discardableResult
+    private func upsertCustomCard(id: String, message: String, presentation: TraceEventPresentation) -> Bool {
+        let item = ChatItem.customEvent(id: id, message: message, presentation: presentation)
+        let before = renderMutationCheckpoint()
+        if let index = indexForID(id) {
+            items[index] = item
+        } else {
+            items.append(item)
+            indexAppend(item)
+        }
+        bumpItemsMutationSeq()
+        return renderMutationCheckpoint() != before
     }
 
     @discardableResult

@@ -557,6 +557,37 @@ struct TraceRenderingTests {
         #expect(renderedPresentation == presentation)
     }
 
+    @Test func liveCustomCardSurvivesATraceReloadThatMissedIt() {
+        let reducer = TimelineReducer()
+        let replayID = UUID()
+        reducer.beginHistoryReplayBuffer(id: replayID)
+        let presentation = TraceEventPresentation(
+            kind: "custom",
+            title: "Custom Message",
+            subtitle: nil,
+            status: nil,
+            body: "These are background job results, not a new user request.",
+            fields: nil,
+            accent: "info"
+        )
+        reducer.process(.customCard(
+            sessionId: "session",
+            id: "job-1",
+            text: "Custom Message\n\nThese are background job results, not a new user request.",
+            presentation: presentation
+        ))
+
+        reducer.applyTraceWithLiveReplay([], replayID: replayID)
+
+        #expect(reducer.items.count == 1)
+        guard case .customEvent(let id, _, let rendered) = reducer.items[0] else {
+            Issue.record("Expected the live card to be replayed")
+            return
+        }
+        #expect(id == "job-1")
+        #expect(rendered.title == "Custom Message")
+    }
+
     // MARK: - Multiple thinking blocks
 
     @Test func multipleThinkingBlocksAcrossTurns() {

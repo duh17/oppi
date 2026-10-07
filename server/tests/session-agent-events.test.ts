@@ -217,6 +217,140 @@ describe("SessionAgentEventCoordinator", () => {
     expect(summaryBroadcasts).toEqual([["child-1", { type: "session_summary", summary }]]);
   });
 
+  it("broadcasts a visible custom message as the same history card while streaming", () => {
+    const active = makeActiveSession({ status: "busy" });
+    const guidance =
+      "These are background job results, not a new user request. Integrate useful findings, changes, failures, or blockers. Do not reply only to acknowledge results that are already covered.";
+    const { broadcast, coordinator } = makeCoordinator(active);
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "entry_appended",
+      entry: {
+        type: "custom_message",
+        id: "job-1",
+        parentId: "turn-1",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        customType: "background-job",
+        display: true,
+        content: `${guidance}\n\ncommand finished`,
+      },
+    } as SessionBackendEvent);
+
+    expect(broadcast).toHaveBeenCalledWith(
+      active.session.id,
+      expect.objectContaining({
+        type: "custom_card",
+        id: "job-1",
+        presentation: expect.objectContaining({
+          kind: "custom",
+          title: "Custom Message",
+        }),
+      }),
+    );
+
+    broadcast.mockClear();
+    coordinator.handlePiEvent(active.session.id, {
+      type: "entry_appended",
+      entry: {
+        type: "custom_message",
+        id: "hidden",
+        parentId: null,
+        timestamp: "2026-01-01T00:00:01.000Z",
+        customType: "background-job",
+        display: false,
+        content: guidance,
+      },
+    } as SessionBackendEvent);
+    expect(broadcast).not.toHaveBeenCalled();
+  });
+
+  it("broadcasts the new custom entry when an identical batch is still the leaf", async () => {
+    const active = makeActiveSession({ status: "busy" });
+    const content = "same batch";
+    const entries = new Map<string, { type: string; id: string; parentId: string | null; content: string; display: boolean }>();
+    entries.set("old", {
+      type: "custom_message",
+      id: "old",
+      parentId: "turn",
+      content,
+      display: true,
+    });
+    let leafId = "old";
+    active.sdkBackend = {
+      sessionTree: () => ({
+        getLeafId: () => leafId,
+        getLeafEntry: () => entries.get(leafId),
+        getEntry: (id: string) => entries.get(id),
+      }),
+      toolDefinition: () => undefined,
+    } as never;
+    const { broadcast, coordinator } = makeCoordinator(active);
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "message_end",
+      message: { role: "custom", content, display: true },
+    } as SessionBackendEvent);
+    entries.set("new", {
+      type: "custom_message",
+      id: "new",
+      parentId: "old",
+      content,
+      display: true,
+    });
+    leafId = "new";
+    await new Promise((resolve) => queueMicrotask(resolve));
+
+    const cardIds = broadcast.mock.calls.flatMap(([, message]) =>
+      message.type === "custom_card" && typeof message.id === "string" ? [message.id] : [],
+    );
+    expect(cardIds).toContain("new");
+  });
+
+  it("broadcasts both equal batches when each is appended before its message_end", async () => {
+    const active = makeActiveSession({ status: "busy" });
+    const content = "same batch";
+    const entries = new Map<string, { type: string; id: string; parentId: string | null; content: string; display: boolean }>();
+    entries.set("first", {
+      type: "custom_message",
+      id: "first",
+      parentId: "turn",
+      content,
+      display: true,
+    });
+    let leafId = "first";
+    active.sdkBackend = {
+      sessionTree: () => ({
+        getLeafId: () => leafId,
+        getLeafEntry: () => entries.get(leafId),
+        getEntry: (id: string) => entries.get(id),
+      }),
+      toolDefinition: () => undefined,
+    } as never;
+    const { broadcast, coordinator } = makeCoordinator(active);
+    const messageEnd = {
+      type: "message_end",
+      message: { role: "custom", content, display: true },
+    } as SessionBackendEvent;
+
+    coordinator.handlePiEvent(active.session.id, messageEnd);
+    entries.set("second", {
+      type: "custom_message",
+      id: "second",
+      parentId: "first",
+      content,
+      display: true,
+    });
+    leafId = "second";
+    coordinator.handlePiEvent(active.session.id, messageEnd);
+    await new Promise((resolve) => queueMicrotask(resolve));
+    await new Promise((resolve) => queueMicrotask(resolve));
+
+    const cardIds = broadcast.mock.calls.flatMap(([, message]) =>
+      message.type === "custom_card" && typeof message.id === "string" ? [message.id] : [],
+    );
+    expect(cardIds).toEqual(expect.arrayContaining(["first", "second"]));
+  });
+
   it("broadcasts one compatibility-safe message_end with ordered assistant structure", () => {
     const active = makeActiveSession({ status: "busy" });
     const { broadcast, coordinator } = makeCoordinator(active);

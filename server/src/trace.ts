@@ -665,25 +665,20 @@ export function buildSessionContext(
         }
         break;
 
-      case "custom_message":
-        if (entry.content && entry.display !== false) {
-          const text = extractText(entry.content);
-          if (text) {
-            const parent = entry.parentId ? visibleEntryById.get(entry.parentId) : undefined;
-            if (parent?.type === "custom") {
-              break;
-            }
-            const presentation = customPresentationFromText(text);
-            events.push({
-              id: entry.id,
-              type: "system",
-              timestamp,
-              text: textFromPresentation(presentation),
-              presentation,
-            });
-          }
+      case "custom_message": {
+        const parent = entry.parentId ? visibleEntryById.get(entry.parentId) : undefined;
+        const projected = projectVisibleCustomMessage(entry, parent?.type);
+        if (projected) {
+          events.push({
+            id: projected.id,
+            type: "system",
+            timestamp,
+            text: projected.text,
+            presentation: projected.presentation,
+          });
         }
         break;
+      }
 
       case "custom": {
         const lifecycle = formatLifecycleEvent(entry, timestamp);
@@ -784,6 +779,23 @@ function formatCompactionEvent(entry: SessionEntry): TraceEvent {
     type: "compaction",
     timestamp: entry.timestamp || new Date().toISOString(),
     text: `Context compacted${tokenInfo}: ${summaryText}`,
+  };
+}
+
+/** Same card history shows for a visible custom message. Live delivery uses this too. */
+export function projectVisibleCustomMessage(
+  entry: SessionEntry,
+  parentType?: string,
+): { id: string; text: string; presentation: TraceEventPresentation } | null {
+  if (entry.type !== "custom_message" || !entry.content || entry.display === false) return null;
+  if (parentType === "custom") return null;
+  const text = extractText(entry.content);
+  if (!text) return null;
+  const presentation = customPresentationFromText(text);
+  return {
+    id: entry.id,
+    text: textFromPresentation(presentation),
+    presentation,
   };
 }
 

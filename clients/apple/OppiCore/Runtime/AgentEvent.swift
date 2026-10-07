@@ -61,6 +61,7 @@ enum AgentEvent: Sendable {
     )
     case cacheMiss(sessionId: String, id: String, message: String)
     case notice(sessionId: String, id: String, message: String)
+    case customCard(sessionId: String, id: String, text: String, presentation: TraceEventPresentation)
 
     /// Tool events carry a client-generated `toolEventId` (v1: sequential assumption).
     case toolStart(sessionId: String, toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]? = nil, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil, parentToolCallId: String? = nil)
@@ -93,6 +94,7 @@ enum AgentEvent: Sendable {
         case .messageEnd: "messageEnd"
         case .cacheMiss: "cacheMiss"
         case .notice: "notice"
+        case .customCard: "customCard"
         case .toolStart: "toolStart"
         case .toolUpdate: "toolUpdate"
         case .toolOutput: "toolOutput"

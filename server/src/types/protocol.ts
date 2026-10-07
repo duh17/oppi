@@ -476,6 +476,21 @@ export type ServerMessage = // ── Connection ──
         id: string;
         message: string;
       }
+    | {
+        /** Visible custom message, same card history projects. Not model-only. */
+        type: "custom_card";
+        id: string;
+        text: string;
+        presentation: {
+          kind: "custom";
+          title: string;
+          subtitle?: string;
+          status?: string;
+          body?: string;
+          fields?: { label: string; value: string }[];
+          accent?: "info" | "success" | "warning" | "error";
+        };
+      }
     // ── Streaming ──
     | { type: "text_delta"; delta: string; contentIndex?: number; replace?: true }
     | { type: "thinking_delta"; delta: string; contentIndex?: number; replace?: true }

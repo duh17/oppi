@@ -38,6 +38,7 @@ import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.j
 import { materializeToolMediaDetails } from "./session-attachments.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { normalizeMutationToolName } from "./tool-mutations.js";
+import { projectVisibleCustomMessage, type SessionEntry as TraceSessionEntry } from "./trace.js";
 import type { ServerMessage, SessionSummary } from "./types.js";
 
 export interface SessionAgentEventState extends EventProcessorSessionState, TurnSessionState {
@@ -65,6 +66,17 @@ export interface SessionAgentEventCoordinatorDeps {
   resumeQueuedCompactions?: (key: string) => void;
   dataDir?: string;
   trustedAttachmentSourceRoots?: string[];
+}
+
+function customMessageRecord(message: object): {
+  display?: boolean;
+  content?: unknown;
+} {
+  return message as { display?: boolean; content?: unknown };
+}
+
+function sameCustomContent(entry: { content?: unknown }, message: object): boolean {
+  return JSON.stringify(entry.content) === JSON.stringify(customMessageRecord(message).content);
 }
 
 export class SessionAgentEventCoordinator {
@@ -110,6 +122,18 @@ export class SessionAgentEventCoordinator {
     }
 
     this.flushPendingCanonicalMessage(key, active);
+
+    if (data.type === "entry_appended" && data.entry.type === "custom_message") {
+      this.deps.resetIdleTimer(key);
+      this.broadcastVisibleCustomMessage(key, active, data.entry);
+      return;
+    }
+
+    if (data.type === "message_end" && data.message.role === "custom") {
+      this.deps.resetIdleTimer(key);
+      this.broadcastCustomMessageEnd(key, active, data);
+      return;
+    }
 
     if (data.type === "queue_item_started") {
       this.deps.broadcast(key, data);
@@ -438,6 +462,57 @@ export class SessionAgentEventCoordinator {
         message: formatCacheMissNotice(cacheMissNotice),
       });
     }
+  }
+
+  private broadcastCustomMessageEnd(
+    key: string,
+    active: SessionAgentEventState,
+    event: Extract<AgentSessionEvent, { type: "message_end" }>,
+  ): void {
+    if (customMessageRecord(event.message).display === false) return;
+    const tree = this.sessionTreeFor(active);
+    const preAppendLeafId = tree?.getLeafId() ?? null;
+    const leafAtEvent = tree?.getLeafEntry();
+    queueMicrotask(() => {
+      const current = this.deps.getActiveSession(key);
+      if (!current) return;
+      const laterTree = this.sessionTreeFor(current);
+      const laterLeaf = laterTree?.getLeafEntry();
+      // Append-then-emit already made this batch the leaf. Emit-then-append
+      // still has the previous leaf here. Send that entry either way; an
+      // already-visible row is only an upsert.
+      if (leafAtEvent?.type === "custom_message" && sameCustomContent(leafAtEvent, event.message)) {
+        this.broadcastVisibleCustomMessage(key, current, leafAtEvent);
+      }
+      if (
+        laterLeaf?.type === "custom_message" &&
+        laterLeaf.id !== leafAtEvent?.id &&
+        laterLeaf.parentId === preAppendLeafId &&
+        sameCustomContent(laterLeaf, event.message)
+      ) {
+        this.broadcastVisibleCustomMessage(key, current, laterLeaf);
+      }
+    });
+  }
+
+  private broadcastVisibleCustomMessage(
+    key: string,
+    active: SessionAgentEventState,
+    entry: SessionEntry,
+  ): void {
+    const tree = this.sessionTreeFor(active);
+    const parentType =
+      tree && typeof entry.parentId === "string"
+        ? tree.getEntry(entry.parentId)?.type
+        : undefined;
+    const projected = projectVisibleCustomMessage(entry as TraceSessionEntry, parentType);
+    if (!projected) return;
+    this.deps.broadcast(key, {
+      type: "custom_card",
+      id: projected.id,
+      text: projected.text,
+      presentation: projected.presentation,
+    });
   }
 
   private shouldBroadcastSessionSummaryAfterUpdate(event: AgentSessionEvent): boolean {

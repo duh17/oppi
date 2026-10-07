@@ -55,6 +55,7 @@ export const APP_EVENT_FORBIDDEN_SERVER_MESSAGE_TYPES = [
   "text_delta",
   "thinking_delta",
   "message_end",
+  "custom_card",
   "tool_start",
   "tool_update",
   "tool_output",
