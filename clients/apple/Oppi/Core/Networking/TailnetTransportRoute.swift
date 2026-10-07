@@ -74,8 +74,16 @@ enum TailnetTransportRoute {
     }
 
     /// `URLSessionConfiguration.default` routed for Oppi server transports.
+    ///
+    /// Oppi server traffic never touches an HTTP cache. A disk `URLCache` would
+    /// store response bodies and the `Authorization: Bearer` request header in
+    /// `Library/Caches/<bundle>/Cache.db`. Every API call already passes
+    /// `.reloadIgnoringLocalCacheData`, and the app keeps its own ETag state, so
+    /// nothing reads these rows back.
     static func defaultSessionConfiguration(route: Snapshot = .current) -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.default
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         apply(to: configuration, proxy: route.proxy)
         return configuration
     }

@@ -249,6 +249,8 @@ extension ServerConnection {
     private func invalidateWorkspaceCaches(workspaceId: String, worktreeId: String? = nil) {
         gitStatusStore.invalidate(workspaceId: workspaceId, worktreeId: worktreeId, apiClient: apiClient)
         fileIndexStore.invalidate(workspaceId: workspaceId)
-        Task { await FileBrowserCache.shared.invalidateWorkspaceCaches(for: workspaceId) }
+        if let serverId = currentServerId {
+            Task { await FileBrowserCache.shared.invalidateWorkspaceCaches(for: workspaceId, serverId: serverId) }
+        }
     }
 }

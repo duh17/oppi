@@ -165,7 +165,6 @@ final class SessionStore {
         }
     }
 
-    // periphery:ignore - used by SessionStoreTests via @testable import
     /// Remove all data for a server (on unpair).
     func removeServer(_ serverId: String) {
         serverSessions.removeValue(forKey: serverId)

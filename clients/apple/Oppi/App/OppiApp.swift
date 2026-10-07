@@ -434,6 +434,7 @@ struct OppiApp: App {
         }
 #endif
         FeatureEducationTips.configure()
+        LocalHTTPCache.disableDiskCacheAndPurgeLeftovers()
     }
 
     var body: some Scene {

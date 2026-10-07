@@ -260,7 +260,9 @@ final class ServerConnection {
     let workspaceStore = WorkspaceStore()
     let serverResourceStore = ServerResourceStore()
     let gitStatusStore = GitStatusStore(environment: .app)
-    let fileIndexStore = FileIndexStore(environment: .app)
+    @ObservationIgnored private(set) lazy var fileIndexStore = FileIndexStore(
+        environment: .app(serverId: { [weak self] in self?.currentServerId })
+    )
     let messageQueueStore = MessageQueueStore(telemetry: .appMetrics)
 
     /// Session content access for assistant/tool rows. It reads this connection's
@@ -984,14 +986,20 @@ final class ServerConnection {
         self.transportPath = transportPath
     }
 
-    private func installAPIClient(_ client: APIClient?) {
-        // Route epoch + stream teardown are one structural invariant: any new
-        // API client invalidates in-flight list work and the app-event window.
+    /// Invalidate in-flight session-list and workspace-catalog refreshes so a
+    /// late result is neither applied nor written to the cache.
+    func cancelListRefreshWork() {
         listRefreshGeneration &+= 1
         sessionListRefreshTask?.cancel()
         sessionListRefreshTask = nil
         workspaceCatalogRefreshTask?.cancel()
         workspaceCatalogRefreshTask = nil
+    }
+
+    private func installAPIClient(_ client: APIClient?) {
+        // Route epoch + stream teardown are one structural invariant: any new
+        // API client invalidates in-flight list work and the app-event window.
+        cancelListRefreshWork()
         disconnectAppEventStream()
         if client == nil {
             installedAPIClientIdentity = nil

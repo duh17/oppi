@@ -46,7 +46,9 @@ extension ServerConnection {
         case .gitStatus(let workspaceId, let worktreeId, let status):
             gitStatusStore.handleGitStatusPush(workspaceId: workspaceId, worktreeId: worktreeId, status: status)
             fileIndexStore.invalidate()
-            Task { await FileBrowserCache.shared.invalidateDirectoryListings(for: workspaceId) }
+            if let serverId = currentServerId {
+                Task { await FileBrowserCache.shared.invalidateDirectoryListings(for: workspaceId, serverId: serverId) }
+            }
 
         case .agentStart:
             silenceWatchdog.start()

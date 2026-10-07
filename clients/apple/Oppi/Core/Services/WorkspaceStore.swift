@@ -347,7 +347,6 @@ final class WorkspaceStore {
         storedWorkspaceSummariesByServer[serverId]?.removeValue(forKey: id)
     }
 
-    // periphery:ignore - used by MultiServerStoreTests via @testable import
     /// Remove all data for a server (on unpair).
     func removeServer(_ serverId: String) {
         workspacesByServer.removeValue(forKey: serverId)

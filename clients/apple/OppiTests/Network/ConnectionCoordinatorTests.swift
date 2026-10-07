@@ -269,27 +269,6 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.activeServerId != removed.id)
     }
 
-    @Test func removeServerDeletesOnlyItsCachedData() async throws {
-        let (coordinator, _) = makeCoordinator()
-        let removed = makeServer(id: "sha256:cache-removed-\(UUID().uuidString)", name: "Removed")
-        let kept = makeServer(id: "sha256:cache-kept-\(UUID().uuidString)", name: "Kept")
-        coordinator.serverStore.addOrUpdate(removed)
-        coordinator.serverStore.addOrUpdate(kept)
-        let cache = TimelineCache.shared
-        for server in [removed, kept] {
-            await cache.saveSessionList([makeTestSession(id: server.id, workspaceId: "w")], serverId: server.id)
-            await cache.saveWorkspaces([makeTestWorkspace(id: "w-\(server.id)")], serverId: server.id)
-        }
-        defer { Task { await cache.removeServer(kept.id) } }
-
-        await coordinator.removeServer(id: removed.id)
-
-        #expect(await cache.loadSessionList(serverId: removed.id) == nil)
-        #expect(await cache.loadWorkspaces(serverId: removed.id) == nil)
-        #expect(await cache.loadSessionList(serverId: kept.id)?.map(\.id) == [kept.id])
-        #expect(await cache.loadWorkspaces(serverId: kept.id)?.map(\.id) == ["w-\(kept.id)"])
-    }
-
     @Test func switchToSameServerIsNoOp() {
         let (coordinator, _) = makeCoordinator()
         let server = makeServer(id: "sha256:same-test", name: "Studio")

@@ -16,7 +16,7 @@ You choose the server, workspace, model providers, speech-to-text service, and t
 - Public builds upload diagnostics only after you enable **Settings → Privacy & Security → Send Diagnostics**. Diagnostics go to your paired server, not to a hosted Oppi service.
 - Remote connections use authenticated HTTPS/WSS, including LAN and Tailscale HTTPS. The network path can see ordinary connection metadata such as IP addresses, hostnames, timing, and traffic volume.
 - Unsaved workspace file edits are kept as protected draft files in the app's sandbox until the paired server confirms the save, or until you choose Use Disk Version.
-- Removing a server from the app removes its local pairing credential. It does not delete the server, workspace files, session history, provider data, or backups.
+- Removing a server from the app removes its local pairing credential and the session history, lists, and file indexes cached for it on this device. It does not delete the server, workspace files, session history on the server, provider data, or backups.
 
 ## Data locations and control boundaries
 
@@ -46,19 +46,19 @@ Oppi does not need photo, camera, or microphone access to pair with a server or 
 
 The app stores each paired server as a Keychain item in the shared App Group. The stored record includes the HTTPS host and port, server identity fingerprint, TLS certificate pin when present, and the current device credential: a server-issued device ID, short-lived access token, expiry, and refresh challenge. A separate Keychain item holds the device's P-256 signing key. On supported hardware that key stays in the Secure Enclave; otherwise it is Keychain-sealed. The signing key is not written into the paired-server record. Keychain items use `WhenUnlockedThisDeviceOnly` protection. Older `dt_` pairings cannot authenticate. Update the client and re-pair to obtain a device-key HTTPS credential.
 
-The app keeps a small server-ID index in shared and standard `UserDefaults` so the app and its extensions can find paired servers. Removing a server from the app deletes its server Keychain item and removes it from the local server list. It does not remove data from that server.
+The app keeps a small server-ID index in shared and standard `UserDefaults` so the app and its extensions can find paired servers. Removing a server from the app deletes its server Keychain item, removes it from the local server list, and deletes the timeline cache and file-browser index entries for that server. It does not remove data from that server.
 
 ### Preferences and caches
 
 Settings such as appearance, text size, voice mode, auto-title mode, haptics, diagnostics consent, quick-session choices, and the last keyboard language are device-local preferences. A bounded diagnostic context can also keep coarse values such as a session, workspace, or server identifier, screen, lifecycle state, and resource measurements for a later diagnostic payload.
 
-The app caches server responses under `Library/Caches/`. The timeline cache contains JSON copies of session traces, session lists, workspaces, Skills, and Skill details. It is sandbox-private, excluded from backup, and intentionally disposable. The current timeline-cache defaults are a 256 MB disk budget and a 30-day trace age; iOS can evict cache data sooner. The file-browser index is a separate cache that iOS can also evict.
+The app caches server responses under `Library/Caches/`. The timeline cache contains JSON copies of session traces, session lists, workspaces, Skills, and Skill details. It is sandbox-private, excluded from backup, and intentionally disposable. The current timeline-cache defaults are a 256 MB disk budget and a 30-day trace age; iOS can evict cache data sooner. The file-browser index is a separate cache that iOS can also evict. Traffic to your server is not written to the system HTTP cache (`Cache.db`): the app's API, WebSocket, event-stream, and dictation connections use no URL cache, so response bodies and bearer headers never land there. On launch the app deletes any `Cache.db` that an older build left behind.
 
 ### Encryption at rest
 
-Files the app and the Share extension store use iOS Data Protection class *Complete unless open* (`NSFileProtectionCompleteUnlessOpen`). This covers caches, message and file-edit drafts, the HTTP cache, and the shared-file inbox. iOS encrypts each file with its own key. Closed files in this class cannot be opened or read while the device is locked. Files the app already has open remain accessible until closed, and the app can create new files after lock until those files are closed. The first launch after updating from an older build upgrades files that build left at the iOS default, which stays readable from the first unlock until reboot. Preferences stay in iOS `UserDefaults`, which holds settings, identifiers, and review comment drafts; unsent Start Session prompts are stored as protected draft files, not in preferences.
+Files the app and the Share extension store use iOS Data Protection class *Complete unless open* (`NSFileProtectionCompleteUnlessOpen`). This covers caches, message and file-edit drafts, and the shared-file inbox. iOS encrypts each file with its own key. Closed files in this class cannot be opened or read while the device is locked. Files the app already has open remain accessible until closed, and the app can create new files after lock until those files are closed. The first launch after updating from an older build upgrades files that build left at the iOS default, which stays readable from the first unlock until reboot. Preferences stay in iOS `UserDefaults`, which holds settings, identifiers, and review comment drafts; unsent Start Session prompts are stored as protected draft files, not in preferences.
 
-**Settings → Storage & About → Clear Local Cache** clears the timeline cache. It does not delete the paired server, server workspaces, Pi session files, provider data, or backups. Removing the app is a device-level control and does not delete server-side data.
+**Settings → Storage & About → Clear Local Cache** clears the timeline cache, the file-browser index, and any leftover HTTP cache. It does not delete the paired server, server workspaces, Pi session files, provider data, or backups. Removing the app is a device-level control and does not delete server-side data.
 
 ## Paired-server storage
 

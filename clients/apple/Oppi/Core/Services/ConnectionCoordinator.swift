@@ -56,6 +56,8 @@ enum NetworkPathRecoveryDecision {
 @MainActor @Observable
 final class ConnectionCoordinator {
     let serverStore: ServerStore
+    private let timelineCache: TimelineCache
+    private let fileBrowserCache: FileBrowserCache
 
     /// Currently focused server ID (fingerprint). The server whose data
     /// is displayed in the main UI.
@@ -121,8 +123,15 @@ final class ConnectionCoordinator {
     // periphery:ignore - used by RestorationStateTests via @testable import
     var connection: ServerConnection { activeConnection }
 
-    init(serverStore: ServerStore, lanDiscovery: LANDiscovery = LANDiscovery()) {
+    init(
+        serverStore: ServerStore,
+        lanDiscovery: LANDiscovery = LANDiscovery(),
+        timelineCache: TimelineCache = .shared,
+        fileBrowserCache: FileBrowserCache = .shared
+    ) {
         self.serverStore = serverStore
+        self.timelineCache = timelineCache
+        self.fileBrowserCache = fileBrowserCache
         self.lanDiscovery = lanDiscovery
         lanDiscovery.onUpdate = { [weak self] endpoints in
             self?.applyLANDiscovery(endpoints)
@@ -937,6 +946,7 @@ final class ConnectionCoordinator {
 
     func addServer(_ server: PairedServer, switchTo: Bool = true) {
         serverStore.addOrUpdate(server)
+        resumeCaches(for: server.id)
         let connection = ensureConnection(for: server)
         if switchTo, connection !== disconnectedSentinel {
             activatePreparedConnection(connection, server: server)
@@ -996,10 +1006,19 @@ final class ConnectionCoordinator {
                     )
                 } else {
                     serverStore.remove(id: server.id)
+                    // This attempt may have started while a removal was
+                    // shutting down, so that removal skipped its purge.
+                    // Nothing for this id is paired now: purge and close.
+                    await purgeLocalData(for: server.id, connection: nil)
                 }
             }
+            // A removed server's caches stay closed: this pairing never committed.
             return .failed
         }
+        // The pairing committed with a working transport; its caches may be
+        // written again. Doing this earlier would let a failed re-pair reopen
+        // them for saves still in flight from before the removal.
+        resumeCaches(for: server.id)
         if switchTo {
             guard selectionRevision == requestedRevision,
                   serverStore.server(for: server.id) != nil else { return .pairedWithoutSelection }
@@ -1022,6 +1041,7 @@ final class ConnectionCoordinator {
         // Remove identity before suspension so a re-pair cannot observe or reuse it.
         let removedConnection = connections.removeValue(forKey: id)
         if let conn = removedConnection {
+            conn.cancelListRefreshWork()
             conn.disconnectSession()
             conn.disconnectStream()
             conn.disconnectAppEventStream()
@@ -1033,8 +1053,8 @@ final class ConnectionCoordinator {
         // If re-paired during shutdown, this removal no longer owns the row.
         guard serverLifetimes[id] == removedLifetime,
               serverStore.server(for: id) == nil else { return }
-        let knownWorkspaceIds = Set(removedConnection?.workspaceStore.workspacesByServer[id]?.map(\.id) ?? [])
-        await Self.purgeLocalData(serverId: id, knownWorkspaceIds: knownWorkspaceIds)
+        await purgeLocalData(for: id, connection: removedConnection)
+
         // If we removed the active server, switch to the first remaining
         if id == activeServerId {
             activeServerId = nil
@@ -1045,20 +1065,29 @@ final class ConnectionCoordinator {
         }
     }
 
-    /// Delete this phone's cached copies of a removed server's data: traces,
-    /// session lists, workspaces, skills, file-browser listings, and the HTTP
-    /// response cache. User-authored drafts stay; their stores never delete
-    /// unsaved work.
-    private static func purgeLocalData(serverId: String, knownWorkspaceIds: Set<String>) async {
-        var workspaceIds = knownWorkspaceIds
-        if let cached = await TimelineCache.shared.loadWorkspaces(serverId: serverId) {
-            workspaceIds.formUnion(cached.map(\.id))
-        }
-        await TimelineCache.shared.removeServer(serverId)
-        await FileBrowserCache.shared.removeWorkspaces(workspaceIds)
-        // URLCache cannot remove by host. It holds only disposable copies
-        // (and request headers with bearer tokens), so clear all of it.
-        URLCache.shared.removeAllCachedResponses()
+    /// Delete this phone's cached copies of a removed server's data: in-memory
+    /// stores, traces, session lists, workspaces, skills, the server's
+    /// file-browser directory, and the HTTP response cache. User-authored drafts
+    /// stay; their stores never delete unsaved work. The caches also refuse later
+    /// writes for this id, so a refresh, trace save, or index fetch still in
+    /// flight cannot recreate the data.
+    private func purgeLocalData(for serverId: String, connection: ServerConnection?) async {
+        // Close the caches before the first suspension, so a re-pair that
+        // resumes them during the deletes below stays resumed.
+        timelineCache.markRemoved(serverId)
+        fileBrowserCache.markRemoved(serverId)
+        connection?.sessionStore.removeServer(serverId)
+        connection?.workspaceStore.removeServer(serverId)
+        await timelineCache.removeServer(serverId)
+        await fileBrowserCache.removeServer(serverId)
+        // URLCache cannot remove by host. It holds only disposable copies, so clear all of it.
+        LocalHTTPCache.clear()
+    }
+
+    /// A pairing of this id committed: its caches may be written again.
+    private func resumeCaches(for serverId: String) {
+        timelineCache.resumeServer(serverId)
+        fileBrowserCache.resumeServer(serverId)
     }
 
     // MARK: - Multi-Server Refresh

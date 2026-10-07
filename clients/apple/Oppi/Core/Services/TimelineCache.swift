@@ -1,4 +1,5 @@
 import Foundation
+import os
 import os.log
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Cache")
@@ -55,6 +56,10 @@ actor TimelineCache {
     private let maxDiskBytes: Int64
     private let maxTraceAge: TimeInterval?
     private let now: @Sendable () -> Date
+
+    /// Servers removed from this device. Their writes are dropped until a later
+    /// pairing of the same id commits (`resumeServer(_:)`).
+    private let removedServerIds = OSAllocatedUnfairLock(initialState: Set<String>())
 
     // Telemetry (best-effort, process-local)
     private var hitCount = 0
@@ -133,6 +138,7 @@ actor TimelineCache {
     }
 
     func loadTrace(_ sessionId: String, serverId: String) -> CachedTrace? {
+        guard !isRemoved(serverId) else { return nil }
         let startedAt = Date()
         var hit = false
         defer { recordLoad(startedAt: startedAt, hit: hit) }
@@ -159,6 +165,7 @@ actor TimelineCache {
     }
 
     func saveTrace(_ sessionId: String, serverId: String, events: [TraceEvent], page: TracePageMetadata? = nil) {
+        guard !isRemoved(serverId) else { return }
         ensureTraceServerDir(serverId)
         saveTrace(
             to: traceURL(sessionId, serverId: serverId),
@@ -181,14 +188,6 @@ actor TimelineCache {
         logger.debug("Cache removed: trace for \(sessionId) on \(serverId, privacy: .public)")
     }
 
-    /// Delete everything cached for one server (traces, session list,
-    /// workspaces, skills, resource catalog). Other servers are untouched.
-    func removeServer(_ serverId: String) {
-        try? fileManager.removeItem(at: traceServerDir(serverId))
-        try? fileManager.removeItem(at: root.appending(path: "servers/\(serverId)", directoryHint: .isDirectory))
-        logger.info("Cache removed: server \(serverId.prefix(16), privacy: .public)")
-    }
-
     // MARK: - Session List
 
     /// Legacy single-server session-list cache.
@@ -198,12 +197,14 @@ actor TimelineCache {
 
     /// Load the recent session projection for a specific server.
     func loadSessionList(serverId: String) -> [Session]? {
+        guard !isRemoved(serverId) else { return nil }
         ensureServerDir(serverId)
         return load([Session].self, from: serverPath(serverId, "session-list.json"))
     }
 
     /// Save the recent session projection for a specific server.
     func saveSessionList(_ sessions: [Session], serverId: String) {
+        guard !isRemoved(serverId) else { return }
         ensureServerDir(serverId)
         save(sessions, to: serverPath(serverId, "session-list.json"))
     }
@@ -220,12 +221,14 @@ actor TimelineCache {
 
     /// Load workspaces for a specific server (multi-server).
     func loadWorkspaces(serverId: String) -> [Workspace]? {
+        guard !isRemoved(serverId) else { return nil }
         ensureServerDir(serverId)
         return load([Workspace].self, from: serverPath(serverId, "workspaces.json"))
     }
 
     /// Save workspaces for a specific server (multi-server).
     func saveWorkspaces(_ workspaces: [Workspace], serverId: String) {
+        guard !isRemoved(serverId) else { return }
         ensureServerDir(serverId)
         save(workspaces, to: serverPath(serverId, "workspaces.json"))
     }
@@ -242,12 +245,14 @@ actor TimelineCache {
 
     /// Load skills for a specific server (multi-server).
     func loadSkills(serverId: String) -> [SkillInfo]? {
+        guard !isRemoved(serverId) else { return nil }
         ensureServerDir(serverId)
         return load([SkillInfo].self, from: serverPath(serverId, "skills.json"))
     }
 
     /// Save skills for a specific server (multi-server).
     func saveSkills(_ skills: [SkillInfo], serverId: String) {
+        guard !isRemoved(serverId) else { return }
         ensureServerDir(serverId)
         save(skills, to: serverPath(serverId, "skills.json"))
     }
@@ -256,12 +261,14 @@ actor TimelineCache {
 
     /// Loads independently trustworthy server-global Skills and Extensions cache halves.
     func loadServerResourceCatalog(serverId: String) -> ServerResourceCatalogSnapshot? {
+        guard !isRemoved(serverId) else { return nil }
         ensureServerDir(serverId)
         return load(ServerResourceCatalogSnapshot.self, from: serverPath(serverId, "resource-catalog.json"))
     }
 
     /// Saves independently trustworthy server-global Skills and Extensions cache halves.
     func saveServerResourceCatalog(_ snapshot: ServerResourceCatalogSnapshot, serverId: String) {
+        guard !isRemoved(serverId) else { return }
         ensureServerDir(serverId)
         save(snapshot, to: serverPath(serverId, "resource-catalog.json"))
     }
@@ -281,11 +288,13 @@ actor TimelineCache {
     }
 
     func loadSkillDetail(_ name: String, serverId: String) -> SkillDetail? {
+        guard !isRemoved(serverId) else { return nil }
         ensureSkillDetailServerDir(serverId)
         return load(SkillDetail.self, from: skillDetailPath(serverId: serverId, name: name))
     }
 
     func saveSkillDetail(_ name: String, detail: SkillDetail, serverId: String) {
+        guard !isRemoved(serverId) else { return }
         ensureSkillDetailServerDir(serverId)
         save(detail, to: skillDetailPath(serverId: serverId, name: name))
     }
@@ -312,6 +321,33 @@ actor TimelineCache {
     }
 
     // MARK: - Cleanup
+
+    /// Refuse writes and loads for a server until `resumeServer(_:)`. The caller
+    /// marks synchronously when it decides to remove the server, before awaiting
+    /// `removeServer(_:)`, so a resume that happens during the delete is never
+    /// undone by a later mark.
+    nonisolated func markRemoved(_ serverId: String) {
+        removedServerIds.withLock { _ = $0.insert(serverId) }
+    }
+
+    /// Delete one server's traces, session list, workspaces, skills, skill
+    /// details, and resource catalog. Other servers and legacy unscoped data
+    /// stay. Call `markRemoved(_:)` first so a save already in flight cannot
+    /// recreate what this deletes.
+    func removeServer(_ serverId: String) {
+        try? fileManager.removeItem(at: traceServerDir(serverId))
+        try? fileManager.removeItem(at: root.appending(path: "servers/\(serverId)", directoryHint: .isDirectory))
+        logger.info("Cache removed for server \(serverId, privacy: .public)")
+    }
+
+    /// Allow writes for a server again once a later pairing of the same id commits.
+    nonisolated func resumeServer(_ serverId: String) {
+        removedServerIds.withLock { _ = $0.remove(serverId) }
+    }
+
+    private func isRemoved(_ serverId: String) -> Bool {
+        removedServerIds.withLock { $0.contains(serverId) }
+    }
 
     /// Clear all cached data.
     func clear() {

@@ -46,16 +46,14 @@ final class IOSChatSessionRuntimeAdapter:
         events: [TraceEvent],
         page: TracePageMetadata?
     ) async {
-        if let serverId = connection?.currentServerId ?? sessionStore?.activeServerId {
-            await TimelineCache.shared.saveTrace(
-                sessionId,
-                serverId: serverId,
-                events: events,
-                page: page
-            )
-        } else {
-            await TimelineCache.shared.saveTrace(sessionId, events: events, page: page)
-        }
+        // Never write an unscoped trace: it could not be deleted with its server.
+        guard let serverId = connection?.currentServerId ?? sessionStore?.activeServerId else { return }
+        await TimelineCache.shared.saveTrace(
+            sessionId,
+            serverId: serverId,
+            events: events,
+            page: page
+        )
     }
 
     func fetchLatestTrace(
