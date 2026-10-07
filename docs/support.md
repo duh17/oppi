@@ -17,9 +17,9 @@ This page does not promise a response time or claim a separate legal entity.
 ## Before opening an issue
 
 1. Check whether the problem is in the Apple app, the paired server, the network path, or a model/speech provider.
-2. Record the app version from **Settings → About**.
+2. Record the app version from **Settings → Storage & About**.
 3. Record the server version and transport mode without including its host, token, certificate, or invite link.
-4. If the problem involves dictation, note whether **Settings → Voice → Dictation Engine** is **On-device** or **Server**.
+4. If the problem involves dictation, note whether **Settings → Voice & Dictation → Dictation Engine** is **On-device** or **Server**.
 5. If you enabled diagnostics, you can describe the approximate time and the paired server that received them. Diagnostics are optional and go only to that paired server.
 
 ## Redact private data

@@ -13,7 +13,7 @@ You choose the server, workspace, model providers, speech-to-text service, and t
 - A selected photo or file is read by the app and uploaded to the paired server with the session turn. The app does not collect photos or files in the background.
 - Dictation can use Apple's on-device speech APIs or audio sent through the paired server to its configured speech-to-text backend.
 - Model, speech, and voice providers can receive the content needed for the operation you choose. Their privacy policies and retention rules apply.
-- Public builds upload diagnostics only after you enable **Settings → Privacy & Security → Send Diagnostics to Server**. Diagnostics go to your paired server, not to a hosted Oppi service.
+- Public builds upload diagnostics only after you enable **Settings → Privacy & Security → Send Diagnostics**. Diagnostics go to your paired server, not to a hosted Oppi service.
 - Remote connections use authenticated HTTPS/WSS, including LAN and Tailscale HTTPS. The network path can see ordinary connection metadata such as IP addresses, hostnames, timing, and traffic volume.
 - Unsaved workspace file edits are kept as protected draft files in the app's sandbox until the paired server confirms the save, or until you choose Use Disk Version.
 - Removing a server from the app removes its local pairing credential. It does not delete the server, workspace files, session history, provider data, or backups.
@@ -58,7 +58,7 @@ The app caches server responses under `Library/Caches/`. The timeline cache cont
 
 Files the app and the Share extension store use iOS Data Protection class *Complete unless open* (`NSFileProtectionCompleteUnlessOpen`). This covers caches, message and file-edit drafts, the HTTP cache, and the shared-file inbox. iOS encrypts each file with its own key. Closed files in this class cannot be opened or read while the device is locked. Files the app already has open remain accessible until closed, and the app can create new files after lock until those files are closed. The first launch after updating from an older build upgrades files that build left at the iOS default, which stays readable from the first unlock until reboot. Preferences stay in iOS `UserDefaults`, which holds settings, identifiers, and review comment drafts; unsent Start Session prompts are stored as protected draft files, not in preferences.
 
-**Settings → Storage → Clear Local Cache** clears the timeline cache. It does not delete the paired server, server workspaces, Pi session files, provider data, or backups. Removing the app is a device-level control and does not delete server-side data.
+**Settings → Storage & About → Clear Local Cache** clears the timeline cache. It does not delete the paired server, server workspaces, Pi session files, provider data, or backups. Removing the app is a device-level control and does not delete server-side data.
 
 ## Paired-server storage
 
@@ -107,7 +107,7 @@ Server-side Skills, Extensions, tools, and voice features run on the paired serv
 
 ## Dictation and voice
 
-In **Settings → Voice → Dictation Engine**, you can choose **On-device** or **Server**.
+In **Settings → Voice & Dictation → Dictation Engine**, you can choose **On-device** or **Server**.
 
 ### On-device dictation
 
@@ -131,7 +131,7 @@ The network path, DNS resolver, and any TLS terminator you configure can observe
 
 ## Optional diagnostics
 
-Public release builds do not upload Oppi diagnostics until you enable **Settings → Privacy & Security → Send Diagnostics to Server**. The destination is the currently configured paired Oppi server. Oppi does not link an external crash-reporting service in public iOS builds.
+Public release builds do not upload Oppi diagnostics until you enable **Settings → Privacy & Security → Send Diagnostics**. The destination is the currently configured paired Oppi server. Oppi does not link an external crash-reporting service in public iOS builds.
 
 Diagnostics can include bounded MetricKit summaries, crash/hang/CPU/disk/app-launch information, app and OS/build details, resource samples, connection and lifecycle outcomes, low-cardinality session/workspace/app-instance identifiers, and redacted client logs. The telemetry contract excludes prompt text, assistant output, tool arguments, command output, dictation transcript text, relay URLs and hosts, IP addresses, tokens, tickets, node IDs, endpoint IDs, secrets, credentials, raw URLs, and local file paths.
 

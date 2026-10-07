@@ -62,8 +62,9 @@ final class ChatTimelineE2ETests: E2ETestCase {
 
         navigateBackToWorkspace()
         openAppSettingsFromSessionList()
+        tap(app.buttons["settings.row.chat"], named: "Settings Chat row", timeout: 5)
         let settingsCompactTurns = app.switches["settings.compactTurns"]
-        XCTAssertTrue(settingsCompactTurns.waitForExistence(timeout: 10), "Settings Compact turns toggle did not appear")
+        XCTAssertTrue(settingsCompactTurns.waitForExistence(timeout: 10), "Settings Compact Turns toggle did not appear")
         if !isSwitchOn(settingsCompactTurns) {
             tap(settingsCompactTurns, named: "Settings Compact turns toggle")
         }
@@ -259,6 +260,10 @@ final class ChatTimelineE2ETests: E2ETestCase {
     }
 
     private func closeAppSettingsToSessionList() {
+        // Settings is two levels deep when a section page is open.
+        if app.navigationBars["Chat"].exists {
+            tap(app.navigationBars["Chat"].buttons.firstMatch, named: "Chat settings back button", timeout: 5)
+        }
         let settingsNavigationBar = app.navigationBars["Settings"]
         let backButton = settingsNavigationBar.buttons.firstMatch
         tap(backButton, named: "Settings back button", timeout: 5)

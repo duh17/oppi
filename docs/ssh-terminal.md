@@ -5,7 +5,7 @@ SSH Terminal opens an interactive shell on a host saved on this iPhone or iPad. 
 ## Set up a host
 
 1. Turn on **Settings → Experiments → SSH Terminal**.
-2. Open **Settings → Network → SSH Terminal**. That opens the host list. Opening the list does not dial and does not read the Keychain, so it does not ask for Face ID.
+2. Open **Settings → Network → SSH Hosts**. That opens the host list. Opening the list does not dial and does not read the Keychain, so it does not ask for Face ID.
 3. Tap **Add**. Enter a host, port (default 22), and username. The host has no default. Enable Remote Login or `sshd` on that host. **Edit** opens the same form for a saved host.
 4. Choose **Password** or **This Device’s Key**.
    - **Password:** enter the password at connect. **Save Password** is optional.

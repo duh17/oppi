@@ -67,7 +67,7 @@ struct AutoTitleSettingsView: View {
             }
         }
         .themedListSurface()
-        .navigationTitle("Auto-name Sessions")
+        .navigationTitle("Auto-Name")
         .onChange(of: provider) { _, newValue in
             AppPreferences.Session.setAutoTitleProvider(newValue)
             guard hasLoadedInitialState else { return }

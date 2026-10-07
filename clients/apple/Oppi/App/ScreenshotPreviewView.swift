@@ -27,13 +27,10 @@ struct ScreenshotPreviewView: View {
             OnboardingScreenshotPreview()
         case "tailscale-connection":
             TailscaleConnectionScreenshotPreview()
-        case "ssh-terminal-settings":
+        case "ssh-terminal-settings", "settings":
             // Real Settings/setup surfaces, not a mocked SSH connection. This
             // makes enrollment/refusal QA reachable without pairing a server.
-            NavigationStack { SettingsView() }
-                .environment(ThemeStore())
-                .environment(AppNavigation())
-                .accessibilityIdentifier("screenshot.ready")
+            SettingsScreenshotPreview()
         case "ssh-terminal":
             SSHTerminalScreenshotPreview()
         case "durable-sessions-settings":

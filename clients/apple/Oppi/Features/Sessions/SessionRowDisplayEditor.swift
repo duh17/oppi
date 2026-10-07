@@ -119,11 +119,10 @@ struct SessionRowPreviewSubject {
 
 // MARK: - Editor
 
-/// Customize Rows: one local draft, an inert preview drawn by the production
-/// row and Thread strip, and explicit save. Done saves the draft; Cancel or
-/// swiping the sheet away discards it. Restore Defaults only resets the draft.
+/// Session Rows settings page: an inert preview drawn by the production row
+/// and Thread strip, pinned above the controls. Changes apply immediately, so
+/// the preview and every session list repaint as you toggle.
 struct SessionRowDisplayEditor: View {
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
@@ -139,45 +138,27 @@ struct SessionRowDisplayEditor: View {
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                previewPane
-                Form {
-                    densitySection
-                    detailsSection
-                    if navigation.sessionThreadsEnabled {
-                        threadSection
-                    }
-                    Section {
-                        Button("Restore Defaults") {
-                            draft = .standard
-                        }
-                        .disabled(draft == .standard)
-                        .accessibilityIdentifier("sessionRows.restore")
-                    } footer: {
-                        Text("Restore Defaults changes this preview only until you tap Done.")
-                    }
-                }
-                .themedListSurface()
-                .accessibilityIdentifier("sessionRows.form")
+        List {
+            densitySection
+            detailsSection
+            if navigation.sessionThreadsEnabled {
+                threadSection
             }
-            .background(theme.bg.primary)
-            .navigationTitle("Customize Rows")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .accessibilityIdentifier("sessionRows.cancel")
+            Section {
+                Button("Restore Defaults") {
+                    draft = .standard
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        AppPreferences.SessionRows.setDisplay(draft)
-                        dismiss()
-                    }
-                    .fontWeight(.semibold)
-                    .accessibilityIdentifier("sessionRows.done")
-                }
+                .disabled(draft == .standard)
+                .accessibilityIdentifier("sessionRows.restore")
             }
+        }
+        .settingsPage("Session Rows")
+        .accessibilityIdentifier("sessionRows.form")
+        .safeAreaInset(edge: .top, spacing: 0) {
+            previewPane
+        }
+        .onChange(of: draft) { _, newValue in
+            AppPreferences.SessionRows.setDisplay(newValue)
         }
         .onAppear {
             guard !didCaptureLoaded else { return }
@@ -252,7 +233,9 @@ struct SessionRowDisplayEditor: View {
             .pickerStyle(.segmented)
             .accessibilityIdentifier("sessionRows.density")
         } footer: {
-            Text("Compact tightens spacing and joins details on one line only when they all fit. It never hides or shortens a detail you turned on.")
+            Text(draft.density == .compact
+                ? "Compact tightens spacing and joins details on one line only when they all fit. It never hides or shortens a detail you turned on."
+                : "Standard stacks details in two rows with roomier spacing.")
         }
     }
 
@@ -260,9 +243,9 @@ struct SessionRowDisplayEditor: View {
         Section {
             toggle("Model", isOn: $draft.showsModel, id: "model")
             toggle("Time", isOn: $draft.showsTime, id: "time")
-            toggle("Context usage", isOn: $draft.showsContextUsage, id: "context")
+            toggle("Context Usage", isOn: $draft.showsContextUsage, id: "context")
             toggle("Cost", isOn: $draft.showsCost, id: "cost")
-            toggle("Files touched", isOn: $draft.showsFilesTouched, id: "files")
+            toggle("Files Touched", isOn: $draft.showsFilesTouched, id: "files")
             toggle("Compactions", isOn: $draft.showsCompactions, id: "compactions")
         } header: {
             Text("Details")
@@ -273,10 +256,10 @@ struct SessionRowDisplayEditor: View {
 
     private var threadSection: some View {
         Section {
-            toggle("Agent summary", isOn: $draft.showsThreadAgentSummary, id: "agentSummary")
-            toggle("Lane graph", isOn: $draft.showsThreadLaneGraph, id: "laneGraph")
+            toggle("Agent Summary", isOn: $draft.showsThreadAgentSummary, id: "agentSummary")
+            toggle("Lane Graph", isOn: $draft.showsThreadLaneGraph, id: "laneGraph")
         } header: {
-            Text("Thread rows")
+            Text("Thread Rows")
         } footer: {
             Text("The Thread control, a child's question, and who is working always show. Cost in the Thread row follows Cost above.")
         }

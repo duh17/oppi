@@ -16,7 +16,7 @@ The Workspaces tab opens **All Sessions** for the active server.
 - **Working** — sessions that are busy.
 - Stopped sessions sit below, grouped by day. Each row shows the workspace name.
 
-All Sessions lists every session as its own row. **Session Threads** is an opt-in experiment: turn it on under Settings → **Experiments** → **Session Threads** (off by default, saved on this device) and sessions that other sessions launched sit under the session that launched them. A thread row is two targets: tap the session row to open that session's chat, or tap the labelled **Thread** strip beneath it to open the thread. The strip shows who is working, a small lane graph, the saved Agents in the thread, and totals. The lane graph has one lane per session from its launch to its last recorded activity, ordered by events rather than clock time. It summarizes the thread; it is not an exact record of when sessions ran. A thread with work in progress stays in **Working** even while its root waits. Turn the experiment off again to return to one row per session. The rest of this section, and Customize Rows' Thread options, apply only while it is on.
+All Sessions lists every session as its own row. **Session Threads** is an opt-in experiment: turn it on under Settings → **Experiments** → **Session Threads** (off by default, saved on this device) and sessions that other sessions launched sit under the session that launched them. A thread row is two targets: tap the session row to open that session's chat, or tap the labelled **Thread** strip beneath it to open the thread. The strip shows who is working, a small lane graph, the saved Agents in the thread, and totals. The lane graph has one lane per session from its launch to its last recorded activity, ordered by events rather than clock time. It summarizes the thread; it is not an exact record of when sessions ran. A thread with work in progress stays in **Working** even while its root waits. Turn the experiment off again to return to one row per session. The rest of this section, and Session Rows' Thread options, apply only while it is on.
 
 A workspace's session list works the same way: the same sections, rows, swipe actions, and (with Session Threads on) Thread strips. It adds the worktree picker, host Pi sessions you can import, and older stopped history grouped by month. A thread is listed in the workspace of the session that launched it, and its strip adds **N workspaces** when its sessions run in more than one. A session launched from another workspace or worktree stays a row in its own list, with an **In thread** link to that thread that names the other workspace when there is one. In thread detail, Outline names the workspace of any session outside the root's workspace. Oppi only connects sessions it has loaded, so a session whose launcher is older than the loaded history shows as a plain row.
 
@@ -28,9 +28,9 @@ Open a thread and use its pill for three views. Oppi remembers the view you last
 
 The **New session in thread** bar at the bottom of a thread opens Quick Session in the root's workspace and checkout. The session you start joins the thread as a child of the root. A pill above the composer names the thread; tap it, or choose a workspace on another server, to start a standalone session instead.
 
-### Customize rows
+### Session rows
 
-Settings → Session List → **Customize Rows** opens the row editor. Choose **Standard** (the full row) or **Compact** (tighter spacing, with details joined on one line only when they all fit; otherwise the same two lines as Standard, and it never hides or shortens a detail you turned on), then turn optional details on or off: model, time, context usage, cost, files touched, and compactions. With Session Threads on, **Agent summary** and **Lane graph** turn off the matching parts of a Thread strip; with it off those options are hidden. Turning off **Cost** also removes the cost total from the strip. The preview above the controls uses sample data, or a snapshot of one of your already-loaded sessions, and never opens or fetches anything. **Done** saves for this device and applies to Oppi session rows in every session list; **Cancel** or swiping the sheet away discards your changes; **Restore Defaults** resets the preview until you tap Done. The title, status, questions, Incognito, workspace context, search matches, and the Thread control always show.
+Settings → Sessions → **Session Rows** opens the row editor. Choose **Standard** (the full row) or **Compact** (tighter spacing, with details joined on one line only when they all fit; otherwise the same two lines as Standard, and it never hides or shortens a detail you turned on), then turn optional details on or off: model, time, context usage, cost, files touched, and compactions. With Session Threads on, **Agent Summary** and **Lane Graph** turn off the matching parts of a Thread strip; with it off those options are hidden. Turning off **Cost** also removes the cost total from the strip. The preview above the controls uses sample data, or a snapshot of one of your already-loaded sessions, and never opens or fetches anything. Every change saves for this device as you make it and applies to Oppi session rows in every session list; **Restore Defaults** resets all of them. The title, status, questions, Incognito, workspace context, search matches, and the Thread control always show.
 
 The sidebar or drawer manages saved Agents and schedules, collapses the workspace list, opens App Settings, or browses a workspace's sessions, files, and settings.
 
@@ -67,14 +67,14 @@ Assistant output can open markdown, code, diffs, and other documents in full-scr
 
 ## Voice
 
-**Settings → Voice → Dictation Engine** is **On-device** or **Server**.
+**Settings → Voice & Dictation → Dictation Engine** is **On-device** or **Server**.
 
 - **On-device** uses Apple's speech APIs on the phone. Audio stays on the device. Submitting the transcript still sends the prompt to the paired server.
 - **Server** streams audio to the paired server, which forwards it to the configured speech-to-text backend.
 
-**Settings → Voice → Dictation animation** chooses the listening control: **Composing** and **Breathing** are voice-reactive Metal orbs, and **Ring** is the older stroke. New installs default to Ring; a saved choice stays. The button size does not change.
+**Settings → Voice & Dictation → Dictation Animation** chooses the listening control: **Composing** and **Breathing** are voice-reactive Metal orbs, and **Ring** is the older stroke. New installs default to Ring; a saved choice stays. The button size does not change.
 
-**Settings → Chat Display → Working indicator** chooses the busy-row animation: **Orbiting**, **Searching**, and **Solving** Metal orbs, plus **Pi** and **GoL**. New installs default to Orbiting; saved Pi or GoL choices stay.
+**Settings → Chat → Busy Animation** chooses the busy-row animation: **Orbiting**, **Searching**, and **Solving** Metal orbs, plus **Pi** and **GoL**. New installs default to Orbiting; saved Pi or GoL choices stay.
 
 Those indicators adapt Thinking Orbs geometry; they are not original Oppi artwork. Jakub Antalik created the original [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) designs and engine. Haplo LLC made the Swift [ThinkingOrbs](https://github.com/haplollc/ThinkingOrbs) port. Oppi adds Metal rasterization and voice-reactive motion. The full MIT notice lives with the orb source in `clients/apple/Shared/Renderers/Orbs/LICENSE`.
 
@@ -96,7 +96,7 @@ Create and edit sheets can open a **Pi Control** session (ordinary Pi with globa
 
 ## SSH Terminal experiment
 
-Turn on **Settings → Experiments → SSH Terminal** to save SSH hosts on this device, with password or per-device key sign-in. **Settings → Network → SSH Terminal**, and **Terminal** below **MCP Servers**, open that list. Saved passwords and trusted host keys stay in this device’s Keychain; saved-password reads and Secure Enclave signing require user presence. See [SSH Terminal](ssh-terminal.md) for setup, host trust, reconnect behavior, and supported algorithms.
+Turn on **Settings → Experiments → SSH Terminal** to save SSH hosts on this device, with password or per-device key sign-in. **Settings → Network → SSH Hosts**, and **Terminal** below **MCP Servers**, open that list. Saved passwords and trusted host keys stay in this device’s Keychain; saved-password reads and Secure Enclave signing require user presence. See [SSH Terminal](ssh-terminal.md) for setup, host trust, reconnect behavior, and supported algorithms.
 
 ## Durable Sessions experiment
 
