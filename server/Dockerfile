@@ -43,7 +43,6 @@ COPY pi-extensions/working-words/durable.ts /opt/pi-extensions/working-words/dur
 COPY pi-extensions/background-jobs/durable.ts /opt/pi-extensions/background-jobs/durable.ts
 COPY pi-extensions/background-jobs/jobs.ts /opt/pi-extensions/background-jobs/jobs.ts
 COPY pi-extensions/background-jobs/delivery.ts /opt/pi-extensions/background-jobs/delivery.ts
-COPY pi-extensions/goal/durable.ts /opt/pi-extensions/goal/durable.ts
 RUN npm run build \
     && ln -sf /opt/server/dist/src/cli.js /usr/local/bin/oppi
 

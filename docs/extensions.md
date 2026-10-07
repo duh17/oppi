@@ -114,8 +114,6 @@ The server loads declarations from global/user Pi resources, not project-local e
 | Ask extension example   | Pi package/settings install or auto-discovered extension path | `pi-extensions/ask`                      | pi resource loader | Portable Pi package: registers `ask`, uses native AskCard when available, then falls back to Pi UI APIs       |
 | Subagents example       | Pi package/settings install or auto-discovered extension path | `pi-extensions/subagents`                | pi resource loader | Reference tool and widget. Launches children, checks in every 4 minutes while supervised, and refreshes only those ids. |
 | Background jobs example | Pi package/settings install or auto-discovered extension path | `pi-extensions/background-jobs`          | pi resource loader | Reference tool. Backgrounds a long shell command and delivers the output as a follow-up.                      |
-| Active goal extension   | User Pi resource settings or auto-discovered extension path   | Standalone `pi-goal` package             | pi resource loader | Canonical durable-goal implementation maintained in its own repository                                        |
-| Disabled goal prototype | Not enabled                                                   | `pi-extensions/goal`                     | not loaded         | Preserved while compaction recovery, task timing, and snapshot migration are audited in the pi-goal workspace |
 | Browser video example   | Pi package/settings install or auto-discovered extension path | `pi-extensions/browser-automation-video` | pi resource loader | Oppi-compatible Pi package: registers a public Pi tool and uses Oppi's attachment helper when available       |
 | Mobile UI compatibility | Native Oppi client + server bridge                            | Protocol and UI bridge code              | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md)    |
 
@@ -140,14 +138,6 @@ Rendering path:
 3. **Other Pi UI contexts:** use `ctx.ui.select()` and `ctx.ui.input()` fallbacks.
 
 `ctx.ui.ask()` is an Oppi-defined UI request because plain Pi's standard dialog API does not include a multi-question or multi-select form. The extension stays portable by checking for `ctx.ui.ask()` and using Pi UI fallbacks when it is absent.
-
-## Goal extension ownership
-
-The canonical active implementation is the standalone `pi-goal` package, maintained in its own repository and enabled through the user's Pi resources. It registers `/goal`, `goal_update`, and `goal_status`, persists goal state as Pi custom session entries, queues continuation turns through Pi lifecycle hooks, and supplies terminal and Oppi-native widget rendering.
-
-The Oppi repository keeps `pi-extensions/goal` disabled as a migration reference. Do not enable it alongside `pi-goal`: both implementations use the `oppi-goal` custom entry type and `goal` widget key, but their persisted snapshots and model-tool contracts differ. The prototype remains preserved until a dedicated pi-goal workspace audit decides how to handle its explicit compaction recovery, per-task timing, and snapshot migration behavior.
-
-Oppi does not own goal lifecycle policy. Its role is normal Pi resource loading, resource-setting edits from the workspace UI, and rendering extension widgets through the native extension UI contract when available.
 
 ## Pi package layout
 

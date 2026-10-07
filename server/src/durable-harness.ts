@@ -26,7 +26,6 @@ import {
 } from "../extensions/durable/background-jobs/durable.js";
 import { controlConversationExtensions } from "./durable-control-conversation.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
-import { DurableGoal } from "../extensions/durable/goal/durable.js";
 import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
 import { DurableProjectContext } from "../extensions/durable/project-context/durable.js";
 import {
@@ -86,7 +85,6 @@ export class DurableHarness {
     CodingTools,
     DurableSandboxTools,
     DurableAsk,
-    DurableGoal,
     DurableWorkingWords,
     DurableBackgroundJobs,
     this.sessionsExtension,

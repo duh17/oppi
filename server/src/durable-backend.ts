@@ -76,7 +76,6 @@ import {
   DURABLE_QUEUE_REQUEST_ID_PREFIX,
   DURABLE_RESERVED_REQUEST_ID_PREFIXES,
 } from "./durable-request-ids.js";
-import { DurableGoal } from "../extensions/durable/goal/durable.js";
 import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
 import {
   DurableWorkingWords,
@@ -347,7 +346,6 @@ export class DurableBackend implements AgentBackend {
                   DurableAsk,
                   DurableWorkingWords,
                   DurableBackgroundJobs,
-                  DurableGoal,
                   owner.sessionsExtension,
                   DurableProjectContext,
                   ...(mcp ? [mcp.selection] : []),
@@ -362,13 +360,7 @@ export class DurableBackend implements AgentBackend {
       const additions = (
         control
           ? []
-          : [
-              DurableAsk,
-              DurableWorkingWords,
-              DurableBackgroundJobs,
-              DurableGoal,
-              owner.sessionsExtension,
-            ]
+          : [DurableAsk, DurableWorkingWords, DurableBackgroundJobs, owner.sessionsExtension]
       )
         .flatMap((extension) => extension.tools ?? [])
         .filter(
@@ -410,7 +402,6 @@ export class DurableBackend implements AgentBackend {
           : [
               ...(CodingTools.tools ?? []),
               ...(DurableAsk.tools ?? []),
-              ...(DurableGoal.tools ?? []),
               ...(sandbox ? (DurableSandboxTools.tools ?? []) : []),
               ...(DurableBackgroundJobs.tools ?? []),
               ...(owner.sessionsExtension.tools ?? []),
@@ -446,7 +437,6 @@ export class DurableBackend implements AgentBackend {
                     DurableAsk,
                     DurableWorkingWords,
                     DurableBackgroundJobs,
-                    DurableGoal,
                     owner.sessionsExtension,
                     DurableProjectContext,
                   ]
@@ -455,7 +445,6 @@ export class DurableBackend implements AgentBackend {
                     DurableAsk,
                     DurableWorkingWords,
                     DurableBackgroundJobs,
-                    DurableGoal,
                     owner.sessionsExtension,
                     DurableProjectContext,
                     ...(mcp ? [mcp.selection] : []),

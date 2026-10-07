@@ -51,7 +51,6 @@ import {
 } from "../src/session-restart-resume.js";
 import type { ChatAttachmentRef, ServerMessage, Session } from "../src/types.js";
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
-import { DurableGoal } from "../extensions/durable/goal/durable.js";
 import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
 import {
   DurableBackgroundJobs,
@@ -179,7 +178,6 @@ async function openHarness(
   const registry = createRegistry();
   registry.install(CodingTools);
   registry.install(DurableAsk);
-  registry.install(DurableGoal);
   registry.install(DurableWorkingWords);
   registry.install(DurableBackgroundJobs);
   if (tool) registry.install({ name: "restart-proof", tools: [tool] });
@@ -337,203 +335,6 @@ describe("server durable managed runtime", () => {
   const askResponse = { color: "red", extras: ["tests", "custom extra"] };
   const askStep = () =>
     fauxAssistantMessage([fauxToolCall("ask", { questions })], { stopReason: "toolUse" });
-
-  it("enrolls goal tools on the managed backend and projects one continuation and its budget blocker", async () => {
-    const f = await fixture([
-      fauxAssistantMessage(
-        [
-          fauxToolCall("create_goal", {
-            objective: "Prove native goal wiring",
-            max_continuations: 1,
-          }),
-        ],
-        { stopReason: "toolUse" },
-      ),
-      fauxAssistantMessage("Initial goal run settled"),
-      fauxAssistantMessage("One continuation finished"),
-    ]);
-    await f.manager.startSession(f.session.id, f.workspace);
-    const observed = observe(f.manager, f.session.id);
-    const blocked = observed.next(
-      (m) =>
-        m.type === "extension_ui_notification" &&
-        m.method === "setStatus" &&
-        m.statusKey === "goal" &&
-        m.statusText === "goal: Blocked 1/1",
-    );
-    const blockedWidget = observed.next(
-      (m) =>
-        m.type === "extension_ui_notification" &&
-        m.method === "setWidget" &&
-        JSON.stringify(m.nativeSurface).includes("Continuation budget exhausted (1/1)."),
-    );
-    const stopNotice = observed.next(
-      (m) =>
-        m.type === "notice" &&
-        m.message === "Goal runner · stop — Continuation budget exhausted (1/1).",
-    );
-    await f.manager.sendPrompt(f.session.id, "Create an explicit autonomous goal", {
-      clientTurnId: "managed-goal",
-    });
-    await Promise.all([blocked, blockedWidget, stopNotice]);
-    const history = (await f.manager.runCommand(f.session.id, { type: "get_messages" })) as Array<{
-      role: string;
-      toolName?: string;
-      isError?: boolean;
-    }>;
-    expect(history.filter((m) => m.role === "user")).toHaveLength(2);
-    expect(JSON.stringify(history)).not.toContain("[Goal runner]");
-    expect(history.filter((m) => m.role === "toolResult" && m.toolName === "create_goal")).toEqual([
-      expect.objectContaining({ isError: false }),
-    ]);
-    expect(observed.messages.filter((m) => m.type === "agent_end")).toHaveLength(2);
-    expect(JSON.stringify(observed.messages)).not.toContain("[Goal runner]");
-    const service = new SessionTraceService({
-      storage: f.storage,
-      sessionRuntimes: f.manager,
-      ensureSessionContextWindow: (session) => session,
-      mobileRenderers: f.manager.mobileRenderer,
-    });
-    const result = await service.getSessionWithTrace({ session: f.session });
-    const cards = result.trace.filter((event) =>
-      event.presentation?.title.startsWith("Goal runner ·"),
-    );
-    expect(cards.map((event) => event.presentation?.status)).toEqual([
-      "update",
-      "continue",
-      "stop",
-    ]);
-    expect(
-      cards.every((event) => event.type === "system" && event.presentation?.kind === "custom"),
-    ).toBe(true);
-    expect(cards[1]?.presentation?.body).toContain(
-      "Run settled; no pending messages or compaction",
-    );
-    expect(cards[2]?.presentation?.body).toBe("Continuation budget exhausted (1/1).");
-    const notices = observed.messages.filter((m) => m.type === "notice");
-    expect(notices).toHaveLength(cards.length);
-    expect(notices.map((m) => m.id)).toEqual(cards.map((event) => `entry:${event.id}`));
-    expect(new Set(notices.map((m) => m.id)).size).toBe(cards.length);
-    await service.getSessionWithTrace({ session: f.session });
-    expect(observed.messages.filter((m) => m.type === "notice")).toHaveLength(cards.length);
-    observed.unsubscribe();
-  });
-
-  it("pages and outlines stopped durable goal decision cards in full-trace order without model rows", async () => {
-    const f = await fixture([
-      fauxAssistantMessage(
-        [fauxToolCall("create_goal", { objective: "Keep decision history", max_continuations: 1 })],
-        { stopReason: "toolUse" },
-      ),
-      fauxAssistantMessage("Initial run settled"),
-      fauxAssistantMessage("Continuation settled"),
-    ]);
-    await f.manager.startSession(f.session.id, f.workspace);
-    const observed = observe(f.manager, f.session.id);
-    const stopped = observed.next(
-      (message) =>
-        message.type === "notice" &&
-        message.message === "Goal runner · stop — Continuation budget exhausted (1/1).",
-    );
-    await f.manager.sendPrompt(f.session.id, "Create an explicit autonomous goal");
-    await stopped;
-    const history = (await f.manager.runCommand(f.session.id, { type: "get_messages" })) as Array<{
-      role: string;
-    }>;
-    expect(history.filter((message) => message.role === "user")).toHaveLength(2);
-    expect(JSON.stringify(history)).not.toContain("[Goal runner]");
-    await f.manager.stopSession(f.session.id);
-    observed.unsubscribe();
-
-    // Exercise the GET handlers and their JSON wire responses with the real
-    // manager/storage, not a mocked page or outline. Only the provider is faux.
-    const dispatch = createSessionRoutes(
-      {
-        storage: f.storage,
-        sessions: f.manager,
-        sessionRuntimes: f.manager,
-        ensureSessionContextWindow: (session: Session) => session,
-      } as unknown as RouteContext,
-      createRouteHelpers(),
-    );
-    async function get<T>(path: string): Promise<T> {
-      const url = new URL(path, "http://localhost");
-      const res = makeResponse();
-      expect(
-        await dispatch({
-          method: "GET",
-          path: url.pathname,
-          url,
-          req: makeRequest(),
-          res: res as never,
-        }),
-      ).toBe(true);
-      expect(res.statusCode).toBe(200);
-      return JSON.parse(res.body) as T;
-    }
-    const full = await get<{ trace: TraceEvent[] }>(`/sessions/${f.session.id}/trace?view=full`);
-    const cards = full.trace.filter((event) =>
-      event.presentation?.title.startsWith("Goal runner ·"),
-    );
-    expect(cards.map((event) => event.presentation?.status)).toEqual([
-      "update",
-      "continue",
-      "stop",
-    ]);
-    expect(
-      cards.every((event) => event.type === "system" && event.presentation?.kind === "custom"),
-    ).toBe(true);
-    expect(cards[1]?.presentation?.body).toContain(
-      "Run settled; no pending messages or compaction",
-    );
-    expect(cards[2]?.presentation?.body).toBe("Continuation budget exhausted (1/1).");
-
-    const base = `/workspaces/${f.workspace.id}/sessions/${f.session.id}`;
-    const pages: TracePageResult[] = [];
-    const paged: TraceEvent[] = [];
-    let cursor: string | null = null;
-    do {
-      const query = new URLSearchParams({ targetEvents: "1" });
-      if (cursor) query.set("cursor", cursor);
-      const page = await get<TracePageResult>(`${base}/trace-page?${query}`);
-      expect(page.page.staleCursor).toBe(false);
-      expect(page.trace.length).toBeGreaterThan(0);
-      expect(page.page.hasOlder).toBe(page.page.olderCursor !== null);
-      pages.push(page);
-      paged.unshift(...page.trace);
-      cursor = page.page.olderCursor;
-      // Fail a non-advancing cursor rather than leave the test in an unbounded loop.
-      expect(pages.length).toBeLessThanOrEqual(full.trace.length);
-    } while (cursor);
-    expect(pages.length).toBeGreaterThan(1);
-    expect(paged.filter((event) => event.presentation?.kind === "custom")).toEqual(cards);
-
-    const outline = await get<TraceOutlineResult>(`${base}/trace-outline`);
-    const rows = outline.outline.entries.filter((entry) => entry.kind === "custom");
-    expect(
-      rows.map(({ id, kind, summary, timestamp }) => ({ id, kind, summary, timestamp })),
-    ).toEqual(
-      cards.map((event) => ({
-        id: event.id,
-        kind: "custom",
-        summary: event.presentation!.title,
-        timestamp: event.timestamp,
-      })),
-    );
-    // Outline rows deliberately omit card bodies. The client's anchor fetch
-    // must retrieve the same complete system/custom event, including its reason.
-    for (const card of cards) {
-      const around = await get<TracePageResult>(
-        `${base}/trace-page?targetEvents=1&aroundEntryId=${encodeURIComponent(card.id)}`,
-      );
-      expect(around.page.staleCursor).toBe(false);
-      expect(around.trace.find((event) => event.id === card.id)).toEqual(card);
-    }
-    writeFileSync(
-      join(f.dir, "goal-decision-history.json"),
-      JSON.stringify({ full, pages, outline, modelMessages: history }, null, 2),
-    );
-  });
 
   it("projects SDK-identical ask fields, replays pending on reconnect, and commits only the first answer", async () => {
     const f = await fixture([askStep(), fauxAssistantMessage("ANSWER_RECEIVED")]);
@@ -1532,9 +1333,6 @@ describe("server durable managed runtime", () => {
       "edit",
       "bash",
       "ask",
-      "get_goal",
-      "create_goal",
-      "update_goal",
       "ls",
       "find",
       "grep",
@@ -2222,7 +2020,7 @@ describe("server durable managed runtime", () => {
       },
       loadedResources: {
         skills: [],
-        extensions: expect.arrayContaining([{ name: DurableGoal.name, path: "" }]),
+        extensions: expect.arrayContaining([{ name: DurableAsk.name, path: "" }]),
       },
     });
     const composition = (stats as { contextComposition: { piSystemPromptTokens: number } })
@@ -2340,14 +2138,14 @@ describe("server durable managed runtime", () => {
     expect(f.faux.state.callCount).toBe(1);
   });
 
-  it("reserves internal goal request IDs before client prompt admission", async () => {
+  it("reserves internal request IDs before client prompt admission", async () => {
     const f = await fixture([fauxAssistantMessage("Normal client prompt accepted")]);
     const harness = await openHarness(f.dir, f.models);
     const runtime = await backend(harness, f.models, f.session, f.dir);
     const accepted = vi.fn();
     await expect(
       runtime.prompt("Preempt a continuation", {
-        clientTurnId: "oppi-goal:known-goal:1",
+        clientTurnId: "oppi-spawn:known-task",
         onPreflightAccepted: accepted,
       }),
     ).rejects.toThrow("reserved durable requestId namespace");
