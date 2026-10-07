@@ -57,6 +57,12 @@ struct DurableSessionsPlaygroundTests {
             session("classic", engine: .classic, minutesAgo: 1),
             session("new-durable", engine: .durable, minutesAgo: 2),
             session("control", engine: .durable, minutesAgo: 0, control: true),
+            {
+                var conversation = session("control-conversation", engine: .durable, minutesAgo: 0)
+                conversation.workspaceId = nil
+                conversation.serverDurableRole = "control"
+                return conversation
+            }(),
         ])
         #expect(listed.map(\.id) == ["new-durable", "old-durable"])
     }

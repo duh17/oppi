@@ -19,7 +19,11 @@ import { createSessionListRouteHandlers, sessionsWithLiveStatus } from "./sessio
 import { createSessionTraceRouteHandlers } from "./session-trace-handlers.js";
 import { WsMessageHandler } from "../ws-message-handler.js";
 import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktrees.js";
-import { isDeclaredControlSession } from "../control-session.js";
+import {
+  isControlConversation,
+  isControlRouteSession,
+  isDeclaredControlSession,
+} from "../control-session.js";
 import { parseClientCommand } from "../session-command-parse.js";
 import { reservedLaunchKeyError } from "../reserved-launch-keys.js";
 import { isThinkingLevel } from "../thinking-levels.js";
@@ -158,7 +162,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       helpers.error(res, 404, "Session not found");
       return null;
     }
-    if (!isDeclaredControlSession(session)) {
+    if (!isControlRouteSession(session)) {
       helpers.error(res, 400, "Session is not a control session");
       return null;
     }
@@ -778,7 +782,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       const session = requireControlSession(controlResumeMatch[1], res);
       if (!session) return true;
       try {
-        const result = await lifecycle.resumeControlSession(session);
+        const result = isControlConversation(session)
+          ? await lifecycle.resumeControlConversation(session)
+          : await lifecycle.resumeControlSession(session);
         helpers.json(res, { session: result.session });
       } catch (error: unknown) {
         const status = error instanceof SessionLifecycleError ? error.statusCode : 500;

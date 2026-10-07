@@ -319,7 +319,8 @@ final class ChatSessionManager {
 
     func resolveRouteScope() -> SessionRouteScope? {
         if routeScopeHint == .control
-            || effectsStatePort.session(id: sessionId)?.control != nil {
+            || effectsStatePort.session(id: sessionId)?.control != nil
+            || effectsStatePort.session(id: sessionId)?.isControlConversation == true {
             return .control
         }
         if case .workspace(let workspaceId) = routeScopeHint,

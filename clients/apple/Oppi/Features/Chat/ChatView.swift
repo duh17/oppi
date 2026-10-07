@@ -240,7 +240,7 @@ struct ChatView: View {
     }
 
     private var focusedRouteScope: SessionRouteScope? {
-        if session?.control != nil { return .control }
+        if session?.control != nil || session?.isControlConversation == true { return .control }
         if let timelineWorkspaceId { return .workspace(timelineWorkspaceId) }
         return routeScope
     }

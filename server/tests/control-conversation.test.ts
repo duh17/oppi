@@ -419,15 +419,20 @@ describe("control conversation lifecycle on the durable harness", () => {
     expect(agent?.cwd).toBe(join(storage.getDataDir(), "control-conversation", "cwd"));
     expect((await owner).baseExtensions.map((e) => e.name)).not.toContain("oppi.control");
 
-    // Never on the phone's session list, live or not.
+    // On the phone's global list, with the role and without a workspace.
     const list = new SessionListService({
       storage,
       sessionRuntimes: first.manager,
       ensureSessionContextWindow: (session) => session,
     });
-    expect(
-      list.listRecentWorkspaceSessionSummaries({ recentDays: 0 }).sessions.map((row) => row.id),
-    ).not.toContain(sessionId);
+    const listed = list.listRecentWorkspaceSessionSummaries({ recentDays: 0 }).sessions;
+    expect(listed.map((row) => row.id)).toContain(sessionId);
+    expect(listed.find((row) => row.id === sessionId)).toMatchObject({
+      engine: "durable",
+      serverDurable: { role: "control" },
+    });
+    expect(listed.find((row) => row.id === sessionId)?.workspaceId).toBeUndefined();
+    expect(listed.find((row) => row.id === sessionId)?.control).toBeUndefined();
 
     // Graceful restart with the conversation idle: it comes back with no client asking.
     const live = [first.manager.getActiveSession(sessionId)!];
@@ -599,7 +604,7 @@ describe("control conversation lifecycle on the durable harness", () => {
         const booted = await boot(storage);
         const opened = await booted.open({ model: "faux/faux-1" });
         const sessionId = opened.body.session.id;
-        // The same row the phone never lists: no workspace, no control metadata.
+        // The row the phone lists as control: no workspace, no control metadata.
         expect(storage.getSession(sessionId)).toMatchObject({ serverDurable: { role: "control" } });
         expect(storage.getSession(sessionId)?.workspaceId).toBeUndefined();
         expect(storage.getSession(sessionId)?.control).toBeUndefined();

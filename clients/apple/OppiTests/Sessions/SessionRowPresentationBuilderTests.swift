@@ -131,6 +131,80 @@ struct SessionRowPresentationBuilderTests {
         #expect(store.routeScope(for: "control-1") == .control)
     }
 
+    @Test func controlConversationDecodesRoleAndUsesControlRoute() throws {
+        let full = Data(#"{"id":"cc-1","name":"Oppi Control","status":"ready","createdAt":1000,"lastActivity":2000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"serverDurable":{"conversationId":7,"role":"control"}}"#.utf8)
+        let summaryJSON = Data(#"{"id":"cc-1","name":"Oppi Control","status":"ready","createdAt":1000,"lastActivity":3000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"engine":"durable","serverDurable":{"role":"control"}}"#.utf8)
+        let session = try JSONDecoder().decode(Session.self, from: full)
+        let summary = try JSONDecoder().decode(SessionSummary.self, from: summaryJSON)
+
+        #expect(session.engine == .durable)
+        #expect(session.serverDurableRole == "control")
+        #expect(session.isControlConversation)
+        #expect(session.control == nil)
+        #expect(session.workspaceId == nil)
+        #expect(SessionInboxSessionRouting.routeScope(for: session) == .control)
+        #expect(summary.engine == .durable)
+        #expect(summary.serverDurableRole == "control")
+        #expect(summary.session.isControlConversation)
+        #expect(SessionInboxSessionRouting.routeScope(for: summary.session) == .control)
+        #expect(SessionInboxSessionRouting.allSessionsContext(for: session, workspaceName: "Elsewhere") == "Oppi Control")
+
+        let durable = try JSONDecoder().decode(
+            Session.self,
+            from: Data(#"{"id":"d1","status":"ready","createdAt":1000,"lastActivity":2000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"workspaceId":"ws-1","serverDurable":{"conversationId":3}}"#.utf8)
+        )
+        #expect(durable.engine == .durable)
+        #expect(durable.serverDurableRole == nil)
+        #expect(!durable.isControlConversation)
+        #expect(SessionInboxSessionRouting.routeScope(for: durable) == .workspace("ws-1"))
+
+        let unknownRole = try JSONDecoder().decode(
+            Session.self,
+            from: Data(#"{"id":"u1","status":"ready","createdAt":1000,"lastActivity":2000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"workspaceId":"ws-1","serverDurable":{"role":42}}"#.utf8)
+        )
+        #expect(unknownRole.engine == .durable)
+        #expect(unknownRole.serverDurableRole == nil)
+        #expect(SessionInboxSessionRouting.routeScope(for: unknownRole) == .workspace("ws-1"))
+
+        let roundTrip = try JSONDecoder().decode(Session.self, from: JSONEncoder().encode(session))
+        #expect(roundTrip == session)
+        #expect(roundTrip.serverDurableRole == "control")
+        #expect(roundTrip.engine == .durable)
+    }
+
+    @MainActor
+    @Test func globalRecentProjectionRetainsControlConversationOutsideWorkspaceCatalogs() throws {
+        let conversation = try JSONDecoder().decode(
+            SessionSummary.self,
+            from: Data(#"{"id":"cc-1","name":"Oppi Control","status":"ready","createdAt":1000,"lastActivity":3000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"engine":"durable","serverDurable":{"role":"control"}}"#.utf8)
+        )
+        let workspace = try JSONDecoder().decode(
+            SessionSummary.self,
+            from: Data(#"{"id":"ws-row","status":"ready","createdAt":1000,"lastActivity":2000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"workspaceId":"workspace-1"}"#.utf8)
+        )
+        let declared = try JSONDecoder().decode(
+            SessionSummary.self,
+            from: Data(#"{"id":"control-1","status":"ready","createdAt":1000,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"create"}}"#.utf8)
+        )
+        let store = SessionStore()
+        store.switchServer(to: "server-1")
+        store.applyRecentWorkspaceSummaryProjection(
+            workspaceIds: Set(["workspace-1"]),
+            summaries: [conversation, workspace, declared]
+        )
+
+        #expect(store.listProjectionSessions.map(\.id) == ["cc-1", "ws-row", "control-1"])
+        #expect(store.session(id: "cc-1")?.workspaceId == nil)
+        #expect(store.session(id: "cc-1")?.isControlConversation == true)
+        #expect(store.routeScope(for: "cc-1") == .control)
+        #expect(store.routeScope(for: "control-1") == .control)
+        #expect(store.routeScope(for: "ws-row") == .workspace("workspace-1"))
+        #expect(store.listProjectionSessions(workspaceId: "workspace-1").map(\.id).contains("ws-row"))
+        #expect(!store.listProjectionSessions(workspaceId: "workspace-1").map(\.id).contains("cc-1"))
+        #expect(!DurableSessionsPlayground.isListed(conversation.session))
+        #expect(!DurableSessionsPlayground.isListed(declared.session))
+    }
+
     @Test func modelSummaryUsesCatalogDisplayNameWhenPresent() {
         let session = makeSession(
             id: "mlx",

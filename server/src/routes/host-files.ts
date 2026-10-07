@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { isAbsolute } from "node:path";
 
-import { isDeclaredControlSession } from "../control-session.js";
+import { isControlRouteSession } from "../control-session.js";
 import {
   listTimedTextSidecars,
   resolveCurrentFilePath,
@@ -60,7 +60,7 @@ export function createHostFileRoutes(
   function controlSessionCwd(sessionId: string | null): string | null {
     if (!sessionId) return null;
     const session = ctx.storage.getSession(sessionId);
-    if (!session || !isDeclaredControlSession(session)) return null;
+    if (!session || !isControlRouteSession(session)) return null;
     try {
       return resolveSdkSessionCwd(undefined, session, { dataDir: ctx.storage.getDataDir() });
     } catch {
@@ -120,7 +120,7 @@ export function createHostFileRoutes(
         if (!sessionId || workspaceId !== null || worktreeId !== null) return conflict;
         const session = ctx.storage.getSession(sessionId);
         if (!session) return { kind: "error", status: 404, message: "Session not found" };
-        if (isDeclaredControlSession(session)) {
+        if (isControlRouteSession(session)) {
           const cwd = controlSessionCwd(sessionId);
           if (!cwd) return { kind: "error", status: 404, message: "Session root not found" };
           return {

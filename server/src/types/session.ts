@@ -200,7 +200,8 @@ export interface Session {
   /**
    * Durable-engine enrollment, set only when the create request asked for
    * `engine: "durable"`; the binding is saved before first submission. Full
-   * `Session` payloads carry it as is; `SessionSummary` projects it as `engine`.
+   * `Session` payloads carry it as is. `SessionSummary` projects enrollment as
+   * `engine` and, for the control conversation only, `serverDurable.role`.
    * `role: "control"` marks the one workspace-less control conversation per data directory.
    */
   serverDurable?: { conversationId?: number; role?: "control" };
@@ -262,6 +263,11 @@ export interface SessionSummary {
   parentSessionId?: string;
   /** Present only for durable-engine sessions; omitted means classic. */
   engine?: "durable";
+  /**
+   * Control-conversation marker on list rows. Omitted for every other session;
+   * the conversation id is not projected.
+   */
+  serverDurable?: { role: "control" };
   /** Cold-list ask badge count; omitted outside list endpoints. */
   pendingAskCount?: number;
 }

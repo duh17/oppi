@@ -19,7 +19,8 @@ enum SessionStatus: String, Codable, Sendable {
 }
 
 /// Agent engine behind a managed session. Summaries carry `engine: "durable"`;
-/// full `Session` payloads mark the durable engine with `serverDurable`. Absent is classic.
+/// full `Session` payloads mark the durable engine with `serverDurable`. The control
+/// conversation also carries `serverDurable.role: "control"` on both. Absent is classic.
 enum SessionEngine: String, Codable, Sendable {
     case classic
     case durable
@@ -203,6 +204,13 @@ struct Session: Identifiable, Sendable, Equatable {
 
     var engine: SessionEngine = .classic
 
+    /// `serverDurable.role` when the server sent one. `"control"` is the durable
+    /// control conversation. Unknown roles stay stored and are not a control route.
+    var serverDurableRole: String? = nil
+
+    /// Durable control conversation. Distinct from a declared Pi Control session (`control != nil`).
+    var isControlConversation: Bool { serverDurableRole == "control" }
+
     /// Display title: name, first message preview, or session ID prefix.
     var displayTitle: String {
         if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
@@ -299,6 +307,7 @@ struct SessionSummary: Sendable, Equatable {
     var parentSessionId: String? = nil
     var ephemeral: Bool?
     var engine: SessionEngine = .classic
+    var serverDurableRole: String? = nil
     var pendingAskCount: Int {
         didSet { hasPendingAskCount = true }
     }
@@ -336,7 +345,8 @@ struct SessionSummary: Sendable, Equatable {
             launch: agentId.map { SessionLaunchMetadata(agentId: $0, agentIcon: agentIcon) },
             parentSessionId: parentSessionId,
             ephemeral: ephemeral,
-            engine: engine
+            engine: engine,
+            serverDurableRole: serverDurableRole
         )
     }
 }
@@ -371,6 +381,7 @@ extension SessionSummary {
         self.parentSessionId = session.parentSessionId
         self.ephemeral = session.ephemeral
         self.engine = session.engine
+        self.serverDurableRole = session.serverDurableRole
         self.pendingAskCount = 0
         self.hasPendingAskCount = false
     }
@@ -421,6 +432,7 @@ private struct DecodedSessionWireFields {
     let ephemeral: Bool?
     let warnings: [String]?
     let engine: SessionEngine
+    let serverDurableRole: String?
 
     init(from container: KeyedDecodingContainer<SessionWireCodingKeys>) throws {
         id = try container.decode(String.self, forKey: .id)
@@ -455,15 +467,44 @@ private struct DecodedSessionWireFields {
             ?? container.decodeIfPresent(LaunchParentWire.self, forKey: .launch)?.parentSessionId
         ephemeral = try container.decodeIfPresent(Bool.self, forKey: .ephemeral)
         warnings = try container.decodeIfPresent([String].self, forKey: .warnings)
+        let serverDurable = try container.decodeIfPresent(ServerDurableWire.self, forKey: .serverDurable)
+        // A non-string role must not fail the session; it is not the control conversation.
+        serverDurableRole = serverDurable?.role
         // Summaries name the engine; full sessions carry the `serverDurable` enrollment.
         // An unknown future engine is not durable, so it reads as classic.
         if let engineName = try container.decodeIfPresent(String.self, forKey: .engine) {
             engine = SessionEngine(rawValue: engineName) ?? .classic
-        } else if container.contains(.serverDurable), try !container.decodeNil(forKey: .serverDurable) {
+        } else if serverDurable != nil {
             engine = .durable
         } else {
             engine = .classic
         }
+    }
+}
+
+private struct ServerDurableWire: Codable {
+    var role: String?
+
+    init(role: String?) {
+        self.role = role
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let raw = try? container.decodeIfPresent(String.self, forKey: .role) {
+            role = raw
+        } else {
+            role = nil
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(role, forKey: .role)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case role
     }
 }
 
@@ -500,7 +541,8 @@ private extension DecodedSessionWireFields {
             parentSessionId: parentSessionId,
             ephemeral: ephemeral,
             warnings: warnings,
-            engine: engine
+            engine: engine,
+            serverDurableRole: serverDurableRole
         )
     }
 
@@ -570,6 +612,9 @@ extension Session: Codable {
         try c.encodeIfPresent(warnings, forKey: .warnings)
         if engine == .durable {
             try c.encode(engine, forKey: .engine)
+        }
+        if let serverDurableRole {
+            try c.encode(ServerDurableWire(role: serverDurableRole), forKey: .serverDurable)
         }
 
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)

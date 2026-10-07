@@ -112,9 +112,16 @@ final class SessionStore {
 
     func routeScope(for sessionId: String) -> SessionRouteScope? {
         guard let session = session(id: sessionId) else { return nil }
-        if session.control != nil { return .control }
+        if session.control != nil || session.isControlConversation { return .control }
         guard let workspaceId = session.workspaceId, !workspaceId.isEmpty else { return nil }
         return .workspace(workspaceId)
+    }
+
+    /// Declared Pi Control and the durable control conversation: global list only.
+    private func isGlobalControlListSession(_ session: Session) -> Bool {
+        let hasWorkspace = session.workspaceId?.isEmpty == false
+        guard !hasWorkspace else { return false }
+        return session.control != nil || session.isControlConversation
     }
 
     // ── Cross-server queries ──
@@ -438,7 +445,7 @@ final class SessionStore {
             summaries: incomingSummaries
         )
         let incomingControlSessions = incomingSummaries.map(\.session).filter {
-            $0.control != nil && $0.workspaceId == nil && !isDeletedSessionTombstoned($0.id)
+            isGlobalControlListSession($0) && !isDeletedSessionTombstoned($0.id)
         }
 
         var backing = sessions
@@ -499,6 +506,8 @@ final class SessionStore {
         let singleWorkspaceId = targetWorkspaceIds.count == 1 ? targetWorkspaceIds.first : nil
         return incomingSummaries.map(\.session).compactMap { session -> Session? in
             guard !isDeletedSessionTombstoned(session.id) else { return nil }
+            // The control conversation shares the global list, never a workspace catalog.
+            guard !session.isControlConversation else { return nil }
             var normalized = session
             if normalized.workspaceId == nil, let singleWorkspaceId {
                 normalized.workspaceId = singleWorkspaceId
@@ -777,10 +786,17 @@ final class SessionStore {
             merged.contextWindow = existing.contextWindow
         }
 
-        if merged.workspaceId == nil || merged.workspaceId?.isEmpty == true {
+        if merged.serverDurableRole == nil {
+            merged.serverDurableRole = existing.serverDurableRole
+        }
+        if merged.isControlConversation {
+            merged.workspaceId = nil
+            merged.workspaceName = nil
+        } else if merged.workspaceId == nil || merged.workspaceId?.isEmpty == true {
             merged.workspaceId = existing.workspaceId
         }
-        if merged.workspaceName == nil || merged.workspaceName?.isEmpty == true {
+        if !merged.isControlConversation,
+           merged.workspaceName == nil || merged.workspaceName?.isEmpty == true {
             merged.workspaceName = existing.workspaceName
         }
         if merged.model == nil || merged.model?.isEmpty == true {

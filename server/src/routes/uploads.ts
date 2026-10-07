@@ -8,7 +8,7 @@ import {
   uploadRecordToAttachmentRef,
   writeUploadContent,
 } from "../uploads/local-upload-store.js";
-import { isDeclaredControlSession } from "../control-session.js";
+import { isControlRouteSession } from "../control-session.js";
 
 async function parseUploadCreateBody(
   req: IncomingMessage,
@@ -57,7 +57,7 @@ export function createUploadRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
         helpers.error(res, 404, "Session not found");
         return;
       }
-      if (!isDeclaredControlSession(session)) {
+      if (!isControlRouteSession(session)) {
         helpers.error(res, 400, "Session is not a control session");
         return;
       }
@@ -120,7 +120,7 @@ export function createUploadRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
         helpers.error(res, 404, "Session not found");
         return;
       }
-      if (!isDeclaredControlSession(session)) {
+      if (!isControlRouteSession(session)) {
         helpers.error(res, 400, "Session is not a control session");
         return;
       }

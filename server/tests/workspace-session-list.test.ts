@@ -541,7 +541,7 @@ describe("workspace session list routes", () => {
     expect(response.sessions[1]).not.toHaveProperty("warnings");
   });
 
-  it("includes only explicitly declared control sessions in the global recent list", async () => {
+  it("includes declared control sessions and the control conversation in the global recent list", async () => {
     const mock = createMockContext();
     const now = Date.parse("2026-05-13T12:00:00Z");
     mock.storage.listAllWorkspaceSessionSnapshots.mockReturnValue([
@@ -560,16 +560,38 @@ describe("workspace session list routes", () => {
         workspaceId: undefined,
         lastActivity: now + 1_000,
       }),
+      makeSession({
+        id: "control-conversation",
+        workspaceId: undefined,
+        lastActivity: now + 2_000,
+        serverDurable: { role: "control", conversationId: 9 },
+      }),
+      makeSession({
+        id: "durable-workspace",
+        workspaceId: "ws-1",
+        lastActivity: now - 2_000,
+        serverDurable: { conversationId: 3 },
+      }),
     ]);
 
     await dispatch(mock, "/sessions/recent", "https://localhost/sessions/recent");
 
     const response = mock.responses[0]?.data as { sessions: Array<Session> };
     expect(response.sessions.map((session) => session.id)).toEqual([
+      "control-conversation",
       "control-row",
       "workspace-row",
     ]);
-    expect(response.sessions[0]?.control).toEqual({ domain: "schedules", intent: "create" });
+    expect(response.sessions[0]).toMatchObject({
+      id: "control-conversation",
+      engine: "durable",
+      serverDurable: { role: "control" },
+    });
+    expect(response.sessions[0]?.workspaceId).toBeUndefined();
+    expect(response.sessions[0]?.control).toBeUndefined();
+    expect(response.sessions[0]).not.toHaveProperty("conversationId");
+    expect(response.sessions[1]?.control).toEqual({ domain: "schedules", intent: "create" });
+    expect(response.sessions[1]).not.toHaveProperty("serverDurable");
   });
 
   it("does not leak active control sessions into workspace session collections", async () => {
@@ -582,6 +604,29 @@ describe("workspace session list routes", () => {
     });
     mock.sessions.getActiveSessionIds.mockReturnValue([control.id]);
     mock.sessions.getActiveSession.mockReturnValue(control);
+    mock.storage.listAllWorkspaceSessionSnapshots.mockReturnValue([]);
+
+    await dispatch(
+      mock,
+      "/workspaces/ws-1/sessions",
+      "https://localhost/workspaces/ws-1/sessions?status=active",
+    );
+
+    const response = mock.responses[0]?.data as { active: Session[] };
+    expect(response.active).toEqual([]);
+  });
+
+  it("does not leak the control conversation into workspace session collections", async () => {
+    const mock = createMockContext();
+    const conversation = makeSession({
+      id: "control-conversation",
+      workspaceId: undefined,
+      status: "busy",
+      serverDurable: { role: "control", conversationId: 9 },
+    });
+    mock.sessions.getActiveSessionIds.mockReturnValue([conversation.id]);
+    mock.sessions.getActiveSession.mockReturnValue(conversation);
+    mock.storage.listSessions.mockReturnValue([conversation]);
     mock.storage.listAllWorkspaceSessionSnapshots.mockReturnValue([]);
 
     await dispatch(

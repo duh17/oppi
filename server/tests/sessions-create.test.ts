@@ -607,6 +607,106 @@ describe("control session route scope", () => {
     },
   );
 
+  it("admits the control conversation on a control-session route and rejects a workspace session", async () => {
+    const cases = [
+      {
+        label: "control conversation",
+        session: makeSession({
+          id: "control-conversation",
+          workspaceId: undefined,
+          serverDurable: { role: "control", conversationId: 4 },
+        }),
+        admitted: true,
+      },
+      {
+        label: "workspace session",
+        session: makeSession({ id: "workspace-session", workspaceId: "ws-1" }),
+        admitted: false,
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const mock = createMockContext();
+      mock.storage.getSession.mockReturnValue(testCase.session);
+      mock.sessions.getCatchUp.mockReturnValue({
+        events: [],
+        currentSeq: 3,
+        catchUpComplete: true,
+        session: testCase.session,
+      });
+      const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
+      const path = `/control-sessions/${testCase.session.id}/events`;
+
+      expect(
+        await dispatcher({
+          method: "GET",
+          path,
+          url: new URL(`https://localhost${path}`),
+          req: new PassThrough() as unknown as IncomingMessage,
+          res: {} as ServerResponse,
+        }),
+        testCase.label,
+      ).toBe(true);
+
+      if (testCase.admitted) {
+        expect(mock.errors, testCase.label).toEqual([]);
+        expect(mock.responses, testCase.label).toEqual([
+          expect.objectContaining({
+            status: 200,
+            data: expect.objectContaining({
+              currentSeq: 3,
+              session: testCase.session,
+            }),
+          }),
+        ]);
+      } else {
+        expect(mock.responses, testCase.label).toEqual([]);
+        expect(mock.errors, testCase.label).toEqual([
+          { status: 400, message: "Session is not a control session" },
+        ]);
+        expect(mock.sessions.getCatchUp, testCase.label).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it("resumes a stopped control conversation without a workspace or control metadata", async () => {
+    const mock = createMockContext();
+    const session = makeSession({
+      id: "control-conversation",
+      workspaceId: undefined,
+      status: "stopped",
+      runtime: "oppi",
+      serverDurable: { role: "control", conversationId: 4 },
+    });
+    mock.storage.getSession.mockReturnValue(session);
+    mock.sessions.startSession.mockResolvedValue({ ...session, status: "ready" });
+    const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
+    const path = "/control-sessions/control-conversation/resume";
+
+    await dispatcher({
+      method: "POST",
+      path,
+      url: new URL(`https://localhost${path}`),
+      req: new PassThrough() as unknown as IncomingMessage,
+      res: {} as ServerResponse,
+    });
+
+    expect(mock.sessions.startSession).toHaveBeenCalledWith("control-conversation", undefined);
+    expect(mock.errors).toEqual([]);
+    expect(mock.responses).toEqual([
+      {
+        status: 200,
+        data: {
+          session: expect.objectContaining({
+            id: "control-conversation",
+            status: "ready",
+            serverDurable: { role: "control", conversationId: 4 },
+          }),
+        },
+      },
+    ]);
+  });
+
   it("resumes a declared stopped control session without resolving a workspace", async () => {
     const mock = createMockContext();
     const session = makeSession({

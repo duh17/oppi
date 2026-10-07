@@ -2501,7 +2501,7 @@ final class ServerConnection {
         }
 
         let resolvedScope: SessionRouteScope?
-        if routeScope == .control || session?.control != nil {
+        if routeScope == .control || session?.control != nil || session?.isControlConversation == true {
             resolvedScope = .control
         } else {
             resolvedScope = sessionReentryWorkspaceId(

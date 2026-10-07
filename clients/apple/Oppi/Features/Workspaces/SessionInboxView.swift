@@ -186,13 +186,14 @@ enum SessionInboxHostChange {
 
 enum SessionInboxSessionRouting {
     static func routeScope(for session: Session) -> SessionRouteScope? {
-        if session.control != nil { return .control }
+        if session.control != nil || session.isControlConversation { return .control }
         guard let workspaceId = session.workspaceId, !workspaceId.isEmpty else { return nil }
         return .workspace(workspaceId)
     }
 
     static func allSessionsContext(for session: Session, workspaceName: String?) -> String? {
-        SessionRowPresentationBuilder.allSessionsWorkspaceContext(
+        if session.isControlConversation { return "Oppi Control" }
+        return SessionRowPresentationBuilder.allSessionsWorkspaceContext(
             for: session,
             workspaceName: workspaceName
         )
@@ -1173,6 +1174,7 @@ struct SessionInboxView: View {
     private func openSession(_ item: SessionInboxItem) {
         var normalized = item.session
         if normalized.control == nil,
+           !normalized.isControlConversation,
            normalized.workspaceId == nil || normalized.workspaceId?.isEmpty == true {
             normalized.workspaceId = item.workspace?.id
         }

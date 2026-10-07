@@ -114,7 +114,10 @@ extension ServerConnection {
 
     private func applyAppEventSummary(_ summary: SessionSummary, workspaceId: String?) {
         var normalized = summary
-        if normalized.workspaceId == nil, let workspaceId, !workspaceId.isEmpty {
+        if normalized.workspaceId == nil,
+           !normalized.session.isControlConversation,
+           let workspaceId,
+           !workspaceId.isEmpty {
             normalized.workspaceId = workspaceId
         }
         let previousSession = sessionStore.session(id: normalized.id)
@@ -149,7 +152,7 @@ extension ServerConnection {
             current.currentTurnStartedAt = nil
         }
         current.lastActivity = completedAt
-        if current.workspaceId == nil {
+        if current.workspaceId == nil, !current.isControlConversation {
             current.workspaceId = workspaceId
         }
         sessionStore.upsert(current)

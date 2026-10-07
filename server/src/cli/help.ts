@@ -1911,7 +1911,7 @@ const HELP_TOPICS: HelpTopic[] = [
     summary: "Open or message the one durable control conversation of this server.",
     usage: "oppi control open|send [flags]",
     description: [
-      "The control conversation is a single durable conversation per data directory, created on first use and kept across server restarts. It is not a workspace session and does not appear in the phone session list. Read it back with 'oppi session' commands using the printed session id.",
+      "The control conversation is a single durable conversation per data directory, created on first use and kept across server restarts. It is not a workspace session. The phone lists it with Pi Control sessions. Read it back with 'oppi session' commands using the printed session id.",
     ],
     subcommands: [
       { name: "open", summary: "find or create the conversation and print its ids" },

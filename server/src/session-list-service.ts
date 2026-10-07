@@ -15,7 +15,7 @@ import {
   type PendingUIRequestProvider,
 } from "./session-attention.js";
 import { buildSessionSummary } from "./session-summary.js";
-import { isDeclaredControlSession } from "./control-session.js";
+import { isControlRouteSession } from "./control-session.js";
 import type { Storage } from "./storage.js";
 import type { WorkspaceStoppedTimeBucketSnapshot } from "./storage/session-dao.js";
 import type { LocalSession, Session, SessionSummary, Workspace } from "./types.js";
@@ -149,7 +149,8 @@ export class SessionListService {
       .listSessions()
       .filter(
         (session) =>
-          isDeclaredControlSession(session) &&
+          isControlRouteSession(session) &&
+          session.workspaceId === undefined &&
           isOpenableManagedListSession(session) &&
           (cutoffMs === undefined || session.lastActivity >= cutoffMs),
       );
@@ -462,7 +463,7 @@ function mergeActiveSessionsAcrossWorkspaces(
   const byId = new Map(projectedSessions.map((session) => [session.id, session]));
   for (const activeSessionId of sessionRuntimes.getActiveSessionIds()) {
     const active = sessionRuntimes.getActiveSession(activeSessionId);
-    if (!active || (!active.workspaceId && !isDeclaredControlSession(active))) {
+    if (!active || (!active.workspaceId && !isControlRouteSession(active))) {
       continue;
     }
     if (!sessionMatchesWorkspaceListFilters(active, filters)) {

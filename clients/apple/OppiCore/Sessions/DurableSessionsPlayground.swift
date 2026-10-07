@@ -28,8 +28,9 @@ enum DurableSessionsPlayground {
             }
     }
 
-    /// A durable workspace session; control sessions stay out of the playground.
+    /// A durable workspace session. Declared control sessions and the control
+    /// conversation stay on the global list, not in this playground.
     static func isListed(_ session: Session) -> Bool {
-        session.engine == .durable && session.control == nil
+        session.engine == .durable && session.control == nil && !session.isControlConversation
     }
 }

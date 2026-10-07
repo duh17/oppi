@@ -51,6 +51,29 @@ describe("buildSessionSummary", () => {
     expect(summary).not.toHaveProperty("agentIcon");
   });
 
+  it("projects the control-conversation role without its conversation id", () => {
+    const summary = buildSessionSummary(
+      makeSession({
+        workspaceId: undefined,
+        serverDurable: { role: "control", conversationId: 9 },
+      }),
+    );
+
+    expect(summary.engine).toBe("durable");
+    expect(summary.serverDurable).toEqual({ role: "control" });
+    expect(summary.workspaceId).toBeUndefined();
+    expect(summary.control).toBeUndefined();
+  });
+
+  it("does not project serverDurable onto an ordinary durable summary", () => {
+    const summary = buildSessionSummary(
+      makeSession({ workspaceId: "ws-1", serverDurable: { conversationId: 3 } }),
+    );
+
+    expect(summary.engine).toBe("durable");
+    expect(summary).not.toHaveProperty("serverDurable");
+  });
+
   it("preserves explicit control-session metadata in list summaries", () => {
     const summary = buildSessionSummary(
       makeSession({
