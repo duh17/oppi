@@ -60,6 +60,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Pi content-block index for the active assistant text stream. A changed
     /// index is a structural boundary even when no media event is projected.
     private var currentAssistantContentIndex: Int?
+    /// Content indexes that belong to the open assistant run, including
+    /// consecutive text blocks that share one bubble.
+    private var assistantRunIndexes: [Int] = []
+    /// Closed and open rows for this assistant message, keyed by content index.
+    /// A `replace` writes the partial back into that row instead of opening another.
+    private var assistantIDByContentIndex: [Int: String] = [:]
+    private var thinkingIDByContentIndex: [Int: String] = [:]
     private var assistantBuffer: String = ""
     /// Stable timestamp for the streaming assistant message — avoids
     /// creating a new Date() on every streaming upsert, which would cause
@@ -1017,6 +1024,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             }
             switch event {
             case .textDelta(_, let delta, let contentIndex, let replace):
+                // A rewrite of an earlier text index updates that row. It does
+                // not close the open thinking block.
+                if replace, replaceClosedAssistantPartial(delta, contentIndex: contentIndex) {
+                    didMutate = true
+                    break
+                }
                 // Text is a structural boundary. Pi streams content blocks in
                 // order, so the thinking block before it has ended even though
                 // message_end may still be far away.
@@ -1025,11 +1038,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     finalizeThinking()
                     didMutate = true
                 }
-                if prepareAssistantBlock(contentIndex: contentIndex) {
+                if assistantRunCrosses(contentIndex) {
                     flushPendingUpserts()
                     finalizeAssistantMessage()
+                    assistantRunIndexes.removeAll(keepingCapacity: true)
                     didMutate = true
                 }
+                noteAssistantContentIndex(contentIndex)
                 if replace {
                     flushPendingUpserts()
                     assistantBuffer = delta
@@ -1041,6 +1056,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 }
 
             case .thinkingDelta(_, let delta, let contentIndex, let replace):
+                // A rewrite of an earlier thinking index updates that row. It
+                // does not close the open text bubble or start a second thinking row.
+                if replace, replaceClosedThinkingPartial(delta, contentIndex: contentIndex) {
+                    didMutate = true
+                    break
+                }
                 // Thinking is a structural boundary. Finalize text that arrived
                 // before it so later text starts a distinct adjacent run.
                 if hasPendingAssistantUpsert || currentAssistantID != nil {
@@ -1199,11 +1220,16 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return renderMutationCheckpoint() != before
 
         case .textDelta(_, let delta, let contentIndex, let replace):
+            if replace, replaceClosedAssistantPartial(delta, contentIndex: contentIndex) {
+                return true
+            }
             finalizeThinking()
-            let crossedBoundary = prepareAssistantBlock(contentIndex: contentIndex)
+            let crossedBoundary = assistantRunCrosses(contentIndex)
             if crossedBoundary {
                 finalizeAssistantMessage()
+                assistantRunIndexes.removeAll(keepingCapacity: true)
             }
+            noteAssistantContentIndex(contentIndex)
             if replace {
                 assistantBuffer = delta
             } else {
@@ -1213,6 +1239,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return true
 
         case .thinkingDelta(_, let delta, let contentIndex, let replace):
+            if replace, replaceClosedThinkingPartial(delta, contentIndex: contentIndex) {
+                return true
+            }
             let before = renderMutationCheckpoint()
             finalizeAssistantMessage()
             if appendThinkingDelta(delta, contentIndex: contentIndex, replace: replace) {
@@ -1765,6 +1794,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         lastAssistantIDThisTurn = nil
         assistantIDsThisMessage.removeAll(keepingCapacity: false)
         thinkingIDsThisMessage.removeAll(keepingCapacity: false)
+        assistantRunIndexes.removeAll(keepingCapacity: false)
+        assistantIDByContentIndex.removeAll(keepingCapacity: false)
+        thinkingIDByContentIndex.removeAll(keepingCapacity: false)
     }
 
     private func handleMessageEnd(
@@ -2256,18 +2288,66 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         currentAssistantContentIndex = nil
         assistantIDsThisMessage.removeAll(keepingCapacity: true)
         thinkingIDsThisMessage.removeAll(keepingCapacity: true)
+        assistantRunIndexes.removeAll(keepingCapacity: true)
+        assistantIDByContentIndex.removeAll(keepingCapacity: true)
+        thinkingIDByContentIndex.removeAll(keepingCapacity: true)
         messageRegionStart = items.count
     }
 
     /// Returns true when an indexed delta starts a distinct assistant text run.
-    private func prepareAssistantBlock(contentIndex: Int?) -> Bool {
-        guard let contentIndex else { return false }
-        defer { currentAssistantContentIndex = contentIndex }
-        guard let currentAssistantContentIndex else { return false }
+    /// Does not move the current index; the caller records it after flushing the previous run.
+    private func assistantRunCrosses(_ contentIndex: Int?) -> Bool {
+        guard let contentIndex, let currentAssistantContentIndex else { return false }
         // Consecutive text/output_text blocks are one Markdown-safe run; a gap
         // means an unprojected structural block (media/future content) occurred.
         return contentIndex < currentAssistantContentIndex
             || contentIndex > currentAssistantContentIndex + 1
+    }
+
+    private func noteAssistantContentIndex(_ contentIndex: Int?) {
+        guard let contentIndex else { return }
+        currentAssistantContentIndex = contentIndex
+        if !assistantRunIndexes.contains(contentIndex) {
+            assistantRunIndexes.append(contentIndex)
+        }
+        if let currentAssistantID {
+            assistantIDByContentIndex[contentIndex] = currentAssistantID
+        }
+    }
+
+    /// A replace of an earlier text index writes that row and leaves the other modality open.
+    private func replaceClosedAssistantPartial(_ text: String, contentIndex: Int?) -> Bool {
+        guard let contentIndex,
+              let id = assistantIDByContentIndex[contentIndex],
+              assistantIDsThisMessage.contains(id),
+              id != currentAssistantID,
+              let idx = indexForID(id),
+              case .assistantMessage(_, _, let timestamp) = items[idx] else {
+            return false
+        }
+        items[idx] = TimelineTurnAssembler.makeAssistantItem(id: id, text: text, timestamp: timestamp)
+        bumpItemsMutationSeq()
+        return true
+    }
+
+    /// A replace of an earlier thinking index writes that row and leaves the open text bubble alone.
+    private func replaceClosedThinkingPartial(_ text: String, contentIndex: Int?) -> Bool {
+        guard let contentIndex,
+              let id = thinkingIDByContentIndex[contentIndex],
+              thinkingIDsThisMessage.contains(id),
+              id != currentThinkingID,
+              let idx = indexForID(id),
+              case .thinking(_, _, _, let isDone) = items[idx] else {
+            return false
+        }
+        items[idx] = TimelineTurnAssembler.makeThinkingItem(
+            id: id,
+            preview: text,
+            hasMore: text.utf8.count > ChatItem.maxPreviewLength,
+            isDone: isDone
+        )
+        bumpItemsMutationSeq()
+        return true
     }
 
     private func shouldSuppressDuplicateMessageEnd(_ content: String) -> Bool {
@@ -2314,6 +2394,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         if turnInProgress, !assistantIDsThisMessage.contains(id) {
             assistantIDsThisMessage.append(id)
         }
+        for index in assistantRunIndexes {
+            assistantIDByContentIndex[index] = id
+        }
+        if let currentAssistantContentIndex {
+            assistantIDByContentIndex[currentAssistantContentIndex] = id
+        }
 
         let item = TimelineTurnAssembler.makeAssistantItem(
             id: id,
@@ -2338,6 +2424,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         currentThinkingID = id
         if turnInProgress, !thinkingIDsThisMessage.contains(id) {
             thinkingIDsThisMessage.append(id)
+        }
+        if let currentThinkingContentIndex {
+            thinkingIDByContentIndex[currentThinkingContentIndex] = id
         }
         return id
     }
