@@ -31,17 +31,44 @@ import {
 	nextIdleFlushDelay,
 	shutdownDelivery,
 } from "./delivery.ts";
+import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import {
+	ACTIVITY_FRAME_MS,
 	BACKGROUND_POLICY,
+	activityFrame,
 	backgroundPill,
+	backgroundWidgetExpands,
 	bashBackgroundAdvice,
 	createJobManager,
+	renderBackgroundWidget,
 	runBackgroundPolicy,
 	type SessionExports,
+	type WidgetStyle,
 } from "./jobs.ts";
 
 const PILL_KEY = "background-jobs";
 const AUTO_STOP_LOOKUP_TIMEOUT_MS = 5_000;
+
+function widgetStyle(theme: {
+	fg: (
+		color: "accent" | "success" | "warning" | "error" | "muted" | "dim" | "toolTitle" | "toolOutput" | "borderAccent",
+		text: string,
+	) => string;
+	bold: (text: string) => string;
+}): WidgetStyle {
+	return {
+		accent: (text) => theme.fg("accent", text),
+		success: (text) => theme.fg("success", text),
+		warning: (text) => theme.fg("warning", text),
+		error: (text) => theme.fg("error", text),
+		muted: (text) => theme.fg("muted", text),
+		dim: (text) => theme.fg("dim", text),
+		title: (text) => theme.fg("toolTitle", text),
+		output: (text) => theme.fg("toolOutput", text),
+		rule: (text) => theme.fg("borderAccent", text),
+		bold: (text) => theme.bold(text),
+	};
+}
 
 /**
  * Ask Oppi once whether this session auto-stops. Pi's session id is Oppi's
@@ -143,23 +170,63 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 			return;
 		}
 		ui.setStatus(PILL_KEY, pill.status);
-		ui.setWidget(PILL_KEY, () => ({
-			render: () => pill.lines,
-			renderNative: () => ({
-				version: 1,
-				id: `widget:${PILL_KEY}`,
-				source: "widget",
-				presentation: {
-					style: "surfacePanel",
-					title: pill.title,
-					subtitle: pill.subtitle,
+		ui.setWidget(PILL_KEY, (tui, theme) => {
+			const jobs = pill.widgetJobs;
+			let timer: ReturnType<typeof setInterval> | undefined;
+			if (jobs.some((job) => job.status === "running")) {
+				timer = setInterval(() => tui.requestRender(), ACTIVITY_FRAME_MS);
+				timer.unref?.();
+			}
+			const style = widgetStyle(theme);
+			return {
+				dispose() {
+					if (timer) clearInterval(timer);
 				},
-				// Each row discloses its own output tail; Oppi resolves it like bash output.
-				blocks: [{ type: "activityList", id: "jobs", rows: pill.rows }],
-				fallback: { lines: pill.summary },
-			}),
-			invalidate() {},
-		}));
+				invalidate() {},
+				setExpanded() {
+					tui.requestRender();
+				},
+				handleMouse(event: { type: string; button?: string }) {
+					if (event.type !== "click" || event.button !== "left" || !backgroundWidgetExpands(jobs)) return undefined;
+					if (typeof ui.setToolsExpanded !== "function" || typeof ui.getToolsExpanded !== "function") return undefined;
+					ui.setToolsExpanded(!ui.getToolsExpanded());
+					return { handled: true };
+				},
+				render(width: number) {
+					const expanded = typeof ui.getToolsExpanded === "function" && ui.getToolsExpanded();
+					const lines = renderBackgroundWidget(jobs, {
+						now: Date.now(),
+						expanded,
+						frame: activityFrame(),
+						style,
+					});
+					const inner = Math.max(1, width);
+					const fitted = expanded
+						? lines.flatMap((line) => wrapTextWithAnsi(line, inner))
+						: lines.map((line) => truncateToWidth(line, inner, "…"));
+					// Keep the band and the latest wrapped lines. A long tail must not push the editor off a short pane.
+					const maxLines = expanded ? 18 : fitted.length;
+					if (fitted.length <= maxLines) return fitted;
+					const head = fitted.slice(0, 3);
+					const tail = fitted.slice(-(maxLines - 4));
+					const skipped = fitted.length - head.length - tail.length;
+					return [...head, truncateToWidth(`│ … +${skipped} lines`, inner, "…"), ...tail];
+				},
+				renderNative: () => ({
+					version: 1,
+					id: `widget:${PILL_KEY}`,
+					source: "widget",
+					presentation: {
+						style: "surfacePanel",
+						title: pill.title,
+						subtitle: pill.subtitle,
+					},
+					// Each row discloses its own output tail; Oppi resolves it like bash output.
+					blocks: [{ type: "activityList", id: "jobs", rows: pill.rows }],
+					fallback: { lines: pill.summary },
+				}),
+			};
+		});
 	};
 	const sendBatch = (content: string, details: Record<string, unknown>) => {
 		pi.sendMessage(

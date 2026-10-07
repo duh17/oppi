@@ -5,7 +5,9 @@ import {
 	BACKGROUND_POLICY,
 	backgroundDisposition,
 	backgroundPill,
+	formatJobElapsed,
 	rawOutputTail,
+	renderBackgroundWidget,
 	bashBackgroundAdvice,
 	createJobManager,
 	formatBackgroundNotice,
@@ -225,7 +227,9 @@ describe("background pill", () => {
 			{ id: "bash-2", command: "go test ./...", status: "running", backgrounded: true },
 		]);
 		expect(pill?.title).toBe("2 jobs");
-		expect(pill?.status).toContain("npm test");
+		expect(pill?.status).toContain("2 jobs");
+		expect(pill?.subtitle).toContain("npm test");
+		expect(pill?.lines.some((line) => line.includes("bash-1") && line.includes("[running]"))).toBe(true);
 		expect(pill?.rows.map((row) => row.title)).toEqual(["bash-1", "bash-2"]);
 		expect(pill?.rows.map((row) => row.state)).toEqual(["running", "running"]);
 		expect(pill?.rows[0]?.blocks).toEqual([
@@ -246,7 +250,9 @@ describe("background pill", () => {
 		expect(pill?.rows[0]?.title).toBe("bash-52");
 		expect(pill?.rows[0]?.subtitle.startsWith("prompt_file=")).toBe(true);
 		expect(pill?.rows[0]?.subtitle.length).toBeLessThanOrEqual(48);
-		expect(pill?.lines.slice(-3)).toEqual(["# bash-52", "line one", "line two"]);
+		expect(pill?.lines.some((line) => line.includes("line two"))).toBe(true);
+		expect(pill?.lines.some((line) => line.includes("line one"))).toBe(false);
+		expect(pill?.lines.at(-1)).toContain("ctrl+o: expand");
 		expect(pill?.rows[0]?.blocks).toEqual([{ type: "terminal", id: "output:bash-52", text: "line one\nline two" }]);
 	});
 
@@ -284,6 +290,38 @@ describe("background pill", () => {
 		expect(backgroundPill([{ id: "bash-3", command: "echo hi", status: "completed", backgrounded: true }])?.title).toBe(
 			"1 result",
 		);
+	});
+
+	test("collapsed band hides the tail and expanded band reveals the cut-off path", () => {
+		const path =
+			"xattr: [Errno 13] Permission denied: '/tmp/xcode-27.1-expand/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform'";
+		const jobs = [
+			{
+				id: "bash-27",
+				command: "chmod +x /tmp/setup-iphone-duo.sh && /tmp/setup-iphone-duo.sh",
+				status: "running" as const,
+				startedAt: 1_000,
+				output: `first\n${path}\nDownloading iOS 27.1 Simulator`,
+			},
+		];
+		const collapsed = renderBackgroundWidget(jobs, { now: 61_000 });
+		expect(collapsed[0]).toContain("1 job");
+		expect(collapsed[0]).toContain("1m");
+		expect(collapsed.some((line) => line.includes("[running]") && line.includes("bash-27"))).toBe(true);
+		expect(collapsed.some((line) => line.includes("Downloading iOS"))).toBe(true);
+		expect(collapsed.some((line) => line.includes("iPhoneSimulator.platform"))).toBe(false);
+		expect(collapsed.at(-1)).toContain("ctrl+o: expand");
+
+		const expanded = renderBackgroundWidget(jobs, { now: 61_000, expanded: true, frame: "⠋" });
+		expect(expanded[0]?.startsWith("│ ⠋")).toBe(true);
+		expect(expanded.some((line) => line.includes("iPhoneSimulator.platform"))).toBe(true);
+		expect(expanded.at(-1)).toContain("ctrl+o: collapse");
+	});
+
+	test("elapsed timer uses whole minutes and hours", () => {
+		expect(formatJobElapsed(12_000)).toBe("12s");
+		expect(formatJobElapsed(3 * 60_000 + 5_000)).toBe("3m");
+		expect(formatJobElapsed(2 * 3_600_000)).toBe("2h");
 	});
 });
 

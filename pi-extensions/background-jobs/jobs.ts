@@ -62,14 +62,39 @@ export type JobOutputBlock =
 	| { type: "terminal"; id: string; text: string }
 	| { type: "text"; id: string; spans: Array<{ text: string; role: "muted" }> };
 
+export interface BackgroundWidgetJob {
+	id: string;
+	command: string;
+	status: JobStatus;
+	startedAt?: number;
+	finishedAt?: number;
+	output?: string;
+}
+
+/** Theme hooks for the terminal band. Plain text uses identity functions. */
+export interface WidgetStyle {
+	accent: (text: string) => string;
+	success: (text: string) => string;
+	warning: (text: string) => string;
+	error: (text: string) => string;
+	muted: (text: string) => string;
+	dim: (text: string) => string;
+	title: (text: string) => string;
+	output: (text: string) => string;
+	rule: (text: string) => string;
+	bold: (text: string) => string;
+}
+
 export interface BackgroundPill {
 	status: string;
 	title: string;
 	subtitle: string;
-	/** Terminal widget: summary, job rows, then the last output lines. */
+	/** Collapsed terminal band. The TUI re-renders this from widgetJobs so it can expand. */
 	lines: string[];
-	/** Summary and job rows only, for the native fallback. */
+	/** Same collapsed band, for a client that cannot draw the native surface. */
 	summary: string[];
+	/** Live source for the terminal widget. Not a protocol field. */
+	widgetJobs: BackgroundWidgetJob[];
 	/** Tapping a row shows that job's output. Display only; it is not a model update. */
 	rows: Array<{
 		id: string;
@@ -86,7 +111,16 @@ const ROW_OUTPUT_MAX_BYTES = 4 * 1024;
 const ROW_OUTPUT_MAX_LINES = 30;
 
 export function backgroundPill(
-	jobs: Array<{ id: string; command: string; status: JobStatus; backgrounded: boolean; output?: string }>,
+	jobs: Array<{
+		id: string;
+		command: string;
+		status: JobStatus;
+		backgrounded: boolean;
+		output?: string;
+		startedAt?: number;
+		finishedAt?: number;
+	}>,
+	now = Date.now(),
 ): BackgroundPill | undefined {
 	const visible = jobs.filter((job) => job.backgrounded);
 	const running = visible.filter((job) => job.status === "running");
@@ -108,16 +142,27 @@ export function backgroundPill(
 			: running.length > 0
 				? runningSubtitle
 				: first;
-	const status = `${title} · ${subtitle}`.slice(0, 160);
-	const summary = [status, ...visible.map((job) => `${job.id} ${job.status} ${compactCommand(job.command)}`)];
+	const elapsed = bandElapsed(running.length > 0 ? running : finished, now);
+	const ready = running.length > 0 && finished.length > 0 ? `${finished.length} ready` : undefined;
+	const status = [title, elapsed, ready].filter(Boolean).join(" · ").slice(0, 160);
+	const widgetJobs = visible.map((job) => ({
+		id: job.id,
+		command: job.command,
+		status: job.status,
+		startedAt: job.startedAt,
+		finishedAt: job.finishedAt,
+		output: job.output,
+	}));
+	const lines = renderBackgroundWidget(widgetJobs, { now });
 	const withOutput = visible.filter((job) => (job.output ?? "").trim().length > 0).length;
 	const rowBytes = Math.min(ROW_OUTPUT_MAX_BYTES, Math.floor(ROW_OUTPUT_TOTAL_BYTES / Math.max(1, withOutput)));
 	return {
 		status,
 		title,
 		subtitle,
-		lines: [...summary, ...terminalTail(visible)],
-		summary,
+		lines,
+		summary: lines,
+		widgetJobs,
 		rows: visible.map((job) => {
 			const text = rawOutputTail(job.output ?? "", rowBytes, ROW_OUTPUT_MAX_LINES);
 			return {
@@ -133,6 +178,210 @@ export function backgroundPill(
 			};
 		}),
 	};
+}
+
+const ACTIVITY_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+export const ACTIVITY_FRAME_MS = 80;
+const EXPANDED_OUTPUT_LINES = 24;
+const plainStyle: WidgetStyle = {
+	accent: (text) => text,
+	success: (text) => text,
+	warning: (text) => text,
+	error: (text) => text,
+	muted: (text) => text,
+	dim: (text) => text,
+	title: (text) => text,
+	output: (text) => text,
+	rule: (text) => text,
+	bold: (text) => text,
+};
+
+/** Braille activity frame on a shared clock, same 80ms cadence as OMP's status band. */
+export function activityFrame(now = Date.now()): string {
+	return ACTIVITY_FRAMES[Math.floor(now / ACTIVITY_FRAME_MS) % ACTIVITY_FRAMES.length] ?? "⠋";
+}
+
+/** Whole-unit age: 12s, then 3m, then 1h. Matches OMP's status-band timer. */
+export function formatJobElapsed(ms: number): string {
+	const seconds = Math.max(0, Math.floor(ms / 1000));
+	if (seconds < 60) return `${seconds}s`;
+	if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+	return `${Math.min(99, Math.floor(seconds / 3600))}h`;
+}
+
+export function backgroundWidgetExpands(jobs: readonly BackgroundWidgetJob[]): boolean {
+	return jobs.some((job) => {
+		const lines = displayLines(job.output ?? "");
+		return lines.length > 1 || lines.some((line) => line.length > 72) || displayCommand(job.command).length > 48;
+	});
+}
+
+/**
+ * Terminal band for live jobs. Collapsed keeps one output line and an expand
+ * hint. Expanded reveals the tail; the caller wraps those lines to the pane.
+ */
+export function renderBackgroundWidget(
+	jobs: readonly BackgroundWidgetJob[],
+	options: { now?: number; expanded?: boolean; frame?: string; style?: WidgetStyle; hint?: string } = {},
+): string[] {
+	if (jobs.length === 0) return [];
+	const now = options.now ?? Date.now();
+	const style = options.style ?? plainStyle;
+	const expanded = options.expanded === true;
+	const hint = options.hint ?? "ctrl+o";
+	const running = jobs.filter((job) => job.status === "running");
+	const finished = jobs.filter((job) => job.status !== "running");
+	const title =
+		running.length > 0
+			? running.length === 1
+				? "1 job"
+				: `${running.length} jobs`
+			: finished.length === 1
+				? "1 result"
+				: `${finished.length} results`;
+	const headerMark = running.length > 0 ? (options.frame ?? "⚙") : headerGlyph(jobs);
+	const headerColor = running.length > 0 ? style.accent : statePaint(style, pillState(worstStatus(jobs)));
+	const meta = [bandElapsed(running.length > 0 ? running : finished, now), readyLabel(running.length, finished.length)]
+		.filter(Boolean)
+		.join(" · ");
+	const lines = [
+		joinParts([
+			style.rule("│"),
+			headerColor(headerMark),
+			style.bold(headerColor(title)),
+			meta ? style.dim(`· ${meta}`) : "",
+		]),
+	];
+	for (const job of jobs) {
+		const paint = statePaint(style, pillState(job.status));
+		const age = jobElapsed(job, now);
+		lines.push(
+			joinParts([
+				style.rule("│"),
+				paint(job.status === "running" ? "●" : headerGlyph([job])),
+				style.bold(style.title(job.id)),
+				paint(`[${badgeLabel(job.status)}]`),
+				age ? style.dim(`· ${age}`) : "",
+				style.dim("·"),
+				style.muted(displayCommand(job.command)),
+			]),
+		);
+	}
+	const hidden = hiddenOutputCount(jobs, expanded);
+	for (const block of outputBlocks(jobs, expanded)) {
+		if (jobs.length > 1) lines.push(joinParts([style.rule("│"), style.dim(`# ${block.id}`)]));
+		for (const line of block.lines) {
+			lines.push(joinParts([style.rule("│"), style.output(`  ${line}`)]));
+		}
+	}
+	if (!expanded && backgroundWidgetExpands(jobs)) {
+		const more = hidden > 0 ? ` · +${hidden} lines` : "";
+		lines.push(joinParts([style.rule("│"), style.dim(`[${hint}: expand${more}]`)]));
+	} else if (expanded && backgroundWidgetExpands(jobs)) {
+		lines.push(joinParts([style.rule("│"), style.dim(`[${hint}: collapse]`)]));
+	}
+	return lines;
+}
+
+function joinParts(parts: string[]): string {
+	return parts.filter((part) => part.length > 0).join(" ");
+}
+
+function readyLabel(running: number, finished: number): string | undefined {
+	return running > 0 && finished > 0 ? `${finished} ready` : undefined;
+}
+
+function bandElapsed(jobs: readonly BackgroundWidgetJob[], now: number): string | undefined {
+	let oldestMs: number | undefined;
+	for (const job of jobs) {
+		if (job.startedAt === undefined || !Number.isFinite(job.startedAt)) continue;
+		const end = job.status !== "running" && job.finishedAt !== undefined ? job.finishedAt : now;
+		const age = end - job.startedAt;
+		if (oldestMs === undefined || age > oldestMs) oldestMs = age;
+	}
+	return oldestMs === undefined ? undefined : formatJobElapsed(oldestMs);
+}
+
+function jobElapsed(job: BackgroundWidgetJob, now: number): string | undefined {
+	if (job.startedAt === undefined || !Number.isFinite(job.startedAt)) return undefined;
+	const end = job.status !== "running" && job.finishedAt !== undefined ? job.finishedAt : now;
+	return formatJobElapsed(end - job.startedAt);
+}
+
+function headerGlyph(jobs: readonly BackgroundWidgetJob[]): string {
+	const status = worstStatus(jobs);
+	if (status === "running") return "●";
+	if (status === "completed") return "✓";
+	if (status === "cancelled") return "!";
+	return "✗";
+}
+
+function worstStatus(jobs: readonly BackgroundWidgetJob[]): JobStatus {
+	if (jobs.some((job) => job.status === "failed" || job.status === "timed_out")) return "failed";
+	if (jobs.some((job) => job.status === "cancelled")) return "cancelled";
+	if (jobs.some((job) => job.status === "running")) return "running";
+	return "completed";
+}
+
+function badgeLabel(status: JobStatus): string {
+	if (status === "running") return "running";
+	if (status === "completed") return "done";
+	if (status === "cancelled") return "cancelled";
+	if (status === "timed_out") return "timed out";
+	return "failed";
+}
+
+function statePaint(style: WidgetStyle, state: ReturnType<typeof pillState>): (text: string) => string {
+	if (state === "success") return style.success;
+	if (state === "warning") return style.warning;
+	if (state === "error") return style.error;
+	return style.accent;
+}
+
+function displayCommand(command: string): string {
+	return command.replace(/\s+/g, " ").trim();
+}
+
+function displayLines(output: string): string[] {
+	const stripped = output
+		.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+		.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+		.replace(/\u001b./g, "");
+	const lines: string[] = [];
+	let current = "";
+	for (const char of stripped) {
+		if (char === "\n") {
+			if (current.trim()) lines.push(current.replace(/\s+$/u, ""));
+			current = "";
+		} else if (char === "\r") {
+			current = "";
+		} else {
+			current += char;
+		}
+	}
+	if (current.trim()) lines.push(current.replace(/\s+$/u, ""));
+	return lines;
+}
+
+function outputBlocks(
+	jobs: readonly BackgroundWidgetJob[],
+	expanded: boolean,
+): Array<{ id: string; lines: string[] }> {
+	const blocks: Array<{ id: string; lines: string[] }> = [];
+	for (const job of jobs) {
+		const lines = displayLines(job.output ?? "");
+		if (lines.length === 0) continue;
+		blocks.push({
+			id: job.id,
+			lines: expanded ? lines.slice(-EXPANDED_OUTPUT_LINES) : lines.slice(-1),
+		});
+	}
+	return blocks;
+}
+
+function hiddenOutputCount(jobs: readonly BackgroundWidgetJob[], expanded: boolean): number {
+	if (expanded) return 0;
+	return jobs.reduce((sum, job) => sum + Math.max(0, displayLines(job.output ?? "").length - 1), 0);
 }
 
 /**
@@ -160,23 +409,7 @@ function pillState(status: JobStatus): "running" | "success" | "warning" | "erro
 	return "error";
 }
 
-export function outputTail(output: string, maxLines = 16): string[] {
-	const lines = output.replace(/\s+$/u, "").split("\n").filter((line) => line.length > 0);
-	return lines.slice(-maxLines).map((line) => (line.length > 200 ? `${line.slice(0, 199)}…` : line));
-}
 
-function terminalTail(
-	jobs: Array<{ id: string; output?: string }>,
-): string[] {
-	const lines: string[] = [];
-	for (const job of jobs) {
-		const tail = outputTail(job.output ?? "");
-		if (tail.length === 0) continue;
-		lines.push(`# ${job.id}`);
-		lines.push(...tail);
-	}
-	return lines.slice(-40);
-}
 
 export interface SessionExports {
 	sessionId?: string;
