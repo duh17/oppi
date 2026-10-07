@@ -43,6 +43,18 @@ final class FullScreenCodeViewController: UIViewController {
     /// Interaction state owned by a palette-capturing UIKit body. Views are
     /// rebuilt for a theme change, so preserve equivalent descendant state by
     /// stable traversal order before replacing the hierarchy.
+    /// Chrome identity that a text chunk does not change. Rebuilding bar
+    /// items on every chunk drops the button the reader already has.
+    private struct NavigationPresentation: Equatable {
+        let sourceToggleTitle: String?
+        let readerFamily: FullScreenReaderContentFamily?
+
+        init(_ presentation: Presentation) {
+            sourceToggleTitle = presentation.sourceToggleTitle
+            readerFamily = presentation.readerFamily
+        }
+    }
+
     private struct BodyInteractionState {
         let scrollOffsets: [CGPoint]
         let selections: [NSRange]
@@ -74,6 +86,7 @@ final class FullScreenCodeViewController: UIViewController {
     private var lineAnchorNoticeDelivered = false
     private var navigationActions: [FullScreenViewerNavigationAction]
     private var navigationActionPresentation: [FullScreenViewerNavigationAction.Presentation]
+    private var lastNavigationPresentation: NavigationPresentation?
     private var showSource = false
     private var completeRawText: String?
     private var rawSidecarTask: Task<Void, Never>?
@@ -305,6 +318,7 @@ final class FullScreenCodeViewController: UIViewController {
         guard presentation != navigationActionPresentation else { return }
         navigationActions = actions
         navigationActionPresentation = presentation
+        lastNavigationPresentation = nil
         guard isViewLoaded, let viewController = contentHostController else { return }
         configureNavigation(on: viewController, palette: bodyThemeID.palette)
     }
@@ -354,6 +368,7 @@ final class FullScreenCodeViewController: UIViewController {
 
         // Force navigation items to be rebuilt because their tint colors are
         // also captured UIKit values rather than dynamic SwiftUI styles.
+        lastNavigationPresentation = nil
         configureNavigation(on: viewController, palette: palette)
     }
 
@@ -715,7 +730,24 @@ final class FullScreenCodeViewController: UIViewController {
         configureFloatingAnnotateButton(on: viewController, palette: palette)
         configureFloatingStashButton(on: viewController, palette: palette)
         updateAnnotateAvailability()
+
+        let navigationPresentation = NavigationPresentation(presentation)
+        guard navigationPresentation != lastNavigationPresentation else {
+            // A chunk can recreate a floating control. Keep it off the rail
+            // without replacing the bar items the reader already has.
+            syncFloatingControlVisibility(on: viewController)
+            return
+        }
+        lastNavigationPresentation = navigationPresentation
         installRightBarItems(on: viewController, palette: palette)
+    }
+
+    private func syncFloatingControlVisibility(on viewController: UIViewController) {
+        let sideRail = SystemVerticalBar.isActive(viewController)
+        floatingViewingOptionsButton?.isHidden = sideRail
+        annotateButton?.isHidden = sideRail
+        stashButton?.isHidden = sideRail
+        stashBadgeLabel?.isHidden = sideRail
     }
 
     /// Sole writer of the content host's right bar items. Persistent viewer
@@ -796,10 +828,7 @@ final class FullScreenCodeViewController: UIViewController {
             }
         }
 
-        floatingViewingOptionsButton?.isHidden = sideRail
-        annotateButton?.isHidden = sideRail
-        stashButton?.isHidden = sideRail
-        stashBadgeLabel?.isHidden = sideRail
+        syncFloatingControlVisibility(on: viewController)
         viewController.navigationItem.rightBarButtonItems = rightItems
     }
 
