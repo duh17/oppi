@@ -1218,7 +1218,13 @@ final class NativeMarkdownImageView: UIView {
         // detached from bottom. Soft invalidation is skipped in that state and
         // can leave the assistant row cut off until another interaction.
         // Force-invalidate so self-sizing adopts the loaded image height now.
-        ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(startingAt: self)
+        // Defer off the current turn: Build 51 published height from the
+        // diffable cell provider while `isPerformingLayout` was already false,
+        // and a synchronous `invalidateLayout()` re-entered that provider.
+        ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(
+            startingAt: self,
+            deferToNextRunLoop: true
+        )
     }
 
     override func accessibilityActivate() -> Bool {
@@ -1319,6 +1325,10 @@ final class NativeMarkdownImageView: UIView {
 
 #if DEBUG
 extension NativeMarkdownImageView {
+    func debugSetDisplayHeightForTesting(_ height: CGFloat) {
+        setDisplayHeight(height)
+    }
+
     var debugHasRasterPreviewForTesting: Bool {
         imageView.image != nil && !imageView.isHidden
     }

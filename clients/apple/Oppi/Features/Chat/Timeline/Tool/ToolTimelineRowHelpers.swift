@@ -338,7 +338,10 @@ enum ToolTimelineRowPresentationHelpers {
     /// own height while the user is detached from the bottom. Detached anchors
     /// still preserve the viewport during `layoutSubviews`; this only bypasses
     /// the helper's normal skip for passive snapshot-driven updates.
-    static func forceInvalidateEnclosingCollectionViewLayout(startingAt sourceView: UIView) {
+    static func forceInvalidateEnclosingCollectionViewLayout(
+        startingAt sourceView: UIView,
+        deferToNextRunLoop: Bool = false
+    ) {
         invalidateEnclosingStreamingHeightCache(startingAt: sourceView)
 
         let target = enclosingLayoutTarget(startingAt: sourceView)
@@ -349,6 +352,15 @@ enum ToolTimelineRowPresentationHelpers {
             }
             if isUserInteracting(with: collectionView) {
                 scheduleForcedInvalidationWhenInteractionEnds(for: collectionView)
+                return
+            }
+            if deferToNextRunLoop {
+                scheduleInvalidationAfterCurrentLayout(
+                    for: collectionView,
+                    allowDetachedAnchorInvalidation: true,
+                    preservingViewportAround: sourceView,
+                    preserveCurrentViewport: false
+                )
                 return
             }
 
@@ -404,10 +416,10 @@ enum ToolTimelineRowPresentationHelpers {
     /// Cleared after the async block fires.
     private static var pendingCoalescedInvalidations: Set<ObjectIdentifier> = []
 
-    /// Forced/coalesced invalidations that arrived while the enclosing
-    /// collection view was already inside `layoutSubviews`. UIKit aborts if
-    /// `invalidateLayout()` runs in that window (Build 49 chat-timeline
-    /// SIGABRT from prepared markdown images).
+    /// Forced/coalesced invalidations deferred by a caller or received while
+    /// the enclosing collection view was already inside `layoutSubviews`.
+    /// UIKit aborts when image-driven invalidation re-enters its cell provider
+    /// (Build 49/51 chat-timeline SIGABRTs).
     private struct PendingAfterLayoutInvalidation {
         weak var sourceView: UIView?
         var allowDetachedAnchorInvalidation: Bool
