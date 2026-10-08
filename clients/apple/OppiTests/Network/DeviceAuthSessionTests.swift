@@ -50,7 +50,7 @@ private func decodeBase64URL(_ value: String) throws -> Data {
 }
 
 private func p256PublicKey(_ jwk: DevicePublicKey) throws -> P256.Signing.PublicKey {
-    let raw = Data([0x04]) + try decodeBase64URL(jwk.x) + try decodeBase64URL(jwk.y)
+    let raw = Data([0x04]) + (try decodeBase64URL(jwk.x)) + (try decodeBase64URL(jwk.y))
     return try P256.Signing.PublicKey(x963Representation: raw)
 }
 

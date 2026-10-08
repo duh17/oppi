@@ -439,7 +439,7 @@ struct IntentSessionOpenTriggerTests {
         let suiteName = "IntentSessionOpenTrigger-\(UUID().uuidString)"
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "IntentSessionOpenTrigger-\(UUID().uuidString)", directoryHint: .isDirectory)
-        var defaults: UserDefaults { (try #require(UserDefaults(suiteName: suiteName))) }
+        var defaults: UserDefaults { testUnwrap(UserDefaults(suiteName: suiteName)) }
 
         func makeTrigger() -> IntentSessionOpenTrigger {
             IntentSessionOpenTrigger(

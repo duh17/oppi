@@ -49,7 +49,7 @@ struct HostSwitcherDestinationTests {
 
 @Suite("Host-scoped server follow")
 struct HostScopedServerFollowTests {
-    @Test func visibleServerPrefersActiveHostOverFrozenTarget() {
+    @Test func visibleServerPrefersActiveHostOverFrozenTarget() throws {
         let servers = try makeServers("sha256:aaa", "sha256:bbb")
         let result = ServerSelection.resolveVisible(
             activeId: "sha256:bbb",
@@ -59,7 +59,7 @@ struct HostScopedServerFollowTests {
         #expect(result?.id == "sha256:bbb")
     }
 
-    @Test func visibleServerFallsBackToFrozenTargetWhenActiveMissing() {
+    @Test func visibleServerFallsBackToFrozenTargetWhenActiveMissing() throws {
         let servers = try makeServers("sha256:aaa", "sha256:bbb")
         let result = ServerSelection.resolveVisible(
             activeId: nil,
@@ -69,7 +69,7 @@ struct HostScopedServerFollowTests {
         #expect(result?.id == "sha256:aaa")
     }
 
-    @Test func visibleServerFallsBackToFirstWhenBothMissing() {
+    @Test func visibleServerFallsBackToFirstWhenBothMissing() throws {
         let servers = try makeServers("sha256:aaa", "sha256:bbb")
         let result = ServerSelection.resolveVisible(
             activeId: "sha256:gone",

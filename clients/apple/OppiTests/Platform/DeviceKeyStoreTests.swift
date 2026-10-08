@@ -130,7 +130,7 @@ struct DeviceKeyStoreTests {
 
         #expect(signature.count == 64)
 
-        let raw = Data([0x04]) + try decodeBase64URL(key.publicKey.x) + try decodeBase64URL(key.publicKey.y)
+        let raw = Data([0x04]) + (try decodeBase64URL(key.publicKey.x)) + (try decodeBase64URL(key.publicKey.y))
         let publicKey = try P256.Signing.PublicKey(x963Representation: raw)
         let signatureObject = try P256.Signing.ECDSASignature(rawRepresentation: signature)
         #expect(publicKey.isValidSignature(signatureObject, for: input))
