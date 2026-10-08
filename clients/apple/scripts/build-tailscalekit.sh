@@ -147,6 +147,9 @@ if [[ $force -eq 0 ]]; then
 fi
 
 command -v go >/dev/null 2>&1 || fail "Go is required to build libtailscale (cgo c-archive)."
+# shellcheck source=xcode-toolchain.sh
+source "$SCRIPT_DIR/xcode-toolchain.sh"
+oppi_use_xcode_toolchain
 command -v xcodebuild >/dev/null 2>&1 || fail "Xcode is required to build TailscaleKit."
 
 mkdir -p "$WORK_DIR"

@@ -8,11 +8,12 @@ import {
   commandRun,
   commandShutdownIdle,
   commandStatus,
-  extractRootFlag,
+  extractPoolFlags,
   loadConfig,
   PoolError,
   usage,
 } from "./sim-pool-ops";
+import { applyXcodeToolchain } from "./xcode-toolchain";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 
@@ -28,6 +29,7 @@ function selfTest(): number {
     "./clients/apple/scripts/sim-pool-prune.test.ts",
     "./clients/apple/scripts/sim-pool-cutover.test.ts",
     "./clients/apple/scripts/sim-slim.test.ts",
+    "./clients/apple/scripts/xcode-toolchain.test.ts",
   ];
   for (const path of files) {
     if (!existsSync(join(repoRoot, path))) {
@@ -54,7 +56,7 @@ function selfTest(): number {
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  const peeled = extractRootFlag(argv);
+  const peeled = extractPoolFlags(argv);
   const command = peeled.rest[0];
   if (!command) {
     usage();
@@ -62,9 +64,19 @@ async function main(): Promise<void> {
   if (command === "self-test") {
     process.exit(selfTest());
   }
-  const env = peeled.root ? { ...process.env, OPPI_ROOT: peeled.root } : process.env;
-  const config = loadConfig(env, process.cwd(), scriptDir);
   try {
+    // Every child (xcrun simctl, xcodebuild, sim-slim) inherits DEVELOPER_DIR.
+    try {
+      applyXcodeToolchain(process.env);
+    } catch (error) {
+      throw new PoolError(error instanceof Error ? error.message : String(error));
+    }
+    const env = {
+      ...process.env,
+      ...(peeled.root ? { OPPI_ROOT: peeled.root } : {}),
+      ...(peeled.profile ? { OPPI_SIM_DEVICE_PROFILE: peeled.profile } : {}),
+    };
+    const config = loadConfig(env, process.cwd(), scriptDir);
     switch (command) {
       case "run":
         process.exit(await commandRun(config, peeled.rest.slice(1)));

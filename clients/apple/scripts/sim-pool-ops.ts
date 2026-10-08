@@ -157,35 +157,77 @@ function gitTopLevel(cwd: string): string | null {
   return result.stdout.trim();
 }
 
-export function extractRootFlag(args: string[]): { root?: string; rest: string[] } {
+/**
+ * Named device lanes. A profile supplies defaults for device type, runtime,
+ * and the dedicated slot range; explicit OPPI_SIM_DEVICE_TYPE, OPPI_SIM_RUNTIME,
+ * OPPI_SIM_POOL_SLOT_START, and OPPI_SIM_POOL_COUNT still win. Dedicated lanes
+ * live above the default iPhone slots (0-5); slot 8-9 belong to the iPad lane.
+ */
+export type DeviceProfile = {
+  deviceType: string;
+  runtime: string;
+  slotStart: number;
+  count: number;
+};
+
+export const DEVICE_PROFILES: Record<string, DeviceProfile> = {
+  duo: {
+    deviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-Duo",
+    runtime: "com.apple.CoreSimulator.SimRuntime.iOS-27-1",
+    slotStart: 10,
+    count: 1,
+  },
+};
+
+function lookupDeviceProfile(name: string): DeviceProfile | undefined {
+  if (!name) {
+    return undefined;
+  }
+  const profile = Object.hasOwn(DEVICE_PROFILES, name) ? DEVICE_PROFILES[name] : undefined;
+  if (!profile) {
+    die(`unknown device profile '${name}' (expected ${Object.keys(DEVICE_PROFILES).join(", ")})`);
+  }
+  return profile;
+}
+
+export function extractPoolFlags(args: string[]): { root?: string; profile?: string; rest: string[] } {
   const rest: string[] = [];
   let root: string | undefined;
+  let profile: string | undefined;
+  const value = (flag: string, index: number): string => {
+    const next = args[index + 1];
+    if (!next || next.startsWith("-")) {
+      die(`${flag} requires a value`);
+    }
+    return next;
+  };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === "--") {
       rest.push(...args.slice(i));
-      return { root, rest };
+      return { root, profile, rest };
     }
-    if (arg === "--root") {
-      const value = args[i + 1];
-      if (!value || value.startsWith("-")) {
-        die("--root requires a path");
-      }
-      root = value;
+    if (arg === "--root" || arg === "--device-profile") {
+      const parsed = value(arg, i);
+      if (arg === "--root") root = parsed;
+      else profile = parsed;
       i += 1;
       continue;
     }
-    if (arg.startsWith("--root=")) {
-      const value = arg.slice("--root=".length);
-      if (!value) {
-        die("--root requires a path");
+    if (arg.startsWith("--root=") || arg.startsWith("--device-profile=")) {
+      const eq = arg.indexOf("=");
+      const flag = arg.slice(0, eq);
+      const parsed = arg.slice(eq + 1);
+      if (!parsed) {
+        die(`${flag} requires a value`);
       }
-      root = value;
+      if (flag === "--root") root = parsed;
+      else profile = parsed;
       continue;
     }
     rest.push(arg);
   }
-  return { root, rest };
+  return { root, profile, rest };
 }
 
 export function normalizeOppiRoot(raw: string, cwd = process.cwd()): string {
@@ -274,17 +316,19 @@ export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: strin
   }
   const appleDir = join(oppiRoot, "clients", "apple");
   const buildBase = join(appleDir, ".build");
-  const count = parsePositiveInt(env.OPPI_SIM_POOL_COUNT ?? "6", "OPPI_SIM_POOL_COUNT", 1);
+  const profile = lookupDeviceProfile(env.OPPI_SIM_DEVICE_PROFILE ?? "");
+  const count = parsePositiveInt(env.OPPI_SIM_POOL_COUNT ?? String(profile?.count ?? 6), "OPPI_SIM_POOL_COUNT", 1);
   const slotStart = parsePositiveInt(
-    env.OPPI_SIM_POOL_SLOT_START ?? env.OPPI_SIM_POOL_SLOT_OFFSET ?? "0",
+    env.OPPI_SIM_POOL_SLOT_START ?? env.OPPI_SIM_POOL_SLOT_OFFSET ?? String(profile?.slotStart ?? 0),
     "OPPI_SIM_POOL_SLOT_START",
     0,
   );
   return {
     count,
     slotStart,
-    deviceType: env.OPPI_SIM_DEVICE_TYPE ?? "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro",
-    runtime: env.OPPI_SIM_RUNTIME ?? "",
+    deviceType:
+      env.OPPI_SIM_DEVICE_TYPE ?? profile?.deviceType ?? "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro",
+    runtime: env.OPPI_SIM_RUNTIME ?? profile?.runtime ?? "",
     runtimePolicy: normalizeRuntimePolicy(env.OPPI_SIM_RUNTIME_POLICY ?? ""),
     waitSeconds: parsePositiveInt(env.OPPI_SIM_POOL_WAIT ?? "60", "OPPI_SIM_POOL_WAIT", 0),
     bootTimeout: parsePositiveInt(env.OPPI_SIM_POOL_BOOT_TIMEOUT ?? "120", "OPPI_SIM_POOL_BOOT_TIMEOUT", 1),
@@ -2004,7 +2048,7 @@ export function commandStatus(config: PoolConfig): number {
 
 export function usage(): never {
   process.stderr.write(`Usage:
-  sim-pool.sh run [--root <checkout>] -- <xcodebuild args...>
+  sim-pool.sh run [--root <checkout>] [--device-profile duo] -- <xcodebuild args...>
   sim-pool.sh self-test
   sim-pool.sh status
   sim-pool.sh shutdown-idle
@@ -2013,6 +2057,13 @@ export function usage(): never {
 --root PATH is the Oppi checkout or worktree to test (also clients/apple).
 It overrides OPPI_ROOT. run always executes xcodebuild in that checkout's
 clients/apple, even if the script was launched from another tree.
+
+--device-profile NAME (or OPPI_SIM_DEVICE_PROFILE) selects a named lane:
+  duo  iPhone Duo on iOS 27.1, dedicated slot 10 (count 1). Explicit
+       OPPI_SIM_DEVICE_TYPE, OPPI_SIM_RUNTIME, OPPI_SIM_POOL_SLOT_START, and
+       OPPI_SIM_POOL_COUNT override the profile.
+Every command builds with DEVELOPER_DIR, defaulting to the Xcode in
+xcode-toolchain.txt (Xcode 27.1); an explicit DEVELOPER_DIR wins.
 
 run acquires a simulator pool slot, injects -destination and -derivedDataPath,
 runs xcodebuild, and releases the slot on exit. An already-booted pool

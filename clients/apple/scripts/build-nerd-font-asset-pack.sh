@@ -22,6 +22,9 @@ LICENSE_SHA256="1f6ad4edae6479aaace3112ede5279a23284ae54b2a34db66357aef5f64df160
 BASE_URL="https://raw.githubusercontent.com/ryanoasis/nerd-fonts/$NERD_FONTS_RELEASE"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=xcode-toolchain.sh
+source "$SCRIPT_DIR/xcode-toolchain.sh"
+oppi_use_xcode_toolchain
 APPLE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MANIFEST="$APPLE_ROOT/AssetPacks/NerdFontSymbols/Manifest.json"
 STAGE="$APPLE_ROOT/.build/asset-packs/NerdFontSymbols"

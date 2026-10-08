@@ -7,6 +7,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=xcode-toolchain.sh
+source "$SCRIPT_DIR/xcode-toolchain.sh"
+oppi_use_xcode_toolchain
 APPLE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$APPLE_DIR/../.." && pwd)"
 SIM_POOL="${OPPI_SIM_POOL:-$REPO_ROOT/clients/apple/scripts/sim-pool.sh}"

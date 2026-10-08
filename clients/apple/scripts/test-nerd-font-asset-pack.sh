@@ -14,6 +14,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=xcode-toolchain.sh
+source "$SCRIPT_DIR/xcode-toolchain.sh"
+oppi_use_xcode_toolchain
 APPLE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PACK="$APPLE_ROOT/build/asset-packs/NerdFontSymbols.aar"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/oppi-asset-pack.XXXXXX")"

@@ -118,6 +118,20 @@ cd clients/apple
   xcodebuild -project Oppi.xcodeproj -scheme Oppi build
 ```
 
+#### Xcode toolchain
+
+Every Oppi dev build lane builds with Xcode 27.1 (iOS 27.1 SDK, `/Applications/Xcode-27.1.app`) through `DEVELOPER_DIR`, never `xcode-select`. The default lives in `clients/apple/scripts/xcode-toolchain.txt` and is applied by `scripts/xcode-toolchain.sh` (shell lanes) and `scripts/xcode-toolchain.ts` (`sim-pool.sh`): an explicit `DEVELOPER_DIR` wins, otherwise the pinned app is used, and a missing app fails with a message instead of falling back to another Xcode. This covers `sim-pool.sh`, `ci-simulator.sh` (a runner image that keeps Xcode elsewhere exports `DEVELOPER_DIR`), `check-coverage.sh`, `ipad-shell-diagnostic.sh`, the TailscaleKit/GhosttyVt/asset-pack builders, and the oppi-dev skill's `install.sh`, `sim-lab.sh`, `ui-validate.sh`, and coverage script. Release lanes (`release-mac.sh`, TestFlight, Xcode Cloud) are not moved yet. A bare `xcodebuild` in your shell still uses whatever `DEVELOPER_DIR` you have; export `DEVELOPER_DIR=/Applications/Xcode-27.1.app/Contents/Developer` first. `plutil -p <Oppi.app>/Info.plist` should show `DTSDKName` `iphonesimulator27.1` (simulator) or `iphoneos27.1` (device).
+
+#### iPhone Duo lane
+
+`sim-pool.sh run --device-profile duo -- xcodebuild ...` (or `OPPI_SIM_DEVICE_PROFILE=duo`) leases a dedicated iPhone Duo simulator (`com.apple.CoreSimulator.SimDeviceType.iPhone-Duo`) on the iOS 27.1 runtime (`com.apple.CoreSimulator.SimRuntime.iOS-27-1`). The profile uses slot 10 with a pool of one, so it never touches the iPhone slots 0-5 or the iPad lane (slots 8-9); concurrent Duo runs queue on that slot's lock. The pool creates `Oppi-Pool-10` on first use and recreates it if its device type or runtime ever differs. Explicit `OPPI_SIM_DEVICE_TYPE`, `OPPI_SIM_RUNTIME`, `OPPI_SIM_POOL_SLOT_START`, and `OPPI_SIM_POOL_COUNT` override the profile. The Duo has two displays: capture the outer one with `xcrun simctl io <udid> screenshot --display=1 <path>` and the inner one with `--display=3`.
+
+```bash
+cd clients/apple
+./scripts/sim-pool.sh run --device-profile duo -- \
+  xcodebuild -project Oppi.xcodeproj -scheme Oppi build
+```
+
 Public fallback when the local pool wrapper is unavailable: use a unique `-derivedDataPath`.
 
 ```bash

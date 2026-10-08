@@ -75,7 +75,7 @@ options:
   deploymentTarget:
     iOS: "26.0"
     macOS: "15.0"
-  xcodeVersion: "26.2"
+  xcodeVersion: "27.1"
   generateEmptyDirectories: true
   defaultLocalization: en
 configFiles:

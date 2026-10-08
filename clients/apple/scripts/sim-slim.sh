@@ -113,6 +113,9 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     fi
     udid="${2:-}"
     [[ -n "$udid" ]] || die "usage: sim-slim.sh apply <udid>"
+    # shellcheck source=xcode-toolchain.sh
+    source "$_SIM_SLIM_DIR/xcode-toolchain.sh"
+    oppi_use_xcode_toolchain
     slim_simulator "$udid"
     exit 0
   fi

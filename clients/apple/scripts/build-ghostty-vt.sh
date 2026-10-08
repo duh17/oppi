@@ -45,6 +45,9 @@ if current "$CACHE"; then
 fi
 command -v zig >/dev/null || { echo 'error: install Zig 0.16.0 to build GhosttyVt' >&2; exit 1; }
 [[ "$(zig version)" == '0.16.0' ]] || { echo 'error: GhosttyVt requires exactly Zig 0.16.0' >&2; exit 1; }
+# shellcheck source=xcode-toolchain.sh
+source "$ROOT/scripts/xcode-toolchain.sh"
+oppi_use_xcode_toolchain
 command -v xcodebuild >/dev/null || { echo 'error: Xcode is required to build GhosttyVt' >&2; exit 1; }
 mkdir -p "$WORK"
 if [[ ! -d "$WORK/source/.git" ]]; then

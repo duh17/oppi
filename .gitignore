@@ -58,6 +58,10 @@ clients/apple/scripts/*
 !clients/apple/scripts/sim-pool-prune.test.ts
 !clients/apple/scripts/sim-pool-shutdown.test.ts
 !clients/apple/scripts/sim-pool-types.d.ts
+!clients/apple/scripts/xcode-toolchain.sh
+!clients/apple/scripts/xcode-toolchain.ts
+!clients/apple/scripts/xcode-toolchain.test.ts
+!clients/apple/scripts/xcode-toolchain.txt
 !clients/apple/scripts/tsconfig.json
 !clients/apple/scripts/sim-slim.sh
 !clients/apple/scripts/sim-slim.test.ts

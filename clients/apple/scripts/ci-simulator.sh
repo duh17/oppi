@@ -872,6 +872,11 @@ for argument in "$@"; do
   esac
 done
 
+# The runner image may keep Xcode elsewhere; export DEVELOPER_DIR to override the default.
+# shellcheck source=xcode-toolchain.sh
+source "$SCRIPT_DIR/xcode-toolchain.sh"
+oppi_use_xcode_toolchain
+
 RUNTIME="${OPPI_CI_SIM_RUNTIME:-$(runtime_for_active_xcode)}"
 DEVICES_JSON="$(mktemp -t oppi-ci-simulators.XXXXXX.json)"
 trap 'rm -f "$DEVICES_JSON"; cleanup' EXIT

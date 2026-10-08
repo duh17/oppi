@@ -8,7 +8,7 @@ import {
   ensureOppiTestsInfoPlist,
   extractBuildTimingSummary,
   extractCompilerLinkerErrors,
-  extractRootFlag,
+  extractPoolFlags,
   loadConfig,
   normalizeCommandArgs,
   normalizeOppiRoot,
@@ -349,18 +349,59 @@ describe("sim-pool checkout targeting", () => {
     return root;
   }
 
-  test("extractRootFlag peels --root before --", () => {
-    expect(extractRootFlag(["run", "--root", "/wt", "--", "xcodebuild", "build"])).toEqual({
+  test("extractPoolFlags peels --root and --device-profile before --", () => {
+    expect(extractPoolFlags(["run", "--root", "/wt", "--", "xcodebuild", "build"])).toEqual({
       root: "/wt",
       rest: ["run", "--", "xcodebuild", "build"],
     });
-    expect(extractRootFlag(["--root=/wt", "run", "--", "xcodebuild"])).toEqual({
+    expect(extractPoolFlags(["--root=/wt", "run", "--", "xcodebuild"])).toEqual({
       root: "/wt",
       rest: ["run", "--", "xcodebuild"],
     });
-    expect(extractRootFlag(["run", "--", "xcodebuild", "--root", "not-ours"])).toEqual({
-      rest: ["run", "--", "xcodebuild", "--root", "not-ours"],
+    expect(extractPoolFlags(["run", "--device-profile", "duo", "--", "xcodebuild"])).toEqual({
+      profile: "duo",
+      rest: ["run", "--", "xcodebuild"],
     });
+    expect(extractPoolFlags(["run", "--device-profile=duo", "--root", "/wt", "--", "xcodebuild"])).toEqual({
+      root: "/wt",
+      profile: "duo",
+      rest: ["run", "--", "xcodebuild"],
+    });
+    expect(extractPoolFlags(["run", "--", "xcodebuild", "--root", "not-ours", "--device-profile", "duo"])).toEqual({
+      rest: ["run", "--", "xcodebuild", "--root", "not-ours", "--device-profile", "duo"],
+    });
+    expect(() => extractPoolFlags(["run", "--device-profile"])).toThrow("--device-profile requires a value");
+  });
+
+  test("duo device profile selects the iPhone Duo lane and yields to explicit env", () => {
+    const duo = loadConfig({ OPPI_SIM_DEVICE_PROFILE: "duo" }, process.cwd(), scriptDir);
+    expect(duo.deviceType).toBe("com.apple.CoreSimulator.SimDeviceType.iPhone-Duo");
+    expect(duo.runtime).toBe("com.apple.CoreSimulator.SimRuntime.iOS-27-1");
+    expect([duo.slotStart, duo.count]).toEqual([10, 1]);
+
+    const overridden = loadConfig(
+      {
+        OPPI_SIM_DEVICE_PROFILE: "duo",
+        OPPI_SIM_POOL_SLOT_START: "20",
+        OPPI_SIM_POOL_COUNT: "2",
+        OPPI_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-27-2",
+      },
+      process.cwd(),
+      scriptDir,
+    );
+    expect([overridden.slotStart, overridden.count, overridden.runtime]).toEqual([
+      20,
+      2,
+      "com.apple.CoreSimulator.SimRuntime.iOS-27-2",
+    ]);
+
+    const plain = loadConfig({}, process.cwd(), scriptDir);
+    expect(plain.deviceType).toBe("com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro");
+    expect([plain.slotStart, plain.count]).toEqual([0, 6]);
+
+    expect(() => loadConfig({ OPPI_SIM_DEVICE_PROFILE: "trio" }, process.cwd(), scriptDir)).toThrow(
+      "unknown device profile 'trio'",
+    );
   });
 
   test("normalizeOppiRoot accepts repo root or clients/apple", () => {
