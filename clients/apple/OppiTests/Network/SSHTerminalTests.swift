@@ -737,7 +737,7 @@ struct SSHTerminalTests {
         // pi: a value replaces the defaults, [] unbinds, a broken file is ignored like pi does.
         let pi = #"{"app.interrupt": "ctrl+g", "app.model.select": ["ctrl+k", "ctrl+l"], "app.tools.expand": []}"#
         #expect(try strip("pi", pi) == ["Stop ^G", "Thinking \u{21E7}Tab", "Model ^K"])
-        #expect(try strip("pi", "{ not json") == try strip("pi", nil))
+        #expect(try strip("pi", "{ not json") == (try strip("pi", nil)))
 
         // Claude Code: keys add to defaults; a default key unbound (any alias
         // or case) or taken by another action drops out; other contexts don't apply.

@@ -80,7 +80,7 @@ struct SessionToolOutputAccessTests {
     }
 
     @Test("No capability without a current client or route scope, and no readiness wait")
-    func absentClientOrScopeYieldsNoCapability() {
+    func absentClientOrScopeYieldsNoCapability() throws {
         let clientPolls = PollCounter()
         let noClient = makeContent(client: nil, polls: clientPolls)
         #expect(noClient.toolOutputAccess(sessionId: "s1", routeScope: .workspace("w1")) == nil)
