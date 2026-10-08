@@ -866,6 +866,14 @@ struct WorkspaceDetailView: View {
                     compactQuickSessionBar(joinsRail: true)
                 }
             }
+            if workspaceLockBadge == .unlocked {
+                prioritizedRailToolbarItem(joinsVerticalRail: true, priority: .keep) {
+                    Label("Unlocked", systemImage: "lock.open.fill")
+                        .foregroundStyle(.themeFg)
+                        .accessibilityLabel("Unlocked")
+                        .accessibilityIdentifier("lockBadge.unlocked")
+                }
+            }
             prioritizedRailToolbarItem(joinsVerticalRail: true, priority: .keep) {
                 worktreeRailButton
             }

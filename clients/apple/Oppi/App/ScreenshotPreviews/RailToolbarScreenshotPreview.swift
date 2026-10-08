@@ -144,6 +144,7 @@ private struct RailSessionListScreenshotPreview: View {
     @State private var coordinator: ConnectionCoordinator
     @State private var navigation = AppNavigation()
     @State private var path = NavigationPath()
+    @State private var themeStore = ThemeStore()
 
     init(surface: Surface) {
         self.surface = surface
@@ -161,7 +162,9 @@ private struct RailSessionListScreenshotPreview: View {
             .environment(coordinator.serverStore)
             .withServerScopedEnvironment(coordinator.activeConnection)
             .environment(navigation)
-            .environment(ThemeStore())
+            .environment(themeStore)
+            .environment(\.theme, themeStore.appTheme)
+            .preferredColorScheme(themeStore.preferredColorScheme)
     }
 
     @ViewBuilder

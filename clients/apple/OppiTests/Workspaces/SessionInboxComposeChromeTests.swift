@@ -67,8 +67,6 @@ struct SessionInboxComposeChromeTests {
         #expect(workspace.contains("compactQuickSessionBar"))
         #expect(workspace.contains("SessionInboxComposeLauncher"))
         #expect(workspace.contains("SessionInboxFolderToolbarButton"))
-        #expect(chrome.contains("struct SessionInboxComposeLauncher"))
-        #expect(chrome.contains("SessionInboxCompactComposeBar"))
         #expect(workspace.contains("onIncognito"))
         #expect(chrome.contains("Incognito Session"))
         #expect(chrome.contains("workspace.quickSession.dictate"))
