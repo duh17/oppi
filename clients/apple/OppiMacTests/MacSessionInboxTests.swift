@@ -809,18 +809,6 @@ struct MacSessionRowIdentityTests {
         session.launch = SessionLaunchMetadata(agentId: "agent-1", agentIcon: .symbol("checkmark.shield"))
         #expect(MacSessionRowIdentityPaint.make(session: session) == .symbol("checkmark.shield"))
     }
-
-    @Test func unreadCompletionAtPaintsLeadingDotLikeIOS() {
-        let session = makeSession(id: "ready", status: .ready)
-        let unread = SessionRowPresentationBuilder.make(
-            session: session,
-            unreadCompletionAt: Date(timeIntervalSince1970: 7)
-        )
-        let read = SessionRowPresentationBuilder.make(session: session)
-
-        #expect(MacSessionInboxRowPaint.showsUnreadDot(for: unread))
-        #expect(!MacSessionInboxRowPaint.showsUnreadDot(for: read))
-    }
 }
 
 private func makeSession(

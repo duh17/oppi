@@ -58,9 +58,10 @@ struct MacSessionToolbarPresentation: Equatable, Sendable {
         let matchingSummary = selectedTarget?.sessionId == session.id
             ? selectedTarget?.summary
             : nil
-        let statusTitle = SessionRowStatusKind.from(
+        let statusTitle = SessionStatusKind.resolve(
             session: session,
-            pendingAskCount: matchingSummary?.pendingAskCount ?? 0
+            pendingAskCount: matchingSummary?.pendingAskCount ?? 0,
+            seenAt: nil
         ).label
         let fallbackWorkspace = selectedTarget?.workspaceId
             .trimmingCharacters(in: .whitespacesAndNewlines)

@@ -22,7 +22,7 @@ struct WorkspaceSessionSummaryRow: View {
         }
     }
 
-    private var pillVariant: SessionRowStatusKind { presentation.statusKind }
+    private var pillVariant: SessionStatusKind { presentation.statusKind }
 
     private var currentTurnStartedAt: Date? {
         switch session.status {
@@ -34,7 +34,7 @@ struct WorkspaceSessionSummaryRow: View {
     }
 
     private var doneReferenceAt: Date {
-        presentation.unreadCompletionAt ?? session.lastAgentReplyAt ?? session.lastActivity
+        session.lastAgentReplyAt ?? session.lastActivity
     }
 
     private var secondaryMetadata: String {
@@ -49,16 +49,6 @@ struct WorkspaceSessionSummaryRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 titleBand
                 contextBand
-            }
-        }
-        .overlay(alignment: .topLeading) {
-            if MacSessionInboxRowPaint.showsUnreadDot(for: presentation) {
-                Circle()
-                    .fill(.themeBlue)
-                    .frame(width: 6, height: 6)
-                    .padding(.top, 7)
-                    .padding(.leading, 1)
-                    .accessibilityHidden(true)
             }
         }
         .id(themeID)
@@ -157,7 +147,7 @@ struct WorkspaceSessionSummaryRow: View {
     private var statusForeground: Color {
         switch pillVariant {
         case .idle, .done: .themeGreen
-        case .question, .working: .themeBlue
+        case .needsApproval, .question, .signIn, .working: .themeBlue
         case .stopped: .themeComment
         case .error: .themeRed
         }

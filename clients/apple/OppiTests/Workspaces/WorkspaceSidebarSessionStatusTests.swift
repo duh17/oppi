@@ -85,7 +85,7 @@ struct WorkspaceSidebarSessionStatusTests {
             makeTestSession(id: "error", status: .error, messageCount: 1, firstMessage: "Failed"),
         ])
 
-        #expect(status.questionCount == 0)
+        #expect(status.blockedCount == 0)
         #expect(status.errorCount == 1)
         #expect(status.attentionCount == 1)
         #expect(status.workingCount == 2)
@@ -109,13 +109,42 @@ struct WorkspaceSidebarSessionStatusTests {
             pendingAskCountForSession: { $0 == "question" ? 1 : 0 }
         )
 
-        #expect(status.questionCount == 1)
+        #expect(status.blockedCount == 1)
         #expect(status.errorCount == 0)
         #expect(status.attentionCount == 1)
         #expect(status.doneCount == 0)
         #expect(status.showsDone == false)
         #expect(status.isVisible)
         #expect(status.accessibilityValue == "1 session needs attention")
+    }
+
+    @Test func blockedKindsCountAsAttentionAndSeenOutcomesDropOut() {
+        let since = Date(timeIntervalSince1970: 1_000)
+        func session(_ id: String, _ state: ProgramStatusState, kind: ProgramStatusKind? = nil) -> Session {
+            makeTestSession(
+                id: id,
+                status: .ready,
+                programStatus: ProgramStatus(state: state, kind: kind, since: since),
+                messageCount: 1,
+                firstMessage: "go"
+            )
+        }
+        let sessions = [
+            session("approval", .blocked, kind: .permission),
+            session("signin", .blocked, kind: .auth),
+            session("unseen-done", .done),
+            session("seen-done", .done),
+            session("seen-error", .error),
+        ]
+
+        let status = WorkspaceSidebarSessionStatus(
+            sessions: sessions,
+            seenAtForSession: { $0.hasPrefix("seen") ? since : nil }
+        )
+
+        #expect(status.blockedCount == 2)
+        #expect(status.errorCount == 0)
+        #expect(status.doneCount == 1)
     }
 
     @Test func showsDoneWhenNoSessionNeedsAttention() {

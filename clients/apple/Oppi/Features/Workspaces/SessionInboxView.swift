@@ -469,8 +469,9 @@ struct SessionInboxView: View {
             now: Date(),
             calendar: Calendar.current,
             session: \.representative,
-            attention: { $0.attention(attentionCounts(for:)) },
+            attention: { attentionCounts(for: $0.session) },
             sectionKind: { $0.sectionKind(attention: attentionCounts(for:)) },
+            isBlocked: { $0.isBlocked(attention: attentionCounts(for:)) },
             stoppedDayLimit: scope.stoppedDayLimit
         )
         return SessionInboxViewData(
@@ -1060,7 +1061,7 @@ struct SessionInboxView: View {
                 }
                 return rowPresentation(for: item)
             },
-            hasPendingAsk: { pendingAskCount(for: $0.id) > 0 },
+            status: { sessionStatus($0) },
             // Every All Sessions row already names its workspace.
             foreignWorkspaceName: { _ in nil },
             actions: rowActions(itemsById: itemsById)
@@ -1186,6 +1187,15 @@ struct SessionInboxView: View {
         )
     }
 
+    /// Status of a session for this device, for thread members and rows alike.
+    private func sessionStatus(_ session: Session) -> SessionStatusKind {
+        SessionStatusKind.resolve(
+            session: session,
+            pendingAskCount: pendingAskCount(for: session.id),
+            seenAt: activeConnection?.sessionStore.seenAt(for: session.id)
+        )
+    }
+
     private func rowPresentation(for item: SessionInboxItem) -> SessionRowPresentation {
         let attention = attentionCounts(for: item.session)
         return SessionRowPresentationBuilder.make(
@@ -1196,7 +1206,7 @@ struct SessionInboxView: View {
                 for: item.session,
                 workspaceName: item.workspace?.name
             ),
-            unreadCompletionAt: item.connection.sessionStore.unreadCompletionDate(for: item.session.id),
+            seenAt: item.connection.sessionStore.seenAt(for: item.session.id),
             searchSnippet: searchStore.snippetsBySessionId[item.session.id],
             catalogModels: item.connection.chatState.cachedModels
         )
@@ -2008,7 +2018,8 @@ struct WorkspaceSidebarView: View {
                     hasPendingAsk: connection.askRequestStore.hasPending(for: sessionId),
                     hasPendingExtensionDialog: connection.hasPendingExtensionDialog(for: sessionId)
                 )
-            }
+            },
+            seenAtForSession: { connection.sessionStore.seenAt(for: $0) }
         )
     }
 
@@ -2060,39 +2071,45 @@ struct WorkspaceSidebarView: View {
 
 /// Compact workspace aggregate using the same attention and status semantics as session rows.
 struct WorkspaceSidebarSessionStatus: Equatable {
-    let questionCount: Int
+    /// Sessions waiting on the person, whatever they wait for.
+    let blockedCount: Int
     let errorCount: Int
     let workingCount: Int
     let doneCount: Int
 
     init(
-        questionCount: Int = 0,
+        blockedCount: Int = 0,
         errorCount: Int = 0,
         workingCount: Int = 0,
         doneCount: Int = 0
     ) {
-        self.questionCount = questionCount
+        self.blockedCount = blockedCount
         self.errorCount = errorCount
         self.workingCount = workingCount
         self.doneCount = doneCount
     }
 
+    /// Counts the sessions' statuses. Error and done are the unseen ones: once this device
+    /// has seen an outcome the session is Idle and no longer counts.
     init(
         sessions: [Session],
-        pendingAskCountForSession: (String) -> Int = { _ in 0 }
+        pendingAskCountForSession: (String) -> Int = { _ in 0 },
+        seenAtForSession: (String) -> Date? = { _ in nil }
     ) {
-        var questionCount = 0
+        var blockedCount = 0
         var errorCount = 0
         var workingCount = 0
         var doneCount = 0
 
         for session in sessions {
-            switch SessionPillVariant.from(
+            let status = SessionStatusKind.resolve(
                 session: session,
-                pendingAskCount: pendingAskCountForSession(session.id)
-            ) {
-            case .question:
-                questionCount += 1
+                pendingAskCount: pendingAskCountForSession(session.id),
+                seenAt: seenAtForSession(session.id)
+            )
+            switch status {
+            case .needsApproval, .question, .signIn:
+                blockedCount += 1
             case .error:
                 errorCount += 1
             case .working:
@@ -2104,14 +2121,14 @@ struct WorkspaceSidebarSessionStatus: Equatable {
             }
         }
 
-        self.questionCount = questionCount
+        self.blockedCount = blockedCount
         self.errorCount = errorCount
         self.workingCount = workingCount
         self.doneCount = doneCount
     }
 
     var attentionCount: Int {
-        questionCount + errorCount
+        blockedCount + errorCount
     }
 
     var isVisible: Bool {
@@ -2126,7 +2143,7 @@ struct WorkspaceSidebarSessionStatus: Equatable {
     var accessibilityValue: String {
         [
             sessionAttentionLabel(errorCount, state: "has an error", pluralState: "have errors"),
-            sessionAttentionLabel(questionCount, state: "needs attention", pluralState: "need attention"),
+            sessionAttentionLabel(blockedCount, state: "needs attention", pluralState: "need attention"),
             sessionCountLabel(workingCount, state: "working"),
             sessionCountLabel(doneCount, state: "done"),
         ]

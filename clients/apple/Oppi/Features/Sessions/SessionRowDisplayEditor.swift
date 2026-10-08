@@ -8,7 +8,12 @@ import SwiftUI
 struct SessionRowPreviewSubject {
     struct Thread {
         let rollup: SessionThreadRollup
-        let attentionMember: Session?
+        /// Status of each member, fixed when the subject is built.
+        let statuses: [String: SessionStatusKind]
+
+        func status(_ session: Session) -> SessionStatusKind {
+            statuses[session.id] ?? SessionThreadStatus.withoutSeenState(session)
+        }
     }
 
     let presentation: SessionRowPresentation
@@ -27,7 +32,8 @@ struct SessionRowPreviewSubject {
             cost: Double,
             model: String = "anthropic/claude-sonnet-5",
             changeStats: SessionChangeStats? = nil,
-            contextTokens: Int? = nil
+            contextTokens: Int? = nil,
+            programStatus: ProgramStatus? = nil
         ) -> Session {
             Session(
                 id: "sample.\(id)",
@@ -37,6 +43,7 @@ struct SessionRowPreviewSubject {
                 createdAt: now.addingTimeInterval(-startedAgo),
                 lastActivity: now.addingTimeInterval(-activeAgo),
                 currentTurnStartedAt: status == .busy ? now.addingTimeInterval(-95) : nil,
+                programStatus: programStatus,
                 model: model,
                 messageCount: 24,
                 tokens: TokenUsage(input: 0, output: 0),
@@ -55,27 +62,35 @@ struct SessionRowPreviewSubject {
                 mutatingToolCalls: 31, compactionCount: 2, filesChanged: 7,
                 changedFiles: [], changedFilesOverflow: nil, addedLines: 210, removedLines: 64
             ),
-            contextTokens: 96_000
+            contextTokens: 96_000,
+            programStatus: ProgramStatus(state: .done, since: now.addingTimeInterval(-180))
         )
         let working = session(
             "tests", "Write migration tests", status: .busy, parent: "root",
-            startedAgo: 1_800, activeAgo: 20, cost: 0.84
+            startedAgo: 1_800, activeAgo: 20, cost: 0.84,
+            programStatus: ProgramStatus(state: .working, since: now.addingTimeInterval(-95))
         )
         let question = session(
             "review", "Review API diff", status: .ready, parent: "root",
-            startedAgo: 1_500, activeAgo: 240, cost: 0.51
+            startedAgo: 1_500, activeAgo: 240, cost: 0.51,
+            programStatus: ProgramStatus(state: .blocked, kind: .question, since: now.addingTimeInterval(-240))
         )
         let finished = session(
             "notes", "Draft changelog", status: .stopped, parent: "root",
-            startedAgo: 3_600, activeAgo: 2_400, cost: 0.19
+            startedAgo: 3_600, activeAgo: 2_400, cost: 0.19,
+            programStatus: ProgramStatus(state: .done, since: now.addingTimeInterval(-2_400))
         )
         let rollup = SessionThreadGrouping.rollups(from: [root, working, question, finished])[0]
+        // Nothing in a sample has been seen, so the root's result reads Done.
+        let statuses = Dictionary(uniqueKeysWithValues: rollup.members.map {
+            ($0.id, SessionStatusKind.resolve(session: $0, seenAt: nil))
+        })
         return Self(
             presentation: SessionRowPresentationBuilder.make(
                 session: root,
                 workspaceContext: root.workspaceName
             ),
-            thread: Thread(rollup: rollup, attentionMember: question)
+            thread: Thread(rollup: rollup, statuses: statuses)
         )
     }
 
@@ -105,14 +120,19 @@ struct SessionRowPreviewSubject {
             pendingAskCount: askCount(root.id),
             pendingAsk: connection.askRequestStore.pending(for: root.id),
             workspaceContext: SessionInboxSessionRouting.allSessionsContext(for: root, workspaceName: workspaceName),
-            unreadCompletionAt: store.unreadCompletionDate(for: root.id),
+            seenAt: store.seenAt(for: root.id),
             catalogModels: connection.chatState.cachedModels
         )
+        let statuses = Dictionary(uniqueKeysWithValues: rollup.members.map {
+            ($0.id, SessionStatusKind.resolve(
+                session: $0,
+                pendingAskCount: askCount($0.id),
+                seenAt: store.seenAt(for: $0.id)
+            ))
+        })
         return Self(
             presentation: presentation,
-            thread: rollup.descendants.isEmpty
-                ? nil
-                : Thread(rollup: rollup, attentionMember: rollup.descendants.first { askCount($0.id) > 0 })
+            thread: rollup.descendants.isEmpty ? nil : Thread(rollup: rollup, statuses: statuses)
         )
     }
 }
@@ -181,7 +201,7 @@ struct SessionRowDisplayEditor: View {
             VStack(alignment: .leading, spacing: 6) {
                 SessionRow(presentation: subject.presentation)
                 if navigation.sessionThreadsEnabled, let thread = subject.thread {
-                    SessionThreadStrip(rollup: thread.rollup, attentionMember: thread.attentionMember)
+                    SessionThreadStrip(rollup: thread.rollup, status: thread.status)
                         .padding(.leading, SessionThreadStrip.rowInset)
                 }
             }

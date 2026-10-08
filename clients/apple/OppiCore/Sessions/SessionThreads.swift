@@ -11,10 +11,16 @@ struct SessionThreadRollup: Sendable, Equatable {
     var descendants: ArraySlice<Session> { members.dropFirst() }
     var latestActivity: Date { members.lazy.map(\.lastActivity).max() ?? root.lastActivity }
     var totalCost: Double { members.reduce(0) { $0 + $1.cost } }
-    var workingMemberCount: Int { members.count(where: SessionThreadGrouping.isWorking) }
-    var finishedMemberCount: Int { members.count { $0.status == .stopped } }
     /// Distinct workspaces the loaded members run in; above 1 marks a cross-workspace thread.
     var workspaceCount: Int { Set(members.compactMap(\.workspaceId)).count }
+}
+
+enum SessionThreadStatus {
+    /// Status of a session when the caller has no per-device seen state: every done or
+    /// error outcome counts as unseen.
+    static func withoutSeenState(_ session: Session) -> SessionStatusKind {
+        SessionStatusKind.resolve(session: session, seenAt: nil)
+    }
 }
 
 enum SessionThreadGrouping {
@@ -68,7 +74,7 @@ enum SessionThreadGrouping {
         }
     }
 
-    /// Thread section: attention anywhere > any member working > any member
+    /// Thread section: a blocked member anywhere > any member working > any member
     /// idle > stopped. A root that is idle or stopped while a child works still
     /// lists the thread as Working, so detached hand-offs stay visible.
     static func sectionKind(
@@ -80,12 +86,24 @@ enum SessionThreadGrouping {
         for member in rollup.members {
             let memberAttention = attention(member)
             let kind = SessionListPresentation.activeSectionKind(for: member, attention: memberAttention)
-            if kind != nil, memberAttention.hasAttention { return .yourTurn }
+            if kind != nil, SessionListPresentation.isBlocked(member, attention: memberAttention) {
+                return .yourTurn
+            }
             sawWorking = sawWorking || kind == .working
             sawYourTurn = sawYourTurn || kind == .yourTurn
         }
         if sawWorking { return .working }
         return sawYourTurn ? .yourTurn : nil
+    }
+
+    /// Whether any live member waits on the person.
+    static func isBlocked(
+        _ rollup: SessionThreadRollup,
+        attention: (Session) -> SessionListAttentionCounts
+    ) -> Bool {
+        rollup.members.contains {
+            $0.status != .stopped && SessionListPresentation.isBlocked($0, attention: attention($0))
+        }
     }
 }
 
@@ -113,10 +131,10 @@ struct SessionListEntry: Sendable, Equatable, Identifiable {
         return representative
     }
 
-    /// Attention that orders the row: a thread asks when any member asks.
-    func attention(_ attention: (Session) -> SessionListAttentionCounts) -> SessionListAttentionCounts {
-        guard let thread else { return attention(session) }
-        return SessionListAttentionCounts(askCount: thread.members.reduce(0) { $0 + attention($1).askCount })
+    /// Whether the row waits on the person: a thread when any live member does.
+    func isBlocked(attention: (Session) -> SessionListAttentionCounts) -> Bool {
+        if let thread { return SessionThreadGrouping.isBlocked(thread, attention: attention) }
+        return session.status != .stopped && SessionListPresentation.isBlocked(session, attention: attention(session))
     }
 
     /// A thread sits where its most urgent member would; a plain row by its own state.
@@ -223,7 +241,7 @@ struct SessionThreadLaneGraph: Sendable, Equatable {
         let isStopped: Bool
         /// Where an idle root starts waiting (dashed from here); nil otherwise.
         let idleFrom: Double?
-        let status: SessionRowStatusKind
+        let status: SessionStatusKind
     }
 
     let laneCount: Int
@@ -235,7 +253,8 @@ struct SessionThreadLaneGraph: Sendable, Equatable {
         members: [Session],
         rootId: String,
         now: Date,
-        maxLanes: Int = 4
+        maxLanes: Int = 4,
+        status: (Session) -> SessionStatusKind = SessionThreadStatus.withoutSeenState
     ) -> SessionThreadLaneGraph {
         guard let root = members.first(where: { $0.id == rootId }) else {
             return SessionThreadLaneGraph(laneCount: 0, hiddenLaneCount: 0, segments: [])
@@ -276,7 +295,7 @@ struct SessionThreadLaneGraph: Sendable, Equatable {
                 isWorking: working,
                 isStopped: stopped,
                 idleFrom: idle ? x(session.lastActivity) : nil,
-                status: SessionRowStatusKind.from(session: session)
+                status: status(session)
             )
         }
         return SessionThreadLaneGraph(
@@ -336,7 +355,7 @@ struct SessionThreadWaterfall: Sendable, Equatable {
         let end: Double
         /// Where an idle root starts waiting; nil otherwise.
         let idleFrom: Double?
-        let status: SessionRowStatusKind
+        let status: SessionStatusKind
 
         var id: String { session.id }
     }
@@ -354,7 +373,11 @@ struct SessionThreadWaterfall: Sendable, Equatable {
     let startDate: Date
     let endDate: Date
 
-    static func build(snapshot: SessionThreadSnapshot, now: Date) -> SessionThreadWaterfall {
+    static func build(
+        snapshot: SessionThreadSnapshot,
+        now: Date,
+        status: (Session) -> SessionStatusKind = SessionThreadStatus.withoutSeenState
+    ) -> SessionThreadWaterfall {
         let byId = Dictionary(snapshot.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         guard let root = byId[snapshot.rootSessionId] else {
             return SessionThreadWaterfall(rows: [], messages: [], startDate: now, endDate: now)
@@ -391,7 +414,7 @@ struct SessionThreadWaterfall: Sendable, Equatable {
                 start: x(session.createdAt),
                 end: stopped ? x(session.lastActivity) : 1,
                 idleFrom: idle ? x(session.lastActivity) : nil,
-                status: SessionRowStatusKind.from(session: session)
+                status: status(session)
             )
         }
         let rowIndex = Dictionary(uniqueKeysWithValues: rows.enumerated().map { ($1.id, $0) })
@@ -503,7 +526,7 @@ struct SessionThreadTimelineRow: Sendable, Equatable, Identifiable {
     /// Lanes drawn dashed: the root waiting idle on its children.
     let idleLanes: Set<Int>
     /// Status of the session drawing each lane on this row; lanes take their session's status color.
-    var laneStatus: [Int: SessionRowStatusKind] = [:]
+    var laneStatus: [Int: SessionStatusKind] = [:]
 }
 
 struct SessionThreadTimeline: Sendable, Equatable {
@@ -520,7 +543,8 @@ struct SessionThreadTimeline: Sendable, Equatable {
         snapshot: SessionThreadSnapshot,
         now: Date,
         filter: SessionThreadTimelineFilter = .all,
-        hidesCost: (Session) -> Bool = { _ in false }
+        hidesCost: (Session) -> Bool = { _ in false },
+        status: (Session) -> SessionStatusKind = SessionThreadStatus.withoutSeenState
     ) -> SessionThreadTimeline {
         let byId = Dictionary(snapshot.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         guard let root = byId[snapshot.rootSessionId] else {
@@ -662,13 +686,13 @@ struct SessionThreadTimeline: Sendable, Equatable {
             return result
         }
 
-        func laneStatus(at index: Int) -> [Int: SessionRowStatusKind] {
-            var result: [Int: SessionRowStatusKind] = [:]
+        func laneStatus(at index: Int) -> [Int: SessionStatusKind] {
+            var result: [Int: SessionStatusKind] = [:]
             for session in snapshot.sessions {
                 guard let start = startIndex[session.id], let lane = laneBySessionId[session.id] else { continue }
                 let end = endIndex[session.id] ?? Int.max
                 if start <= index && index <= end {
-                    result[lane] = SessionRowStatusKind.from(session: session)
+                    result[lane] = status(session)
                 }
             }
             return result

@@ -82,6 +82,12 @@ struct AttentionNotificationServiceTests {
         )
         #expect(
             AttentionNotificationService.navigationSessionId(
+                categoryIdentifier: AttentionNotificationService.sessionBlockedCategoryId,
+                userInfo: ["sessionId": "blocked-session", "event": "blocked", "kind": "permission"]
+            ) == "blocked-session"
+        )
+        #expect(
+            AttentionNotificationService.navigationSessionId(
                 categoryIdentifier: AttentionNotificationService.askCategoryId,
                 userInfo: ["sessionId": "  "]
             ) == nil

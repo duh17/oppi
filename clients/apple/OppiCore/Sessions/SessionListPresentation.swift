@@ -66,39 +66,35 @@ struct SessionListRefreshPollingPolicy: Equatable {
 }
 
 enum SessionListPresentation {
+    /// Working = working. Your Turn = blocked, done, error, and idle. A stopped session is in neither.
+    /// Whether a done or error outcome is seen does not move a row, so no seen state is needed.
     static func activeSectionKind(
         for session: Session,
         attention: SessionListAttentionCounts = .none
     ) -> SessionListActiveSectionKind? {
         if session.status == .stopped { return nil }
-        if attention.hasAttention { return .yourTurn }
-        if session.isAwaitingFirstPrompt { return .yourTurn }
-
-        switch session.status {
-        case .ready, .error:
-            return .yourTurn
-        case .busy, .starting:
-            return .working
-        case .stopping:
-            // Terminate broadcasts `stopping` for idle/ready sessions too.
-            // Keep those in Your Turn so the row does not fly through Working.
-            return session.currentTurnStartedAt == nil ? .yourTurn : .working
-        case .stopped:
-            return nil
+        switch SessionStatusKind.resolve(session: session, pendingAskCount: attention.askCount, seenAt: nil) {
+        case .working: return .working
+        case .stopped: return nil
+        case .needsApproval, .question, .signIn, .error, .done, .idle: return .yourTurn
         }
     }
 
-    /// Your Turn order: questions first, then the oldest visible activity, the
+    /// Whether the session waits on the person (any blocked kind). Server program status
+    /// owns this; `attention` covers a missing program status.
+    static func isBlocked(_ session: Session, attention: SessionListAttentionCounts = .none) -> Bool {
+        SessionStatusKind.resolve(session: session, pendingAskCount: attention.askCount, seenAt: nil).isBlocked
+    }
+
+    /// Your Turn order: blocked first, then the oldest visible activity, the
     /// same timestamp the row shows.
     static func compareYourTurn(
         _ lhs: Session,
-        lhsAttention: SessionListAttentionCounts,
+        lhsBlocked: Bool,
         _ rhs: Session,
-        rhsAttention: SessionListAttentionCounts
+        rhsBlocked: Bool
     ) -> Bool {
-        let lhsAskPending = lhsAttention.askCount > 0
-        let rhsAskPending = rhsAttention.askCount > 0
-        if lhsAskPending != rhsAskPending { return lhsAskPending }
+        if lhsBlocked != rhsBlocked { return lhsBlocked }
 
         if lhs.lastActivity != rhs.lastActivity { return lhs.lastActivity < rhs.lastActivity }
         if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }

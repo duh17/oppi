@@ -123,12 +123,6 @@ extension ServerConnection {
         let previousSession = sessionStore.session(id: normalized.id)
         let previousWorkspaceId = previousSession?.workspaceId
         sessionStore.applySummary(normalized)
-        if previousSession?.status.isRunning == true,
-           normalized.status.isTerminal,
-           let completedAt = normalized.lastAgentReplyAt,
-           completedAt != previousSession?.lastAgentReplyAt {
-            recordUnreadCompletionIfNeeded(sessionId: normalized.id, at: completedAt)
-        }
         if let previousWorkspaceId, previousWorkspaceId != normalized.workspaceId {
             syncWorkspaceSummary(workspaceId: previousWorkspaceId)
         }

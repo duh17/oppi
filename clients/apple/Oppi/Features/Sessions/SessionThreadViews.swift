@@ -2,38 +2,56 @@ import SwiftUI
 
 // MARK: - Inbox thread strip
 
+/// A thread member that waits on the person, with what it waits for.
+struct SessionThreadBlockedMember: Equatable {
+    let session: Session
+    let status: SessionStatusKind
+}
+
 /// Thread control under a thread root row: who is working, optional lane
 /// graph and Agent summary, and totals. The caller makes it the tap target
 /// that opens Thread detail; the root row above it opens the root chat.
 ///
 /// Agent summary and totals count every member, root included, so they agree
-/// with the lane graph. The working line names only children: the root row
-/// above already shows its own status.
+/// with the lane graph. The status counts and the working line cover the
+/// children only: the root row above already shows its own status.
 ///
 /// Display choices only hide the lane graph, the Agent summary, and the cost
-/// total. The chevron, a child's question, who is working, and the
-/// working/done counts always stay.
+/// total. The chevron, a blocked child, who is working, and the status
+/// counts always stay.
 struct SessionThreadStrip: View {
     @Environment(\.sessionRowDisplay) private var display
+    @Environment(\.theme) private var theme
 
     /// Leading inset that lines the strip up under the root row's identity icon.
-    static let rowInset: CGFloat = 30
+    static let rowInset: CGFloat = 18
 
     let rollup: SessionThreadRollup
-    /// Member with a pending question, shown so the user knows where to answer.
-    var attentionMember: Session?
+    /// This device's status for each member: its seen state and pending asks applied.
+    let status: (Session) -> SessionStatusKind
     /// Locked root: names and counts only, no lane graph, Agents, or cost.
     var hidesDetails = false
     /// A locked member: its cost stays out of the total.
     var hidesCost = false
 
+    private var statusRollup: SessionStatusRollup { rollup.statusRollup(status: status) }
+
+    /// A blocked child, shown so the user knows where to answer.
+    private var blockedMember: SessionThreadBlockedMember? {
+        rollup.descendants.first { status($0).isBlocked }
+            .map { SessionThreadBlockedMember(session: $0, status: status($0)) }
+    }
+
     var body: some View {
         let working = rollup.descendants.filter(SessionThreadGrouping.isWorking)
         VStack(alignment: .leading, spacing: display.isCompact ? 2 : 4) {
-            if let attentionMember {
-                Label("Question from \(attentionMember.displayTitle)", systemImage: "questionmark.bubble.fill")
+            if let blockedMember {
+                Label(
+                    "\(blockedMember.status.label) · \(blockedMember.session.displayTitle)",
+                    systemImage: blockedMember.status.badgeSymbol
+                )
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.themeOrange)
+                    .foregroundStyle(blockedMember.status.tint(theme))
                     .lineLimit(1)
             } else if !working.isEmpty {
                 Text(working.map(\.displayTitle).joined(separator: " · ") + " working")
@@ -42,7 +60,11 @@ struct SessionThreadStrip: View {
                     .lineLimit(1)
             }
             if display.showsThreadLaneGraph, !hidesDetails {
-                SessionThreadLaneGraphView(members: rollup.members, rootId: rollup.root.id)
+                SessionThreadLaneGraphView(
+                    members: rollup.members,
+                    rootId: rollup.root.id,
+                    status: status
+                )
                     .frame(maxWidth: 260, alignment: .leading)
             }
             HStack(alignment: .center, spacing: 8) {
@@ -70,9 +92,7 @@ struct SessionThreadStrip: View {
 
     private var summary: String {
         var parts: [String] = []
-        let working = rollup.workingMemberCount
-        if working > 0 { parts.append("\(working) working") }
-        parts.append("\(rollup.finishedMemberCount) done")
+        if !statusRollup.summaryText.isEmpty { parts.append(statusRollup.summaryText) }
         // Same rule as a row: unknown or zero cost is absent, never "$0.00".
         if display.showsCost, !hidesDetails, !hidesCost, rollup.totalCost > 0 {
             parts.append(String(format: "$%.2f", rollup.totalCost))
@@ -84,8 +104,9 @@ struct SessionThreadStrip: View {
     }
 
     private var accessibilitySummary: String {
-        let question = attentionMember.map { "Question from \($0.displayTitle). " } ?? ""
-        return question + "Thread with \(rollup.members.count) sessions, \(summary)"
+        let blocked = blockedMember.map { "\($0.status.label) from \($0.session.displayTitle). " } ?? ""
+        let headline = statusRollup.headline.map { "\($0.label). " } ?? ""
+        return blocked + headline + "Thread with \(rollup.members.count) sessions, \(summary)"
     }
 
 }
@@ -98,11 +119,10 @@ struct SessionThreadIdentityBadge: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let session: Session
-    var hasQuestion = false
+    let status: SessionStatusKind
     var size: CGFloat = 22
 
     var body: some View {
-        let status: SessionRowStatusKind = hasQuestion ? .question : SessionRowStatusKind.from(session: session)
         SessionIdentityIconView(sessionId: session.id, agentId: session.launch?.agentId, agentIcon: session.launch?.agentIcon)
             .frame(width: size, height: size)
             .opacity(session.status == .stopped ? 0.6 : 1)
@@ -315,13 +335,14 @@ struct SessionThreadLaneGraphView: View {
 
     let members: [Session]
     let rootId: String
+    let status: (Session) -> SessionStatusKind
     var maxLanes = 4
 
     static let laneSpacing: CGFloat = 6
     static let inset: CGFloat = 4
 
     var body: some View {
-        let graph = SessionThreadLaneGraph.layout(members: members, rootId: rootId, now: Date(), maxLanes: maxLanes)
+        let graph = SessionThreadLaneGraph.layout(members: members, rootId: rootId, now: Date(), maxLanes: maxLanes, status: status)
         let height = CGFloat(max(graph.laneCount, 1) - 1) * Self.laneSpacing + Self.inset * 2
         HStack(spacing: 4) {
             GeometryReader { proxy in
@@ -503,6 +524,8 @@ private struct SessionThreadDetailContentView: View {
     @State private var agentNames: [String: String] = [:]
 
     @State private var snapshot: SessionThreadSnapshot?
+    /// When this device last saw each member, from before this visit marked them seen.
+    @State private var seenOnOpen: [String: Date] = [:]
 
     private var promptCache: [String: SessionPromptCacheStatus] { snapshot?.promptCache ?? [:] }
     @State private var loadError: String?
@@ -572,7 +595,7 @@ private struct SessionThreadDetailContentView: View {
                 case .waterfall:
                     Section {
                         SessionThreadWaterfallView(
-                            waterfall: SessionThreadWaterfall.build(snapshot: thread, now: Date()),
+                            waterfall: SessionThreadWaterfall.build(snapshot: thread, now: Date(), status: memberStatus),
                             agentNames: agentNames,
                             onOpen: open
                         )
@@ -637,6 +660,7 @@ private struct SessionThreadDetailContentView: View {
             let fetched = try await api.getSessionThread(sessionId: target.rootSessionId)
             guard generation == loadGeneration else { return }
             snapshot = fetched
+            markMembersSeen(fetched.sessions.map(\.id))
             loadedMemberKey = memberKey
             loadError = nil
             refreshError = nil
@@ -648,6 +672,16 @@ private struct SessionThreadDetailContentView: View {
                 refreshError = "Couldn't refresh: \(error.localizedDescription)"
             }
         }
+    }
+
+    /// Opening the thread marks every member seen. The view keeps the seen state from before,
+    /// so this visit still shows what finished since the last one.
+    private func markMembersSeen(_ sessionIds: [String]) {
+        guard let store = connection?.sessionStore else { return }
+        for id in sessionIds where seenOnOpen[id] == nil {
+            seenOnOpen[id] = store.seenAt(for: id)
+        }
+        store.markSeen(sessionIds: sessionIds)
     }
 
     // MARK: Compose
@@ -698,8 +732,7 @@ private struct SessionThreadDetailContentView: View {
     private func header(_ thread: SessionThreadSnapshot) -> some View {
         let root = thread.sessions.first { $0.id == thread.rootSessionId }
         let others = thread.sessions.filter { $0.id != thread.rootSessionId }
-        let working = thread.sessions.filter(SessionThreadGrouping.isWorking).count
-        let done = others.count { $0.status == .stopped }
+        let rollup = SessionStatusRollup(root: root.map(memberStatus), others: others.map(memberStatus))
         let cost = thread.sessions.reduce(0) { $0 + $1.cost }
         let hidesTotals = thread.sessions.contains(where: isLocked)
         Section {
@@ -716,17 +749,11 @@ private struct SessionThreadDetailContentView: View {
                 ))
                     .font(.subheadline)
                     .foregroundStyle(.themeComment)
-                HStack(spacing: 8) {
-                    if working > 0 { chip("\(working) working", color: SessionRowStatusKind.working.tint(theme)) }
-                    chip("\(done) finished", color: SessionRowStatusKind.stopped.tint(theme))
-                    if let root, root.status != .stopped, !SessionThreadGrouping.isWorking(root) {
-                        chip("root idle", color: SessionRowStatusKind.done.tint(theme))
-                    }
+                SessionThreadSummaryChips(rollup: rollup) {
                     if let root {
                         SessionPromptCacheBadge(session: root, status: thread.promptCache[root.id])
                     }
                 }
-                .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("thread.summary")
             }
             .padding(.vertical, 4)
@@ -764,16 +791,6 @@ private struct SessionThreadDetailContentView: View {
         }
         if let rate = total.cacheHitRate { parts.append("\(Int((rate * 100).rounded()))% cached") }
         return parts.joined(separator: " · ")
-    }
-
-    private func chip(_ text: String, color: Color) -> some View {
-        HStack(spacing: 5) {
-            Circle().fill(color).frame(width: 6, height: 6)
-            Text(text).font(.footnote.weight(.semibold)).foregroundStyle(color)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(color.opacity(0.16), in: Capsule())
     }
 
     // MARK: Outline
@@ -845,24 +862,31 @@ private struct SessionThreadDetailContentView: View {
         locks.isLocked(.session(session, serverId: target.serverId))
     }
 
-    private func hasPendingQuestion(_ session: Session) -> Bool {
-        guard let connection else { return false }
-        return SessionListAttentionMerger.askCount(
+    /// Status of a member for this visit: the seen state from when the thread opened, so what
+    /// finished since the last visit shows as Done or Error even though opening marks it seen.
+    private func memberStatus(_ session: Session) -> SessionStatusKind {
+        guard let connection else { return SessionThreadStatus.withoutSeenState(session) }
+        let pendingAsks = SessionListAttentionMerger.askCount(
             listCount: connection.sessionStore.listPendingAskCount(for: session.id),
             hasPendingAsk: connection.askRequestStore.hasPending(for: session.id),
             hasPendingExtensionDialog: connection.hasPendingExtensionDialog(for: session.id)
-        ) > 0
+        )
+        return SessionStatusKind.resolve(
+            session: session,
+            pendingAskCount: pendingAsks,
+            seenAt: seenOnOpen[session.id] ?? connection.sessionStore.seenAt(for: session.id)
+        )
     }
 
     private func outlineRow(_ session: Session, depth: Int) -> some View {
-        let question = hasPendingQuestion(session)
+        let status = memberStatus(session)
         let lockTarget = ScopedLockTarget.session(session, serverId: target.serverId)
         let hidesDetails = locks.isLocked(lockTarget)
         return Button {
             open(session)
         } label: {
             HStack(alignment: .center, spacing: 8) {
-                SessionThreadIdentityBadge(session: session, hasQuestion: question)
+                SessionThreadIdentityBadge(session: session, status: status)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(session.displayTitle)
@@ -883,18 +907,18 @@ private struct SessionThreadDetailContentView: View {
                                 .truncationMode(.middle)
                             Text("·")
                         }
-                        Text(outlineSubtitle(session, hidesDetails: hidesDetails))
+                        Text(outlineSubtitle(session, status: status, hidesDetails: hidesDetails))
                             .lineLimit(1)
                     }
                     .font(.footnote)
-                    .foregroundStyle(SessionThreadGrouping.isWorking(session) ? SessionRowStatusKind.working.tint(theme) : theme.text.tertiary)
+                    .foregroundStyle(status == .working || status.isBlocked ? status.tint(theme) : theme.text.tertiary)
                 }
             }
             .padding(.leading, CGFloat(depth) * 18)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityValue(question ? "Question pending" : "")
+        .accessibilityValue(status.label)
         .accessibilityIdentifier("thread.row.\(session.id)")
         // The same long-press menu and swipes as every session list.
         .sessionRowActions(session, actions: rowActions)
@@ -941,19 +965,21 @@ private struct SessionThreadDetailContentView: View {
         return connection?.workspaceStore.workspaces.first { $0.id == workspaceId }?.name ?? session.workspaceName
     }
 
-    private func outlineSubtitle(_ session: Session, hidesDetails: Bool) -> String {
+    private func outlineSubtitle(_ session: Session, status: SessionStatusKind, hidesDetails: Bool) -> String {
         var parts: [String] = []
         if let workspace = foreignWorkspaceName(session) { parts.append(workspace) }
         if !hidesDetails {
             parts.append(String(format: "$%.2f", session.cost))
             if let rate = session.tokens.cacheHitRate { parts.append("\(Int((rate * 100).rounded()))% cached") }
         }
-        if SessionThreadGrouping.isWorking(session) {
-            parts.append("working")
-        } else if session.status == .stopped {
-            parts.append("stopped \(session.lastActivity.formatted(date: .omitted, time: .shortened))")
-        } else {
-            parts.append("idle since \(session.lastActivity.formatted(date: .omitted, time: .shortened))")
+        let time = session.lastActivity.formatted(date: .omitted, time: .shortened)
+        switch status {
+        case .working: parts.append("working")
+        case .needsApproval, .question, .signIn: parts.append("\(status.label.lowercased()) since \(time)")
+        case .error: parts.append("failed \(time)")
+        case .done: parts.append("done \(time)")
+        case .idle: parts.append("idle since \(time)")
+        case .stopped: parts.append("stopped \(time)")
         }
         return parts.joined(separator: " · ")
     }
@@ -1058,7 +1084,13 @@ private struct SessionThreadDetailContentView: View {
 
     @ViewBuilder
     private func timeline(_ thread: SessionThreadSnapshot) -> some View {
-        let layout = SessionThreadTimeline.build(snapshot: thread, now: Date(), filter: filter, hidesCost: isLocked)
+        let layout = SessionThreadTimeline.build(
+            snapshot: thread,
+            now: Date(),
+            filter: filter,
+            hidesCost: isLocked,
+            status: memberStatus
+        )
         Section {
             filterBar
                 .listRowBackground(Color.clear)
@@ -1208,14 +1240,14 @@ struct SessionThreadTimelineRowView: View {
         case .end: ("stop ", theme.text.tertiary)
         case .interaction(let kind, _): ("\(SessionThreadTimeline.verb(for: kind)) ", theme.accent.cyan)
         case .crossThread: ("↗ ", theme.accent.purple)
-        case .working: ("", SessionRowStatusKind.working.tint(theme))
+        case .working: ("", SessionStatusKind.working.tint(theme))
         }
         var prefix = AttributedString(verb)
         prefix.foregroundColor = color
         var title = AttributedString(row.title)
         switch row.kind {
         case .crossThread: title.foregroundColor = theme.accent.purple
-        case .working: title.foregroundColor = SessionRowStatusKind.working.tint(theme)
+        case .working: title.foregroundColor = SessionStatusKind.working.tint(theme)
         case .end: title.foregroundColor = theme.text.secondary
         default: title.foregroundColor = theme.text.primary
         }
@@ -1303,7 +1335,7 @@ struct SessionThreadTimelineRowView: View {
                 dot(node, color: theme.accent.purple, radius: 4)
             case .working(let lanes):
                 for lane in lanes {
-                    let working = SessionRowStatusKind.working.tint(theme)
+                    let working = SessionStatusKind.working.tint(theme)
                     dot(CGPoint(x: x(lane), y: mid), color: working.opacity(0.35), radius: 4 + 4 * pulse)
                     dot(CGPoint(x: x(lane), y: mid), color: working)
                 }
@@ -1361,5 +1393,81 @@ struct SessionPillToggle<Option: Hashable & Identifiable>: View {
         .padding(3)
         .background(Capsule().fill(theme.text.tertiary.opacity(0.12)))
         .accessibilityElement(children: .contain)
+    }
+}
+
+// MARK: - Summary chips
+
+/// The thread's status at a glance: the root's own chip, then one chip per state among the
+/// other members, each in its status color. `trailing` adds non-status badges (prompt cache).
+struct SessionThreadSummaryChips<Trailing: View>: View {
+    @Environment(\.theme) private var theme
+
+    let rollup: SessionStatusRollup
+    @ViewBuilder let trailing: () -> Trailing
+
+    var body: some View {
+        SessionChipFlowLayout(spacing: 8) {
+            if let root = rollup.root, let rootChip = rollup.rootChipText {
+                chip(rootChip, color: root.tint(theme))
+            }
+            ForEach(rollup.chips) { statusChip in
+                chip(statusChip.text, color: statusChip.kind.tint(theme))
+            }
+            trailing()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(rollup.headline.map { "Thread status: \($0.label)" } ?? "Thread status")
+        .accessibilityValue(([rollup.rootChipText] + rollup.chips.map(\.text)).compactMap { $0 }.joined(separator: ", "))
+    }
+
+    private func chip(_ text: String, color: Color) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(text).font(.footnote.weight(.semibold)).foregroundStyle(color)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(color.opacity(0.16), in: Capsule())
+    }
+}
+
+// MARK: - Chip flow
+
+/// Wraps status chips onto further lines instead of overflowing, so a thread with every
+/// state present still fits at large text sizes.
+struct SessionChipFlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(in: proposal.width ?? .infinity, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let arranged = arrange(in: bounds.width, subviews: subviews)
+        for (subview, origin) in zip(subviews, arranged.origins) {
+            subview.place(at: CGPoint(x: bounds.minX + origin.x, y: bounds.minY + origin.y), proposal: .unspecified)
+        }
+    }
+
+    private func arrange(in width: CGFloat, subviews: Subviews) -> (size: CGSize, origins: [CGPoint]) {
+        var origins: [CGPoint] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var widest: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            origins.append(CGPoint(x: x, y: y))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            widest = max(widest, x - spacing)
+        }
+        return (CGSize(width: widest, height: y + rowHeight), origins)
     }
 }

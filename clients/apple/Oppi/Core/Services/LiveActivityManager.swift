@@ -9,7 +9,8 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Live
 /// v2 policy:
 /// - Single aggregate activity (not one-per-session)
 /// - Event-driven updates only
-/// - Session phase model (`working`, `awaitingReply`, `error`, `ended`)
+/// - Session phase model (`working`, `blocked`, `awaitingReply`, `error`, `ended`), read from
+///   the session's program status; lifecycle covers sessions that lack one
 @MainActor @Observable
 final class LiveActivityManager {
     static let shared = LiveActivityManager()
@@ -19,6 +20,9 @@ final class LiveActivityManager {
         var name: String
         var status: SessionStatus
         var phaseHint: SessionPhase
+        /// Program-status reading of the session as of the last `sync`. Nil after an event
+        /// hint, which is newer than the stored session, and for no stored value.
+        var statusKind: SessionStatusKind?
         var activeTool: String?
         var lastActivity: String?
         var startDate: Date?
@@ -42,6 +46,7 @@ final class LiveActivityManager {
         let lockTarget: ScopedLockTarget
         let name: String
         let phase: SessionPhase
+        let blockedKind: String?
         let activeTool: String?
         let lastActivity: String?
         let startDate: Date?
@@ -76,6 +81,8 @@ final class LiveActivityManager {
         totalActiveSessions: 0,
         sessionsAwaitingReply: 0,
         sessionsWorking: 0,
+        sessionsBlocked: nil,
+        primaryBlockedKind: nil,
         primaryMutatingToolCalls: nil,
         primaryFilesChanged: nil,
         primaryAddedLines: nil,
@@ -142,7 +149,12 @@ final class LiveActivityManager {
     // MARK: - Public API
 
     /// Sync canonical session state for a server connection.
-    func sync(connectionId: String, sessions: [Session]) {
+    /// `seenAt` is this device's watermark, so a seen done or error is not green.
+    func sync(
+        connectionId: String,
+        sessions: [Session],
+        seenAt: (String) -> Date? = { _ in nil }
+    ) {
         var snapshot = connectionSnapshots[connectionId] ?? ConnectionSnapshot()
 
         var nextById: [String: SessionSnapshot] = [:]
@@ -153,6 +165,7 @@ final class LiveActivityManager {
                 name: session.displayTitle,
                 status: session.status,
                 phaseHint: baselinePhase(for: session.status),
+                statusKind: nil,
                 activeTool: nil,
                 lastActivity: nil,
                 startDate: nil,
@@ -165,6 +178,7 @@ final class LiveActivityManager {
 
             entry.name = session.displayTitle
             entry.status = session.status
+            entry.statusKind = SessionStatusKind.resolve(session: session, seenAt: seenAt(session.id))
             entry.changeStats = session.changeStats
             entry.workspaceId = session.workspaceId
             entry.isIncognito = session.ephemeral == true
@@ -240,6 +254,7 @@ final class LiveActivityManager {
                 name: fallbackSessionName(sessionId),
                 status: .ready,
                 phaseHint: .awaitingReply,
+                statusKind: nil,
                 activeTool: nil,
                 lastActivity: nil,
                 startDate: nil,
@@ -256,6 +271,7 @@ final class LiveActivityManager {
             var entry = upsertSession(sessionId)
             let now = Date()
             entry.status = .busy
+            entry.statusKind = nil
             entry.phaseHint = .working
             entry.readySince = nil
             entry.startDate = now
@@ -271,6 +287,7 @@ final class LiveActivityManager {
             var entry = upsertSession(sessionId)
             let now = Date()
             entry.status = .ready
+            entry.statusKind = nil
             entry.phaseHint = .awaitingReply
             entry.readySince = now
             entry.activeTool = nil
@@ -287,6 +304,7 @@ final class LiveActivityManager {
             var entry = upsertSession(sessionId)
             let now = Date()
             entry.status = .busy
+            entry.statusKind = nil
             entry.phaseHint = .working
             if entry.startDate == nil {
                 entry.startDate = now
@@ -306,6 +324,7 @@ final class LiveActivityManager {
         case .sessionEnded(let sessionId, _):
             var entry = upsertSession(sessionId)
             entry.status = .stopped
+            entry.statusKind = nil
             entry.phaseHint = .ended
             entry.activeTool = nil
             entry.startDate = nil
@@ -320,6 +339,7 @@ final class LiveActivityManager {
             }
             var entry = upsertSession(sessionId)
             entry.status = .error
+            entry.statusKind = nil
             entry.phaseHint = .error
             entry.startDate = nil
             entry.lastActivity = String(localized: "Attention needed")
@@ -577,9 +597,7 @@ final class LiveActivityManager {
 
         for snapshot in connectionSnapshots.values {
             for session in snapshot.sessionsById.values {
-                guard session.status == .ready else { continue }
-                let phase = phase(for: session)
-                guard phase == .awaitingReply else { continue }
+                guard isTransientPhase(session) else { continue }
 
                 let referenceDate = session.readySince ?? session.updatedAt
                 let expiry = referenceDate.addingTimeInterval(awaitingReplyVisibilitySeconds)
@@ -769,6 +787,7 @@ final class LiveActivityManager {
                 ),
                 name: session.name,
                 phase: phase(for: session),
+                blockedKind: blockedKind(for: session),
                 activeTool: session.activeTool,
                 lastActivity: session.lastActivity,
                 startDate: session.startDate,
@@ -780,6 +799,7 @@ final class LiveActivityManager {
         let totalActiveSessions = sessionViews.filter { $0.phase != .ended }.count
         let sessionsAwaitingReply = sessionViews.filter { $0.phase == .awaitingReply }.count
         let sessionsWorking = sessionViews.filter { $0.phase == .working }.count
+        let sessionsBlocked = sessionViews.filter { $0.phase == .blocked }.count
 
         let primary = sessionViews.max { lhs, rhs in
             let lhsPriority = phasePriority(lhs.phase)
@@ -800,6 +820,8 @@ final class LiveActivityManager {
                 totalActiveSessions: totalActiveSessions,
                 sessionsAwaitingReply: sessionsAwaitingReply,
                 sessionsWorking: sessionsWorking,
+                sessionsBlocked: sessionsBlocked > 0 ? sessionsBlocked : nil,
+                primaryBlockedKind: primary.phase == .blocked ? primary.blockedKind : nil,
                 primaryMutatingToolCalls: primary.changeStats?.mutatingToolCalls,
                 primaryFilesChanged: primary.changeStats?.filesChanged,
                 primaryAddedLines: primary.changeStats?.addedLines,
@@ -850,6 +872,24 @@ final class LiveActivityManager {
     }
 
     private func phase(for session: SessionSnapshot) -> SessionPhase {
+        if let kind = session.statusKind {
+            switch kind {
+            case .working:
+                return .working
+            case .needsApproval, .question, .signIn:
+                return .blocked
+            case .stopped:
+                return .ended
+            case .error:
+                // A failed session stays an error; a run that ended in an error shows briefly.
+                return session.status == .error ? .error : settledPhase(.error, for: session)
+            case .done:
+                return settledPhase(.done, for: session)
+            case .idle:
+                return .ended
+            }
+        }
+
         switch session.status {
         case .starting, .busy, .stopping:
             return .working
@@ -858,16 +898,34 @@ final class LiveActivityManager {
         case .stopped:
             return .ended
         case .ready:
-            // Use readySince (anchored to the .ready transition) rather than
-            // updatedAt (which sync() refreshes on every message). This ensures
-            // the awaitingReply window doesn't get extended indefinitely.
-            let referenceDate = session.readySince ?? session.updatedAt
-            let age = Date().timeIntervalSince(referenceDate)
-            if age <= awaitingReplyVisibilitySeconds,
-               session.phaseHint != .error {
-                return .awaitingReply
-            }
-            return .ended
+            return settledPhase(.awaitingReply, for: session)
+        }
+    }
+
+    /// A settled outcome shows for `awaitingReplyVisibilitySeconds`, then the session reads
+    /// as ended so the activity can dismiss. Anchored to `readySince` (the transition), not
+    /// `updatedAt`, which `sync()` refreshes on every message.
+    private func settledPhase(_ phase: SessionPhase, for session: SessionSnapshot) -> SessionPhase {
+        let referenceDate = session.readySince ?? session.updatedAt
+        let age = Date().timeIntervalSince(referenceDate)
+        if age <= awaitingReplyVisibilitySeconds, session.phaseHint != .error || phase == .error {
+            return phase
+        }
+        return .ended
+    }
+
+    /// Phases that expire on their own timer.
+    private func isTransientPhase(_ session: SessionSnapshot) -> Bool {
+        let phase = phase(for: session)
+        return phase == .awaitingReply || phase == .done || (phase == .error && session.status != .error)
+    }
+
+    private func blockedKind(for session: SessionSnapshot) -> String? {
+        switch session.statusKind {
+        case .needsApproval: "permission"
+        case .question: "question"
+        case .signIn: "auth"
+        case .working, .error, .done, .idle, .stopped, nil: nil
         }
     }
 
@@ -895,8 +953,10 @@ final class LiveActivityManager {
 
     private func phasePriority(_ phase: SessionPhase) -> Int {
         switch phase {
+        case .blocked: return 100
         case .error: return 75
         case .working: return 50
+        case .done: return 30
         case .awaitingReply: return 25
         case .ended: return 0
         }
@@ -907,7 +967,7 @@ final class LiveActivityManager {
     }
 
     private func staleDate(for state: PiSessionAttributes.ContentState) -> Date? {
-        if state.primaryPhase == .awaitingReply {
+        if state.primaryPhase == .awaitingReply || state.primaryPhase == .done {
             return nil
         }
         if state.primaryPhase == .ended {
@@ -923,6 +983,8 @@ final class LiveActivityManager {
     private static func defaultLastActivity(for phase: SessionPhase) -> String {
         switch phase {
         case .working: return String(localized: "Working")
+        case .blocked: return String(localized: "Needs you")
+        case .done: return String(localized: "Done")
         case .awaitingReply: return String(localized: "Your turn")
         case .error: return String(localized: "Attention needed")
         case .ended: return String(localized: "Session ended")

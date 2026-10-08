@@ -23,7 +23,7 @@ struct SessionRow: View {
     let attentionText: String?
     let workspaceContext: String?
     let modelSummaries: [SessionModelSummary]
-    let unreadCompletionAt: Date?
+    let seenAt: Date?
     let searchSnippet: AttributedString?
     let lockBadge: ScopedLockState
     /// A locked session shows its name, time, and status only: no question
@@ -36,7 +36,7 @@ struct SessionRow: View {
         attentionText: String? = nil,
         workspaceContext: String? = nil,
         modelSummaries: [SessionModelSummary] = [],
-        unreadCompletionAt: Date? = nil,
+        seenAt: Date? = nil,
         searchSnippet: AttributedString? = nil,
         lockBadge: ScopedLockState = .none,
         hidesDetails: Bool = false
@@ -46,7 +46,7 @@ struct SessionRow: View {
         self.attentionText = attentionText
         self.workspaceContext = workspaceContext
         self.modelSummaries = modelSummaries
-        self.unreadCompletionAt = unreadCompletionAt
+        self.seenAt = seenAt
         self.searchSnippet = searchSnippet
         self.lockBadge = lockBadge
         self.hidesDetails = hidesDetails
@@ -63,7 +63,7 @@ struct SessionRow: View {
             attentionText: presentation.attentionText,
             workspaceContext: presentation.workspaceContext,
             modelSummaries: presentation.modelSummaries,
-            unreadCompletionAt: presentation.unreadCompletionAt,
+            seenAt: presentation.seenAt,
             searchSnippet: presentation.searchSnippet,
             lockBadge: lockBadge,
             hidesDetails: hidesDetails
@@ -81,8 +81,8 @@ struct SessionRow: View {
         return min(max(Double(used) / Double(window), 0), 1)
     }
 
-    private var pillVariant: SessionPillVariant {
-        .from(session: session, pendingAskCount: pendingAskCount)
+    private var statusKind: SessionStatusKind {
+        SessionStatusKind.resolve(session: session, pendingAskCount: pendingAskCount, seenAt: seenAt)
     }
 
     private var visibleModelSummaries: [SessionModelSummary] {
@@ -122,11 +122,7 @@ struct SessionRow: View {
     }
 
     private var doneReferenceAt: Date {
-        unreadCompletionAt ?? session.lastAgentReplyAt ?? session.lastActivity
-    }
-
-    private var isUnread: Bool {
-        unreadCompletionAt != nil
+        session.lastAgentReplyAt ?? session.lastActivity
     }
 
     var body: some View {
@@ -142,7 +138,6 @@ struct SessionRow: View {
                         .foregroundStyle(.themeFg)
                         .lineLimit(1)
                         .layoutPriority(1)
-                        .accessibilityLabel(isUnread ? Text("Unread, \(title)") : Text(verbatim: title))
 
                     LockBadge(state: lockBadge)
 
@@ -166,17 +161,6 @@ struct SessionRow: View {
 
                     detailRows
                 }
-            }
-        }
-        .padding(.leading, 12)
-        .overlay(alignment: .topLeading) {
-            if isUnread {
-                Circle()
-                    .fill(.themeBlue)
-                    .frame(width: 6, height: 6)
-                    .padding(.top, 7)
-                    .padding(.leading, 1)
-                    .accessibilityHidden(true)
             }
         }
         .id(themeID)
@@ -328,17 +312,18 @@ struct SessionRow: View {
         }
     }
 
-    /// The question badge and the authoritative status.
+    /// The attention badge for a blocked session and the authoritative status.
     @ViewBuilder
     private var statusItems: some View {
-        if pendingAskCount > 0 {
-            Image(systemName: "questionmark.circle.fill")
+        if statusKind.isBlocked {
+            Image(systemName: statusKind.badgeSymbol)
                 .font(.caption)
-                .foregroundStyle(pillVariant.tint(theme))
+                .foregroundStyle(statusKind.tint(theme))
+                .accessibilityHidden(true)
                 .accessibilityIdentifier("session.attentionBadge.\(session.id)")
         }
 
-        SessionStatusPill(pillVariant)
+        SessionStatusPill(statusKind)
             .fixedSize()
     }
 

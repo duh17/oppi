@@ -109,7 +109,7 @@ iOS and Mac are both live runtime consumers. iOS implements the three ports with
 
 Live messages can arrive through focused session streams, app-event streams, and HTTP refreshes. The client keeps mutation policy centralized:
 
-- `ServerConnection+StoreUpdates.swift` applies shared session store, workspace summary, screen-awake, unread-completion, and Live Activity state changes.
+- `ServerConnection+StoreUpdates.swift` applies shared session store, workspace summary, screen-awake and Live Activity state changes.
 - `ServerConnection+MessageRouter.swift` applies active-session UI effects, inactive-session UI effects, queue effects, extension UI notifications, and command result side effects.
 - `ChatSessionManager` routes timeline events to its own coalescer and reducer after shared store updates.
 

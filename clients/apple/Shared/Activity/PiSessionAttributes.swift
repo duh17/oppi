@@ -4,7 +4,12 @@ import Foundation
 /// High-level phase for a session in the aggregate Live Activity.
 enum SessionPhase: String, Codable, Hashable {
     case working
+    /// Waiting on the person: an approval, a question, or a sign-in.
+    /// `ContentState.primaryBlockedKind` says which.
+    case blocked
     case awaitingReply
+    /// An unseen done outcome. Green, and only while the result is unseen.
+    case done
     case error
     case ended
 }
@@ -29,6 +34,13 @@ struct PiSessionAttributes: ActivityAttributes {
         var totalActiveSessions: Int
         var sessionsAwaitingReply: Int
         var sessionsWorking: Int
+        /// Sessions waiting on the person. Optional so an activity started before this field
+        /// existed still decodes.
+        var sessionsBlocked: Int?
+
+        /// Why a `blocked` primary session waits: "permission", "question", or "auth".
+        /// Optional for ActivityKit decode compatibility.
+        var primaryBlockedKind: String?
 
         // Primary session change counters (optional for ActivityKit decode compatibility)
         var primaryMutatingToolCalls: Int?

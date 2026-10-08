@@ -16,8 +16,9 @@ struct WorkspaceDetailSortTests {
         return SessionInboxGrouping.split(
             items: entries,
             session: \.representative,
-            attention: { $0.attention(attention) },
-            sectionKind: { $0.sectionKind(attention: attention) }
+            attention: { attention($0.session) },
+            sectionKind: { $0.sectionKind(attention: attention) },
+            isBlocked: { $0.isBlocked(attention: attention) }
         ).yourTurn
     }
 
@@ -45,7 +46,8 @@ struct WorkspaceDetailSortTests {
         parent: String? = nil,
         status: SessionStatus = .ready,
         createdAt: Date? = nil,
-        lastActivity: Date? = nil
+        lastActivity: Date? = nil,
+        program: ProgramStatus? = nil
     ) -> Session {
         let created = createdAt ?? baseTime
         var session = Session(
@@ -62,7 +64,44 @@ struct WorkspaceDetailSortTests {
             cost: 0
         )
         session.parentSessionId = parent
+        session.programStatus = program
         return session
+    }
+
+    private func blocked(_ kind: ProgramStatusKind) -> ProgramStatus {
+        ProgramStatus(state: .blocked, kind: kind, since: baseTime)
+    }
+
+    /// Blocked comes from the server's program status, so an editor dialog (blocked, kind
+    /// question) sorts like an ask and needs no pending-ask count.
+    @Test func blockedSessionsSortAheadOfOlderPlainRowsWithoutAnAskCount() {
+        let plain = makeSession(id: "plain", lastActivity: baseTime.addingTimeInterval(-300))
+        let approval = makeSession(id: "approval", lastActivity: baseTime, program: blocked(.permission))
+        let editor = makeSession(id: "editor", lastActivity: baseTime.addingTimeInterval(60), program: blocked(.question))
+        let done = makeSession(
+            id: "done",
+            lastActivity: baseTime.addingTimeInterval(-600),
+            program: ProgramStatus(state: .done, since: baseTime)
+        )
+
+        let sorted = yourTurnSorted([plain, done, editor, approval], hasAskInQueue: { _ in false })
+
+        // Blocked first (oldest activity first among them), then done and idle in the existing order.
+        #expect(sorted.map(\.id) == ["approval", "editor", "done", "plain"])
+    }
+
+    @Test func threadWithABlockedChildSortsAsBlocked() {
+        let plain = makeSession(id: "plain", lastActivity: baseTime.addingTimeInterval(-300))
+        let root = makeSession(id: "root", lastActivity: baseTime)
+        let child = makeSession(id: "child", parent: "root", program: blocked(.auth))
+        let sessions = [plain, root, child]
+
+        let rows = yourTurn(
+            SessionListEntries.threads(listed: sessions, loaded: sessions),
+            hasAskInQueue: { _ in false }
+        )
+
+        #expect(rows.map(\.id) == ["root", "plain"])
     }
 
     @Test func sameTier_olderVisibleActivityComesFirst() {

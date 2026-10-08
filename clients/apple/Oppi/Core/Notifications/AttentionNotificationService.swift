@@ -20,11 +20,14 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
     /// Category ID for agent questions. Tapping opens the owning session.
     nonisolated static let askCategoryId = AttentionNotificationPolicy.askCategoryId
 
-    /// Remote session-ended alerts. Tapping opens the owning session.
+    /// Remote session-ended and session-done alerts. Tapping opens the owning session.
     nonisolated static let sessionDoneCategoryId = AttentionNotificationPolicy.sessionDoneCategoryId
 
     /// Remote session-error alerts. Tapping opens the owning session.
     nonisolated static let sessionErrorCategoryId = AttentionNotificationPolicy.sessionErrorCategoryId
+
+    /// Remote alerts for a session waiting on approval, an answer, or a sign-in. Tapping opens the owning session.
+    nonisolated static let sessionBlockedCategoryId = AttentionNotificationPolicy.sessionBlockedCategoryId
 
     /// Called when the user taps an ask notification body.
     /// Navigate to the session containing this ask request.

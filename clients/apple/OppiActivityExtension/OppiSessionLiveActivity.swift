@@ -35,7 +35,7 @@ struct PiSessionLiveActivity: Widget {
 
                 DynamicIslandExpandedRegion(.trailing) {
                     PhaseStatusBadge(
-                        label: LiveActivityPresentation.phaseLabel(context.state.primaryPhase),
+                        label: LiveActivityPresentation.statusLabel(context.state),
                         phase: context.state.primaryPhase,
                         isStale: context.isStale
                     )
@@ -97,12 +97,12 @@ struct PiSessionLiveActivity: Widget {
                     .accessibilityLabel(compactChangeAccessibilityLabel(context.state))
                 } else {
                     CompactTrailingBadge(
-                        text: LiveActivityPresentation.phaseShortLabel(context.state.primaryPhase),
+                        text: LiveActivityPresentation.statusShortLabel(context.state),
                         phase: context.state.primaryPhase,
                         isStale: context.isStale,
                         monospaced: false
                     )
-                    .accessibilityLabel(LiveActivityPresentation.phaseLabel(context.state.primaryPhase))
+                    .accessibilityLabel(LiveActivityPresentation.statusLabel(context.state))
                 }
             } minimal: {
                 PhaseGlyphView(
@@ -154,7 +154,7 @@ private struct LockScreenView: View {
 
                 VStack(alignment: .trailing, spacing: 6) {
                     PhaseStatusBadge(
-                        label: LiveActivityPresentation.phaseLabel(context.state.primaryPhase),
+                        label: LiveActivityPresentation.statusLabel(context.state),
                         phase: context.state.primaryPhase,
                         isStale: context.isStale
                     )
@@ -374,6 +374,7 @@ private struct StaleStatusView: View {
 private func glyphAnimationToken(_ state: PiSessionAttributes.ContentState, isStale: Bool) -> String {
     [
         state.primaryPhase.rawValue,
+        state.primaryBlockedKind ?? "",
         state.primaryTool ?? "",
         state.primarySessionName,
         isStale ? "stale" : "fresh",
@@ -514,7 +515,7 @@ private func shouldPulse(_ phase: SessionPhase) -> Bool {
     switch phase {
     case .working:
         return true
-    case .awaitingReply, .error, .ended:
+    case .blocked, .done, .awaitingReply, .error, .ended:
         return false
     }
 }
@@ -524,7 +525,7 @@ private func accessibilitySummary(
     _ state: PiSessionAttributes.ContentState,
     isStale: Bool = false
 ) -> String {
-    var parts = ["\(state.primarySessionName), \(LiveActivityPresentation.phaseLabel(state.primaryPhase))"]
+    var parts = ["\(state.primarySessionName), \(LiveActivityPresentation.statusLabel(state))"]
     if isStale {
         parts.append("Update delayed")
     }

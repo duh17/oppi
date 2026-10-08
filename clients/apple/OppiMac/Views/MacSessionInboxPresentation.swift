@@ -205,12 +205,6 @@ enum MacSessionInboxRowPaint: Sendable {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
-
-    /// Overlay only when the shared presentation already carries an unread date.
-    /// This does not invent unread tracking.
-    static func showsUnreadDot(for presentation: SessionRowPresentation) -> Bool {
-        presentation.unreadCompletionAt != nil
-    }
 }
 
 /// Ordinary sessions use the Pi mark. Saved Agents keep their authored icon

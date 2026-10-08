@@ -64,7 +64,7 @@ struct WorkspaceSidebarGitStatusPreview: View {
                 description: "Description remains when git is quiet",
                 icon: "paintpalette"
             ),
-            sessionStatus: WorkspaceSidebarSessionStatus(questionCount: 2),
+            sessionStatus: WorkspaceSidebarSessionStatus(blockedCount: 2),
             gitSummary: nil,
             isSelected: false
         ),

@@ -44,7 +44,8 @@ enum SessionLeadingSwipeAction: String, CaseIterable, Identifiable {
 struct SessionListEntryRow: View {
     let entry: SessionListEntry
     let presentation: (Session) -> SessionRowPresentation
-    let hasPendingAsk: (Session) -> Bool
+    /// Status of any session in the entry: its own seen state and pending asks applied.
+    let status: (Session) -> SessionStatusKind
     /// Workspace name to show for a session outside this list's workspace; nil hides it.
     let foreignWorkspaceName: (Session) -> String?
     let actions: SessionListRowActions
@@ -55,11 +56,11 @@ struct SessionListEntryRow: View {
         VStack(alignment: .leading, spacing: 6) {
             rowBody
             if let thread = entry.thread {
-                let attentionMember = thread.descendants.first(where: hasPendingAsk)
+                let blockedMember = thread.descendants.first { status($0).isBlocked }
                 let rootTarget = actions.lockTarget(thread.root)
                 SessionThreadStrip(
                     rollup: thread,
-                    attentionMember: attentionMember,
+                    status: status,
                     hidesDetails: rootTarget.map(locks.isLocked) ?? false,
                     hidesCost: thread.members.contains { member in
                         actions.lockTarget(member).map(locks.isLocked) ?? false
@@ -70,7 +71,7 @@ struct SessionListEntryRow: View {
                     .accessibilityAddTraits(.isButton)
                     .accessibilityAction { actions.openThread(thread.root) }
                     .accessibilityIdentifier("thread.nav.\(thread.root.id)")
-                    .accessibilityValue(attentionMember != nil ? "Question pending" : "")
+                    .accessibilityValue(blockedMember.map { status($0).label } ?? "")
             } else if let root = entry.outsideRoot {
                 SessionThreadLink(
                     root: root,
@@ -104,7 +105,7 @@ struct SessionListEntryRow: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { actions.open(session) }
             .accessibilityIdentifier("session.nav.\(session.id)")
-            .accessibilityValue(hasPendingAsk(session) ? "Question pending" : "")
+            .accessibilityValue(status(session).isBlocked ? status(session).label : "")
     }
 }
 

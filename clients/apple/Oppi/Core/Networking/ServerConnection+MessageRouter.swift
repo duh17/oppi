@@ -445,7 +445,8 @@ extension ServerConnection {
 
         LiveActivityManager.shared.sync(
             connectionId: liveActivityConnectionId,
-            sessions: sessionStore.sessions
+            sessions: sessionStore.sessions,
+            seenAt: { [sessionStore] id in sessionStore.seenAt(for: id) }
         )
     }
 

@@ -41,6 +41,104 @@ struct LiveActivityStateTests {
         #expect(mgr.currentState.totalActiveSessions == 0)
     }
 
+    @Test("blocked program status shows its kind and outranks working", arguments: [
+        (ProgramStatusKind.permission, "permission", "Needs approval"),
+        (.question, "question", "Question"),
+        (.auth, "auth", "Sign-in"),
+        (.unknown("device-flow"), "question", "Question"),
+    ])
+    @MainActor func blockedShowsItsKind(kind: ProgramStatusKind, wireKind: String, label: String) {
+        let mgr = LiveActivityManager()
+        let blocked = makeTestSession(
+            id: "blocked",
+            status: .busy,
+            programStatus: ProgramStatus(state: .blocked, kind: kind, since: Date()),
+            messageCount: 2,
+            firstMessage: "go"
+        )
+        let working = makeTestSession(id: "working", status: .busy, messageCount: 2, firstMessage: "go")
+
+        mgr.sync(connectionId: "c1", sessions: [working, blocked])
+
+        #expect(mgr.currentState.primaryPhase == .blocked)
+        #expect(mgr.currentState.primarySessionId == "blocked")
+        #expect(mgr.currentState.primaryBlockedKind == wireKind)
+        #expect(mgr.currentState.sessionsBlocked == 1)
+        #expect(mgr.currentState.sessionsWorking == 1)
+        #expect(LiveActivityPresentation.statusLabel(mgr.currentState) == label)
+    }
+
+    @Test("unseen done is green Done; a seen outcome and idle are not")
+    @MainActor func unseenDoneIsGreenAndSeenIsNot() {
+        let mgr = LiveActivityManager()
+        let since = Date()
+        let done = makeTestSession(
+            id: "done",
+            status: .ready,
+            lastActivity: since,
+            programStatus: ProgramStatus(state: .done, since: since),
+            messageCount: 2,
+            firstMessage: "go"
+        )
+        mgr.sync(connectionId: "c1", sessions: [done], seenAt: { _ in since.addingTimeInterval(-10) })
+        #expect(mgr.currentState.primaryPhase == .done)
+        #expect(LiveActivityPresentation.statusLabel(mgr.currentState) == "Done")
+
+        mgr.sync(connectionId: "c1", sessions: [done], seenAt: { _ in since })
+        #expect(mgr.currentState.primaryPhase == .ended)
+
+        let idle = makeTestSession(
+            id: "idle",
+            status: .ready,
+            programStatus: ProgramStatus(state: .idle, since: since),
+            messageCount: 2,
+            firstMessage: "go"
+        )
+        mgr.sync(connectionId: "c1", sessions: [idle])
+        #expect(mgr.currentState.primaryPhase == .ended)
+    }
+
+    @Test("program status leads and a later event hint overrides it")
+    @MainActor func programStatusLeadsAndClears() {
+        let mgr = LiveActivityManager()
+        let blocked = makeTestSession(
+            id: "s1",
+            status: .busy,
+            programStatus: ProgramStatus(state: .blocked, kind: .permission, since: Date()),
+            messageCount: 2,
+            firstMessage: "go"
+        )
+        mgr.sync(connectionId: "c1", sessions: [blocked])
+        #expect(mgr.currentState.primaryPhase == .blocked)
+
+        var resumed = blocked
+        resumed.programStatus = ProgramStatus(state: .working, since: Date())
+        mgr.sync(connectionId: "c1", sessions: [resumed])
+        #expect(mgr.currentState.primaryPhase == .working)
+        #expect(mgr.currentState.primaryBlockedKind == nil)
+        #expect(mgr.currentState.sessionsBlocked == nil)
+
+        // A later event hint is newer than the stored program status.
+        mgr.sync(connectionId: "c1", sessions: [blocked])
+        mgr.recordEvent(connectionId: "c1", event: .agentSettled(sessionId: "s1"))
+        #expect(mgr.currentState.primaryPhase == .awaitingReply)
+    }
+
+    @Test("an older activity state without blocked fields still decodes")
+    func oldContentStateDecodes() throws {
+        let json = """
+        {"primaryPhase":"working","primarySessionName":"Old","totalActiveSessions":1,
+         "sessionsAwaitingReply":0,"sessionsWorking":1}
+        """
+        let state = try JSONDecoder().decode(
+            PiSessionAttributes.ContentState.self,
+            from: Data(json.utf8)
+        )
+        #expect(state.primaryPhase == .working)
+        #expect(state.sessionsBlocked == nil)
+        #expect(state.primaryBlockedKind == nil)
+    }
+
     @Test("recordEvent agentStart sets working")
     @MainActor func agentStartWorking() {
         let mgr = LiveActivityManager()

@@ -132,6 +132,41 @@ struct SessionThreadsTests {
         #expect(kind == expected)
     }
 
+    @Test func blockedChildPutsTheThreadInYourTurnEvenWhileOthersWork() {
+        var members = [
+            session("s0", status: .busy, created: 0),
+            session("s1", parent: "s0", status: .busy, created: 1),
+            session("s2", parent: "s0", status: .ready, created: 2),
+        ]
+        members[2].programStatus = ProgramStatus(state: .blocked, kind: .permission, since: Date())
+        let rollup = SessionThreadGrouping.rollups(from: members)[0]
+
+        #expect(SessionThreadGrouping.sectionKind(for: rollup, attention: attentionFree) == .yourTurn)
+        #expect(SessionThreadGrouping.isBlocked(rollup, attention: attentionFree))
+    }
+
+    @Test func lanesAndWaterfallTakeEachMembersStatus() {
+        var members = orchestration
+        members[3].status = .ready
+        members[3].programStatus = ProgramStatus(state: .blocked, kind: .question, since: Date(timeIntervalSince1970: 60))
+        members[1].programStatus = ProgramStatus(state: .done, since: Date(timeIntervalSince1970: 30))
+        let thread = snapshot(members)
+
+        func status(_ member: Session) -> SessionStatusKind {
+            SessionStatusKind.resolve(session: member, seenAt: nil)
+        }
+        let waterfall = SessionThreadWaterfall.build(snapshot: thread, now: Date(timeIntervalSince1970: 100), status: status)
+        let graph = SessionThreadLaneGraph.layout(
+            members: members, rootId: "root", now: Date(timeIntervalSince1970: 100), status: status
+        )
+
+        #expect(waterfall.rows.first { $0.id == "review" }?.status == .question)
+        #expect(waterfall.rows.first { $0.id == "master" }?.status == .working)
+        #expect(graph.segments.first { $0.id == "review" }?.status == .question)
+        // Done, still unseen, and stopped lifecycle: the outcome shows until seen.
+        #expect(graph.segments.first { $0.id == "fix" }?.status == .done)
+    }
+
     // MARK: Timeline
 
     private func snapshot(

@@ -430,8 +430,9 @@ struct WorkspaceDetailView: View {
         let split = SessionInboxGrouping.split(
             items: entries(for: workspaceSessions),
             session: \.representative,
-            attention: { $0.attention(attentionCounts(for:)) },
-            sectionKind: { $0.sectionKind(attention: attentionCounts(for:)) }
+            attention: { attentionCounts(for: $0.session) },
+            sectionKind: { $0.sectionKind(attention: attentionCounts(for:)) },
+            isBlocked: { $0.isBlocked(attention: attentionCounts(for:)) }
         )
 
         SessionListPerf.recordViewDataCompute(
@@ -724,7 +725,7 @@ struct WorkspaceDetailView: View {
         SessionListEntryRow(
             entry: entry,
             presentation: rowPresentation(for:),
-            hasPendingAsk: { pendingAskCount(for: $0.id) > 0 },
+            status: { sessionStatus($0) },
             foreignWorkspaceName: foreignWorkspaceName(for:),
             actions: rowActions
         )
@@ -754,6 +755,15 @@ struct WorkspaceDetailView: View {
         return workspaceStore.workspaces.first { $0.id == workspaceId }?.name ?? session.workspaceName
     }
 
+    /// Status of a session for this device, for thread members and rows alike.
+    private func sessionStatus(_ session: Session) -> SessionStatusKind {
+        SessionStatusKind.resolve(
+            session: session,
+            pendingAskCount: pendingAskCount(for: session.id),
+            seenAt: sessionStore.seenAt(for: session.id)
+        )
+    }
+
     private func rowPresentation(for session: Session) -> SessionRowPresentation {
         let rowStartNs = SessionListPerf.timestampNs()
         let attention = attentionCounts(for: session)
@@ -761,7 +771,7 @@ struct WorkspaceDetailView: View {
             session: session,
             pendingAskCount: attention.askCount,
             pendingAsk: askRequestStore.pending(for: session.id),
-            unreadCompletionAt: sessionStore.unreadCompletionDate(for: session.id),
+            seenAt: sessionStore.seenAt(for: session.id),
             searchSnippet: searchStore.snippetsBySessionId[session.id],
             catalogModels: connection.chatState.cachedModels
         )

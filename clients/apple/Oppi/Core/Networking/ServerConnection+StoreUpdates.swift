@@ -82,10 +82,8 @@ extension ServerConnection {
 
         case .agentSettled:
             let completedAt = Date()
-            var didCompleteTurn = false
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }),
                current.status.isRunning {
-                didCompleteTurn = true
                 current.status = .ready
                 current.currentTurnStartedAt = nil
                 current.lastActivity = completedAt
@@ -93,9 +91,6 @@ extension ServerConnection {
                 if let workspaceId = current.workspaceId {
                     syncWorkspaceSummary(workspaceId: workspaceId)
                 }
-            }
-            if didCompleteTurn {
-                recordUnreadCompletionIfNeeded(sessionId: sessionId, at: completedAt)
             }
             screenAwakeController.setSessionActivity(false, sessionId: sessionId)
             syncLiveActivityState()
@@ -212,23 +207,11 @@ extension ServerConnection {
         if currentSession.status.isRunning {
             screenAwakeController.setSessionActivity(true, sessionId: currentSession.id)
         } else if stateContext.didTransitionOutOfRunning {
-            if let completedAt = currentSession.lastAgentReplyAt,
-               completedAt != previousSession?.lastAgentReplyAt {
-                recordUnreadCompletionIfNeeded(sessionId: currentSession.id, at: completedAt)
-            }
             screenAwakeController.setSessionActivity(false, sessionId: currentSession.id)
         }
 
         syncLiveActivityState()
         return StoreUpdateResult(stateContext: stateContext, handled: true)
-    }
-
-    func recordUnreadCompletionIfNeeded(sessionId: String, at date: Date) {
-        if isFocusedSession(sessionId) {
-            sessionStore.markSessionRead(sessionId: sessionId)
-        } else {
-            sessionStore.recordUnreadCompletion(sessionId: sessionId, at: date)
-        }
     }
 
     func attentionWorkspaceId(explicitWorkspaceId: String?, sessionId: String?) -> String? {

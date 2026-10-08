@@ -2462,6 +2462,7 @@ final class ServerConnection {
         let context = startsClaim
             ? focusedSessionStore.claim(sessionId: sessionId)
             : focusedSessionStore.focus(sessionId: sessionId)
+        sessionStore.setViewingSession(sessionId)
         // Reset per-connection chat state for the new focused session.
         // Sheet-backed extension dialogs are derived from pendingExtensionDialogQueues.
         chatState.resetSessionState()
@@ -2658,6 +2659,7 @@ final class ServerConnection {
         // visible again when focus returns to this session.
 
         focusedSessionStore.clear()
+        sessionStore.setViewingSession(nil)
         sessionStreamCoordinator.noteStreamDisconnected()
         silenceWatchdog.stop()
         chatState.resetSessionState()
@@ -2793,8 +2795,10 @@ final class ServerConnection {
     func _setActiveSessionIdForTesting(_ sessionId: String?) {
         if let sessionId {
             focusedSessionStore.focus(sessionId: sessionId)
+            sessionStore.setViewingSession(sessionId)
         } else {
             focusedSessionStore.clear()
+            sessionStore.setViewingSession(nil)
         }
     }
 

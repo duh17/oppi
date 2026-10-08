@@ -114,45 +114,36 @@ struct ServerConnectionRoutingTests {
         #expect(!pipe.reducer.isToolInterrupted("uv"))
     }
 
-    @Test func inactiveAgentSettledRecordsUnreadCompletion() {
+    @Test func backgroundSessionThatSettlesShowsDoneUntilOpened() {
         let (conn, _) = makeTestConnection(sessionId: "focused")
         conn.sessionStore.switchServer(to: "srv1")
-        conn.sessionStore.upsert(makeTestSession(id: "background", status: .busy))
-
-        _ = conn.applySharedStoreUpdate(for: .agentEnd, sessionId: "background")
-        #expect(conn.sessionStore.unreadCompletionDate(for: "background") == nil)
+        conn.sessionStore.upsert(makeTestSession(id: "background", status: .busy, messageCount: 2, firstMessage: "go"))
 
         _ = conn.applySharedStoreUpdate(for: .agentSettled, sessionId: "background")
-        #expect(conn.sessionStore.unreadCompletionDate(for: "background") != nil)
+
+        let settled = conn.sessionStore.session(id: "background")!
+        #expect(SessionStatusKind.resolve(session: settled, seenAt: conn.sessionStore.seenAt(for: "background")) == .done)
+
+        conn.sessionStore.activeSessionId = "background"
+
+        #expect(SessionStatusKind.resolve(session: settled, seenAt: conn.sessionStore.seenAt(for: "background")) == .idle)
     }
 
-    @Test func stoppingPreviouslyReadIdleSessionDoesNotRecordUnreadCompletion() {
-        let (conn, _) = makeTestConnection(sessionId: "focused")
-        conn.sessionStore.switchServer(to: "srv1")
-        var previouslyRead = makeTestSession(id: "read", status: .ready, messageCount: 2)
-        previouslyRead.lastAgentReplyAt = Date(timeIntervalSince1970: 1_700_000_000)
-        conn.sessionStore.upsert(previouslyRead)
-        conn.sessionStore.recordUnreadCompletion(sessionId: "read")
-        conn.sessionStore.markSessionRead(sessionId: "read")
-
-        _ = conn.applySharedStoreUpdate(
-            for: .sessionEnded(reason: "stopped"),
-            sessionId: "read"
-        )
-
-        #expect(conn.sessionStore.unreadCompletionDate(for: "read") == nil)
-    }
-
-    @Test func focusedAgentEndDoesNotRecordUnreadCompletion() {
+    @Test func focusedSessionThatSettlesIsSeenWhileFocusedAndAfter() {
         let (conn, pipe) = makeTestConnection(sessionId: "focused")
         conn.sessionStore.switchServer(to: "srv1")
-        conn.sessionStore.upsert(makeTestSession(id: "focused", status: .ready))
+        conn.sessionStore.upsert(makeTestSession(id: "focused", status: .ready, messageCount: 2, firstMessage: "go"))
 
         pipe.handle(.agentStart, sessionId: "focused")
         pipe.handle(.agentEnd, sessionId: "focused")
         pipe.handle(.agentSettled, sessionId: "focused")
 
-        #expect(conn.sessionStore.unreadCompletionDate(for: "focused") == nil)
+        let settled = conn.sessionStore.session(id: "focused")!
+        #expect(SessionStatusKind.resolve(session: settled, seenAt: conn.sessionStore.seenAt(for: "focused")) == .idle)
+
+        conn._setActiveSessionIdForTesting(nil)
+
+        #expect(SessionStatusKind.resolve(session: settled, seenAt: conn.sessionStore.seenAt(for: "focused")) == .idle)
     }
 
     @Test func stateUpdateCarriesPreviousContextAndReleasesSleepPrevention() {

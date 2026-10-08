@@ -68,7 +68,7 @@ struct LiveActivityPreviewScreen: View {
 
     @ViewBuilder
     private var previewCompactTrailing: some View {
-        Text(LiveActivityPresentation.phaseShortLabel(state.primaryPhase))
+        Text(LiveActivityPresentation.statusShortLabel(state))
             .font(.caption2.bold())
             .foregroundStyle(LiveActivityPresentation.phaseColor(state.primaryPhase))
         .padding(.horizontal, 12)
@@ -110,7 +110,7 @@ private struct PreviewLockScreenCard: View {
                 Spacer(minLength: 12)
 
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text(LiveActivityPresentation.phaseLabel(state.primaryPhase))
+                    Text(LiveActivityPresentation.statusLabel(state))
                         .font(.caption2.bold())
                         .foregroundStyle(LiveActivityPresentation.phaseColor(state.primaryPhase))
                         .padding(.horizontal, 6)

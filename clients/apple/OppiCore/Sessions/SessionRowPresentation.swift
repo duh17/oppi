@@ -115,49 +115,6 @@ enum SessionRowMetricsFormatting {
     }
 }
 
-/// Status kind for session rows. Colors stay in the platform paint layer.
-enum SessionRowStatusKind: Equatable, Sendable {
-    case question
-    case idle
-    case working
-    case done
-    case stopped
-    case error
-
-    /// Priority: ask/input request > status-based.
-    static func from(status: SessionStatus, pendingAskCount: Int = 0) -> SessionRowStatusKind {
-        if pendingAskCount > 0 { return .question }
-
-        switch status {
-        case .busy, .starting, .stopping:
-            return .working
-        case .ready:
-            return .done
-        case .stopped:
-            return .stopped
-        case .error:
-            return .error
-        }
-    }
-
-    static func from(session: Session, pendingAskCount: Int = 0) -> SessionRowStatusKind {
-        if pendingAskCount > 0 { return .question }
-        if session.isAwaitingFirstPrompt { return .idle }
-        return from(status: session.status)
-    }
-
-    var label: String {
-        switch self {
-        case .question: "Question"
-        case .idle: "Idle"
-        case .working: "Working"
-        case .done: "Done"
-        case .stopped: "Stopped"
-        case .error: "Error"
-        }
-    }
-}
-
 /// Immutable row inputs shared by workspace session surfaces.
 ///
 /// Platform rows own visual layout. This type keeps the presentation data
@@ -170,11 +127,12 @@ struct SessionRowPresentation: Equatable, Sendable {
     let lineageHint: String?
     let workspaceContext: String?
     let modelSummaries: [SessionModelSummary]
-    let unreadCompletionAt: Date?
+    /// When this device last saw the session; nil if never.
+    let seenAt: Date?
     let searchSnippet: AttributedString?
 
-    var statusKind: SessionRowStatusKind {
-        SessionRowStatusKind.from(session: session, pendingAskCount: pendingAskCount)
+    var statusKind: SessionStatusKind {
+        SessionStatusKind.resolve(session: session, pendingAskCount: pendingAskCount, seenAt: seenAt)
     }
 
     var visibleModelSummaries: [SessionModelSummary] {
@@ -199,7 +157,7 @@ enum SessionRowPresentationBuilder {
         pendingAsk: AskRequest? = nil,
         lineageHint: String? = nil,
         workspaceContext: String? = nil,
-        unreadCompletionAt: Date? = nil,
+        seenAt: Date? = nil,
         searchSnippet: AttributedString? = nil,
         catalogModels: [ModelInfo] = []
     ) -> SessionRowPresentation {
@@ -210,7 +168,7 @@ enum SessionRowPresentationBuilder {
             lineageHint: lineageHint,
             workspaceContext: normalizedWorkspaceContext(workspaceContext),
             modelSummaries: modelSummaries(for: session, catalogModels: catalogModels),
-            unreadCompletionAt: unreadCompletionAt,
+            seenAt: seenAt,
             searchSnippet: searchSnippet
         )
     }

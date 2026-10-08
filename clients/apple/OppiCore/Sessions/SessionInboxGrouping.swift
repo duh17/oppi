@@ -106,9 +106,16 @@ enum SessionInboxGrouping {
         session: (Item) -> Session,
         attention: (Item) -> SessionListAttentionCounts,
         sectionKind: ((Item) -> SessionListActiveSectionKind?)? = nil,
+        isBlocked: ((Item) -> Bool)? = nil,
         stoppedDayLimit: Int? = SessionInboxStoppedDayPolicy.visibleDayCount
     ) -> SessionInboxSections<Item> {
-        let split = split(items: items, session: session, attention: attention, sectionKind: sectionKind)
+        let split = split(
+            items: items,
+            session: session,
+            attention: attention,
+            sectionKind: sectionKind,
+            isBlocked: isBlocked
+        )
         return SessionInboxSections(
             yourTurn: split.yourTurn,
             working: split.working,
@@ -126,8 +133,14 @@ enum SessionInboxGrouping {
         items: [Item],
         session: (Item) -> Session,
         attention: (Item) -> SessionListAttentionCounts,
-        sectionKind: ((Item) -> SessionListActiveSectionKind?)? = nil
+        sectionKind: ((Item) -> SessionListActiveSectionKind?)? = nil,
+        isBlocked: ((Item) -> Bool)? = nil
     ) -> SessionListSplit<Item> {
+        // Threads wait on the person when any member does; plain rows by their own status.
+        func blocked(_ item: Item) -> Bool {
+            if let isBlocked { return isBlocked(item) }
+            return SessionListPresentation.isBlocked(session(item), attention: attention(item))
+        }
         var yourTurn: [Item] = []
         var working: [Item] = []
         var stopped: [Item] = []
@@ -149,9 +162,9 @@ enum SessionInboxGrouping {
         yourTurn.sort { lhs, rhs in
             SessionListPresentation.compareYourTurn(
                 session(lhs),
-                lhsAttention: attention(lhs),
+                lhsBlocked: blocked(lhs),
                 session(rhs),
-                rhsAttention: attention(rhs)
+                rhsBlocked: blocked(rhs)
             )
         }
         working.sort { SessionListPresentation.compareWorking(session($0), session($1)) }

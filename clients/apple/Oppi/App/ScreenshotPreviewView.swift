@@ -201,6 +201,16 @@ struct ScreenshotPreviewView: View {
                 state: .workingPreview,
                 isStale: false
             )
+        case "session-status-inbox":
+            SessionStatusScreenshotPreview(screen: .inbox)
+        case "session-status-thread":
+            SessionStatusScreenshotPreview(screen: .thread)
+        case "live-activity-blocked":
+            LiveActivityPreviewScreen(
+                title: "Live Activity — Needs Approval",
+                state: .blockedPreview,
+                isStale: false
+            )
         case "live-activity-awaiting":
             LiveActivityPreviewScreen(
                 title: "Live Activity — Awaiting Reply",
@@ -356,6 +366,20 @@ private extension PiSessionAttributes.ContentState {
         primaryAddedLines: 48,
         primaryRemovedLines: 12,
         sessionStartDate: Date().addingTimeInterval(-97)
+    )
+
+    static let blockedPreview = Self(
+        primaryPhase: .blocked,
+        primarySessionId: "session-blocked",
+        primarySessionName: "Migrate Database",
+        primaryTool: nil,
+        primaryLastActivity: "Needs approval",
+        totalActiveSessions: 3,
+        sessionsAwaitingReply: 0,
+        sessionsWorking: 2,
+        sessionsBlocked: 1,
+        primaryBlockedKind: "permission",
+        sessionStartDate: nil
     )
 
     static let awaitingReplyPreview = Self(

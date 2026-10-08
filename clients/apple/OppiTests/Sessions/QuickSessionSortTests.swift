@@ -241,6 +241,30 @@ struct SharedSessionListActiveSectionTests {
         #expect(SessionListPresentation.activeSectionKind(for: session) == .working)
     }
 
+    @Test(arguments: [
+        (ProgramStatusState.working, SessionStatus.busy, SessionListActiveSectionKind.working as SessionListActiveSectionKind?),
+        (.blocked, .busy, .yourTurn),
+        (.blocked, .ready, .yourTurn),
+        (.done, .ready, .yourTurn),
+        (.error, .ready, .yourTurn),
+        (.idle, .ready, .yourTurn),
+        // A stale outcome on a running session is still Working; stopped stays out of both sections.
+        (.done, .busy, .working),
+        (.done, .stopped, nil),
+        (.blocked, .stopped, nil),
+    ])
+    func programStatusDecidesTheSection(
+        state: ProgramStatusState,
+        lifecycle: SessionStatus,
+        expected: SessionListActiveSectionKind?
+    ) {
+        var session = makeSession(id: "program", status: lifecycle)
+        session.messageCount = 3
+        session.firstMessage = "go"
+        session.programStatus = ProgramStatus(state: state, kind: state == .blocked ? .permission : nil, since: Date())
+        #expect(SessionListPresentation.activeSectionKind(for: session) == expected)
+    }
+
     @Test func stoppedRowIdentityDoesNotMatchLiveIdentity() {
         let liveID = "server:session"
         #expect(SessionListPresentation.stoppedRowID(liveID) != liveID)

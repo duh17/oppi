@@ -39,14 +39,17 @@ final class SessionStore {
     /// when switching servers.
     private(set) var activeServerId: String?
 
-    /// The session the user is currently viewing/chatting with.
+    /// The session the user opened last. Opening a session's chat marks it seen.
     var activeSessionId: String? {
         didSet {
             if let activeSessionId {
-                markSessionRead(sessionId: activeSessionId)
+                markSeen(sessionId: activeSessionId)
             }
         }
     }
+
+    /// The session whose chat is open on this device right now.
+    private(set) var viewingSessionId: String?
 
     /// Sessions deleted locally or confirmed deleted by the server.
     ///
@@ -55,9 +58,13 @@ final class SessionStore {
     private var serverDeletedSessionTombstones: [String: [String: Date]] = [:]
     private static let deletedSessionTombstoneTTL: TimeInterval = 600
 
-    /// Completion timestamps for turns that finished while the user was not
-    /// viewing the session. Session rows use this as the "done, unread" clock.
-    private var serverUnreadCompletionDates: [String: [String: Date]] = [:]
+    /// When this device last saw each session, per server. Status surfaces show a done or
+    /// error outcome only while it is newer than this (see `SessionStatusKind`).
+    private var serverSeenLedgers: [String: SessionSeenLedger] = [:]
+
+    /// Outcomes that began before this store existed count as seen, so a fresh launch
+    /// does not paint every earlier run Done.
+    private let seenBaseline = Date()
 
     // ── Per-server freshness tracking ──
 
@@ -171,7 +178,7 @@ final class SessionStore {
         serverListProjectionSessions.removeValue(forKey: serverId)
         serverListAttentionCounts.removeValue(forKey: serverId)
         serverDeletedSessionTombstones.removeValue(forKey: serverId)
-        serverUnreadCompletionDates.removeValue(forKey: serverId)
+        serverSeenLedgers.removeValue(forKey: serverId)
         serverLastSyncAt.removeValue(forKey: serverId)
         serverIsSyncing.removeValue(forKey: serverId)
         serverSyncFailed.removeValue(forKey: serverId)
@@ -181,29 +188,47 @@ final class SessionStore {
         }
     }
 
-    /// Record a completed turn that should be shown as unread in session rows.
-    func recordUnreadCompletion(sessionId: String, at date: Date = Date()) {
-        let key = activeServerKey
-        var dates = serverUnreadCompletionDates[key] ?? [:]
-        dates[sessionId] = date
-        serverUnreadCompletionDates[key] = dates
+    // ── Seen (per device) ──
+
+    /// When this device last saw the session. A session whose chat is open is being seen right now.
+    func seenAt(for sessionId: String) -> Date {
+        if sessionId == viewingSessionId { return .distantFuture }
+        return seenLedger(for: activeServerKey).seenAt(for: sessionId)
     }
 
-    func unreadCompletionDate(for sessionId: String) -> Date? {
-        serverUnreadCompletionDates[activeServerKey]?[sessionId]
+    /// The chat for `sessionId` opened (`nil`: the open chat closed). Leaving marks the session
+    /// seen, so a result that arrived while the user watched never shows as unseen.
+    func setViewingSession(_ sessionId: String?) {
+        guard sessionId != viewingSessionId else { return }
+        if let previous = viewingSessionId { markSeen(sessionId: previous) }
+        viewingSessionId = sessionId
+        if let sessionId { markSeen(sessionId: sessionId) }
     }
 
-    func markSessionRead(sessionId: String) {
-        let key = activeServerKey
-        guard var dates = serverUnreadCompletionDates[key], dates.removeValue(forKey: sessionId) != nil else {
-            return
-        }
+    /// Mark a session seen: opening its chat, leaving it, or opening its thread.
+    func markSeen(sessionId: String) {
+        markSeen(sessionIds: [sessionId])
+    }
 
-        if dates.isEmpty {
-            serverUnreadCompletionDates.removeValue(forKey: key)
-        } else {
-            serverUnreadCompletionDates[key] = dates
+    func markSeen(sessionIds: some Sequence<String>) {
+        let key = activeServerKey
+        var ledger = seenLedger(for: key)
+        let now = Date()
+        for sessionId in sessionIds {
+            // The program status clock is the server's; never mark earlier than the
+            // outcome being seen, whatever this device's clock says.
+            let outcomeAt = session(id: sessionId).map { session in
+                [session.programStatus?.since, session.lastAgentReplyAt, session.lastActivity]
+                    .compactMap { $0 }.max() ?? now
+            } ?? now
+            ledger.markSeen(sessionId, at: max(now, outcomeAt))
         }
+        guard ledger != serverSeenLedgers[key] else { return }
+        serverSeenLedgers[key] = ledger
+    }
+
+    private func seenLedger(for key: String) -> SessionSeenLedger {
+        serverSeenLedgers[key] ?? SessionSeenLedger(baseline: seenBaseline)
     }
 
     // ── Freshness (delegates to active server) ──
@@ -413,10 +438,8 @@ final class SessionStore {
 
         let nextIds = Set(next.map(\.id))
         let removedIds = Set(current.map(\.id)).subtracting(nextIds)
-        let key = activeServerKey
-        for removedId in removedIds {
-            serverUnreadCompletionDates[key]?.removeValue(forKey: removedId)
-        }
+        // Leaving the hot list is not a delete. The seen watermark stays, so a
+        // completion from this launch does not turn green again when the row returns.
         if let activeSessionId, removedIds.contains(activeSessionId) {
             self.activeSessionId = nil
         }
@@ -898,7 +921,7 @@ final class SessionStore {
         sessions = list
         let key = activeServerKey
         serverListAttentionCounts[key]?.removeValue(forKey: id)
-        serverUnreadCompletionDates[key]?.removeValue(forKey: id)
+        serverSeenLedgers[key]?.forget(id)
         if activeSessionId == id {
             activeSessionId = nil
         }

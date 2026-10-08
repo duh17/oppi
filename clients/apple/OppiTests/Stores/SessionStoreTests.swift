@@ -1143,46 +1143,121 @@ struct SessionStorePartitioningTests {
     }
 }
 
-// MARK: - Unread completion tracking
+// MARK: - Seen tracking
 
-@Suite("SessionStore Unread Completion Tracking")
+@Suite("SessionStore Seen Tracking")
 @MainActor
-struct SessionStoreUnreadCompletionTests {
-
-    @Test func recordsUnreadCompletionForInactiveSession() {
-        let store = SessionStore()
-        store.switchServer(to: "srv1")
-        let date = Date(timeIntervalSince1970: 3000)
-
-        store.recordUnreadCompletion(sessionId: "s1", at: date)
-
-        #expect(store.unreadCompletionDate(for: "s1") == date)
+struct SessionStoreSeenTrackingTests {
+    /// A finished session whose outcome began after the store launched, so this device has not seen it.
+    private func finished(_ id: String, since offset: TimeInterval = 60) -> Session {
+        makeTestSession(
+            id: id,
+            status: .ready,
+            programStatus: ProgramStatus(state: .done, since: Date().addingTimeInterval(offset)),
+            messageCount: 2,
+            firstMessage: "go"
+        )
     }
 
-    @Test func openingSessionClearsUnreadCompletion() {
-        let store = SessionStore()
-        store.switchServer(to: "srv1")
-        store.recordUnreadCompletion(sessionId: "s1", at: Date(timeIntervalSince1970: 3000))
-
-        store.activeSessionId = "s1"
-
-        #expect(store.unreadCompletionDate(for: "s1") == nil)
+    private func status(_ id: String, in store: SessionStore) -> SessionStatusKind? {
+        store.session(id: id).map {
+            SessionStatusKind.resolve(session: $0, seenAt: store.seenAt(for: id))
+        }
     }
 
-    @Test func unreadCompletionDatesArePartitionedByServer() {
+    @Test func aFinishedSessionIsUnseenUntilItsChatOpens() {
         let store = SessionStore()
-        let serverOneDate = Date(timeIntervalSince1970: 1000)
-        let serverTwoDate = Date(timeIntervalSince1970: 2000)
-
         store.switchServer(to: "srv1")
-        store.recordUnreadCompletion(sessionId: "s1", at: serverOneDate)
+        store.upsertMany([finished("a"), finished("b")])
+        #expect(status("a", in: store) == .done)
+
+        store.activeSessionId = "a"
+
+        // Opening one chat marks only that session seen.
+        #expect(status("a", in: store) == .idle)
+        #expect(status("b", in: store) == .done)
+    }
+
+    @Test func openingAThreadMarksEveryMemberSeen() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        store.upsertMany([finished("root"), finished("child-1"), finished("child-2"), finished("elsewhere")])
+
+        store.markSeen(sessionIds: ["root", "child-1", "child-2"])
+
+        #expect(["root", "child-1", "child-2"].allSatisfy { status($0, in: store) == .idle })
+        #expect(status("elsewhere", in: store) == .done)
+    }
+
+    @Test func aResultThatArrivesWhileTheChatIsOpenStaysSeenAfterLeaving() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        store.upsert(makeTestSession(id: "a", status: .busy, programStatus: ProgramStatus(state: .working, since: Date())))
+        store.setViewingSession("a")
+
+        store.upsert(finished("a", since: 5))
+        #expect(status("a", in: store) == .idle)
+
+        store.setViewingSession(nil)
+        #expect(status("a", in: store) == .idle)
+    }
+
+    @Test func aLaterOutcomeIsUnseenAgain() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        store.upsert(finished("a"))
+        store.markSeen(sessionId: "a")
+        #expect(status("a", in: store) == .idle)
+
+        store.upsert(finished("a", since: 3_600))
+
+        #expect(status("a", in: store) == .done)
+    }
+
+    @Test func outcomesFromBeforeLaunchCountAsSeen() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        store.upsert(finished("old", since: -3_600))
+
+        #expect(status("old", in: store) == .idle)
+    }
+
+    @Test func seenStateIsPartitionedByServer() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        store.upsert(finished("s1"))
+        store.markSeen(sessionId: "s1")
         store.switchServer(to: "srv2")
-        store.recordUnreadCompletion(sessionId: "s1", at: serverTwoDate)
+        store.upsert(finished("s1"))
 
-        #expect(store.unreadCompletionDate(for: "s1") == serverTwoDate)
+        #expect(status("s1", in: store) == .done)
         store.switchServer(to: "srv1")
-        #expect(store.unreadCompletionDate(for: "s1") == serverOneDate)
+        #expect(status("s1", in: store) == .idle)
     }
+
+    @Test func leavingTheHotListDoesNotForgetWhatWasSeen() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        var gone = finished("a")
+        gone.workspaceId = "w1"
+        store.upsert(gone)
+        store.markSeen(sessionId: "a")
+        #expect(status("a", in: store) == .idle)
+
+        store.applyRecentWorkspaceSummaries(workspaceIds: ["w1"], summaries: [])
+        #expect(store.session(id: "a") == nil)
+
+        store.upsert(finished("a", since: 30))
+        #expect(status("a", in: store) == .idle)
+    }
+}
+
+@Test func seenLedgerForgetDropsTheWatermark() {
+    let baseline = Date(timeIntervalSince1970: 100)
+    var ledger = SessionSeenLedger(baseline: baseline)
+    ledger.markSeen("a", at: Date(timeIntervalSince1970: 500))
+    ledger.forget("a")
+    #expect(ledger.seenAt(for: "a") == baseline)
 }
 
 // MARK: - Context summary clearing

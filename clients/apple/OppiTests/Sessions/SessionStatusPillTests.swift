@@ -4,86 +4,38 @@ import Testing
 import UIKit
 @testable import Oppi
 
-@Suite("SessionStatusPill")
+@Suite("SessionStatusPill palette")
 struct SessionStatusPillTests {
-    @Test func workingWhenBusy() {
-        let variant = SessionPillVariant.from(status: .busy)
-        #expect(variant == .working)
-    }
-
-    @Test func workingWhenStarting() {
-        let variant = SessionPillVariant.from(status: .starting)
-        #expect(variant == .working)
-    }
-
-    @Test func workingWhenStopping() {
-        let variant = SessionPillVariant.from(status: .stopping)
-        #expect(variant == .working)
-    }
-
-    @Test func doneWhenReady() {
-        let variant = SessionPillVariant.from(status: .ready)
-        #expect(variant == .done)
-    }
-
-    @Test func idleWhenBlankDraftReadySession() {
-        let session = makeTestSession(status: .ready, messageCount: 0, firstMessage: nil)
-        let variant = SessionPillVariant.from(session: session)
-        #expect(variant == .idle)
-    }
-
-    @Test func idleWhenBlankDraftStartingSession() {
-        let session = makeTestSession(status: .starting, messageCount: 0, firstMessage: nil)
-        let variant = SessionPillVariant.from(session: session)
-        #expect(variant == .idle)
-    }
-
-    @Test func nonBlankReadySessionStaysDone() {
-        let session = makeTestSession(status: .ready, messageCount: 1, firstMessage: "Hello")
-        let variant = SessionPillVariant.from(session: session)
-        #expect(variant == .done)
-    }
-
-    @Test func stoppedWhenStopped() {
-        let variant = SessionPillVariant.from(status: .stopped)
-        #expect(variant == .stopped)
-    }
-
-    @Test func errorWhenError() {
-        let variant = SessionPillVariant.from(status: .error)
-        #expect(variant == .error)
-    }
-
-    @Test func questionWhenPendingAsk() {
-        let variant = SessionPillVariant.from(status: .busy, pendingAskCount: 1)
-        #expect(variant == .question)
-    }
-
-    @Test func questionOverridesReadyStatus() {
-        let variant = SessionPillVariant.from(status: .ready, pendingAskCount: 1)
-        #expect(variant == .question)
-    }
-
-    @Test func questionOverridesWorkingStatus() {
-        let variant = SessionPillVariant.from(status: .busy, pendingAskCount: 1)
-        #expect(variant == .question)
-    }
-
-    @Test func labels() {
-        #expect(SessionPillVariant.question.label == "Question")
-        #expect(SessionPillVariant.idle.label == "Idle")
-        #expect(SessionPillVariant.working.label == "Working")
-        #expect(SessionPillVariant.done.label == "Done")
-        #expect(SessionPillVariant.stopped.label == "Stopped")
-        #expect(SessionPillVariant.error.label == "Error")
-    }
-
-    /// Working and needs-you must never share a color; done and idle always do.
-    @Test func statusPaletteSeparatesWorkingFromNeedsYou() {
+    /// Working blue; every blocked kind the same orange; Done green and Error red (both only
+    /// while unseen); Idle and Stopped neutral greys that never read as green.
+    @Test func statusPaletteSeparatesWorkingBlockedAndUnseenOutcomes() {
         let theme = ThemeID.dark.appTheme
-        #expect(UIColor(SessionPillVariant.done.tint(theme)) == UIColor(theme.accent.green))
-        #expect(UIColor(SessionPillVariant.idle.tint(theme)) == UIColor(theme.accent.green))
-        #expect(UIColor(SessionPillVariant.working.tint(theme)) == UIColor(theme.accent.blue))
-        #expect(UIColor(SessionPillVariant.question.tint(theme)) == UIColor(theme.accent.orange))
+        func color(_ kind: SessionStatusKind) -> UIColor { UIColor(kind.tint(theme)) }
+
+        #expect(color(.working) == UIColor(theme.accent.blue))
+        for blocked in [SessionStatusKind.needsApproval, .question, .signIn] {
+            #expect(color(blocked) == UIColor(theme.accent.orange))
+        }
+        #expect(color(.done) == UIColor(theme.accent.green))
+        #expect(color(.error) == UIColor(theme.accent.red))
+        #expect(color(.idle) == UIColor(theme.text.secondary))
+        #expect(color(.stopped) == UIColor(theme.text.tertiary))
+        #expect(color(.idle) != color(.done))
+    }
+
+    @Test func rowCarriesSeenStateIntoItsStatus() {
+        let since = Date(timeIntervalSince1970: 1_000)
+        let session = makeTestSession(
+            status: .ready,
+            programStatus: ProgramStatus(state: .done, since: since),
+            messageCount: 2,
+            firstMessage: "go"
+        )
+
+        let unseen = SessionRowPresentationBuilder.make(session: session, seenAt: since.addingTimeInterval(-1))
+        let seen = SessionRowPresentationBuilder.make(session: session, seenAt: since)
+
+        #expect(unseen.statusKind == .done)
+        #expect(seen.statusKind == .idle)
     }
 }

@@ -2,18 +2,21 @@ import Foundation
 
 /// UIKit-free attention-notification policy shared by iOS and Mac painters.
 ///
-/// Local banners exist for agent asks. `SESSION_DONE` / `SESSION_ERROR` are
-/// tap-routing categories for remote payloads; this policy does not build
-/// local session-ended banners because iOS does not post those locally.
+/// Local banners exist for agent asks. `SESSION_DONE` / `SESSION_ERROR` /
+/// `SESSION_BLOCKED` are tap-routing categories for remote session-event
+/// payloads (ended, done, error, blocked); this policy does not build local
+/// banners for them because iOS does not post those locally.
 enum AttentionNotificationPolicy: Sendable {
     static let askCategoryId = "ASK_REQUEST"
     static let sessionDoneCategoryId = "SESSION_DONE"
     static let sessionErrorCategoryId = "SESSION_ERROR"
+    static let sessionBlockedCategoryId = "SESSION_BLOCKED"
 
     static let sessionCategoryIds = [
         askCategoryId,
         sessionDoneCategoryId,
         sessionErrorCategoryId,
+        sessionBlockedCategoryId,
     ]
 
     static func shouldNotify(
@@ -32,12 +35,7 @@ enum AttentionNotificationPolicy: Sendable {
         categoryIdentifier: String,
         userInfo: [AnyHashable: Any]
     ) -> String? {
-        switch categoryIdentifier {
-        case askCategoryId, sessionDoneCategoryId, sessionErrorCategoryId:
-            break
-        default:
-            return nil
-        }
+        guard sessionCategoryIds.contains(categoryIdentifier) else { return nil }
         guard let sessionId = userInfo["sessionId"] as? String else {
             return nil
         }
