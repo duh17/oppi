@@ -78,6 +78,14 @@ final class FocusedSessionStore {
         return next.holder
     }
 
+    /// The current `claim`'s runtime released it, but focus stays on it for a
+    /// deferred close (live audio drain). Drop its holder so a later
+    /// same-session claim never keeps the released runtime for hand-back.
+    func detachHolder(from claim: FocusedSessionContext) {
+        guard focused == claim else { return }
+        focusedHolder = nil
+    }
+
     /// Drop a superseded claim its runtime released; it can never regain focus.
     func forget(_ claim: FocusedSessionContext) {
         heldClaims.removeAll { $0.claim == claim }

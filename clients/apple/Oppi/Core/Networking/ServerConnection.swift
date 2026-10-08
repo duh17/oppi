@@ -2429,6 +2429,9 @@ final class ServerConnection {
             return
         }
         if audioPlayer.activeLiveTransportSessionID == claim.sessionId {
+            // Focus stays on the released claim until audio drains, but its
+            // runtime is gone: it must never be kept for a later hand-back.
+            focusedSessionStore.detachHolder(from: claim)
             deferDisconnectSessionUntilLiveAudioStreamFinishes(claim)
             return
         }

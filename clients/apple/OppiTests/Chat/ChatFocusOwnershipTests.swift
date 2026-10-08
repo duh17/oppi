@@ -394,6 +394,55 @@ struct ChatFocusOwnershipTests {
         harness.tearDown()
     }
 
+    /// A chat released while live audio drains keeps focus only for the
+    /// deferred close; its runtime is gone. Re-entering the same session must
+    /// not keep that released runtime for hand-back, so the next leave closes
+    /// the stream instead of restoring a claim nobody holds.
+    /// `audioEndsFirst`: audio drains before the newer chat leaves, versus the
+    /// newer chat leaving while audio still plays (defer, then close).
+    @Test(arguments: [true, false])
+    func chatReleasedDuringLiveAudioIsNeverHandedFocusBack(audioEndsFirst: Bool) async {
+        let sessionId = "audio-holder-\(UUID().uuidString)"
+        let (connection, _) = makeTestConnection(sessionId: "other")
+        connection._sendMessageForTesting = { _ in }
+        var regained: [String] = []
+        let releasedRuntime = NSObject()
+        let newerRuntime = NSObject()
+
+        guard let released = connection.claimFocusedSession(
+            sessionId,
+            holder: FocusClaimHolder(id: ObjectIdentifier(releasedRuntime)) { regained.append("released") }
+        ) else {
+            Issue.record("Expected claim")
+            return
+        }
+        connection.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: sessionId)
+        connection.releaseFocusedSession(released)
+        #expect(connection.focusedSessionStore.focused == released, "Live audio defers the release")
+
+        // Re-enter the same session before audio drains.
+        let newer = connection.claimFocusedSession(
+            sessionId,
+            holder: FocusClaimHolder(id: ObjectIdentifier(newerRuntime)) { regained.append("newer") }
+        )
+
+        if audioEndsFirst {
+            connection.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: sessionId, receivedDone: true)
+            connection.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: nil)
+            if let newer { connection.releaseFocusedSession(newer) }
+            #expect(connection.focusedSessionId == nil, "Leaving the newer chat closes the stream")
+        } else {
+            if let newer { connection.releaseFocusedSession(newer) }
+            #expect(connection.focusedSessionStore.focused == newer, "Still deferred while audio plays")
+            connection.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: sessionId, receivedDone: true)
+            #expect(await waitForMainActorCondition { connection.focusedSessionStore.focused == nil })
+        }
+        #expect(regained.isEmpty, "A released chat must never be handed focus")
+
+        connection.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: nil)
+        connection.disconnectStream()
+    }
+
     // MARK: - Send readiness
 
     /// Exercise the manager -> iOS adapter -> focused socket binding, not a
