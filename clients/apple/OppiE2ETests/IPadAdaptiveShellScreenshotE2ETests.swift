@@ -80,11 +80,11 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         try saveLabScreenshot(name: "ipad-session-outline-fullscreen")
         openSessionTreeIfAvailable()
         try saveLabScreenshot(name: "ipad-session-tree-fullscreen")
-        dismissPresentedNavigationSurface(title: "Session Outline")
+        dismissPresentedNavigationSurface(title: "Session Outline", closeButtonID: "chat.outline.close")
 
         openContextInspectorSurface()
         try saveLabScreenshot(name: "ipad-context-inspector-fullscreen")
-        dismissPresentedNavigationSurface(title: "Context")
+        dismissPresentedNavigationSurface(title: "Context", closeButtonID: "chat.context.close")
 
         navigateBackToWorkspace()
 
@@ -377,16 +377,12 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         )
     }
 
-    private func dismissPresentedNavigationSurface(title: String) {
+    /// The close control is an untitled role button, so find it by identifier.
+    private func dismissPresentedNavigationSurface(title: String, closeButtonID: String) {
         let navigationBar = app.navigationBars[title]
         XCTAssertTrue(navigationBar.waitForExistence(timeout: 5), "\(title) navigation bar missing before dismissal")
 
-        let doneButton = navigationBar.buttons["Done"]
-        if doneButton.waitForExistence(timeout: 2) {
-            tap(doneButton, named: "\(title) done button", timeout: 1)
-        } else {
-            tap(app.buttons["Done"], named: "\(title) done button", timeout: 1)
-        }
+        tap(navigationBar.buttons[closeButtonID], named: "\(title) close button", timeout: 2)
 
         let predicate = NSPredicate(format: "exists == false")
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: navigationBar)

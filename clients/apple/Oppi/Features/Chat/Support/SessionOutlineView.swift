@@ -114,6 +114,7 @@ struct SessionOutlineView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(role: .close) { close() }
+                        .accessibilityIdentifier("chat.outline.close")
                 }
             }
             .task {
