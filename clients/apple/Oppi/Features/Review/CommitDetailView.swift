@@ -22,8 +22,11 @@ struct CommitDetailView: View {
     let workspaceId: String
     let commit: GitCommitSummary
     var testingQuickActionDestination: QuickActionSessionNavDestination? = nil
+    /// Screenshot previews open the first changed file so the diff panel is visible.
+    var opensFirstFileForPreview = false
 
     @Environment(\.apiClient) private var apiClient
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @Environment(SessionStore.self) private var sessionStore
     @State private var detail: GitCommitDetail?
@@ -125,22 +128,12 @@ struct CommitDetailView: View {
         } message: {
             Text(launchError ?? "")
         }
-        .sheet(item: $selectedFile) { file in
+        .inspector(isPresented: commitDiffPresented) {
+            commitDiffColumn
+        }
+        .sheet(item: commitDiffSheetFile) { file in
             NavigationStack {
-                CommitFileDiffView(workspaceId: workspaceId, sha: commit.sha, file: file)
-                    .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button {
-                                selectedFile = nil
-                            } label: {
-                                Label(
-                                    FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel,
-                                    systemImage: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName
-                                )
-                            }
-                        }
-                    }
+                commitDiffContent(file)
             }
         }
     }
@@ -152,6 +145,57 @@ struct CommitDetailView: View {
                 if !isPresented { launchError = nil }
             }
         )
+    }
+
+    private var usesTrailingColumn: Bool {
+        TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: horizontalSizeClass)
+    }
+
+    /// The open diff follows the selection. Dismissing the column clears it,
+    /// the same way the sheet's close button did.
+    private var commitDiffPresented: Binding<Bool> {
+        Binding(
+            get: { usesTrailingColumn && selectedFile != nil },
+            set: { presented in
+                // Ignore a compact transition. SwiftUI may report the column
+                // dismissed as the width changes; the open file has to survive.
+                if !presented, usesTrailingColumn { selectedFile = nil }
+            }
+        )
+    }
+
+    private var commitDiffSheetFile: Binding<GitCommitFileInfo?> {
+        Binding(
+            get: { usesTrailingColumn ? nil : selectedFile },
+            set: { selectedFile = $0 }
+        )
+    }
+
+    @ViewBuilder
+    private var commitDiffColumn: some View {
+        if let file = selectedFile {
+            NavigationStack {
+                commitDiffContent(file)
+            }
+            .inspectorColumnWidth(min: 320, ideal: 440, max: 640)
+        }
+    }
+
+    private func commitDiffContent(_ file: GitCommitFileInfo) -> some View {
+        CommitFileDiffView(workspaceId: workspaceId, sha: commit.sha, file: file)
+            .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        selectedFile = nil
+                    } label: {
+                        Label(
+                            FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel,
+                            systemImage: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName
+                        )
+                    }
+                }
+            }
     }
 
     @ViewBuilder
@@ -348,6 +392,9 @@ struct CommitDetailView: View {
 
         do {
             detail = try await api.getCommitDetail(workspaceId: workspaceId, sha: commit.sha)
+            if opensFirstFileForPreview, selectedFile == nil {
+                selectedFile = detail?.files.first
+            }
         } catch {
             self.error = error.localizedDescription
         }

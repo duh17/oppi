@@ -199,10 +199,16 @@ enum FileBrowserLayoutMode: Equatable {
     case compactOnly
 }
 
-private enum FileBrowserAdaptiveLayout: Equatable {
-    case compact
-    case landscapeTree
-    case portraitOverlay
+enum FileBrowserColumnPolicy {
+    /// The file tree is primary navigation, like Mail's list. Regular width
+    /// shows it as a system column; compact keeps the push stack. Aspect
+    /// ratio is not a third layout.
+    static func showsColumn(
+        layoutMode: FileBrowserLayoutMode,
+        horizontalSizeClass: UserInterfaceSizeClass?
+    ) -> Bool {
+        layoutMode == .adaptive && TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: horizontalSizeClass)
+    }
 }
 
 /// Workspace file browser — entry point view.
@@ -221,17 +227,22 @@ struct FileBrowserView: View {
     let scope: FileBrowserScope
     let initialPath: String
     let layoutMode: FileBrowserLayoutMode
+    /// Screenshot previews open the first file so the column and the reader
+    /// are both on screen. Production callers leave this false.
+    var opensFirstFileForPreview = false
 
     init(
         serverId: String? = nil,
         scope: FileBrowserScope,
         initialPath: String,
-        layoutMode: FileBrowserLayoutMode = .adaptive
+        layoutMode: FileBrowserLayoutMode = .adaptive,
+        opensFirstFileForPreview: Bool = false
     ) {
         self.serverId = serverId
         self.scope = scope
         self.initialPath = initialPath
         self.layoutMode = layoutMode
+        self.opensFirstFileForPreview = opensFirstFileForPreview
     }
 
     init(
@@ -239,13 +250,15 @@ struct FileBrowserView: View {
         workspaceId: String,
         worktreeId: String? = nil,
         initialPath: String,
-        layoutMode: FileBrowserLayoutMode = .adaptive
+        layoutMode: FileBrowserLayoutMode = .adaptive,
+        opensFirstFileForPreview: Bool = false
     ) {
         self.init(
             serverId: serverId,
             scope: .workspace(workspaceId: workspaceId, worktreeId: worktreeId),
             initialPath: initialPath,
-            layoutMode: layoutMode
+            layoutMode: layoutMode,
+            opensFirstFileForPreview: opensFirstFileForPreview
         )
     }
 
@@ -298,8 +311,7 @@ struct FileBrowserView: View {
     @State private var fuzzyResults: [FuzzyMatch.ScoredPath] = []
     @State private var selectedFile: FileBrowserSelection?
     @State private var markdownViewportRestore = FullScreenMarkdownViewportRestoreState()
-    @State private var isTreeOverlayVisible = true
-    @State private var activeLayout: FileBrowserAdaptiveLayout = .compact
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var treeDirectoryPath: String?
 
     private var currentDirectoryPath: String {
@@ -308,15 +320,6 @@ struct FileBrowserView: View {
 
     private var isRoot: Bool {
         currentDirectoryPath.isEmpty || currentDirectoryPath == "/"
-    }
-
-    private var rootSubtitle: String {
-        switch scope {
-        case .hostHome:
-            return "~"
-        case .workspace:
-            return "Workspace root"
-        }
     }
 
     private var directoryLoadTaskID: String {
@@ -369,26 +372,16 @@ struct FileBrowserView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            let layout = adaptiveLayout(for: proxy.size)
-            adaptiveContent(layout: layout, size: proxy.size)
-                .onAppear {
-                    activeLayout = layout
-                    if layout == .portraitOverlay, selectedFile == nil {
-                        isTreeOverlayVisible = true
-                    }
-                }
-                .onChange(of: layout) { _, newValue in
-                    activeLayout = newValue
-                    if newValue == .compact {
-                        treeDirectoryPath = nil
-                    }
-                    if newValue == .portraitOverlay, selectedFile == nil {
-                        isTreeOverlayVisible = true
-                    }
-                }
+        Group {
+            if showsFileColumn {
+                columnBrowser
+            } else if selectedFile != nil {
+                selectedFileContent
+            } else {
+                compactBrowserContent
+            }
         }
-        .fileBrowserSearchable(isEnabled: activeLayout == .compact && !isHostHome, text: $searchText)
+        .fileBrowserSearchable(isEnabled: !showsFileColumn && selectedFile == nil && !isHostHome, text: $searchText)
         .navigationTitle(isRoot ? breadcrumbRootLabel : lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -429,22 +422,29 @@ struct FileBrowserView: View {
         .task { ensureFileIndex() }
     }
 
-    @ViewBuilder
-    private func adaptiveContent(layout: FileBrowserAdaptiveLayout, size: CGSize) -> some View {
-        switch layout {
-        case .compact:
-            compactBrowserContent
-        case .landscapeTree:
-            landscapeTreeContent(size: size)
-        case .portraitOverlay:
-            portraitOverlayContent(size: size)
-        }
+    private var showsFileColumn: Bool {
+        FileBrowserColumnPolicy.showsColumn(
+            layoutMode: layoutMode,
+            horizontalSizeClass: horizontalSizeClass
+        )
     }
 
-    private func adaptiveLayout(for size: CGSize) -> FileBrowserAdaptiveLayout {
-        guard layoutMode == .adaptive else { return .compact }
-        guard horizontalSizeClass == .regular else { return .compact }
-        return size.width >= size.height ? .landscapeTree : .portraitOverlay
+    private var columnBrowser: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            fileTreeSidebar
+        } detail: {
+            selectedFileContent
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+
+    private var fileTreeSidebar: some View {
+        fileTreeBody
+            .navigationTitle(isRoot ? breadcrumbRootLabel : lastPathComponent)
+            .navigationBarTitleDisplayMode(.inline)
+            .fileBrowserSearchable(isEnabled: !isHostHome, text: $searchText)
+            .accessibilityIdentifier("fileBrowser.tree")
+            .navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 480)
     }
 
     @ViewBuilder
@@ -465,50 +465,6 @@ struct FileBrowserView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-    }
-
-    private func landscapeTreeContent(size: CGSize) -> some View {
-        HStack(spacing: 0) {
-            fileTreeRail(showCloseButton: false)
-                .frame(width: min(max(size.width * 0.30, 320), 430))
-                .padding(.leading, 16)
-                .padding(.vertical, 16)
-
-            Divider()
-                .overlay(.themeComment.opacity(0.18))
-                .padding(.vertical, 20)
-
-            selectedFileContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .background(.themeBg)
-    }
-
-    private func portraitOverlayContent(size: CGSize) -> some View {
-        ZStack(alignment: .leading) {
-            selectedFileContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            if !isTreeOverlayVisible, selectedFile != nil {
-                fileTreeRevealButton
-                    .padding(.leading, 12)
-                    .padding(.top, 12)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .transition(.opacity)
-                    .zIndex(1)
-            }
-
-            if isTreeOverlayVisible || selectedFile == nil {
-                fileTreeRail(showCloseButton: selectedFile != nil)
-                    .frame(width: min(size.width * 0.82, 390))
-                    .padding(.leading, 12)
-                    .padding(.vertical, 14)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-                    .zIndex(2)
-            }
-        }
-        .background(.themeBg)
-        .animation(.easeInOut(duration: 0.18), value: isTreeOverlayVisible)
     }
 
     @ViewBuilder
@@ -535,103 +491,6 @@ struct FileBrowserView: View {
             return "100+ files"
         }
         return "\(count) file\(count == 1 ? "" : "s")"
-    }
-
-    private func fileTreeRail(showCloseButton: Bool) -> some View {
-        VStack(spacing: 12) {
-            fileTreeHeader(showCloseButton: showCloseButton)
-            if !isHostHome {
-                fileTreeSearchField
-            }
-            fileTreeBody
-        }
-        .padding(14)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .fileTreeGlassPanel(cornerRadius: 28)
-        .accessibilityIdentifier("fileBrowser.tree")
-    }
-
-    private func fileTreeHeader(showCloseButton: Bool) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "folder")
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(.themeBlue)
-                .frame(width: 30, height: 30)
-                .glassEffect(.regular.interactive(), in: Circle())
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(breadcrumbRootLabel)
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-                Text(isRoot ? rootSubtitle : currentDirectoryPath)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.themeComment)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-
-            Spacer(minLength: 8)
-
-            if showCloseButton {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        isTreeOverlayVisible = false
-                    }
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.caption.weight(.bold))
-                        .frame(width: 30, height: 30)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.themeFg)
-                .glassEffect(.regular.interactive(), in: Circle())
-                .accessibilityLabel("Hide file tree")
-            }
-        }
-    }
-
-    private var fileTreeRevealButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                isTreeOverlayVisible = true
-            }
-        } label: {
-            Image(systemName: "sidebar.left")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.themeFg)
-                .frame(width: 42, height: 42)
-        }
-        .buttonStyle(.plain)
-        .fileTreeGlassPanel(cornerRadius: 21)
-        .accessibilityLabel("Show file tree")
-        .accessibilityIdentifier("fileBrowser.tree.reveal")
-    }
-
-    private var fileTreeSearchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.themeComment)
-
-            TextField("Search files", text: $searchText)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .font(.body)
-                .foregroundStyle(.themeFg)
-
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.themeComment)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear file search")
-            }
-        }
-        .padding(.horizontal, 12)
-        .frame(minHeight: 42)
-        .fileTreeGlassPanel(cornerRadius: 16)
     }
 
     @ViewBuilder
@@ -1128,19 +987,11 @@ struct FileBrowserView: View {
 
     private func selectFile(path: String, name: String, size: Int?) {
         selectedFile = FileBrowserSelection(path: path, name: name, size: size)
-        if activeLayout == .portraitOverlay {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                isTreeOverlayVisible = false
-            }
-        }
     }
 
     private func clearSelectedFileForBackNavigation() {
         withAnimation(.easeInOut(duration: 0.22)) {
             selectedFile = nil
-            if activeLayout == .portraitOverlay {
-                isTreeOverlayVisible = true
-            }
         }
     }
 
@@ -1150,7 +1001,7 @@ struct FileBrowserView: View {
     }
 
     private func openDirectory(path: String) {
-        guard activeLayout == .compact && !usesInlineCompactDirectoryNavigation else {
+        guard !showsFileColumn && !usesInlineCompactDirectoryNavigation else {
             let mutation = FileBrowserTreeNavigationReducer.openDirectory(
                 path: path,
                 selectedFile: selectedFile
@@ -1210,7 +1061,7 @@ struct FileBrowserView: View {
         let popCount = currentDepth - targetDepth
         guard popCount > 0 else { return }
 
-        guard activeLayout == .compact && !usesInlineCompactDirectoryNavigation else {
+        guard !showsFileColumn && !usesInlineCompactDirectoryNavigation else {
             let mutation = FileBrowserTreeNavigationReducer.popToBreadcrumb(
                 path: breadcrumbPath(for: targetDepth),
                 selectedFile: selectedFile
@@ -1245,6 +1096,16 @@ struct FileBrowserView: View {
         return trimmed.split(separator: "/").last.map(String.init) ?? breadcrumbRootLabel
     }
 
+    private func openFirstPreviewFileIfNeeded(in response: DirectoryListingResponse, relativeTo path: String) {
+        guard opensFirstFileForPreview, selectedFile == nil else { return }
+        guard let entry = response.entries.first(where: { !$0.isDirectory }) else { return }
+        selectFile(
+            path: filePath(for: entry, relativeTo: path),
+            name: entry.name,
+            size: entry.size
+        )
+    }
+
     private func loadDirectory(path: String) async {
         guard let api = apiClient else {
             self.error = "Not connected"
@@ -1271,6 +1132,7 @@ struct FileBrowserView: View {
             guard path == currentDirectoryPath else { return }
             listing = response
             error = nil
+            openFirstPreviewFileIfNeeded(in: response, relativeTo: path)
         } catch {
             guard path == currentDirectoryPath else { return }
             self.error = error.localizedDescription
@@ -1333,13 +1195,6 @@ private struct FileBrowserSearchableModifier: ViewModifier {
 private extension View {
     func fileBrowserSearchable(isEnabled: Bool, text: Binding<String>) -> some View {
         modifier(FileBrowserSearchableModifier(isEnabled: isEnabled, text: text))
-    }
-
-    func fileTreeGlassPanel(cornerRadius: CGFloat) -> some View {
-        themedSurface(
-            .floatingControl,
-            in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        )
     }
 }
 

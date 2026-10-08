@@ -35,21 +35,22 @@ struct ChatFileBrowserPanelTests {
         #expect(store.tab(for: "   ") == .changed)
     }
 
-    @Test func layoutUsesSideRailForWideChatAndBottomPanelForNarrowChat() {
-        #expect(ChatFileBrowserPanelLayout.style(for: CGSize(width: 900, height: 700)) == .sideRail)
-        #expect(ChatFileBrowserPanelLayout.style(for: CGSize(width: 390, height: 844)) == .bottomPanel)
+    @Test func trailingColumnFollowsRegularWidthNotAPointThreshold() {
+        #expect(TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: .regular))
+        #expect(TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: .compact) == false)
+        #expect(TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: nil) == false)
     }
 
-    @Test func layoutSizesStayWithinComfortableBounds() {
-        let regularWidth = ChatFileBrowserPanelLayout.sideRailWidth(for: CGSize(width: 1_100, height: 800))
-        let largeWidth = ChatFileBrowserPanelLayout.sideRailWidth(for: CGSize(width: 2_000, height: 1_000))
-        let phoneHeight = ChatFileBrowserPanelLayout.bottomPanelHeight(for: CGSize(width: 390, height: 844))
-        let tallHeight = ChatFileBrowserPanelLayout.bottomPanelHeight(for: CGSize(width: 800, height: 1_300))
-
-        #expect(regularWidth >= 320 && regularWidth <= 460)
-        #expect(largeWidth == 460)
-        #expect(phoneHeight >= 260 && phoneHeight <= 360)
-        #expect(tallHeight == 460)
+    @Test func fileBrowserColumnStaysOnRegularWidthInEitherOrientation() {
+        #expect(
+            FileBrowserColumnPolicy.showsColumn(layoutMode: .adaptive, horizontalSizeClass: .regular)
+        )
+        #expect(
+            FileBrowserColumnPolicy.showsColumn(layoutMode: .adaptive, horizontalSizeClass: .compact) == false
+        )
+        #expect(
+            FileBrowserColumnPolicy.showsColumn(layoutMode: .compactOnly, horizontalSizeClass: .regular) == false
+        )
     }
 
     @Test func changedFileRoutingOpensNonGitRelativePathsThroughSessionRawEndpoint() {

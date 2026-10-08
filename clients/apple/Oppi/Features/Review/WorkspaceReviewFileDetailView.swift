@@ -92,6 +92,7 @@ struct WorkspaceReviewFileDetailView: View {
 
     @Environment(\.apiClient) private var apiClient
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(SessionStore.self) private var sessionStore
@@ -111,6 +112,8 @@ struct WorkspaceReviewFileDetailView: View {
     @State private var isEditingCurrentFile = false
     /// Bumped when an edit ends so Changes reloads once the save lands.
     @State private var diffRevision = 0
+    /// Survives a fold. Compact hides the column; regular shows it again.
+    @State private var showsFileListColumn = true
 
     private var currentFile: WorkspaceReviewFile {
         activeFile ?? file
@@ -266,6 +269,14 @@ struct WorkspaceReviewFileDetailView: View {
         .toolbar {
             // The editor owns the bar while typing: status, Preview, Done.
             if !isEditingCurrentFile {
+                if usesReviewFileColumn && !showsFileListColumn {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Files", systemImage: "list.bullet") {
+                            showsFileListColumn = true
+                        }
+                        .accessibilityIdentifier("review-file.list.show")
+                    }
+                }
                 if toolbarState.showsShare, let shareable = toolbarShareableContent {
                     ToolbarItem(placement: .topBarTrailing) {
                         FileShareButton(content: shareable, style: .icon)
@@ -293,6 +304,9 @@ struct WorkspaceReviewFileDetailView: View {
                 }
             }
         }
+        .inspector(isPresented: reviewFileListPresented) {
+            reviewFileListColumn
+        }
         .alert(
             "Unable to start action",
             isPresented: launchErrorPresented
@@ -301,6 +315,44 @@ struct WorkspaceReviewFileDetailView: View {
         } message: {
             Text(launchError ?? "")
         }
+    }
+
+    private var usesReviewFileColumn: Bool {
+        TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: horizontalSizeClass)
+            && WorkspaceReviewFileNavigationPolicy.navigationFiles(navigationFiles).count > 1
+    }
+
+    private var reviewFileListPresented: Binding<Bool> {
+        Binding(
+            get: { usesReviewFileColumn && showsFileListColumn && !isEditingCurrentFile },
+            set: { presented in
+                if usesReviewFileColumn { showsFileListColumn = presented }
+            }
+        )
+    }
+
+    private var reviewFileListColumn: some View {
+        let files = WorkspaceReviewFileNavigationPolicy.navigationFiles(navigationFiles)
+        return List(files) { file in
+            Button {
+                selectReviewFile(file)
+            } label: {
+                HStack {
+                    Text(file.path.lastPathComponentForDisplay)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    if file.path == currentFile.path {
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(.themeBlue)
+                    }
+                }
+            }
+            .accessibilityIdentifier("review-file.list.row")
+        }
+        .navigationTitle("Files")
+        .accessibilityIdentifier("review-file.list")
+        .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
     }
 
     private var launchErrorPresented: Binding<Bool> {
@@ -586,6 +638,19 @@ struct WorkspaceReviewFileDetailView: View {
         fileTransitionDirection = direction
         withAnimation(FileBrowserPushTransitionPolicy.animation(reduceMotion: reduceMotion)) {
             activeFile = nextFile
+            diff = nil
+            error = nil
+        }
+    }
+
+    private func selectReviewFile(_ file: WorkspaceReviewFile) {
+        guard file.path != currentFile.path else { return }
+        let files = WorkspaceReviewFileNavigationPolicy.navigationFiles(navigationFiles)
+        let currentIndex = files.firstIndex(where: { $0.path == currentFile.path }) ?? 0
+        let nextIndex = files.firstIndex(where: { $0.path == file.path }) ?? currentIndex
+        fileTransitionDirection = nextIndex >= currentIndex ? .next : .previous
+        withAnimation(FileBrowserPushTransitionPolicy.animation(reduceMotion: reduceMotion)) {
+            activeFile = file
             diff = nil
             error = nil
         }

@@ -112,6 +112,12 @@ struct ScreenshotPreviewView: View {
             BuiltInToolFactsPreview(isEdit: true)
         case "chat-file-panel":
             ChatFileBrowserPanelPreview()
+        case "side-panel-files":
+            SidePanelScreenshotPreview(surface: .files)
+        case "side-panel-commit":
+            SidePanelScreenshotPreview(surface: .commit)
+        case "side-panel-review":
+            SidePanelScreenshotPreview(surface: .review)
         case "file-browser-motion":
             FileBrowserMotionPreview()
         case "file-editor-save-status":

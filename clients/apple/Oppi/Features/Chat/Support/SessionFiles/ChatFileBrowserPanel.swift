@@ -58,26 +58,8 @@ struct ChatFileBrowserPanelTabStore {
     }
 }
 
-enum ChatFileBrowserPanelLayoutStyle: Equatable {
-    case sideRail
-    case bottomPanel
-}
-
-enum ChatFileBrowserPanelLayout {
-    static func style(for size: CGSize) -> ChatFileBrowserPanelLayoutStyle {
-        size.width >= 700 ? .sideRail : .bottomPanel
-    }
-
-    static func sideRailWidth(for size: CGSize) -> CGFloat {
-        min(max(size.width * 0.34, 320), 460)
-    }
-
-    static func bottomPanelHeight(for size: CGSize) -> CGFloat {
-        min(max(size.height * 0.38, 260), 460)
-    }
-}
-
-/// Reusable chat file surface that can live in a side rail, bottom split, or sheet.
+/// Reusable chat file surface. Chat presents it in a trailing inspector when
+/// the width is regular, and in a sheet when the width is compact.
 struct ChatFileBrowserPanel: View {
     let sessionId: String
     let workspaceId: String?

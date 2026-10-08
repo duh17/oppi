@@ -6,6 +6,7 @@ import UIKit
 // MARK: - Chat File Browser Panel Preview
 
 struct ChatFileBrowserPanelPreview: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var selectedTab = ScreenshotPreviewConfig.panelTab
     @State private var navigation = AppNavigation()
     @State private var gitStatusStore = GitStatusStore()
@@ -24,37 +25,16 @@ struct ChatFileBrowserPanelPreview: View {
     ]
 
     var body: some View {
-        GeometryReader { proxy in
-            let size = proxy.size
-            let style = ChatFileBrowserPanelLayout.style(for: size)
-
-            Group {
-                switch style {
-                case .sideRail:
-                    let panelWidth = ChatFileBrowserPanelLayout.sideRailWidth(for: size)
-                    HStack(spacing: 0) {
-                        previewSessionColumn
-                            .frame(width: max(0, size.width - panelWidth), height: size.height)
-
-                        Divider().overlay(Color.themeComment.opacity(0.18))
-
+        Group {
+            if TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: horizontalSizeClass) {
+                previewSessionColumn
+                    .inspector(isPresented: .constant(true)) {
                         panel
-                            .frame(width: panelWidth, height: size.height)
+                            .inspectorColumnWidth(min: 320, ideal: 400, max: 520)
                     }
-                case .bottomPanel:
-                    let panelHeight = ChatFileBrowserPanelLayout.bottomPanelHeight(for: size)
-                    VStack(spacing: 0) {
-                        previewSessionColumn
-                            .frame(width: size.width, height: max(0, size.height - panelHeight))
-
-                        Divider().overlay(Color.themeComment.opacity(0.18))
-
-                        panel
-                            .frame(width: size.width, height: panelHeight)
-                    }
-                }
+            } else {
+                panel
             }
-            .frame(width: size.width, height: size.height)
         }
         .background(Color.themeBg.ignoresSafeArea())
         .environment(navigation)
