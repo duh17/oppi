@@ -72,6 +72,7 @@ interface SessionProjectionRow {
   launch_lease_until_ms: number | null;
   launch_metadata_json: string | null;
   server_durable_json: string | null;
+  program_status_json: string | null;
 }
 
 interface WorkspaceSummaryRow {
@@ -136,7 +137,8 @@ const SESSION_PROJECTION_COLUMNS = `
   launch_lease_owner,
   launch_lease_until_ms,
   launch_metadata_json,
-  server_durable_json
+  server_durable_json,
+  program_status_json
 `;
 
 const SESSION_COLUMN_DEFINITIONS = [
@@ -183,6 +185,8 @@ const SESSION_COLUMN_DEFINITIONS = [
   ["launch_metadata_json", "TEXT"],
   // Durable-engine enrollment, so list projections can report `engine` without session_json.
   ["server_durable_json", "TEXT"],
+  // OSC 7501 program status, so list projections report it without session_json.
+  ["program_status_json", "TEXT"],
   ["session_json", "TEXT NOT NULL DEFAULT ''"],
   ["updated_at", "INTEGER NOT NULL DEFAULT 0"],
 ] as const;
@@ -231,6 +235,7 @@ export class SessionSqliteStore {
       status: "ready",
       createdAt: now,
       lastActivity: now,
+      programStatus: { state: "idle", since: now },
       ...(model ? { model } : {}),
       messageCount: 0,
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -295,6 +300,7 @@ export class SessionSqliteStore {
       normalized.launch?.idempotencyKey ?? null,
       normalized.launch ? JSON.stringify(normalized.launch) : null,
       normalized.serverDurable ? JSON.stringify(normalized.serverDurable) : null,
+      normalized.programStatus ? JSON.stringify(normalized.programStatus) : null,
       json,
       Date.now(),
     );
@@ -634,6 +640,7 @@ export class SessionSqliteStore {
         launch_idempotency_key TEXT,
         launch_metadata_json TEXT,
         server_durable_json TEXT,
+        program_status_json TEXT,
         session_json TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -834,10 +841,11 @@ export class SessionSqliteStore {
         launch_idempotency_key,
         launch_metadata_json,
         server_durable_json,
+        program_status_json,
         session_json,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         workspace_id = excluded.workspace_id,
         workspace_name = excluded.workspace_name,
@@ -881,6 +889,7 @@ export class SessionSqliteStore {
         launch_idempotency_key = excluded.launch_idempotency_key,
         launch_metadata_json = excluded.launch_metadata_json,
         server_durable_json = excluded.server_durable_json,
+        program_status_json = excluded.program_status_json,
         session_json = excluded.session_json,
         updated_at = excluded.updated_at
     `);
@@ -1148,6 +1157,13 @@ function buildProjectedSession(row: SessionProjectionRow): Session {
   );
   if (serverDurable) session.serverDurable = serverDurable;
 
+  const programStatus = parseJsonValue<Session["programStatus"]>(
+    row.program_status_json,
+    row.id,
+    "programStatus",
+  );
+  if (programStatus) session.programStatus = programStatus;
+
   const changeStats = parseJsonValue<Session["changeStats"]>(
     row.change_stats_json,
     row.id,
@@ -1260,6 +1276,9 @@ function normalizeDeclaredSession(session: Session): Session {
   }
   if (session.currentTurnStartedAt !== undefined && session.currentTurnStartedAt !== null) {
     normalized.currentTurnStartedAt = session.currentTurnStartedAt;
+  }
+  if (session.programStatus !== undefined && session.programStatus !== null) {
+    normalized.programStatus = { ...session.programStatus };
   }
   if (session.model !== undefined && session.model !== null) {
     normalized.model = session.model;

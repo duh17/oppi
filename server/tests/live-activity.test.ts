@@ -123,6 +123,21 @@ function event(
   } as unknown as SessionBroadcastEvent;
 }
 
+/** A session_summary event as the server sends it: lifecycle status plus program status. */
+function summary(
+  status: Session["status"],
+  programState?: "idle" | "working" | "done" | "blocked" | "error",
+  sessionId = "s1",
+): SessionBroadcastEvent {
+  return event("session_summary", sessionId, {
+    summary: {
+      id: sessionId,
+      status,
+      ...(programState ? { programStatus: { state: programState, since: 1 } } : {}),
+    },
+  });
+}
+
 // ─── Tests ───
 
 describe("LiveActivityBridge", () => {
@@ -135,9 +150,10 @@ describe("LiveActivityBridge", () => {
   });
 
   describe("event mapping", () => {
-    it("maps agent_start to busy status", () => {
+    it("reports agent_start with the busy status program status gave the session", () => {
       const { bridge, push } = makeBridge();
 
+      bridge.handleSessionEvent(summary("busy", "working"));
       bridge.handleSessionEvent(event("agent_start"));
       vi.advanceTimersByTime(800);
 
@@ -146,27 +162,57 @@ describe("LiveActivityBridge", () => {
       expect(push.updates[0].contentState.lastEvent).toBe("Agent started");
     });
 
-    it("keeps agent_end busy until agent_settled", () => {
+    it("keeps agent_end busy until the settled program status arrives", () => {
       const storage = makeStorageStub("la-token", [makeSession({ status: "busy" })]);
       const { bridge, push } = makeBridge({ storage });
 
+      bridge.handleSessionEvent(summary("busy", "working"));
+      vi.advanceTimersByTime(800);
       bridge.handleSessionEvent(event("agent_end"));
       vi.advanceTimersByTime(800);
 
-      expect(push.updates[0].contentState.status).toBe("busy");
-      expect(push.updates[0].contentState.activeTool).toBeNull();
-      expect(push.updates[0].contentState.lastEvent).toBe("Agent run finished");
+      expect(push.updates[1].contentState.status).toBe("busy");
+      expect(push.updates[1].contentState.activeTool).toBeNull();
+      expect(push.updates[1].contentState.lastEvent).toBe("Agent run finished");
 
+      bridge.handleSessionEvent(summary("ready", "done"));
       bridge.handleSessionEvent(event("agent_settled"));
       vi.advanceTimersByTime(800);
 
-      expect(push.updates[1].contentState.status).toBe("ready");
-      expect(push.updates[1].contentState.lastEvent).toBe("Agent finished");
+      expect(push.updates[2].contentState.status).toBe("ready");
+      expect(push.updates[2].contentState.lastEvent).toBe("Agent finished");
     });
 
-    it("maps tool_start to busy with tool name", () => {
+    it.each([
+      ["working", "busy"],
+      ["blocked", "busy"],
+      ["error", "error"],
+      ["done", "ready"],
+      ["idle", "ready"],
+    ] as const)("maps program status %s to %s", (programState, expected) => {
       const { bridge, push } = makeBridge();
 
+      bridge.handleSessionEvent(summary("ready", programState));
+      vi.advanceTimersByTime(800);
+
+      expect(push.updates[0].contentState.status).toBe(expected);
+    });
+
+    it("keeps lifecycle stopping and stopped regardless of program status", () => {
+      const { bridge, push } = makeBridge();
+
+      bridge.handleSessionEvent(summary("stopping", "working"));
+      vi.advanceTimersByTime(800);
+      bridge.handleSessionEvent(summary("stopped", "done"));
+      vi.advanceTimersByTime(800);
+
+      expect(push.updates.map((u) => u.contentState.status)).toEqual(["stopping", "stopped"]);
+    });
+
+    it("reports tool_start with the tool name under the current program status", () => {
+      const { bridge, push } = makeBridge();
+
+      bridge.handleSessionEvent(summary("busy", "working"));
       bridge.handleSessionEvent(event("tool_start", "s1", { tool: "bash" }));
       vi.advanceTimersByTime(800);
 
@@ -261,7 +307,10 @@ describe("LiveActivityBridge", () => {
 
       bridge.handleSessionEvent(
         event("state", "s1", {
-          session: makeSession({ status: "busy" }),
+          session: makeSession({
+            status: "busy",
+            programStatus: { state: "working", since: 1 },
+          }),
         }),
       );
       vi.advanceTimersByTime(800);
@@ -330,10 +379,10 @@ describe("LiveActivityBridge", () => {
     it("sends separate pushes for events after debounce window", () => {
       const { bridge, push } = makeBridge();
 
-      bridge.handleSessionEvent(event("agent_start"));
+      bridge.handleSessionEvent(summary("busy", "working"));
       vi.advanceTimersByTime(800);
 
-      bridge.handleSessionEvent(event("agent_settled"));
+      bridge.handleSessionEvent(summary("ready", "done"));
       vi.advanceTimersByTime(800);
 
       expect(push.updates).toHaveLength(2);

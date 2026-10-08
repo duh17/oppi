@@ -942,6 +942,47 @@ describe("CLI app-state API boundary", () => {
     );
   });
 
+  it("wait reads idle from program status and adds it to the JSON", async () => {
+    let polls = 0;
+    await withOrchApi(
+      (res, ctx) => {
+        if (ctx.path === "/sessions/sess-1/events") {
+          polls += 1;
+          sendJson(res, {
+            session: {
+              id: "sess-1",
+              status: polls >= 2 ? "ready" : "busy",
+              programStatus:
+                polls >= 2
+                  ? { state: "done", message: "Fix login", since: 2 }
+                  : { state: "working", message: "Fix login", since: 1 },
+            },
+            events: [],
+            currentSeq: polls,
+          });
+          return;
+        }
+        sendJson(res, {});
+      },
+      async ({ dataDir }) => {
+        const { stdout, code } = await runCliResult(
+          ["session", "wait", "sess-1", "--for", "idle", "--poll", "20ms", "--timeout", "5s", "--json"],
+          dataDir,
+        );
+        expect(code).toBe(0);
+        expect(JSON.parse(stdout)).toMatchObject({
+          ok: true,
+          data: {
+            session_id: "sess-1",
+            reason: "idle",
+            status: "ready",
+            program_status: { state: "done", message: "Fix login", since: 2 },
+          },
+        });
+      },
+    );
+  });
+
   it("wait resolves to a terminal record when the session goes idle", async () => {
     let polls = 0;
     await withOrchApi(

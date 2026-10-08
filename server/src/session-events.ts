@@ -3,6 +3,13 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import type { ExtensionUIState } from "./extension-ui-state.js";
 import { getGitStatus } from "./git-status.js";
+import {
+  programRunFor,
+  syncProgramStatus,
+  trackProgramRunEvent,
+  type ProgramRunTracker,
+  type ProgramStatusChangeListener,
+} from "./program-status.js";
 import { resolveWorkspaceWorktree } from "./worktrees.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
@@ -147,6 +154,8 @@ function routingTags(session: Session, extra?: Record<string, string>): Record<s
 
 export interface EventProcessorSessionState extends ExtensionUIState {
   session: Session;
+  /** Event-folded run state behind `session.programStatus`. */
+  programRun?: ProgramRunTracker;
   toolOutputSnapshots: ToolOutputSnapshots;
   streamedAssistantText: string;
   currentThinkingContentIndex?: number;
@@ -189,6 +198,8 @@ export interface SessionEventProcessorDeps {
   metrics?: ServerMetricCollector;
   /** Mirror mode receives terminal-origin user messages as pi events. */
   recordUserMessagesFromEvents?: boolean;
+  /** Called when an event changes the session's program status. */
+  onProgramStatusChange?: ProgramStatusChangeListener;
 }
 
 export class SessionEventProcessor {
@@ -478,6 +489,12 @@ export class SessionEventProcessor {
     }
 
     session.lastActivity = Date.now();
+
+    // Program status follows the same events Pi's own terminal reporter reads; the lifecycle
+    // status above is already updated, so one sync sees both.
+    trackProgramRunEvent(programRunFor(active), event);
+    const programChange = syncProgramStatus(active);
+    if (programChange.changed) this.deps.onProgramStatusChange?.(session, programChange);
 
     if (shouldFlushNow) {
       this.deps.persistSessionNow(key, session);

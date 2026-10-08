@@ -18,6 +18,132 @@ enum SessionStatus: String, Codable, Sendable {
     }
 }
 
+/// OSC 7501 program status state, matching the server's `ProgramStatusState`.
+///
+/// Lifecycle `SessionStatus` drives controls; status surfaces read this. A value a later
+/// server adds decodes as `.unknown` instead of failing the session row.
+enum ProgramStatusState: Sendable, Hashable, Codable {
+    case idle
+    case working
+    case done
+    case blocked
+    case error
+    case unknown(String)
+
+    init(rawValue: String) {
+        switch rawValue {
+        case "idle": self = .idle
+        case "working": self = .working
+        case "done": self = .done
+        case "blocked": self = .blocked
+        case "error": self = .error
+        default: self = .unknown(rawValue)
+        }
+    }
+
+    var rawValue: String {
+        switch self {
+        case .idle: "idle"
+        case .working: "working"
+        case .done: "done"
+        case .blocked: "blocked"
+        case .error: "error"
+        case .unknown(let value): value
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+/// Why a `blocked` program waits, matching the server's `ProgramStatusKind`.
+/// Unknown future kinds decode as `.unknown`.
+enum ProgramStatusKind: Sendable, Hashable, Codable {
+    case permission
+    case question
+    case auth
+    case unknown(String)
+
+    init(rawValue: String) {
+        switch rawValue {
+        case "permission": self = .permission
+        case "question": self = .question
+        case "auth": self = .auth
+        default: self = .unknown(rawValue)
+        }
+    }
+
+    var rawValue: String {
+        switch self {
+        case .permission: "permission"
+        case .question: "question"
+        case .auth: "auth"
+        case .unknown(let value): value
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+/// Server-derived OSC 7501 program status for a session. `message` is one line (session
+/// name, dialog title, or first error line) and is never a prompt or model output.
+/// `since` arrives as Unix milliseconds.
+struct ProgramStatus: Sendable, Equatable, Codable {
+    var state: ProgramStatusState
+    /// Present for `blocked` only.
+    var kind: ProgramStatusKind?
+    var message: String?
+    var since: Date
+
+    init(
+        state: ProgramStatusState,
+        kind: ProgramStatusKind? = nil,
+        message: String? = nil,
+        since: Date
+    ) {
+        self.state = state
+        self.kind = kind
+        self.message = message
+        self.since = since
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case state, kind, message, since
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        state = try container.decode(ProgramStatusState.self, forKey: .state)
+        // A kind that is not a string is malformed; the field is optional detail, so drop it.
+        kind = (try? container.decodeIfPresent(ProgramStatusKind.self, forKey: .kind)) ?? nil
+        message = try container.decodeIfPresent(String.self, forKey: .message)
+        since = Date(
+            timeIntervalSince1970: try container.decode(Double.self, forKey: .since) / 1000
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(state, forKey: .state)
+        try container.encodeIfPresent(kind, forKey: .kind)
+        try container.encodeIfPresent(message, forKey: .message)
+        try container.encode(since.timeIntervalSince1970 * 1000, forKey: .since)
+    }
+}
+
 /// Agent engine behind a managed session. Summaries carry `engine: "durable"`;
 /// full `Session` payloads mark the durable engine with `serverDurable`. The control
 /// conversation also carries `serverDurable.role: "control"` on both. Absent is classic.
@@ -170,6 +296,8 @@ struct Session: Identifiable, Sendable, Equatable {
     var lastActivity: Date
     var lastAgentReplyAt: Date? = nil
     var currentTurnStartedAt: Date? = nil
+    /// Server-derived program status; absent on servers that predate it.
+    var programStatus: ProgramStatus? = nil
     var model: String?
 
     var messageCount: Int
@@ -288,6 +416,7 @@ struct SessionSummary: Sendable, Equatable {
     var lastActivity: Date
     var lastAgentReplyAt: Date?
     var currentTurnStartedAt: Date?
+    var programStatus: ProgramStatus? = nil
     var model: String?
     var messageCount: Int
     var tokens: TokenUsage
@@ -329,6 +458,7 @@ struct SessionSummary: Sendable, Equatable {
             lastActivity: lastActivity,
             lastAgentReplyAt: lastAgentReplyAt,
             currentTurnStartedAt: currentTurnStartedAt,
+            programStatus: programStatus,
             model: model,
             messageCount: messageCount,
             tokens: tokens,
@@ -363,6 +493,7 @@ extension SessionSummary {
         self.lastActivity = session.lastActivity
         self.lastAgentReplyAt = session.lastAgentReplyAt
         self.currentTurnStartedAt = session.currentTurnStartedAt
+        self.programStatus = session.programStatus
         self.model = session.model
         self.messageCount = session.messageCount
         self.tokens = session.tokens
@@ -390,6 +521,7 @@ extension SessionSummary {
 private enum SessionWireCodingKeys: String, CodingKey {
     case id, workspaceId, workspaceName, worktreeId
     case name, status, createdAt, lastActivity, lastAgentReplyAt, currentTurnStartedAt
+    case programStatus
     case model, messageCount, tokens, cost, changeStats
     case contextTokens, contextWindow, firstMessage, lastMessage
     case thinkingLevel, runtime, mirror, control, launch, agentId, agentIcon, parentSessionId, ephemeral, warnings
@@ -412,6 +544,7 @@ private struct DecodedSessionWireFields {
     let lastActivity: Date
     let lastAgentReplyAt: Date?
     let currentTurnStartedAt: Date?
+    let programStatus: ProgramStatus?
     let model: String?
     let messageCount: Int
     let tokens: TokenUsage
@@ -445,6 +578,8 @@ private struct DecodedSessionWireFields {
         lastActivity = try container.decodeUnixMilliseconds(forKey: .lastActivity)
         lastAgentReplyAt = try container.decodeUnixMillisecondsIfPresent(forKey: .lastAgentReplyAt)
         currentTurnStartedAt = try container.decodeUnixMillisecondsIfPresent(forKey: .currentTurnStartedAt)
+        // Malformed program status loses that field, never the row: status surfaces are display-only.
+        programStatus = (try? container.decodeIfPresent(ProgramStatus.self, forKey: .programStatus)) ?? nil
         model = try container.decodeIfPresent(String.self, forKey: .model)
         messageCount = try container.decode(Int.self, forKey: .messageCount)
         tokens = try container.decode(TokenUsage.self, forKey: .tokens)
@@ -521,6 +656,7 @@ private extension DecodedSessionWireFields {
             lastActivity: lastActivity,
             lastAgentReplyAt: lastAgentReplyAt,
             currentTurnStartedAt: currentTurnStartedAt,
+            programStatus: programStatus,
             model: model,
             messageCount: messageCount,
             tokens: tokens,
@@ -595,6 +731,7 @@ extension Session: Codable {
         try c.encode(tokens, forKey: .tokens)
         try c.encode(cost, forKey: .cost)
         try c.encodeIfPresent(changeStats, forKey: .changeStats)
+        try c.encodeIfPresent(programStatus, forKey: .programStatus)
         try c.encodeIfPresent(contextTokens, forKey: .contextTokens)
         try c.encodeIfPresent(contextWindow, forKey: .contextWindow)
         try c.encodeIfPresent(firstMessage, forKey: .firstMessage)

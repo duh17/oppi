@@ -56,6 +56,7 @@ import {
   WAIT_DEFAULT_TIMEOUT,
   type WaitProgressSnapshot,
 } from "./session-watch.js";
+import { ProgramStatusEmitter, type ProgramStatusStream } from "../program-status-osc.js";
 
 type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
 type SessionCliOutput = (data: Record<string, unknown>, human: () => void) => void;
@@ -202,24 +203,39 @@ export async function cmdSession(
       const requireAll = flags.all === "true" && ids.length > 1;
       const progress: WaitProgressSnapshot[] = [];
       const summaryEveryMs = parseDurationMs(flags["summary-every"] ?? WAIT_DEFAULT_SUMMARY_EVERY);
-      const outcome = await runSessionWatch(
-        ids,
-        {
-          condition,
-          requireAll,
-          intervalMs: parseDurationMs(flags.poll ?? WAIT_DEFAULT_POLL),
-          timeoutMs: parseDurationMs(flags.timeout ?? WAIT_DEFAULT_TIMEOUT),
-          summaryEveryMs,
-          onSummary: (snapshot) => {
-            if (progress.length < 50) progress.push(snapshot);
-            if (!jsonOutput) writeHumanLine(formatWaitProgress(snapshot));
+      // Opt-in OSC 7501 reports for the terminal this command runs in. Cleared on every exit.
+      const programStatusEmitter =
+        flags["program-status"] === "true"
+          ? new ProgramStatusEmitter(controllingTerminalStream(jsonOutput), ids)
+          : undefined;
+      let outcome: Awaited<ReturnType<typeof runSessionWatch>>;
+      try {
+        outcome = await runSessionWatch(
+          ids,
+          {
+            condition,
+            requireAll,
+            intervalMs: parseDurationMs(flags.poll ?? WAIT_DEFAULT_POLL),
+            timeoutMs: parseDurationMs(flags.timeout ?? WAIT_DEFAULT_TIMEOUT),
+            summaryEveryMs,
+            onSummary: (snapshot) => {
+              if (progress.length < 50) progress.push(snapshot);
+              if (!jsonOutput) writeHumanLine(formatWaitProgress(snapshot));
+            },
+            ...(programStatusEmitter
+              ? { onSessionObserved: (session) => programStatusEmitter.update(session) }
+              : {}),
+            ...(callerContext.onLiveSnapshot
+              ? { onLiveSnapshot: callerContext.onLiveSnapshot }
+              : {}),
+            ...(callerContext.signal ? { signal: callerContext.signal } : {}),
           },
-          ...(callerContext.onLiveSnapshot ? { onLiveSnapshot: callerContext.onLiveSnapshot } : {}),
-          ...(callerContext.signal ? { signal: callerContext.signal } : {}),
-        },
-        call,
-        () => {},
-      );
+          call,
+          () => {},
+        );
+      } finally {
+        programStatusEmitter?.clear();
+      }
       throwIfAborted(callerContext.signal);
       const progressJson =
         progress.length > 0 ? { progress: progress.map(progressJsonSnapshot) } : {};
@@ -233,6 +249,7 @@ export async function cmdSession(
             sessions: outcome.sessions.map((session) => ({
               session_id: session.sessionId,
               status: session.status ?? null,
+              ...(session.programStatus ? { program_status: session.programStatus } : {}),
               tools_this_turn: session.toolsThisTurn,
               ...(session.pendingDialogs !== undefined
                 ? { pending_dialogs: session.pendingDialogs }
@@ -265,6 +282,7 @@ export async function cmdSession(
             sessions: outcome.sessions.map((session) => ({
               session_id: session.sessionId,
               status: session.status ?? null,
+              ...(session.programStatus ? { program_status: session.programStatus } : {}),
               ...(session.pendingDialogs !== undefined
                 ? { pending_dialogs: session.pendingDialogs }
                 : {}),
@@ -298,6 +316,7 @@ export async function cmdSession(
           session_id: outcome.sessionId,
           reason,
           status,
+          ...(outcome.programStatus ? { program_status: outcome.programStatus } : {}),
           ...(pendingDialogs !== undefined ? { pending_dialogs: pendingDialogs } : {}),
           ...(outputDelta !== undefined ? { output_delta: outputDelta } : {}),
           ...(outputDeltaKind !== undefined ? { output_delta_kind: outputDeltaKind } : {}),
@@ -673,7 +692,7 @@ const SESSION_FLAGS: Record<string, readonly string[]> = {
   ],
   send: ["follow-up", "json", "steer", "text", "turn-id"],
   abort: ["json"],
-  wait: ["all", "for", "interval", "json", "poll", "summary-every", "timeout"],
+  wait: ["all", "for", "interval", "json", "poll", "program-status", "summary-every", "timeout"],
   read: ["json", "tail"],
   events: ["json", "since"],
   trace: ["include", "json"],
@@ -834,10 +853,21 @@ function progressJsonSnapshot(snapshot: WaitProgressSnapshot): Record<string, un
     sessions: snapshot.sessions.map((session) => ({
       session_id: session.sessionId,
       status: session.status ?? null,
+      ...(session.programStatus ? { program_status: session.programStatus } : {}),
       tools_this_turn: session.toolsThisTurn,
       ...(session.pendingDialogs !== undefined ? { pending_dialogs: session.pendingDialogs } : {}),
     })),
   };
+}
+
+/**
+ * OSC 7501 goes to the terminal the user is looking at: stderr, else stdout, only when a TTY.
+ * `--json` owns stdout for its envelope, so it reports through a TTY stderr or not at all.
+ */
+function controllingTerminalStream(jsonOutput: boolean): ProgramStatusStream | undefined {
+  if (process.stderr.isTTY) return process.stderr;
+  if (!jsonOutput && process.stdout.isTTY) return process.stdout;
+  return undefined;
 }
 
 function hasToolPolicy(policy: {

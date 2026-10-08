@@ -161,6 +161,8 @@ function normalizeSessionForParity(session: Session): Session {
   delete clone.firstMessage;
   delete clone.lastActivity;
   delete clone.lastAgentReplyAt;
+  // State, kind, and message must match across runtimes; `since` is wall-clock.
+  if (clone.programStatus) clone.programStatus = { ...clone.programStatus, since: 0 };
   return clone;
 }
 

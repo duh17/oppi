@@ -17,6 +17,7 @@ import {
   type RestartResumeDeps,
 } from "../src/session-restart-resume.js";
 import { Storage } from "../src/storage.js";
+import { SessionSqliteStore } from "../src/storage/session-sqlite-store.js";
 import type { Session, Workspace } from "../src/types.js";
 
 const dirs: string[] = [];
@@ -125,6 +126,88 @@ describe("session restart resume", () => {
     }
     expect(storage.getSession("busy")?.currentTurnStartedAt).toBeUndefined();
     expect(storage.getSession("failed")?.status).toBe("error");
+  });
+
+  describe("program status across a restart", () => {
+    it("keeps done and error on stopped sessions and drops runs the crash cut short", () => {
+      const { storage, workspace } = makeStorage();
+      const ws = { workspaceId: workspace.id };
+      saveSession(storage, "finished", {
+        ...ws,
+        status: "ready",
+        programStatus: { state: "done", message: "Fix login", since: 111 },
+      });
+      saveSession(storage, "failed-run", {
+        ...ws,
+        status: "stopped",
+        programStatus: { state: "error", since: 222 },
+      });
+      saveSession(storage, "mid-run", {
+        ...ws,
+        status: "busy",
+        programStatus: { state: "working", message: "Fix login", since: 333 },
+      });
+      saveSession(storage, "mid-start", {
+        ...ws,
+        status: "starting",
+        programStatus: { state: "error", since: 888 },
+      });
+      saveSession(storage, "mid-dialog", {
+        ...ws,
+        status: "busy",
+        programStatus: { state: "blocked", kind: "question", since: 444 },
+      });
+      // Rows an older server wrote: no program status. Storage.saveSession would derive one, so
+      // write them straight to the table.
+      const legacyWriter = new SessionSqliteStore(storage.getDataDir());
+      const legacy = (id: string, status: Session["status"], lastActivity: number) =>
+        legacyWriter.saveSession({
+          id,
+          ...ws,
+          status,
+          createdAt: 1,
+          lastActivity,
+          messageCount: 1,
+          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          cost: 0,
+        });
+      legacy("legacy", "stopped", 555);
+      legacy("legacy-error", "error", 666);
+
+      queueOrphanedSessionsForRestart(storage, 9_000);
+
+      const status = (id: string) => storage.getSession(id)?.programStatus;
+      expect(status("finished")).toEqual({ state: "done", since: 111 });
+      expect(status("failed-run")).toEqual({ state: "error", since: 222 });
+      expect(status("mid-run")).toEqual({ state: "idle", since: 9_000 });
+      expect(status("mid-dialog")).toEqual({ state: "idle", since: 9_000 });
+      expect(status("mid-start")).toEqual({ state: "error", since: 888 });
+      expect(status("legacy")).toEqual({ state: "idle", since: 555 });
+      expect(status("legacy-error")).toEqual({ state: "error", since: 666 });
+    });
+
+    it("is read back by a fresh process, on both list projections", () => {
+      const { storage, workspace } = makeStorage();
+      saveSession(storage, "s1", {
+        workspaceId: workspace.id,
+        status: "stopped",
+        lastActivity: 5_000,
+        programStatus: { state: "error", since: 4_000 },
+      });
+      const dataDir = storage.getDataDir();
+
+      const reopened = new Storage(dataDir);
+      expect(reopened.getSession("s1")?.programStatus).toEqual({ state: "error", since: 4_000 });
+      const stopped = reopened.listStoppedWorkspaceTimeRangeSessionSnapshots(
+        workspace.id,
+        0,
+        10_000,
+      );
+      expect(stopped.find((session) => session.id === "s1")?.programStatus).toEqual({
+        state: "error",
+        since: 4_000,
+      });
+    });
   });
 
   it("keeps the resume queued when marking crash orphans stopped fails partway", () => {

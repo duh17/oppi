@@ -1204,7 +1204,7 @@ const HELP_TOPICS: HelpTopic[] = [
     summary:
       "Block until one or more sessions are idle or need attention, then print the terminal state.",
     usage:
-      "oppi session wait <id...> [--for idle|attention|either] [--all] [--poll <duration>] [--summary-every <duration>] [--timeout <duration>] [--json]",
+      "oppi session wait <id...> [--for idle|attention|either] [--all] [--poll <duration>] [--summary-every <duration>] [--timeout <duration>] [--program-status] [--json]",
     arguments: [{ name: "<id...>", summary: "one or more session ids or unique prefixes" }],
     flags: [
       {
@@ -1231,9 +1231,16 @@ const HELP_TOPICS: HelpTopic[] = [
         value: "<duration>",
         summary: "compact heartbeat while still waiting; default 60s; 0 disables",
       },
+      {
+        name: "--program-status",
+        summary:
+          "while waiting, report session state to the terminal as OSC 7501 program status (only when stderr or stdout is a TTY); place it after the ids",
+      },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
+      "idle means the session's program status is idle, done, or error (not working or blocked), and its lifecycle status is not starting or busy; attention means a dialog needs a reply, including editor dialogs. JSON adds program_status ({ state, kind?, message?, since }) beside the lifecycle status.",
+      "--program-status writes OSC 7501 reports: one id is the terminal's root record; several ids are child records (id = UUID without dashes, base64 title). Records are cleared when the wait ends. Nothing is written when no output stream is a terminal.",
       "One id keeps the single-session JSON envelope. Several ids resolve on the first match unless --all is set.",
       "Wait never streams transitions. It polls quietly and may print a compact still-waiting summary. JSON stays one envelope and includes progress[] when heartbeats fired.",
       'If --timeout fires first, JSON stays ok with timed_out: true, code: "wait_timeout", and the last snapshot. That means still working, not a failed wait. Default 4m is just under a 5m prompt-cache TTL so the parent can take a model turn.',
@@ -1887,7 +1894,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "Managed sessions can create only direct children by default. A root may pass --allow-nested-delegation to authorize a child to spawn its own children; the grant then propagates down the subtree, so explicitly requested grandchild sessions work without re-authorizing at every level.",
       "With --idempotency-key, retrying the same create request reuses the existing launch instead of creating a duplicate session.",
       "If another launcher still owns the active lease for that key, the server can report launch_in_progress; retry with the same key.",
-      "--auto-stop stamps launch.autoStop so callers can skip session stop. The session stops as soon as the agent settles and is ready, with no idle wait. Pending ask/select/confirm/input dialogs keep the session alive until they are answered and the next settle. Prompt, steer, and follow-up start a new turn.",
+      "--auto-stop stamps launch.autoStop so callers can skip session stop. The session stops as soon as the agent settles and is ready, with no idle wait. Pending ask/select/confirm/input/editor dialogs keep the session alive until they are answered and the next settle. Prompt, steer, and follow-up start a new turn.",
       "With --idempotency-key, retrying the same create request must keep the same --auto-stop value or the server reports a conflict.",
       "--model accepts exact provider/model IDs or fuzzy text like sonnet; it resolves against /models, which is filtered by Pi enabledModels.",
       "--model also accepts an optional :thinking suffix such as sonnet:high. --thinking wins if both are present.",

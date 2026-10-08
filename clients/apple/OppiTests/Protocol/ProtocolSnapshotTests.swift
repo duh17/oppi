@@ -247,6 +247,101 @@ struct ProtocolSnapshotTests {
         }
     }
 
+    @Test func programStatusDecodesOnFullSessionsAndSummaries() throws {
+        guard case .state(let session) = try decodeMessage("state"),
+              case .sessionSummary(let summary) = try decodeMessage("session_summary") else {
+            Issue.record("Expected .state and .sessionSummary")
+            return
+        }
+        let expected = ProgramStatus(
+            state: .blocked,
+            kind: .question,
+            message: "Which database?",
+            since: Date(timeIntervalSince1970: 1_739_750_455)
+        )
+        #expect(session.programStatus == expected)
+        #expect(summary.programStatus == expected)
+        #expect(summary.session.programStatus == expected)
+        #expect(SessionSummary(from: session).programStatus == expected)
+
+        let reencoded = try JSONDecoder().decode(Session.self, from: JSONEncoder().encode(session))
+        #expect(reencoded.programStatus == expected)
+    }
+
+    @Test func unknownProgramStatusValuesKeepTheRowAndTheirRawValue() throws {
+        guard case .state(let session) = try decodeMessage("state_program_status_future"),
+              case .sessionSummary(let summary) = try decodeMessage(
+                "session_summary_program_status_future"
+              ) else {
+            Issue.record("Expected .state and .sessionSummary")
+            return
+        }
+        #expect(session.id == "test-session-1")
+        #expect(session.programStatus?.state == .unknown("paused"))
+        #expect(session.programStatus?.kind == .unknown("mystery"))
+        #expect(summary.programStatus?.state == .unknown("paused"))
+        #expect(summary.programStatus?.message == "Later")
+
+        let reencoded = try JSONDecoder().decode(Session.self, from: JSONEncoder().encode(session))
+        #expect(reencoded.programStatus?.state.rawValue == "paused")
+        #expect(reencoded.programStatus?.kind?.rawValue == "mystery")
+    }
+
+    @Test func everyKnownProgramStatusValueRoundTripsToItsCase() throws {
+        let states: [(String, ProgramStatusState)] = [
+            ("idle", .idle), ("working", .working), ("done", .done),
+            ("blocked", .blocked), ("error", .error),
+        ]
+        for (raw, state) in states {
+            let status = try JSONDecoder().decode(
+                ProgramStatus.self,
+                from: Data(#"{"state":"\#(raw)","since":1000}"#.utf8)
+            )
+            #expect(status.state == state)
+            #expect(status.kind == nil)
+            #expect(status.message == nil)
+            #expect(status.since == Date(timeIntervalSince1970: 1))
+        }
+        let kinds: [(String, ProgramStatusKind)] = [
+            ("permission", .permission), ("question", .question), ("auth", .auth),
+        ]
+        for (raw, kind) in kinds {
+            let status = try JSONDecoder().decode(
+                ProgramStatus.self,
+                from: Data(#"{"state":"blocked","kind":"\#(raw)","since":1}"#.utf8)
+            )
+            #expect(status.kind == kind)
+        }
+    }
+
+    @Test func malformedProgramStatusDropsOnlyThatFieldNotTheSession() throws {
+        func decodeSession(programStatus: String?) throws -> Session {
+            let extra = programStatus.map { #","programStatus":\#($0)"# } ?? ""
+            let json = #"""
+            {"id":"s","status":"ready","createdAt":1,"lastActivity":2,"messageCount":0,
+             "tokens":{"input":0,"output":0},"cost":0\#(extra)}
+            """#
+            return try JSONDecoder().decode(Session.self, from: Data(json.utf8))
+        }
+        #expect(try decodeSession(programStatus: nil).programStatus == nil)
+        for malformed in [
+            #"{"state":7,"since":1}"#,
+            #"{"state":"done"}"#,
+            #"{"state":"done","since":"later"}"#,
+            #""working""#,
+        ] {
+            let session = try decodeSession(programStatus: malformed)
+            #expect(session.id == "s", "\(malformed)")
+            #expect(session.programStatus == nil, "\(malformed)")
+        }
+        // A kind that is not a string loses the kind, not the status.
+        let status = try decodeSession(
+            programStatus: #"{"state":"blocked","kind":3,"since":1}"#
+        ).programStatus
+        #expect(status?.state == .blocked)
+        #expect(status?.kind == nil)
+    }
+
     @Test func sessionChangeStats() throws {
         let msg = try decodeMessage("connected")
 

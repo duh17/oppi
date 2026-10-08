@@ -26,6 +26,24 @@ export interface SessionSummaryChangeStats {
   removedLines: number;
 }
 
+/**
+ * OSC 7501 program status vocabulary. One server-derived value per session; lifecycle
+ * `Session.status` keeps driving controls (stop, resume, open) while status surfaces
+ * read this.
+ */
+export type ProgramStatusState = "idle" | "working" | "done" | "blocked" | "error";
+export type ProgramStatusKind = "permission" | "question" | "auth";
+
+export interface ProgramStatus {
+  state: ProgramStatusState;
+  /** Blocked only. */
+  kind?: ProgramStatusKind;
+  /** One line; never prompts or model output. */
+  message?: string;
+  /** Epoch ms when this state began. */
+  since: number;
+}
+
 export type SessionRuntimeKind = "oppi" | "pi-tui";
 
 /** Agent engine a create request selects. Omitted means classic. */
@@ -171,6 +189,11 @@ export interface Session {
   lastAgentReplyAt?: number;
   /** Timestamp (ms) when the currently active agent turn began. */
   currentTurnStartedAt?: number;
+  /**
+   * Server-derived OSC 7501 program status. Persisted so a stopped session keeps its
+   * last run outcome (done/error/idle) across a server restart.
+   */
+  programStatus?: ProgramStatus;
   model?: string;
 
   // Stats
@@ -241,6 +264,7 @@ export interface SessionSummary {
   lastActivity: number;
   lastAgentReplyAt?: number;
   currentTurnStartedAt?: number;
+  programStatus?: ProgramStatus;
   model?: string;
   messageCount: number;
   tokens: TokenUsage;

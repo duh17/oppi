@@ -223,6 +223,11 @@ export class BoundSessionStreamMux {
     return `bound_session_stream_${this.connectionSeq}`;
   }
 
+  /** True while any client holds an open focused session stream. */
+  hasLiveConnections(): boolean {
+    return this.liveSessionConnections.size > 0;
+  }
+
   sendToSession(sessionId: string, msg: ServerMessage): number {
     const connections = this.liveSessionConnections.get(sessionId);
     if (!connections) return 0;

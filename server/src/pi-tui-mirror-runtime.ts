@@ -53,6 +53,7 @@ import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summar
 import { composeModelId } from "./session-state.js";
 import { SessionBroadcaster, type SessionCatchUpResponse } from "./session-broadcast.js";
 import { SessionEventProcessor } from "./session-events.js";
+import { syncProgramStatus } from "./program-status.js";
 import { SessionInputCoordinator } from "./session-input.js";
 import { readSessionJsonlMeta } from "./session-jsonl-meta.js";
 import {
@@ -479,6 +480,8 @@ function sessionActivityProjectionFingerprint(session: Session): string {
   return sessionSummaryFingerprint({
     ...summary,
     lastActivity: 0,
+    // Derived from the fields compared here plus event state; its timestamp is not activity.
+    programStatus: undefined,
     mirror: summary.mirror ? { status: summary.mirror.status } : undefined,
   });
 }
@@ -545,8 +548,12 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       getActiveSession: (sessionId) => this.active.get(sessionId),
       emitSessionEvent: (payload) => this.emit("session_event", payload),
       saveSession: (session) => this.storage.saveSession(session),
+      onProgramStatusChange: (session, change) =>
+        this.emit("program_status_change", session, change),
     });
     this.eventProcessor = new SessionEventProcessor({
+      onProgramStatusChange: (session, change) =>
+        this.emit("program_status_change", session, change),
       mobileRenderers: options.mobileRenderers,
       storage: this.storage,
       broadcast: (sessionId, message) => this.broadcast(sessionId, message),
@@ -1500,6 +1507,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       active.session.currentTurnStartedAt = undefined;
       active.session.lastActivity = disconnectedAt;
     }
+    this.syncProgramStatus(active);
     this.storage.saveSession(active.session);
     this.broadcast(active.session.id, { type: "state", session: active.session });
     this.broadcastSessionSummaryIfChanged(active, `mirror_${options.reason}`);
@@ -1887,6 +1895,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         ? undefined
         : (session.currentTurnStartedAt ?? now);
     }
+    this.syncProgramStatus(active);
 
     if (connection) {
       connection.lastSeenAt = now;
@@ -1934,6 +1943,11 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
   private broadcast(sessionId: string, message: ServerMessage): number {
     return this.broadcaster.broadcast(sessionId, message);
+  }
+
+  private syncProgramStatus(active: MirrorActiveSession): void {
+    const change = syncProgramStatus(active);
+    if (change.changed) this.emit("program_status_change", active.session, change);
   }
 
   private broadcastSessionSummaryIfChanged(active: MirrorActiveSession, reason: string): void {

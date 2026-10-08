@@ -3,6 +3,11 @@ import type { EventRing } from "./event-ring.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { Session, ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
+import {
+  syncProgramStatus,
+  type ProgramStatusChangeListener,
+  type ProgramStatusHost,
+} from "./program-status.js";
 
 export interface SessionCatchUpResponse {
   events: ServerMessage[];
@@ -20,8 +25,7 @@ export interface SessionBroadcastEvent {
   durable: boolean;
 }
 
-export interface BroadcastSessionState {
-  session: Session;
+export interface BroadcastSessionState extends ProgramStatusHost {
   subscribers: Set<(msg: ServerMessage) => void>;
   seq: number;
   runtimeEpoch?: string;
@@ -32,6 +36,8 @@ export interface SessionBroadcasterDeps {
   getActiveSession: (key: string) => BroadcastSessionState | undefined;
   emitSessionEvent: (payload: SessionBroadcastEvent) => void;
   saveSession: (session: Session) => void;
+  /** Called when a sync here changes the session's program status. */
+  onProgramStatusChange?: ProgramStatusChangeListener;
   metrics?: ServerMetricCollector;
 }
 
@@ -54,6 +60,21 @@ export class SessionBroadcaster {
     "compaction_end",
     "retry_start",
     "retry_end",
+  ]);
+
+  /**
+   * Messages sent for causes the Pi event processor does not see: lifecycle changes and
+   * extension dialogs. Pi events sync program status in the processor itself.
+   */
+  private static readonly PROGRAM_STATUS_SYNC_TYPES = new Set<ServerMessage["type"]>([
+    "state",
+    "session_ended",
+    "stop_requested",
+    "stop_confirmed",
+    "stop_failed",
+    "error",
+    "extension_ui_request",
+    "extension_ui_settled",
   ]);
 
   private dirtySessions: Set<string> = new Set();
@@ -110,6 +131,9 @@ export class SessionBroadcaster {
   }
 
   broadcast(key: string, message: ServerMessage): number {
+    if (SessionBroadcaster.PROGRAM_STATUS_SYNC_TYPES.has(message.type)) {
+      this.syncProgramStatus(key);
+    }
     if (SessionBroadcaster.DURABLE_MESSAGE_TYPES.has(message.type)) {
       return this.broadcastDurable(key, message);
     }
@@ -140,13 +164,23 @@ export class SessionBroadcaster {
         continue;
       }
 
+      this.syncProgramStatus(key);
       this.deps.saveSession(active.session);
     }
   }
 
   persistSessionNow(key: string, session: Session): void {
     this.dirtySessions.delete(key);
+    // The persisted value is what a stopped session shows after a restart.
+    this.syncProgramStatus(key);
     this.deps.saveSession(session);
+  }
+
+  private syncProgramStatus(key: string): void {
+    const active = this.deps.getActiveSession(key);
+    if (!active) return;
+    const change = syncProgramStatus(active);
+    if (change.changed) this.deps.onProgramStatusChange?.(active.session, change);
   }
 
   private broadcastDurable(key: string, message: ServerMessage): number {

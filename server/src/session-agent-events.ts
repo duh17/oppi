@@ -102,6 +102,9 @@ export class SessionAgentEventCoordinator {
     "agent_start",
     "agent_end",
     "agent_settled",
+    // Compaction is a program status of its own ("Compacting context", then done).
+    "compaction_start",
+    "compaction_end",
     "session_info_changed",
   ]);
 

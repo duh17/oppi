@@ -175,6 +175,11 @@ export class AppEventStreamMux implements AppEventEmitter {
     return `app_event_stream_${this.connectionSeq}`;
   }
 
+  /** True while any client holds an open app-event stream. */
+  hasSubscribers(): boolean {
+    return this.subscribers.size > 0;
+  }
+
   handleWebSocket(ws: WebSocket, upgradeReceivedAt?: number): void {
     const connectedAt = this.now();
     const metrics = this.ctx.metrics;

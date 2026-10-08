@@ -653,3 +653,66 @@ describe("SessionEventProcessor", () => {
     ]);
   });
 });
+
+describe("SessionEventProcessor program status", () => {
+  function setup() {
+    const changes: string[] = [];
+    const processor = new SessionEventProcessor({
+      mobileRenderers: new MobileRendererRegistry(),
+      storage: {} as never,
+      broadcast: vi.fn(),
+      persistSessionNow: vi.fn(),
+      markSessionDirty: vi.fn(),
+      onProgramStatusChange: (_session, change) => changes.push(change.current.state),
+    });
+    const active = makeActiveSession({ ...makeSession("s1"), status: "ready", name: "Fix login" });
+    const send = (event: Record<string, unknown>) =>
+      processor.updateSessionFromEvent("s1", active, event as never);
+    return { active, send, changes };
+  }
+
+  it("follows a run from working to done and reports each transition", () => {
+    const { active, send, changes } = setup();
+
+    send({ type: "agent_start" });
+    expect(active.session.programStatus).toMatchObject({ state: "working", message: "Fix login" });
+
+    send({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [] } });
+    send({ type: "agent_end", messages: [], willRetry: false });
+    expect(active.session.programStatus?.state).toBe("working");
+
+    send({ type: "agent_settled", aborted: false });
+    expect(active.session.programStatus).toMatchObject({ state: "done", message: "Fix login" });
+    expect(changes).toEqual(["working", "done"]);
+  });
+
+  it("settles an unretried error as error and a cancelled run as idle", () => {
+    const failed = setup();
+    failed.send({ type: "agent_start" });
+    failed.send({
+      type: "message_end",
+      message: { role: "assistant", stopReason: "error", errorMessage: "529 overloaded\nraw body" },
+    });
+    failed.send({ type: "agent_settled", aborted: false });
+    expect(failed.active.session.programStatus).toMatchObject({
+      state: "error",
+      message: "529 overloaded",
+    });
+
+    const cancelled = setup();
+    cancelled.send({ type: "agent_start" });
+    cancelled.send({ type: "agent_settled", aborted: true });
+    expect(cancelled.active.session.programStatus?.state).toBe("idle");
+  });
+
+  it("reports compaction as working with its own message", () => {
+    const { active, send } = setup();
+    send({ type: "compaction_start", reason: "threshold" });
+    expect(active.session.programStatus).toMatchObject({
+      state: "working",
+      message: "Compacting context",
+    });
+    send({ type: "compaction_end", reason: "threshold", aborted: false, willRetry: false });
+    expect(active.session.programStatus?.state).toBe("idle");
+  });
+});

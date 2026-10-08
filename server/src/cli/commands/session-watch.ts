@@ -1,3 +1,4 @@
+import type { ProgramStatus } from "../../types.js";
 import { throwIfAborted, type LocalApiRequestOptions } from "../local-api-client.js";
 import { apiStatus } from "../resources.js";
 import { sleepWithSignal } from "./wait.js";
@@ -7,9 +8,11 @@ type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) =>
 // ─── Session wait poller ───
 //
 // `session wait` uses this state machine for one session and prints the terminal record.
-// Status comes from the live events/catch-up stream so busy→ready is observed without a tight
-// status poll; pending dialogs come from the per-session dialogs route only when the condition
-// needs them. Tool counts and the last assistant snippet are derived from the events already
+// Run state comes from the session's program status (working/blocked vs idle/done/error),
+// read from the live events/catch-up stream so a run ending is observed without a tight
+// status poll; the lifecycle status stays in the output. Pending dialogs come from the
+// per-session dialogs route only when the condition needs them.
+// Tool counts and the last assistant snippet are derived from the events already
 // fetched, never from tool/extension names.
 
 type SessionWatchCondition = "idle" | "attention" | "either" | "any-change";
@@ -22,6 +25,7 @@ const WATCH_OUTPUT_OMISSION_MARKER = "[… earlier output omitted …]\n\n";
 interface WatchSessionState {
   sinceSeq: number;
   status?: string;
+  programStatus?: ProgramStatus;
   messageCount?: number;
   pendingDialogs?: number;
   toolsThisTurn: number;
@@ -53,6 +57,7 @@ export type WatchOutcome =
       sessionId: string;
       reason: SessionWatchReason;
       status?: string;
+      programStatus?: ProgramStatus;
       pendingDialogs?: number;
       outputDelta?: string;
       outputDeltaKind?: WatchOutputDeltaKind;
@@ -60,7 +65,12 @@ export type WatchOutcome =
   | {
       kind: "all";
       condition: SessionWatchCondition;
-      sessions: Array<{ sessionId: string; status?: string; pendingDialogs?: number }>;
+      sessions: Array<{
+        sessionId: string;
+        status?: string;
+        programStatus?: ProgramStatus;
+        pendingDialogs?: number;
+      }>;
     }
   | {
       kind: "timeout";
@@ -72,6 +82,7 @@ export type WatchOutcome =
 export type WaitProgressSession = {
   sessionId: string;
   status?: string;
+  programStatus?: ProgramStatus;
   pendingDialogs?: number;
   toolsThisTurn: number;
   name?: string;
@@ -94,6 +105,8 @@ interface WatchOptions {
   onSummary?: (snapshot: WaitProgressSnapshot) => void;
   /** UI-only full-card replacements. Not printed on the human CLI. */
   onLiveSnapshot?: (text: string) => void;
+  /** Called after every observation of a session, including the one that resolves the wait. */
+  onSessionObserved?: (session: WaitProgressSession) => void;
   signal?: AbortSignal;
 }
 
@@ -194,6 +207,7 @@ function waitProgressSnapshot(
         sessionId: id,
         toolsThisTurn: state?.toolsThisTurn ?? 0,
         ...(state?.status !== undefined ? { status: state.status } : {}),
+        ...(state?.programStatus !== undefined ? { programStatus: state.programStatus } : {}),
         ...(state?.pendingDialogs !== undefined ? { pendingDialogs: state.pendingDialogs } : {}),
         ...(state?.name !== undefined ? { name: state.name } : {}),
         ...(state?.last !== undefined ? { last: state.last } : {}),
@@ -202,10 +216,18 @@ function waitProgressSnapshot(
   };
 }
 
-function isIdleSessionStatus(status: string | undefined): boolean {
-  // A turn has settled once the runtime leaves the working states. Terminal stopped/error
-  // sessions also count as idle so a supervisor wait resolves instead of timing out.
-  return status === "ready" || status === "stopped" || status === "error";
+function isIdleSession(state: WatchSessionState): boolean {
+  // `starting` and `busy` are never idle. A new session is stored with program status idle
+  // while it is still starting, and `busy` can be set from Pi's state sync without a program
+  // status sync, leaving a stale settled status; `create && wait --for idle` must not resolve.
+  if (state.status === "starting" || state.status === "busy") return false;
+  // Otherwise a turn has settled once the program is neither working nor blocked. Stopped and
+  // error sessions also count as idle so a supervisor wait resolves instead of timing out.
+  if (state.programStatus) {
+    return state.programStatus.state !== "working" && state.programStatus.state !== "blocked";
+  }
+  // A server that predates program status sends none. Its lifecycle status says the same.
+  return state.status === "ready" || state.status === "stopped" || state.status === "error";
 }
 
 async function observeSession(
@@ -216,16 +238,18 @@ async function observeSession(
   signal?: AbortSignal,
 ): Promise<{ activityChanged: boolean; stateChanged: boolean }> {
   const prevStatus = state.status;
+  const prevProgress = programStatusKey(state.programStatus);
   const prevPending = state.pendingDialogs;
   const prevSeq = state.sinceSeq;
   const prevMessageCount = state.messageCount;
   const prevTools = state.toolsThisTurn;
   const prevLast = state.last;
   let status: string | undefined;
+  let programStatus: ProgramStatus | undefined;
 
   try {
     const events = await call<{
-      session?: { status?: string; messageCount?: number; lastMessage?: string; name?: string };
+      session?: WatchSessionSnapshot;
       events?: Array<Record<string, unknown>>;
       currentSeq?: number;
     }>(
@@ -233,6 +257,7 @@ async function observeSession(
       signal ? { signal } : undefined,
     );
     status = events.session?.status;
+    programStatus = events.session?.programStatus;
     recordSessionName(state, events.session?.name);
     if (typeof events.session?.messageCount === "number") {
       state.messageCount = events.session.messageCount;
@@ -256,10 +281,12 @@ async function observeSession(
   } catch (err) {
     throwIfAborted(signal);
     if (apiStatus(err) === 404) {
-      const snapshot = await call<{
-        session?: { status?: string; messageCount?: number; lastMessage?: string; name?: string };
-      }>(`/sessions/${encodeURIComponent(id)}`, signal ? { signal } : undefined);
+      const snapshot = await call<{ session?: WatchSessionSnapshot }>(
+        `/sessions/${encodeURIComponent(id)}`,
+        signal ? { signal } : undefined,
+      );
       status = snapshot.session?.status;
+      programStatus = snapshot.session?.programStatus;
       recordSessionName(state, snapshot.session?.name);
       if (typeof snapshot.session?.messageCount === "number") {
         state.messageCount = snapshot.session.messageCount;
@@ -274,6 +301,7 @@ async function observeSession(
 
   throwIfAborted(signal);
   state.status = status;
+  state.programStatus = programStatus;
   if (needDialogs) {
     const list = await call<{ dialogs?: unknown[] }>(
       `/sessions/${encodeURIComponent(id)}/dialogs`,
@@ -282,7 +310,10 @@ async function observeSession(
     state.pendingDialogs = Array.isArray(list.dialogs) ? list.dialogs.length : 0;
   }
 
-  const stateChanged = state.status !== prevStatus || state.pendingDialogs !== prevPending;
+  const stateChanged =
+    state.status !== prevStatus ||
+    programStatusKey(state.programStatus) !== prevProgress ||
+    state.pendingDialogs !== prevPending;
   return {
     stateChanged,
     activityChanged:
@@ -292,6 +323,19 @@ async function observeSession(
       state.toolsThisTurn !== prevTools ||
       state.last !== prevLast,
   };
+}
+
+interface WatchSessionSnapshot {
+  status?: string;
+  programStatus?: ProgramStatus;
+  messageCount?: number;
+  lastMessage?: string;
+  name?: string;
+}
+
+/** What a wait treats as a program status change; `since` follows state and kind. */
+function programStatusKey(programStatus: ProgramStatus | undefined): string | undefined {
+  return programStatus && `${programStatus.state}/${programStatus.kind ?? ""}`;
 }
 
 function recordAssistantOutput(state: WatchSessionState, content: string, dedupe = true): void {
@@ -340,7 +384,7 @@ function evaluateWatchCondition(
   if (condition === "any-change") {
     return !isBaseline && activityChanged ? "change" : undefined;
   }
-  const idle = isIdleSessionStatus(state.status);
+  const idle = isIdleSession(state);
   const attention = (state.pendingDialogs ?? 0) > 0;
   if (condition === "idle") return idle ? "idle" : undefined;
   if (condition === "attention") return attention ? "attention" : undefined;
@@ -408,6 +452,12 @@ export async function runSessionWatch(
         call,
         options.signal,
       );
+      options.onSessionObserved?.({
+        sessionId: id,
+        toolsThisTurn: state.toolsThisTurn,
+        ...(state.programStatus !== undefined ? { programStatus: state.programStatus } : {}),
+        ...(state.name !== undefined ? { name: state.name } : {}),
+      });
       const isBaseline = !state.seenBaseline;
       if (isBaseline) state.outputDelta = "";
       state.seenBaseline = true;
@@ -425,6 +475,7 @@ export async function runSessionWatch(
           sessionId: id,
           reason,
           ...(state.status !== undefined ? { status: state.status } : {}),
+          ...(state.programStatus !== undefined ? { programStatus: state.programStatus } : {}),
           ...(state.pendingDialogs !== undefined ? { pendingDialogs: state.pendingDialogs } : {}),
           ...(outputDelta
             ? { outputDelta: outputDelta.text, outputDeltaKind: outputDelta.kind }
@@ -449,6 +500,7 @@ export async function runSessionWatch(
           return {
             sessionId: id,
             ...(state?.status !== undefined ? { status: state.status } : {}),
+            ...(state?.programStatus !== undefined ? { programStatus: state.programStatus } : {}),
             ...(state?.pendingDialogs !== undefined
               ? { pendingDialogs: state.pendingDialogs }
               : {}),

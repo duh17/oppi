@@ -85,9 +85,7 @@ describe("session wait poller contract", () => {
             ? { session: { status: "busy" }, events: [], currentSeq: 1 }
             : {
                 session: { status: "ready", messageCount: 4 },
-                events: [
-                  { type: "message_end", role: "assistant", content: "  final answer  " },
-                ],
+                events: [{ type: "message_end", role: "assistant", content: "  final answer  " }],
                 currentSeq: 2,
               }
         ) as T;
@@ -380,7 +378,10 @@ describe("session wait poller contract", () => {
     expect(summaries.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(summaries.mock.calls.length).toBeLessThan(6);
     expect(summaries.mock.calls[0]?.[0]).toMatchObject({
-      sessions: [{ sessionId: "a", status: "busy" }, { sessionId: "b", status: "busy" }],
+      sessions: [
+        { sessionId: "a", status: "busy" },
+        { sessionId: "b", status: "busy" },
+      ],
     });
   });
 
@@ -628,5 +629,185 @@ describe("session wait poller contract", () => {
     const liveTexts = live.mock.calls.map((call) => String(call[0]));
     expect(new Set(liveTexts).size).toBe(liveTexts.length);
     expect(liveTexts.some((text) => text.includes("· 1s"))).toBe(true);
+  });
+
+  describe("program status", () => {
+    const programStatus = (state: string, extra: Record<string, unknown> = {}) => ({
+      state,
+      since: 1,
+      ...extra,
+    });
+
+    it.each([
+      ["idle", true],
+      ["done", true],
+      ["error", true],
+      ["working", false],
+      ["blocked", false],
+    ])("treats program status %s as idle=%s on a ready session", async (state, resolves) => {
+      vi.useFakeTimers();
+      // Lifecycle is `ready` throughout, so the program status alone decides. `starting` and
+      // `busy` never settle (below).
+      const status = "ready";
+      const promise = runSessionWatch(
+        ["s"],
+        { condition: "idle", requireAll: false, intervalMs: 20, timeoutMs: 50 },
+        async <T>(): Promise<T> =>
+          ({
+            session: { status, programStatus: programStatus(state) },
+            events: [],
+            currentSeq: 1,
+          }) as T,
+        vi.fn(),
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(promise).resolves.toMatchObject({ kind: resolves ? "session" : "timeout" });
+    });
+
+    // A new session is stored with program status idle while its lifecycle is still `starting`,
+    // and `busy` can be set from Pi's state sync without a program-status sync (stale `done`).
+    // `create && wait --for idle` must not resolve on either.
+    it.each([
+      ["starting", programStatus("idle")],
+      ["busy", programStatus("done", { message: "Previous turn" })],
+    ])(
+      "does not treat a %s session as idle on a settled program status",
+      async (lifecycle, stale) => {
+        vi.useFakeTimers();
+        let polls = 0;
+        const promise = runSessionWatch(
+          ["s"],
+          { condition: "idle", requireAll: false, intervalMs: 20, timeoutMs: 1_000 },
+          async <T>(): Promise<T> => {
+            polls += 1;
+            const settled = polls > 3;
+            return {
+              session: settled
+                ? { status: "ready", programStatus: programStatus("done", { since: 2 }) }
+                : { status: lifecycle, programStatus: stale },
+              events: [],
+              currentSeq: 1,
+            } as T;
+          },
+          vi.fn(),
+        );
+        let settledEarly = false;
+        void promise.then(() => {
+          settledEarly = polls <= 3;
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(40);
+        expect(polls).toBeGreaterThanOrEqual(2);
+        expect(settledEarly).toBe(false);
+        await vi.advanceTimersByTimeAsync(100);
+        await expect(promise).resolves.toMatchObject({
+          kind: "session",
+          status: "ready",
+          programStatus: { state: "done" },
+        });
+        expect(polls).toBeGreaterThan(3);
+      },
+    );
+
+    it("adds the program status to the resolved, all, and timeout outcomes", async () => {
+      const done = programStatus("done", { message: "Fix login" });
+      const call = async <T>(): Promise<T> =>
+        ({ session: { status: "ready", programStatus: done }, events: [], currentSeq: 1 }) as T;
+
+      await expect(
+        runSessionWatch(
+          ["s"],
+          { condition: "idle", requireAll: false, intervalMs: 10, timeoutMs: 100 },
+          call,
+          vi.fn(),
+        ),
+      ).resolves.toMatchObject({ kind: "session", status: "ready", programStatus: done });
+
+      await expect(
+        runSessionWatch(
+          ["a", "b"],
+          { condition: "idle", requireAll: true, intervalMs: 10, timeoutMs: 100 },
+          call,
+          vi.fn(),
+        ),
+      ).resolves.toMatchObject({
+        kind: "all",
+        sessions: [
+          { sessionId: "a", programStatus: done },
+          { sessionId: "b", programStatus: done },
+        ],
+      });
+
+      const working = programStatus("working");
+      await expect(
+        runSessionWatch(
+          ["s"],
+          { condition: "idle", requireAll: false, intervalMs: 10, timeoutMs: 1 },
+          async <T>(): Promise<T> =>
+            ({ session: { status: "busy", programStatus: working }, events: [] }) as T,
+          vi.fn(),
+        ),
+      ).resolves.toMatchObject({
+        kind: "timeout",
+        sessions: [{ sessionId: "s", status: "busy", programStatus: working }],
+      });
+    });
+
+    it("reports every observation, including the one that resolves the wait", async () => {
+      vi.useFakeTimers();
+      const seen: Array<string | undefined> = [];
+      let polls = 0;
+      const promise = runSessionWatch(
+        ["s"],
+        {
+          condition: "idle",
+          requireAll: false,
+          intervalMs: 20,
+          timeoutMs: 100,
+          onSessionObserved: (session) => seen.push(session.programStatus?.state),
+        },
+        async <T>(): Promise<T> => {
+          polls += 1;
+          const state = polls === 1 ? "working" : "done";
+          return {
+            session: {
+              status: polls === 1 ? "busy" : "ready",
+              programStatus: programStatus(state),
+            },
+            events: [],
+            currentSeq: polls,
+          } as T;
+        },
+        vi.fn(),
+      );
+      await vi.advanceTimersByTimeAsync(40);
+      await promise;
+      expect(seen).toEqual(["working", "done"]);
+    });
+
+    it("still resolves attention from pending dialogs, which now include editor dialogs", async () => {
+      const outcome = await runSessionWatch(
+        ["s"],
+        { condition: "attention", requireAll: false, intervalMs: 10, timeoutMs: 100 },
+        async <T>(path: string): Promise<T> =>
+          (path.endsWith("/dialogs")
+            ? { dialogs: [{ method: "editor" }] }
+            : {
+                session: {
+                  status: "busy",
+                  programStatus: programStatus("blocked", { kind: "question" }),
+                },
+                events: [],
+                currentSeq: 1,
+              }) as T,
+        vi.fn(),
+      );
+      expect(outcome).toMatchObject({
+        kind: "session",
+        reason: "attention",
+        pendingDialogs: 1,
+        programStatus: { state: "blocked", kind: "question" },
+      });
+    });
   });
 });

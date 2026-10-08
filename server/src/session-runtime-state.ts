@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { EventRing } from "./event-ring.js";
 import type { CacheMissModelPriceSource, CacheMissTrackerState } from "./cache-miss.js";
 import type { ExtensionUIState } from "./extension-ui-state.js";
+import type { ProgramRunTracker } from "./program-status.js";
 import type { PendingStop } from "./session-stop.js";
 import { TurnDedupeCache } from "./turn-cache.js";
 import type { MessageQueueState, ServerMessage, Session } from "./types.js";
@@ -12,6 +13,8 @@ export interface RuntimeSessionStateScaffold<
   TQueue extends MessageQueueState = MessageQueueState,
 > extends ExtensionUIState {
   session: Session;
+  /** Event-folded run state behind `session.programStatus`; created on first sync. */
+  programRun?: ProgramRunTracker;
   subscribers: Set<(msg: ServerMessage) => void>;
   seq: number;
   runtimeEpoch: string;

@@ -134,6 +134,21 @@ struct AppEventMessageTests {
         }
     }
 
+    @Test func appEventSummariesCarryProgramStatusIncludingFutureValues() throws {
+        guard case .sessionSummary(_, _, _, let done) = try decodeSnapshot("session_summary"),
+              case .sessionSummary(_, _, _, let future) = try decodeSnapshot(
+                "session_summary_program_status_future"
+              ) else {
+            Issue.record("Expected .sessionSummary")
+            return
+        }
+        #expect(done.programStatus?.state == .done)
+        #expect(done.programStatus?.message == "Test session")
+        #expect(future.programStatus?.state == .unknown("paused"))
+        #expect(future.programStatus?.kind == .unknown("mystery"))
+        #expect(future.id == done.id)
+    }
+
     @Test func decodesExtensionUIRequestWithWorkspaceRouting() throws {
         let event = try AppEventMessage.decode(from: """
         {

@@ -28,7 +28,7 @@ describe("Pi create-flag help", () => {
     expect(text).toContain("--auto-stop");
     expect(text).toContain("when the turn is done");
     expect(text).toContain("no idle wait");
-    expect(text).toContain("ask/select/confirm/input");
+    expect(text).toContain("ask/select/confirm/input/editor");
     expect(text).toContain(EXAMPLE_SESSION_ID);
     expect(text).not.toContain("sess_123");
   });

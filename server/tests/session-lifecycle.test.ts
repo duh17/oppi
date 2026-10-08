@@ -2287,6 +2287,26 @@ describe("SessionLifecycleCoordinator auto-stop settle", () => {
     expect(deps.stopSession).not.toHaveBeenCalled();
   });
 
+  it("when autoStop and an editor dialog is pending, do not stop", () => {
+    const active = makeLifecycleActiveSession({
+      status: "ready",
+      launch: { autoStop: true },
+    });
+    active.pendingUIRequests.set("editor-1", {
+      type: "extension_ui_request",
+      id: "editor-1",
+      method: "editor",
+      title: "Edit the plan",
+    } as ExtensionUIRequest);
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.handleSessionSettled("key");
+    vi.advanceTimersByTime(300_000);
+
+    expect(deps.stopSession).not.toHaveBeenCalled();
+  });
+
   it("when autoStop is absent, idle timer still used", () => {
     const active = makeLifecycleActiveSession({ status: "ready" });
     const deps = makeLifecycleDeps(active);

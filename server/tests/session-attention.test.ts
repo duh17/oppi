@@ -81,7 +81,7 @@ describe("session attention", () => {
     ]);
   });
 
-  it("does not count widget, editor, or unknown surfaces as user reply requests", () => {
+  it("counts an editor dialog as a blocking user reply but not widgets or unknown surfaces", () => {
     const pending = provider([
       {
         type: "extension_ui_notification",
@@ -105,7 +105,7 @@ describe("session attention", () => {
       },
     ]);
 
-    expect(pendingBlockingUIRequestCount(pending, "s1")).toBe(0);
-    expect(hasPendingBlockingUIRequest(pending, "s1")).toBe(false);
+    expect(pendingBlockingUIRequestCount(pending, "s1")).toBe(1);
+    expect(hasPendingBlockingUIRequest(pending, "s1")).toBe(true);
   });
 });

@@ -24,6 +24,7 @@
 import { isControlConversation } from "./control-session.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
+import { syncProgramStatus } from "./program-status.js";
 import {
   canResumeAfterServerRestart as canResumeAfterRestart,
   type SessionLifecycleService,
@@ -89,6 +90,14 @@ export function queueOrphanedSessionsForRestart(
   for (const session of orphaned) {
     session.status = "stopped";
     session.currentTurnStartedAt = undefined;
+    // A run the crash cut short has no outcome; a finished one keeps done/error.
+    syncProgramStatus({ session }, nowMs);
+    storage.saveSession(session);
+  }
+  // Sessions stored before program status existed get the value their lifecycle implies.
+  for (const session of storage.listSessions()) {
+    if (session.programStatus) continue;
+    syncProgramStatus({ session }, session.lastActivity);
     storage.saveSession(session);
   }
   if (orphaned.length > 0) {

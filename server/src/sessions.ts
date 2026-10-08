@@ -180,6 +180,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       getContextWindowResolver: () => this.contextWindowResolver,
       getSkillPathResolver: () => this.skillPathResolver,
       emitSessionEvent: (payload) => this.emit("session_event", payload),
+      onProgramStatusChange: (session, change) =>
+        this.emit("program_status_change", session, change),
       onPiEvent: (key, event) => this.handlePiEvent(key, event),
       hasUI: (key) =>
         (this.startupUISubscribers.get(key)?.size ?? 0) > 0 ||

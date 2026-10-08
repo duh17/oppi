@@ -34,6 +34,12 @@ const TEST_SESSION: Session = {
   status: "ready",
   createdAt: 1739750400000, // 2025-02-17T00:00:00Z
   lastActivity: 1739750460000,
+  programStatus: {
+    state: "blocked",
+    kind: "question",
+    message: "Which database?",
+    since: 1739750455000,
+  },
   model: "anthropic/claude-sonnet-4-20250514",
   messageCount: 5,
   tokens: { input: 1500, output: 800, cacheRead: 250, cacheWrite: 100 },
@@ -64,6 +70,7 @@ const TEST_SESSION_SUMMARY: SessionSummary = {
   createdAt: TEST_SESSION.createdAt,
   lastActivity: TEST_SESSION.lastActivity,
   currentTurnStartedAt: TEST_SESSION.currentTurnStartedAt,
+  programStatus: TEST_SESSION.programStatus,
   model: TEST_SESSION.model,
   messageCount: TEST_SESSION.messageCount,
   tokens: TEST_SESSION.tokens,
@@ -700,6 +707,21 @@ export function assertNoOverlappingFixtureKeys(
 // These examples intentionally exercise Apple decoder fallback behavior. They
 // are not part of the typed canonical discriminator coverage set above.
 const SERVER_MESSAGE_COMPATIBILITY_EXAMPLES = {
+  // A state or kind added by a later server must not drop the row on older clients.
+  state_program_status_future: {
+    type: "state",
+    session: {
+      ...TEST_SESSION,
+      programStatus: { state: "paused", kind: "mystery", message: "Later", since: 1739750455000 },
+    },
+  },
+  session_summary_program_status_future: {
+    type: "session_summary",
+    summary: {
+      ...TEST_SESSION_SUMMARY,
+      programStatus: { state: "paused", kind: "mystery", message: "Later", since: 1739750455000 },
+    },
+  },
   state_icon_malformed: {
     type: "state",
     session: {
@@ -734,6 +756,8 @@ const SERVER_MESSAGE_ORDER = [
   "state_icon_default",
   "state_icon_emoji",
   "state_icon_genmoji",
+  "state_program_status_future",
+  "session_summary_program_status_future",
   "state_icon_malformed",
   "state_icon_future",
   "session_ended",
@@ -854,6 +878,7 @@ function makeSessionSummary(session = makeSession()): SessionSummary {
     firstMessage: session.firstMessage,
     agentId: session.launch?.agentId,
     agentIcon: session.launch?.agentIcon,
+    programStatus: { state: "done", message: session.name, since: 1_791_650_009_000 },
     pendingAskCount: 0,
   };
 }
@@ -995,6 +1020,14 @@ type CanonicalAppEventMessageTypesAreExhaustive = [MissingCanonicalAppEventMessa
 const _canonicalAppEventMessageTypesAreExhaustive: CanonicalAppEventMessageTypesAreExhaustive = true;
 
 const APP_EVENT_COMPATIBILITY_EXAMPLES = {
+  session_summary_program_status_future: {
+    type: "session_summary",
+    ...appEventSessionBase,
+    summary: {
+      ...appEventSummary,
+      programStatus: { state: "paused", kind: "mystery", message: "Later", since: 1_791_650_009_000 },
+    },
+  },
   session_summary_icon_malformed: {
     type: "session_summary",
     ...appEventSessionBase,
@@ -1024,6 +1057,7 @@ const APP_EVENT_MESSAGE_ORDER = [
   "session_summary_icon_default",
   "session_summary_icon_emoji",
   "session_summary_icon_genmoji",
+  "session_summary_program_status_future",
   "session_summary_icon_malformed",
   "session_summary_icon_future",
   "session_deleted",

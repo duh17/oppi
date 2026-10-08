@@ -16,6 +16,7 @@ import { createLogger } from "./logger.js";
 import { AgentDefinitionStore } from "./agent-definitions.js";
 import { iconAssetId } from "./icon-choice.js";
 import { AgentScheduleStore } from "./agent-schedules.js";
+import { syncProgramStatus } from "./program-status.js";
 import { openDatabase } from "./sqlite-compat.js";
 import { AuthStore } from "./storage/auth-store.js";
 import {
@@ -366,6 +367,18 @@ export class Storage {
   }
 
   saveSession(session: Session): void {
+    // Normalizes stopped and error rows. These lifecycle states have no live run to ask, so
+    // program status follows from lifecycle and the stored outcome alone. Deriving it here
+    // covers every writer (stop of a disconnected mirror, launch failures) and keeps
+    // `working`/`blocked` from outliving the lifecycle. It writes `programStatus` back onto the
+    // caller's object, and callers rely on that (the broadcast after a disconnected-mirror stop
+    // sends this very object). Live sessions are synced by their runtime before they reach this
+    // point. `starting` is excluded on purpose: its row is written before any runtime exists, and
+    // storing `working` there would erase the last outcome if the server stops mid-start.
+    // Do not add a tenth sync site elsewhere; extend this one.
+    if (session.status === "stopped" || session.status === "error") {
+      syncProgramStatus({ session });
+    }
     this.sessionStore.saveSession(session);
   }
 

@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 65
+    "messageCount": 67
   },
   "messages": {
     "connected": {
@@ -15,6 +15,12 @@
         "status": "ready",
         "createdAt": 1739750400000,
         "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
         "model": "anthropic/claude-sonnet-4-20250514",
         "messageCount": 5,
         "tokens": {
@@ -75,6 +81,12 @@
         "status": "ready",
         "createdAt": 1739750400000,
         "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
         "model": "anthropic/claude-sonnet-4-20250514",
         "messageCount": 5,
         "tokens": {
@@ -128,6 +140,12 @@
         "status": "ready",
         "createdAt": 1739750400000,
         "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
         "model": "anthropic/claude-sonnet-4-20250514",
         "messageCount": 5,
         "tokens": {
@@ -168,6 +186,12 @@
         "status": "ready",
         "createdAt": 1739750400000,
         "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
         "model": "anthropic/claude-sonnet-4-20250514",
         "messageCount": 5,
         "tokens": {
@@ -225,6 +249,12 @@
         "status": "ready",
         "createdAt": 1739750400000,
         "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
         "model": "anthropic/claude-sonnet-4-20250514",
         "messageCount": 5,
         "tokens": {
@@ -273,6 +303,12 @@
         "status": "ready",
         "createdAt": 1739750400000,
         "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
         "model": "anthropic/claude-sonnet-4-20250514",
         "messageCount": 5,
         "tokens": {
@@ -325,6 +361,12 @@
         "status": "ready",
         "createdAt": 1739750400000,
         "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
         "model": "anthropic/claude-sonnet-4-20250514",
         "messageCount": 5,
         "tokens": {
@@ -368,6 +410,12 @@
         "status": "ready",
         "createdAt": 1739750400000,
         "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
         "model": "anthropic/claude-sonnet-4-20250514",
         "messageCount": 5,
         "tokens": {
@@ -420,6 +468,12 @@
         "status": "ready",
         "createdAt": 1739750400000,
         "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
         "model": "anthropic/claude-sonnet-4-20250514",
         "messageCount": 5,
         "tokens": {
@@ -473,6 +527,12 @@
         "status": "ready",
         "createdAt": 1739750400000,
         "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
         "model": "anthropic/claude-sonnet-4-20250514",
         "messageCount": 5,
         "tokens": {
@@ -517,6 +577,113 @@
         ]
       }
     },
+    "state_program_status_future": {
+      "type": "state",
+      "session": {
+        "id": "test-session-1",
+        "workspaceId": "ws-1",
+        "workspaceName": "My Workspace",
+        "name": "Test Session",
+        "status": "ready",
+        "createdAt": 1739750400000,
+        "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "paused",
+          "kind": "mystery",
+          "message": "Later",
+          "since": 1739750455000
+        },
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "messageCount": 5,
+        "tokens": {
+          "input": 1500,
+          "output": 800,
+          "cacheRead": 250,
+          "cacheWrite": 100
+        },
+        "cost": 0.012,
+        "changeStats": {
+          "mutatingToolCalls": 3,
+          "filesChanged": 6,
+          "changedFiles": [
+            "src/main.ts",
+            "README.md"
+          ],
+          "changedFilesOverflow": 4,
+          "addedLines": 45,
+          "removedLines": 12
+        },
+        "contextTokens": 2300,
+        "contextWindow": 200000,
+        "lastMessage": "I've updated the README with the new API docs.",
+        "thinkingLevel": "high",
+        "launch": {
+          "source": "agent",
+          "agentId": "agent-reviewer",
+          "agentVersion": 4,
+          "agentIcon": {
+            "kind": "symbol",
+            "name": "checkmark.shield"
+          },
+          "parentSessionId": "parent-session-1",
+          "status": "accepted",
+          "requestedAt": 1739750399000,
+          "completedAt": 1739750400000
+        },
+        "piSessionFile": "/tmp/pi-sessions/abc123.jsonl",
+        "piSessionFiles": [
+          "/tmp/pi-sessions/abc123.jsonl"
+        ]
+      }
+    },
+    "session_summary_program_status_future": {
+      "type": "session_summary",
+      "summary": {
+        "id": "test-session-1",
+        "workspaceId": "ws-1",
+        "workspaceName": "My Workspace",
+        "name": "Test Session",
+        "status": "ready",
+        "createdAt": 1739750400000,
+        "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "paused",
+          "kind": "mystery",
+          "message": "Later",
+          "since": 1739750455000
+        },
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "messageCount": 5,
+        "tokens": {
+          "input": 1500,
+          "output": 800,
+          "cacheRead": 250,
+          "cacheWrite": 100
+        },
+        "cost": 0.012,
+        "changeStats": {
+          "mutatingToolCalls": 3,
+          "filesChanged": 6,
+          "changedFiles": [
+            "src/main.ts",
+            "README.md"
+          ],
+          "changedFilesOverflow": 4,
+          "addedLines": 45,
+          "removedLines": 12
+        },
+        "contextTokens": 2300,
+        "contextWindow": 200000,
+        "lastMessage": "I've updated the README with the new API docs.",
+        "thinkingLevel": "high",
+        "agentId": "agent-reviewer",
+        "agentIcon": {
+          "kind": "symbol",
+          "name": "checkmark.shield"
+        },
+        "parentSessionId": "parent-session-1"
+      }
+    },
     "state_icon_malformed": {
       "type": "state",
       "session": {
@@ -527,6 +694,12 @@
         "status": "ready",
         "createdAt": 1739750400000,
         "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
         "model": "anthropic/claude-sonnet-4-20250514",
         "messageCount": 5,
         "tokens": {
@@ -580,6 +753,12 @@
         "status": "ready",
         "createdAt": 1739750400000,
         "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
         "model": "anthropic/claude-sonnet-4-20250514",
         "messageCount": 5,
         "tokens": {

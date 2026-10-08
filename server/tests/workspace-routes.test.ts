@@ -155,7 +155,10 @@ describe("workspaces module", () => {
     }
   });
 
-  it("marks workspace summaries with pending mirror extension UI requests", async () => {
+  it.each([
+    ["select", { options: ["Allow once", "Deny"] }],
+    ["editor", { prefill: "draft" }],
+  ])("marks workspace summaries with a pending mirror %s dialog", async (method, extra) => {
     const workspace = { id: "ws-1", name: "Default" };
     const session = {
       id: "mirror-1",
@@ -195,9 +198,9 @@ describe("workspaces module", () => {
                   type: "extension_ui_request",
                   id: "ui-1",
                   sessionId,
-                  method: "select",
+                  method,
                   title: "Remote access",
-                  options: ["Allow once", "Deny"],
+                  ...extra,
                 },
               ]
             : [],

@@ -3,6 +3,7 @@ import { isControlRouteSession } from "./control-session.js";
 import { applyHostEnv } from "./host-env.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionBackendEvent } from "./pi-events.js";
+import type { ProgramStatusChangeListener } from "./program-status.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import {
   SessionActivationCoordinator,
@@ -71,6 +72,7 @@ export interface SessionCoordinatorBundleDeps {
   getContextWindowResolver: () => ((modelId: string) => number) | null;
   getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
   emitSessionEvent: (payload: SessionBroadcastEvent) => void;
+  onProgramStatusChange?: ProgramStatusChangeListener;
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
   onSessionEnd: (key: string, reason: string, stopConfirmationReason?: string) => Promise<void>;
   persistSessionNow: (key: string, session: Session) => void;
@@ -106,6 +108,7 @@ export function createSessionCoordinatorBundle(
     getActiveSession: (key) => deps.active.get(key),
     emitSessionEvent: (payload) => deps.emitSessionEvent(payload),
     saveSession: (session) => deps.storage.saveSession(session),
+    onProgramStatusChange: deps.onProgramStatusChange,
     metrics: deps.metrics,
   });
 
@@ -115,6 +118,7 @@ export function createSessionCoordinatorBundle(
     broadcast: (key, message) => broadcaster.broadcast(key, message),
     persistSessionNow: (key, session) => deps.persistSessionNow(key, session),
     markSessionDirty: (key) => deps.markSessionDirty(key),
+    onProgramStatusChange: deps.onProgramStatusChange,
     metrics: deps.metrics,
   });
 

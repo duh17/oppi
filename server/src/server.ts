@@ -34,6 +34,7 @@ import { shouldRecordHttpRequestMetric } from "./http-request-metrics.js";
 import { defaultModelRefFromGlobalSettings, ModelCatalog } from "./model-catalog.js";
 import { ExtensionProviderCatalog } from "./extension-model-discovery.js";
 import { LiveActivityBridge } from "./live-activity.js";
+import type { ProgramStatusSync } from "./program-status.js";
 import { SessionPushNotifier } from "./session-push-notifier.js";
 import { AgentScheduleRunner } from "./agent-schedule-runner.js";
 import { ServerResourceSampler } from "./server-resource-sampler.js";
@@ -568,7 +569,11 @@ export class Server {
 
     this.push = createPushClient(apnsConfig, this.opsMetrics);
     this.liveActivity = new LiveActivityBridge(this.push, this.storage);
-    this.sessionPushNotifier = new SessionPushNotifier(this.push, this.storage);
+    this.sessionPushNotifier = new SessionPushNotifier(this.push, this.storage, {
+      // A client with an open app-event or focused session stream already shows the change.
+      isClientConnected: () =>
+        this.appEventStreamMux.hasSubscribers() || this.boundSessionStreamMux.hasLiveConnections(),
+    });
     this.sessions = new SessionManager(storage, this.opsMetrics);
     this.sessions.contextWindowResolver = (modelId: string) =>
       this.models.getContextWindow(modelId);
@@ -680,6 +685,11 @@ export class Server {
       this.appEventStreamMux.handleSessionBroadcastEvent(payload);
     };
     this.sessions.on("session_event", handleSessionEvent);
+    const handleProgramStatusChange = (session: Session, change: ProgramStatusSync): void => {
+      this.sessionPushNotifier.handleProgramStatusChange(session, change);
+    };
+    this.sessions.on("program_status_change", handleProgramStatusChange);
+    this.mirrorRuntime.on("program_status_change", handleProgramStatusChange);
     // A durable child gets its Session when its parent spawns it, not through an API route.
     this.sessions.on("session_created", (session: Session) =>
       this.appEventStreamMux.emitSessionCreated(this.models.ensureSessionContextWindow(session)),

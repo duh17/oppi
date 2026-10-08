@@ -22,6 +22,7 @@ export function buildSessionSummary(session: Session): SessionSummary {
     lastActivity: session.lastActivity,
     lastAgentReplyAt: session.lastAgentReplyAt,
     currentTurnStartedAt: session.currentTurnStartedAt,
+    ...(session.programStatus ? { programStatus: { ...session.programStatus } } : {}),
     model: session.model,
     messageCount: session.messageCount,
     tokens: { ...session.tokens },

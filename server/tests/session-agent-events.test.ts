@@ -175,6 +175,38 @@ describe("SessionAgentEventCoordinator", () => {
     expect(summaryBroadcasts).toEqual([["child-1", { type: "session_summary", summary }]]);
   });
 
+  it("broadcasts a summary with the compacting program status, then the settled one", () => {
+    const active = makeActiveSession({ status: "ready" });
+    const { broadcast, coordinator, updateSessionFromEvent } = makeCoordinator(active);
+    // The processor owns the derivation; here it only has to leave a changed status behind.
+    updateSessionFromEvent.mockImplementation((_key: string, _active: unknown, event: never) => {
+      active.session.programStatus =
+        (event as { type: string }).type === "compaction_start"
+          ? { state: "working", message: "Compacting context", since: 1 }
+          : { state: "done", since: 2 };
+    });
+    const summaries = () =>
+      broadcast.mock.calls
+        .filter(([, message]) => message.type === "session_summary")
+        .map(([, message]) => message.summary.programStatus);
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "compaction_start",
+      reason: "manual",
+    } as unknown as SessionBackendEvent);
+    coordinator.handlePiEvent(active.session.id, {
+      type: "compaction_end",
+      reason: "manual",
+      aborted: false,
+      willRetry: false,
+    } as unknown as SessionBackendEvent);
+
+    expect(summaries()).toEqual([
+      expect.objectContaining({ state: "working", message: "Compacting context" }),
+      expect.objectContaining({ state: "done" }),
+    ]);
+  });
+
   it("broadcasts session summaries after Pi session name changes", () => {
     const active = makeActiveSession({ status: "ready" });
     const broadcast = vi.fn();

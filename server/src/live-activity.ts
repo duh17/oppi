@@ -1,14 +1,18 @@
 /**
  * Live Activity bridge — debounced APNs push updates for iOS Live Activities.
  *
- * Translates session lifecycle events into coalesced Live Activity content
- * state updates. Debounces rapid-fire events (750ms) and handles end-of-session
- * teardown.
+ * Translates session events into coalesced Live Activity content state updates.
+ * Debounces rapid-fire events (750ms) and handles end-of-session teardown.
+ *
+ * Run state comes from the session's program status (carried by `state` and
+ * `session_summary` events), not from a second reading of agent events. Lifecycle
+ * `stopping`/`stopped` have no program-status equivalent and stay lifecycle-driven.
+ * The payload keeps its fields and status values.
  */
 
 import type { PushClient } from "./push.js";
 import type { Storage } from "./storage.js";
-import type { Session } from "./types.js";
+import type { ProgramStatus, Session } from "./types.js";
 import type { SessionBroadcastEvent } from "./session-broadcast.js";
 
 // ─── Types ───
@@ -37,6 +41,8 @@ export class LiveActivityBridge {
   private timer: NodeJS.Timeout | null = null;
   private pending: PendingLiveActivityUpdate | null = null;
   private readonly debounceMs = 750;
+  /** Latest status per session, mapped from program status when a state/summary event carried it. */
+  private readonly latestStatus = new Map<string, LiveActivityStatus>();
 
   constructor(
     private push: PushClient,
@@ -51,7 +57,7 @@ export class LiveActivityBridge {
       case "state":
         this.queue({
           sessionId,
-          status: this.mapStatus(event.session.status),
+          status: this.rememberStatus(sessionId, event.session.status, event.session.programStatus),
           lastEvent: this.statusLabel(event.session.status),
           priority: 5,
         });
@@ -59,13 +65,13 @@ export class LiveActivityBridge {
       case "session_summary":
         this.queue({
           sessionId,
-          status: this.mapStatus(event.summary.status),
+          status: this.rememberStatus(sessionId, event.summary.status, event.summary.programStatus),
           lastEvent: this.statusLabel(event.summary.status),
           priority: 5,
         });
         return;
       case "agent_start":
-        this.queue({ sessionId, status: "busy", lastEvent: "Agent started", priority: 5 });
+        this.queue({ sessionId, lastEvent: "Agent started", priority: 5 });
         return;
       case "agent_end":
         this.queue({
@@ -78,7 +84,6 @@ export class LiveActivityBridge {
       case "agent_settled":
         this.queue({
           sessionId,
-          status: "ready",
           activeTool: null,
           lastEvent: "Agent finished",
           priority: 5,
@@ -87,7 +92,6 @@ export class LiveActivityBridge {
       case "tool_start":
         this.queue({
           sessionId,
-          status: "busy",
           activeTool: event.tool,
           lastEvent: event.tool,
           priority: 5,
@@ -127,6 +131,7 @@ export class LiveActivityBridge {
         }
         return;
       case "session_ended":
+        this.latestStatus.delete(sessionId);
         this.queue({
           sessionId,
           status: "stopped",
@@ -146,6 +151,7 @@ export class LiveActivityBridge {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.pending = null;
+    this.latestStatus.clear();
   }
 
   // ─── Private ───
@@ -216,7 +222,10 @@ export class LiveActivityBridge {
     const elapsedSeconds = session ? Math.max(0, Math.floor((now - session.createdAt) / 1000)) : 0;
 
     return {
-      status: pending.status ?? this.mapStatus(session?.status),
+      status:
+        pending.status ??
+        (pending.sessionId ? this.latestStatus.get(pending.sessionId) : undefined) ??
+        this.mapStatus(session?.status),
       activeTool: pending.activeTool ?? null,
       lastEvent: pending.lastEvent ?? null,
       elapsedSeconds,
@@ -257,6 +266,28 @@ export class LiveActivityBridge {
       }
       return b.lastActivity - a.lastActivity;
     })[0];
+  }
+
+  /**
+   * Status for a lifecycle + program status pair. Program status owns the run state:
+   * working and blocked are both an unsettled run (`busy`), error is `error`, and
+   * idle/done are `ready`. Without program status (no value on the wire), lifecycle decides.
+   */
+  private rememberStatus(
+    sessionId: string,
+    lifecycle: Session["status"],
+    programStatus: ProgramStatus | undefined,
+  ): LiveActivityStatus {
+    let status: LiveActivityStatus;
+    if (lifecycle === "stopping" || lifecycle === "stopped" || !programStatus) {
+      status = this.mapStatus(lifecycle);
+    } else if (programStatus.state === "working" || programStatus.state === "blocked") {
+      status = "busy";
+    } else {
+      status = programStatus.state === "error" ? "error" : "ready";
+    }
+    this.latestStatus.set(sessionId, status);
+    return status;
   }
 
   private mapStatus(status: Session["status"] | undefined): LiveActivityStatus {

@@ -255,6 +255,56 @@ describe("push", () => {
     });
   });
 
+  it("sends blocked alerts as urgent with the kind and a kind-specific title", async () => {
+    const connections = mockHttp2([{ kind: "response", status: 200 }]);
+    const client = new APNsClient(createTestConfig());
+
+    await client.sendSessionEventPush("device-token-789", {
+      sessionId: "session-3",
+      sessionName: "Deploy",
+      event: "blocked",
+      kind: "permission",
+      reason: "Allow rm -rf build?",
+    });
+
+    const sent = connections[0].requests[0];
+    expect(sent.headers["apns-priority"]).toBe(10);
+    expect(JSON.parse(sent.request.body)).toEqual({
+      aps: {
+        alert: { title: "Needs Approval", subtitle: "Deploy", body: "Allow rm -rf build?" },
+        category: "SESSION_BLOCKED",
+        "interruption-level": "active",
+        sound: "default",
+      },
+      sessionId: "session-3",
+      event: "blocked",
+      kind: "permission",
+    });
+  });
+
+  it("sends done alerts as passive", async () => {
+    const connections = mockHttp2([{ kind: "response", status: 200 }]);
+    const client = new APNsClient(createTestConfig());
+
+    await client.sendSessionEventPush("device-token-790", {
+      sessionId: "session-4",
+      event: "done",
+      reason: "Fix login",
+    });
+
+    const sent = connections[0].requests[0];
+    expect(sent.headers["apns-priority"]).toBe(5);
+    expect(JSON.parse(sent.request.body)).toEqual({
+      aps: {
+        alert: { title: "Session Done", subtitle: "session-4", body: "Fix login" },
+        category: "SESSION_DONE",
+        "interruption-level": "passive",
+      },
+      sessionId: "session-4",
+      event: "done",
+    });
+  });
+
   it("sends Live Activity updates with a liveactivity topic and stale date", async () => {
     const staleDate = 1_700_000_123_456;
     const connections = mockHttp2([{ kind: "response", status: 200 }]);

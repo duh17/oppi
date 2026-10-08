@@ -252,3 +252,67 @@ describe("storage session metadata format", () => {
     expect(loaded).toBeUndefined();
   });
 });
+
+describe("storage program status for stopped and failed sessions", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "oppi-server-program-status-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function session(overrides: Record<string, unknown>) {
+    return {
+      id: "s1",
+      createdAt: 1,
+      lastActivity: 2,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      ...overrides,
+    } as never;
+  }
+
+  it("never persists working or blocked on a stopped session, whoever stops it", () => {
+    const storage = new Storage(dir);
+    // A disconnected mirror stopped from Oppi: lifecycle moves to stopped, status was left behind.
+    storage.saveSession(
+      session({
+        status: "stopped",
+        programStatus: { state: "blocked", kind: "question", message: "Which?", since: 5 },
+      }),
+    );
+    expect(storage.getSession("s1")?.programStatus).toMatchObject({ state: "idle" });
+
+    storage.saveSession(
+      session({ id: "s2", status: "stopped", programStatus: { state: "done", since: 5 } }),
+    );
+    expect(storage.getSession("s2")?.programStatus).toEqual({ state: "done", since: 5 });
+  });
+
+  it("keeps the stored outcome on a starting row, so a stop mid-start does not erase it", () => {
+    const storage = new Storage(dir);
+    storage.saveSession(
+      session({ status: "starting", name: "Fix login", programStatus: { state: "done", since: 5 } }),
+    );
+    expect(storage.getSession("s1")?.programStatus).toEqual({ state: "done", since: 5 });
+  });
+
+  it("derives error from a failed launch instead of keeping the old status", () => {
+    const storage = new Storage(dir);
+    storage.saveSession(
+      session({
+        status: "error",
+        programStatus: { state: "idle", since: 5 },
+        launch: { status: "failed", requestedAt: 1, promptError: "Model unavailable\ndetail" },
+      }),
+    );
+    expect(storage.getSession("s1")?.programStatus).toMatchObject({
+      state: "error",
+      message: "Model unavailable",
+    });
+  });
+});

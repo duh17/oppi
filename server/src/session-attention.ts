@@ -130,6 +130,7 @@ export function isPendingUserReplyRequest(message: {
       return Array.isArray(message.options) && message.options.length > 0;
     case "confirm":
     case "input":
+    case "editor":
       return true;
     default:
       return false;

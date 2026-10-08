@@ -12,6 +12,7 @@ import { createPrivateKey, createSign, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import { createLogger } from "./logger.js";
+import type { ProgramStatusKind } from "./types.js";
 
 // ─── Config ───
 
@@ -33,8 +34,36 @@ export interface APNsConfig {
 export interface SessionEventPushPayload {
   sessionId: string;
   sessionName?: string;
-  event: "ended" | "error";
+  event: "ended" | "error" | "blocked" | "done";
   reason: string;
+  /** Blocked pushes only: why the session waits. */
+  kind?: ProgramStatusKind;
+}
+
+function sessionEventPresentation(payload: SessionEventPushPayload): {
+  title: string;
+  category: string;
+  urgent: boolean;
+} {
+  switch (payload.event) {
+    case "ended":
+      return { title: "Session Ended", category: "SESSION_DONE", urgent: false };
+    case "done":
+      return { title: "Session Done", category: "SESSION_DONE", urgent: false };
+    case "error":
+      return { title: "Session Error", category: "SESSION_ERROR", urgent: true };
+    case "blocked":
+      return {
+        title:
+          payload.kind === "permission"
+            ? "Needs Approval"
+            : payload.kind === "auth"
+              ? "Sign-in Needed"
+              : "Question",
+        category: "SESSION_BLOCKED",
+        urgent: true,
+      };
+  }
 }
 
 // ─── APNs Client ───
@@ -75,34 +104,34 @@ export class APNsClient {
   // ─── Public API ───
 
   /**
-   * Send a session event push (ended, error).
-   * Not time-sensitive.
+   * Send a session event push (ended, error, blocked, done).
+   * Blocked and error alert immediately; ended and done are passive.
    */
   async sendSessionEventPush(
     deviceToken: string,
     payload: SessionEventPushPayload,
   ): Promise<boolean> {
-    const title = payload.event === "ended" ? "Session Ended" : "Session Error";
-    const category = payload.event === "ended" ? "SESSION_DONE" : "SESSION_ERROR";
+    const presentation = sessionEventPresentation(payload);
 
     const apnsPayload = {
       aps: {
         alert: {
-          title,
+          title: presentation.title,
           subtitle: payload.sessionName || payload.sessionId,
           body: payload.reason,
         },
-        category,
-        "interruption-level": payload.event === "error" ? "active" : "passive",
-        sound: payload.event === "error" ? "default" : undefined,
+        category: presentation.category,
+        "interruption-level": presentation.urgent ? "active" : "passive",
+        sound: presentation.urgent ? "default" : undefined,
       },
       sessionId: payload.sessionId,
       event: payload.event,
+      ...(payload.kind ? { kind: payload.kind } : {}),
     };
 
     return this.send(deviceToken, apnsPayload, {
       pushType: "alert",
-      priority: payload.event === "error" ? 10 : 5,
+      priority: presentation.urgent ? 10 : 5,
     });
   }
 

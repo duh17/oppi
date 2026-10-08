@@ -502,3 +502,76 @@ describe("SessionBroadcaster", () => {
     });
   });
 });
+
+describe("SessionBroadcaster program status", () => {
+  function pendingConfirm() {
+    return new Map([
+      [
+        "ui-1",
+        { type: "extension_ui_request", id: "ui-1", method: "confirm", title: "Allow rm?" } as never,
+      ],
+    ]);
+  }
+
+  it("syncs program status before a dialog or lifecycle message reaches observers", () => {
+    const activeSessions = new Map<string, BroadcastSessionState>();
+    const seenAtEmit: Array<Session["programStatus"]> = [];
+    const changes: Array<[string | undefined, string]> = [];
+    const broadcaster = new SessionBroadcaster({
+      getActiveSession: (key) => activeSessions.get(key),
+      emitSessionEvent: (payload) => {
+        if (payload.event.type === "extension_ui_request") {
+          seenAtEmit.push(activeSessions.get("k1")!.session.programStatus);
+        }
+      },
+      saveSession: () => {},
+      onProgramStatusChange: (_session, change) =>
+        changes.push([change.previous?.state, change.current.state]),
+    });
+    const active = makeActive({ ...makeSession("s1"), status: "busy" });
+    activeSessions.set("k1", active);
+
+    const pending = pendingConfirm();
+    active.pendingUIRequests = pending;
+    broadcaster.broadcast("k1", { type: "extension_ui_request", id: "ui-1" } as ServerMessage);
+
+    expect(seenAtEmit).toEqual([
+      expect.objectContaining({ state: "blocked", kind: "permission", message: "Allow rm?" }),
+    ]);
+
+    pending.clear();
+    broadcaster.broadcast("k1", { type: "extension_ui_settled", id: "ui-1" } as ServerMessage);
+    expect(changes).toEqual([
+      [undefined, "blocked"],
+      ["blocked", "working"],
+    ]);
+
+    // A repeat with nothing new changes nothing and notifies nobody.
+    broadcaster.broadcast("k1", { type: "state", session: active.session } as ServerMessage);
+    expect(changes).toHaveLength(2);
+  });
+
+  it("persists the synced status, so a stopped session keeps its outcome", () => {
+    const activeSessions = new Map<string, BroadcastSessionState>();
+    const saved: Session[] = [];
+    const broadcaster = new SessionBroadcaster({
+      getActiveSession: (key) => activeSessions.get(key),
+      emitSessionEvent: () => {},
+      saveSession: (session) => saved.push(structuredClone(session)),
+    });
+    const session = { ...makeSession("s1"), status: "stopped" as const };
+    const active = makeActive(session);
+    active.programRun = {
+      runActive: false,
+      compacting: false,
+      runResult: { state: "done" },
+      resting: { state: "error", message: "boom" },
+    };
+    activeSessions.set("k1", active);
+
+    broadcaster.persistSessionNow("k1", session);
+
+    expect(saved[0]?.programStatus).toMatchObject({ state: "error" });
+    expect(saved[0]?.programStatus?.message).toBeUndefined();
+  });
+});

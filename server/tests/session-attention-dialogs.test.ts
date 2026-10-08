@@ -43,19 +43,34 @@ describe("pendingDialogSnapshots", () => {
         method: "input",
         placeholder: "name",
       },
+      {
+        type: "extension_ui_request",
+        id: "editor-1",
+        sessionId: "s1",
+        method: "editor",
+        title: "Edit plan",
+        prefill: "draft",
+      },
       // ask without questions is not a pending user-reply request.
       { type: "extension_ui_request", id: "ask-empty", sessionId: "s1", method: "ask" },
     ];
 
     const dialogs = pendingDialogSnapshots(messages);
 
-    expect(dialogs.map((dialog) => dialog.id)).toEqual(["ask-1", "sel-1", "conf-1", "input-1"]);
+    expect(dialogs.map((dialog) => dialog.id)).toEqual([
+      "ask-1",
+      "sel-1",
+      "conf-1",
+      "input-1",
+      "editor-1",
+    ]);
     expect(dialogs[0]).toMatchObject({ method: "ask", allowCustom: false, timeout: 45_000 });
     expect(dialogs[0]).not.toHaveProperty("sessionId");
     expect(dialogs[0]?.questions).toHaveLength(1);
     expect(dialogs[1]).toMatchObject({ method: "select", title: "Pick", options: ["a", "b"] });
     expect(dialogs[2]).toMatchObject({ method: "confirm", message: "Sure?" });
     expect(dialogs[3]).toMatchObject({ method: "input", placeholder: "name" });
+    expect(dialogs[4]).toMatchObject({ method: "editor", title: "Edit plan", prefill: "draft" });
   });
 
   it("dedupes repeated request ids", () => {
