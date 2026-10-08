@@ -164,6 +164,17 @@ struct SessionThreadsTests {
         #expect(timeline.rows.last?.kind == .working(lanes: [2]))
     }
 
+    @Test func aLockedMemberEndsWithoutItsCost() {
+        let timeline = SessionThreadTimeline.build(
+            snapshot: snapshot(orchestration),
+            now: Date(timeIntervalSince1970: 100),
+            hidesCost: { $0.id == "fix" }
+        )
+
+        #expect(timeline.rows.first { $0.id == "end:fix" }?.detail == "stopped")
+        #expect(timeline.rows.first { $0.id == "end:review" }?.detail?.contains("$") == true)
+    }
+
     @Test func idleRootLaneTurnsDashedAfterItsLastActivity() {
         let timeline = SessionThreadTimeline.build(snapshot: snapshot(orchestration), now: Date(timeIntervalSince1970: 100))
 

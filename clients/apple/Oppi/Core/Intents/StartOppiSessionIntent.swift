@@ -72,6 +72,14 @@ struct StartOppiSessionIntent: AppIntent {
             return .result(dialog: IntentDialog(stringLiteral: StartOppiSessionDialog.noServer))
         }
 
+        // A locked server or workspace asks before the prompt is confirmed or sent.
+        guard await AppLockIntentGate.authorizeScope(
+            .workspace(serverId: target.serverId, workspaceId: target.workspaceId),
+            continueInForeground: { try await continueInForeground(alwaysConfirm: false) }
+        ) else {
+            return .result(dialog: IntentDialog(stringLiteral: AppLockIntentGate.scopeLockedDialog))
+        }
+
         let outcome: CreateOutcome?
         do {
             outcome = try await StartOppiSessionConfirmation.run(

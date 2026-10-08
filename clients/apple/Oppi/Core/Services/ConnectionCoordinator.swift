@@ -1053,6 +1053,8 @@ final class ConnectionCoordinator {
         // If re-paired during shutdown, this removal no longer owns the row.
         guard serverLifetimes[id] == removedLifetime,
               serverStore.server(for: id) == nil else { return }
+        // Device-local lock flags for the server, its workspaces, and sessions.
+        ScopedLockService.shared.forgetServer(id)
         await purgeLocalData(for: id, connection: removedConnection)
 
         // If we removed the active server, switch to the first remaining

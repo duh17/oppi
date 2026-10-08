@@ -500,7 +500,7 @@ struct AppLockContentRaceTests {
 
         let delivered: (identifier: String, body: String) = await withCheckedContinuation { continuation in
             service._deliverForTesting = { continuation.resume(returning: ($0.identifier, $0.content.body)) }
-            service.notifyAskIfNeeded(ask, activeSessionId: nil)
+            service.notifyAskIfNeeded(ask, activeSessionId: nil, hidesQuestionText: { false })
             // App Lock turns on after the ask was queued, before it is added.
             service._appLockEnabledForTesting = true
         }

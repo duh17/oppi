@@ -271,6 +271,15 @@ struct WorkspaceScopedDestinationView: View {
     @State private var scopedConnection: ServerConnection?
 
     var body: some View {
+        ScopedLockGate(
+            target: .workspace(serverId: target.serverId, workspaceId: target.workspace.id),
+            title: target.workspace.name
+        ) {
+            unlockedBody
+        }
+    }
+
+    private var unlockedBody: some View {
         Group {
             if let connection = scopedConnection {
                 WorkspaceDetailView(workspace: target.workspace)
@@ -291,8 +300,23 @@ struct WorkspaceSessionScopedDestinationView: View {
     let target: WorkspaceSessionNavTarget
 
     @State private var scopedConnection: ServerConnection?
+    @State private var locks = ScopedLockService.shared
 
     var body: some View {
+        ScopedLockGate(
+            target: locks.sessionTarget(
+                serverId: target.serverId,
+                sessionId: target.sessionId,
+                workspaceId: target.workspaceId
+            ),
+            title: locks.sessionLookup(target.serverId, target.sessionId)?.displayTitle
+                ?? String(localized: "Session")
+        ) {
+            unlockedBody
+        }
+    }
+
+    private var unlockedBody: some View {
         Group {
             if let connection = resolvedConnection {
                 ChatView(
@@ -335,7 +359,23 @@ struct WorkspaceFileBrowserDestinationView: View {
         scopedConnection
     }
 
+    /// Workspace files follow the workspace lock; the host home folder the server's.
+    private var lockTarget: ScopedLockTarget {
+        switch target.scope {
+        case .workspace(let workspaceId, _):
+            .workspace(serverId: targetServerId, workspaceId: workspaceId)
+        case .hostHome:
+            .server(targetServerId)
+        }
+    }
+
     var body: some View {
+        ScopedLockGate(target: lockTarget, title: String(localized: "Files")) {
+            unlockedBody
+        }
+    }
+
+    private var unlockedBody: some View {
         Group {
             if let connection = resolvedConnection {
                 FileBrowserView(
@@ -379,6 +419,19 @@ struct WorkspaceLinkedFileDestinationView: View {
     @State private var markdownViewportRestore = FullScreenMarkdownViewportRestoreState()
 
     var body: some View {
+        ScopedLockGate(target: Self.lockTarget(for: target), title: fileName) {
+            unlockedBody
+        }
+    }
+
+    private var fileName: String {
+        switch target.kind {
+        case .workspaceFile(_, let fileName), .sessionFile(_, let fileName, _), .hostFile(_, let fileName):
+            fileName
+        }
+    }
+
+    private var unlockedBody: some View {
         Group {
             switch connectionState {
             case .connected(let connection):
@@ -467,6 +520,24 @@ struct WorkspaceLinkedFileDestinationView: View {
 }
 
 extension WorkspaceLinkedFileDestinationView {
+    /// A file opened from a session follows that session's lock (and so its
+    /// workspace and server); any other file follows its workspace.
+    @MainActor
+    static func lockTarget(for target: WorkspaceLinkedFileNavTarget) -> ScopedLockTarget {
+        let sessionId: String? = switch target.kind {
+        case .sessionFile(_, _, let sessionId): sessionId
+        case .workspaceFile, .hostFile: target.sourceSessionId
+        }
+        guard let sessionId else {
+            return .workspace(serverId: target.serverId, workspaceId: target.workspaceId)
+        }
+        return ScopedLockService.shared.sessionTarget(
+            serverId: target.serverId,
+            sessionId: sessionId,
+            workspaceId: target.workspaceId
+        )
+    }
+
     static func reviewCommentSelectionScope(sourceSessionId: String?) -> ReviewCommentSelectionScope? {
         guard let sourceSessionId,
               let router = ReviewCommentSelectionActiveRouter.router(for: sourceSessionId) else {
@@ -587,8 +658,21 @@ struct HostSwitcherMenu: View {
     var fitsVerticalRail = false
     var onSwitch: ((PairedServer) -> Void)?
 
+    @State private var locks = ScopedLockService.shared
+
     private var servers: [PairedServer] {
         serverStore.servers
+    }
+
+    /// Menu rows cannot draw a trailing badge, so a gated server's row uses
+    /// the lock symbol as its image (the current server keeps its checkmark).
+    private func menuImage(for server: PairedServer) -> String {
+        if server.id == current.id { return "checkmark.circle.fill" }
+        switch locks.badge(.server(server.id)) {
+        case .locked: return "lock.fill"
+        case .unlocked: return "lock.open.fill"
+        case .none: return server.resolvedBadgeIcon.symbolName
+        }
     }
 
     var body: some View {
@@ -597,14 +681,9 @@ struct HostSwitcherMenu: View {
                 Button {
                     switchHost(server)
                 } label: {
-                    Label(
-                        menuTitle(for: server),
-                        systemImage: server.id == current.id
-                            ? "checkmark.circle.fill"
-                            : server.resolvedBadgeIcon.symbolName
-                    )
+                    Label(menuTitle(for: server), systemImage: menuImage(for: server))
                 }
-                .accessibilityValue(badgeState(for: server).title)
+                .accessibilityValue(menuAccessibilityValue(for: server))
             }
 
             Section("Connection") {
@@ -643,20 +722,39 @@ struct HostSwitcherMenu: View {
             ServerSwitcherPill(
                 server: current,
                 connectionState: badgeState(for: current),
-                fitsVerticalRail: fitsVerticalRail
+                fitsVerticalRail: fitsVerticalRail,
+                lockBadge: locks.badge(.server(current.id))
             )
         }
         .accessibilityLabel("Current server: \(current.name)")
         .accessibilityValue(badgeState(for: current).title)
     }
 
+    private func menuAccessibilityValue(for server: PairedServer) -> String {
+        let state = badgeState(for: server).title
+        switch locks.badge(.server(server.id)) {
+        case .locked: return "\(state), Locked"
+        case .unlocked: return "\(state), Unlocked"
+        case .none: return state
+        }
+    }
+
     private func switchHost(_ server: PairedServer) {
-        // Selection is local; a failed HTTPS bootstrap must not keep the old host selected.
-        guard coordinator.restoreActiveServer(server.id) else { return }
-        onSwitch?(server)
-        Task {
-            // Preparation updates this host's transport, never the current selection.
-            await coordinator.prepareSelectedServerShell(for: server)
+        // Capture now: the unlock callback runs after this view update.
+        let coordinator = coordinator
+        let onSwitch = onSwitch
+        let perform: @MainActor () -> Void = {
+            // Selection is local; a failed HTTPS bootstrap must not keep the old host selected.
+            guard coordinator.restoreActiveServer(server.id) else { return }
+            onSwitch?(server)
+            Task {
+                // Preparation updates this host's transport, never the current selection.
+                await coordinator.prepareSelectedServerShell(for: server)
+            }
+        }
+        // A locked server asks first; cancel keeps the current host.
+        if locks.gate(.server(server.id), onUnlock: perform) {
+            perform()
         }
     }
 
@@ -711,6 +809,7 @@ struct ServerSwitcherPill: View {
     /// already draws the circle. A fill inside either one stacks a second pill.
     /// The menu's accessibility value still speaks the state word.
     var fitsVerticalRail = false
+    var lockBadge: ScopedLockState = .none
 
     var body: some View {
         if fitsVerticalRail {
@@ -727,6 +826,7 @@ struct ServerSwitcherPill: View {
             Text(server.name)
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
+            LockBadge(state: lockBadge)
             if connectionState != .connected {
                 statusIndicator
                 Text(connectionState.title)

@@ -156,6 +156,9 @@ extension ServerConnection {
         case .sessionDeleted(let deletedId):
             let workspaceId = sessionStore.session(id: deletedId)?.workspaceId
             sessionStore.remove(id: deletedId)
+            if let currentServerId {
+                scopedLocks.forgetSession(serverId: currentServerId, sessionId: deletedId)
+            }
             if let workspaceId {
                 syncWorkspaceSummary(workspaceId: workspaceId)
             }
@@ -371,7 +374,8 @@ extension ServerConnection {
                 if let nextAsk = askRequestStore.pending(for: sessionId) {
                     AttentionNotificationService.shared.notifyAskIfNeeded(
                         nextAsk,
-                        activeSessionId: focusedSessionId
+                        activeSessionId: focusedSessionId,
+                        hidesQuestionText: askTextIsLocked(nextAsk)
                     )
                 }
             }

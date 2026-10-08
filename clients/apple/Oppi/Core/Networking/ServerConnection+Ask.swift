@@ -15,13 +15,29 @@ extension ServerConnection {
         if inserted, ReleaseFeatures.localAttentionNotificationsEnabled {
             AttentionNotificationService.shared.notifyAskIfNeeded(
                 ask,
-                activeSessionId: focusedSessionId
+                activeSessionId: focusedSessionId,
+                hidesQuestionText: askTextIsLocked(ask)
             )
         }
         if isFocusedSession {
             // The agent is blocked waiting for user input, so silence is expected.
             silenceWatchdog.stop()
         }
+    }
+
+    /// A locked session, workspace, or server never puts question text in
+    /// Oppi's notification, unlocked or not: the banner outlives the unlock.
+    func askTextIsLocked(_ ask: AskRequest) -> @MainActor () -> Bool {
+        guard let serverId = currentServerId else { return { false } }
+        let known = sessionStore.session(id: ask.sessionId)
+        let target = ScopedLockTarget.session(
+            serverId: serverId,
+            workspaceId: known?.workspaceId ?? ask.workspaceId,
+            sessionId: ask.sessionId,
+            isIncognito: known?.ephemeral == true
+        )
+        let locks = scopedLocks
+        return { locks.hidesContentOutsideApp(target) }
     }
 
     func syncActiveAskWorkspaceSummary() {
@@ -150,7 +166,8 @@ extension ServerConnection {
                 if let nextAsk = askRequestStore.pending(for: sessionId) {
                     AttentionNotificationService.shared.notifyAskIfNeeded(
                         nextAsk,
-                        activeSessionId: focusedSessionId
+                        activeSessionId: focusedSessionId,
+                        hidesQuestionText: askTextIsLocked(nextAsk)
                     )
                 }
             }

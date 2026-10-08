@@ -44,7 +44,7 @@ struct AskOppiIntent: AppIntent {
 
         do {
             let message = try await ServerTransportAPIClient.withClient(for: server) { api in
-                await performRequest(api: api)
+                await performRequest(api: api, serverId: server.id)
             }
             return .result(dialog: IntentDialog(stringLiteral: message))
         } catch {
@@ -54,7 +54,7 @@ struct AskOppiIntent: AppIntent {
     }
 
     @MainActor
-    private func performRequest(api: APIClient) async -> String {
+    private func performRequest(api: APIClient, serverId: String) async -> String {
         let targetWorkspaceId: String
         let workspaceSelectionSource: String
         if let workspace {
@@ -80,6 +80,14 @@ struct AskOppiIntent: AppIntent {
                 logger.error("Failed to list workspaces: \(error)")
                 return "Could not connect to server."
             }
+        }
+
+        // A locked server or workspace asks before anything is created.
+        guard await AppLockIntentGate.authorizeScope(
+            .workspace(serverId: serverId, workspaceId: targetWorkspaceId),
+            continueInForeground: { try await continueInForeground(alwaysConfirm: false) }
+        ) else {
+            return AppLockIntentGate.scopeLockedDialog
         }
 
         let telemetryStartedAtMs = ChatSessionTelemetry.nowMs()

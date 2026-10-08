@@ -16,6 +16,8 @@ struct WorkspaceListView: View {
     @State private var pendingDelete: Workspace?
     @State private var error: String?
     @State private var isDeleting = false
+    @State private var editing: Workspace?
+    @State private var locks = ScopedLockService.shared
 
     private var workspaces: [Workspace] {
         coordinator.connection(for: server.id)?.workspaceStore.workspaces ?? []
@@ -24,10 +26,17 @@ struct WorkspaceListView: View {
     var body: some View {
         List {
             ForEach(workspaces) { workspace in
-                NavigationLink {
-                    WorkspaceEditScopedDestinationView(server: server, workspace: workspace)
+                // A locked workspace asks before its settings open; cancel stays here.
+                SettingsIndexActionRow {
+                    let lockTarget = ScopedLockTarget.workspace(serverId: server.id, workspaceId: workspace.id)
+                    if locks.gate(lockTarget, onUnlock: { editing = workspace }) {
+                        editing = workspace
+                    }
                 } label: {
-                    WorkspaceRowView(workspace: workspace)
+                    WorkspaceRowView(
+                        workspace: workspace,
+                        lockBadge: locks.badge(.workspace(serverId: server.id, workspaceId: workspace.id))
+                    )
                 }
                 .accessibilityIdentifier("server.workspace.\(workspace.id)")
                 .swipeActions(edge: .trailing) {
@@ -44,6 +53,9 @@ struct WorkspaceListView: View {
         .themedListSurface()
         .accessibilityIdentifier("server.workspaceList")
         .navigationTitle("Workspaces")
+        .navigationDestination(item: $editing) { workspace in
+            WorkspaceEditScopedDestinationView(server: server, workspace: workspace)
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -130,6 +142,11 @@ struct WorkspaceListView: View {
 
         do {
             try await api.deleteWorkspace(id: workspace.id)
+            ScopedLockService.shared.forgetWorkspace(
+                serverId: server.id,
+                workspaceId: workspace.id,
+                sessionIds: conn.sessionStore.listProjectionSessions(workspaceId: workspace.id).map(\.id)
+            )
             conn.workspaceStore.remove(id: workspace.id, serverId: server.id)
             navigation.leaveDeletedWorkspace(serverId: server.id, workspaceId: workspace.id)
         } catch {
@@ -150,6 +167,15 @@ struct WorkspaceEditScopedDestinationView: View {
     @State private var scopedConnection: ServerConnection?
 
     var body: some View {
+        ScopedLockGate(
+            target: .workspace(serverId: server.id, workspaceId: workspace.id),
+            title: workspace.name
+        ) {
+            unlockedBody
+        }
+    }
+
+    private var unlockedBody: some View {
         Group {
             if let scopedConnection {
                 WorkspaceSettingsRootView(workspace: workspace)
@@ -169,16 +195,20 @@ struct WorkspaceEditScopedDestinationView: View {
 
 private struct WorkspaceRowView: View {
     let workspace: Workspace
+    let lockBadge: ScopedLockState
 
     var body: some View {
         HStack(spacing: 12) {
             WorkspaceRuntimeIcon(workspace: workspace, size: 24, frameSize: 36)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(workspace.name)
-                    .font(.headline)
+                HStack(spacing: 5) {
+                    Text(workspace.name)
+                        .font(.headline)
+                    LockBadge(state: lockBadge)
+                }
 
-                if let description = workspace.description {
+                if lockBadge != .locked, let description = workspace.description {
                     Text(description)
                         .font(.caption)
                         .foregroundStyle(.themeComment)

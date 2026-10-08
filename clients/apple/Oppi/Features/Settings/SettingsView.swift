@@ -105,7 +105,10 @@ struct SettingsView: View {
                     HStack(spacing: 12) {
                         RuntimeBadge(icon: server.resolvedBadgeIcon, tint: state.tintColor)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(server.name)
+                            HStack(spacing: 5) {
+                                Text(server.name)
+                                LockBadge(state: ScopedLockService.shared.badge(.server(server.id)))
+                            }
                             Text(state.title)
                                 .font(.footnote)
                                 .foregroundStyle(.themeComment)
@@ -131,12 +134,20 @@ struct SettingsView: View {
     /// switcher does. The push goes through `AppNavigation` so the route stays
     /// on the tracked stack (iPhone) or detail path (iPad) and the host
     /// switcher knows it is on Server Settings.
+    /// A locked server asks first; cancel stays in Settings.
     private func openServerSettings(_ server: PairedServer) {
-        if coordinator.activeServerId != server.id {
-            guard coordinator.restoreActiveServer(server.id) else { return }
-            Task { await coordinator.prepareSelectedServerShell(for: server) }
+        let coordinator = coordinator
+        let navigation = navigation
+        let perform: @MainActor () -> Void = {
+            if coordinator.activeServerId != server.id {
+                guard coordinator.restoreActiveServer(server.id) else { return }
+                Task { await coordinator.prepareSelectedServerShell(for: server) }
+            }
+            navigation.openServerDetails(ServerDetailsNavTarget(serverId: server.id))
         }
-        navigation.openServerDetails(ServerDetailsNavTarget(serverId: server.id))
+        if ScopedLockService.shared.gate(.server(server.id), onUnlock: perform) {
+            perform()
+        }
     }
 
     // MARK: - Summaries

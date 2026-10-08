@@ -364,6 +364,9 @@ final class AppNavigation {
     }
 
     func openWorkspace(_ target: WorkspaceNavTarget) {
+        guard scopedLockAllows(.workspace(serverId: target.serverId, workspaceId: target.workspace.id), retry: {
+            self.openWorkspace(target)
+        }) else { return }
         selectedTab = .workspaces
         selectedWorkspaceFilter = target
         switch workspaceNavigationPresentation {
@@ -409,8 +412,11 @@ final class AppNavigation {
     }
 
     func openWorkspaceSession(_ target: WorkspaceSessionNavTarget, workspace: WorkspaceNavTarget? = nil) {
-        selectedTab = .workspaces
         let resolvedTarget = target.withWorkspaceIdIfMissing(workspace?.workspace.id)
+        guard scopedLockAllows(Self.lockTarget(resolvedTarget), retry: {
+            self.openWorkspaceSession(target, workspace: workspace)
+        }) else { return }
+        selectedTab = .workspaces
         let wasShowingWorkspaceInbox = workspace.map {
             selectedWorkspaceFilter == $0 && workspacePath.count == 1
         } ?? false
@@ -488,6 +494,9 @@ final class AppNavigation {
     /// Push a session referenced from the currently visible chat without
     /// replacing its compact or split back stack. An exact self-link is a no-op.
     func openReferencedSession(_ target: WorkspaceSessionNavTarget) {
+        guard scopedLockAllows(Self.lockTarget(target), retry: {
+            self.openReferencedSession(target)
+        }) else { return }
         selectedTab = .workspaces
         switch workspaceNavigationPresentation {
         case .stack:
@@ -534,6 +543,9 @@ final class AppNavigation {
         workspace: WorkspaceNavTarget? = nil,
         sourceSession: WorkspaceSessionNavTarget?
     ) {
+        guard scopedLockAllows(WorkspaceLinkedFileDestinationView.lockTarget(for: target), retry: {
+            self.openReferencedWorkspaceLinkedFile(target, workspace: workspace, sourceSession: sourceSession)
+        }) else { return }
         selectedTab = .workspaces
         guard let sourceSession else {
             openWorkspaceLinkedFile(target, workspace: workspace)
@@ -710,6 +722,11 @@ final class AppNavigation {
     }
 
     func openWorkspaceFileBrowser(_ target: FileBrowserNavTarget, workspace: WorkspaceNavTarget? = nil) {
+        if case .workspace(let workspaceId, _) = target.scope {
+            guard scopedLockAllows(.workspace(serverId: target.serverId, workspaceId: workspaceId), retry: {
+                self.openWorkspaceFileBrowser(target, workspace: workspace)
+            }) else { return }
+        }
         selectedTab = .workspaces
         if let workspace {
             selectedWorkspaceFilter = workspace
@@ -732,6 +749,9 @@ final class AppNavigation {
     }
 
     func openWorkspaceLinkedFile(_ target: WorkspaceLinkedFileNavTarget, workspace: WorkspaceNavTarget? = nil) {
+        guard scopedLockAllows(WorkspaceLinkedFileDestinationView.lockTarget(for: target), retry: {
+            self.openWorkspaceLinkedFile(target, workspace: workspace)
+        }) else { return }
         selectedTab = .workspaces
         if let workspace {
             selectedWorkspaceFilter = workspace
@@ -810,6 +830,8 @@ final class AppNavigation {
     }
 
     func openSessionThread(_ target: SessionThreadNavTarget) {
+        let root = ScopedLockService.shared.sessionTarget(serverId: target.serverId, sessionId: target.rootSessionId)
+        guard scopedLockAllows(root, retry: { self.openSessionThread(target) }) else { return }
         selectedTab = .workspaces
         switch workspaceNavigationPresentation {
         case .stack:
@@ -984,6 +1006,9 @@ final class AppNavigation {
     }
 
     func openWorkspaceConfiguration(_ target: WorkspaceNavTarget) {
+        guard scopedLockAllows(.workspace(serverId: target.serverId, workspaceId: target.workspace.id), retry: {
+            self.openWorkspaceConfiguration(target)
+        }) else { return }
         selectedTab = .workspaces
         selectedWorkspaceFilter = target
         switch workspaceNavigationPresentation {
@@ -1040,6 +1065,9 @@ final class AppNavigation {
     /// stack, and that old view can steal the focused session stream back.
     func setWorkspaceSessionPath(serverId: String, sessionId: String, workspaceId: String? = nil) {
         let target = WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: workspaceId)
+        guard scopedLockAllows(Self.lockTarget(target), retry: {
+            self.setWorkspaceSessionPath(serverId: serverId, sessionId: sessionId, workspaceId: workspaceId)
+        }) else { return }
         switch workspaceNavigationPresentation {
         case .stack:
             replaceWorkspaceStack(
@@ -1056,6 +1084,25 @@ final class AppNavigation {
             resetSplitDetailPath()
             splitColumnVisibility = .detailOnly
         }
+    }
+
+    // MARK: - Scoped locks
+
+    /// Every open of a server-, workspace-, or session-scoped destination
+    /// passes here. A locked target asks for device authentication and opens
+    /// after success (`retry`); cancel leaves navigation where it was. The
+    /// destination views gate again, which covers an unlock that expires
+    /// under an open screen.
+    private func scopedLockAllows(_ target: ScopedLockTarget, retry: @escaping @MainActor () -> Void) -> Bool {
+        ScopedLockService.shared.gate(target, onUnlock: retry)
+    }
+
+    private static func lockTarget(_ target: WorkspaceSessionNavTarget) -> ScopedLockTarget {
+        ScopedLockService.shared.sessionTarget(
+            serverId: target.serverId,
+            sessionId: target.sessionId,
+            workspaceId: target.workspaceId
+        )
     }
 
     static func workspaceSessionPath(serverId: String, sessionId: String, workspaceId: String? = nil) -> NavigationPath {

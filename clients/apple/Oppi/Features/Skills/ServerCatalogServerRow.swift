@@ -21,7 +21,8 @@ struct ServerCatalogServerRow: View {
                 ForEach(servers) { server in
                     Button {
                         Task { @MainActor in
-                            guard await coordinator.switchToServerReady(server) else { return }
+                            guard await ScopedLockService.shared.authorize(.server(server.id)),
+                                  await coordinator.switchToServerReady(server) else { return }
                             await onSwitch(server)
                         }
                     } label: {

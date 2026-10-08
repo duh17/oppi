@@ -426,7 +426,7 @@ struct QuickSessionSheet: View {
             await loadSlashCommands(for: slashCommandLoadKey)
         }
         .task(id: fileIndexLoadKey) {
-            ensureFileIndex(for: fileIndexLoadKey)
+            await ensureFileIndex(for: fileIndexLoadKey)
         }
         .onChange(of: selectedServerConnection()?.fileIndexStore.paths) { _, _ in
             // The first @ query can arrive before /paths finishes loading.
@@ -852,6 +852,18 @@ struct QuickSessionSheet: View {
             isLoadingWorktrees = false
             return
         }
+        // A locked workspace (or server) asks first; nothing from the
+        // previous workspace stays in the picker while it does, or after a cancel.
+        if let serverId = selectedServerId ?? coordinator.activeServerId {
+            let lockTarget = ScopedLockTarget.workspace(serverId: serverId, workspaceId: workspace.id)
+            if ScopedLockService.shared.isLocked(lockTarget) {
+                worktrees = []
+                selectedWorktreeId = WorkspaceWorktree.mainId
+                guard await ScopedLockService.shared.authorize(lockTarget),
+                      generation == worktreeLoadGeneration else { return }
+            }
+        }
+
         isLoadingWorktrees = worktrees.isEmpty
         defer {
             if generation == worktreeLoadGeneration {
@@ -1077,6 +1089,13 @@ struct QuickSessionSheet: View {
               ObjectIdentifier(api) == apiClientIdentifier else {
             return
         }
+        // Prompt templates and skills are workspace content: a locked
+        // workspace (or server) asks first and cancel loads nothing.
+        guard await ScopedLockService.shared.authorize(.workspace(serverId: serverId, workspaceId: workspaceId)),
+              generation == slashCommandLoadGeneration,
+              key == slashCommandLoadKey else {
+            return
+        }
 
         await withTaskGroup(of: QuickSessionSlashCommandLoadResult.self) { group in
             group.addTask {
@@ -1118,11 +1137,15 @@ struct QuickSessionSheet: View {
         }
     }
 
-    private func ensureFileIndex(for key: QuickSessionFileIndexLoadKey) {
+    private func ensureFileIndex(for key: QuickSessionFileIndexLoadKey) async {
         guard key == fileIndexLoadKey, let serverId = key.serverId,
               let workspaceId = key.workspaceId,
               let connection = coordinator.connection(for: serverId) else { return }
         connection.clearFileSuggestions()
+        // File paths are workspace content: a locked workspace (or server)
+        // asks first and cancel loads nothing.
+        guard await ScopedLockService.shared.authorize(.workspace(serverId: serverId, workspaceId: workspaceId)),
+              key == fileIndexLoadKey else { return }
         guard let api = connection.apiClient,
               ObjectIdentifier(api) == key.apiClientIdentifier else { return }
         connection.fileIndexStore.ensureLoaded(
@@ -1143,6 +1166,9 @@ struct QuickSessionSheet: View {
         }
         let key = fileIndexLoadKey
         guard let workspaceId = key.workspaceId,
+              let serverId = key.serverId,
+              // An index loaded before the workspace locked stays unused.
+              !ScopedLockService.shared.isLocked(.workspace(serverId: serverId, workspaceId: workspaceId)),
               connection.fileIndexStore.workspaceId == workspaceId,
               connection.fileIndexStore.worktreeId == key.worktreeId else {
             connection.clearFileSuggestions()
@@ -1327,6 +1353,14 @@ struct QuickSessionSheet: View {
         let launchEngine = self.engine
 
         Task { @MainActor in
+            // A locked server or workspace asks before anything is created or
+            // sent; cancel keeps the sheet and its draft, and submits nothing.
+            guard await ScopedLockService.shared.authorize(
+                .workspace(serverId: serverId, workspaceId: workspace.id)
+            ) else {
+                isCreating = false
+                return
+            }
             do {
                 // Use the correct server's API client
                 guard let targetConnection = coordinator.connection(for: serverId),

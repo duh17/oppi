@@ -413,6 +413,8 @@ final class ServerConnection {
     }
     var extensionToast: String?
     var extensionSurfaceBySession: [String: ExtensionSurfaceState] = [:]
+    /// Server, workspace, and session locks: hide ask text, forget deleted sessions.
+    @ObservationIgnored var scopedLocks: ScopedLockService = .shared
 
     /// Per-connection chat UI state (composer, caches, thinking level).
     /// Views observe this directly via `@Environment(ChatSessionState.self)`.

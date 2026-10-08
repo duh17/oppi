@@ -5,9 +5,9 @@ import UIKit
 /// scene, so it also hides sheets, full-screen covers, and UIKit
 /// presentations. One window per `UIWindowScene` (iPad can have several).
 ///
-/// It is shown when the app is locked, and — with App Lock on — while a scene
-/// is inactive or in the background, so the app-switcher snapshot never holds
-/// session content.
+/// It is shown when the app is locked, and while a scene is inactive or in
+/// the background with App Lock on or a server, workspace, or session
+/// unlocked, so the app-switcher snapshot never holds session content.
 @MainActor
 final class AppLockCoverController {
     static let shared = AppLockCoverController()
@@ -19,11 +19,13 @@ final class AppLockCoverController {
     }
 
     private let service: AppLockService
+    private let scopedLocks: ScopedLockService
     private var covers: [ObjectIdentifier: SceneCover] = [:]
     private var observers: [NSObjectProtocol] = []
 
-    init(service: AppLockService = .shared) {
+    init(service: AppLockService = .shared, scopedLocks: ScopedLockService = .shared) {
         self.service = service
+        self.scopedLocks = scopedLocks
     }
 
     /// Register for scene lifecycle notifications. Call from
@@ -52,17 +54,25 @@ final class AppLockCoverController {
         }
         observe(UIScene.willDeactivateNotification) { [weak self] scene in
             guard let self else { return }
-            setObscured(service.obscuresInactiveScenes, scene: scene)
+            // With App Lock off, an open server, workspace, or session
+            // unlock still keeps the app-switcher snapshot covered.
+            setObscured(
+                service.obscuresInactiveScenes || scopedLocks.obscuresInactiveScenes,
+                scene: scene
+            )
         }
         observe(UIScene.didEnterBackgroundNotification) { [weak self] scene in
             guard let self else { return }
             let otherScenesInForeground = UIApplication.shared.connectedScenes.contains {
                 $0 !== scene && $0.activationState != .background && $0.activationState != .unattached
             }
+            var scopedContentOpen = scopedLocks.hasOpenUnlock
             if !otherScenesInForeground {
-                service.appDidEnterBackground()
+                scopedContentOpen = scopedLocks.backgroundTransition {
+                    service.appDidEnterBackground()
+                }
             }
-            setObscured(service.isEnabled, scene: scene)
+            setObscured(service.isEnabled || scopedContentOpen, scene: scene)
         }
         observe(UIScene.didActivateNotification) { [weak self] scene in
             guard let self else { return }

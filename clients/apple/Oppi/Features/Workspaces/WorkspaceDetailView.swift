@@ -200,6 +200,22 @@ struct WorkspaceDetailView: View {
         connection.currentServerId ?? workspaceStore.activeServerId
     }
 
+    private var workspaceLockBadge: ScopedLockState {
+        guard let currentServerId else { return .none }
+        return ScopedLockService.shared.badge(.workspace(serverId: currentServerId, workspaceId: workspace.id))
+    }
+
+    /// Content matches for a locked session would say what it contains; a
+    /// locked session matches by name only.
+    private var unlockedSearchResults: [SessionSearchResult] {
+        guard let currentServerId else { return searchStore.results }
+        let locks = ScopedLockService.shared
+        return searchStore.results.filter { result in
+            guard let session = result.session else { return true }
+            return !locks.isLocked(.session(session, serverId: currentServerId))
+        }
+    }
+
     private static let hotStoppedRangeDays = 3
 
     private var hasSessionSearchQuery: Bool {
@@ -360,11 +376,14 @@ struct WorkspaceDetailView: View {
     private func worktreeTitleLabel(showsChevron: Bool) -> some View {
         HStack(spacing: 5) {
             VStack(spacing: 1) {
-                Text(currentWorkspace.name)
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(currentWorkspace.name)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                    LockBadge(state: workspaceLockBadge)
+                }
                 Text(selectedWorktreeDisplayName)
                     .font(.caption2)
                     .foregroundStyle(.themeComment)
@@ -386,7 +405,7 @@ struct WorkspaceDetailView: View {
             localSessions: workspaceSessions,
             query: sessionSearchText,
             extraCandidates: { _ in [] },
-            serverResults: searchStore.results,
+            serverResults: unlockedSearchResults,
             completedServerQuery: searchStore.completedServerQuery,
             activeServerQuery: searchStore.activeServerQuery,
             snippetsBySessionId: searchStore.snippetsBySessionId
@@ -723,7 +742,10 @@ struct WorkspaceDetailView: View {
             },
             stop: { session in Task { await stopSession(session) } },
             resume: { session in Task { await resumeSession(session) } },
-            delete: { session in { pendingDeleteSession = session } }
+            delete: { session in { pendingDeleteSession = session } },
+            lockTarget: { [currentServerId] session in
+                currentServerId.map { ScopedLockTarget.session(session, serverId: $0) }
+            }
         )
     }
 
@@ -953,6 +975,10 @@ struct WorkspaceDetailView: View {
             )
             sessionStore.upsert(response.session)
             isCreating = false
+            // The creator opens a new Incognito session without being asked.
+            if let currentServerId {
+                ScopedLockService.shared.noteCreated(.session(response.session, serverId: currentServerId))
+            }
             routeToSession(response.session.id)
         } catch {
             self.error = error.localizedDescription
@@ -990,12 +1016,21 @@ struct WorkspaceDetailView: View {
         } else {
             await TimelineCache.shared.removeTrace(session.id)
         }
+        // The lock goes only once the server no longer has the session; a
+        // failed delete brings it back on the next sync, still locked.
+        let forgetLock = { [currentServerId] in
+            if let currentServerId {
+                ScopedLockService.shared.forgetSession(serverId: currentServerId, sessionId: session.id)
+            }
+        }
         do {
             try await api.deleteWorkspaceSession(workspaceId: workspace.id, sessionId: session.id)
+            forgetLock()
             clearComposerDraft(for: session.id)
         } catch let apiError as APIError {
             // 404 means already deleted server-side — local removal above is sufficient.
             if case .server(let status, _) = apiError, status == 404 {
+                forgetLock()
                 clearComposerDraft(for: session.id)
             } else {
                 self.error = "Delete failed: \(apiError.localizedDescription)"

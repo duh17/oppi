@@ -623,12 +623,25 @@ struct ChatView: View {
     static func stampedTimelineReaderPayload(
         _ payload: ChatReaderPayload,
         sessionId: String,
-        composerDestination: ComposerCanvasDestination
+        composerDestination: ComposerCanvasDestination,
+        lockOrigin: ScopedLockTarget? = nil
     ) -> ChatReaderPayload {
         let destination = ComposerCanvasActiveDestination.current.flatMap { current in
             current.sessionId == sessionId ? current : nil
         } ?? composerDestination
-        return payload.stamped(with: destination)
+        return payload.stamped(with: destination, lockOrigin: lockOrigin)
+    }
+
+    /// This chat's lock scope; a reader opened from it follows the same lock.
+    private var readerLockOrigin: ScopedLockTarget? {
+        guard let serverId = serverIdHint ?? connection.currentServerId ?? sessionStore.activeServerId else {
+            return nil
+        }
+        return ScopedLockService.shared.sessionTarget(
+            serverId: serverId,
+            sessionId: sessionId,
+            workspaceId: session?.workspaceId ?? workspaceIdHint
+        )
     }
 
     private func openTimelineReader(_ payload: ChatReaderPayload) {
@@ -639,7 +652,8 @@ struct ChatView: View {
                 Self.stampedTimelineReaderPayload(
                     payload,
                     sessionId: sessionId,
-                    composerDestination: composerCanvasDestination
+                    composerDestination: composerCanvasDestination,
+                    lockOrigin: readerLockOrigin
                 ),
                 retaining: appNavigation.containsChatReader
             )

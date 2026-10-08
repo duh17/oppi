@@ -56,10 +56,14 @@ struct ChatReaderPayload {
     var kind: Kind
     /// Origin chat captured at timeline-open time. Nested readers inherit this, including nil.
     var destination: ComposerCanvasDestination? = nil
+    /// Lock scope of the origin chat (server, workspace, session), stamped
+    /// with `destination`. The reader shows only while that scope is open.
+    var lockOrigin: ScopedLockTarget? = nil
 
-    init(kind: Kind, destination: ComposerCanvasDestination? = nil) {
+    init(kind: Kind, destination: ComposerCanvasDestination? = nil, lockOrigin: ScopedLockTarget? = nil) {
         self.kind = kind
         self.destination = destination
+        self.lockOrigin = lockOrigin
     }
 
     init(
@@ -113,12 +117,15 @@ struct ChatReaderPayload {
     }
 
     /// Stamp the origin chat. Nested opens inherit this value, including nil.
-    func stamped(with destination: ComposerCanvasDestination?) -> ChatReaderPayload {
-        ChatReaderPayload(kind: kind, destination: destination)
+    func stamped(
+        with destination: ComposerCanvasDestination?,
+        lockOrigin: ScopedLockTarget? = nil
+    ) -> ChatReaderPayload {
+        ChatReaderPayload(kind: kind, destination: destination, lockOrigin: lockOrigin)
     }
 
     func inheritingDestination(from parent: ChatReaderPayload) -> ChatReaderPayload {
-        stamped(with: parent.destination)
+        stamped(with: parent.destination, lockOrigin: parent.lockOrigin)
     }
 
     var content: FullScreenCodeContent {
@@ -446,14 +453,39 @@ struct ChatReaderDestinationView: View {
     @Environment(AppNavigation.self) private var navigation
     @State private var payloadHolder = ChatReaderPayloadHolder()
 
+    @State private var locks = ScopedLockService.shared
+    @Environment(\.dismiss) private var dismiss
+
     var body: some View {
-        readerPage(for: target)
-            .toolbarVisibility(.hidden, for: .navigationBar)
+        gatedReader
             .onDisappear {
                 if !navigation.containsChatReader(target) {
                     store.remove(target)
                 }
             }
+    }
+
+    /// A reader shows content from its origin chat, so it follows that
+    /// chat's lock: when the unlock ends under it, the cover replaces it. A
+    /// reader with content but no origin cannot be checked and stays covered
+    /// while any lock exists.
+    @ViewBuilder
+    private var gatedReader: some View {
+        let payload = payloadHolder.resolve(from: store, target: target)
+        if let payload, payload.lockOrigin == nil, locks.mayLockUnknownScope {
+            ScopedLockCoverView(
+                title: String(localized: "Reader"),
+                isAuthenticating: false,
+                actionTitle: String(localized: "Close"),
+                actionSystemImage: "xmark",
+                onUnlock: { dismiss() }
+            ) { EmptyView() }
+        } else {
+            ScopedLockGate(target: payload?.lockOrigin, title: String(localized: "Reader")) {
+                readerPage(for: target)
+                    .toolbarVisibility(.hidden, for: .navigationBar)
+            }
+        }
     }
 
     @ViewBuilder

@@ -328,7 +328,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(reveal(reviewRoot, in: reviewDetail), "Idle review root row missing")
         XCTAssertFalse(reviewRoot.label.contains("stopped"), "Review root should start idle: \(reviewRoot.label)")
         reviewRoot.swipeLeft()
-        let stop = app.buttons["thread.stop.\(reviewCleanup)"]
+        let stop = app.buttons["session.stop.\(reviewCleanup)"]
         XCTAssertTrue(stop.waitForExistence(timeout: 5), "Idle session row did not offer Stop")
         stop.tap()
         let stopped = XCTNSPredicateExpectation(
@@ -1139,7 +1139,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(reveal(finishedRow, in: detail), "Stopped outline row missing after returning")
         try assertStopped(finishedFix, "before Resume")
         finishedRow.swipeLeft()
-        let resume = app.buttons["thread.resume.\(finishedFix)"]
+        let resume = app.buttons["session.resume.\(finishedFix)"]
         XCTAssertTrue(resume.waitForExistence(timeout: 5), "Stopped outline row did not offer Resume")
         resume.tap()
         let resumed = expectation(description: "server records the explicit resume")

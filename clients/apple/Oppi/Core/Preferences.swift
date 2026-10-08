@@ -135,6 +135,10 @@ enum AppPreferences {
         static func setThreadDetailMode(_ mode: SessionThreadDetailMode) {
             UserDefaults.standard.set(mode.rawValue, forKey: threadDetailModeKey)
         }
+
+        /// Settings → Sessions → Swipe Actions: the one action a swipe to the
+        /// right shows on every session row. Read with `@AppStorage`.
+        static let leadingSwipeActionKey = "\(AppIdentifiers.subsystem).sessionRows.leadingSwipeAction"
     }
 
     // MARK: - Browser

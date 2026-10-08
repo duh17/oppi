@@ -236,8 +236,8 @@ final class AppLockService {
     var isLocked: Bool { machine.isLocked }
     var isAuthenticating: Bool { machine.isAuthenticating || protectedAuthenticationsInFlight > 0 }
 
-    /// Slice B hook: a scoped (server/workspace/session) unlock is valid only
-    /// while this value is unchanged. It advances whenever the app locks and,
+    /// `ScopedLockService`: a server, workspace, or session unlock is valid
+    /// only while this value is unchanged. It advances whenever the app locks and,
     /// with App Lock off, whenever the app leaves the foreground.
     var scopedUnlockGeneration: Int { machine.scopedUnlockGeneration }
 
@@ -355,6 +355,25 @@ final class AppLockService {
             return true
         case .unavailable:
             // The passcode was removed; App Lock no longer applies.
+            update { $0.setAvailable(false) }
+            return true
+        case .cancelled, .failed:
+            return false
+        }
+    }
+
+    /// Scoped (server, workspace, session) unlock. Unlike protected actions it
+    /// asks even with App Lock off, because scoped locks work without it.
+    /// Never prompts behind the App Lock cover. A device without a passcode
+    /// cannot authenticate, so scoped locks do not apply there.
+    func authenticateScopedUnlock(reason: String) async -> Bool {
+        guard !requiresUnlock() else { return false }
+        protectedAuthenticationsInFlight += 1
+        defer { protectedAuthenticationsInFlight -= 1 }
+        switch await authenticator(reason) {
+        case .success:
+            return true
+        case .unavailable:
             update { $0.setAvailable(false) }
             return true
         case .cancelled, .failed:

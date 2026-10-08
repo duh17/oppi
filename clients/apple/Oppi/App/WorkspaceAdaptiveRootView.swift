@@ -2,6 +2,8 @@ import SwiftUI
 
 struct WorkspaceAdaptiveRootView: View {
     @Environment(AppNavigation.self) private var navigation
+    @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(ServerStore.self) private var serverStore
     @Environment(\.chatReaderPayloadStore) private var chatReaderPayloadStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -16,7 +18,14 @@ struct WorkspaceAdaptiveRootView: View {
                 frozen: navigation.workspaceNavigationPresentation
             )
 
-            Group {
+            // A locked active server covers everything under it: lists,
+            // sidebar, pushed pages, and settings that follow the active host.
+            ScopedLockGate(
+                target: coordinator.activeServerId.map(ScopedLockTarget.server),
+                title: activeServer?.name ?? String(localized: "Server")
+            ) {
+                LockedServerSwitchMenu()
+            } content: {
                 switch presentation {
                 case .stack:
                     WorkspaceStackRootView()
@@ -42,6 +51,10 @@ struct WorkspaceAdaptiveRootView: View {
         }
     }
 
+    private var activeServer: PairedServer? {
+        coordinator.activeServerId.flatMap { serverStore.server(for: $0) }
+    }
+
     private func presentation(for size: CGSize) -> WorkspaceNavigationPresentation {
         guard horizontalSizeClass == .regular else { return .stack }
         guard size.width >= minimumSplitWidth else { return .stack }
@@ -51,6 +64,45 @@ struct WorkspaceAdaptiveRootView: View {
     private func applyPresentation(_ presentation: WorkspaceNavigationPresentation) {
         navigation.setWorkspaceNavigationPresentation(presentation)
         navigation.routeLegacySelectedTabIfNeeded()
+    }
+}
+
+/// On a locked server's cover: switch to another paired server instead of
+/// unlocking this one. A locked target server asks first.
+private struct LockedServerSwitchMenu: View {
+    @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(ServerStore.self) private var serverStore
+
+    private var otherServers: [PairedServer] {
+        serverStore.servers.filter { $0.id != coordinator.activeServerId }
+    }
+
+    var body: some View {
+        if !otherServers.isEmpty {
+            Menu {
+                ForEach(otherServers) { server in
+                    Button {
+                        switchTo(server)
+                    } label: {
+                        Label(server.name, systemImage: server.resolvedBadgeIcon.symbolName)
+                    }
+                }
+            } label: {
+                Label("Switch Server", systemImage: "arrow.left.arrow.right")
+            }
+            .accessibilityIdentifier("scopedLock.switchServer")
+        }
+    }
+
+    private func switchTo(_ server: PairedServer) {
+        let coordinator = coordinator
+        let perform: @MainActor () -> Void = {
+            guard coordinator.restoreActiveServer(server.id) else { return }
+            Task { await coordinator.prepareSelectedServerShell(for: server) }
+        }
+        if ScopedLockService.shared.gate(.server(server.id), onUnlock: perform) {
+            perform()
+        }
     }
 }
 
@@ -184,6 +236,15 @@ private struct WorkspaceSplitWorkspaceConfigurationDestinationView: View {
     private var resolvedConnection: ServerConnection? { scopedConnection }
 
     var body: some View {
+        ScopedLockGate(
+            target: .workspace(serverId: target.serverId, workspaceId: target.workspace.id),
+            title: target.workspace.name
+        ) {
+            unlockedBody
+        }
+    }
+
+    private var unlockedBody: some View {
         Group {
             if let connection = resolvedConnection {
                 WorkspaceSettingsRootView(workspace: target.workspace)

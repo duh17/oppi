@@ -206,6 +206,31 @@ struct ContentView: View {
     private func completePendingQuickSessionNavigation() async {
         guard let pending = navigation.pendingQuickSessionNav else { return }
 
+        // A session started in a locked workspace or server opens only after
+        // device authentication. On cancel the unsent message waits in that
+        // session's composer instead of riding along to the next chat opened.
+        let lockTarget = ScopedLockService.shared.sessionTarget(
+            serverId: pending.target.serverId,
+            sessionId: pending.sessionId,
+            workspaceId: pending.target.workspace.id
+        )
+        guard await ScopedLockService.shared.authorize(lockTarget) else {
+            navigation.pendingQuickSessionNav = nil
+            if let message = pending.autoSendMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !message.isEmpty,
+               let key = ComposerDraftKey(
+                   serverID: pending.target.serverId,
+                   workspaceID: pending.target.workspace.id,
+                   sessionID: pending.sessionId
+               ) {
+                composerDraftStore?.setDraft(
+                    ComposerDraftPayload(text: message, repoPointers: [], attachments: []),
+                    for: key
+                )
+            }
+            return
+        }
+
         // Switch server FIRST so coordinator.activeConnection (and all
         // environment-injected stores) reflect the target server by the time
         // ChatView renders. Without this, cross-server quick sessions can

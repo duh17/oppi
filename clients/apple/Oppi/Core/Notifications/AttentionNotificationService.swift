@@ -81,7 +81,14 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
     // MARK: - Fire Notifications
 
     /// Schedule a local notification for an agent question.
-    func notifyAskIfNeeded(_ ask: AskRequest, activeSessionId: String?) {
+    /// - Parameter hidesQuestionText: true when the session, its workspace,
+    ///   or its server is locked; read when the request is added. Required so
+    ///   no caller can forget the scoped lock.
+    func notifyAskIfNeeded(
+        _ ask: AskRequest,
+        activeSessionId: String?,
+        hidesQuestionText: @escaping @MainActor () -> Bool
+    ) {
         let appState = _applicationStateForTesting ?? UIApplication.shared.applicationState
         let isAppActive = appState == .active
         let shouldNotify = Self.shouldNotify(
@@ -100,6 +107,7 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             let payload = AttentionNotificationPolicy.askPayload(
                 for: ask,
                 revealsQuestionText: !(_appLockEnabledForTesting ?? AppLockService.shared.isEnabled)
+                    && !hidesQuestionText()
             )
             let content = UNMutableNotificationContent()
             content.title = payload.title

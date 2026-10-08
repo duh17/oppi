@@ -38,6 +38,7 @@ struct WorkspaceSettingsRootView: View {
     @State private var isConfirmingDelete = false
     @State private var isLaunchingOppi = false
     @State private var launchError: String?
+    @State private var locks = ScopedLockService.shared
 
     init(workspace: Workspace) {
         self.workspace = workspace
@@ -117,6 +118,15 @@ struct WorkspaceSettingsRootView: View {
                 Text("Shows branch, changed files, and line stats above the chat.")
             }
 
+            if let lockScope {
+                Section {
+                    ScopedLockToggle(title: "Lock Workspace", scope: lockScope)
+                        .accessibilityIdentifier("workspace.edit.lock")
+                } footer: {
+                    Text(ScopedLockToggle.footer(for: "this workspace and its sessions"))
+                }
+            }
+
             if connection.controlSessionsAvailable, apiClient != nil {
                 Section {
                     UseOppiSessionRow(
@@ -193,7 +203,12 @@ struct WorkspaceSettingsRootView: View {
                 HStack(spacing: 12) {
                     WorkspaceRuntimeIcon(workspace: current, size: 24, frameSize: 36)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(current.name)
+                        HStack(spacing: 5) {
+                            Text(current.name)
+                            if let lockScope {
+                                LockBadge(state: locks.badge(.workspace(serverId: lockScope.serverId, workspaceId: workspace.id)))
+                            }
+                        }
                         Text(folderSummary)
                             .font(.footnote)
                             .foregroundStyle(.themeComment)
@@ -204,6 +219,11 @@ struct WorkspaceSettingsRootView: View {
             }
             .accessibilityIdentifier("workspace.edit.details")
         }
+    }
+
+    private var lockScope: ScopedLockScope? {
+        (connection.currentServerId ?? connection.workspaceStore.activeServerId)
+            .map { .workspace(serverId: $0, workspaceId: workspace.id) }
     }
 
     private var folderSummary: String {
@@ -228,6 +248,11 @@ struct WorkspaceSettingsRootView: View {
             reason: String(localized: "Delete \(current.name)")
         ) else { return }
         guard let deleted = await model.deleteWorkspace() else { return }
+        ScopedLockService.shared.forgetWorkspace(
+            serverId: deleted.serverId,
+            workspaceId: deleted.workspaceId,
+            sessionIds: sessionStore.listProjectionSessions(workspaceId: deleted.workspaceId).map(\.id)
+        )
         dismiss()
         navigation.leaveDeletedWorkspace(serverId: deleted.serverId, workspaceId: deleted.workspaceId)
     }

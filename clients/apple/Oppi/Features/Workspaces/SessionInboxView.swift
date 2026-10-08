@@ -427,9 +427,15 @@ struct SessionInboxView: View {
             extraCandidates: { session in
                 [itemsById[session.id]?.workspace?.name]
             },
-            serverResults: scope == .all
+            serverResults: (scope == .all
                 ? searchStore.results
-                : searchStore.results.filter { $0.session.map(scope.includes) == true },
+                : searchStore.results.filter { $0.session.map(scope.includes) == true })
+                // A content match would say what a locked session contains;
+                // locked sessions match by name only.
+                .filter { result in
+                    guard let session = result.session, let activeServerId else { return true }
+                    return !ScopedLockService.shared.isLocked(.session(session, serverId: activeServerId))
+                },
             completedServerQuery: searchStore.completedServerQuery,
             activeServerQuery: searchStore.activeServerQuery,
             snippetsBySessionId: searchStore.snippetsBySessionId
@@ -1082,6 +1088,9 @@ struct SessionInboxView: View {
                         session: session
                     )
                 }
+            },
+            lockTarget: { [activeServerId] session in
+                activeServerId.map { ScopedLockTarget.session(session, serverId: $0) }
             }
         )
     }
@@ -1245,9 +1254,11 @@ struct SessionInboxView: View {
         await TimelineCache.shared.removeTrace(pending.session.id, serverId: pending.serverId)
         do {
             try await api.deleteSession(scope: pending.routeScope, sessionId: pending.session.id)
+            forgetLock(for: pending)
             clearComposerDraft(for: pending)
         } catch let apiError as APIError {
             if case .server(let status, _) = apiError, status == 404 {
+                forgetLock(for: pending)
                 clearComposerDraft(for: pending)
             } else {
                 self.error = "Delete failed: \(apiError.localizedDescription)"
@@ -1259,6 +1270,12 @@ struct SessionInboxView: View {
 
     private func routeScope(for session: Session) -> SessionRouteScope? {
         SessionInboxSessionRouting.routeScope(for: session)
+    }
+
+    /// Only after the server no longer has the session; a failed delete
+    /// brings it back on the next sync, still locked.
+    private func forgetLock(for pending: SessionInboxPendingDelete) {
+        ScopedLockService.shared.forgetSession(serverId: pending.serverId, sessionId: pending.session.id)
     }
 
     private func clearComposerDraft(for pending: SessionInboxPendingDelete) {
@@ -1363,6 +1380,15 @@ private struct WorkspaceConfigurationScopedDestinationView: View {
     }
 
     var body: some View {
+        ScopedLockGate(
+            target: .workspace(serverId: target.serverId, workspaceId: target.workspace.id),
+            title: target.workspace.name
+        ) {
+            unlockedBody
+        }
+    }
+
+    private var unlockedBody: some View {
         Group {
             if let connection = resolvedConnection {
                 WorkspaceSettingsRootView(workspace: target.workspace)
@@ -1782,7 +1808,10 @@ struct WorkspaceSidebarView: View {
                                         workspace: workspace,
                                         status: status,
                                         gitSummary: gitSummary,
-                                        isSelected: navigation.selectedWorkspaceFilter == target
+                                        isSelected: navigation.selectedWorkspaceFilter == target,
+                                        lockBadge: ScopedLockService.shared.badge(
+                                            .workspace(serverId: serverId, workspaceId: workspace.id)
+                                        )
                                     )
                                 }
                                 .buttonStyle(.plain)
@@ -2148,18 +2177,24 @@ struct WorkspaceSidebarRow: View {
     let status: WorkspaceSidebarSessionStatus
     let gitSummary: WorkspaceSidebarGitSummary?
     let isSelected: Bool
+    let lockBadge: ScopedLockState
 
     init(
         workspace: Workspace,
         status: WorkspaceSidebarSessionStatus,
         gitSummary: WorkspaceSidebarGitSummary? = nil,
-        isSelected: Bool
+        isSelected: Bool,
+        lockBadge: ScopedLockState = .none
     ) {
         self.workspace = workspace
         self.status = status
         self.gitSummary = gitSummary
         self.isSelected = isSelected
+        self.lockBadge = lockBadge
     }
+
+    /// A locked workspace shows its name only.
+    private var hidesDetails: Bool { lockBadge == .locked }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -2168,18 +2203,21 @@ struct WorkspaceSidebarRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(workspace.name)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text(workspace.name)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.themeFg)
+                            .lineLimit(1)
+                        LockBadge(state: lockBadge)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    if status.isVisible {
+                    if status.isVisible, !hidesDetails {
                         WorkspaceSidebarSessionStatusIndicator(status: status)
                     }
                 }
 
-                if let description = workspace.description, !description.isEmpty {
+                if !hidesDetails, let description = workspace.description, !description.isEmpty {
                     Text(description)
                         .font(.caption)
                         .foregroundStyle(.themeComment)
@@ -2187,7 +2225,7 @@ struct WorkspaceSidebarRow: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                if let gitSummary, gitSummary.isVisible {
+                if !hidesDetails, let gitSummary, gitSummary.isVisible {
                     WorkspaceSidebarGitStatusLine(summary: gitSummary)
                 }
             }

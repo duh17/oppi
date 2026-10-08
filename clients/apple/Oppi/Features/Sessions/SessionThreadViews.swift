@@ -22,6 +22,10 @@ struct SessionThreadStrip: View {
     let rollup: SessionThreadRollup
     /// Member with a pending question, shown so the user knows where to answer.
     var attentionMember: Session?
+    /// Locked root: names and counts only, no lane graph, Agents, or cost.
+    var hidesDetails = false
+    /// A locked member: its cost stays out of the total.
+    var hidesCost = false
 
     var body: some View {
         let working = rollup.descendants.filter(SessionThreadGrouping.isWorking)
@@ -37,12 +41,12 @@ struct SessionThreadStrip: View {
                     .foregroundStyle(.themeBlue)
                     .lineLimit(1)
             }
-            if display.showsThreadLaneGraph {
+            if display.showsThreadLaneGraph, !hidesDetails {
                 SessionThreadLaneGraphView(members: rollup.members, rootId: rollup.root.id)
                     .frame(maxWidth: 260, alignment: .leading)
             }
             HStack(alignment: .center, spacing: 8) {
-                if display.showsThreadAgentSummary {
+                if display.showsThreadAgentSummary, !hidesDetails {
                     SessionThreadAgentCluster(groups: SessionThreadAgentGroup.groups(rollup.members), maxGroups: 3)
                 }
                 Text(summary)
@@ -70,7 +74,7 @@ struct SessionThreadStrip: View {
         if working > 0 { parts.append("\(working) working") }
         parts.append("\(rollup.finishedMemberCount) done")
         // Same rule as a row: unknown or zero cost is absent, never "$0.00".
-        if display.showsCost, rollup.totalCost > 0 {
+        if display.showsCost, !hidesDetails, !hidesCost, rollup.totalCost > 0 {
             parts.append(String(format: "$%.2f", rollup.totalCost))
         }
         if rollup.workspaceCount > 1 {
@@ -470,10 +474,28 @@ enum SessionThreadDetailMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// Thread detail behind the root session's lock: a locked root (or its
+/// workspace or server) shows the lock cover instead of the thread.
 struct SessionThreadDetailView: View {
+    @State private var locks = ScopedLockService.shared
+
+    let target: SessionThreadNavTarget
+
+    var body: some View {
+        ScopedLockGate(
+            target: locks.sessionTarget(serverId: target.serverId, sessionId: target.rootSessionId),
+            title: String(localized: "Thread")
+        ) {
+            SessionThreadDetailContentView(target: target)
+        }
+    }
+}
+
+private struct SessionThreadDetailContentView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
     @Environment(\.theme) private var theme
+    @State private var locks = ScopedLockService.shared
 
     let target: SessionThreadNavTarget
 
@@ -679,13 +701,19 @@ struct SessionThreadDetailView: View {
         let working = thread.sessions.filter(SessionThreadGrouping.isWorking).count
         let done = others.count { $0.status == .stopped }
         let cost = thread.sessions.reduce(0) { $0 + $1.cost }
+        let hidesTotals = thread.sessions.contains(where: isLocked)
         Section {
             VStack(alignment: .leading, spacing: 8) {
                 Text(root?.displayTitle ?? "Thread")
                     .font(.title2.bold())
                     .foregroundStyle(.themeFg)
                     .accessibilityIdentifier("thread.title")
-                Text(headerMeta(root: root, count: thread.sessions.count, cost: cost, sessions: thread.sessions))
+                Text(headerMeta(
+                    root: root,
+                    count: thread.sessions.count,
+                    cost: hidesTotals ? nil : cost,
+                    sessions: thread.sessions
+                ))
                     .font(.subheadline)
                     .foregroundStyle(.themeComment)
                 HStack(spacing: 8) {
@@ -715,13 +743,16 @@ struct SessionThreadDetailView: View {
         }
     }
 
-    private func headerMeta(root: Session?, count: Int, cost: Double, sessions: [Session]) -> String {
+    /// `cost` is nil when a member is locked: totals would include its cost
+    /// and cache use.
+    private func headerMeta(root: Session?, count: Int, cost: Double?, sessions: [Session]) -> String {
         var parts: [String] = []
         if let workspace = root?.workspaceName, !workspace.isEmpty { parts.append(workspace) }
         parts.append("\(count) sessions")
         if let root {
             parts.append("since \(root.createdAt.formatted(date: .omitted, time: .shortened))")
         }
+        guard let cost else { return parts.joined(separator: " · ") }
         parts.append(String(format: "$%.2f", cost))
         let total = sessions.reduce(TokenUsage(input: 0, output: 0, cacheRead: 0, cacheWrite: 0)) { sum, session in
             TokenUsage(
@@ -810,6 +841,10 @@ struct SessionThreadDetailView: View {
         }
     }
 
+    private func isLocked(_ session: Session) -> Bool {
+        locks.isLocked(.session(session, serverId: target.serverId))
+    }
+
     private func hasPendingQuestion(_ session: Session) -> Bool {
         guard let connection else { return false }
         return SessionListAttentionMerger.askCount(
@@ -821,6 +856,8 @@ struct SessionThreadDetailView: View {
 
     private func outlineRow(_ session: Session, depth: Int) -> some View {
         let question = hasPendingQuestion(session)
+        let lockTarget = ScopedLockTarget.session(session, serverId: target.serverId)
+        let hidesDetails = locks.isLocked(lockTarget)
         return Button {
             open(session)
         } label: {
@@ -832,18 +869,21 @@ struct SessionThreadDetailView: View {
                             .font(.body.weight(depth == 0 ? .semibold : .regular))
                             .foregroundStyle(session.status == .stopped ? theme.text.secondary : theme.text.primary)
                             .lineLimit(1)
+                        LockBadge(state: locks.badge(lockTarget))
                         Spacer(minLength: 4)
-                        SessionPromptCacheBadge(session: session, status: promptCache[session.id])
+                        if !hidesDetails {
+                            SessionPromptCacheBadge(session: session, status: promptCache[session.id])
+                        }
                     }
                     HStack(spacing: 4) {
-                        if let model = modelSummary(session) {
+                        if !hidesDetails, let model = modelSummary(session) {
                             if !model.provider.isEmpty { ProviderIcon(provider: model.provider, size: 11) }
                             Text(model.label)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             Text("·")
                         }
-                        Text(outlineSubtitle(session))
+                        Text(outlineSubtitle(session, hidesDetails: hidesDetails))
                             .lineLimit(1)
                     }
                     .font(.footnote)
@@ -856,34 +896,20 @@ struct SessionThreadDetailView: View {
         .buttonStyle(.plain)
         .accessibilityValue(question ? "Question pending" : "")
         .accessibilityIdentifier("thread.row.\(session.id)")
-        // Same actions and tints as the inbox row: Stop anything not stopped
-        // (idle included), Resume a stopped session.
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) { lifecycleButton(session) }
-        .contextMenu {
-            Button { open(session) } label: { Label("Open", systemImage: "bubble.left.and.text.bubble.right") }
-            lifecycleButton(session)
-        }
+        // The same long-press menu and swipes as every session list.
+        .sessionRowActions(session, actions: rowActions)
     }
 
-    @ViewBuilder
-    private func lifecycleButton(_ session: Session) -> some View {
-        if session.status == .stopped {
-            Button {
-                Task { await setRunning(session, running: true) }
-            } label: {
-                Label("Resume", systemImage: "play.fill")
-            }
-            .tint(.themeGreen)
-            .accessibilityIdentifier("thread.resume.\(session.id)")
-        } else {
-            Button {
-                Task { await setRunning(session, running: false) }
-            } label: {
-                Label("Stop", systemImage: "stop.fill")
-            }
-            .tint(.themeOrange)
-            .accessibilityIdentifier("thread.stop.\(session.id)")
-        }
+    /// Thread detail has no delete; Thread rows open chat, not a nested thread.
+    private var rowActions: SessionListRowActions {
+        SessionListRowActions(
+            open: open,
+            openThread: open,
+            stop: { session in Task { await setRunning(session, running: false) } },
+            resume: { session in Task { await setRunning(session, running: true) } },
+            delete: { _ in nil },
+            lockTarget: { [serverId = target.serverId] session in .session(session, serverId: serverId) }
+        )
     }
 
     private func setRunning(_ session: Session, running: Bool) async {
@@ -915,11 +941,13 @@ struct SessionThreadDetailView: View {
         return connection?.workspaceStore.workspaces.first { $0.id == workspaceId }?.name ?? session.workspaceName
     }
 
-    private func outlineSubtitle(_ session: Session) -> String {
+    private func outlineSubtitle(_ session: Session, hidesDetails: Bool) -> String {
         var parts: [String] = []
         if let workspace = foreignWorkspaceName(session) { parts.append(workspace) }
-        parts.append(String(format: "$%.2f", session.cost))
-        if let rate = session.tokens.cacheHitRate { parts.append("\(Int((rate * 100).rounded()))% cached") }
+        if !hidesDetails {
+            parts.append(String(format: "$%.2f", session.cost))
+            if let rate = session.tokens.cacheHitRate { parts.append("\(Int((rate * 100).rounded()))% cached") }
+        }
         if SessionThreadGrouping.isWorking(session) {
             parts.append("working")
         } else if session.status == .stopped {
@@ -933,6 +961,8 @@ struct SessionThreadDetailView: View {
     private func foldRow(parentId: String, children: [Session], depth: Int) -> some View {
         let expanded = expandedFolds.contains(parentId)
         let cost = children.reduce(0) { $0 + $1.cost }
+        // A locked child's cost stays out of the fold total.
+        let costText = children.contains(where: isLocked) ? "" : String(format: " · $%.2f", cost)
         return Button {
             withAnimation(ThemeMotion.animation(.snappy, reduceMotion: reduceMotion)) {
                 if expanded { expandedFolds.remove(parentId) } else { expandedFolds.insert(parentId) }
@@ -951,7 +981,7 @@ struct SessionThreadDetailView: View {
                             .foregroundStyle(.themeFg)
                         SessionThreadAgentCluster(groups: SessionThreadAgentGroup.groups(children), maxGroups: 4)
                     }
-                    Text(agentSummary(children) + String(format: " · $%.2f", cost))
+                    Text(agentSummary(children) + costText)
                         .font(.footnote)
                         .foregroundStyle(.themeComment)
                         .lineLimit(1)
@@ -1028,7 +1058,7 @@ struct SessionThreadDetailView: View {
 
     @ViewBuilder
     private func timeline(_ thread: SessionThreadSnapshot) -> some View {
-        let layout = SessionThreadTimeline.build(snapshot: thread, now: Date(), filter: filter)
+        let layout = SessionThreadTimeline.build(snapshot: thread, now: Date(), filter: filter, hidesCost: isLocked)
         Section {
             filterBar
                 .listRowBackground(Color.clear)

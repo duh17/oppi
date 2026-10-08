@@ -25,6 +25,10 @@ struct SessionRow: View {
     let modelSummaries: [SessionModelSummary]
     let unreadCompletionAt: Date?
     let searchSnippet: AttributedString?
+    let lockBadge: ScopedLockState
+    /// A locked session shows its name, time, and status only: no question
+    /// text, search snippet, model, cost, context, or file counts.
+    let hidesDetails: Bool
 
     init(
         session: Session,
@@ -33,7 +37,9 @@ struct SessionRow: View {
         workspaceContext: String? = nil,
         modelSummaries: [SessionModelSummary] = [],
         unreadCompletionAt: Date? = nil,
-        searchSnippet: AttributedString? = nil
+        searchSnippet: AttributedString? = nil,
+        lockBadge: ScopedLockState = .none,
+        hidesDetails: Bool = false
     ) {
         self.session = session
         self.pendingAskCount = pendingAskCount
@@ -42,9 +48,15 @@ struct SessionRow: View {
         self.modelSummaries = modelSummaries
         self.unreadCompletionAt = unreadCompletionAt
         self.searchSnippet = searchSnippet
+        self.lockBadge = lockBadge
+        self.hidesDetails = hidesDetails
     }
 
-    init(presentation: SessionRowPresentation) {
+    init(
+        presentation: SessionRowPresentation,
+        lockBadge: ScopedLockState = .none,
+        hidesDetails: Bool = false
+    ) {
         self.init(
             session: presentation.session,
             pendingAskCount: presentation.pendingAskCount,
@@ -52,7 +64,9 @@ struct SessionRow: View {
             workspaceContext: presentation.workspaceContext,
             modelSummaries: presentation.modelSummaries,
             unreadCompletionAt: presentation.unreadCompletionAt,
-            searchSnippet: presentation.searchSnippet
+            searchSnippet: presentation.searchSnippet,
+            lockBadge: lockBadge,
+            hidesDetails: hidesDetails
         )
     }
 
@@ -130,6 +144,8 @@ struct SessionRow: View {
                         .layoutPriority(1)
                         .accessibilityLabel(isUnread ? Text("Unread, \(title)") : Text(verbatim: title))
 
+                    LockBadge(state: lockBadge)
+
                     Spacer(minLength: 4)
 
                     if display.showsTime {
@@ -137,15 +153,19 @@ struct SessionRow: View {
                     }
                 }
 
-                // Row 1.75: search snippet (when searching)
-                if let searchSnippet {
-                    Text(highlightedSearchSnippet(searchSnippet))
-                        .font(.caption)
-                        .foregroundStyle(.themeFgDim)
-                        .lineLimit(2)
-                }
+                if hidesDetails {
+                    lockedStatusRow
+                } else {
+                    // Row 1.75: search snippet (when searching)
+                    if let searchSnippet {
+                        Text(highlightedSearchSnippet(searchSnippet))
+                            .font(.caption)
+                            .foregroundStyle(.themeFgDim)
+                            .lineLimit(2)
+                    }
 
-                detailRows
+                    detailRows
+                }
             }
         }
         .padding(.leading, 12)
@@ -167,6 +187,18 @@ struct SessionRow: View {
     }
 
     // MARK: - Detail rows
+
+    /// Locked: the Incognito marker and status only.
+    private var lockedStatusRow: some View {
+        HStack(spacing: 6) {
+            if isIncognito {
+                incognitoBadge
+            }
+            Spacer(minLength: 8)
+            statusItems
+        }
+        .metricsStyle()
+    }
 
     /// Standard stacks the context row above the metrics row. Compact tries one
     /// line first and otherwise falls back to the same two rows, so density

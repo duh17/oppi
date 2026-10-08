@@ -16,6 +16,7 @@ struct ServerSettingsRootView: View {
     @State private var model = ServerSettingsModel()
     @State private var verticalBarActive = false
     @State private var showRemoveConfirmation = false
+    @State private var locks = ScopedLockService.shared
 
     init(server: PairedServer) {
         self.server = server
@@ -82,6 +83,13 @@ struct ServerSettingsRootView: View {
             }
 
             Section {
+                ScopedLockToggle(title: "Lock Server", scope: .server(serverId: pairedServer.id))
+                    .accessibilityIdentifier("server.lock")
+            } footer: {
+                Text(ScopedLockToggle.footer(for: "this server and its workspaces and sessions"))
+            }
+
+            Section {
                 Button(role: .destructive) {
                     showRemoveConfirmation = true
                 } label: {
@@ -138,8 +146,11 @@ struct ServerSettingsRootView: View {
             HStack(spacing: 12) {
                 RuntimeBadge(icon: pairedServer.resolvedBadgeIcon, tint: state.tintColor)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(pairedServer.name)
-                        .foregroundStyle(.themeFg)
+                    HStack(spacing: 5) {
+                        Text(pairedServer.name)
+                            .foregroundStyle(.themeFg)
+                        LockBadge(state: locks.badge(.server(pairedServer.id)))
+                    }
                     Text(Self.connectionStatusTitle(for: pairedServer, coordinator: coordinator))
                         .font(.footnote)
                         .foregroundStyle(.themeComment)

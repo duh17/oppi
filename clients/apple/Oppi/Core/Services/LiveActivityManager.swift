@@ -28,6 +28,9 @@ final class LiveActivityManager {
         /// expiry so that `sync()` refreshing `updatedAt` doesn't keep the
         /// expiry window open indefinitely.
         var readySince: Date?
+        /// Lock scope inputs, filled by `sync`; events alone do not carry them.
+        var workspaceId: String?
+        var isIncognito = false
     }
 
     private struct ConnectionSnapshot {
@@ -36,6 +39,7 @@ final class LiveActivityManager {
 
     private struct SessionView {
         let id: String
+        let lockTarget: ScopedLockTarget
         let name: String
         let phase: SessionPhase
         let activeTool: String?
@@ -100,6 +104,9 @@ final class LiveActivityManager {
     private var pushThrottleTask: Task<Void, Never>?
 
     private var lastDeliveredSnapshot: DeliveredSnapshot?
+    /// Advances on every queued ActivityKit update; an update task whose
+    /// number is no longer current was superseded and is dropped.
+    private var pushSequence = 0
 
     /// Minimum interval between ActivityKit updates (ActivityKit throttles at ~1/sec anyway).
     private let pushThrottleInterval: Duration = .seconds(1)
@@ -118,9 +125,18 @@ final class LiveActivityManager {
     /// True while App Lock is on: the Lock Screen and Dynamic Island show
     /// phase and counts only, never session names, tools, or activity text.
     private let hidesSessionText: @MainActor () -> Bool
+    /// True for a session whose server, workspace, or the session itself is
+    /// locked: its name, tool, and activity text stay off the Lock Screen.
+    private let hidesScopedSessionText: @MainActor (ScopedLockTarget) -> Bool
 
-    init(hidesSessionText: @escaping @MainActor () -> Bool = { AppLockService.shared.isEnabled }) {
+    init(
+        hidesSessionText: @escaping @MainActor () -> Bool = { AppLockService.shared.isEnabled },
+        hidesScopedSessionText: @escaping @MainActor (ScopedLockTarget) -> Bool = {
+            ScopedLockService.shared.hidesContentOutsideApp($0)
+        }
+    ) {
         self.hidesSessionText = hidesSessionText
+        self.hidesScopedSessionText = hidesScopedSessionText
     }
 
     // MARK: - Public API
@@ -150,6 +166,8 @@ final class LiveActivityManager {
             entry.name = session.displayTitle
             entry.status = session.status
             entry.changeStats = session.changeStats
+            entry.workspaceId = session.workspaceId
+            entry.isIncognito = session.ephemeral == true
             if session.lastActivity > entry.updatedAt {
                 entry.updatedAt = session.lastActivity
             }
@@ -704,14 +722,18 @@ final class LiveActivityManager {
         }
 
         lastDeliveredSnapshot = deliveredSnapshot
+        pushSequence &+= 1
+        let sequence = pushSequence
 
         nonisolated(unsafe) let detachedActivity = activity
         let alertConfiguration: AlertConfiguration? = nil
 
-        Task { [hidesSessionText] in
-            // App Lock may have turned on since this update was queued; never
-            // let a stale state with session text land after the redaction.
-            let deliveredState = Self.stateForDelivery(state, hidesSessionText: hidesSessionText())
+        Task { @MainActor [weak self] in
+            // Built on the main actor right before the update: App Lock or a
+            // server, workspace, or session lock may have turned on since this
+            // update was queued, and a newer update supersedes this one.
+            guard let self, sequence == self.pushSequence else { return }
+            let deliveredState = self.deliveryState(for: state)
             await detachedActivity.update(
                 ActivityContent(
                     state: deliveredState,
@@ -728,16 +750,23 @@ final class LiveActivityManager {
     private func aggregateState() -> PiSessionAttributes.ContentState {
         let sortedConnectionIds = connectionSnapshots.keys.sorted()
 
-        var allSessions: [SessionSnapshot] = []
+        var allSessions: [(connectionId: String, session: SessionSnapshot)] = []
 
         for connectionId in sortedConnectionIds {
             guard let snapshot = connectionSnapshots[connectionId] else { continue }
-            allSessions.append(contentsOf: snapshot.sessionsById.values)
+            allSessions.append(contentsOf: snapshot.sessionsById.values.map { (connectionId, $0) })
         }
 
-        let sessionViews = allSessions.map { session in
+        let sessionViews = allSessions.map { connectionId, session in
             SessionView(
                 id: session.id,
+                // Connection ids are server ids (`ServerConnection.liveActivityConnectionId`).
+                lockTarget: .session(
+                    serverId: connectionId,
+                    workspaceId: session.workspaceId,
+                    sessionId: session.id,
+                    isIncognito: session.isIncognito
+                ),
                 name: session.name,
                 phase: phase(for: session),
                 activeTool: session.activeTool,
@@ -777,10 +806,34 @@ final class LiveActivityManager {
                 primaryRemovedLines: primary.changeStats?.removedLines,
                 sessionStartDate: primary.phase == .working ? primary.startDate : nil
             )
-            return Self.stateForDelivery(state, hidesSessionText: hidesSessionText())
+            return Self.stateForDelivery(
+                state,
+                hidesSessionText: hidesSessionText() || hidesScopedSessionText(primary.lockTarget)
+            )
         }
 
         return Self.emptyState
+    }
+
+    /// The state an update delivers now: `queued` with App Lock and the
+    /// primary session's scoped lock applied as of this moment.
+    func deliveryState(for queued: PiSessionAttributes.ContentState) -> PiSessionAttributes.ContentState {
+        let primaryTarget = queued.primarySessionId.flatMap { sessionId in
+            connectionSnapshots.lazy.compactMap { connectionId, snapshot in
+                snapshot.sessionsById[sessionId].map { session in
+                    ScopedLockTarget.session(
+                        serverId: connectionId,
+                        workspaceId: session.workspaceId,
+                        sessionId: session.id,
+                        isIncognito: session.isIncognito
+                    )
+                }
+            }.first
+        }
+        return Self.stateForDelivery(
+            queued,
+            hidesSessionText: hidesSessionText() || (primaryTarget.map(hidesScopedSessionText) ?? false)
+        )
     }
 
     /// App Lock: phase and counts only; no session name, tool, or activity text.

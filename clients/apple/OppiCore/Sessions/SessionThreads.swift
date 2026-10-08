@@ -515,10 +515,12 @@ struct SessionThreadTimeline: Sendable, Equatable {
     /// `lastActivity` of a stopped session, plus recorded interactions. Lanes
     /// and their continuity come from session lifetimes, so hiding a primitive
     /// with `filter` removes its rows without breaking the lanes.
+    /// `hidesCost` drops the cost from a member's end row (a locked session).
     static func build(
         snapshot: SessionThreadSnapshot,
         now: Date,
-        filter: SessionThreadTimelineFilter = .all
+        filter: SessionThreadTimelineFilter = .all,
+        hidesCost: (Session) -> Bool = { _ in false }
     ) -> SessionThreadTimeline {
         let byId = Dictionary(snapshot.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         guard let root = byId[snapshot.rootSessionId] else {
@@ -574,13 +576,14 @@ struct SessionThreadTimeline: Sendable, Equatable {
 
         for session in snapshot.sessions where session.status == .stopped {
             let lane = laneBySessionId[session.id] ?? 0
+            let detail = hidesCost(session) ? "stopped" : String(format: "stopped · $%.2f", session.cost)
             let parent = session.id == root.id ? nil : parentLane(of: session)
             events.append(Event(at: session.lastActivity, order: 3, category: .ends, row: { above, below, idle in
                 SessionThreadTimelineRow(
                     id: "end:\(session.id)", at: session.lastActivity, lane: lane,
                     kind: .end(parentLane: parent), sessionId: session.id,
                     title: session.displayTitle,
-                    detail: String(format: "stopped · $%.2f", session.cost),
+                    detail: detail,
                     lanesAbove: above, lanesBelow: below, idleLanes: idle
                 )
             }, lane: lane, sessionId: session.id))

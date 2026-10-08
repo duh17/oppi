@@ -662,6 +662,11 @@ struct OppiApp: App {
         TailnetNodeController.shared.startAtLaunchIfNeeded(
             pairedHosts: coordinator.serverStore.servers.map(\.host)
         )
+        // Navigation gates know sessions only by id; their workspace and
+        // Incognito state come from the loaded stores.
+        ScopedLockService.shared.sessionLookup = { [coordinator] serverId, sessionId in
+            coordinator.connection(for: serverId)?.sessionStore.session(id: sessionId)
+        }
         await setupNotifications()
 #if DEBUG
         scheduleE2EInAppBrowserIfRequested()
@@ -813,6 +818,9 @@ struct OppiApp: App {
     private func openSessionFileReference(_ reference: ResourceReference) async {
         guard let target = Self.sessionFileTarget(for: reference) else {
             connection.extensionToast = "Could not open this session file"
+            return
+        }
+        guard await ScopedLockService.shared.authorize(WorkspaceLinkedFileDestinationView.lockTarget(for: target)) else {
             return
         }
         guard await coordinator.switchToServerReady(target.serverId) else {
@@ -1140,6 +1148,9 @@ struct OppiApp: App {
                 self.connection.extensionToast = "Could not open session \(session.sessionID)"
                 return
             }
+            guard await ScopedLockService.shared.authorize(
+                ScopedLockService.shared.sessionTarget(serverId: session.serverID, sessionId: session.sessionID)
+            ), resourceReferenceRequestCoordinator.isCurrent(token) else { return }
             guard await coordinator.switchToServerReady(session.serverID, shouldActivate: {
                 resourceReferenceRequestCoordinator.isCurrent(token)
             }), resourceReferenceRequestCoordinator.isCurrent(token) else {
@@ -1165,6 +1176,9 @@ struct OppiApp: App {
                 self.connection.extensionToast = "Could not open file \(file.path)"
                 return
             }
+            guard await ScopedLockService.shared.authorize(
+                .workspace(serverId: file.serverID, workspaceId: file.workspaceID)
+            ), resourceReferenceRequestCoordinator.isCurrent(token) else { return }
             guard await coordinator.switchToServerReady(file.serverID, shouldActivate: {
                 resourceReferenceRequestCoordinator.isCurrent(token)
             }), resourceReferenceRequestCoordinator.isCurrent(token) else {
@@ -1210,6 +1224,8 @@ struct OppiApp: App {
                 self.connection.extensionToast = "Could not open file \(file.path)"
                 return
             }
+            guard await ScopedLockService.shared.authorize(.server(file.serverID)),
+                  resourceReferenceRequestCoordinator.isCurrent(token) else { return }
             guard await coordinator.switchToServerReady(file.serverID, shouldActivate: {
                 resourceReferenceRequestCoordinator.isCurrent(token)
             }), resourceReferenceRequestCoordinator.isCurrent(token) else {
@@ -1269,6 +1285,9 @@ struct OppiApp: App {
             connection.extensionToast = "Could not open this file link"
             return false
         }
+        guard await ScopedLockService.shared.authorize(
+            WorkspaceLinkedFileDestinationView.lockTarget(for: resolution.target)
+        ) else { return true }
         guard await coordinator.switchToServerReady(resolution.target.serverId) else {
             connection.extensionToast = "Could not open the server for this file link"
             return false
@@ -1351,6 +1370,14 @@ struct OppiApp: App {
         guard let receipt = intentSessionOpenTrigger.consume(startupComplete: appStartupComplete) else {
             return
         }
+        // Siri / Shortcuts: a locked target asks first; cancel drops the open.
+        guard await ScopedLockService.shared.authorize(
+            ScopedLockService.shared.sessionTarget(
+                serverId: receipt.serverId,
+                sessionId: receipt.sessionId,
+                workspaceId: receipt.workspaceId
+            )
+        ) else { return }
         guard await coordinator.switchToServerReady(receipt.serverId),
               let connection = coordinator.connection(for: receipt.serverId) else {
             intentSessionOpenTrigger.enqueue(receipt)
@@ -1422,6 +1449,7 @@ struct OppiApp: App {
     private func handleIncomingWorkspaceURL(_ url: URL) async -> Bool {
         guard let payload = WorkspaceDeepLink.payload(from: url) else { return false }
         guard let server = workspaceDeepLinkTargetServer(for: payload) else { return true }
+        guard await ScopedLockService.shared.authorize(.server(server.id)) else { return true }
         guard await coordinator.switchToServerReady(server) else {
             connection.extensionToast = "Could not open the server for this workspace link"
             return true
@@ -1461,6 +1489,11 @@ struct OppiApp: App {
         connection: ServerConnection,
         source: SessionNavigationSource = .externalURL
     ) async {
+        // A locked session (or its workspace or server) asks before Oppi
+        // switches servers, so cancel leaves everything where it was.
+        guard await ScopedLockService.shared.authorize(
+            ScopedLockService.shared.sessionTarget(serverId: serverId, sessionId: sessionId)
+        ) else { return }
         guard await coordinator.switchToServerReady(serverId) else { return }
         await SessionNotificationOpen.openResolved(
             sessionId: sessionId,
