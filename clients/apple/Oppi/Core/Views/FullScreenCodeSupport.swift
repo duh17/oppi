@@ -47,18 +47,16 @@ enum FullScreenViewerChrome {
     // Grep for `FullScreenViewerChrome` to find all adopters.
 }
 
-/// Whether the system is presenting bars on the side.
+/// Whether the system may place a vertical bar for these traits.
 ///
-/// `verticalBarEdge` exists only in the iOS 27.1 SDK. A build from Xcode 27.0
-/// never sees a vertical bar, so this stays false and the iPhone chrome is
-/// unchanged.
+/// `verticalBarEdge` is the preferred edge, not "a bar is on screen". It is
+/// `.unspecified` where iOS never places a vertical bar. Deployment stays
+/// 26.0, so the read is still availability-gated.
 enum SystemVerticalBar {
     static func traitIsActive(_ traits: UITraitCollection) -> Bool {
-        #if canImport(SwiftUI, _version: 8.0.85)
         if #available(iOS 27.1, *) {
             return traits.verticalBarEdge != .unspecified
         }
-        #endif
         return false
     }
 

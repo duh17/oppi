@@ -872,16 +872,12 @@ struct ServerSwitcherPill: View {
 func topLeadingToolbarItem<Content: View>(
     @ViewBuilder content: @escaping () -> Content
 ) -> some ToolbarContent {
-    #if canImport(SwiftUI, _version: 8.0.85)
     if #available(iOS 27.1, *) {
         ToolbarItem(placement: .topBarLeading, content: content)
             .axisBehavior(.horizontalOnly)
     } else {
         ToolbarItem(placement: .topBarLeading, content: content)
     }
-    #else
-    ToolbarItem(placement: .topBarLeading, content: content)
-    #endif
 }
 
 /// Moves a control onto the side rail when that rail exists. A pinned item
@@ -894,7 +890,6 @@ func verticalRailToolbarItem<Content: View>(
     anchorsToRailBottom: Bool = false,
     @ViewBuilder content: @escaping () -> Content
 ) -> some ToolbarContent {
-    #if canImport(SwiftUI, _version: 8.0.85)
     if #available(iOS 27.1, *), joinsVerticalRail {
         ToolbarItem(
             placement: anchorsToRailBottom
@@ -906,107 +901,73 @@ func verticalRailToolbarItem<Content: View>(
     } else {
         ToolbarItem(placement: .topBarTrailing, content: content)
     }
-    #else
-    ToolbarItem(placement: .topBarTrailing, content: content)
-    #endif
+}
+
+/// Reads `@Environment(\.toolbarVerticalEdge)` at the call site.
+///
+/// The value is the system's preferred edge, not "a pill is on screen". It is
+/// nil where iOS never places a vertical bar (a regular iPhone, a full-screen
+/// iPad) and non-nil on Duo's outer display even before a toolbar item joins
+/// the rail. `verticalPreferred` items are what make the system draw that rail.
+/// Below iOS 27.1 the edge is nil.
+@MainActor
+@ViewBuilder
+func readingToolbarVerticalEdge<Content: View>(
+    @ViewBuilder content: @escaping (HorizontalEdge?) -> Content
+) -> some View {
+    if #available(iOS 27.1, *) {
+        ToolbarVerticalEdgeReader(content: content)
+    } else {
+        content(nil)
+    }
+}
+
+@available(iOS 27.1, *)
+private struct ToolbarVerticalEdgeReader<Content: View>: View {
+    @Environment(\.toolbarVerticalEdge) private var edge
+    @ViewBuilder var content: (HorizontalEdge?) -> Content
+
+    var body: some View {
+        content(edge)
+    }
 }
 
 extension View {
-    func readVerticalBarActivity(_ isActive: Binding<Bool>) -> some View {
-        background {
-            VerticalBarActivityReader(isActive: isActive)
-        }
-        .onAppear {
-            isActive.wrappedValue = VerticalBarActivityScan.isActive()
-        }
-    }
-}
-
-enum VerticalBarActivityScan {
-    /// The side rail is a scene trait. A background probe does not inherit it.
-    @MainActor
-    static func isActive() -> Bool {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .contains { SystemVerticalBar.traitIsActive($0.traitCollection) }
-    }
-}
-
-private struct VerticalBarActivityReader: UIViewControllerRepresentable {
-    var isActive: Binding<Bool>
-
-    func makeUIViewController(context: Context) -> VerticalBarActivityProbe {
-        let probe = VerticalBarActivityProbe()
-        probe.onChange = { isActive.wrappedValue = $0 }
-        return probe
-    }
-
-    func updateUIViewController(_ probe: VerticalBarActivityProbe, context: Context) {
-        probe.onChange = { isActive.wrappedValue = $0 }
-        probe.reportIfChanged()
-    }
-}
-
-private final class VerticalBarActivityProbe: UIViewController {
-    var onChange: ((Bool) -> Void)?
-    private var lastReported: Bool?
-    private weak var observedNavigationController: UINavigationController?
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.isUserInteractionEnabled = false
-        view.backgroundColor = .clear
-    }
-
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        observeNavigationBar()
-        reportIfChanged()
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        observeNavigationBar()
-        reportIfChanged()
-    }
-
-    func reportIfChanged() {
-        let active = VerticalBarActivityScan.isActive()
-        guard active != lastReported else { return }
-        lastReported = active
-        onChange?(active)
-    }
-
-    /// The bar edge lives on the navigation controller. A background probe
-    /// does not inherit it, so read the controller that owns the bar.
-    private func observeNavigationBar() {
-        guard let navigationController = enclosingNavigationController(),
-              navigationController !== observedNavigationController else { return }
-        observedNavigationController = navigationController
-        #if canImport(SwiftUI, _version: 8.0.85)
+    /// Host switcher on the side rail when the system has a vertical edge.
+    @ViewBuilder
+    func hostSwitcherRailToolbar(
+        server: PairedServer,
+        destination: HostSwitcherDestination
+    ) -> some View {
         if #available(iOS 27.1, *) {
-            navigationController.registerForTraitChanges(
-                UITraitCollection.systemTraitsAffectingVerticalBarEdge
-            ) { [weak self] (_: UINavigationController, _) in
-                self?.reportIfChanged()
+            modifier(HostSwitcherRailToolbar(server: server, destination: destination))
+        } else {
+            toolbar {
+                verticalRailToolbarItem(joinsVerticalRail: false) {
+                    HostSwitcherMenu(current: server, destination: destination)
+                }
             }
         }
-        #endif
     }
+}
 
-    private func enclosingNavigationController() -> UINavigationController? {
-        var responder: UIResponder? = view
-        while let current = responder {
-            if let navigationController = current as? UINavigationController {
-                return navigationController
+@available(iOS 27.1, *)
+private struct HostSwitcherRailToolbar: ViewModifier {
+    let server: PairedServer
+    let destination: HostSwitcherDestination
+    @Environment(\.toolbarVerticalEdge) private var edge
+
+    func body(content: Content) -> some View {
+        let joinsRail = edge != nil
+        content.toolbar {
+            verticalRailToolbarItem(joinsVerticalRail: joinsRail) {
+                HostSwitcherMenu(
+                    current: server,
+                    destination: destination,
+                    fitsVerticalRail: joinsRail
+                )
             }
-            if let controller = current as? UIViewController,
-               let navigationController = controller.navigationController {
-                return navigationController
-            }
-            responder = current.next
         }
-        return nil
     }
 }
 

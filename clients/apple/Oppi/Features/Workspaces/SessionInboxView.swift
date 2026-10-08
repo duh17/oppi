@@ -289,7 +289,6 @@ struct SessionInboxView: View {
     @FocusState private var isSearchFieldFocused: Bool
     @State private var presentsNowPlayingPlayer = false
     @State private var composeBarColumnWidth: CGFloat = 0
-    @State private var verticalBarActive = false
 
     init(scope: SessionInboxScope = .all, onOpenSidebar: (() -> Void)? = nil) {
         self.scope = scope
@@ -486,6 +485,13 @@ struct SessionInboxView: View {
     }
 
     var body: some View {
+        readingToolbarVerticalEdge { edge in
+            inboxRoot(railEdge: edge)
+        }
+    }
+
+    @ViewBuilder
+    private func inboxRoot(railEdge: HorizontalEdge?) -> some View {
         let data = viewData
 
         List {
@@ -598,8 +604,7 @@ struct SessionInboxView: View {
         .onChange(of: activeServerId) { _, _ in
             resetLocalHostState()
         }
-        .toolbar { toolbarContent }
-        .readVerticalBarActivity($verticalBarActive)
+        .toolbar { toolbarContent(railEdge: railEdge) }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { composeBarColumnWidth = $0 }
         .refreshable {
             async let refresh: () = refreshVisibleServer()
@@ -758,7 +763,8 @@ struct SessionInboxView: View {
     }
 
     @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
+    private func toolbarContent(railEdge: HorizontalEdge?) -> some ToolbarContent {
+        let joinsRail = railEdge != nil
         ToolbarItem(placement: .principal) {
             inboxTitle
         }
@@ -779,7 +785,7 @@ struct SessionInboxView: View {
         // Pinned trailing sits with the status cluster, under the wifi mark,
         // once the capsule has a vertical layout. A normal top bar keeps it trailing.
         if scope == .all, let selectedServer {
-            if verticalBarActive {
+            if joinsRail {
                 verticalRailToolbarItem(joinsVerticalRail: true, pinnedUnderStatus: true) {
                     serverSwitcher(selectedServer, fitsVerticalRail: true)
                 }
@@ -791,7 +797,7 @@ struct SessionInboxView: View {
         }
 
         ToolbarItem(placement: .bottomBar) {
-            compactQuickSessionBar
+            compactQuickSessionBar(joinsRail: joinsRail)
         }
         if sessionListToolbar.showsNowPlayingPill {
             ToolbarSpacer(
@@ -813,7 +819,7 @@ struct SessionInboxView: View {
             ToolbarSpacer(.flexible, placement: .bottomBar)
         }
 
-        if verticalBarActive {
+        if joinsRail {
             verticalRailToolbarItem(joinsVerticalRail: true, anchorsToRailBottom: true) {
                 inboxFolderButton
             }
@@ -1286,7 +1292,7 @@ struct SessionInboxView: View {
         )
     }
 
-    private var compactQuickSessionBar: some View {
+    private func compactQuickSessionBar(joinsRail: Bool) -> some View {
         SessionInboxCompactComposeBar(
             showsDictation: SessionInboxComposeChrome.showsDictationShortcut(
                 voiceInputEnabled: ReleaseFeatures.voiceInputEnabled,
@@ -1294,7 +1300,7 @@ struct SessionInboxView: View {
             ),
             hasActivePlayback: sessionListHasActivePlayback,
             columnWidth: composeBarColumnWidth,
-            trailingReserve: verticalBarActive
+            trailingReserve: joinsRail
                 ? SessionInboxComposeChrome.messageCapsuleSoloReserve
                 : SessionInboxComposeChrome.messageCapsuleFolderReserve,
             onIncognito: nil,

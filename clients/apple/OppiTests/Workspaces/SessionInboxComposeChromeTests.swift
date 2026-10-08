@@ -307,7 +307,7 @@ struct SessionInboxComposeChromeTests {
         let preview = try appleSource("Oppi/App/ScreenshotPreviews/InboxProviderSetupPreview.swift")
         let inboxToolbar = try sourceSlice(
             inbox,
-            start: "private var toolbarContent: some ToolbarContent {",
+            start: "private func toolbarContent(railEdge: HorizontalEdge?) -> some ToolbarContent {",
             end: "private func serverSwitcher"
         )
         let workspaceToolbar = try sourceSlice(

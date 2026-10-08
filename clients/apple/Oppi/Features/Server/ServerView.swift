@@ -12,7 +12,6 @@ struct ServerView: View {
     @Environment(AppNavigation.self) private var navigation
 
     @State private var stats: ServerStats?
-    @State private var verticalBarActive = false
     @State private var serverInfo: ServerInfo?
     @State private var selectedRange: Int = 7
     @State private var isLoading = true
@@ -62,6 +61,14 @@ struct ServerView: View {
     }
 
     var body: some View {
+        readingToolbarVerticalEdge { edge in
+            serverRoot(railEdge: edge)
+        }
+    }
+
+    @ViewBuilder
+    private func serverRoot(railEdge: HorizontalEdge?) -> some View {
+        let joinsRail = railEdge != nil
         Group {
             if serverStore.servers.isEmpty {
                 emptyState
@@ -75,16 +82,15 @@ struct ServerView: View {
         .navigationTitle(HostSwitcherDestination.usage.title)
         .toolbar {
             if let selectedServer {
-                verticalRailToolbarItem(joinsVerticalRail: verticalBarActive) {
+                verticalRailToolbarItem(joinsVerticalRail: joinsRail) {
                     HostSwitcherMenu(
                         current: selectedServer,
                         destination: .usage,
-                        fitsVerticalRail: verticalBarActive
+                        fitsVerticalRail: joinsRail
                     )
                 }
             }
         }
-        .readVerticalBarActivity($verticalBarActive)
         .navigationDestination(for: ServerDetailsNavTarget.self) { target in
             ServerDetailsScopedDestinationView(target: target)
         }
@@ -382,7 +388,14 @@ struct UsageChromePreview: View {
     }
 
     var body: some View {
-        NavigationStack {
+        readingToolbarVerticalEdge { edge in
+            usagePreview(railEdge: edge)
+        }
+    }
+
+    private func usagePreview(railEdge: HorizontalEdge?) -> some View {
+        let joinsRail = railEdge != nil
+        return NavigationStack {
             VStack(spacing: 16) {
                 Picker("Range", selection: .constant(7)) {
                     Text("7d").tag(7)
@@ -396,13 +409,14 @@ struct UsageChromePreview: View {
             .navigationTitle(HostSwitcherDestination.usage.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                verticalRailToolbarItem(joinsVerticalRail: joinsRail) {
                     Menu {
                         Button(HostSwitcherPreviewData.server.name, systemImage: "checkmark.circle.fill") {}
                     } label: {
                         ServerSwitcherPill(
                             server: HostSwitcherPreviewData.server,
-                            connectionState: .connected
+                            connectionState: .connected,
+                            fitsVerticalRail: joinsRail
                         )
                     }
                     .accessibilityLabel("Current server: \(HostSwitcherPreviewData.server.name)")

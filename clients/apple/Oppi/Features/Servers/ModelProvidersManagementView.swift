@@ -255,8 +255,6 @@ struct ModelProvidersManagementView: View {
     @Environment(ServerStore.self) private var serverStore
     @Environment(\.scenePhase) private var scenePhase
 
-    @State private var verticalBarActive = false
-
     @State private var providerStatuses: [ProviderAuthProviderStatus] = []
     @State private var providerSetupState: ProviderSetupState = .unknown
     @State private var providerQuotas: ProviderQuotasInfo?
@@ -290,16 +288,7 @@ struct ModelProvidersManagementView: View {
         .accessibilityIdentifier("server.modelProviders.list")
         .navigationTitle(HostSwitcherDestination.modelProviders.title)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            verticalRailToolbarItem(joinsVerticalRail: verticalBarActive) {
-                HostSwitcherMenu(
-                    current: pairedServer,
-                    destination: .modelProviders,
-                    fitsVerticalRail: verticalBarActive
-                )
-            }
-        }
-        .readVerticalBarActivity($verticalBarActive)
+        .hostSwitcherRailToolbar(server: pairedServer, destination: .modelProviders)
         .refreshable {
             await loadProviderConfiguration()
         }

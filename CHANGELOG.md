@@ -113,6 +113,7 @@ Entries labeled **Mac** describe work on `main`; the Mac app is not part of the 
 
 ### Changed
 
+- **Client:** Side-rail layout follows the system toolbar edge. Chat, inbox, Usage, Server Settings, and Model Providers join that rail only where iOS places one, including after a rotation, and a regular iPhone keeps the top bar.
 - **Client:** On iPhones with a side rail, the chat's back, session, Files, Outline, and context controls sit on the rail and the top title strip is gone; the session button opens Rename, Copy Session ID, and Share. On a wide rail screen, Files, Outline, and Context slide in from the right beside the timeline instead of rising as sheets, one at a time; narrow screens keep the sheets. Usage, Server Settings, and Model Providers show the server switcher on the rail as one status-colored icon instead of a pill that ran off the screen.
 - **Client:** Session Threads experiment: a Thread strip no longer has its own "Thread · N sessions" header row; the chevron moves to the totals line, and "N workspaces" joins the totals. The Agent summary and working/done totals now count the root session too, so they match the lane graph.
 - **Server:** Updated embedded Pi runtime packages to `@earendil-works/pi-coding-agent@1.1.0` (with `pi-ai`, `pi-tui`, `chord`, `pi-codemode`, `pi-durable`, and `pi-server` at 1.1.0). Pi 1.1.0 adds `aborted` to `agent_settled`, so a cancelled run can be told from a finished one.

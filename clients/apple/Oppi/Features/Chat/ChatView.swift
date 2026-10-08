@@ -129,9 +129,6 @@ struct ChatView: View {
     @State private var sharePreflightTask: Task<Void, Never>?
 
     @State private var showContextInspector = false
-    /// Duo side rail. Chat controls join it and auxiliary panels slide in
-    /// from the trailing edge instead of rising as sheets.
-    @State private var verticalBarActive = false
     @State private var isKeyboardVisible = false
     @State private var footerHeight: CGFloat = 0
     @State private var timelineChromeFrame: CGRect = .zero
@@ -832,14 +829,22 @@ struct ChatView: View {
     }
 
     private var chatPresentationContent: some View {
-        configuredChatContent
-            .inspector(isPresented: sidePanelPresented) { chatSidePanel }
+        readingToolbarVerticalEdge { edge in
+            chatPresentation(railEdge: edge)
+        }
+    }
+
+    @ViewBuilder
+    private func chatPresentation(railEdge: HorizontalEdge?) -> some View {
+        let joinsRail = railEdge != nil
+        configuredChatContent(railEdge: railEdge)
+            .inspector(isPresented: sidePanelPresented(railEdge: railEdge)) { chatSidePanel }
             .chatAuxiliaryPresentation(
-                isPresented: usesTrailingSidePanel ? .constant(false) : $showOutline,
+                isPresented: joinsRail && horizontalSizeClass == .regular ? .constant(false) : $showOutline,
                 prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
             ) { outlineSheet }
             .chatAuxiliaryPresentation(
-                isPresented: usesTrailingSidePanel ? .constant(false) : $isFilePanelVisible,
+                isPresented: joinsRail && horizontalSizeClass == .regular ? .constant(false) : $isFilePanelVisible,
                 prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
             ) { filePanelSheet }
             .sheet(isPresented: $showModelPicker) { modelPickerSheet }
@@ -847,7 +852,7 @@ struct ChatView: View {
                 reviewCommentStashSheet(presentation)
             }
             .chatAuxiliaryPresentation(
-                isPresented: usesTrailingSidePanel ? .constant(false) : $showContextInspector,
+                isPresented: joinsRail && horizontalSizeClass == .regular ? .constant(false) : $showContextInspector,
                 prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
             ) { contextInspectorSheet }
             .chatAuxiliaryPresentation(
@@ -1059,12 +1064,14 @@ struct ChatView: View {
         horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom == .pad
     }
 
-    private var configuredChatContent: some View {
-        configuredChatToolbarContent
+    private func configuredChatContent(railEdge: HorizontalEdge?) -> some View {
+        configuredChatToolbarContent(railEdge: railEdge)
     }
 
-    private var configuredChatToolbarContent: some View {
-        configuredChatNavigationContent
+    @ViewBuilder
+    private func configuredChatToolbarContent(railEdge: HorizontalEdge?) -> some View {
+        let joinsRail = railEdge != nil
+        configuredChatNavigationContent(railEdge: railEdge)
             .toolbarVisibility(.hidden, for: .tabBar)
             .toolbarVisibility(
                 WorkspaceSessionNavigationChromePolicy.bottomBarVisibility(on: .sessionTimeline),
@@ -1081,8 +1088,8 @@ struct ChatView: View {
                 }
             }
             .toolbar {
-                if verticalBarActive {
-                    chatRailToolbarContent
+                if joinsRail {
+                    chatRailToolbarContent(railEdge: railEdge)
                 } else {
                     ToolbarItem(placement: .topBarLeading) {
                         chatLeadingToolbarItem
@@ -1093,18 +1100,17 @@ struct ChatView: View {
                     }
 
                     ToolbarItem(placement: .topBarTrailing) {
-                        chatTrailingToolbarItem
+                        chatTrailingToolbarItem(railEdge: railEdge)
                     }
                 }
             }
-            .readVerticalBarActivity($verticalBarActive)
     }
 
     /// One control per rail slot, top to bottom: back, session, files,
     /// outline, context. The title text has no room on the rail, so the
     /// session slot is the avatar and carries the title's menu actions.
     @ToolbarContentBuilder
-    private var chatRailToolbarContent: some ToolbarContent {
+    private func chatRailToolbarContent(railEdge: HorizontalEdge?) -> some ToolbarContent {
         if usesCustomChatBackButton {
             verticalRailToolbarItem(joinsVerticalRail: true) {
                 chatBackButton
@@ -1120,11 +1126,11 @@ struct ChatView: View {
         }
         if outlineAvailability.isAvailable {
             verticalRailToolbarItem(joinsVerticalRail: true) {
-                chatOutlineButton
+                chatOutlineButton(railEdge: railEdge)
             }
         }
         verticalRailToolbarItem(joinsVerticalRail: true) {
-            contextRingButton
+            contextRingButton(railEdge: railEdge)
         }
     }
 
@@ -1168,9 +1174,10 @@ struct ChatView: View {
 
     /// The column needs regular width. On a narrow rail screen (the Duo's
     /// cover display) the inspector would become a sheet, so the existing
-    /// sheets stay in charge there.
-    private var usesTrailingSidePanel: Bool {
-        verticalBarActive && horizontalSizeClass == .regular
+    /// sheets stay in charge there. `railEdge` is the system's preferred
+    /// edge, nil where no vertical bar is placed.
+    private func usesTrailingSidePanel(railEdge: HorizontalEdge?) -> Bool {
+        railEdge != nil && horizontalSizeClass == .regular
     }
 
     /// Content follows the panel flags alone. Gating it on the rail too can
@@ -1182,9 +1189,9 @@ struct ChatView: View {
         return nil
     }
 
-    private var sidePanelPresented: Binding<Bool> {
+    private func sidePanelPresented(railEdge: HorizontalEdge?) -> Binding<Bool> {
         Binding(
-            get: { usesTrailingSidePanel && activeSidePanel != nil },
+            get: { usesTrailingSidePanel(railEdge: railEdge) && activeSidePanel != nil },
             set: { presented in
                 guard !presented else { return }
                 isFilePanelVisible = false
@@ -1214,12 +1221,12 @@ struct ChatView: View {
         showContextInspector = panel == .context
     }
 
-    private var configuredChatNavigationContent: some View {
+    private func configuredChatNavigationContent(railEdge: HorizontalEdge?) -> some View {
         chatTimelineScaffold
             .themedScrollSurface()
             // On the side rail the system draws the title as its own strip
             // above the timeline. The rail session menu carries the name.
-            .navigationTitle(verticalBarActive ? "" : sessionDisplayName)
+            .navigationTitle(railEdge == nil ? sessionDisplayName : "")
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarBackButtonHidden(usesCustomChatBackButton)
             .navigationDestination(item: $forkedSessionToOpen) { route in
@@ -1609,22 +1616,23 @@ struct ChatView: View {
     }
 
     @ViewBuilder
-    private var chatTrailingToolbarItem: some View {
+    private func chatTrailingToolbarItem(railEdge: HorizontalEdge?) -> some View {
         HStack(spacing: 2) {
             // Do not read `reducer.items` here. Content-only streaming would
             // rebuild ChatView and `updateUIView`. The UIKit clock publishes
             // this boolean on empty/nonempty transitions and session bind.
             if outlineAvailability.isAvailable {
-                chatOutlineButton
+                chatOutlineButton(railEdge: railEdge)
             }
 
-            contextRingButton
+            contextRingButton(railEdge: railEdge)
         }
     }
 
-    private var chatOutlineButton: some View {
-        Button {
-            if usesTrailingSidePanel {
+    private func chatOutlineButton(railEdge: HorizontalEdge?) -> some View {
+        let sidePanel = usesTrailingSidePanel(railEdge: railEdge)
+        return Button {
+            if sidePanel {
                 showSidePanel(showOutline ? nil : .outline)
             } else {
                 showOutline = true
@@ -1636,15 +1644,16 @@ struct ChatView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(usesTrailingSidePanel && showOutline ? .themeBlue : .themeFg)
+        .foregroundStyle(sidePanel && showOutline ? .themeBlue : .themeFg)
         .accessibilityLabel("Open session outline")
         .accessibilityIdentifier("chat.toolbar.outline")
     }
 
-    private var contextRingButton: some View {
-        Button {
+    private func contextRingButton(railEdge: HorizontalEdge?) -> some View {
+        let sidePanel = usesTrailingSidePanel(railEdge: railEdge)
+        return Button {
             AppHaptics.toolbarExpansion()
-            if usesTrailingSidePanel {
+            if sidePanel {
                 showSidePanel(showContextInspector ? nil : .context)
             } else {
                 showContextInspector = true

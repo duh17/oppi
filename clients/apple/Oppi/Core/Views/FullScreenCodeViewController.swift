@@ -2393,13 +2393,11 @@ private final class FullScreenContentHostController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        #if canImport(SwiftUI, _version: 8.0.85)
         if #available(iOS 27.1, *) {
             registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (host: Self, _) in
                 host.onVerticalBarEdgeChange?()
             }
         }
-        #endif
     }
 
     override func viewIsAppearing(_ animated: Bool) {

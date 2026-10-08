@@ -14,7 +14,6 @@ struct ServerSettingsRootView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var model = ServerSettingsModel()
-    @State private var verticalBarActive = false
     @State private var showRemoveConfirmation = false
     @State private var locks = ScopedLockService.shared
 
@@ -107,16 +106,7 @@ struct ServerSettingsRootView: View {
         }
         .settingsPage(HostSwitcherDestination.serverSettings.title)
         .accessibilityIdentifier("server.details.list")
-        .toolbar {
-            verticalRailToolbarItem(joinsVerticalRail: verticalBarActive) {
-                HostSwitcherMenu(
-                    current: pairedServer,
-                    destination: .serverSettings,
-                    fitsVerticalRail: verticalBarActive
-                )
-            }
-        }
-        .readVerticalBarActivity($verticalBarActive)
+        .hostSwitcherRailToolbar(server: pairedServer, destination: .serverSettings)
         .refreshable {
             await model.load()
         }
