@@ -15,7 +15,6 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
-  inspectSlot,
   lockPath,
   beginPublishing,
   recordOwnedPgid,
@@ -83,7 +82,19 @@ export type PoolConfig = {
   appleDir: string;
   buildBase: string;
   slimScript: string;
+  poolScript: string;
   homeDir: string;
+  /** Selected device profile name, or "" for the default iPhone pool. */
+  profileName: string;
+  /** Slots `claim` hands out for the selected profile. */
+  claimSlotStart: number;
+  claimCount: number;
+  /** Shut down idle pool simulators after this many minutes; 0 disables the reaper. */
+  idleMinutes: number;
+  /** Most recently used idle pool simulators the reaper leaves booted. */
+  keepWarm: number;
+  /** Booted-simulator ceiling enforced before the pool boots one; 0 disables it. */
+  maxBooted: number;
 };
 
 export function die(message: string): never {
@@ -160,22 +171,47 @@ function gitTopLevel(cwd: string): string | null {
 /**
  * Named device lanes. A profile supplies defaults for device type, runtime,
  * and the dedicated slot range; explicit OPPI_SIM_DEVICE_TYPE, OPPI_SIM_RUNTIME,
- * OPPI_SIM_POOL_SLOT_START, and OPPI_SIM_POOL_COUNT still win. Dedicated lanes
- * live above the default iPhone slots (0-5); slot 8-9 belong to the iPad lane.
+ * OPPI_SIM_POOL_SLOT_START, and OPPI_SIM_POOL_COUNT still win.
+ *
+ * Slot map: 0-5 iPhone runs, 8-9 iPad runs, 10 Duo runs. `claim` hands out
+ * session-owned simulators from a separate range per profile (20-27 iPhone,
+ * 30-37 Duo, 40-47 iPad) so a long-lived claim never blocks a run lane.
  */
 export type DeviceProfile = {
   deviceType: string;
   runtime: string;
   slotStart: number;
   count: number;
+  claimSlotStart: number;
+  claimCount: number;
 };
 
+const DEFAULT_DEVICE_TYPE = "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro";
+
 export const DEVICE_PROFILES: Record<string, DeviceProfile> = {
+  iphone: {
+    deviceType: DEFAULT_DEVICE_TYPE,
+    runtime: "",
+    slotStart: 0,
+    count: 6,
+    claimSlotStart: 20,
+    claimCount: 8,
+  },
+  ipad: {
+    deviceType: "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB",
+    runtime: "",
+    slotStart: 8,
+    count: 2,
+    claimSlotStart: 40,
+    claimCount: 8,
+  },
   duo: {
     deviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-Duo",
     runtime: "com.apple.CoreSimulator.SimRuntime.iOS-27-1",
     slotStart: 10,
     count: 1,
+    claimSlotStart: 30,
+    claimCount: 8,
   },
 };
 
@@ -354,7 +390,8 @@ export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: strin
   }
   const appleDir = join(oppiRoot, "clients", "apple");
   const buildBase = join(appleDir, ".build");
-  const profile = lookupDeviceProfile(env.OPPI_SIM_DEVICE_PROFILE ?? "");
+  const profileName = env.OPPI_SIM_DEVICE_PROFILE ?? "";
+  const profile = lookupDeviceProfile(profileName);
   const count = parsePositiveInt(env.OPPI_SIM_POOL_COUNT ?? String(profile?.count ?? 6), "OPPI_SIM_POOL_COUNT", 1);
   const slotStart = parsePositiveInt(
     env.OPPI_SIM_POOL_SLOT_START ?? env.OPPI_SIM_POOL_SLOT_OFFSET ?? String(profile?.slotStart ?? 0),
@@ -364,8 +401,7 @@ export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: strin
   return {
     count,
     slotStart,
-    deviceType:
-      env.OPPI_SIM_DEVICE_TYPE ?? profile?.deviceType ?? "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro",
+    deviceType: env.OPPI_SIM_DEVICE_TYPE ?? profile?.deviceType ?? DEFAULT_DEVICE_TYPE,
     runtime: env.OPPI_SIM_RUNTIME ?? profile?.runtime ?? "",
     runtimePolicy: normalizeRuntimePolicy(env.OPPI_SIM_RUNTIME_POLICY ?? ""),
     waitSeconds: parsePositiveInt(env.OPPI_SIM_POOL_WAIT ?? "60", "OPPI_SIM_POOL_WAIT", 0),
@@ -407,7 +443,14 @@ export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: strin
     appleDir,
     buildBase,
     slimScript: join(scriptDir, "sim-slim.sh"),
+    poolScript: join(scriptDir, "sim-pool.ts"),
     homeDir: env.HOME ?? homedir(),
+    profileName,
+    claimSlotStart: profile?.claimSlotStart ?? 0,
+    claimCount: profile?.claimCount ?? 0,
+    idleMinutes: parsePositiveInt(env.OPPI_SIM_POOL_IDLE_MINUTES ?? "30", "OPPI_SIM_POOL_IDLE_MINUTES", 0),
+    keepWarm: parsePositiveInt(env.OPPI_SIM_POOL_KEEP_WARM ?? "2", "OPPI_SIM_POOL_KEEP_WARM", 0),
+    maxBooted: parsePositiveInt(env.OPPI_SIM_POOL_MAX_BOOTED ?? "8", "OPPI_SIM_POOL_MAX_BOOTED", 0),
   };
 }
 
@@ -637,7 +680,7 @@ function sampleTreeCpu(rootPid: number): Map<number, number> | undefined {
   return ps.status === 0 ? treeCpu(rootPid, ps.stdout) : undefined;
 }
 
-function log(message: string): void {
+export function log(message: string): void {
   process.stderr.write(`${message}\n`);
 }
 
@@ -704,7 +747,7 @@ export async function runXcrun(
   };
 }
 
-async function listDevices(session: CommandSession, config: PoolConfig): Promise<SimulatorDevice[]> {
+export async function listDevices(session: CommandSession): Promise<SimulatorDevice[]> {
   const result = requireQuiescent(await runXcrun(session, ["simctl", "list", "devices", "-j"]), "simctl list");
   if (session.canceled) {
     die("canceled while listing simulators");
@@ -715,7 +758,7 @@ async function listDevices(session: CommandSession, config: PoolConfig): Promise
   return parseDevicesJson(result.stdout);
 }
 
-async function resolveRuntime(session: CommandSession, config: PoolConfig): Promise<string> {
+export async function resolveRuntime(session: CommandSession, config: PoolConfig): Promise<string> {
   if (config.runtime) {
     return config.runtime;
   }
@@ -735,7 +778,7 @@ async function resolveRuntime(session: CommandSession, config: PoolConfig): Prom
 
 export async function ensureSim(session: CommandSession, config: PoolConfig, slot: number): Promise<string> {
   const runtime = await resolveRuntime(session, config);
-  const devices = await listDevices(session, config);
+  const devices = await listDevices(session);
   const found = findMatchingPoolDevice(devices, slot, runtime, config.deviceType);
   if (found.match) {
     return found.match.udid;
@@ -889,11 +932,17 @@ async function runSimctl(session: CommandSession, args: string[], action: string
   die(`${action} failed: ${result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`}`);
 }
 
+/**
+ * `beforeBoot` runs right before a non-recovery `simctl boot` (recovery reboots
+ * a device that was already booted). The lifecycle uses it to stay under the
+ * booted-simulator ceiling.
+ */
 export async function prepareSimulator(
   session: CommandSession,
   config: PoolConfig,
   udid: string,
   mode: "normal" | "recovery",
+  beforeBoot?: () => Promise<void>,
 ): Promise<void> {
   if (mode === "recovery") {
     log(`[sim-pool] Recovery: shutting down + erasing simulator ${udid}`);
@@ -903,7 +952,7 @@ export async function prepareSimulator(
     log(`[sim-pool] Preparing clean simulator boot for ${udid}`);
     await runSimctl(session, ["shutdown", udid], "simctl shutdown");
   } else {
-    const devices = await listDevices(session, config);
+    const devices = await listDevices(session);
     if (deviceState(devices, udid) === "Booted") {
       log(`[sim-pool] Reusing already-booted simulator ${udid}`);
       if (await waitForBootReadyWithRetries(session, config, udid)) {
@@ -926,6 +975,9 @@ export async function prepareSimulator(
       log(`[sim-pool] Preparing simulator boot for ${udid}`);
       await runSimctl(session, ["shutdown", udid], "simctl shutdown");
     }
+  }
+  if (mode === "normal" && beforeBoot) {
+    await beforeBoot();
   }
   await runSimctl(session, ["boot", udid], "simctl boot");
   if (!(await waitForBootReadyWithRetries(session, config, udid))) {
@@ -953,7 +1005,7 @@ async function acquireRunSlot(
     if (session.canceled) {
       die("canceled while waiting for a simulator slot");
     }
-    const devices = await listDevices(session, config);
+    const devices = await listDevices(session);
     for (const slot of preferredAcquireSlots(
       slotNumbers(config),
       devices,
@@ -1475,7 +1527,11 @@ function commandRunExitCode(input: {
   return input.exitCode;
 }
 
-export async function commandRun(config: PoolConfig, rawArgs: string[]): Promise<number> {
+export async function commandRun(
+  config: PoolConfig,
+  rawArgs: string[],
+  hooks: { beforeBoot?: (udid: string) => Promise<void> } = {},
+): Promise<number> {
   const session = new CommandSession();
   session.installHandlers();
   if (rawArgs[0] !== "--" || rawArgs.length < 2) {
@@ -1535,7 +1591,9 @@ export async function commandRun(config: PoolConfig, rawArgs: string[]): Promise
     log(`[sim-pool] Simulator: ${poolDeviceName(owned.slot)} (${simUdId})`);
     log(`[sim-pool] DerivedData: ${derivedData}`);
     prepStart = nowEpoch();
-    await prepareSimulator(session, config, simUdId, "normal");
+    const bootUdid = simUdId;
+    const beforeBoot = hooks.beforeBoot;
+    await prepareSimulator(session, config, bootUdid, "normal", beforeBoot && (() => beforeBoot(bootUdid)));
     prepEnd = nowEpoch();
     const logDir = join(config.buildBase, "logs");
     mkdirSync(logDir, { recursive: true });
@@ -1966,253 +2024,12 @@ function lstatIsSymlink(path: string): boolean {
   }
 }
 
-export async function commandShutdownIdle(config: PoolConfig): Promise<number> {
-  const session = new CommandSession();
-  session.installHandlers();
-  let status = 0;
-  try {
-    if (session.canceled) {
-      return session.cancelExitCode();
-    }
-    const list = await runXcrun(session, ["simctl", "list", "devices", "-j"]);
-    if (session.canceled) {
-      return session.cancelExitCode();
-    }
-    if (!list.stop.quiescent) {
-      log(`[sim-pool] shutdown-idle: list did not prove quiescence${list.stop.note ? ` (${list.stop.note})` : ""}`);
-      return 1;
-    }
-    if (list.code !== 0) {
-      log("[sim-pool] shutdown-idle: failed to list simulators");
-      return 1;
-    }
-    let devices: SimulatorDevice[];
-    try {
-      devices = parseDevicesJson(list.stdout);
-    } catch {
-      log("[sim-pool] shutdown-idle: failed to parse simulator list");
-      return 1;
-    }
-    const candidates = devices.filter((device) => {
-      const match = /^Oppi-Pool-(\d+)$/.exec(device.name);
-      return Boolean(match) && device.state === "Booted";
-    });
-    for (const device of candidates) {
-      if (session.canceled) {
-        status = session.cancelExitCode();
-        break;
-      }
-      const slot = Number(/^Oppi-Pool-(\d+)$/.exec(device.name)?.[1]);
-      const acquired = tryAcquireSlot({ lockDir: config.lockDir, slot, argv: ["shutdown-idle"] });
-      if (!acquired.ok) {
-        if (
-          acquired.reason.includes("legacy") ||
-          acquired.reason.includes("busy") ||
-          acquired.reason.includes("in-flight") ||
-          acquired.reason.includes("uncertain")
-        ) {
-          log(`[sim-pool] shutdown-idle: skipping existing slot lock ${slot}`);
-        } else {
-          log(`[sim-pool] shutdown-idle: failed to acquire slot ${slot}`);
-          status = 1;
-        }
-        continue;
-      }
-      const slotOwner = acquired.owned;
-      session.onBeforeSpawn = () => {
-        beginPublishing(slotOwner);
-      };
-      session.onSpawned = (child) => {
-        recordOwnedPgid(slotOwner, child.pgid);
-      };
-      let released = false;
-      const finishSlot = (kind: "reusable" | "uncertain", note?: string): void => {
-        if (released) {
-          return;
-        }
-        released = true;
-        session.onBeforeSpawn = undefined;
-        session.onSpawned = undefined;
-        if (kind === "uncertain") {
-          releaseUncertain(slotOwner, note ?? "shutdown-idle did not prove quiescence");
-        } else {
-          releaseReusable(slotOwner);
-        }
-      };
-      try {
-        if (session.canceled) {
-          finishSlot("reusable");
-          status = session.cancelExitCode();
-          break;
-        }
-        const recheck = await runXcrun(session, ["simctl", "list", "devices", "-j"]);
-        if (!recheck.stop.quiescent) {
-          log(`[sim-pool] shutdown-idle: recheck did not prove quiescence for ${device.udid}`);
-          finishSlot("uncertain", recheck.stop.note ?? "recheck did not prove quiescence");
-          status = 1;
-          if (session.canceled) {
-            status = session.cancelExitCode();
-            break;
-          }
-          continue;
-        }
-        if (session.canceled) {
-          finishSlot("reusable");
-          status = session.cancelExitCode();
-          break;
-        }
-        if (recheck.code !== 0) {
-          log(`[sim-pool] shutdown-idle: failed to recheck ${device.udid}`);
-          finishSlot("reusable");
-          status = 1;
-          continue;
-        }
-        let state = "";
-        try {
-          state = deviceState(parseDevicesJson(recheck.stdout), device.udid) ?? "";
-        } catch {
-          state = "";
-        }
-        if (!state) {
-          log(`[sim-pool] shutdown-idle: failed to recheck ${device.udid}`);
-          finishSlot("reusable");
-          status = 1;
-          continue;
-        }
-        if (state !== "Booted") {
-          log(`[sim-pool] shutdown-idle: ${device.udid} state is ${state} (not Booted)`);
-          finishSlot("reusable");
-          continue;
-        }
-        if (session.canceled) {
-          finishSlot("reusable");
-          status = session.cancelExitCode();
-          break;
-        }
-        log(`[sim-pool] Shutting down idle simulator ${device.udid}`);
-        const shutdown = await runXcrun(session, ["simctl", "shutdown", device.udid]);
-        if (!shutdown.stop.quiescent) {
-          log(`[sim-pool] shutdown-idle: shutdown did not prove quiescence for ${device.udid}`);
-          finishSlot("uncertain", shutdown.stop.note ?? "shutdown did not prove quiescence");
-          status = 1;
-          if (session.canceled) {
-            status = session.cancelExitCode();
-            break;
-          }
-          continue;
-        }
-        if (shutdown.code !== 0) {
-          log(`[sim-pool] shutdown-idle: failed to shut down ${device.udid}`);
-          finishSlot("reusable");
-          status = 1;
-          continue;
-        }
-        if (session.canceled) {
-          finishSlot("reusable");
-          status = session.cancelExitCode();
-          break;
-        }
-        finishSlot("reusable");
-      } catch (error) {
-        if (slotOwner.pgids.length > 0) {
-          finishSlot("uncertain", error instanceof Error ? error.message : String(error));
-        } else {
-          finishSlot("reusable");
-        }
-        throw error;
-      } finally {
-        if (!released) {
-          if (slotOwner.pgids.length > 0) {
-            finishSlot("uncertain", "shutdown-idle released without completion");
-          } else {
-            finishSlot("reusable");
-          }
-        }
-      }
-    }
-    if (session.canceled) {
-      status = session.cancelExitCode();
-    }
-  } finally {
-    const stopped = await session.dispose();
-    if (!stopped.quiescent && status === 0 && !session.canceled) {
-      status = 1;
-    }
-  }
-  return status;
-}
-
-export function commandStatus(config: PoolConfig): number {
-  process.stdout.write(`Pool count: ${config.count}\n`);
-  process.stdout.write(`Pool slot start: ${config.slotStart}\n`);
-  process.stdout.write(`Pool slot range: ${poolSlotRange(config)}\n`);
-  process.stdout.write(`Lock dir: ${config.lockDir}\n`);
-  process.stdout.write(`Build base: ${config.buildBase}\n\nLocks:\n`);
-  mkdirSync(config.lockDir, { recursive: true });
-  let found = false;
-  const names = existsSync(config.lockDir) ? readdirSync(config.lockDir) : [];
-  for (const name of names) {
-    const match = /^slot-([0-9]+)(\.lock)?$/.exec(name);
-    if (!match) {
-      continue;
-    }
-    if (name.endsWith(".state.json")) {
-      continue;
-    }
-  }
-  const slots = new Set<number>();
-  for (const name of names) {
-    const lockMatch = /^slot-([0-9]+)\.lock$/.exec(name);
-    const dirMatch = /^slot-([0-9]+)$/.exec(name);
-    if (lockMatch) {
-      slots.add(Number(lockMatch[1]));
-    }
-    if (dirMatch) {
-      slots.add(Number(dirMatch[1]));
-    }
-  }
-  if (slots.size === 0) {
-    process.stdout.write("  none\n");
-  } else {
-    found = true;
-    for (const slot of [...slots].sort((a, b) => a - b)) {
-      const info = inspectSlot(config.lockDir, slot);
-      const label = info.legacy
-        ? "legacy"
-        : info.flockHeld
-          ? "live"
-          : info.state && info.state !== "unreadable"
-            ? info.state.status
-            : "idle";
-      process.stdout.write(`  slot-${slot} ${label}\n`);
-    }
-  }
-  void found;
-  process.stdout.write("\nPool and booted simulators:\n");
-  const listed = spawnSync("xcrun", ["simctl", "list", "devices", "-j"], { encoding: "utf8" });
-  if (listed.status === 0) {
-    const devices = parseDevicesJson(listed.stdout);
-    for (const device of devices) {
-      const pool = /^Oppi-Pool-(\d+)$/.exec(device.name);
-      if (!pool && device.state !== "Booted") {
-        continue;
-      }
-      const slot = pool ? Number(pool[1]) : null;
-      const info = slot != null ? inspectSlot(config.lockDir, slot) : null;
-      const marker = info?.flockHeld || info?.legacy || (info?.state && info.state !== "unreadable" && info.state.status !== "reusable")
-        ? "locked"
-        : "idle";
-      process.stdout.write(
-        `  ${device.name.padEnd(18)} ${device.state.padEnd(8)} ${marker.padEnd(6)} ${device.udid}\n`,
-      );
-    }
-  }
-  return 0;
-}
-
 export function usage(): never {
   process.stderr.write(`Usage:
-  sim-pool.sh run [--root <checkout>] [--device-profile duo] -- <xcodebuild args...>
+  sim-pool.sh run [--root <checkout>] [--device-profile NAME] -- <xcodebuild args...>
+  sim-pool.sh claim --device-profile NAME [--owner SESSION]
+  sim-pool.sh release [UDID] [--owner SESSION]
+  sim-pool.sh reap [--watch]
   sim-pool.sh self-test
   sim-pool.sh status
   sim-pool.sh shutdown-idle
@@ -2223,23 +2040,46 @@ It overrides OPPI_ROOT. run always executes xcodebuild in that checkout's
 clients/apple, even if the script was launched from another tree.
 
 --device-profile NAME (or OPPI_SIM_DEVICE_PROFILE) selects a named lane:
-  duo  iPhone Duo on iOS 27.1, dedicated slot 10 (count 1). Explicit
-       OPPI_SIM_DEVICE_TYPE, OPPI_SIM_RUNTIME, OPPI_SIM_POOL_SLOT_START, and
-       OPPI_SIM_POOL_COUNT override the profile.
+  iphone  iPhone 16 Pro, run slots 0-5 (the default pool), claim slots 20-27
+  ipad    iPad Pro 13-inch (M5), run slots 8-9, claim slots 40-47
+  duo     iPhone Duo on iOS 27.1, run slot 10, claim slots 30-37
+Explicit OPPI_SIM_DEVICE_TYPE, OPPI_SIM_RUNTIME, OPPI_SIM_POOL_SLOT_START, and
+OPPI_SIM_POOL_COUNT override the profile.
 Every command builds with DEVELOPER_DIR, defaulting to the Xcode in
 xcode-toolchain.txt (Xcode 27.1); an explicit DEVELOPER_DIR wins.
 
 run acquires a simulator pool slot, injects -destination and -derivedDataPath,
 runs xcodebuild, and releases the slot on exit. An already-booted pool
 simulator is reused unless OPPI_SIM_POOL_FORCE_CLEAN_BOOT=1. Pool simulators
-stay booted after a run unless OPPI_SIM_POOL_KEEP_BOOTED=0. Unused simulator
+stay booted after a run unless OPPI_SIM_POOL_KEEP_BOOTED=0; after each run the
+reaper shuts down pool simulators idle for OPPI_SIM_POOL_IDLE_MINUTES (30)
+except the OPPI_SIM_POOL_KEEP_WARM (2) most recently used. Before booting, the
+pool shuts down least recently used idle pool simulators to keep at most
+OPPI_SIM_POOL_MAX_BOOTED (8) simulators booted, counting simulators it does not
+manage; when nothing is idle it boots anyway and says so. Unused simulator
 daemons are disabled unless OPPI_SIM_SLIM=0. Compiler index store is
 disabled unless OPPI_SIM_POOL_INDEX_STORE=1 or the command already sets
 COMPILER_INDEX_STORE_ENABLE. Ordinary run does not delete unavailable
 simulators or CoreSimulator device caches.
 
+claim gives the calling Oppi session (OPPI_CALLER_SESSION_ID, or --owner) its
+own booted, slimmed simulator for the profile and prints its UDID on stdout.
+Claiming again returns the same simulator (waiting if a reaper is working on
+it) and boots it if the reaper shut it down. release shuts down the owner's
+claimed simulators (or just UDID) and frees their slots. The reaper frees a
+claim once its owner session is stopped or gone and shuts down a claimed
+simulator whose owner has been idle, and has not claimed, for
+OPPI_SIM_POOL_IDLE_MINUTES (the claim stays). Owners are checked with the oppi
+CLI, again right before each shutdown; when that fails, claims are left alone.
+
+reap applies that idle policy once. --watch keeps doing it until nothing is
+left to reap, retrying failed shutdowns after two minutes; run (also when
+canceled) and claim start a watcher in the background
+(\$OPPI_SIM_POOL_LOCK_DIR/reaper.log). OPPI_SIM_POOL_IDLE_MINUTES=0 turns the
+reaper off.
+
 shutdown-idle acquires each slot with flock and records child process groups.
-Existing live, legacy, and flock-v1 in-flight slots are skipped. gated-v1
+Existing live, legacy, claimed, and flock-v1 in-flight slots are skipped. gated-v1
 in-flight/uncertain reclaim when recorded groups are idle or the ledger is
 proven empty. Booted is rechecked as device state, not idleness. Killing xcrun
 does not mean CoreSimulator finished.

@@ -15,6 +15,7 @@
     "sim-pool-supervise.ts",
     "sim-pool-simctl.ts",
     "sim-pool-ops.ts",
+    "sim-pool-lifecycle.ts",
     "xcode-toolchain.ts",
     "sim-pool-ffi.d.ts",
     "qa-verify.ts",

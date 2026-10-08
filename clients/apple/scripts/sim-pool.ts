@@ -4,15 +4,16 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  commandPruneCache,
-  commandRun,
+  commandClaim,
+  commandReap,
+  commandRelease,
   commandShutdownIdle,
   commandStatus,
-  extractPoolFlags,
-  loadConfig,
-  PoolError,
-  usage,
-} from "./sim-pool-ops";
+  ensureBootCapacity,
+  maintainAfterRun,
+  startReaperWatcher,
+} from "./sim-pool-lifecycle";
+import { commandPruneCache, commandRun, extractPoolFlags, loadConfig, PoolError, usage } from "./sim-pool-ops";
 import { applyXcodeToolchain } from "./xcode-toolchain";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -28,6 +29,7 @@ function selfTest(): number {
     "./clients/apple/scripts/sim-pool-shutdown.test.ts",
     "./clients/apple/scripts/sim-pool-prune.test.ts",
     "./clients/apple/scripts/sim-pool-cutover.test.ts",
+    "./clients/apple/scripts/sim-pool-lifecycle.test.ts",
     "./clients/apple/scripts/sim-slim.test.ts",
     "./clients/apple/scripts/xcode-toolchain.test.ts",
   ];
@@ -78,8 +80,28 @@ async function main(): Promise<void> {
     };
     const config = loadConfig(env, process.cwd(), scriptDir);
     switch (command) {
-      case "run":
-        process.exit(await commandRun(config, peeled.rest.slice(1)));
+      case "run": {
+        const code = await commandRun(config, peeled.rest.slice(1), {
+          beforeBoot: (udid) => ensureBootCapacity(config, udid),
+        });
+        // 130/143: canceled by SIGINT/SIGTERM. Skip the reap pass, but leave a
+        // watcher so a simulator this run booted does not stay up forever.
+        if (code === 130 || code === 143) {
+          startReaperWatcher(config);
+        } else {
+          await maintainAfterRun(config);
+        }
+        process.exit(code);
+        break;
+      }
+      case "claim":
+        process.exit(await commandClaim(config, peeled.rest.slice(1)));
+        break;
+      case "release":
+        process.exit(await commandRelease(config, peeled.rest.slice(1)));
+        break;
+      case "reap":
+        process.exit(await commandReap(config, peeled.rest.slice(1)));
         break;
       case "status":
         process.exit(commandStatus(config));

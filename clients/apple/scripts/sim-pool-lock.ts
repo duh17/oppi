@@ -34,9 +34,20 @@ export function flockFd(fd: number, op: number): number {
   return flock(fd, op);
 }
 
-export type SlotStatus = "reusable" | "in-flight" | "uncertain";
+/**
+ * `claimed` is a lease that outlives the process that took it: an Oppi session
+ * owns the slot's simulator until it releases the claim or the reaper finds the
+ * owner stopped. No flock is held while a slot is claimed; `tryAcquireSlot`
+ * refuses it unless the caller's `claimed` predicate accepts the state.
+ */
+export type SlotStatus = "reusable" | "in-flight" | "uncertain" | "claimed";
 export type SlotFormat = "flock-v1" | "flock-v2";
 export type LeaseProtocol = "ungated" | "gated-v1";
+
+export type SlotClaim = {
+  owner: string;
+  profile: string;
+};
 
 export type SlotState = {
   format: SlotFormat;
@@ -45,11 +56,21 @@ export type SlotState = {
   pid: number;
   nonce: string;
   argv: string[];
+  /**
+   * When this state was written. For `reusable` that is the release time, which
+   * the idle reaper uses as the slot's last use.
+   */
   started_at: string;
   note?: string;
   pgids: number[];
   publishing: boolean;
   publishedCount: number;
+  /**
+   * Required for `claimed`. Also kept while a lease works on a claimed slot
+   * (`in-flight`, `uncertain`), so the owner still finds its slot and no one
+   * else reclaims it.
+   */
+  claim?: SlotClaim;
 };
 
 export type OwnedSlot = {
@@ -65,6 +86,8 @@ export type OwnedSlot = {
   format: SlotFormat;
   publishing: boolean;
   publishedCount: number;
+  /** Claim carried through this lease's own state writes; see `SlotState.claim`. */
+  claim?: SlotClaim;
 };
 
 export type AcquireFailure = {
@@ -75,6 +98,8 @@ export type AcquireFailure = {
 export type AcquireSuccess = {
   ok: true;
   owned: OwnedSlot;
+  /** State found under the lock before this lease replaced it. */
+  previous: SlotState | null;
 };
 
 export type AcquireResult = AcquireSuccess | AcquireFailure;
@@ -101,7 +126,16 @@ export function readSlotState(lockDir: string, slot: number): SlotState | "unrea
     if (parsed.format !== "flock-v1" && parsed.format !== "flock-v2") {
       return "unreadable";
     }
-    if (parsed.status !== "reusable" && parsed.status !== "in-flight" && parsed.status !== "uncertain") {
+    if (
+      parsed.status !== "reusable" &&
+      parsed.status !== "in-flight" &&
+      parsed.status !== "uncertain" &&
+      parsed.status !== "claimed"
+    ) {
+      return "unreadable";
+    }
+    const claimOwner = typeof parsed.claim?.owner === "string" ? parsed.claim.owner.trim() : "";
+    if (parsed.status === "claimed" && !claimOwner) {
       return "unreadable";
     }
     const protocol: LeaseProtocol =
@@ -125,13 +159,20 @@ export function readSlotState(lockDir: string, slot: number): SlotState | "unrea
       publishing: Boolean(parsed.publishing),
       publishedCount: Number.isInteger(publishedCount) && publishedCount >= 0 ? publishedCount : 0,
       ...(parsed.note ? { note: String(parsed.note) } : {}),
+      ...(claimOwner ? { claim: { owner: claimOwner, profile: String(parsed.claim?.profile ?? "") } } : {}),
     };
   } catch {
     return "unreadable";
   }
 }
 
-function writeState(owned: OwnedSlot, status: SlotStatus, note?: string): void {
+function writeState(
+  owned: OwnedSlot,
+  status: SlotStatus,
+  note?: string,
+  claim?: SlotClaim,
+  startedAt?: string,
+): void {
   const payload: SlotState = {
     format: owned.format,
     protocol: owned.protocol,
@@ -139,11 +180,12 @@ function writeState(owned: OwnedSlot, status: SlotStatus, note?: string): void {
     pid: process.pid,
     nonce: owned.nonce,
     argv: owned.argv,
-    started_at: new Date().toISOString(),
+    started_at: startedAt ?? new Date().toISOString(),
     pgids: [...owned.pgids],
     publishing: owned.publishing,
     publishedCount: owned.publishedCount,
     ...(note ? { note } : {}),
+    ...(claim ? { claim } : {}),
   };
   const tempPath = `${owned.statePath}.${process.pid}.tmp`;
   writeFileSync(tempPath, `${JSON.stringify(payload, null, 2)}\n`);
@@ -167,6 +209,8 @@ export function tryAcquireSlot(input: {
   slot: number;
   argv: string[];
   pid?: number;
+  /** Decides, under the lock, whether this caller may take a claimed slot. */
+  claimed?: (state: SlotState) => boolean;
 }): AcquireResult {
   const { lockDir, slot, argv } = input;
   if (!Number.isInteger(slot) || slot < 0) {
@@ -213,7 +257,12 @@ export function tryAcquireSlot(input: {
     owned.fd = -1;
     return { ok: false, reason: `slot ${slot} uncertain (unreadable state)` };
   }
-  if (state && state.status !== "reusable") {
+  if (state?.claim && !input.claimed?.(state)) {
+    closeSync(fd);
+    owned.fd = -1;
+    return { ok: false, reason: `slot ${slot} claimed by ${state.claim.owner}` };
+  }
+  if (state && state.status !== "reusable" && state.status !== "claimed") {
     if (!canReclaimAbandoned(state)) {
       const reason = `slot ${slot} ${state.status}${state.note ? `: ${state.note}` : ""}`;
       closeSync(fd);
@@ -222,15 +271,16 @@ export function tryAcquireSlot(input: {
     }
   }
 
+  owned.claim = state?.claim;
   try {
-    writeState(owned, "in-flight");
+    writeState(owned, "in-flight", undefined, owned.claim);
   } catch (error) {
     closeSync(fd);
     owned.fd = -1;
     owned.closed = true;
     return { ok: false, reason: `slot ${slot} state write failed: ${error}` };
   }
-  return { ok: true, owned };
+  return { ok: true, owned, previous: state };
 }
 
 export function closeOwned(owned: OwnedSlot): void {
@@ -279,7 +329,7 @@ export function beginPublishing(owned: OwnedSlot): void {
     throw new Error("cannot publish on a closed slot");
   }
   owned.publishing = true;
-  writeState(owned, "in-flight");
+  writeState(owned, "in-flight", undefined, owned.claim);
 }
 
 export function recordOwnedPgid(owned: OwnedSlot, pgid: number): void {
@@ -294,22 +344,35 @@ export function recordOwnedPgid(owned: OwnedSlot, pgid: number): void {
   }
   owned.publishing = false;
   owned.publishedCount = owned.pgids.length;
-  writeState(owned, "in-flight");
+  writeState(owned, "in-flight", undefined, owned.claim);
 }
 
-export function releaseReusable(owned: OwnedSlot): void {
+/**
+ * `startedAt` keeps an earlier timestamp when a lease that did not use the
+ * simulator puts the state back, so the slot's idle clock does not restart.
+ */
+export function releaseReusable(owned: OwnedSlot, startedAt?: string): void {
   if (owned.closed || owned.fd < 0) {
     return;
   }
-  writeState(owned, "reusable");
+  writeState(owned, "reusable", undefined, undefined, startedAt);
   closeOwned(owned);
 }
 
-export function releaseUncertain(owned: OwnedSlot, note: string): void {
+/** Hands the slot to `claim.owner` and drops the flock; the claim persists. */
+export function releaseClaimed(owned: OwnedSlot, claim: SlotClaim, startedAt?: string): void {
   if (owned.closed || owned.fd < 0) {
     return;
   }
-  writeState(owned, "uncertain", note);
+  writeState(owned, "claimed", undefined, claim, startedAt);
+  closeOwned(owned);
+}
+
+export function releaseUncertain(owned: OwnedSlot, note: string, startedAt?: string): void {
+  if (owned.closed || owned.fd < 0) {
+    return;
+  }
+  writeState(owned, "uncertain", note, owned.claim, startedAt);
   closeOwned(owned);
 }
 

@@ -55,6 +55,8 @@ clients/apple/scripts/*
 !clients/apple/scripts/sim-pool-simctl.test.ts
 !clients/apple/scripts/sim-pool-ops.ts
 !clients/apple/scripts/sim-pool-ops.test.ts
+!clients/apple/scripts/sim-pool-lifecycle.ts
+!clients/apple/scripts/sim-pool-lifecycle.test.ts
 !clients/apple/scripts/sim-pool-cli.test.ts
 !clients/apple/scripts/sim-pool-prune.test.ts
 !clients/apple/scripts/sim-pool-shutdown.test.ts
