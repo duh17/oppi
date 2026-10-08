@@ -161,6 +161,26 @@ struct SSHTerminalProgramStatusEngineTests {
         #expect(store.root?.state == GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED) // A query is not a report.
     }
 
+    @Test func lineAndParagraphSeparatorsBecomeSpacesInTitleAndMessage() throws {
+        let engine = try SSHTerminalEngine { _ in }
+        engine.receive(Data("\u{1b}]2;one\u{2028}two\u{2029}three\u{1b}\\".utf8))
+        #expect(engine.title == "one two three")
+        engine.receive(osc("state=done:msg=" + b64("alpha\u{2028}beta\u{2029}gamma")))
+        #expect(engine.programStatus.root?.message == "alpha beta gamma")
+    }
+
+    @Test func fullResetClearsTheShownTitle() throws {
+        let engine = try SSHTerminalEngine { _ in }
+        engine.receive(Data("\u{1b}]2;old title\u{1b}\\".utf8))
+        #expect(engine.title == "old title")
+        engine.receive(Data("\u{1b}c".utf8))
+        #expect(engine.title.isEmpty)
+        engine.receive(Data("\u{1b}]2;new\u{1b}\\".utf8))
+        #expect(engine.title == "new")
+        engine.receive(Data("\u{1b}]2;\u{1b}\\".utf8))
+        #expect(engine.title.isEmpty)
+    }
+
     @Test func belTerminatedQueryAlsoGetsTheSupportReply() throws {
         var sent = Data()
         let engine = try SSHTerminalEngine { sent.append($0) }

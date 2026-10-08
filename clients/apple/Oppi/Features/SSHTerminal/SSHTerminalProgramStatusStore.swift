@@ -9,11 +9,23 @@ enum SSHTerminalDisplayText {
     static let titleLimit = 120
     static let messageLimit = 256
 
+    /// Line and paragraph separators (U+2028/U+2029) become one space so the
+    /// result is a single line and neighboring words stay apart.
     static func sanitized(_ raw: String, limit: Int) -> String {
-        String(String.UnicodeScalarView(raw.unicodeScalars.filter {
-            !CharacterSet.controlCharacters.contains($0) && !CharacterSet.illegalCharacters.contains($0)
-                && $0.properties.generalCategory != .format
-        }).prefix(limit))
+        var kept = String.UnicodeScalarView()
+        for scalar in raw.unicodeScalars {
+            if kept.count >= limit { break }
+            switch scalar.properties.generalCategory {
+            case .lineSeparator, .paragraphSeparator:
+                kept.append(" ")
+            case .format:
+                continue
+            default:
+                if CharacterSet.controlCharacters.contains(scalar) || CharacterSet.illegalCharacters.contains(scalar) { continue }
+                kept.append(scalar)
+            }
+        }
+        return String(kept)
     }
 }
 

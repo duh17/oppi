@@ -95,10 +95,13 @@ final class SSHTerminalEngine {
         }
         if titleChanged {
             var value = GhosttyString()
-            if ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_TITLE, &value) == GHOSTTY_SUCCESS,
-               let ptr = value.ptr {
-                let raw = String(decoding: UnsafeBufferPointer(start: ptr, count: value.len), as: UTF8.self)
-                title = SSHTerminalDisplayText.sanitized(raw, limit: SSHTerminalDisplayText.titleLimit)
+            if ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_TITLE, &value) == GHOSTTY_SUCCESS {
+                if let ptr = value.ptr, value.len > 0 {
+                    let raw = String(decoding: UnsafeBufferPointer(start: ptr, count: value.len), as: UTF8.self)
+                    title = SSHTerminalDisplayText.sanitized(raw, limit: SSHTerminalDisplayText.titleLimit)
+                } else {
+                    title = ""
+                }
             }
             titleChanged = false
         }
@@ -406,11 +409,15 @@ final class SSHTerminalEngine {
             }
         }
         // A full reset also reports a status clear first; this keeps RIS clearing
-        // records even if that report were ever missing.
+        // records even if that report were ever missing. libghostty clears its
+        // title on RIS without calling TITLE_CHANGED, so the shown title resets here.
         let reset: GhosttyTerminalResetFn = { _, context in
             MainActor.assumeIsolated {
                 guard let context else { return }
-                Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue().programStatus.removeAll()
+                let owner = Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue()
+                owner.programStatus.removeAll()
+                owner.title = ""
+                owner.titleChanged = false
             }
         }
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS, unsafeBitCast(status, to: UnsafeRawPointer.self))
