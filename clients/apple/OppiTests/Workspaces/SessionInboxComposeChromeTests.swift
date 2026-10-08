@@ -61,12 +61,14 @@ struct SessionInboxComposeChromeTests {
         let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
         let sheet = try appleSource("Oppi/Features/QuickSession/QuickSessionSheet.swift")
         #expect(inbox.contains("compactQuickSessionBar"))
-        #expect(inbox.contains("SessionInboxCompactComposeBar"))
+        #expect(inbox.contains("SessionInboxComposeLauncher"))
         #expect(inbox.contains("inboxFolderButton"))
         #expect(inbox.contains("pendingQuickSessionStartDictation = true"))
         #expect(workspace.contains("compactQuickSessionBar"))
-        #expect(workspace.contains("SessionInboxCompactComposeBar"))
+        #expect(workspace.contains("SessionInboxComposeLauncher"))
         #expect(workspace.contains("SessionInboxFolderToolbarButton"))
+        #expect(chrome.contains("struct SessionInboxComposeLauncher"))
+        #expect(chrome.contains("SessionInboxCompactComposeBar"))
         #expect(workspace.contains("onIncognito"))
         #expect(chrome.contains("Incognito Session"))
         #expect(chrome.contains("workspace.quickSession.dictate"))
@@ -162,8 +164,11 @@ struct SessionInboxComposeChromeTests {
 
     @Test func disabledFolderUsesUnavailableForegroundInTheSameCapsule() throws {
         let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
-        let buttonStart = try #require(chrome.range(of: "struct SessionInboxFolderToolbarButton: View {"))
-        let button = String(chrome[buttonStart.lowerBound...])
+        let button = try sourceSlice(
+            chrome,
+            start: "struct SessionInboxFolderToolbarButton: View {",
+            end: "struct SessionInboxNowPlayingRailButton: View {"
+        )
         #expect(button.contains("isEnabled ? .themeFg : .themeFgDim"))
         #expect(button.contains(".disabled(!isEnabled)"))
         #expect(!button.contains(".foregroundStyle(.themeFg)"))

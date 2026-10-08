@@ -766,67 +766,93 @@ struct SessionInboxView: View {
     @ToolbarContentBuilder
     private func toolbarContent(railEdge: HorizontalEdge?) -> some ToolbarContent {
         let joinsRail = railEdge != nil
-        ToolbarItem(placement: .principal) {
-            inboxTitle
-        }
-
-        topLeadingToolbarItem {
+        if joinsRail {
+            // Navigation, then Message, then the pinned server switcher.
+            // A text principal would keep a horizontal bar, so the system title stays.
             if let onOpenSidebar {
-                Button {
-                    onOpenSidebar()
-                } label: {
-                    Image(systemName: "sidebar.left")
+                prioritizedRailToolbarItem(joinsVerticalRail: true, priority: .navigation) {
+                    Button("Workspaces", systemImage: "sidebar.left") {
+                        onOpenSidebar()
+                    }
+                    .foregroundStyle(.themeFg)
+                    .accessibilityLabel("Show workspaces")
+                    .accessibilityIdentifier("workspace.sidebar.open")
                 }
-                .foregroundStyle(.themeFg)
-                .accessibilityLabel("Show workspaces")
-                .accessibilityIdentifier("workspace.sidebar.open")
             }
-        }
-
-        // Pinned trailing sits with the status cluster, under the wifi mark,
-        // once the capsule has a vertical layout. A normal top bar keeps it trailing.
-        if scope == .all, let selectedServer {
-            if joinsRail {
-                verticalRailToolbarItem(joinsVerticalRail: true, pinnedUnderStatus: true) {
+            prioritizedRailToolbarItem(joinsVerticalRail: true, priority: .keep) {
+                compactQuickSessionBar(joinsRail: true)
+            }
+            if scope == .all, let selectedServer {
+                prioritizedRailToolbarItem(
+                    joinsVerticalRail: true,
+                    pinnedUnderStatus: true,
+                    priority: .keep
+                ) {
                     serverSwitcher(selectedServer, fitsVerticalRail: true)
                 }
-            } else {
+            }
+            if sessionListToolbar.showsNowPlayingPill {
+                prioritizedRailToolbarItem(joinsVerticalRail: true, priority: .overflowFirst) {
+                    SessionInboxNowPlayingRailButton {
+                        presentsNowPlayingPlayer = true
+                    }
+                }
+            }
+            prioritizedRailToolbarItem(
+                joinsVerticalRail: true,
+                anchorsToRailBottom: true,
+                priority: .keep
+            ) {
+                inboxFolderButton(joinsRail: true)
+            }
+        } else {
+            ToolbarItem(placement: .principal) {
+                inboxTitle
+            }
+
+            topLeadingToolbarItem {
+                if let onOpenSidebar {
+                    Button {
+                        onOpenSidebar()
+                    } label: {
+                        Image(systemName: "sidebar.left")
+                    }
+                    .foregroundStyle(.themeFg)
+                    .accessibilityLabel("Show workspaces")
+                    .accessibilityIdentifier("workspace.sidebar.open")
+                }
+            }
+
+            if scope == .all, let selectedServer {
                 ToolbarItem(placement: .topBarTrailing) {
                     serverSwitcher(selectedServer)
                 }
             }
-        }
 
-        ToolbarItem(placement: .bottomBar) {
-            compactQuickSessionBar(joinsRail: joinsRail)
-        }
-        if sessionListToolbar.showsNowPlayingPill {
-            ToolbarSpacer(
-                sessionListToolbar.parksNowPlayingNextToCompose ? .fixed : .flexible,
-                placement: .bottomBar
-            )
             ToolbarItem(placement: .bottomBar) {
-                if let player = sessionListAudioPlayer {
-                    InAppNowPlayingPill(
-                        audioPlayer: player,
-                        accessibilityPrefix: "sessionList.nowPlaying",
-                        density: sessionListToolbar.pillDensity,
-                        onOpen: { presentsNowPlayingPlayer = true }
-                    )
+                compactQuickSessionBar(joinsRail: false)
+            }
+            if sessionListToolbar.showsNowPlayingPill {
+                ToolbarSpacer(
+                    sessionListToolbar.parksNowPlayingNextToCompose ? .fixed : .flexible,
+                    placement: .bottomBar
+                )
+                ToolbarItem(placement: .bottomBar) {
+                    if let player = sessionListAudioPlayer {
+                        InAppNowPlayingPill(
+                            audioPlayer: player,
+                            accessibilityPrefix: "sessionList.nowPlaying",
+                            density: sessionListToolbar.pillDensity,
+                            onOpen: { presentsNowPlayingPlayer = true }
+                        )
+                    }
                 }
+                ToolbarSpacer(.flexible, placement: .bottomBar)
+            } else {
+                ToolbarSpacer(.flexible, placement: .bottomBar)
             }
-            ToolbarSpacer(.flexible, placement: .bottomBar)
-        } else {
-            ToolbarSpacer(.flexible, placement: .bottomBar)
-        }
-
-        if joinsRail {
-            verticalRailToolbarItem(joinsVerticalRail: true, anchorsToRailBottom: true) {
-                inboxFolderButton
-            }
-        } else {
             ToolbarItem(placement: .bottomBar) {
-                inboxFolderButton
+                inboxFolderButton(joinsRail: false)
             }
         }
     }
@@ -1303,16 +1329,15 @@ struct SessionInboxView: View {
     }
 
     private func compactQuickSessionBar(joinsRail: Bool) -> some View {
-        SessionInboxCompactComposeBar(
+        SessionInboxComposeLauncher(
+            joinsVerticalRail: joinsRail,
             showsDictation: SessionInboxComposeChrome.showsDictationShortcut(
                 voiceInputEnabled: ReleaseFeatures.voiceInputEnabled,
                 hasActivePlayback: sessionListHasActivePlayback
             ),
             hasActivePlayback: sessionListHasActivePlayback,
             columnWidth: composeBarColumnWidth,
-            trailingReserve: joinsRail
-                ? SessionInboxComposeChrome.messageCapsuleSoloReserve
-                : SessionInboxComposeChrome.messageCapsuleFolderReserve,
+            trailingReserve: SessionInboxComposeChrome.messageCapsuleFolderReserve,
             onIncognito: nil,
             onStart: {
                 startQuickSession(dictate: false)
@@ -1371,10 +1396,11 @@ struct SessionInboxView: View {
         openSession(item)
     }
 
-    private var inboxFolderButton: some View {
+    private func inboxFolderButton(joinsRail: Bool) -> some View {
         SessionInboxFolderToolbarButton(
             isEnabled: SessionInboxComposeChrome.canOpenFiles(hasServer: activeServerId != nil),
             accessibilityLabel: "Open server files",
+            railTitle: joinsRail ? "Files" : nil,
             onOpen: openInboxFiles
         )
     }

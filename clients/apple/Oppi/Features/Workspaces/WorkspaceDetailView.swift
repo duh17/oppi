@@ -342,24 +342,29 @@ struct WorkspaceDetailView: View {
     }
 
     @ViewBuilder
+    private var worktreeMenuRows: some View {
+        Section("Worktree") {
+            ForEach(visibleWorktrees) { worktree in
+                Button {
+                    selectWorktree(worktree)
+                } label: {
+                    Label {
+                        Text(worktreeMenuTitle(for: worktree))
+                    } icon: {
+                        Image(systemName: selectedWorktreeId == worktree.id ? "checkmark" : worktree.isMain ? "house" : "point.3.connected.trianglepath.dotted")
+                    }
+                }
+                .accessibilityLabel(WorkspaceWorktreeMenuFormatting.accessibilityLabel(for: worktree))
+                .accessibilityIdentifier("workspace.worktree.\(worktree.id)")
+            }
+        }
+    }
+
+    @ViewBuilder
     private var worktreeTitleMenu: some View {
         if canSwitchWorktrees {
             Menu {
-                Section("Worktree") {
-                    ForEach(visibleWorktrees) { worktree in
-                        Button {
-                            selectWorktree(worktree)
-                        } label: {
-                            Label {
-                                Text(worktreeMenuTitle(for: worktree))
-                            } icon: {
-                                Image(systemName: selectedWorktreeId == worktree.id ? "checkmark" : worktree.isMain ? "house" : "point.3.connected.trianglepath.dotted")
-                            }
-                        }
-                        .accessibilityLabel(WorkspaceWorktreeMenuFormatting.accessibilityLabel(for: worktree))
-                        .accessibilityIdentifier("workspace.worktree.\(worktree.id)")
-                    }
-                }
+                worktreeMenuRows
             } label: {
                 worktreeTitleLabel(showsChevron: true)
                     .accessibilityLabel("Switch worktree, current worktree \(selectedWorktreeDisplayName)")
@@ -367,6 +372,25 @@ struct WorkspaceDetailView: View {
             .accessibilityIdentifier("workspace.worktree.menu")
         } else {
             worktreeTitleLabel(showsChevron: false)
+                .accessibilityLabel("Current worktree \(selectedWorktreeDisplayName)")
+                .accessibilityIdentifier("workspace.worktree.title")
+        }
+    }
+
+    /// The principal title is a wide custom view. On the rail it is a labeled
+    /// branch symbol that keeps the same worktree menu.
+    @ViewBuilder
+    private var worktreeRailButton: some View {
+        if canSwitchWorktrees {
+            Menu {
+                worktreeMenuRows
+            } label: {
+                Label("Worktree", systemImage: "arrow.triangle.branch")
+            }
+            .accessibilityLabel("Switch worktree, current worktree \(selectedWorktreeDisplayName)")
+            .accessibilityIdentifier("workspace.worktree.menu")
+        } else {
+            Label("Worktree", systemImage: "arrow.triangle.branch")
                 .accessibilityLabel("Current worktree \(selectedWorktreeDisplayName)")
                 .accessibilityIdentifier("workspace.worktree.title")
         }
@@ -460,6 +484,13 @@ struct WorkspaceDetailView: View {
     }
 
     var body: some View {
+        readingToolbarVerticalEdge { edge in
+            workspaceDetail(railEdge: edge)
+        }
+    }
+
+    @ViewBuilder
+    private func workspaceDetail(railEdge: HorizontalEdge?) -> some View {
         let data = viewData
 
         List {
@@ -645,40 +676,7 @@ struct WorkspaceDetailView: View {
             ChatView(sessionId: sessionId, workspaceIdHint: workspace.id)
         }
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                worktreeTitleMenu
-            }
-            ToolbarItem(placement: .topBarLeading) {
-                workspaceListToolbarItem
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                workspaceConfigurationButton
-            }
-            if !isNavigatingDeeperInWorkspaceStack {
-                ToolbarItem(placement: .bottomBar) {
-                    compactQuickSessionBar
-                }
-                if sessionListToolbar.showsNowPlayingPill {
-                    ToolbarSpacer(
-                        sessionListToolbar.parksNowPlayingNextToCompose ? .fixed : .flexible,
-                        placement: .bottomBar
-                    )
-                    ToolbarItem(placement: .bottomBar) {
-                        InAppNowPlayingPill(
-                            audioPlayer: connection.audioPlayer,
-                            accessibilityPrefix: "sessionList.nowPlaying",
-                            density: sessionListToolbar.pillDensity,
-                            onOpen: { presentsNowPlayingPlayer = true }
-                        )
-                    }
-                    ToolbarSpacer(.flexible, placement: .bottomBar)
-                } else {
-                    ToolbarSpacer(.flexible, placement: .bottomBar)
-                }
-                ToolbarItem(placement: .bottomBar) {
-                    workspaceFilesToolbarItem
-                }
-            }
+            workspaceDetailToolbar(railEdge: railEdge)
         }
         .refreshable {
             await refreshWorkspaceData()
@@ -791,10 +789,11 @@ struct WorkspaceDetailView: View {
         )
     }
 
-    private var workspaceFilesToolbarItem: some View {
+    private func workspaceFilesToolbarItem(joinsRail: Bool) -> some View {
         SessionInboxFolderToolbarButton(
             isEnabled: SessionInboxComposeChrome.canOpenFiles(hasServer: currentServerId != nil),
             accessibilityLabel: "Open workspace files",
+            railTitle: joinsRail ? "Files" : nil,
             onOpen: openWorkspaceFiles
         )
     }
@@ -839,8 +838,97 @@ struct WorkspaceDetailView: View {
         }
     }
 
-    private var compactQuickSessionBar: some View {
-        SessionInboxCompactComposeBar(
+    /// Split detail has no system Back. On the rail this is a labeled sidebar
+    /// symbol; the horizontal bar keeps the chevron so iPad looks the same.
+    @ViewBuilder
+    private var workspaceListRailButton: some View {
+        if navigation.workspaceNavigationPresentation == .split {
+            Button("Workspaces", systemImage: "sidebar.leading") {
+                navigation.showWorkspaceListInSplitSidebar()
+            }
+            .foregroundStyle(.themeFg)
+            .accessibilityLabel("Show workspaces")
+            .accessibilityIdentifier("workspace.sidebar.showWorkspaces")
+        }
+    }
+
+    @ToolbarContentBuilder
+    private func workspaceDetailToolbar(railEdge: HorizontalEdge?) -> some ToolbarContent {
+        let joinsRail = railEdge != nil
+        if joinsRail {
+            if navigation.workspaceNavigationPresentation == .split {
+                prioritizedRailToolbarItem(joinsVerticalRail: true, priority: .navigation) {
+                    workspaceListRailButton
+                }
+            }
+            if !isNavigatingDeeperInWorkspaceStack {
+                prioritizedRailToolbarItem(joinsVerticalRail: true, priority: .keep) {
+                    compactQuickSessionBar(joinsRail: true)
+                }
+            }
+            prioritizedRailToolbarItem(joinsVerticalRail: true, priority: .keep) {
+                worktreeRailButton
+            }
+            prioritizedRailToolbarItem(joinsVerticalRail: true, priority: .keep) {
+                workspaceConfigurationRailButton
+            }
+            if !isNavigatingDeeperInWorkspaceStack {
+                if sessionListToolbar.showsNowPlayingPill {
+                    prioritizedRailToolbarItem(joinsVerticalRail: true, priority: .overflowFirst) {
+                        SessionInboxNowPlayingRailButton {
+                            presentsNowPlayingPlayer = true
+                        }
+                    }
+                }
+                prioritizedRailToolbarItem(
+                    joinsVerticalRail: true,
+                    anchorsToRailBottom: true,
+                    priority: .keep
+                ) {
+                    workspaceFilesToolbarItem(joinsRail: true)
+                }
+            }
+        } else {
+            ToolbarItem(placement: .principal) {
+                worktreeTitleMenu
+            }
+            ToolbarItem(placement: .topBarLeading) {
+                workspaceListToolbarItem
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                workspaceConfigurationButton
+            }
+            if !isNavigatingDeeperInWorkspaceStack {
+                ToolbarItem(placement: .bottomBar) {
+                    compactQuickSessionBar(joinsRail: false)
+                }
+                if sessionListToolbar.showsNowPlayingPill {
+                    ToolbarSpacer(
+                        sessionListToolbar.parksNowPlayingNextToCompose ? .fixed : .flexible,
+                        placement: .bottomBar
+                    )
+                    ToolbarItem(placement: .bottomBar) {
+                        InAppNowPlayingPill(
+                            audioPlayer: connection.audioPlayer,
+                            accessibilityPrefix: "sessionList.nowPlaying",
+                            density: sessionListToolbar.pillDensity,
+                            onOpen: { presentsNowPlayingPlayer = true }
+                        )
+                    }
+                    ToolbarSpacer(.flexible, placement: .bottomBar)
+                } else {
+                    ToolbarSpacer(.flexible, placement: .bottomBar)
+                }
+                ToolbarItem(placement: .bottomBar) {
+                    workspaceFilesToolbarItem(joinsRail: false)
+                }
+            }
+        }
+    }
+
+    private func compactQuickSessionBar(joinsRail: Bool) -> some View {
+        SessionInboxComposeLauncher(
+            joinsVerticalRail: joinsRail,
             showsDictation: SessionInboxComposeChrome.showsDictationShortcut(
                 voiceInputEnabled: ReleaseFeatures.voiceInputEnabled,
                 hasActivePlayback: connection.audioPlayer.hasActivePlayback
@@ -875,18 +963,27 @@ struct WorkspaceDetailView: View {
     }
 
     private var workspaceConfigurationButton: some View {
-        Button {
-            guard let currentServerId else { return }
-            navigation.openWorkspaceConfiguration(
-                WorkspaceNavTarget(serverId: currentServerId, workspace: currentWorkspace)
-            )
-        } label: {
+        Button(action: openWorkspaceConfiguration) {
             Image(systemName: "slider.horizontal.3")
                 .symbolRenderingMode(.monochrome)
                 .foregroundStyle(.themeFg)
         }
         .accessibilityLabel(workspaceConfigurationAccessibilityLabel)
         .accessibilityIdentifier("workspace.edit.open")
+    }
+
+    private var workspaceConfigurationRailButton: some View {
+        Button("Config", systemImage: "slider.horizontal.3", action: openWorkspaceConfiguration)
+            .foregroundStyle(.themeFg)
+            .accessibilityLabel(workspaceConfigurationAccessibilityLabel)
+            .accessibilityIdentifier("workspace.edit.open")
+    }
+
+    private func openWorkspaceConfiguration() {
+        guard let currentServerId else { return }
+        navigation.openWorkspaceConfiguration(
+            WorkspaceNavTarget(serverId: currentServerId, workspace: currentWorkspace)
+        )
     }
 
     private var workspaceConfigurationAccessibilityLabel: String {

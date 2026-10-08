@@ -880,6 +880,30 @@ func topLeadingToolbarItem<Content: View>(
     }
 }
 
+/// Which rail items stay on the short Duo outer display.
+///
+/// Items overflow from the bottom. Navigation outranks the frequent actions,
+/// and an accessory leaves before either.
+enum VerticalRailItemPriority: Equatable {
+    case navigation
+    case keep
+    case overflowFirst
+}
+
+@available(iOS 27.0, *)
+private func verticalRailItemVisibilityPriority(
+    _ priority: VerticalRailItemPriority
+) -> ToolbarItemVisibilityPriority {
+    switch priority {
+    case .navigation:
+        ToolbarItemVisibilityPriority(higherThan: .high)
+    case .keep:
+        .high
+    case .overflowFirst:
+        .low
+    }
+}
+
 /// Moves a control onto the side rail when that rail exists. A pinned item
 /// sits with the status cluster, under the wifi mark on Duo. A bottom-anchored
 /// item starts from the rail's lower end; spacers cannot push a rail item down.
@@ -898,6 +922,35 @@ func verticalRailToolbarItem<Content: View>(
             content: content
         )
         .axisBehavior(.verticalPreferred)
+    } else {
+        ToolbarItem(placement: .topBarTrailing, content: content)
+    }
+}
+
+/// Same rail item, with an overflow priority. `visibilityPriority` is
+/// main-actor-isolated, so this wrapper builds the item itself. Chat keeps
+/// calling `verticalRailToolbarItem` without a priority.
+@MainActor
+@ToolbarContentBuilder
+func prioritizedRailToolbarItem<Content: View>(
+    joinsVerticalRail: Bool,
+    pinnedUnderStatus: Bool = false,
+    anchorsToRailBottom: Bool = false,
+    priority: VerticalRailItemPriority,
+    @ViewBuilder content: @escaping () -> Content
+) -> some ToolbarContent {
+    if #available(iOS 27.1, *), joinsVerticalRail {
+        ToolbarItem(
+            placement: anchorsToRailBottom
+                ? .bottomBar
+                : pinnedUnderStatus ? .topBarPinnedTrailing : .topBarTrailing,
+            content: content
+        )
+        .axisBehavior(.verticalPreferred)
+        .visibilityPriority(verticalRailItemVisibilityPriority(priority))
+    } else if #available(iOS 27.0, *) {
+        ToolbarItem(placement: .topBarTrailing, content: content)
+            .visibilityPriority(verticalRailItemVisibilityPriority(priority))
     } else {
         ToolbarItem(placement: .topBarTrailing, content: content)
     }
