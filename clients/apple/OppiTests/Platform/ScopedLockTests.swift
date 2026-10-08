@@ -232,7 +232,7 @@ struct ScopedLockServiceTests {
         harness.locks.forgetWorkspace(serverId: "srv", workspaceId: "w1", sessionIds: ["in-w1"])
         harness.locks.forgetSession(serverId: "srv", sessionId: "s2")
 
-        let reloaded = ScopedLockService(defaults: harness.defaults, appLock: harness.appLock, didLock: {}, stopPlayback: {})
+        let reloaded = ScopedLockService(defaults: harness.defaults, appLock: harness.appLock, didLock: {})
         #expect(reloaded.flags == [.session(serverId: "srv", sessionId: "s3")])
     }
 
@@ -345,30 +345,16 @@ struct ScopedLockSurfaceTests {
         #expect(body == String(localized: "Open Oppi to answer a question."))
     }
 
-    @Test func leavingOppiWithAnUnlockOpenStopsPlaybackAndCoversTheSwitcher() async {
+    @Test func anOpenUnlockCoversTheSwitcherUntilOppiLeavesWithAppLockOff() async {
         let harness = ScopedHarness(appLock: .off, outcomes: [.success])
         harness.locks.lock(.session(serverId: "srv", sessionId: "s1"))
-        #expect(!harness.locks.obscuresInactiveScenes)
+        #expect(!harness.locks.obscuresInactiveScenes, "nothing open, nothing to cover")
         #expect(await harness.locks.authorize(.session(serverId: "srv", workspaceId: nil, sessionId: "s1", isIncognito: false)))
         #expect(harness.locks.obscuresInactiveScenes)
 
-        let wasOpen = harness.locks.backgroundTransition { harness.appLock.appDidEnterBackground() }
+        harness.appLock.appDidEnterBackground()
 
-        #expect(wasOpen, "the backgrounded scene stays covered")
-        #expect(harness.playbackStops == 1)
-        #expect(!harness.locks.hasOpenUnlock)
-    }
-
-    @Test func aTimedAppLockKeepsTheUnlockAndPlaybackAcrossAShortBackground() async {
-        let harness = ScopedHarness(appLock: .fiveMinutes, outcomes: [.success, .success])
-        #expect(await harness.appLock.unlock())
-        harness.locks.lock(.session(serverId: "srv", sessionId: "s1"))
-        #expect(await harness.locks.authorize(.session(serverId: "srv", workspaceId: nil, sessionId: "s1", isIncognito: false)))
-
-        harness.locks.backgroundTransition { harness.appLock.appDidEnterBackground() }
-
-        #expect(harness.playbackStops == 0)
-        #expect(harness.locks.hasOpenUnlock)
+        #expect(!harness.locks.hasOpenUnlock, "leaving Oppi ended the unlock")
     }
 
     @Test func theSwitcherIsNotCoveredWhileTheDeviceAuthSheetIsUp() async {
@@ -390,7 +376,7 @@ struct ScopedLockSurfaceTests {
 
         harness.locks.forgetWorkspace(serverId: "srv", workspaceId: "w1")
 
-        let reloaded = ScopedLockService(defaults: harness.defaults, appLock: harness.appLock, didLock: {}, stopPlayback: {})
+        let reloaded = ScopedLockService(defaults: harness.defaults, appLock: harness.appLock, didLock: {})
         #expect(reloaded.flags == [.session(serverId: "srv", sessionId: "elsewhere")])
         reloaded.forgetWorkspace(serverId: "srv", workspaceId: "w2")
         #expect(reloaded.flags.isEmpty, "the recorded workspace survives a reload")
@@ -516,10 +502,8 @@ private struct ScopedHarness {
     let appLock: AppLockService
     let locks: ScopedLockService
     let authenticator: ScopedAuthenticator
-    private let playback: PlaybackCounter
 
     var prompts: Int { authenticator.calls }
-    var playbackStops: Int { playback.stops }
 
     init(appLock timeout: AppLockTimeout, outcomes: [DeviceOwnerAuthentication.Outcome]) {
         guard let defaults = UserDefaults(suiteName: "ScopedLockTests-\(UUID().uuidString)") else {
@@ -536,18 +520,10 @@ private struct ScopedHarness {
             availability: { .available },
             method: { .faceID },
             authenticator: { _ in await authenticator.authenticate() },
-            stopPlayback: {},
             didTurnOn: {}
         )
-        let playback = PlaybackCounter()
-        self.playback = playback
-        locks = ScopedLockService(defaults: defaults, appLock: appLock, didLock: {}, stopPlayback: { playback.stops += 1 })
+        locks = ScopedLockService(defaults: defaults, appLock: appLock, didLock: {})
     }
-}
-
-@MainActor
-private final class PlaybackCounter {
-    var stops = 0
 }
 
 @MainActor

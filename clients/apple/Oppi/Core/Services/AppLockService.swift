@@ -163,12 +163,8 @@ final class AppLockService {
     @ObservationIgnored private let availability: @MainActor () -> DeviceOwnerAuthentication.Availability
     @ObservationIgnored private let authenticator: @MainActor (String) async -> DeviceOwnerAuthentication.Outcome
     @ObservationIgnored private let methodProvider: @MainActor () -> DeviceOwnerAuthentication.Method
-    @ObservationIgnored private let stopPlayback: @MainActor () -> Void
     @ObservationIgnored private let didTurnOn: @MainActor () -> Void
     @ObservationIgnored private var unlockTask: Task<Bool, Never>?
-    /// Background playback keeps the process alive, so it stops when a timed
-    /// lock becomes due even though the lock itself applies on foreground.
-    @ObservationIgnored private var playbackStopTask: Task<Void, Never>?
     /// Protected-action prompts in flight; their auth sheet must not obscure.
     /// Observed so controls disabled during a prompt re-enable after it.
     private var protectedAuthenticationsInFlight = 0
@@ -179,7 +175,6 @@ final class AppLockService {
         availability: @escaping @MainActor () -> DeviceOwnerAuthentication.Availability = { DeviceOwnerAuthentication.availability() },
         method: @escaping @MainActor () -> DeviceOwnerAuthentication.Method = { DeviceOwnerAuthentication.method() },
         authenticator: @escaping @MainActor (String) async -> DeviceOwnerAuthentication.Outcome = { await DeviceOwnerAuthentication.authenticate(reason: $0) },
-        stopPlayback: @escaping @MainActor () -> Void = { AppLockPlayback.stopAll() },
         didTurnOn: @escaping @MainActor () -> Void = { AppLockService.clearContentShownBeforeAppLock() }
     ) {
         self.defaults = defaults
@@ -187,7 +182,6 @@ final class AppLockService {
         self.availability = availability
         self.authenticator = authenticator
         self.methodProvider = method
-        self.stopPlayback = stopPlayback
         self.didTurnOn = didTurnOn
         self.method = method()
         machine = AppLockMachine(
@@ -197,13 +191,6 @@ final class AppLockService {
     }
 
     private func now() -> TimeInterval { monotonicNow() }
-
-    /// At least one second, at most 30, so a suspended stretch is caught soon
-    /// after the process wakes.
-    private func secondsUntilLockIsDue() -> TimeInterval {
-        guard let lockAfter = machine.timeout.lockAfter, let backgroundedAt = machine.backgroundedAt else { return 30 }
-        return min(30, max(1, lockAfter - (now() - backgroundedAt)))
-    }
 
     /// Runs `action` now when Oppi does not need unlocking, otherwise after the
     /// next successful unlock. Deep links, notification taps, and Quick
@@ -218,8 +205,9 @@ final class AppLockService {
     }
 
     /// Turning App Lock on: content shown while it was off (ask notifications
-    /// with question text, the Live Activity, Picture in Picture) follows the
-    /// new setting at once. Runs in the foreground with the user present.
+    /// with question text, the Live Activity) follows the new setting at
+    /// once. Runs in the foreground with the user present. Playback,
+    /// including Picture in Picture, is never affected by App Lock.
     static func clearContentShownBeforeAppLock() {
         if ReleaseFeatures.localAttentionNotificationsEnabled {
             AttentionNotificationService.shared.removeAskNotifications()
@@ -227,7 +215,6 @@ final class AppLockService {
         if ReleaseFeatures.liveActivitiesEnabled {
             LiveActivityManager.shared.endAllForAppLock()
         }
-        AppLockPlayback.disablePictureInPicture()
     }
 
     var timeout: AppLockTimeout { machine.timeout }
@@ -274,29 +261,12 @@ final class AppLockService {
     func appDidEnterBackground() {
         deferredUntilUnlock = nil
         update { $0.didEnterBackground(at: now()) }
-        playbackStopTask?.cancel()
-        guard machine.isEnabled, !machine.isLocked, machine.timeout.lockAfter != nil else { return }
-        // Re-checks the monotonic deadline on every wake, so time the process
-        // spent suspended still counts. New playback is refused once the lock
-        // is due (`requiresUnlock`), so one stop is enough.
-        playbackStopTask = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                if self.requiresUnlock() {
-                    self.stopPlayback()
-                    return
-                }
-                try? await Task.sleep(for: .seconds(self.secondsUntilLockIsDue()))
-            }
-        }
     }
 
     /// A scene became active. Applies a due lock, then starts the one
     /// automatic unlock prompt for this lock.
     @discardableResult
     func sceneDidBecomeActive() -> Task<Bool, Never>? {
-        playbackStopTask?.cancel()
-        playbackStopTask = nil
         refreshAvailability()
         update { $0.didBecomeActive(at: now()) }
         var autoPrompt = false
@@ -386,9 +356,6 @@ final class AppLockService {
         change(&machine)
         guard machine != before else { return }
         onLockStateChange?()
-        if machine.isLocked, !before.isLocked {
-            stopPlayback()
-        }
         if let deferred = deferredUntilUnlock, !requiresUnlock() {
             deferredUntilUnlock = nil
             deferred()

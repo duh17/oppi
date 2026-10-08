@@ -1523,9 +1523,8 @@ final class TimedTextCaptionOverlay {
 enum InlineVideoPlayerConfiguration {
     static func apply(to controller: AVPlayerViewController) {
         controller.showsPlaybackControls = true
-        // Picture in Picture follows App Lock (off while it is on); App Lock
-        // also pauses this player when Oppi locks.
-        AppLockPlayback.register(controller)
+        controller.allowsPictureInPicturePlayback = true
+        controller.canStartPictureInPictureAutomaticallyFromInline = true
         controller.entersFullScreenWhenPlaybackBegins = false
         controller.exitsFullScreenWhenPlaybackEnds = false
         controller.view.accessibilityIdentifier = "videoPlayer.native"

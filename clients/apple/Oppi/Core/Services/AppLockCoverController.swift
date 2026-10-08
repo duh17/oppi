@@ -66,11 +66,11 @@ final class AppLockCoverController {
             let otherScenesInForeground = UIApplication.shared.connectedScenes.contains {
                 $0 !== scene && $0.activationState != .background && $0.activationState != .unattached
             }
-            var scopedContentOpen = scopedLocks.hasOpenUnlock
+            // Read before App Lock's background transition, which can end
+            // the unlocks; the backgrounded scene stays covered either way.
+            let scopedContentOpen = scopedLocks.hasOpenUnlock
             if !otherScenesInForeground {
-                scopedContentOpen = scopedLocks.backgroundTransition {
-                    service.appDidEnterBackground()
-                }
+                service.appDidEnterBackground()
             }
             setObscured(service.isEnabled || scopedContentOpen, scene: scene)
         }

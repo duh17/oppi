@@ -194,9 +194,6 @@ final class ScopedLockService {
     /// Called after a lock turns on so Oppi's own notifications and the Live
     /// Activity stop showing text from the newly locked scope.
     @ObservationIgnored private let didLock: @MainActor () -> Void
-    /// Stops audio and video when Oppi leaves the foreground and that ends
-    /// the unlocks: what was playing may come from a now-locked scope.
-    @ObservationIgnored private let stopPlayback: @MainActor () -> Void
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let appLock: AppLockService
@@ -204,10 +201,8 @@ final class ScopedLockService {
     init(
         defaults: UserDefaults = .standard,
         appLock: AppLockService = .shared,
-        didLock: @escaping @MainActor () -> Void = { ScopedLockService.clearContentShownBeforeLock() },
-        stopPlayback: @escaping @MainActor () -> Void = { AppLockPlayback.stopAll() }
+        didLock: @escaping @MainActor () -> Void = { ScopedLockService.clearContentShownBeforeLock() }
     ) {
-        self.stopPlayback = stopPlayback
         self.defaults = defaults
         self.appLock = appLock
         self.didLock = didLock
@@ -283,19 +278,6 @@ final class ScopedLockService {
         hasOpenUnlock && !isAuthenticating && !appLock.isAuthenticating
     }
 
-    /// Wraps App Lock's background transition. Returns whether unlocked
-    /// content was open, so the backgrounded scene stays covered. When the
-    /// transition ends those unlocks (App Lock off, or an immediate lock),
-    /// playback stops.
-    @discardableResult
-    func backgroundTransition(_ transition: () -> Void) -> Bool {
-        let wasOpen = hasOpenUnlock
-        transition()
-        if wasOpen, !hasOpenUnlock {
-            stopPlayback()
-        }
-        return wasOpen
-    }
 
     // MARK: - Gates
 

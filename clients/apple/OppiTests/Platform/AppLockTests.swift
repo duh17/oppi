@@ -249,17 +249,6 @@ struct AppLockServiceTests {
         #expect(harness.authenticator.calls == 1)
     }
 
-    @Test func lockingStopsPlayback() async {
-        let harness = Harness(timeout: .immediately, outcomes: [.success])
-        #expect(await harness.service.unlock())
-        #expect(harness.playbackStops == 0)
-
-        harness.service.appDidEnterBackground()
-
-        #expect(harness.service.isLocked)
-        #expect(harness.playbackStops == 1)
-    }
-
     @Test func turningAppLockOnClearsContentShownWhileItWasOff() {
         let harness = Harness(timeout: .off, outcomes: [])
         harness.service.setTimeout(.fiveMinutes)
@@ -458,25 +447,6 @@ struct AppLockRedactionTests {
 @MainActor
 @Suite("App Lock content races")
 struct AppLockContentRaceTests {
-    @Test func onceTheLockIsDueNothingPlaysOrResumes() {
-        let lock = Flag()
-        let player = AudioPlayerService(appLockBlocksPlayback: { lock.value })
-        #expect(player.shouldAutoplayAudioMessage(itemID: "v1", playbackBehavior: .playNow))
-        player._startPCMStreamForTesting(id: "before")
-        player.pause()
-
-        lock.value = true
-        player.resume()
-        #expect(player.isPaused, "the Lock Screen play command cannot resume")
-        #expect(!player.shouldAutoplayAudioMessage(itemID: "v2", playbackBehavior: .playNow))
-        player.stop()
-        player._startPCMStreamForTesting(id: "after")
-        #expect(player.playingItemID == nil, "no new voice stream")
-        player.toggleDataPlayback(data: Data([0, 1, 2]), itemID: "clip")
-        #expect(player.playingItemID == nil)
-        #expect(player.loadingItemID == nil)
-    }
-
     @Test func anAskQueuedWhileAppLockTurnsOnIsAddedRedacted() async {
         let service = AttentionNotificationService.shared
         let previousState = service._applicationStateForTesting
@@ -578,7 +548,6 @@ private final class StubAuthenticator {
 
 @MainActor
 private final class HookCounts {
-    var playbackStops = 0
     var turnedOn = 0
 }
 
@@ -590,7 +559,6 @@ private struct Harness {
     let service: AppLockService
     private let hooks: HookCounts
 
-    var playbackStops: Int { hooks.playbackStops }
     var turnedOn: Int { hooks.turnedOn }
 
     init(
@@ -615,7 +583,6 @@ private struct Harness {
             availability: { availability },
             method: { .faceID },
             authenticator: { _ in await authenticator.authenticate() },
-            stopPlayback: { hooks.playbackStops += 1 },
             didTurnOn: { hooks.turnedOn += 1 }
         )
     }

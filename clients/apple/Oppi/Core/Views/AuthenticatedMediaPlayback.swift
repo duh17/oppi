@@ -2065,9 +2065,8 @@ final class AuthenticatedMediaPlayerViewController: AVPlayerViewController {
         self.playbackSession = playbackSession
         player = playbackSession.player
         showsPlaybackControls = true
-        // Picture in Picture follows App Lock (off while it is on); App Lock
-        // also pauses this player when Oppi locks.
-        AppLockPlayback.register(self)
+        allowsPictureInPicturePlayback = true
+        canStartPictureInPictureAutomaticallyFromInline = true
         entersFullScreenWhenPlaybackBegins = false
         exitsFullScreenWhenPlaybackEnds = false
         view.accessibilityIdentifier = "videoPlayer.native"
