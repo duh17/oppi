@@ -113,7 +113,7 @@ struct SessionOutlineView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { close() }
+                    Button(role: .close) { close() }
                 }
             }
             .task {
@@ -700,13 +700,13 @@ struct SessionOutlineView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button(role: .cancel) {
                         clearPendingTreeNavigationSelection()
                     }
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Navigate") {
+                    Button("Navigate", systemImage: "arrow.turn.down.right") {
                         beginTreeNavigationWithCustomSummary()
                     }
                     .disabled(!hasCustomSummaryInstructions || navigatingTreeNodeId != nil)

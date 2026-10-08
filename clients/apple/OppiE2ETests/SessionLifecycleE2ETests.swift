@@ -162,7 +162,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
             contextNavigationBar.waitForExistence(timeout: 10),
             "A tap near the lower edge of the Context hit target did not open Context"
         )
-        tap(contextNavigationBar.buttons["Done"], named: "Context done button")
+        tap(contextNavigationBar.buttons["chat.context.close"], named: "Context close button")
 
         let chatInput = app.textViews["chat.input"]
         tap(chatInput, named: "chat input")

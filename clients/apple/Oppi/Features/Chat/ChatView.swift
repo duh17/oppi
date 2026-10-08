@@ -1123,12 +1123,16 @@ struct ChatView: View {
     /// One control per rail slot, top to bottom: back, session, files,
     /// outline, context. The title text has no room on the rail, so the
     /// session slot is the avatar and carries the title's menu actions.
+    /// Overflow empties the rail from the bottom; on a short rail (the Duo
+    /// cover display in landscape) Back, Files, and Context stay, and the
+    /// session menu and outline go to the overflow menu first.
     @ToolbarContentBuilder
     private func chatRailToolbarContent(railEdge: HorizontalEdge?) -> some ToolbarContent {
         if usesCustomChatBackButton {
             verticalRailToolbarItem(joinsVerticalRail: true) {
                 chatBackButton
             }
+            .chatRailKeepsVisible()
         }
         verticalRailToolbarItem(joinsVerticalRail: true) {
             chatRailSessionMenu
@@ -1137,6 +1141,7 @@ struct ChatView: View {
             verticalRailToolbarItem(joinsVerticalRail: true) {
                 chatFilesToolbarItem
             }
+            .chatRailKeepsVisible()
         }
         if outlineAvailability.isAvailable {
             verticalRailToolbarItem(joinsVerticalRail: true) {
@@ -1146,6 +1151,7 @@ struct ChatView: View {
         verticalRailToolbarItem(joinsVerticalRail: true) {
             contextRingButton(railEdge: railEdge)
         }
+        .chatRailKeepsVisible()
     }
 
     private var chatRailSessionMenu: some View {
@@ -3031,7 +3037,8 @@ struct ChatView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { showContextInspector = false }
+                    Button(role: .close) { showContextInspector = false }
+                        .accessibilityIdentifier("chat.context.close")
                 }
             }
         }
@@ -3188,6 +3195,17 @@ struct ChatSessionTitleView: View {
                 .accessibilityIdentifier(iconAccessibilityIdentifier)
         } else {
             icon
+        }
+    }
+}
+
+private extension ToolbarContent {
+    @ToolbarContentBuilder
+    func chatRailKeepsVisible() -> some ToolbarContent {
+        if #available(iOS 27.0, *) {
+            visibilityPriority(.high)
+        } else {
+            self
         }
     }
 }
