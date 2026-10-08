@@ -4,7 +4,8 @@ import UIKit
 ///
 /// Uses computed properties so values update when font preferences change.
 /// The user can scale dense code/tool text in Settings; the default is the
-/// shared readable code baseline on every device class.
+/// shared readable code baseline at every size, so tool output keeps its type
+/// size when an iPhone Duo folds or a window resizes.
 enum ToolFont {
     /// Small: line numbers, counters, secondary labels
     static var small: UIFont { font(baseSize: 10, weight: .regular) }
@@ -16,22 +17,11 @@ enum ToolFont {
     static var title: UIFont { font(baseSize: 12, weight: .semibold) }
     static var titleRegular: UIFont { font(baseSize: 12, weight: .regular) }
 
-    private static var currentIdiom: UIUserInterfaceIdiom {
-        guard Thread.isMainThread else { return .phone }
-        return MainActor.assumeIsolated {
-            UIDevice.current.userInterfaceIdiom
-        }
+    static func font(baseSize: CGFloat, weight: UIFont.Weight) -> UIFont {
+        FontPreferences.codeFont.font(size: pointSize(baseSize: baseSize), weight: weight)
     }
 
-    static func font(
-        baseSize: CGFloat,
-        weight: UIFont.Weight,
-        idiom: UIUserInterfaceIdiom = currentIdiom
-    ) -> UIFont {
-        FontPreferences.codeFont.font(size: pointSize(baseSize: baseSize, idiom: idiom), weight: weight)
-    }
-
-    static func pointSize(baseSize: CGFloat, idiom: UIUserInterfaceIdiom = currentIdiom) -> CGFloat {
-        FontPreferences.codePointSize(baseSize: baseSize, idiom: idiom)
+    static func pointSize(baseSize: CGFloat) -> CGFloat {
+        FontPreferences.codePointSize(baseSize: baseSize)
     }
 }

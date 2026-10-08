@@ -297,7 +297,6 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         while Date() < deadline {
             let size = app.frame.size
             if min(size.width, size.height) >= 700,
-               size.width >= 980,
                size.width >= size.height {
                 return
             }
@@ -308,13 +307,6 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         try XCTSkipUnless(
             min(size.width, size.height) >= 700,
             "iPad adaptive shell screenshots require an iPad-sized simulator",
-            file: file,
-            line: line
-        )
-        XCTAssertGreaterThanOrEqual(
-            size.width,
-            980,
-            "iPad adaptive shell screenshots require a landscape canvas wide enough for the split shell. App frame: \(size)",
             file: file,
             line: line
         )

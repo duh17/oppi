@@ -243,24 +243,21 @@ struct FontPreferencesTests {
         AppFont.rebuild()
 
         #expect(FontPreferences.codeTextScale == FontPreferences.standardCodeTextScale)
-        #expect(FontPreferences.codePointSize(baseSize: 10, idiom: .phone) == 11)
-        #expect(FontPreferences.codePointSize(baseSize: 11, idiom: .phone) == 12)
-        #expect(FontPreferences.codePointSize(baseSize: 12, idiom: .phone) == 13)
-        #expect(FontPreferences.codePointSize(baseSize: 11, idiom: .pad) == 12)
+        #expect(FontPreferences.codePointSize(baseSize: 10) == 11)
+        #expect(FontPreferences.codePointSize(baseSize: 11) == 12)
+        #expect(FontPreferences.codePointSize(baseSize: 12) == 13)
         #expect(AppFont.monoSmall.pointSize == 11)
         #expect(AppFont.mono.pointSize == 12)
         #expect(AppFont.monoMedium.pointSize == 13)
     }
 
-    @Test func codePointSizeUsesDeviceLocalScaleWithoutPlatformDelta() {
+    @Test func codePointSizeUsesDeviceLocalScale() {
         let defaults = captureCodeTextDefaults()
         defer { restoreCodeTextDefaults(defaults) }
 
         FontPreferences.setCodeTextScale(1.25)
-        #expect(FontPreferences.codePointSize(baseSize: 10, idiom: .phone) == 14)
-        #expect(FontPreferences.codePointSize(baseSize: 10, idiom: .pad) == 14)
-        #expect(FontPreferences.codePointSize(baseSize: 11, idiom: .phone) == 15)
-        #expect(FontPreferences.codePointSize(baseSize: 11, idiom: .pad) == 15)
+        #expect(FontPreferences.codePointSize(baseSize: 10) == 14)
+        #expect(FontPreferences.codePointSize(baseSize: 11) == 15)
     }
 
     @Test func storedEffectiveScaleMapsCurrentReadableSizeToOneHundredPercent() {
@@ -272,7 +269,7 @@ struct FontPreferencesTests {
         UserDefaults.standard.removeObject(forKey: "codeFontSize")
 
         #expect(FontPreferences.codeTextScale == 1.0)
-        #expect(FontPreferences.codePointSize(baseSize: 11, idiom: .phone) == 12)
+        #expect(FontPreferences.codePointSize(baseSize: 11) == 12)
     }
 
     @Test func storedCodeFontSizePresetsMapToScale() {
@@ -490,20 +487,9 @@ struct ToolFontTextScaleTests {
         UserDefaults.standard.removeObject(forKey: "codeFontSize")
         AppFont.rebuild()
 
-        #expect(ToolFont.pointSize(baseSize: 10, idiom: .phone) == 11)
-        #expect(ToolFont.pointSize(baseSize: 11, idiom: .phone) == 12)
-        #expect(ToolFont.pointSize(baseSize: 12, idiom: .phone) == 13)
-    }
-
-    @Test func padUsesSameScaleAsPhone() {
-        let defaults = captureCodeTextDefaults()
-        defer { restoreCodeTextDefaults(defaults) }
-
-        FontPreferences.setCodeTextScale(1.3)
-        #expect(ToolFont.pointSize(baseSize: 10, idiom: .phone) == 14)
-        #expect(ToolFont.pointSize(baseSize: 10, idiom: .pad) == 14)
-        #expect(ToolFont.pointSize(baseSize: 12, idiom: .phone) == 17)
-        #expect(ToolFont.pointSize(baseSize: 12, idiom: .pad) == 17)
+        #expect(ToolFont.pointSize(baseSize: 10) == 11)
+        #expect(ToolFont.pointSize(baseSize: 11) == 12)
+        #expect(ToolFont.pointSize(baseSize: 12) == 13)
     }
 
     @Test func regularToolOutputFontUsesConfiguredScale() {

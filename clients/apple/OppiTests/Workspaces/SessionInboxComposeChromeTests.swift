@@ -170,69 +170,19 @@ struct SessionInboxComposeChromeTests {
         #expect(!button.contains(".hidden("))
     }
 
-    @Test func expandsMessageCapsuleOnPhoneAndCompactPadWhenIdle() {
-        #expect(
-            SessionInboxComposeChrome.expandsMessageCapsule(
-                horizontalSizeClass: .compact,
-                idiom: .phone,
-                hasActivePlayback: false
-            )
-        )
-        #expect(
-            SessionInboxComposeChrome.expandsMessageCapsule(
-                horizontalSizeClass: .regular,
-                idiom: .phone,
-                hasActivePlayback: false
-            )
-        )
-        #expect(
-            SessionInboxComposeChrome.expandsMessageCapsule(
-                horizontalSizeClass: .compact,
-                idiom: .pad,
-                hasActivePlayback: false
-            )
-        )
-        #expect(
-            SessionInboxComposeChrome.expandsMessageCapsule(
-                horizontalSizeClass: nil,
-                idiom: .phone,
-                hasActivePlayback: false
-            )
-        )
+    @Test func expandsMessageCapsuleAtCompactOrUnknownWidthWhenIdle() {
+        #expect(SessionInboxComposeChrome.expandsMessageCapsule(horizontalSizeClass: .compact, hasActivePlayback: false))
+        #expect(SessionInboxComposeChrome.expandsMessageCapsule(horizontalSizeClass: nil, hasActivePlayback: false))
     }
 
-    @Test func doesNotExpandMessageCapsuleOnRegularPad() {
-        #expect(
-            !SessionInboxComposeChrome.expandsMessageCapsule(
-                horizontalSizeClass: .regular,
-                idiom: .pad,
-                hasActivePlayback: false
-            )
-        )
+    /// Regular width covers iPad and the iPhone Duo inner display alike.
+    @Test func doesNotExpandMessageCapsuleAtRegularWidth() {
+        #expect(!SessionInboxComposeChrome.expandsMessageCapsule(horizontalSizeClass: .regular, hasActivePlayback: false))
     }
 
     @Test func doesNotExpandMessageCapsuleWhileNowPlayingOwnsTheBar() {
-        #expect(
-            !SessionInboxComposeChrome.expandsMessageCapsule(
-                horizontalSizeClass: .compact,
-                idiom: .phone,
-                hasActivePlayback: true
-            )
-        )
-        #expect(
-            !SessionInboxComposeChrome.expandsMessageCapsule(
-                horizontalSizeClass: .compact,
-                idiom: .pad,
-                hasActivePlayback: true
-            )
-        )
-        #expect(
-            !SessionInboxComposeChrome.expandsMessageCapsule(
-                horizontalSizeClass: .regular,
-                idiom: .pad,
-                hasActivePlayback: true
-            )
-        )
+        #expect(!SessionInboxComposeChrome.expandsMessageCapsule(horizontalSizeClass: .compact, hasActivePlayback: true))
+        #expect(!SessionInboxComposeChrome.expandsMessageCapsule(horizontalSizeClass: .regular, hasActivePlayback: true))
     }
 
     @Test func messageCapsuleMinWidthUsesReserveAndFloorWhenExpanded() {
@@ -291,7 +241,6 @@ struct SessionInboxComposeChromeTests {
         #expect(chrome.contains("static func messageCapsuleMinWidth("))
         #expect(chrome.contains("messageCapsuleFolderReserve"))
         #expect(chrome.contains("messageCapsuleMinWidthFloor"))
-        #expect(chrome.contains("horizontalSizeClass == .regular && idiom == .pad"))
         #expect(chrome.contains("width: minWidth"))
         #expect(!chrome.contains("Spacer(minLength:"))
         #expect(!chrome.contains(".infinity"))

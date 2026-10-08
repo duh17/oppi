@@ -15,23 +15,7 @@ struct WorkspaceMediaOverlayNavigationTests {
         #expect(!WorkspaceMediaOverlayNavigationPolicy.isOverlayActive(depth: 0))
     }
 
-    @Test func overlayFreezesMeasuredPresentation() {
-        #expect(
-            WorkspaceMediaOverlayNavigationPolicy.effectivePresentation(
-                measured: .split,
-                overlayActive: true,
-                frozen: .stack
-            ) == .stack
-        )
-        #expect(
-            WorkspaceMediaOverlayNavigationPolicy.effectivePresentation(
-                measured: .split,
-                overlayActive: false,
-                frozen: .stack
-            ) == .split
-        )
-        #expect(!WorkspaceMediaOverlayNavigationPolicy.shouldApplyMeasuredPresentation(overlayActive: true))
-        #expect(WorkspaceMediaOverlayNavigationPolicy.shouldApplyMeasuredPresentation(overlayActive: false))
+    @Test func cancelledDismissalKeepsOverlay() {
         #expect(!WorkspaceMediaOverlayNavigationPolicy.shouldEndOverlay(cancelled: true))
         #expect(WorkspaceMediaOverlayNavigationPolicy.shouldEndOverlay(cancelled: false))
     }

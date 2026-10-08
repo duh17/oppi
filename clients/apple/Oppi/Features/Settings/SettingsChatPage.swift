@@ -25,6 +25,9 @@ struct SettingsChatPage: View {
                 }
             }
 
+            // Feature availability, not layout: this must match the gate in
+            // ChatView.compactTurnsEnabled, or the toggle shows where it does
+            // nothing (or hides where it applies). Change both together.
             if UIDevice.current.userInterfaceIdiom == .phone {
                 Section {
                     Toggle("Compact Turns", isOn: $compactTurnsEnabled)

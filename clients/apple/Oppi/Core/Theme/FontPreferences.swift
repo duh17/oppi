@@ -24,7 +24,8 @@ enum FontPreferences {
     // MARK: - Code Text Scale
 
     /// Current user-facing code text scale. Defaults to 100%, where 100% maps
-    /// to the app's readable code baseline. iPhone and iPad use the same scale;
+    /// to the app's readable code baseline. Every device class and window size
+    /// uses the same scale, so code text does not jump when an iPhone Duo folds;
     /// each device persists its own local value through UserDefaults.
     static var codeTextScale: CGFloat {
         CGFloat(FontPreferenceStore.codeTextScale)
@@ -41,12 +42,8 @@ enum FontPreferences {
         CGFloat(FontPreferenceStore.clampedCodeTextScale(Double(scale)))
     }
 
-    static func codePointSize(
-        baseSize: CGFloat,
-        idiom: UIUserInterfaceIdiom = currentIdiom
-    ) -> CGFloat {
-        _ = idiom
-        return codePointSize(baseSize: baseSize, codeTextScale: codeTextScale)
+    static func codePointSize(baseSize: CGFloat) -> CGFloat {
+        codePointSize(baseSize: baseSize, codeTextScale: codeTextScale)
     }
 
     static func codePointSize(baseSize: CGFloat, codeTextScale: CGFloat) -> CGFloat {
@@ -93,11 +90,10 @@ enum FontPreferences {
         baseSize: CGFloat,
         textStyle: UIFont.TextStyle,
         weight: UIFont.Weight = .regular,
-        idiom: UIUserInterfaceIdiom = currentIdiom,
         compatibleWith traitCollection: UITraitCollection? = nil
     ) -> UIFont {
         let baseFont = codeFont.font(
-            size: codePointSize(baseSize: baseSize, idiom: idiom),
+            size: codePointSize(baseSize: baseSize),
             weight: weight
         )
         let metrics = UIFontMetrics(forTextStyle: textStyle)
@@ -105,13 +101,6 @@ enum FontPreferences {
             return metrics.scaledFont(for: baseFont, compatibleWith: traitCollection)
         }
         return metrics.scaledFont(for: baseFont)
-    }
-
-    private static var currentIdiom: UIUserInterfaceIdiom {
-        guard Thread.isMainThread else { return .phone }
-        return MainActor.assumeIsolated {
-            UIDevice.current.userInterfaceIdiom
-        }
     }
 
     /// Current code font family.

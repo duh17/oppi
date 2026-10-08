@@ -1,7 +1,4 @@
 import SwiftUI
-#if canImport(UIKit)
-import UIKit
-#endif
 
 // MARK: - Scoping logic (testable)
 
@@ -350,13 +347,12 @@ struct WorkspaceContextBar: View {
         (gitStatus?.recentCommits ?? []) + additionalCommits
     }
 
+    /// Regular width (iPad, the iPhone Duo inner display) gets the larger git
+    /// bar type. This chrome sits above the timeline, so a fold steps it one
+    /// text style with the rest of the regular layout; reading text in the
+    /// timeline keeps its size.
     private var usesIPadTypography: Bool {
-        guard horizontalSizeClass == .regular else { return false }
-#if canImport(UIKit)
-        return UIDevice.current.userInterfaceIdiom == .pad
-#else
-        return false
-#endif
+        horizontalSizeClass == .regular
     }
 
     private func gitBarFont(compact: Font, iPad: Font) -> Font {

@@ -47,18 +47,6 @@ enum WorkspaceMediaOverlayNavigationPolicy {
         depth > 0
     }
 
-    static func effectivePresentation(
-        measured: WorkspaceNavigationPresentation,
-        overlayActive: Bool,
-        frozen: WorkspaceNavigationPresentation
-    ) -> WorkspaceNavigationPresentation {
-        overlayActive ? frozen : measured
-    }
-
-    static func shouldApplyMeasuredPresentation(overlayActive: Bool) -> Bool {
-        !overlayActive
-    }
-
     /// Cancelled AVKit dismissals remain fullscreen, so the navigation freeze
     /// must stay in place until a committed dismissal.
     static func shouldEndOverlay(cancelled: Bool) -> Bool {

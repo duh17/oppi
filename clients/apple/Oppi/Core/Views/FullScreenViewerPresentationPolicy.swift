@@ -2,8 +2,10 @@ import UIKit
 
 @MainActor
 enum FullScreenViewerPresentationPolicy {
+    /// Regular width (iPad, the iPhone Duo inner display) covers the window;
+    /// compact width keeps the large page sheet.
     static func prefersFullScreenOverlay(for traitCollection: UITraitCollection) -> Bool {
-        traitCollection.horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom == .pad
+        traitCollection.horizontalSizeClass == .regular
     }
 
     static func configureLargePresentation(

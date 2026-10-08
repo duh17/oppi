@@ -1777,6 +1777,39 @@ struct AppNavigationShellRoutingTests {
     }
 }
 
+@Suite("Workspace stack/split presentation")
+struct WorkspaceNavigationPresentationResolveTests {
+    private func resolve(
+        _ horizontal: UserInterfaceSizeClass?,
+        _ vertical: UserInterfaceSizeClass?,
+        _ width: CGFloat,
+        _ height: CGFloat
+    ) -> WorkspaceNavigationPresentation {
+        WorkspaceNavigationPresentation.resolve(
+            horizontalSizeClass: horizontal,
+            verticalSizeClass: vertical,
+            size: CGSize(width: width, height: height)
+        )
+    }
+
+    /// iPhone Duo inner display (regular both ways): split in landscape,
+    /// stack in portrait. A square regular window splits.
+    @Test func regularBothWaysSplitsOnlyWhenAtLeastAsWideAsTall() {
+        #expect(resolve(.regular, .regular, 951, 669) == .split)
+        #expect(resolve(.regular, .regular, 669, 951) == .stack)
+        #expect(resolve(.regular, .regular, 800, 800) == .split)
+    }
+
+    /// Duo outer display, iPad Slide Over, a large iPhone in landscape
+    /// (regular width, compact height), or no trait yet.
+    @Test func anyCompactOrMissingSizeClassKeepsTheStack() {
+        #expect(resolve(.compact, .regular, 1366, 1024) == .stack)
+        #expect(resolve(.regular, .compact, 956, 440) == .stack)
+        #expect(resolve(nil, .regular, 1366, 1024) == .stack)
+        #expect(resolve(.regular, nil, 1366, 1024) == .stack)
+    }
+}
+
 @Suite("Workspace wiki-link file lookup policy")
 struct WorkspaceWikiLinkFileLookupPolicyTests {
     @Test func deterministicAbsenceRecognizesOnly404DirectoryListings() {

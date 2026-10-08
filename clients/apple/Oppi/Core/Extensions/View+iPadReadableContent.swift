@@ -1,7 +1,4 @@
 import SwiftUI
-#if canImport(UIKit)
-import UIKit
-#endif
 
 enum IPadReadableContentWidth {
     static let form: CGFloat = 760
@@ -9,8 +6,8 @@ enum IPadReadableContentWidth {
 }
 
 extension View {
-    /// Caps long form/list content on regular-width iPad while leaving compact
-    /// iPhone navigation unchanged.
+    /// Caps long form/list content at regular width (iPad, the iPhone Duo inner
+    /// display) while leaving compact-width layouts unchanged.
     func iPadReadableContent(maxWidth: CGFloat = IPadReadableContentWidth.detail) -> some View {
         modifier(IPadReadableContentModifier(maxWidth: maxWidth))
     }
@@ -20,18 +17,9 @@ private struct IPadReadableContentModifier: ViewModifier {
     let maxWidth: CGFloat
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    private var shouldConstrain: Bool {
-        guard horizontalSizeClass == .regular else { return false }
-#if canImport(UIKit)
-        return UIDevice.current.userInterfaceIdiom == .pad
-#else
-        return false
-#endif
-    }
-
     @ViewBuilder
     func body(content: Content) -> some View {
-        if shouldConstrain {
+        if horizontalSizeClass == .regular {
             content
                 .frame(maxWidth: maxWidth)
                 .frame(maxWidth: .infinity, alignment: .top)

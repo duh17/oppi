@@ -6,17 +6,9 @@ struct DesktopCurrentStillViewerView: View {
     @Environment(\.theme) private var theme
     @State private var model: DesktopCurrentStillViewerModel?
 
+    // Reachable only from the sidebar utility row, which owns the iPhone-only
+    // product gate (`WorkspaceSidebarPrimaryUtilities.items(for:)`).
     var body: some View {
-        Group {
-            if UIDevice.current.userInterfaceIdiom == .phone {
-                phoneBody
-            } else {
-                EmptyView()
-            }
-        }
-    }
-
-    private var phoneBody: some View {
         Group {
             if let model {
                 content(model)
@@ -41,12 +33,9 @@ struct DesktopCurrentStillViewerView: View {
                 Button {
                     Task { await model?.refresh() }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
+                    Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(model == nil || model?.canRetry == false)
-                .accessibilityLabel("Refresh")
                 .accessibilityHint("Reloads the current remote screen without capturing again")
                 .accessibilityIdentifier("desktop.still.refresh")
             }

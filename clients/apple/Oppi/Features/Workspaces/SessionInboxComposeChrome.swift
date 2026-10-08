@@ -1,7 +1,4 @@
 import SwiftUI
-#if canImport(UIKit)
-import UIKit
-#endif
 
 /// Session-list bottom chrome shared by All Sessions and workspace lists.
 /// Search lives in the navigation-bar drawer and reveals by pulling the list.
@@ -22,16 +19,15 @@ enum SessionInboxComposeChrome {
     /// Narrowest expanded Message capsule on compact splits.
     static let messageCapsuleMinWidthFloor: CGFloat = 180
 
-    /// Grow the Message capsule on iPhone and compact iPad. Keep it intrinsic
-    /// on regular-width iPad, and while now-playing shares the bottom bar.
+    /// Grow the Message capsule at compact width. Keep it intrinsic at regular
+    /// width (iPad, the iPhone Duo inner display), and while now-playing shares
+    /// the bottom bar.
     static func expandsMessageCapsule(
         horizontalSizeClass: UserInterfaceSizeClass?,
-        idiom: UIUserInterfaceIdiom,
         hasActivePlayback: Bool
     ) -> Bool {
         guard !hasActivePlayback else { return false }
-        if horizontalSizeClass == .regular && idiom == .pad { return false }
-        return true
+        return horizontalSizeClass != .regular
     }
 
     /// Finite min width so the leading capsule covers the title line without
@@ -89,7 +85,6 @@ struct SessionInboxCompactComposeBar: View {
     var body: some View {
         let expands = SessionInboxComposeChrome.expandsMessageCapsule(
             horizontalSizeClass: horizontalSizeClass,
-            idiom: UIDevice.current.userInterfaceIdiom,
             hasActivePlayback: hasActivePlayback
         )
         let minWidth = SessionInboxComposeChrome.messageCapsuleMinWidth(

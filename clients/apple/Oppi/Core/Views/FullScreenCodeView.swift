@@ -393,7 +393,7 @@ private struct FullScreenViewerPresentationModifier: ViewModifier {
     @Environment(\.openChatReader) private var openChatReader
 
     private var prefersFullScreenCover: Bool {
-        horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom == .pad
+        horizontalSizeClass == .regular
     }
 
     @ViewBuilder

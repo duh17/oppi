@@ -33,6 +33,22 @@ enum AppLaunchPhase: Sendable, Equatable {
 enum WorkspaceNavigationPresentation: Sendable, Equatable {
     case stack
     case split
+
+    /// The split shell needs room both ways: regular width for two columns,
+    /// regular height for the sidebar list, and a window at least as wide as
+    /// it is tall. That covers iPad landscape and the iPhone Duo inner display
+    /// in landscape (951×669pt). Compact width (Duo outer display, iPhone, iPad
+    /// Slide Over), compact height (a large iPhone in landscape), and
+    /// taller-than-wide windows keep the stack. No point threshold: the old
+    /// 980pt floor was a device-size guess that excluded the Duo.
+    static func resolve(
+        horizontalSizeClass: UserInterfaceSizeClass?,
+        verticalSizeClass: UserInterfaceSizeClass?,
+        size: CGSize
+    ) -> Self {
+        guard horizontalSizeClass == .regular, verticalSizeClass == .regular else { return .stack }
+        return size.width >= size.height ? .split : .stack
+    }
 }
 
 enum SessionNavigationSource: Sendable, Equatable {

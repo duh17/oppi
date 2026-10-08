@@ -6,16 +6,18 @@ struct WorkspaceAdaptiveRootView: View {
     @Environment(ServerStore.self) private var serverStore
     @Environment(\.chatReaderPayloadStore) private var chatReaderPayloadStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
-    private let minimumSplitWidth: CGFloat = 980
+    /// False until the first measured presentation has been applied, so launch
+    /// never mounts the wrong shell for one frame.
+    @State private var hasAppliedPresentation = false
 
     var body: some View {
         GeometryReader { proxy in
-            let measured = presentation(for: proxy.size)
-            let presentation = WorkspaceMediaOverlayNavigationPolicy.effectivePresentation(
-                measured: measured,
-                overlayActive: navigation.isMediaOverlayActive,
-                frozen: navigation.workspaceNavigationPresentation
+            let measured = WorkspaceNavigationPresentation.resolve(
+                horizontalSizeClass: horizontalSizeClass,
+                verticalSizeClass: verticalSizeClass,
+                size: proxy.size
             )
 
             // A locked active server covers everything under it: lists,
@@ -26,22 +28,32 @@ struct WorkspaceAdaptiveRootView: View {
             ) {
                 LockedServerSwitchMenu()
             } content: {
-                switch presentation {
-                case .stack:
-                    WorkspaceStackRootView()
-                case .split:
-                    WorkspaceSplitRootView()
+                // Render the shell AppNavigation already converted its routes for,
+                // never the raw measurement. A fold or rotation first converts the
+                // stack path into split selection (or back) in one mutation, then
+                // the new shell mounts once with matching state. Rendering the raw
+                // measurement mounted the new shell against the old shell's routes
+                // for a frame, then remounted the split detail when its
+                // `.id(splitDetailTarget)` changed. AVKit fullscreen freezes the
+                // presentation inside AppNavigation, so it needs no check here.
+                if hasAppliedPresentation {
+                    switch navigation.workspaceNavigationPresentation {
+                    case .stack:
+                        WorkspaceStackRootView()
+                    case .split:
+                        WorkspaceSplitRootView()
+                    }
+                } else {
+                    Color.clear
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .modifier(WorkspaceCreationIntakeModifier())
             .onAppear {
-                applyPresentation(presentation)
+                applyPresentation(measured)
+                hasAppliedPresentation = true
             }
             .onChange(of: measured) { _, newValue in
-                guard WorkspaceMediaOverlayNavigationPolicy.shouldApplyMeasuredPresentation(
-                    overlayActive: navigation.isMediaOverlayActive
-                ) else { return }
                 applyPresentation(newValue)
             }
             .onChange(of: navigation.isMediaOverlayActive) { wasActive, isActive in
@@ -53,12 +65,6 @@ struct WorkspaceAdaptiveRootView: View {
 
     private var activeServer: PairedServer? {
         coordinator.activeServerId.flatMap { serverStore.server(for: $0) }
-    }
-
-    private func presentation(for size: CGSize) -> WorkspaceNavigationPresentation {
-        guard horizontalSizeClass == .regular else { return .stack }
-        guard size.width >= minimumSplitWidth else { return .stack }
-        return size.width >= size.height ? .split : .stack
     }
 
     private func applyPresentation(_ presentation: WorkspaceNavigationPresentation) {
@@ -186,10 +192,11 @@ private struct WorkspaceSplitSidebarToggleButton: View {
         Button {
             navigation.splitColumnVisibility = isSidebarVisible ? .detailOnly : .all
         } label: {
-            Image(systemName: "sidebar.left")
+            // Title plus symbol so the toolbar can render it on the Duo's
+            // vertical rail and in overflow menus.
+            Label(isSidebarVisible ? "Hide Sidebar" : "Show Sidebar", systemImage: "sidebar.leading")
         }
         .foregroundStyle(.themeFg)
-        .accessibilityLabel(isSidebarVisible ? "Hide sidebar" : "Show sidebar")
         .accessibilityIdentifier("workspace.split.sidebarToggle")
     }
 }
