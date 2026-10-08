@@ -60,8 +60,8 @@ struct ChatTimelineChromeOverlapTests {
 
     @Test func emptyHeaderStillCoversNavigationGap() {
         let timeline = CGRect(x: 0, y: 0, width: 390, height: 844)
-        // Named-space overlay: zero-height bar stretched to timeline width,
-        // origin at the safe-area top (below the nav bar).
+        // Empty context bar: zero height, sitting at the safe-area top below
+        // the nav bar while the timeline starts at the window top.
         let emptyHeaderAtSafeArea = CGRect(x: 0, y: 103, width: 390, height: 0)
 
         #expect(
@@ -72,51 +72,24 @@ struct ChatTimelineChromeOverlapTests {
         )
     }
 
-    @Test func globalFramesBelowNavCollapseToBarHeight() {
-        let timelineLaidOutBelowNav = CGRect(x: 0, y: 103, width: 390, height: 741)
-        let header = CGRect(x: 16, y: 103, width: 358, height: 48)
-        #expect(
-            ChatTimelineChromeOverlap.topInset(
-                timelineFrame: timelineLaidOutBelowNav,
-                headerFrame: header
-            ) == header.height,
-            "Without a safe-area gap, shared-origin frames are only the bar height"
-        )
-        #expect(
-            ChatTimelineChromeOverlap.topInset(
-                timelineFrame: timelineLaidOutBelowNav,
-                headerFrame: header,
-                safeAreaTop: 103
-            ) == 151,
-            "Shared-origin frames plus safe area keep the first row below the nav"
-        )
-    }
-
     @Test func unmeasuredFramesDoNotInventInset() {
         #expect(
             ChatTimelineChromeOverlap.topInset(timelineFrame: .zero, headerFrame: .zero) == 0
         )
     }
 
+    /// Hosted under a real navigation bar: the measured overlap alone must
+    /// cover the bar and the navigation chrome above it, with no inset read.
     @MainActor
-    @Test func namedSpaceBelowNavCollapsesInsetToBarHeight() async {
+    @Test func overlapFromFramesCoversNavigationChromeAndBar() async {
         let frames = await measureChromeOverlayFrames(hugHeader: true, barHeight: 48)
-        let rawInset = ChatTimelineChromeOverlap.topInset(
+        let inset = ChatTimelineChromeOverlap.topInset(
             timelineFrame: frames.timeline,
             headerFrame: frames.header
         )
-        #expect(abs(frames.header.minY - frames.timeline.minY) < 1)
         #expect(
-            rawInset < 80,
-            "0486bc75 named-space frames share the safe-area origin so inset is only the bar; header=\(frames.header) timeline=\(frames.timeline) inset=\(rawInset)"
-        )
-        #expect(
-            ChatTimelineChromeOverlap.topInset(
-                timelineFrame: frames.timeline,
-                headerFrame: frames.header,
-                safeAreaTop: frames.safeAreaTop
-            ) >= frames.safeAreaTop + 40,
-            "Safe-area compensation must keep the first row below the nav; safeArea=\(frames.safeAreaTop) header=\(frames.header)"
+            abs(inset - (frames.safeAreaTop + 48)) < 1,
+            "First row must clear the nav and the bar; safeArea=\(frames.safeAreaTop) header=\(frames.header) timeline=\(frames.timeline) inset=\(inset)"
         )
     }
 }
@@ -207,14 +180,14 @@ private struct ChromeOverlayProbe: View {
     let frames: ChromeOverlayFrames
 
     var body: some View {
+        // Same order as ChatView.chatTimelineScaffold.
         Color.gray
-            .ignoresSafeArea(.container, edges: .top)
-            .coordinateSpace(name: ChatTimelineChromeOverlap.coordinateSpaceName)
             .onGeometryChange(for: CGRect.self) {
-                $0.frame(in: .named(ChatTimelineChromeOverlap.coordinateSpaceName))
+                $0.frame(in: .global)
             } action: {
                 frames.timeline = $0
             }
+            .ignoresSafeArea(.container, edges: .top)
             .overlay(alignment: .top) {
                 ZStack(alignment: .topLeading) {
                     Rectangle()
@@ -223,7 +196,7 @@ private struct ChromeOverlayProbe: View {
                 }
                 .modifier(ConditionalHuggingHeader(enabled: hugHeader))
                 .onGeometryChange(for: CGRect.self) {
-                    $0.frame(in: .named(ChatTimelineChromeOverlap.coordinateSpaceName))
+                    $0.frame(in: .global)
                 } action: {
                     frames.header = $0
                 }

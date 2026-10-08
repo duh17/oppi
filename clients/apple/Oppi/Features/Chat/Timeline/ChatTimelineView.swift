@@ -40,27 +40,19 @@ enum TimelineRenderWindowPolicy {
 /// under Liquid Glass. `contentInsetAdjustmentBehavior` is `.never` because
 /// SwiftUI zeros the UIKit safe area on that expanded view.
 ///
-/// Named-space frames often share the safe-area origin instead of starting
-/// at 0 under the nav. In that case `header.maxY - timeline.minY` is only
-/// the branch chip, and pull-to-top cannot uncover the first row. Add the
-/// SwiftUI safe-area gap when both frames share `minY`.
+/// The overlap is measured from frames, never from a safe-area inset. Both
+/// frames are in window coordinates: the timeline is measured inside
+/// `ignoresSafeArea`, where it starts under the navigation bar, and the
+/// context bar overlays below that bar. `header.maxY - timeline.minY` then
+/// covers the bar and the chrome above it, and follows any change to either.
+/// (A named space on the `ignoresSafeArea` view reports the two frames from
+/// different origins, so it cannot be used here.)
 enum ChatTimelineChromeOverlap {
-    static let coordinateSpaceName = "chatTimelineChrome"
-
-    static func topInset(
-        timelineFrame: CGRect,
-        headerFrame: CGRect,
-        safeAreaTop: CGFloat = 0
-    ) -> CGFloat {
+    static func topInset(timelineFrame: CGRect, headerFrame: CGRect) -> CGFloat {
         if timelineFrame == .zero, headerFrame == .zero {
             return 0
         }
-
-        let headerBottom = max(0, headerFrame.maxY - timelineFrame.minY)
-        if safeAreaTop > 0, abs(headerFrame.minY - timelineFrame.minY) < 1 {
-            return headerBottom + safeAreaTop
-        }
-        return headerBottom
+        return max(0, headerFrame.maxY - timelineFrame.minY)
     }
 
     /// Keep overlay measurement on the bar's ideal height, not a full-screen

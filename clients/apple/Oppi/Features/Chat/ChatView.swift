@@ -133,7 +133,6 @@ struct ChatView: View {
     @State private var footerHeight: CGFloat = 0
     @State private var timelineChromeFrame: CGRect = .zero
     @State private var headerChromeFrame: CGRect = .zero
-    @State private var chromeSafeAreaTop: CGFloat = 0
     @State private var visibleAudioStripItemIDs: Set<String> = []
     @State private var nowPlayingDrawerExpanded = false
     @State private var reviewCommentDrawerExpanded = false
@@ -745,20 +744,20 @@ struct ChatView: View {
     private var timelineTopOverlap: CGFloat {
         ChatTimelineChromeOverlap.topInset(
             timelineFrame: timelineChromeFrame,
-            headerFrame: headerChromeFrame,
-            safeAreaTop: chromeSafeAreaTop
+            headerFrame: headerChromeFrame
         )
     }
 
     private var chatTimelineScaffold: some View {
         chatTimeline
-            .ignoresSafeArea(.container, edges: .top)
-            .coordinateSpace(name: ChatTimelineChromeOverlap.coordinateSpaceName)
+            // Measured inside `ignoresSafeArea`: the frame reaches up under
+            // the navigation bar (see ChatTimelineChromeOverlap).
             .onGeometryChange(for: CGRect.self) {
-                $0.frame(in: .named(ChatTimelineChromeOverlap.coordinateSpaceName))
+                $0.frame(in: .global)
             } action: {
                 timelineChromeFrame = $0
             }
+            .ignoresSafeArea(.container, edges: .top)
             .overlay {
                 // Dismiss scrim: dims the timeline so content doesn't
                 // bleed through the context bar's glass effect, and
@@ -788,7 +787,7 @@ struct ChatView: View {
                 )
                 .modifier(ChatTimelineChromeOverlap.HuggingHeader())
                 .onGeometryChange(for: CGRect.self) {
-                    $0.frame(in: .named(ChatTimelineChromeOverlap.coordinateSpaceName))
+                    $0.frame(in: .global)
                 } action: {
                     headerChromeFrame = $0
                 }
@@ -1082,15 +1081,6 @@ struct ChatView: View {
                 for: .bottomBar
             )
             .toolbarVisibility(.visible, for: .navigationBar)
-            .background {
-                GeometryReader { proxy in
-                    Color.clear
-                        .onAppear { chromeSafeAreaTop = proxy.safeAreaInsets.top }
-                        .onChange(of: proxy.safeAreaInsets.top) { _, top in
-                            chromeSafeAreaTop = top
-                        }
-                }
-            }
             .toolbar {
                 if joinsRail {
                     chatRailToolbarContent(railEdge: railEdge)
