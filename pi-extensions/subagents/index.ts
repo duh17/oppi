@@ -20,8 +20,10 @@ import {
 	sessionLink,
 	subagentFromCreate,
 	subagentRows,
+	renderSubagentTerminal,
 	widgetChrome,
 	type Subagent,
+	type SubagentTerminalStyle,
 } from "./subagents.ts";
 import {
 	attentionText,
@@ -130,6 +132,25 @@ function parseJson(text: string): unknown {
 	}
 }
 
+function terminalStyle(theme: {
+	fg: (
+		color: "accent" | "success" | "warning" | "error" | "dim" | "toolTitle" | "borderAccent",
+		text: string,
+	) => string;
+	bold: (text: string) => string;
+}): SubagentTerminalStyle {
+	return {
+		accent: (text) => theme.fg("accent", text),
+		success: (text) => theme.fg("success", text),
+		warning: (text) => theme.fg("warning", text),
+		error: (text) => theme.fg("error", text),
+		dim: (text) => theme.fg("dim", text),
+		title: (text) => theme.fg("toolTitle", text),
+		rule: (text) => theme.fg("borderAccent", text),
+		bold: (text) => theme.bold(text),
+	};
+}
+
 export default function subagentsExtension(pi: ExtensionAPI) {
 	let seen: Subagent[] = [];
 	let shown: Subagent[] = [];
@@ -158,11 +179,18 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			ui.setWidget(WIDGET_KEY, undefined);
 			return;
 		}
-		const rows = subagentRows(shown);
-		const chrome = widgetChrome(shown);
+		const agents = shown;
+		const rows = subagentRows(agents);
+		const chrome = widgetChrome(agents);
 		ui.setStatus(WIDGET_KEY, chrome.subtitle);
-		ui.setWidget(WIDGET_KEY, () => ({
-			render: () => [chrome.title, ...rows.map(rowFallback)],
+		ui.setWidget(WIDGET_KEY, (_tui, theme) => ({
+			// Phone activity rows stay on renderNative. This band is the terminal only.
+			render(width: number) {
+				return renderSubagentTerminal(agents, {
+					width: Math.max(1, width),
+					style: theme ? terminalStyle(theme) : undefined,
+				});
+			},
 			renderNative: () => ({
 				version: 1,
 				id: `widget:${WIDGET_KEY}`,

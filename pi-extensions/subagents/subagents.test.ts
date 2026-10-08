@@ -3,11 +3,14 @@ import {
 	applyGet,
 	applyWaitReading,
 	refreshLaunched,
+	renderSubagentTerminal,
 	rowFallback,
 	subagentFromCreate,
 	subagentRows,
 	widgetChrome,
 	withStatuses,
+	type Subagent,
+	type SubagentTerminalStyle,
 } from "./subagents.ts";
 
 describe("subagents", () => {
@@ -316,5 +319,104 @@ describe("subagents", () => {
 		expect(row?.subtitle).toBe("Working · deepseek-v4-flash");
 		expect(row?.detail).toBe("child1");
 		expect(row?.progress).toBeUndefined();
+	});
+});
+
+describe("terminal band", () => {
+	const marked: SubagentTerminalStyle = {
+		accent: (text) => `<accent>${text}</accent>`,
+		success: (text) => `<success>${text}</success>`,
+		warning: (text) => `<warning>${text}</warning>`,
+		error: (text) => `<error>${text}</error>`,
+		dim: (text) => `<dim>${text}</dim>`,
+		title: (text) => `<title>${text}</title>`,
+		rule: (text) => `<rule>${text}</rule>`,
+		bold: (text) => `<bold>${text}</bold>`,
+	};
+
+	function child(partial: Partial<Subagent> & Pick<Subagent, "id" | "title" | "state">): Subagent {
+		return {
+			subtitle: partial.id.slice(0, 8),
+			link: `oppi://session/${partial.id}`,
+			...partial,
+		};
+	}
+
+	const crew: Subagent[] = [
+		child({
+			id: "1fa2aa56-aaaa",
+			title: "worker-server-deps-lts",
+			state: "success",
+			model: "xai/grok-4.7",
+			contextTokens: 4_000,
+			contextWindow: 100_000,
+		}),
+		child({
+			id: "bbbbbbbb-bbbb",
+			title: "worker-swift-dead-code",
+			state: "running",
+			model: "xai/grok-4.7",
+			contextTokens: 0,
+			contextWindow: 100_000,
+		}),
+		child({
+			id: "cccccccc-cccc",
+			title: "scout-unlanded-branches",
+			state: "success",
+			model: "xai/grok-4.7",
+			contextTokens: 3_000,
+			contextWindow: 100_000,
+		}),
+	];
+
+	test("a phone-width band keeps status and model and drops the session URL", () => {
+		const lines = renderSubagentTerminal(crew, { width: 52 });
+		expect(lines[0]).toBe("\u2502 \u25cf 3 subagents \u00b7 1 working");
+		expect(lines.join("\n")).not.toContain("oppi://");
+		expect(lines.join("\n")).not.toContain("1fa2aa56");
+		const working = lines.find((line) => line.includes("worker-swift-dead-code"));
+		expect(working).toContain("Working");
+		expect(working).toContain("grok-4.7");
+		expect(working).toContain("0%");
+		expect(lines.every((line) => [...line].length <= 52)).toBe(true);
+		const workingAt = lines[2]?.indexOf("Working");
+		const doneAt = lines[1]?.indexOf("Done");
+		expect(workingAt).toBe(doneAt);
+	});
+
+	test("a narrow band keeps the status and truncates the name before the URL can appear", () => {
+		const lines = renderSubagentTerminal(crew, { width: 28 });
+		expect(lines.join("\n")).not.toContain("oppi://");
+		expect(lines.join("\n")).not.toContain("grok-4.7");
+		const working = lines.find((line) => line.includes("Working"));
+		expect(working).toBeDefined();
+		expect(working).not.toContain("worker-swift-dead-code");
+		expect(lines.every((line) => [...line].length <= 28)).toBe(true);
+	});
+
+	test("attention uses the warning mark and does not change the phone row", () => {
+		const warned = child({ id: "child-1", title: "scout", state: "warning", model: "anthropic/claude-opus-4-6" });
+		const lines = renderSubagentTerminal([warned], { width: 40, style: marked });
+		expect(lines[0]).toContain("<warning>!</warning>");
+		expect(lines[0]).toContain("Needs attention");
+		expect(lines[1]).toContain("<warning>Needs attention</warning>");
+		expect(lines.join("\n")).not.toContain("oppi://");
+		const [row] = subagentRows([warned]);
+		expect(rowFallback(row!)).toContain("oppi://session/child-1");
+		expect(row?.subtitle).toBe("Needs attention \u00b7 opus-4-6");
+	});
+
+	test("an empty set draws nothing", () => {
+		expect(renderSubagentTerminal([])).toEqual([]);
+	});
+
+	test("a wide-character name is truncated before the row can wrap", () => {
+		const lines = renderSubagentTerminal(
+			[child({ id: "child-1", title: "\u68c0\u67e5\u5de5\u4f5c\u6811\u5ba1\u8ba1", state: "running", model: "xai/grok-4.7" })],
+			{ width: 20 },
+		);
+		expect(lines[1]).toContain("Working");
+		expect(lines[1]).not.toContain("\u5ba1\u8ba1");
+		expect(lines[1]).not.toContain("oppi://");
 	});
 });

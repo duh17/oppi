@@ -54,6 +54,7 @@ describe("subagent refresh", () => {
 		let status: string | undefined;
 		type Row = { state: string; subtitle: string; detail?: string; progress?: number };
 		let row: Row | undefined;
+		let terminal: string[] | undefined;
 		const { default: extension } = await import("./index.ts");
 		extension({
 			on: (event: string, handler: (...args: unknown[]) => void) => { handlers.set(event, handler); },
@@ -66,8 +67,12 @@ describe("subagent refresh", () => {
 				setStatus: (_key: string, value: string | undefined) => { status = value; },
 				setWidget: (_key: string, value: unknown) => {
 					if (typeof value !== "function") return;
-					const widget = (value as () => { renderNative: () => { blocks: Array<{ rows: Row[] }> } })();
+					const widget = (value as () => {
+						render: (width: number) => string[];
+						renderNative: () => { blocks: Array<{ rows: Row[] }> };
+					})();
 					row = widget.renderNative().blocks[0]?.rows[0];
+					terminal = widget.render(52);
 				},
 			},
 			sessionManager: { getSessionId: () => "parent-1", getEntries: () => [] },
@@ -88,6 +93,8 @@ describe("subagent refresh", () => {
 		expect(row?.subtitle).toBe("Needs attention · model");
 		expect(row?.detail).toBe("50%");
 		expect(row?.progress).toBeCloseTo(0.5);
+		expect(terminal?.join("\n")).toContain("Needs attention");
+		expect(terminal?.join("\n")).not.toContain("oppi://");
 		const idleWait = waitChildren[1];
 		expect(idleWait).toBeDefined();
 		idleWait!.stdout.emit("data", '{"ok":true,"data":{"session_id":"child-1","status":"ready","reason":"idle"}}');
