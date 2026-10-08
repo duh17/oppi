@@ -172,7 +172,9 @@ struct SSHTerminalTests {
                 try? await Task.sleep(for: .seconds(2)) // bounded failure oracle, not synchronization
                 return nil
             }
-            let first = await group.next()
+            // TaskGroup<Data?>.next() is Data??; ?? nil keeps the Data? race result.
+            // swiftlint:disable:next redundant_nil_coalescing
+            let first = await group.next() ?? nil
             group.cancelAll()
             return first
         }
