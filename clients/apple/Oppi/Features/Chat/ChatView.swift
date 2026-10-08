@@ -1674,14 +1674,12 @@ struct ChatView: View {
         .accessibilityLabel("Open context inspector")
     }
 
+    /// Sized from the chat's own width (the measured timeline column), not the
+    /// screen: a split column or a resized window leaves less.
     private var chatPrincipalTitleMaxWidth: CGFloat {
-        let screenWidth = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }?
-            .screen.bounds.width ?? 390
         let reservedChromeWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 220 : 178
         let upperBound: CGFloat = dynamicTypeSize.isAccessibilitySize ? 260 : 320
-        return max(132, min(upperBound, screenWidth - reservedChromeWidth))
+        return max(132, min(upperBound, timelineChromeFrame.width - reservedChromeWidth))
     }
 
     private var sessionTitleLabel: some View {

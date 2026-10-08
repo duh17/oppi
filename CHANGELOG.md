@@ -153,6 +153,7 @@ Entries labeled **Mac** describe work on `main`; the Mac app is not part of the 
 ### Fixed
 
 - **Client:** Full-screen video captions and the caption language button stay inside the safe area, so on iPhone Duo they no longer sit under the side rail.
+- **Client:** The chat title's width follows the chat column instead of the screen, so it fits an iPad split column or a resized window.
 - **Client:** Quick Session stays inside the safe area, so on iPhone Duo's landscape poses it no longer covers the vertical control rail; only the dimmed scrim reaches the screen edges. The composer rides the keyboard with SwiftUI's keyboard safe area instead of keyboard-frame math, and the inline review-comment draft follows the keyboard layout guide, so it also stays above a floating or docked keyboard in a resized window.
 - **Client:** The chat timeline lays its rows out inside the safe area on each side separately, so a vertical control rail on only the leading or trailing edge (iPhone Duo landscape) never sits over message text, and rows reclaim the space when the rail goes away.
 - **Client:** Chat rows, images, diagrams, formulas, and tool output size from their own container, not the screen, and tool rows read their own safe area instead of the window's. Metal orbs and the markup canvas take their pixel scale from the view's display scale. On a resized window or a Duo display these no longer fall back to the screen's size before layout.
