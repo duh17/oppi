@@ -241,6 +241,7 @@ async function runAskDialog(
   questions: AskQuestion[],
   allowCustom: boolean,
   opts: ExtensionUIDialogOptions | undefined,
+  getSessionName: () => string | undefined,
 ): Promise<AskDialogResult> {
   const ui = ctx.ui as AskUIContext;
 
@@ -257,6 +258,7 @@ async function runAskDialog(
       questions,
       allowCustom,
       opts,
+      { getSessionName },
     );
     return result ?? { answers: {}, allIgnored: true };
   }
@@ -348,6 +350,7 @@ export function createAskFactory(): ExtensionFactory {
           params.questions,
           allowCustom,
           dialogOptions,
+          () => pi.getSessionName(),
         );
         return buildAskToolResult(params.questions, askResult.answers);
       },

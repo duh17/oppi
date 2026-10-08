@@ -10,7 +10,7 @@ It supports:
 - single-select and multi-select options
 - optional custom text answers
 - native Oppi AskCard rendering through the documented `ctx.ui.ask()` request when available
-- terminal TUI fallback through `ctx.ui.custom()`
+- terminal TUI fallback through `ctx.ui.custom()`; on Pi 1.1.0+ the dialog reports OSC 7501 `blocked` (kind `question`) while it waits, then hands the terminal back to Pi's own status when it closes
 - portable `select` / `input` fallback for other Pi UI contexts
 
 ## Local install for Oppi development

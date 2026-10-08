@@ -45,9 +45,26 @@ export type AskDialogOptions = {
   timeout?: number;
 };
 
+/** OSC 7501 program status as accepted by pi-tui >= 1.1.0 `Terminal.setProgramStatus`. */
+type ProgramStatus = {
+  state: "idle" | "working" | "done" | "blocked" | "error";
+  app?: string;
+  kind?: "permission" | "question" | "auth";
+  message?: string;
+};
+
+type ProgramStatusTerminal = {
+  setProgramStatus?: (status: ProgramStatus) => void;
+};
+
+export type AskDialogTui = {
+  requestRender: () => void;
+  terminal?: ProgramStatusTerminal;
+};
+
 export type AskCustomRunner = (
   factory: (
-    tui: { requestRender: () => void },
+    tui: AskDialogTui,
     theme: AskDialogTheme,
     kb: unknown,
     done: (result: AskDialogResult) => void,
@@ -55,13 +72,157 @@ export type AskCustomRunner = (
   options?: AskDialogOptions,
 ) => Promise<AskDialogResult | undefined>;
 
+/**
+ * Report OSC 7501 `blocked`/`question` while the dialog waits, and hand the
+ * terminal back to Pi's own status when it closes.
+ *
+ * Pi's reporter skips a report identical to its last, so it would never
+ * re-send `working` after we override it. Instead we divert Pi's reports into
+ * a holder for the dialog's life, then replay the latest one (or `working`)
+ * through the real method on release. Returns undefined when the terminal
+ * has no `setProgramStatus` (Pi < 1.1.0); the returned release is idempotent.
+ */
+function holdProgramStatus(
+  terminal: ProgramStatusTerminal | undefined,
+  message: string | undefined,
+  sessionName: (() => string | undefined) | undefined,
+): (() => void) | undefined {
+  const original = terminal?.setProgramStatus;
+  if (!terminal || typeof original !== "function") {
+    return undefined;
+  }
+
+  const hadOwn = Object.prototype.hasOwnProperty.call(
+    terminal,
+    "setProgramStatus",
+  );
+  let held: ProgramStatus | undefined;
+  let released = false;
+  const holder = (status: ProgramStatus): void => {
+    held = status;
+  };
+
+  const restoreMethod = (): void => {
+    released = true;
+    if (terminal.setProgramStatus !== holder) {
+      return;
+    }
+    if (hadOwn) {
+      terminal.setProgramStatus = original;
+    } else {
+      delete terminal.setProgramStatus;
+    }
+  };
+
+  // Status reporting is best effort: a failed replay must not drop the
+  // user's answer or replace the error that closed the dialog.
+  const release = (): void => {
+    if (released) {
+      return;
+    }
+    restoreMethod();
+    try {
+      if (held) {
+        original.call(terminal, held);
+        return;
+      }
+      const name = statusMessage(sessionName?.());
+      original.call(terminal, {
+        state: "working",
+        app: "pi",
+        ...(name ? { message: name } : {}),
+      });
+    } catch {
+      // The terminal already has the original method back.
+    }
+  };
+
+  terminal.setProgramStatus = holder;
+  try {
+    original.call(terminal, {
+      state: "blocked",
+      kind: "question",
+      app: "pi",
+      ...(message ? { message } : {}),
+    });
+  } catch (error) {
+    restoreMethod();
+    throw error;
+  }
+  return release;
+}
+
+/**
+ * Status messages are model- and user-controlled text that ends up inside an
+ * escape sequence. Drop every control character (ESC, BEL, C1 ST, ...) so the
+ * text cannot terminate the sequence or start another.
+ */
+function statusMessage(text: string | undefined): string | undefined {
+  const cleaned = text
+    // eslint-disable-next-line no-control-regex
+    ?.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned ? cleaned : undefined;
+}
+
+export type AskTerminalHooks = {
+  /** Pi session name, used for the `working` status replayed when Pi sent none. */
+  getSessionName?: () => string | undefined;
+};
+
 export async function runTerminalAskDialog(
   custom: AskCustomRunner,
   questions: AskQuestion[],
   allowCustom: boolean,
   options?: AskDialogOptions,
+  hooks?: AskTerminalHooks,
 ): Promise<AskDialogResult | undefined> {
-  return custom((tui, theme, _kb, done) => {
+  let releaseStatus: (() => void) | undefined;
+  try {
+    return await custom((tui, theme, kb, rawDone) => {
+      const firstQuestion = questions[0]?.question;
+      releaseStatus = holdProgramStatus(
+        tui.terminal,
+        statusMessage(firstQuestion),
+        hooks?.getSessionName,
+      );
+      const hold = releaseStatus;
+      const release = (): void => {
+        options?.signal?.removeEventListener("abort", release);
+        hold?.();
+      };
+      options?.signal?.addEventListener("abort", release, { once: true });
+
+      const done = (result: AskDialogResult): void => {
+        try {
+          rawDone(result);
+        } finally {
+          release();
+        }
+      };
+
+      try {
+        const component = buildDialog(tui, theme, kb, done);
+        return {
+          ...component,
+          dispose: release,
+        };
+      } catch (error) {
+        release();
+        throw error;
+      }
+    }, options);
+  } finally {
+    releaseStatus?.();
+  }
+
+  function buildDialog(
+    tui: AskDialogTui,
+    theme: AskDialogTheme,
+    _kb: unknown,
+    done: (result: AskDialogResult) => void,
+  ): AskDialogComponent {
     let currentPage = 0;
     let optionIndex = 0;
     let inputQuestionId: string | null = null;
@@ -796,5 +957,5 @@ export async function runTerminalAskDialog(
       },
       handleInput,
     };
-  }, options);
+  }
 }
