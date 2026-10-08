@@ -43,9 +43,7 @@ struct AppleOnDeviceSpeechSettingsTests {
         var accepted = 0
         // Nine seconds without consumption: eight seconds are recoverable;
         // the next input fails closed, clears retained audio and ends heartbeat.
-        for _ in 0..<422 {
-            if inputs.enqueue(AnalyzerInput(buffer: buffer)) { accepted += 1 }
-        }
+        for _ in 0..<422 where inputs.enqueue(AnalyzerInput(buffer: buffer)) { accepted += 1 }
         #expect(accepted >= 374 && accepted <= 375)
         var iterator = inputs.makeAsyncIterator()
         #expect(await iterator.next() == nil)

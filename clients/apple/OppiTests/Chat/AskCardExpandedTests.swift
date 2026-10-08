@@ -310,7 +310,7 @@ struct AskCardExpandedTests {
     func dictationPrefixKeepsExistingWhitespace() {
         #expect(AskCardExpanded.dictationPrefix(for: "hello ") == "hello ")
         #expect(AskCardExpanded.dictationPrefix(for: "hello\n") == "hello\n")
-        #expect(AskCardExpanded.dictationPrefix(for: "") == "")
+        #expect(AskCardExpanded.dictationPrefix(for: "").isEmpty)
     }
 
     @Test("Combined dictation text returns base when transcript is empty")

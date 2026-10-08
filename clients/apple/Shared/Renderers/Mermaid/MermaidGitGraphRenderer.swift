@@ -189,7 +189,7 @@ enum MermaidGitGraphRenderer {
 
             // Rails, then every parent join. Commit/tag/label ink comes after so
             // merge cubics cannot sit on top of earlier nodes (`chore`, `release`).
-            for (i, _) in capturedBranches.enumerated() {
+            for i in capturedBranches.indices {
                 let color = colors[i % colors.count]
                 ctx.setStrokeColor(color.copy(alpha: 0.7) ?? color)
                 ctx.setLineWidth(2)

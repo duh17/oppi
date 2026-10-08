@@ -171,7 +171,7 @@ struct TerminalInspectionTests {
         #expect(fields == input)
         #expect(kind == terminal)
         let decoder = JSONDecoder()
-        #expect(try decoder.decode(ToolOutputPresentation.self, from: Data(#"{"kind":7}"#.utf8)).kind == "")
+        #expect(try decoder.decode(ToolOutputPresentation.self, from: Data(#"{"kind":7}"#.utf8)).kind.isEmpty)
         #expect(try decoder.decode(ToolInputPresentation.self, from: Data(#"{"fields":7}"#.utf8)).fields.isEmpty)
         let malformed = try decoder.decode(ToolOutputAvailability.self, from: Data(#"{"complete":"yes","totalBytes":-1,"source":"future"}"#.utf8))
         #expect(!malformed.complete && malformed.totalBytes == nil && !malformed.hasSidecar)

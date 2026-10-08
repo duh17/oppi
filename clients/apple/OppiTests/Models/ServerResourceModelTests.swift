@@ -126,6 +126,6 @@ struct ServerResourceModelTests {
         #expect(filePrompt.resolvedPath == "/tmp/SYSTEM.md")
         #expect(defaultPrompt.source == .default)
         #expect(inherited.defaultTools == nil)
-        #expect(exact.defaultTools == [])
+        #expect(exact.defaultTools?.isEmpty == true)
     }
 }

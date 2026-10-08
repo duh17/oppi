@@ -601,7 +601,7 @@ struct ServerConnectionStreamRecoveryTests {
         appEventStream: Bool = false
     ) -> (Data, HTTPURLResponse) {
         let appEventCapability = appEventStream ? ",\n            \"appEventStream\": { \"version\": 1 }" : ""
-        let data = """
+        let data = Data("""
         {
           "name": "Test",
           "version": "0.0.0-test",
@@ -623,7 +623,7 @@ struct ServerConnectionStreamRecoveryTests {
             "modelCount": 0
           }
         }
-        """.data(using: .utf8)!
+        """.utf8)
         let response = HTTPURLResponse(
             url: request.url ?? URL(string: "http://127.0.0.1:7749/server/info")!,
             statusCode: 200,

@@ -235,7 +235,7 @@ private final class ScreenshotPreviewFileBrowserURLProtocol: URLProtocol {
             response = jsonResponse(Self.appleDirectoryJSON)
         case let rawPath where rawPath.hasPrefix("/workspaces/preview-workspace/raw/"):
             let filePath = String(rawPath.dropFirst("/workspaces/preview-workspace/raw/".count))
-            let body = "// Preview content for \(filePath)\n".data(using: .utf8) ?? Data()
+            let body = Data("// Preview content for \(filePath)\n".utf8)
             response = (200, "text/plain", body)
         default:
             response = jsonResponse(["error": "Not found", "path": path], status: 404)

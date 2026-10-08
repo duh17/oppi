@@ -2086,10 +2086,8 @@ enum FlatSegment: Sendable {
             var result = renderInlinesWithDefaultColor(inlines, palette: palette, defaultColor: bodyColor)
             // Set body font on runs that don't have an explicit font (plain text).
             // Inline code already has monospace font set; this preserves it.
-            for run in result.runs {
-                if run.uiKit.font == nil {
-                    result[run.range].uiKit.font = bodyFont
-                }
+            for run in result.runs where run.uiKit.font == nil {
+                result[run.range].uiKit.font = bodyFont
             }
             return result
 

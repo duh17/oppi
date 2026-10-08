@@ -1184,8 +1184,8 @@ struct ChatInputBarTests {
         ]
 
         #expect(ChatInputBar<EmptyView>.customAskText(answers: answers, questionID: "q1") == "saved first answer")
-        #expect(ChatInputBar<EmptyView>.customAskText(answers: answers, questionID: "q2") == "")
-        #expect(ChatInputBar<EmptyView>.customAskText(answers: answers, questionID: nil) == "")
+        #expect(ChatInputBar<EmptyView>.customAskText(answers: answers, questionID: "q2").isEmpty)
+        #expect(ChatInputBar<EmptyView>.customAskText(answers: answers, questionID: nil).isEmpty)
     }
 
     @Test("Settled ask does not provide replacement composer text")
@@ -1218,7 +1218,7 @@ struct ChatInputBarTests {
             keepComposerClearedForSubmittedRequestID: "ask-1"
         )
 
-        #expect(displayedText == "")
+        #expect(displayedText.isEmpty)
     }
 
     @Test("Submitted custom ask stays cleared after the server drops the pending request")
@@ -1247,7 +1247,7 @@ struct ChatInputBarTests {
             draftAnswers: transition.answers,
             keepComposerClearedForSubmittedRequestID: request.id
         )
-        #expect(whileVisible == "")
+        #expect(whileVisible.isEmpty)
 
         let submission = AskResponseSubmission()
         submission.submit(requestID: request.id) { $0(.completed) }
@@ -1283,7 +1283,7 @@ struct ChatInputBarTests {
             activeQuestionID: "q1",
             draftAnswers: ["q1": .custom(submittedText)],
             keepComposerClearedForSubmittedRequestID: submission.submittedRequestID
-        ) == "")
+        ).isEmpty)
 
         submission.applyRequestIDChange(nil)
         let retainedID = submission.submittedRequestID
@@ -1340,14 +1340,14 @@ struct ChatInputBarTests {
             draftAnswers: state.draftAnswers,
             keepComposerClearedForSubmittedRequestID: state.submittedRequestID
         )
-        #expect(nextComposerText == "")
+        #expect(nextComposerText.isEmpty)
         #expect(state.submittedRequestID == request.id)
 
         state.applyRequestIDChange(nil)
         #expect(state.submittedRequestID == request.id)
         #expect(state.currentPage == 0)
         #expect(state.draftAnswers.isEmpty)
-        #expect(nextComposerText == "")
+        #expect(nextComposerText.isEmpty)
 
         let afterRequestCleared = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
             request: nil,

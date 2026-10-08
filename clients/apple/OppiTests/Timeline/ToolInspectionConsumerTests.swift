@@ -94,7 +94,7 @@ struct ToolInspectionConsumerTests {
         #expect(summary.file?.path == "map.json")
         #expect(summary.file?.operation == .mutation)
         #expect(summary.file?.provenance == .requested)
-        #expect(summary.file?.text == "")
+        #expect(summary.file?.text.isEmpty == true)
         #expect(summary.file?.fileType == nil)
         #expect(summary.output.isEmpty)
         #expect(reducer.resolvedToolOutputPresentation(for: "t")?.kind == "fileContent")

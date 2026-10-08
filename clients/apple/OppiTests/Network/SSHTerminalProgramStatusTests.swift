@@ -25,9 +25,9 @@ struct SSHTerminalProgramStatusStoreTests {
         let root = store.root
         #expect(root?.state == GHOSTTY_PROGRAM_STATUS_STATE_WORKING)
         #expect(root?.kind == GHOSTTY_PROGRAM_STATUS_KIND_NONE)
-        #expect(root?.app == "")
-        #expect(root?.title == "")
-        #expect(root?.message == "")
+        #expect(root?.app.isEmpty == true)
+        #expect(root?.title.isEmpty == true)
+        #expect(root?.message.isEmpty == true)
         #expect(root?.progress == -1)
         #expect(store.records.count == 1)
     }
@@ -67,14 +67,14 @@ struct SSHTerminalProgramStatusStoreTests {
         store.apply(report(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, app: "deploy"))
         store.apply(report(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, id: "eu/web"))
         #expect(store.app(of: "eu/web") == "deploy") // "eu" never reported.
-        #expect(store.record(id: "eu/web")?.app == "")
+        #expect(store.record(id: "eu/web")?.app.isEmpty == true)
         store.apply(report(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, id: "eu", app: "terraform"))
         #expect(store.app(of: "eu/web") == "terraform")
         store.apply(report(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, id: "eu/web", app: "own"))
         #expect(store.app(of: "eu/web") == "own")
         store.apply(report(GHOSTTY_PROGRAM_STATUS_STATE_CLEAR, id: "eu"))
         #expect(store.app(of: "eu/web") == "deploy")
-        #expect(Store().app(of: "x") == "")
+        #expect(Store().app(of: "x").isEmpty)
     }
 
     @Test func leastRecentlyUpdatedRecordIsEvictedAtTheCap() {

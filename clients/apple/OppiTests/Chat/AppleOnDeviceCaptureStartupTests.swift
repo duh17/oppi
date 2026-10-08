@@ -52,7 +52,7 @@ struct AppleOnDeviceCaptureStartupTests {
         let pcm = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_024))
         pcm.frameLength = 1_024
         var accepted = 0
-        for _ in 0..<422 { if inputs.enqueue(AnalyzerInput(buffer: pcm)) { accepted += 1 } }
+        for _ in 0..<422 where inputs.enqueue(AnalyzerInput(buffer: pcm)) { accepted += 1 }
         #expect(accepted >= 374 && accepted <= 375)
         // The queue's one-shot MainActor callback MUST finish before Stop.
         // Only event delivery is withheld; cancellation ownership is real.
@@ -84,7 +84,7 @@ struct AppleOnDeviceCaptureStartupTests {
         // Red-run cleanup is deliberately AFTER the liveness assertions; it
         // cannot make a stranded Stop look green or hang the test runner.
         if !didReturn { await finalizer.open() }
-        #expect(await stop.value == "")
+        #expect(await stop.value.isEmpty)
         #expect(access.deactivateAudioSessionCallCount == 1)
         #expect(!manager._testOperationInFlight)
         await session.stop()
@@ -158,7 +158,7 @@ struct AppleOnDeviceCaptureStartupTests {
         // Always release the gate AFTER ownership assertions, including on red.
         await releaseCancellation.open()
         #expect(await waitForMainActorCondition { returned && session._testInputFailureHandled })
-        #expect(await stop.value == "")
+        #expect(await stop.value.isEmpty)
         #expect(cancellationCompleted && cancellations == 1)
         #expect(!manager.ownsCaptureAudioSession && !manager._testOperationInFlight)
         #expect(access.deactivateAudioSessionCallCount == 1)
@@ -282,7 +282,7 @@ struct AppleOnDeviceCaptureStartupTests {
         if callbackBeforeError {
             #expect(manager.captureFailure != nil)
             #expect(manager.ownsCaptureAudioSession)
-            #expect(await manager.stopRecording() == "")
+            #expect(await manager.stopRecording().isEmpty)
             await manager.cancelRecording()
             #expect(cancellations == 1)
             await releaseCancellation.open()

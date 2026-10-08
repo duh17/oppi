@@ -615,11 +615,11 @@ struct TeXMathParserConformanceTests {
     // MARK: - Empty Input
 
     @Test func emptyInput() {
-        #expect(parser.parse("") == [])
+        #expect(parser.parse("").isEmpty)
     }
 
     @Test func whitespaceOnly() {
-        #expect(parser.parse("   \t\n  ") == [])
+        #expect(parser.parse("   \t\n  ").isEmpty)
     }
 
     // MARK: - Complex Real-World Expressions

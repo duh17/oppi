@@ -340,13 +340,11 @@ enum MermaidERParser {
 
     private static func matchCardinalityPhrase(_ text: String) -> (ERCardinality, remainder: String)? {
         let lower = text.lowercased()
-        for entry in cardinalityPhrases {
-            if lower.hasPrefix(entry.phrase) {
-                let consumed = String(text.prefix(entry.phrase.count))
-                let remainder = String(text.dropFirst(consumed.count))
-                    .trimmingCharacters(in: .whitespaces)
-                return (entry.cardinality, remainder)
-            }
+        for entry in cardinalityPhrases where lower.hasPrefix(entry.phrase) {
+            let consumed = String(text.prefix(entry.phrase.count))
+            let remainder = String(text.dropFirst(consumed.count))
+                .trimmingCharacters(in: .whitespaces)
+            return (entry.cardinality, remainder)
         }
         return nil
     }

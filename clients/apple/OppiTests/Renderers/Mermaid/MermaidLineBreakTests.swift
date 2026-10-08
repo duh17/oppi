@@ -62,7 +62,7 @@ struct MermaidLineBreakTests {
         #expect(MermaidTextUtils.normalizeBrTags("hello world") == "hello world")
         #expect(MermaidTextUtils.normalizeBrTags("a < br > b") == "a < br > b")
         #expect(MermaidTextUtils.normalizeBrTags("break") == "break")
-        #expect(MermaidTextUtils.normalizeBrTags("") == "")
+        #expect(MermaidTextUtils.normalizeBrTags("").isEmpty)
     }
 
     // MARK: - Flowchart: node labels with <br>

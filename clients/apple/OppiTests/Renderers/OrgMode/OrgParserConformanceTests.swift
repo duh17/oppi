@@ -562,13 +562,13 @@ struct OrgParserConformanceTests {
     @Test("Empty string")
     func emptyInput() {
         let result = parser.parse("")
-        #expect(result == [])
+        #expect(result.isEmpty)
     }
 
     @Test("Only whitespace")
     func whitespaceOnly() {
         let result = parser.parse("   \n  \n   ")
-        #expect(result == [])
+        #expect(result.isEmpty)
     }
 
     // MARK: - Mixed Document

@@ -407,10 +407,8 @@ struct NativeMarkdownImageViewSVGTests {
         while let current = cursor {
             var count: UInt32 = 0
             if let methods = class_copyMethodList(current, &count) {
-                for index in 0..<Int(count) {
-                    if method_getName(methods[index]) == selector {
-                        owner = NSStringFromClass(current)
-                    }
+                for index in 0..<Int(count) where method_getName(methods[index]) == selector {
+                    owner = NSStringFromClass(current)
                 }
                 free(methods)
             }

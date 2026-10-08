@@ -441,7 +441,7 @@ struct FileShareServiceTests {
         }
 
         let content = try? String(contentsOf: url, encoding: .utf8)
-        #expect(content == "")
+        #expect(content?.isEmpty == true)
         FileShareService.cleanupTempFiles()
     }
 

@@ -1152,7 +1152,7 @@ final class AssistantMarkdownSegmentApplier {
         // against the ENTIRE text content on each modification, which
         // is increasingly expensive as the response grows. Detectors
         // are re-enabled when streaming ends (next non-streaming apply).
-        if textView.dataDetectorTypes != [] {
+        if !textView.dataDetectorTypes.isEmpty {
             textView.dataDetectorTypes = []
         }
         // Convert only the new suffix to NSAttributedString. Boxing the whole

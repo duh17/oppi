@@ -365,10 +365,8 @@ private func expectKind(
 private func findUTF16Range(_ needle: [UInt16], in haystack: [UInt16]) -> Range<Int>? {
     guard !needle.isEmpty, haystack.count >= needle.count else { return nil }
     let lastStart = haystack.count - needle.count
-    for start in 0...lastStart {
-        if haystack[start..<(start + needle.count)].elementsEqual(needle) {
-            return start..<(start + needle.count)
-        }
+    for start in 0...lastStart where haystack[start..<(start + needle.count)].elementsEqual(needle) {
+        return start..<(start + needle.count)
     }
     return nil
 }

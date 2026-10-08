@@ -2036,15 +2036,12 @@ struct ToolExpandedSurfaceHostTests {
         let maxY = min(raster.height, Int(CGFloat(raster.height) * 0.75))
         var count = 0
         for y in minY..<maxY {
-            for x in 0..<edgeWidth {
-                if raster.pixel(x: x, y: y).isBrightSVGBackground {
-                    count += 1
-                }
+            for x in 0..<edgeWidth where raster.pixel(x: x, y: y).isBrightSVGBackground {
+                count += 1
             }
-            for x in max(edgeWidth, raster.width - edgeWidth)..<raster.width {
-                if raster.pixel(x: x, y: y).isBrightSVGBackground {
-                    count += 1
-                }
+            for x in max(edgeWidth, raster.width - edgeWidth)..<raster.width
+                where raster.pixel(x: x, y: y).isBrightSVGBackground {
+                count += 1
             }
         }
         return count

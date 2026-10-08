@@ -118,9 +118,7 @@ private func expectDefault(
 private func findUTF16Range(_ needle: [UInt16], in haystack: [UInt16]) -> Range<Int>? {
     guard !needle.isEmpty, needle.count <= haystack.count else { return nil }
     outer: for i in 0...(haystack.count - needle.count) {
-        for j in 0..<needle.count {
-            if haystack[i + j] != needle[j] { continue outer }
-        }
+        for j in 0..<needle.count where haystack[i + j] != needle[j] { continue outer }
         return i..<(i + needle.count)
     }
     return nil

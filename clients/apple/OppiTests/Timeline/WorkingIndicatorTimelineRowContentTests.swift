@@ -83,7 +83,6 @@ struct WorkingIndicatorTimelineRowContentTests {
 
     private func firstVisibleLabel(withText text: String, in view: UIView) -> UILabel? {
         timelineAllLabels(in: view)
-            .filter(timelineViewIsVisible)
-            .first { $0.text == text }
+            .first { timelineViewIsVisible($0) && $0.text == text }
     }
 }

@@ -171,14 +171,12 @@ struct OrgParser: DocumentParser, Sendable {
         // Parse optional TODO keyword
         let todoKeywords = ["TODO", "DONE", "NEXT", "WAITING", "CANCELLED", "HOLD"]
         var keyword: String?
-        for kw in todoKeywords {
-            if rest.hasPrefix(kw) {
-                let afterKw = rest.index(rest.startIndex, offsetBy: kw.count)
-                if afterKw == rest.endIndex || rest[afterKw] == " " {
-                    keyword = kw
-                    rest = afterKw < rest.endIndex ? String(rest[rest.index(after: afterKw)...]) : ""
-                    break
-                }
+        for kw in todoKeywords where rest.hasPrefix(kw) {
+            let afterKw = rest.index(rest.startIndex, offsetBy: kw.count)
+            if afterKw == rest.endIndex || rest[afterKw] == " " {
+                keyword = kw
+                rest = afterKw < rest.endIndex ? String(rest[rest.index(after: afterKw)...]) : ""
+                break
             }
         }
 

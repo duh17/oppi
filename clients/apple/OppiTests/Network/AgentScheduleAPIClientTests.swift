@@ -239,10 +239,10 @@ struct AgentScheduleAPIClientTests {
             )
             let resources = try #require(json["resources"] as? [String: Any])
             #expect(resources["skillPaths"] is NSNull)
-            #expect(resources["extensionIds"] as? [String] == [])
+            #expect((resources["extensionIds"] as? [String])?.isEmpty == true)
             #expect(resources["promptTemplateIds"] is NSNull)
             let defaults = try #require(json["sessionDefaults"] as? [String: Any])
-            #expect(defaults["tools"] as? [String] == [])
+            #expect((defaults["tools"] as? [String])?.isEmpty == true)
             #expect(defaults["excludeTools"] is NSNull)
             #expect(defaults["noTools"] is NSNull)
             return mockResponse(json: """

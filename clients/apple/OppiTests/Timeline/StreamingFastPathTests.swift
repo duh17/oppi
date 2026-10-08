@@ -114,7 +114,7 @@ struct StreamingFastPathTests {
             Issue.record("Expected tool call item")
             return
         }
-        #expect(preview1 == "")
+        #expect(preview1.isEmpty)
 
         // Second apply: assistant text grew AND tool output arrived.
         // Same item count, same streaming ID — should trigger the fast path.

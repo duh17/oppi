@@ -214,12 +214,12 @@ struct ANSIParserTests {
 
     @Test("stripPrefix with zero bytes returns empty")
     func stripPrefixZero() {
-        #expect(ANSIParser.stripPrefix("hello", maxInputBytes: 0) == "")
+        #expect(ANSIParser.stripPrefix("hello", maxInputBytes: 0).isEmpty)
     }
 
     @Test("stripPrefix handles empty input")
     func stripPrefixEmpty() {
-        #expect(ANSIParser.stripPrefix("", maxInputBytes: 100) == "")
+        #expect(ANSIParser.stripPrefix("", maxInputBytes: 100).isEmpty)
     }
 
     @Test("stripPrefix drops trailing standalone escape byte")

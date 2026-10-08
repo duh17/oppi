@@ -364,7 +364,7 @@ struct VoiceInputManagerTests {
         #expect(!failure.message.lowercased().contains("overflow"))
         #expect(!failure.message.lowercased().contains("buffer"))
         #expect(failure.message.contains("Your earlier draft was kept"))
-        #expect(await manager.stopRecording() == "")
+        #expect(await manager.stopRecording().isEmpty)
     }
 
     @Test func prewarmGuardsWhenAlreadyReady() async {
@@ -1293,7 +1293,7 @@ struct VoiceInputManagerTests {
         #expect(!suppressed)
         #expect(rollbackCount == 1)
         #expect(manager.state == .processing)
-        #expect(await manager.stopRecording() == "")
+        #expect(await manager.stopRecording().isEmpty)
         await manager.cancelRecording()
         #expect(manager.state == .processing, "Stop and Cancel cannot release a failed take's drain")
         #expect(session.stopCallCount == 0)
@@ -1372,11 +1372,11 @@ struct VoiceInputManagerTests {
             #expect(draft == "Keep exact draft", "Rollback must not wait for analyzer finalization")
             #expect(manager.state == .processing)
             await manager.cancelRecording()
-            #expect(await manager.stopRecording() == "")
+            #expect(await manager.stopRecording().isEmpty)
             #expect(access.deactivateAudioSessionCallCount == 0)
             await releaseFlush.open()
         }
-        #expect(await stop.value == "")
+        #expect(await stop.value.isEmpty)
         #expect(draft == "Keep exact draft")
         #expect(prefix == nil)
         #expect(rollbackCount == 1)
@@ -1448,7 +1448,7 @@ struct VoiceInputManagerTests {
         let didReturn = await waitForMainActorCondition { returned }
         #expect(didReturn, "Stop must return while incoming messages remain open forever")
         guard didReturn else { stop.cancel(); return }
-        #expect(await stop.value == "")
+        #expect(await stop.value.isEmpty)
         #expect(draft == "Keep exact draft")
         #expect(prefix == nil)
         #expect(manager.currentTranscript.isEmpty)
@@ -1536,12 +1536,12 @@ struct VoiceInputManagerTests {
             session.finishEvents(throwing: AudioEngineHelper.captureOverflowError)
         case "overflow_stop":
             session.stopHandler = { session.finishEvents(throwing: AudioEngineHelper.captureOverflowError) }
-            #expect(await manager.stopRecording() == "")
+            #expect(await manager.stopRecording().isEmpty)
         case "analyzer":
             session.finishEvents(throwing: TestVoiceError("Analyzer failed"))
         case "transport_stop":
             session.stopHandler = { session.finishEvents(throwing: URLError(.networkConnectionLost)) }
-            #expect(await manager.stopRecording() == "")
+            #expect(await manager.stopRecording().isEmpty)
         default:
             await manager.handleLostBluetoothRoute(
                 rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
@@ -3152,9 +3152,7 @@ private final class BufferedAnalyzerTestSession: VoiceTranscriptionSession {
         ))
         let pcm = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_024))
         pcm.frameLength = 1_024
-        for _ in 0..<count {
-            if inputs.enqueue(AnalyzerInput(buffer: pcm)) { levelContinuation.yield(.zero) }
-        }
+        for _ in 0..<count where inputs.enqueue(AnalyzerInput(buffer: pcm)) { levelContinuation.yield(.zero) }
     }
     func start() async throws -> VoiceSessionStartTimings {
         VoiceSessionStartTimings(analyzerStartMs: 0, audioStartMs: 0)

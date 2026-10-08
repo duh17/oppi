@@ -14,7 +14,7 @@ struct AudioTimelinePresentationAdapterTests {
             return
         }
         #expect(text == "Projected transcript")
-        #expect(attachmentId == "")
+        #expect(attachmentId.isEmpty)
         #expect(mimeType == "audio/wav")
         #expect(playbackBehavior == .playNow)
     }

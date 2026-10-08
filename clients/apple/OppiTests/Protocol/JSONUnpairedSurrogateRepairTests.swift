@@ -47,7 +47,7 @@ struct JSONUnpairedSurrogateRepairTests {
     }
 
     @Test func returnsOriginalBytesWhenNothingNeedsRepair() {
-        let data = #"{"id":"e1","type":"system","timestamp":"t","text":"plain"}"#.data(using: .utf8)!
+        let data = Data(#"{"id":"e1","type":"system","timestamp":"t","text":"plain"}"#.utf8)
         let repaired = JSONUnpairedSurrogateRepair.repairing(data)
         #expect(repaired == data)
     }

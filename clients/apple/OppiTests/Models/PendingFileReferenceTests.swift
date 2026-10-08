@@ -68,12 +68,12 @@ struct PendingFileReferenceTests {
     @Test func emptyPathDisplayName() {
         let ref = PendingFileReference(path: "", isDirectory: false)
         // split(separator:) on empty string returns [], .last is nil → fallback to normalized
-        #expect(ref.displayName == "")
+        #expect(ref.displayName.isEmpty)
     }
 
     @Test func emptyPathId() {
         let ref = PendingFileReference(path: "", isDirectory: false)
-        #expect(ref.id == "")
+        #expect(ref.id.isEmpty)
     }
 
     // MARK: - Edge cases: slash-only path
@@ -81,7 +81,7 @@ struct PendingFileReferenceTests {
     @Test func slashOnlyPathAsDirectory() {
         // path="/", isDirectory=true → dropLast → "", split → [], .last nil → fallback ""
         let ref = PendingFileReference(path: "/", isDirectory: true)
-        #expect(ref.displayName == "")
+        #expect(ref.displayName.isEmpty)
     }
 
     @Test func slashOnlyPathAsFile() {

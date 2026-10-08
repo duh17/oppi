@@ -95,7 +95,7 @@ struct ServerConnectionSessionCacheTests {
         let persisted = await cache.loadSessionList(serverId: serverId)
         #expect(connection.sessionStore.listProjectionSessions.isEmpty)
         #expect(connection.sessionStore.sessions.map(\.id) == ["studio-session"])
-        #expect(persisted == [])
+        #expect(persisted?.isEmpty == true)
     }
 
     private func makeMockAPIClient() -> APIClient {

@@ -243,7 +243,7 @@ struct WorkspaceSettingsModelTests {
         #expect(server.maxConcurrentRequests == 1)
         let stored = connection.workspaceStore.workspacesByServer[serverId]?.first
         #expect(stored?.gitStatusEnabled == false)
-        #expect(stored?.sandboxConfig?.allowedHosts == [])
+        #expect(stored?.sandboxConfig?.allowedHosts?.isEmpty == true)
         #expect(stored?.sandboxConfig?.mcpServers == ["docs", "github"])
         #expect(stored?.sandboxConfig?.env == ["LANG": "C"])
         // Every sandbox write replaced the config whole, env included.

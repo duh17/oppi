@@ -110,19 +110,19 @@ struct WorkspaceStoreOfflineTests {
             let url = request.url!.absoluteString
 
             if request.url?.path == "/workspaces" {
-                let data = """
+                let data = Data("""
                 {
                   "serverNow": 1700000000000,
                   "workspaces": [{"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0}],
                   "summaries": [{"workspaceId":"w1","activeCount":2,"stoppedCount":3,"hasAttention":true,"hasErrorRoot":false,"latestActivity":1500}]
                 }
-                """.data(using: .utf8)!
+                """.utf8)
                 let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (data, response)
             }
 
             if url.hasSuffix("/skills") {
-                let data = #"{"skills":[]}"#.data(using: .utf8)!
+                let data = Data(#"{"skills":[]}"#.utf8)
                 let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (data, response)
             }

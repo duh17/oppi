@@ -62,7 +62,7 @@ struct SessionListSearchPresentationTests {
             activeServerQuery: "skill"
         )
 
-        #expect(matches == [])
+        #expect(matches?.isEmpty == true)
     }
 
     @Test func completedServerResultsIncludeOlderSessionsOutsideLocalProjection() {
@@ -123,7 +123,7 @@ struct SessionListSearchPresentationTests {
             query: "skill"
         )
 
-        #expect(matches == [])
+        #expect(matches?.isEmpty == true)
     }
 
     private func makeSession(

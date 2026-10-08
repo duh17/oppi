@@ -364,7 +364,7 @@ struct TimedTextTests {
             access: access
         )
         #expect(result.tracks.isEmpty)
-        #expect(TimedText.parentDirectoryPath(forMediaPath: "clip.m4a") == "")
+        #expect(TimedText.parentDirectoryPath(forMediaPath: "clip.m4a").isEmpty)
         #expect(TimedText.parentDirectoryPath(forMediaPath: "media/clip.m4a") == "media/")
         #expect(TimedText.join("media/", fileName: "clip.lrc") == "media/clip.lrc")
         #expect(TimedText.join("", fileName: "clip.lrc") == "clip.lrc")

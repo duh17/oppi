@@ -788,7 +788,7 @@ struct FullScreenMarkdownStressCorpusTests {
             stage: "first paint"
         )
         let replacementCountAfterSettlement = body.debugLayoutReplaceCountForTesting
-        let settledIndexPath = try #require(collectionView.indexPathsForVisibleItems.sorted().first)
+        let settledIndexPath = try #require(collectionView.indexPathsForVisibleItems.min())
         let settledCell = try #require(collectionView.cellForItem(at: settledIndexPath))
         body.collectionView(collectionView, willDisplay: settledCell, forItemAt: settledIndexPath)
         #expect(

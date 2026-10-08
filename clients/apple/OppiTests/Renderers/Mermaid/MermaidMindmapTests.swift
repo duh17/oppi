@@ -30,7 +30,7 @@ struct MermaidMindmapParserTests {
 
     @Test func emptyLinesProduceEmptyDiagram() {
         let diagram = MermaidMindmapParser.parse(lines: ["", "  ", ""])
-        #expect(diagram.root.label == "")
+        #expect(diagram.root.label.isEmpty)
         #expect(diagram == .empty)
     }
 

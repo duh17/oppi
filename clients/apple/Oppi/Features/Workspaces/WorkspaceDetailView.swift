@@ -1200,22 +1200,18 @@ struct WorkspaceDetailView: View {
     }
 
     private func removeArchiveSession(_ sessionId: String) {
-        for (bucketId, sessions) in archiveStoppedSessionsByBucketID {
-            if sessions.contains(where: { $0.id == sessionId }) {
-                archiveStoppedSessionsByBucketID[bucketId] = sessions.filter { $0.id != sessionId }
-                updateArchiveBucketCounts(bucketId: bucketId, removedManagedStoppedCount: 1)
-                break
-            }
+        for (bucketId, sessions) in archiveStoppedSessionsByBucketID where sessions.contains(where: { $0.id == sessionId }) {
+            archiveStoppedSessionsByBucketID[bucketId] = sessions.filter { $0.id != sessionId }
+            updateArchiveBucketCounts(bucketId: bucketId, removedManagedStoppedCount: 1)
+            break
         }
     }
 
     private func removeArchiveLocalSession(_ path: String) {
-        for (bucketId, sessions) in archiveLocalSessionsByBucketID {
-            if sessions.contains(where: { $0.path == path }) {
-                archiveLocalSessionsByBucketID[bucketId] = sessions.filter { $0.path != path }
-                updateArchiveBucketCounts(bucketId: bucketId, removedImportableLocalCount: 1)
-                break
-            }
+        for (bucketId, sessions) in archiveLocalSessionsByBucketID where sessions.contains(where: { $0.path == path }) {
+            archiveLocalSessionsByBucketID[bucketId] = sessions.filter { $0.path != path }
+            updateArchiveBucketCounts(bucketId: bucketId, removedImportableLocalCount: 1)
+            break
         }
     }
 

@@ -612,7 +612,7 @@ struct StartOppiSessionConfirmationTests {
     }
 
     @Test func promptThatIsOnlyInvisibleCharactersNormalizesToEmpty() {
-        #expect(StartOppiSessionConfirmation.normalized("\u{200B}\u{202E}\n \u{2060}") == "")
+        #expect(StartOppiSessionConfirmation.normalized("\u{200B}\u{202E}\n \u{2060}").isEmpty)
     }
 
     @Test func createFailureAfterConfirmationPropagates() async {

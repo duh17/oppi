@@ -77,7 +77,7 @@ struct FullScreenCodeHighlighterTests {
 
     @Test func highlightedTextEmptyString() {
         let result = SyntaxHighlighter.highlight("", language: .swift)
-        #expect(result.string == "")
+        #expect(result.string.isEmpty)
         assertAttributeRangesValid(result)
     }
 

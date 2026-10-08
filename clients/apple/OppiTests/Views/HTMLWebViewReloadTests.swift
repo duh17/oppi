@@ -186,7 +186,7 @@ struct HTMLContentTrackerTests {
     @Test func emptyContentStillTracked() {
         let tracker = HTMLContentTracker()
         _ = tracker.markReady()
-        #expect(tracker.setContent("") == "")
+        #expect(tracker.setContent("")?.isEmpty == true)
         #expect(tracker.setContent("") == nil)
         #expect(tracker.setContent("<p>Content</p>") == "<p>Content</p>")
     }

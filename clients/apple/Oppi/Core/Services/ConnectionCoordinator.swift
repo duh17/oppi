@@ -1236,10 +1236,8 @@ final class ConnectionCoordinator {
 
     /// Find a session by ID across all servers.
     func findSession(id: String) -> SessionLookupResult? {
-        for (serverId, conn) in connections {
-            if conn.sessionStore.session(id: id) != nil {
-                return SessionLookupResult(serverId: serverId, connection: conn)
-            }
+        for (serverId, conn) in connections where conn.sessionStore.session(id: id) != nil {
+            return SessionLookupResult(serverId: serverId, connection: conn)
         }
         return nil
     }

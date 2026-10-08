@@ -171,7 +171,7 @@ struct ToolFileInspectionTests {
     @Test func tolerantDecodingKeepsGoodFieldsAndUnknownOutputDegrades() throws {
         let input = try JSONDecoder().decode(ToolInputPresentation.self, from: Data("{\"fields\":{\"target\":{\"role\":\"filePath\"},\"future\":{\"role\":17,\"language\":true}}}".utf8))
         #expect(input.fields["target"]?.role == "filePath")
-        #expect(input.fields["future"]?.role == "")
+        #expect(input.fields["future"]?.role.isEmpty == true)
         let output = try JSONDecoder().decode(ToolOutputPresentation.self, from: Data("{\"kind\":\"future\",\"provenance\":42}".utf8))
         #expect(build("read", args: [:], input: input, output: output, text: "output").inspection.file == nil)
     }

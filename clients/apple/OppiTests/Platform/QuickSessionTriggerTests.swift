@@ -276,7 +276,7 @@ struct WorkspaceEntityTests {
             serverName: "Studio",
             showsServerSubtitle: false
         )
-        #expect(entity.name == "")
+        #expect(entity.name.isEmpty)
         #expect(entity.workspaceId == "ws-empty")
     }
 

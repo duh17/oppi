@@ -299,13 +299,11 @@ struct ChatTimelinePreparationRunwayTests {
             )
         })
         var admitted = 0
-        for index in 0..<100 {
-            if runway.request(
-                request(itemID: "bounded-\(index)", content: "Body \(index)"),
-                demand: .prefetch
-            ) == .inFlight {
-                admitted += 1
-            }
+        for index in 0..<100 where runway.request(
+            request(itemID: "bounded-\(index)", content: "Body \(index)"),
+            demand: .prefetch
+        ) == .inFlight {
+            admitted += 1
         }
 
         #expect(admitted == ChatTimelinePreparationRunway.maximumParseOperations)
@@ -1074,19 +1072,17 @@ struct ChatTimelinePreparationRunwayTests {
             filePath: "images/shared.png"
         ))
         var joined = 0
-        for index in 0..<100 {
-            if broker.request(
-                url: url,
-                scope: scope,
-                itemID: "shared-\(index)",
-                target: target,
-                loaders: loaders,
-                demand: .prefetch(itemID: "shared-\(index)"),
-                onReady: {},
-                serverBaseURL: trustedServerBaseURL
-            ) == .inFlight {
-                joined += 1
-            }
+        for index in 0..<100 where broker.request(
+            url: url,
+            scope: scope,
+            itemID: "shared-\(index)",
+            target: target,
+            loaders: loaders,
+            demand: .prefetch(itemID: "shared-\(index)"),
+            onReady: {},
+            serverBaseURL: trustedServerBaseURL
+        ) == .inFlight {
+            joined += 1
         }
 
         #expect(joined == TimelineImagePreparationBroker.maximumDemandRegistrations)

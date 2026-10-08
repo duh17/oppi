@@ -271,10 +271,8 @@ struct ChatOutlineColdHarnessView: View {
     private func isOutlinePresented() -> Bool {
         for scene in UIApplication.shared.connectedScenes {
             guard let windowScene = scene as? UIWindowScene else { continue }
-            for window in windowScene.windows {
-                if window.rootViewController?.presentedViewController != nil {
-                    return true
-                }
+            for window in windowScene.windows where window.rootViewController?.presentedViewController != nil {
+                return true
             }
         }
         return false
