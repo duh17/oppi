@@ -28,6 +28,10 @@ const originalInstallFail = process.env.FAKE_NPM_INSTALL_FAIL;
 const originalInstallSleep = process.env.FAKE_NPM_INSTALL_SLEEP;
 const originalRootSleep = process.env.FAKE_NPM_ROOT_SLEEP;
 
+// State that arrives through a fake-npm subprocess (npm view / npm root -g / npm install) needs
+// a real deadline: vitest's 1 s waitFor default is shorter than a loaded host's process spawn.
+const SUBPROCESS_WAIT = { timeout: 8_000, interval: 50 } as const;
+
 function restoreEnv(): void {
   process.env.PATH = originalPath;
   for (const [key, value] of [
@@ -200,12 +204,9 @@ describe("ServerUpdateService", () => {
       if (second.ok) throw new Error("expected rejection");
       expect(second.code).toBe(SERVER_UPDATE_ERROR.updateInProgress);
       expect(second.status).toBe(409);
-      await vi.waitFor(
-        () => {
-          expect(["restarting", "failed"]).toContain(service.snapshot().status);
-        },
-        { timeout: 8_000, interval: 50 },
-      );
+      await vi.waitFor(() => {
+        expect(["restarting", "failed"]).toContain(service.snapshot().status);
+      }, SUBPROCESS_WAIT);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -219,12 +220,9 @@ describe("ServerUpdateService", () => {
       expect(await service.refreshLatest()).toBe("9.9.9");
       const started = await service.beginUpdate("9.9.9");
       expect(started.ok).toBe(true);
-      await vi.waitFor(
-        () => {
-          expect(service.snapshot().status).toBe("failed");
-        },
-        { timeout: 8_000, interval: 50 },
-      );
+      await vi.waitFor(() => {
+        expect(service.snapshot().status).toBe("failed");
+      }, SUBPROCESS_WAIT);
       const snap = service.snapshot();
       expect(snap.error).toMatch(/EACCES/);
     } finally {
@@ -240,12 +238,9 @@ describe("ServerUpdateService", () => {
       expect(await service.refreshLatest()).toBe("9.9.9");
       const started = await service.beginUpdate("9.9.9");
       expect(started.ok).toBe(true);
-      await vi.waitFor(
-        () => {
-          expect(service.snapshot().status).toBe("restarting");
-        },
-        { timeout: 8_000, interval: 50 },
-      );
+      await vi.waitFor(() => {
+        expect(service.snapshot().status).toBe("restarting");
+      }, SUBPROCESS_WAIT);
       expect(service.snapshot().targetVersion).toBe("9.9.9");
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -267,7 +262,10 @@ describe("ServerUpdateService", () => {
       });
       await service.refreshLatest();
       expect((await service.beginUpdate("9.9.9")).ok).toBe(true);
-      await vi.waitFor(() => expect(service.snapshot().status).toBe("restart-needed"));
+      await vi.waitFor(
+        () => expect(service.snapshot().status).toBe("restart-needed"),
+        SUBPROCESS_WAIT,
+      );
       await new Promise((resolve) => setTimeout(resolve, 500));
       expect(stop).not.toHaveBeenCalled();
       expect(restore).not.toHaveBeenCalled();
@@ -328,7 +326,7 @@ describe("ServerUpdateService", () => {
         const info = await localApiRequest<{ update?: ServerUpdateInfo }>(storage, "/server/info");
         expect(info.update?.latestVersion).toBe("9.9.9");
         expect(info.update?.installKind).toBe("npm-global");
-      });
+      }, SUBPROCESS_WAIT);
       const started = await localApiRequest<ServerUpdateInfo>(storage, "/server/update", {
         method: "POST",
         body: { version: "9.9.9" },
@@ -342,17 +340,17 @@ describe("ServerUpdateService", () => {
           body: { version: "9.9.9" },
         }),
       ).rejects.toMatchObject({ status: 409, code: SERVER_UPDATE_ERROR.updateInProgress });
-      await vi.waitFor(
-        async () => {
-          const info = await localApiRequest<{ version: string; update?: ServerUpdateInfo }>(
-            storage,
-            "/server/info",
-          );
-          expect(info.version).toBe(getPackageInfo().version);
-          expect(info.update).toMatchObject({ status: "restart-needed", targetVersion: "9.9.9" });
-        },
-        { timeout: 4_000 },
-      );
+      await vi.waitFor(async () => {
+        const info = await localApiRequest<{ version: string; update?: ServerUpdateInfo }>(
+          storage,
+          "/server/info",
+        );
+        expect(info.version).toBe(getPackageInfo().version);
+        expect(info.update).toMatchObject({ status: "restart-needed", targetVersion: "9.9.9" });
+        // The restored server's start() also looks up npm; let that finish before the
+        // finally block removes the fake npm directory and restores PATH.
+        expect(info.update?.latestVersion).toBe("9.9.9");
+      }, SUBPROCESS_WAIT);
     } finally {
       if (updateStarted) await restored.catch(() => {});
       await server.stop().catch(() => {});
@@ -404,9 +402,10 @@ describe("POST /server/update and GET /server/info", () => {
       const body = JSON.parse(res.body) as { update?: ServerUpdateInfo };
       expect(body.update).toBeUndefined();
       await service.refreshLatest();
-      await vi.waitFor(() => expect(service.infoSnapshot()?.installKind).toBe("other"), {
-        timeout: 4_000,
-      });
+      await vi.waitFor(
+        () => expect(service.infoSnapshot()?.installKind).toBe("other"),
+        SUBPROCESS_WAIT,
+      );
       const after = makeResponse();
       await dispatch({
         method: "GET",
