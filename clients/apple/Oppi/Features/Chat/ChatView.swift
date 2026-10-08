@@ -842,7 +842,6 @@ struct ChatView: View {
     private func chatPresentation(railEdge: HorizontalEdge?) -> some View {
         let joinsRail = railEdge != nil
         configuredChatContent(railEdge: railEdge)
-            .inspector(isPresented: sidePanelPresented(railEdge: railEdge)) { chatSidePanel }
             .chatAuxiliaryPresentation(
                 isPresented: joinsRail && horizontalSizeClass == .regular ? .constant(false) : $showOutline,
                 prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
@@ -1244,6 +1243,10 @@ struct ChatView: View {
     private func configuredChatNavigationContent(railEdge: HorizontalEdge?) -> some View {
         chatTimelineScaffold
             .themedScrollSurface()
+            // Inside the title and toolbar: attached outside them, the
+            // inspector drops the chat's whole navigation bar (title and
+            // every item) when the chat is the split shell's detail.
+            .inspector(isPresented: sidePanelPresented(railEdge: railEdge)) { chatSidePanel }
             // On the side rail the system draws the title as its own strip
             // above the timeline. The rail session menu carries the name.
             .navigationTitle(railEdge == nil ? sessionDisplayName : "")
