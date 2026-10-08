@@ -1011,7 +1011,8 @@ struct WorkspaceFileEditEntryTests {
         #expect(Self.activate(item))
         let editing = await waitForMainActorCondition(timeout: .seconds(5)) {
             host.view.layoutIfNeeded()
-            return Self.barButtonItem(titled: "Done", in: content) != nil
+            // Done is a role button with no bridged title; the Source/Preview toggle only exists while editing.
+            return Self.barButtonItem(titled: "Preview", in: content) != nil
                 && Self.barButtonItem(titled: "Edit", in: content) == nil
         }
         #expect(editing, "Edit did not switch to the editing toolbar; items: \(Self.titles(in: content))")
@@ -1019,7 +1020,7 @@ struct WorkspaceFileEditEntryTests {
 
     /// SwiftUI hosts toolbar buttons as custom views titled by their label.
     private static func barButtonItem(titled title: String, in controller: UIViewController) -> UIBarButtonItem? {
-        barButtonItems(in: controller).first { $0.title == title && $0.customView != nil }
+        barButtonItems(in: controller).first { $0.title == title }
     }
 
     private static func barButtonItems(in controller: UIViewController) -> [UIBarButtonItem] {
