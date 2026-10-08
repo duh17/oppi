@@ -6,7 +6,7 @@ import Testing
 @Suite("Workspace Navigation Server Scope", .serialized)
 @MainActor
 struct WorkspaceNavigationServerScopeTests {
-    @Test func staleWorkspaceRefreshDoesNotPresentErrorAfterSwitchingWorkspaces() async {
+    @Test func staleWorkspaceRefreshDoesNotPresentErrorAfterSwitchingWorkspaces() async throws {
         defer { TestURLProtocol.handler = nil }
         let errorLog = WorkspaceErrorLog()
         let requestLog = RequestLog()
@@ -19,14 +19,14 @@ struct WorkspaceNavigationServerScopeTests {
             requestLog.append(request)
             if request.url?.path.hasPrefix("/workspaces/ws-old") == true {
                 Thread.sleep(forTimeInterval: 0.25)
-                return Self.makeResponse(request: request, status: 404, body: #"{"error":"Workspace not found"}"#)
+                return try Self.makeResponse(request: request, status: 404, body: #"{"error":"Workspace not found"}"#)
             }
-            return Self.response(for: request)
+            return try Self.response(for: request)
         }
 
         let connection = ServerConnection()
         connection.configure(credentials: makeTestCredentials(host: "single.test", fingerprint: "sha256:single"))
-        connection.setAPIClientForTesting(Self.makeAPIClient(host: "single.test"))
+        connection.setAPIClientForTesting(try Self.makeAPIClient(host: "single.test"))
         let navigation = AppNavigation()
         let model = WorkspaceSelectionModel(
             workspace: makeTestWorkspace(id: "ws-old", name: "Old Workspace", gitStatusEnabled: true)
@@ -58,7 +58,7 @@ struct WorkspaceNavigationServerScopeTests {
         )
     }
 
-    @Test func workspaceDetailUsesTargetServerConnectionWhenActiveServerDiffers() async {
+    @Test func workspaceDetailUsesTargetServerConnectionWhenActiveServerDiffers() async throws {
         SharedConstants.sharedDefaults.removeObject(forKey: SharedConstants.pairedServerIdsKey)
         UserDefaults.standard.removeObject(forKey: SharedConstants.pairedServerIdsKey)
         KeychainService.deleteAllServers()
@@ -67,7 +67,7 @@ struct WorkspaceNavigationServerScopeTests {
         let requestLog = RequestLog()
         TestURLProtocol.handler = { request in
             requestLog.append(request)
-            return Self.response(for: request)
+            return try Self.response(for: request)
         }
 
         let serverStore = ServerStore()
@@ -88,8 +88,8 @@ struct WorkspaceNavigationServerScopeTests {
             return
         }
 
-        connectionA.setAPIClientForTesting(Self.makeAPIClient(host: "server-a.test"))
-        connectionB.setAPIClientForTesting(Self.makeAPIClient(host: "server-b.test"))
+        connectionA.setAPIClientForTesting(try Self.makeAPIClient(host: "server-a.test"))
+        connectionB.setAPIClientForTesting(try Self.makeAPIClient(host: "server-b.test"))
         coordinator.switchToServer(serverA)
 
         let host = makeHost(

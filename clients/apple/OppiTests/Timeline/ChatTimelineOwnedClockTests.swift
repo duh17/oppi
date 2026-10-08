@@ -415,7 +415,7 @@ struct ChatTimelineOwnedClockTests {
 
         windowed.coordinator.updateHostChrome(configuration: config, to: windowed.collectionView)
 
-        #expect(notifications.isEmpty, "Host update must return before availability publishes")
+        #expect(notifications.count == 0, "Host update must return before availability publishes") // swiftlint:disable:this empty_count - recorder exposes count, not isEmpty
         #expect(windowed.coordinator.outlineAvailabilityMutationCountForTesting == 0)
         #expect(await waitForOutlinePublication(on: windowed.coordinator, after: publication))
         #expect(notifications.count == 1)

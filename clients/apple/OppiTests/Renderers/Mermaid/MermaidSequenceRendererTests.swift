@@ -48,7 +48,7 @@ struct MermaidSequenceRendererTests {
         #expect(size.height > 0)
     }
 
-    @Test func emptyDiagramDoesNotCrash() {
+    @Test func emptyDiagramDoesNotCrash() throws {
         let layout = layoutFor("sequenceDiagram")
         let size = renderer.boundingBox(layout)
         // Should produce some size (even if small) and not crash.
@@ -106,7 +106,7 @@ struct MermaidSequenceRendererTests {
         #expect(threeSize.height > oneSize.height)
     }
 
-    @Test func participantsWithActorFlag() {
+    @Test func participantsWithActorFlag() throws {
         // Actors should still produce a valid layout.
         let layout = layoutFor("""
             sequenceDiagram
@@ -120,7 +120,7 @@ struct MermaidSequenceRendererTests {
         try drawLayout(layout)
     }
 
-    @Test func participantStereotypeMetadataRenders() {
+    @Test func participantStereotypeMetadataRenders() throws {
         let layout = layoutFor("""
             sequenceDiagram
                 participant API@{ "type": "boundary", "alias": "Public API" }
@@ -143,7 +143,7 @@ struct MermaidSequenceRendererTests {
 
     // MARK: - Messages between participants
 
-    @Test func messagesBetweenParticipantsRender() {
+    @Test func messagesBetweenParticipantsRender() throws {
         let layout = layoutFor("""
             sequenceDiagram
                 Alice->>Bob: Request
@@ -152,7 +152,7 @@ struct MermaidSequenceRendererTests {
         #expect(try drawLayout(layout))
     }
 
-    @Test func messageToNonAdjacentParticipant() {
+    @Test func messageToNonAdjacentParticipant() throws {
         let layout = layoutFor("""
             sequenceDiagram
                 participant Alice
@@ -168,7 +168,7 @@ struct MermaidSequenceRendererTests {
 
     // MARK: - Blocks and notes
 
-    @Test func sequenceBlocksAndRectsRender() {
+    @Test func sequenceBlocksAndRectsRender() throws {
         let layout = layoutFor("""
             sequenceDiagram
                 participant Alice
@@ -191,7 +191,7 @@ struct MermaidSequenceRendererTests {
         #expect(try drawLayout(layout))
     }
 
-    @Test func sequenceBoxesRender() {
+    @Test func sequenceBoxesRender() throws {
         let layout = layoutFor("""
             sequenceDiagram
                 box Purple Alice and Bob
@@ -214,7 +214,7 @@ struct MermaidSequenceRendererTests {
         #expect(try drawLayout(layout))
     }
 
-    @Test func sequenceNotesRenderAndAffectHeight() {
+    @Test func sequenceNotesRenderAndAffectHeight() throws {
         let withoutNote = layoutFor("""
             sequenceDiagram
                 Alice->>Bob: Hello
@@ -234,7 +234,7 @@ struct MermaidSequenceRendererTests {
 
     // MARK: - Self-messages
 
-    @Test func selfMessageRenders() {
+    @Test func selfMessageRenders() throws {
         let layout = layoutFor("""
             sequenceDiagram
                 Alice->>Alice: Think
@@ -255,7 +255,7 @@ struct MermaidSequenceRendererTests {
         #expect(selfSize.height > 0)
     }
 
-    @Test func rightmostSelfMessageLoopAndLabelStayInsideCanvas() {
+    @Test func rightmostSelfMessageLoopAndLabelStayInsideCanvas() throws {
         let source = """
             sequenceDiagram
                 participant Client
@@ -293,37 +293,37 @@ struct MermaidSequenceRendererTests {
 
     // MARK: - Arrow styles
 
-    @Test func solidArrowRenders() {
+    @Test func solidArrowRenders() throws {
         let layout = layoutFor("sequenceDiagram\n    Alice->>Bob: Solid arrow")
         #expect(try drawLayout(layout))
     }
 
-    @Test func dashedArrowRenders() {
+    @Test func dashedArrowRenders() throws {
         let layout = layoutFor("sequenceDiagram\n    Alice-->>Bob: Dashed arrow")
         #expect(try drawLayout(layout))
     }
 
-    @Test func solidOpenRenders() {
+    @Test func solidOpenRenders() throws {
         let layout = layoutFor("sequenceDiagram\n    Alice->Bob: Solid open")
         #expect(try drawLayout(layout))
     }
 
-    @Test func dashedOpenRenders() {
+    @Test func dashedOpenRenders() throws {
         let layout = layoutFor("sequenceDiagram\n    Alice-->Bob: Dashed open")
         #expect(try drawLayout(layout))
     }
 
-    @Test func solidCrossRenders() {
+    @Test func solidCrossRenders() throws {
         let layout = layoutFor("sequenceDiagram\n    Alice-xBob: Solid cross")
         #expect(try drawLayout(layout))
     }
 
-    @Test func dashedCrossRenders() {
+    @Test func dashedCrossRenders() throws {
         let layout = layoutFor("sequenceDiagram\n    Alice--xBob: Dashed cross")
         #expect(try drawLayout(layout))
     }
 
-    @Test func allArrowStylesInOneDiagram() {
+    @Test func allArrowStylesInOneDiagram() throws {
         let layout = layoutFor("""
             sequenceDiagram
                 Alice->>Bob: solid
@@ -339,7 +339,7 @@ struct MermaidSequenceRendererTests {
         #expect(try drawLayout(layout))
     }
 
-    @Test func v11ArrowStylesRender() {
+    @Test func v11ArrowStylesRender() throws {
         let layout = layoutFor(#"""
             sequenceDiagram
                 Alice<<->>Bob: bidirectional
@@ -360,7 +360,7 @@ struct MermaidSequenceRendererTests {
         #expect(try drawLayout(layout))
     }
 
-    @Test func autonumberStartAndIncrementRender() {
+    @Test func autonumberStartAndIncrementRender() throws {
         let layout = layoutFor("""
             sequenceDiagram
                 autonumber 10.5 0.25
@@ -375,7 +375,7 @@ struct MermaidSequenceRendererTests {
 
     // MARK: - Complex diagrams
 
-    @Test func complexDiagramDoesNotCrash() {
+    @Test func complexDiagramDoesNotCrash() throws {
         let layout = layoutFor("""
             sequenceDiagram
                 participant Browser
