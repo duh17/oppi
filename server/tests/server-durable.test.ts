@@ -2603,9 +2603,81 @@ describe("server durable managed runtime", () => {
       expect.objectContaining({ success: false, finalError: "429 overloaded" }),
     ]);
     expect(f.faux.state.callCount).toBe(1);
+    // The command returns once the run has settled, not once the abort is merely signalled.
+    const harness = (
+      f.manager as unknown as { active: Map<string, { sdkBackend: { harness: Harness } }> }
+    ).active.get(f.session.id)!.sdkBackend.harness;
+    expect(
+      (
+        await harness.snapshot(
+          LiveDoc,
+          f.storage.getSession(f.session.id)!.serverDurable!.conversationId! as ConversationId,
+          context,
+        )
+      )?.run,
+    ).toBeUndefined();
     // Cancelling the backoff is not Stop: the follow-up the user queued is still queued.
     expect((await f.manager.getMessageQueue(f.session.id)).followUp).toMatchObject([
       { message: "after the retry" },
+    ]);
+    observed.unsubscribe();
+  });
+
+  it("abort_retry leaves the next attempt alone when the backoff ends before the abort lands", async () => {
+    const answerText = "RETRY ANSWER STREAMED ONE TOKEN AT A TIME";
+    const f = await fixture(
+      [
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "429 overloaded" }),
+        fauxAssistantMessage(answerText),
+      ],
+      { slow: true, settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 1_000 } } },
+    );
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    const harness = (
+      f.manager as unknown as { active: Map<string, { sdkBackend: { harness: Harness } }> }
+    ).active.get(f.session.id)!.sdkBackend.harness;
+
+    // The commit abort_retry issues waits on `gate`, in either implementation: the old one marks
+    // through `abortTask`, the new one commits its own check and mark, and both call the commit
+    // line synchronously from `abortRetry`, so its frame is on the stack. Everything else, the
+    // retry sleeper's commit and the next attempt's, goes through. So the abort is issued during
+    // the backoff and lands only after the backoff has ended and the new attempt is streaming.
+    type CommitWith = (change: unknown, callContext: unknown, scope?: unknown) => Promise<unknown>;
+    const line = harness as unknown as { commitWith: CommitWith };
+    const realCommit = line.commitWith.bind(harness);
+    let gate: Promise<void> | undefined;
+    vi.spyOn(line, "commitWith").mockImplementation(async (change, callContext, scope) => {
+      if (gate !== undefined && new Error().stack?.includes("abortRetry")) await gate;
+      return realCommit(change, callContext, scope);
+    });
+
+    const backoff = observed.next((message) => message.type === "retry_start");
+    await f.manager.sendPrompt(f.session.id, "fail, then retry");
+    await backoff;
+    let open!: () => void;
+    gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const aborting = f.manager.runCommand(f.session.id, { type: "abort_retry" });
+    const attempting = observed.next((message) => message.type === "text_delta");
+    const ended = observed.next((message) => message.type === "agent_end");
+    await attempting;
+    open();
+    await expect(aborting).resolves.toEqual({ success: true });
+    await ended;
+
+    expect(f.faux.state.callCount).toBe(2);
+    const history = (await f.manager.runCommand(f.session.id, { type: "get_messages" })) as Array<{
+      role: string;
+      stopReason?: string;
+      content?: Array<{ type: string; text?: string }>;
+    }>;
+    const assistants = history.filter((message) => message.role === "assistant");
+    expect(assistants.map((message) => message.stopReason)).toEqual(["error", "stop"]);
+    expect(assistants[1]!.content).toEqual([{ type: "text", text: answerText }]);
+    expect(observed.messages.filter((message) => message.type === "retry_end")).toEqual([
+      expect.objectContaining({ success: true }),
     ]);
     observed.unsubscribe();
   });

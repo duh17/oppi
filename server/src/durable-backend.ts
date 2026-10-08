@@ -26,6 +26,8 @@ import {
   type InboxState,
   type UsageState,
   type EntryRecord,
+  type GenerationCheckpoint,
+  type Tx,
   CompactionEntry,
   ResetEntry,
 } from "@earendil-works/pi-durable";
@@ -1363,13 +1365,39 @@ export class DurableBackend implements AgentBackend {
    * Cancel a pending retry backoff and nothing else. The failed attempt's error is already
    * in the transcript; aborting only the generation task ends the run as aborted and leaves
    * queued inputs in the inbox, as classic does. Outside a backoff this does nothing, as classic.
+   * Queued inputs also stay unstarted afterwards: pi-durable places the inbox only at a boundary or
+   * on the next submission, after an aborted run as after a failed one.
+   *
+   * The generation's retry phase clears `pi.live.generation.retry` and moves the same task on to
+   * `prepare` in one commit, then runs the next attempt under the same task id. A read followed by
+   * `harness.abortTask` therefore lets a backoff that ends in between abort the new attempt, which
+   * classic (it only aborts the sleep) never does. The check and the mark must be one commit, and
+   * `abortTask` cannot do that: it marks whatever state the task has when its own commit runs.
+   * pi-durable's public `Tx` reads the task and `pi.live` but has no way to write the mark, so this
+   * calls `setTask`, the call `abortTask` itself makes, on the commit's own transaction. The
+   * scheduler's commit listener signals the run invocation and starts the abort handler for the
+   * mark from any commit. `waitForTask` then returns once the abort handler has ended the run.
    */
   async abortRetry(): Promise<void> {
     this.assertOpen();
     this.owner.assertSchedulingReady();
-    const live = await this.harness.snapshot(LiveDoc, this.conversation.id, BACKGROUND_CONTEXT);
-    if (live?.generation?.retry === undefined || live.run === undefined) return;
-    await this.harness.abortTask(live.run.taskId, BACKGROUND_CONTEXT);
+    const id = this.conversation.id;
+    const marked = await this.conversation.commit(async (tx) => {
+      const live = await tx.doc(LiveDoc, id);
+      if (live.generation?.retry === undefined || live.run === undefined) return undefined;
+      const task = await tx.task(live.run.taskId);
+      if (task === undefined || task.abortRequested) return undefined;
+      const state = task.state;
+      if (state.status !== "running" && state.status !== "pending") return undefined;
+      if ((state.checkpoint as GenerationCheckpoint).phase !== "retry") return undefined;
+      const { setTask } = tx as Tx & { setTask?: (record: typeof task) => void };
+      if (typeof setTask !== "function") {
+        throw new Error("pi-durable no longer lets a commit mark a task abort-requested");
+      }
+      setTask.call(tx, { ...task, abortRequested: true });
+      return task.id;
+    }, BACKGROUND_CONTEXT);
+    if (marked !== undefined) await this.harness.waitForTask(marked, BACKGROUND_CONTEXT);
   }
   getEntryRenderers(): undefined {
     return undefined;
