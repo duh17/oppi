@@ -1218,15 +1218,10 @@ enum FlatSegment: Sendable {
                 )
                 rendered.attributed.uiKit.foregroundColor = UIColor(palette.mdLink)
                 rendered.attributed.underlineStyle = .single
-                // Decorate first (leading file icon), then apply `.link` to the
-                // whole run so the icon itself is tappable. Underline stays on
-                // the text only because it is set before decoration.
-                var decorated = prependWikiIcon(to: rendered.attributed, destination: destination)
-                if let destination,
-                   let url = URL(string: destination),
-                   url.scheme != nil {
-                    decorated.link = url
-                }
+                let decorated = applyLink(
+                    destination: destination,
+                    to: prependWikiIcon(to: rendered.attributed, destination: destination)
+                )
                 result.attributed.append(decorated)
                 result.handledDelimiter = result.handledDelimiter || rendered.handledDelimiter
 
@@ -2557,8 +2552,40 @@ enum FlatSegment: Sendable {
         return AttributedString(NSAttributedString(attachment: attachment))
     }
 
+    /// Applies the link destination to every run of `text` except text
+    /// attachments (wiki file icons, inline math).
+    ///
+    /// A link must never cover an attachment. On long-press, UIKit's text drag
+    /// (`-[_UITextStorageDraggableGeometry draggableObjectsForTextRange:]`)
+    /// collects image-attachment ranges and link ranges separately, then deletes
+    /// each one from a single substring. An attachment inside a link is deleted
+    /// twice and the app aborts with `NSRangeException` ("NSMutableRLEArray
+    /// replaceObjectsInRange:withObject:length:: Out of bounds").
+    private static func applyLink(destination: String?, to text: AttributedString) -> AttributedString {
+        guard let destination,
+              let url = URL(string: destination),
+              url.scheme != nil else {
+            return text
+        }
+        guard text.runs.contains(where: { $0.uiKit.attachment != nil }) else {
+            var linked = text
+            linked.link = url
+            return linked
+        }
+        var linked = AttributedString()
+        for run in text.runs {
+            var piece = AttributedString(text[run.range])
+            if run.uiKit.attachment == nil {
+                piece.link = url
+            }
+            linked.append(piece)
+        }
+        return linked
+    }
+
     /// Prepends the wiki-link file icon (plus a single space) to already-rendered
-    /// link text. Returns the text unchanged when the link has no icon.
+    /// link text. Returns the text unchanged when the link has no icon. The icon
+    /// stays outside the link run; see `applyLink(destination:to:)`.
     private static func prependWikiIcon(
         to linkText: AttributedString,
         destination: String?
@@ -2641,16 +2668,10 @@ enum FlatSegment: Sendable {
             var result = renderInlinesDirectAppend(children, palette: palette, defaultColor: nil)
             result.uiKit.foregroundColor = UIColor(palette.mdLink)
             result.underlineStyle = .single
-            // Decorate first (leading file icon), then apply `.link` to the
-            // whole run so the icon itself is tappable. Underline stays on the
-            // text only because it is set before decoration.
-            var decorated = prependWikiIcon(to: result, destination: destination)
-            if let destination,
-               let url = URL(string: destination),
-               url.scheme != nil {
-                decorated.link = url
-            }
-            return decorated
+            return applyLink(
+                destination: destination,
+                to: prependWikiIcon(to: result, destination: destination)
+            )
         case .image(let alt, _):
             var result = AttributedString(imageFallbackText(alt: alt))
             result.uiKit.foregroundColor = UIColor(palette.comment)

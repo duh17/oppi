@@ -131,6 +131,7 @@ Entries labeled **Mac** describe work on `main`; the Mac app is not part of the 
 
 ### Fixed
 
+- **Client:** Long-pressing a wiki link to an image, video, audio, PDF, or other non-text file no longer crashes the app. The file icon now sits outside the link, so tap the file name to open it. The same rule keeps inline math inside a markdown link out of the link.
 - **Client:** Removing a server also deletes this iPhone's cached copies of its data: session traces and lists, workspaces, skills, file-browser indexes, and the HTTP response cache (which held response bodies and request headers with access tokens). Unsent composer and file-edit drafts stay. Nothing on the server changes.
 - **Client:** Server responses and bearer tokens are no longer written to the iOS HTTP cache (`Cache.db`). The app deletes a `Cache.db` left by earlier builds on launch, and Clear Local Cache now also clears the file-browser index and any leftover HTTP cache.
 - **Server:** A durable run that ends without an answer stays in the session after reconnect or a server restart. A model error, or a faulted or orphaned task, shows once as an error card in the trace and is not sent to the model. The card is written before a prompt sent immediately after the failure. Crash recovery reads the harness storage the server already has open; if that read fails, the session does not attach. A later attach does not rescan terminal tasks it has already examined. Stopping or withdrawing a turn stays quiet.
